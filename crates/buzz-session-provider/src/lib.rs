@@ -89,7 +89,7 @@ use buzz_core::coding_session_observation::{
 };
 use buzz_core::kind::{
     KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_CLOSURE,
-    KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_GENESIS,
+    KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_LEASE,
     KIND_CODING_SESSION_LIFECYCLE_COMMAND, KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
     KIND_CODING_SESSION_METADATA, KIND_CODING_SESSION_OBSERVATION, KIND_CODING_SESSION_POLICY,
     KIND_CODING_SESSION_PROVIDER_CATALOG, KIND_CODING_SESSION_TEAM_TRANSACTION,
@@ -172,6 +172,17 @@ const GENESIS_QUERY_RETRY_DELAY: Duration = Duration::from_millis(150);
 /// receipt still falls off the page, the contiguous fold stalls — grants stay
 /// unapplied (fail closed) until a live receipt or restart retries.
 const AUTHORITY_BACKFILL_QUERY_LIMIT: usize = 1000;
+/// Ceiling on pages one authority-chain discovery will read.
+///
+/// The query is bounded by [`AUTHORITY_BACKFILL_QUERY_LIMIT`] rows, and a
+/// channel busier than that has to be paged through or the chain's own
+/// receipts fall off the end of the first page. Paging needs a stop, and this
+/// is it: a discovery that has not reached the end of the channel's history in
+/// this many pages reports itself **incomplete** rather than pretending the
+/// rows it did read are the whole chain. Thirty-two pages of a thousand rows
+/// is far past any real channel; hitting it means something is wrong, and the
+/// honest answer to that is "I do not know", not "nothing has changed".
+const AUTHORITY_BACKFILL_MAX_PAGES: usize = 32;
 /// Replay-floor slack for channels with no consumed-command watermark.
 ///
 /// A 44221 can legally precede the floor it would replay from: a membership
@@ -289,25 +300,19 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
     relay.set_startup_watermark(now_secs()).await?;
     provider.set_rest_client(relay.rest_client());
 
-    // Witness the relay identity (NIP-11 `self`) once, over the same origin
-    // the whole authenticated command stream already trusts. Without it,
-    // authority-acceptance receipts cannot verify and genesis-bearing
-    // sessions stay founder-only — fail closed, never guessed.
-    match relay.rest_client().fetch_relay_self_verified().await {
-        Ok(Some(relay_self)) => {
-            tracing::info!(target: "csp::authority", %relay_self, "witnessed relay identity");
-            provider.set_relay_self(relay_self);
-        }
-        Ok(None) => tracing::warn!(
+    // Witness the relay identity (NIP-11 `self`), over the same origin the
+    // whole authenticated command stream already trusts. Without it,
+    // relay-signed receipts cannot verify at all: no grant is applied and no
+    // handover claim can be read, so genesis-bearing work is refused rather
+    // than admitted on the assumption that nothing has changed. Retried on the
+    // runtime tick while it is still unknown, so one transient failure here
+    // does not disable verification for this process's whole life.
+    if !provider.witness_relay_identity().await {
+        tracing::warn!(
             target: "csp::authority",
-            "relay advertises no stable identity (NIP-11 self) — authority chains cannot be \
-             verified; genesis-bearing sessions stay founder-only"
-        ),
-        Err(error) => tracing::warn!(
-            target: "csp::authority",
-            "could not witness the relay identity: {error} — genesis-bearing sessions stay \
-             founder-only until the provider restarts"
-        ),
+            "no relay identity is witnessed yet — authority chains cannot be verified and \
+             genesis-bearing sessions are refused by name until one is; retrying on the tick"
+        );
     }
 
     // Repair what the last exit left behind — and, because the relay reader
@@ -433,9 +438,12 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
                 if let Err(error) = provider.run_ci_continuation_tick().await {
                     tracing::warn!(target: "csp::ci", "CI continuation processing failed: {error}");
                 }
-                // Usually a no-op: only a startup whose relay reads failed
-                // leaves anything here, and this is what lets those executions
-                // stop refusing without waiting for another restart.
+                // Both usually no-ops. The identity retry is what lets a
+                // provider that came up before its relay was ready start
+                // verifying without a restart, and the claim retry is what
+                // lets the executions waiting behind an unread chain stop
+                // refusing. Identity first: the chain read needs it.
+                provider.witness_relay_identity().await;
                 provider.retry_pending_claim_verification().await;
             }
             // The replay reorder window closing is a delivery, not a timer
@@ -801,6 +809,12 @@ pub struct InFlightTurn {
     /// turn, so an owner that fails releases the operation for a re-armed
     /// command rather than losing it.
     operation_key: Option<String>,
+    /// The verified signer that sent this turn.
+    ///
+    /// Carried through to [`crate::state::OpenTurn::operator_pubkey`] when the
+    /// turn starts, which is what lets a mid-turn claim change stop the old
+    /// operator's work without stopping the new claimant's.
+    operator_pubkey: String,
 }
 
 /// Turn commands buffered while a channel replays history, held so they are
@@ -936,6 +950,51 @@ impl Provider {
     /// applied — fail closed, never guessed.
     pub fn set_relay_self(&mut self, relay_self_hex: String) {
         self.relay_self = Some(relay_self_hex.to_ascii_lowercase());
+    }
+
+    /// Witness the relay's own signing identity (NIP-11 `self`), if it is not
+    /// already known.
+    ///
+    /// The trust root for every relay-signed fact this provider consumes:
+    /// authority-acceptance receipts, deletion receipts, and through them the
+    /// handover claim itself. Without it nothing verifies and genesis-bearing
+    /// work is refused rather than admitted on a guess.
+    ///
+    /// Called once at startup and then on the runtime tick **only while it is
+    /// still unknown**, because the startup fetch is one HTTP request against
+    /// a relay that may not have been ready yet. One transient failure used to
+    /// leave a provider unable to verify anything for its whole lifetime,
+    /// which is exactly the state in which a returning body would admit work
+    /// somebody else now holds. An already-witnessed identity is never
+    /// re-fetched: it is the trust root, and re-reading it would let a
+    /// mid-life change of answer silently move it.
+    ///
+    /// Returns whether an identity is known afterwards. A relay that publishes
+    /// no `self` key answers `false` every time, and on such a relay
+    /// genesis-bearing sessions stay refused — the remedy is configuring the
+    /// relay's identity, not loosening this.
+    pub async fn witness_relay_identity(&mut self) -> bool {
+        if self.relay_self.is_some() {
+            return true;
+        }
+        let Some(rest) = self.rest_client.clone() else {
+            return false;
+        };
+        match rest.fetch_relay_self_verified().await {
+            Ok(Some(relay_self)) => {
+                tracing::info!(target: "csp::authority", %relay_self, "witnessed relay identity");
+                self.set_relay_self(relay_self);
+                true
+            }
+            Ok(None) => false,
+            Err(error) => {
+                tracing::debug!(
+                    target: "csp::authority",
+                    "the relay identity is still not readable: {error}"
+                );
+                false
+            }
+        }
     }
 
     /// Repair state left behind by an unclean exit.
@@ -2392,7 +2451,7 @@ impl Provider {
                         None => Err("no relay resolver is available for this command".into()),
                     };
                     match founder {
-                        Ok(founder) => plan.founder_pubkey = founder,
+                        Ok(founder) => plan.founder_pubkey = founder.clone(),
                         Err(message) => {
                             self.state.consume_command(&plan.command_id, now_secs())?;
                             // Refused before dispatch: same one-shot rule as
@@ -2417,6 +2476,104 @@ impl Provider {
                                 &receipt,
                             );
                         }
+                    }
+                }
+                // The create fence, over a claim this provider has just
+                // verified rather than one it happens to hold a record of, and
+                // **before** `create_session` spawns anything (root's P1). A
+                // record-based check cannot answer this: the machine joining a
+                // handed-over umbrella for the first time has no record, and
+                // that is precisely the machine that must not start a second
+                // execution of the work.
+                //
+                // **No witnessed relay identity is unreadable authority, not
+                // absent authority.** A provider whose NIP-11 fetch failed at
+                // startup cannot verify a single receipt, so it cannot tell an
+                // unclaimed umbrella from one it simply could not read — and
+                // the machine most likely to be in that state is the one
+                // returning from the outage during which it lost the session.
+                // So a genesis-bearing create there is refused by name and the
+                // umbrella is queued for another read; the identity is
+                // re-witnessed on the runtime tick
+                // ([`Provider::witness_relay_identity`]), so this clears
+                // without a restart. On a relay that publishes no `self` key
+                // at all it never clears: genesis-bearing creates are refused
+                // there until the relay is configured with an identity, and
+                // that is the remedy rather than a workaround here. A create
+                // with no `genesisRef` is untouched by any of this.
+                if let Some(genesis_ref) = plan.genesis_ref.clone() {
+                    // The local records first, and without any I/O: if this
+                    // provider already holds a fenced record of the umbrella
+                    // it knows the answer, and reading the chain to learn it
+                    // again would only add a way to fail.
+                    let refusal = commands::umbrella_fence(
+                        &self.state,
+                        channel_id,
+                        &genesis_ref,
+                        operator_pubkey,
+                        &self.pubkey_hex,
+                    )
+                    .map(|refusal| (refusal.code, refusal.message));
+                    let verified = if refusal.is_some() {
+                        Ok(ClaimState::NoClaim)
+                    } else if self.relay_self.is_none() {
+                        Err(
+                            "this provider has witnessed no relay identity, so no acceptance \
+                             receipt can be verified"
+                                .to_owned(),
+                        )
+                    } else {
+                        match relay {
+                            Some(relay) => {
+                                self.verified_umbrella_claim(
+                                    channel_id,
+                                    &genesis_ref,
+                                    &plan.founder_pubkey,
+                                    &relay.rest_client(),
+                                )
+                                .await
+                            }
+                            None => Err("no relay resolver is available for this command".into()),
+                        }
+                    };
+                    let refusal = match (refusal, verified) {
+                        (Some(refusal), _) => Some(refusal),
+                        (None, Ok(claim)) => {
+                            plan.verified_claim = claim.clone();
+                            commands::claim_fence(&claim, operator_pubkey, &self.pubkey_hex)
+                                .map(|refusal| (refusal.code, refusal.message))
+                        }
+                        // Unreadable is not unclaimed. The umbrella joins the
+                        // pending set so the tick retries it, and this create
+                        // is refused by name rather than dispatched on a
+                        // guess.
+                        (None, Err(reason)) => {
+                            self.claims_pending_reverification
+                                .insert(genesis_ref.clone());
+                            Some((
+                                commands::AUTHORITY_NOT_REVERIFIED,
+                                format!(
+                                    "this umbrella's authority chain could not be verified \
+                                     ({reason}), so whether the session has been handed over \
+                                     is not yet known and no execution was started"
+                                ),
+                            ))
+                        }
+                    };
+                    if let Some((code, message)) = refusal {
+                        self.state.consume_command(&plan.command_id, now_secs())?;
+                        if plan.actor.is_some() {
+                            self.forget_actor_seat(&plan.command_id);
+                        }
+                        tracing::warn!(
+                            target: "csp::authority",
+                            command_id = %plan.command_id,
+                            %genesis_ref,
+                            code,
+                            "genesis-bearing create refused before startup: {message}"
+                        );
+                        let receipt = LifecycleReceipt::failed(&plan.command_id, code, &message);
+                        return self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt);
                     }
                 }
                 self.create_session(plan, relay).await
@@ -2729,13 +2886,21 @@ impl Provider {
             // execution walks straight past a fence its siblings are behind.
             // An umbrella this provider holds no other record of folds to
             // `NoClaim`, and the first accepted receipt fills it in.
-            handover: plan
-                .genesis_ref
-                .as_deref()
-                .map(|genesis_ref| {
-                    commands::umbrella_claim(&self.state, plan.channel_id, genesis_ref)
-                })
-                .unwrap_or_default(),
+            handover: match plan.genesis_ref.as_deref() {
+                None => ClaimState::NoClaim,
+                Some(genesis_ref) => {
+                    // The chain this create was fenced against, in preference
+                    // to the local siblings: on a machine joining the umbrella
+                    // for the first time there are no siblings, and that is
+                    // the record that most needs to carry the claim.
+                    let local = commands::umbrella_claim(&self.state, plan.channel_id, genesis_ref);
+                    if matches!(plan.verified_claim, ClaimState::NoClaim) {
+                        local
+                    } else {
+                        plan.verified_claim.clone()
+                    }
+                }
+            },
             retired: None,
         };
         self.state.insert_session(record)?;
@@ -4160,6 +4325,7 @@ impl Provider {
                             target: target.clone(),
                             created_at,
                             operation_key: operation_key.clone(),
+                            operator_pubkey: operator_pubkey.to_owned(),
                         },
                     );
                     // A `steer` this execution cannot receive is answered
@@ -4611,9 +4777,19 @@ impl Provider {
             if accepted.seq <= applied_seq {
                 continue; // Replay of an already-applied link.
             }
-            if accepted.seq == applied_seq + 1 {
+            // A **relay-verified** receipt this provider could not apply means
+            // the chain has moved somewhere this build cannot follow, and the
+            // record's `handover` is now known to be behind. Marking the
+            // umbrella uncertain is the difference between "the fence is open
+            // because nothing changed" and "the fence is open because I could
+            // not read what changed" — only the first of those is safe, and
+            // before this the two were the same code path (root's P1).
+            //
+            // It applies whether or not the umbrella was pending at startup: a
+            // live receipt is exactly the case a restart never saw.
+            let applied_now = if accepted.seq == applied_seq + 1 {
                 self.resolve_and_apply_grant(&session_id, &accepted, &rest)
-                    .await?;
+                    .await?
             } else {
                 // A gap means receipts were missed; refill from storage, then
                 // retry this link in case it is now the contiguous next one.
@@ -4625,11 +4801,207 @@ impl Provider {
                     .unwrap_or(0);
                 if accepted.seq == applied + 1 {
                     self.resolve_and_apply_grant(&session_id, &accepted, &rest)
-                        .await?;
+                        .await?
+                } else {
+                    false
                 }
+            };
+            if !applied_now {
+                tracing::warn!(
+                    target: "csp::authority",
+                    %session_id,
+                    genesis_ref = %accepted.genesis_ref,
+                    seq = accepted.seq,
+                    "an accepted authority link arrived that this provider could not apply; its executions refuse commands until the chain can be read"
+                );
+                self.claims_pending_reverification
+                    .insert(accepted.genesis_ref.clone());
             }
         }
+        // Applying a claim link can fence a body that is mid-turn. Asked once
+        // for the umbrella, after every local record of it has folded, so a
+        // record cannot be interrupted on a claim its sibling has applied and
+        // it has not.
+        self.fence_open_turns_for_genesis(&accepted.genesis_ref)?;
         Ok(())
+    }
+
+    /// The sentence a turn interrupted by a handover carries.
+    ///
+    /// It states the limit deliberately, because the honest guarantee and the
+    /// comfortable one differ here. The provider requests the cancel the
+    /// moment it has applied the claim and refuses every later admission from
+    /// that instant — that part is a promise. What it cannot promise is that
+    /// the runtime stops mid-tool-call: an adapter may finish the file write
+    /// or the shell command it is already inside before it honours a cancel.
+    /// Claiming zero overlap would be claiming a distributed guarantee nobody
+    /// on this machine can make, so the text says what actually happened.
+    const HANDOVER_INTERRUPT_REASON: &'static str =
+        "HANDOVER_FENCED: this session was handed over while this turn was running. The \
+         provider cancelled it at once and refuses every later command on this execution; the \
+         runtime may still finish a tool call it had already started.";
+
+    /// Stop work already running on a body this umbrella's claim has just
+    /// fenced.
+    ///
+    /// Turn *admission* stops the next command. It does nothing about the
+    /// prompt already in the adapter, or the turns already sitting in its
+    /// mailbox — and those are precisely the two divergent executions the
+    /// fence exists to prevent, since the machine that lost the session is by
+    /// definition the one that was mid-flight when it lost it (root's P1).
+    ///
+    /// So, for every local record of the genesis whose open turn the fence now
+    /// refuses: request the cancel through the same path
+    /// `thread.turn.interrupt` uses, then shut the actor down — an interrupt
+    /// alone cancels the running turn and leaves anything queued behind it to
+    /// run next, which would be the fence stopping one prompt and admitting
+    /// the one after it. A truthful terminal row goes into the transcript, the
+    /// interrupted command is recorded as refused so its replay is silent, and
+    /// `open_turn` is cleared.
+    ///
+    /// Whose turn it is matters: the fence is asked with the turn's own
+    /// operator ([`crate::state::OpenTurn::operator_pubkey`]), so a `transfer`
+    /// that hands the claim to a new claimant on the **same** body stops the
+    /// old claimant's work and leaves the new claimant's running. A turn with
+    /// no recorded operator — a create's `initialTurn`, or a record written
+    /// before the field existed — falls back to asking whether this body may
+    /// act at all.
+    ///
+    /// Idempotent: a record with no open turn, or one the fence admits, is
+    /// left completely alone, so a replayed receipt interrupts nothing twice.
+    fn fence_open_turns_for_genesis(&mut self, genesis_ref: &str) -> anyhow::Result<()> {
+        let fenced: Vec<(String, crate::state::OpenTurn, String)> = self
+            .state
+            .sessions()
+            .filter(|record| !record.closed && record.genesis_ref.as_deref() == Some(genesis_ref))
+            .filter_map(|record| {
+                let open_turn = record.open_turn.clone()?;
+                let operator = open_turn
+                    .operator_pubkey
+                    .clone()
+                    .unwrap_or_else(|| self.pubkey_hex.clone());
+                let refusal = commands::handover_fence(record, &operator, &self.pubkey_hex)?;
+                // Retirement has its own quiescence path and its own code;
+                // this one is only about the handover fence.
+                (refusal.code == payload::HANDOVER_FENCED)
+                    .then(|| (record.session_id.clone(), open_turn, refusal.message))
+            })
+            .collect();
+
+        for (session_id, open_turn, why) in fenced {
+            let Some(record) = self.state.session(&session_id).cloned() else {
+                continue;
+            };
+            let target = self.target_for(&record);
+            tracing::warn!(
+                target: "csp::authority",
+                %session_id,
+                turn_id = %open_turn.turn_id,
+                "{why} — cancelling the running turn and releasing this execution"
+            );
+            // The cancel first: it is the only part of this that races the
+            // adapter, and every line below only records what was decided.
+            self.interrupt_open_turn(
+                &session_id,
+                open_turn
+                    .command_id
+                    .as_deref()
+                    .unwrap_or(&open_turn.turn_id),
+            );
+            let elapsed =
+                u64::try_from(now_ms().saturating_sub(open_turn.started_at_ms)).unwrap_or_default();
+            self.enqueue_transcript(
+                record.channel_id,
+                &target,
+                Some(&open_turn.turn_id),
+                payload::result_item(
+                    payload::ResultSubtype::Error,
+                    elapsed,
+                    Self::HANDOVER_INTERRUPT_REASON,
+                    payload::TurnCost::default(),
+                    payload::TurnUsageReport::default(),
+                ),
+                Priority::High,
+            )?;
+            // Durable, so a redelivery of the interrupted command is answered
+            // `AlreadyRefused` and never republished.
+            if let Some(command_id) = open_turn.command_id.as_deref() {
+                self.state.record_refusal(command_id, now_secs())?;
+                self.in_flight.remove(command_id);
+            }
+            self.state.update_session(&session_id, |record| {
+                record.open_turn = None;
+            })?;
+            // Everything queued behind the cancelled turn goes with it. An
+            // interrupt empties the running turn, not the mailbox.
+            self.sessions.shutdown(&session_id);
+            self.discard_context_packages(&session_id);
+            self.publish_metadata(record.channel_id, &target, SessionStatus::Disconnected)?;
+        }
+        Ok(())
+    }
+
+    /// Fold this umbrella's current claim from the accepted chain, verifying
+    /// every link, without needing a local record of it.
+    ///
+    /// The create path's question, and it cannot be answered the way every
+    /// other path answers it. `handover_fence` reads a `SessionRecord`; a
+    /// create on a machine that has never seen this umbrella has none, which
+    /// is exactly the case root's P1 found dispatching a first prompt under
+    /// somebody else's claim. So the chain is read directly: paged discovery
+    /// ([`Provider::read_accepted_chain`]), then every link resolved by its
+    /// explicit `acceptedEventId` and checked against its receipt and the
+    /// genesis owner — the same two proofs
+    /// [`Provider::resolve_and_apply_grant`] applies, because a receipt alone
+    /// must never decide a claim.
+    ///
+    /// # Errors
+    /// A sentence naming what could not be read or verified. An error is
+    /// **not** "no claim": the caller holds the create rather than admitting
+    /// it, exactly as a restart holds an unread chain.
+    async fn verified_umbrella_claim(
+        &self,
+        channel_id: Uuid,
+        genesis_ref: &str,
+        owner_pubkey: &str,
+        rest: &RestClient,
+    ) -> Result<buzz_core::coding_session_authority_claim::ClaimState, String> {
+        let chain = self
+            .read_accepted_chain(channel_id, genesis_ref, rest)
+            .await;
+        if let Some(reason) = chain.incomplete {
+            return Err(reason);
+        }
+        let mut links = Vec::with_capacity(chain.links.len());
+        for accepted in chain.links {
+            let transition = rest
+                .query_event_by_id(
+                    &accepted.accepted_event_id,
+                    Kind::Custom(KIND_CODING_SESSION_AUTHORITY_TRANSITION as u16),
+                )
+                .await
+                .map_err(|error| format!("an accepted transition could not be read: {error}"))?
+                .ok_or_else(|| {
+                    format!(
+                        "accepted transition {} is not query-visible",
+                        accepted.accepted_event_id
+                    )
+                })?;
+            authority::verify_accepted_transition(
+                &transition,
+                &accepted,
+                channel_id,
+                owner_pubkey,
+            )?;
+            links.push(ClaimLink {
+                seq: accepted.seq,
+                accepted_event_id: accepted.accepted_event_id,
+                transition_type: accepted.transition_type,
+                grantee_pubkey: accepted.grantee_pubkey,
+                body_pubkey: accepted.body_pubkey,
+            });
+        }
+        Ok(buzz_core::coding_session_authority_claim::fold_current_claim(links.into_iter()))
     }
 
     /// Resolve the accepted kind 44228 transition a verified receipt names —
@@ -4756,6 +5128,156 @@ impl Provider {
         Ok(true)
     }
 
+    /// Discover and verify one genesis's accepted chain, paging until the
+    /// channel's history ends.
+    ///
+    /// # What makes a read complete
+    ///
+    /// Only this: every page was read to the end of the channel's history, no
+    /// receipt naming **this** genesis failed verification, and the receipts
+    /// that did verify run contiguously from `seq` 1. Anything else — a failed
+    /// query, a non-array answer, no witnessed relay identity, a page budget
+    /// exhausted, a last page that came back exactly full (so there may be
+    /// more behind it), a gap in the sequence — leaves `incomplete` set.
+    ///
+    /// # What is *not* evidence about this chain
+    ///
+    /// Unrelated traffic. Kind 40099 carries joins, leaves and every other
+    /// system row, and a channel may hold acceptance receipts for other
+    /// umbrellas entirely. A row that is not a receipt, or is a receipt for
+    /// another genesis, says nothing about this one and never blocks it. What
+    /// *does* block it is a receipt that claims this genesis and cannot be
+    /// verified: that is a link this build cannot read, sitting in the middle
+    /// of the chain the fence depends on.
+    async fn read_accepted_chain(
+        &self,
+        channel_id: Uuid,
+        genesis_ref: &str,
+        rest: &RestClient,
+    ) -> AcceptedChain {
+        use nostr::{Alphabet, SingleLetterTag};
+
+        let incomplete = |reason: String| AcceptedChain {
+            links: Vec::new(),
+            incomplete: Some(reason),
+        };
+        let Some(relay_self) = self.relay_self.clone() else {
+            return incomplete("no relay identity is witnessed".to_owned());
+        };
+        let Ok(relay_author) = nostr::PublicKey::from_hex(&relay_self) else {
+            return incomplete("the witnessed relay identity is not a valid pubkey".to_owned());
+        };
+
+        let mut seen: HashSet<String> = HashSet::new();
+        let mut rows: Vec<Event> = Vec::new();
+        let mut until: Option<nostr::Timestamp> = None;
+        let mut pages = 0usize;
+        loop {
+            pages += 1;
+            if pages > AUTHORITY_BACKFILL_MAX_PAGES {
+                return incomplete(format!(
+                    "the channel's history did not end within {AUTHORITY_BACKFILL_MAX_PAGES} pages"
+                ));
+            }
+            let mut filter = nostr::Filter::new()
+                .kind(Kind::Custom(KIND_SYSTEM_MESSAGE as u16))
+                .author(relay_author)
+                .custom_tags(
+                    SingleLetterTag::lowercase(Alphabet::H),
+                    [channel_id.to_string()],
+                )
+                .limit(AUTHORITY_BACKFILL_QUERY_LIMIT);
+            if let Some(until) = until {
+                filter = filter.until(until);
+            }
+            let answer = match rest.query(&[filter]).await {
+                Ok(answer) => answer,
+                Err(error) => return incomplete(format!("the receipt query failed: {error}")),
+            };
+            let Some(page) = answer.as_array() else {
+                return incomplete("the receipt query returned a non-array response".to_owned());
+            };
+            let page_len = page.len();
+            let events: Vec<Event> = page
+                .iter()
+                .filter_map(|row| serde_json::from_value::<Event>(row.clone()).ok())
+                .collect();
+            let oldest = events.iter().map(|event| event.created_at).min();
+            let mut fresh = 0usize;
+            for event in events {
+                if seen.insert(event.id.to_hex()) {
+                    rows.push(event);
+                    fresh += 1;
+                }
+            }
+            // A short page is the end of the history: the relay had nothing
+            // more to give. A full one may or may not be, so it is paged past.
+            if page_len < AUTHORITY_BACKFILL_QUERY_LIMIT {
+                break;
+            }
+            let Some(oldest) = oldest else {
+                return incomplete(
+                    "a full page of receipts could not be decoded, so the read cannot be \
+                     continued past it"
+                        .to_owned(),
+                );
+            };
+            // `until` is inclusive, so a page whose rows all share one second
+            // cannot be paged past — asking again returns the same page
+            // forever. Say so rather than spin or silently truncate.
+            if fresh == 0 {
+                return incomplete(
+                    "a full page of receipts shares one timestamp, so the read cannot be \
+                     continued past it"
+                        .to_owned(),
+                );
+            }
+            until = Some(oldest);
+        }
+
+        let mut links: Vec<authority::AcceptedTransition> = Vec::new();
+        for event in &rows {
+            if !authority::looks_like_acceptance_receipt(&event.content) {
+                continue; // A join, a leave, some other system row.
+            }
+            match authority::verify_acceptance_receipt(event, &relay_self, channel_id) {
+                Ok(accepted) if accepted.genesis_ref == genesis_ref => links.push(accepted),
+                Ok(_) => {} // Another umbrella's chain.
+                Err(error) => {
+                    // Triage only, never authority: read the claimed genesis
+                    // out of the raw content to decide whether this failure is
+                    // about *our* chain. An unreadable receipt for somebody
+                    // else's umbrella is not our problem; one for ours is a
+                    // link we cannot see, and the fence stays up.
+                    if claims_genesis(&event.content, genesis_ref) {
+                        return incomplete(format!(
+                            "a receipt naming this genesis could not be verified: {error}"
+                        ));
+                    }
+                    tracing::debug!(
+                        target: "csp::authority",
+                        "ignoring an unverifiable receipt for another umbrella: {error}"
+                    );
+                }
+            }
+        }
+        links.sort_by_key(|accepted| accepted.seq);
+        links.dedup_by_key(|accepted| accepted.seq);
+        for (index, accepted) in links.iter().enumerate() {
+            let expected = (index + 1) as u32;
+            if accepted.seq != expected {
+                return incomplete(format!(
+                    "the accepted chain is not contiguous: expected seq {expected}, found {}",
+                    accepted.seq
+                ));
+            }
+        }
+        AcceptedChain {
+            links,
+            incomplete: None,
+        }
+    }
+
     /// Extend one session's operator set from the channel's stored acceptance
     /// receipts: the backfill half of chain consumption, run at session load
     /// and whenever a live receipt reveals a gap.
@@ -4768,94 +5290,59 @@ impl Provider {
     /// [`Provider::resolve_and_apply_grant`]. Receipts fold strictly by
     /// contiguous `seq`; a gap or an unverifiable link stops the fold with
     /// later grants unapplied.
+    ///
+    /// Returns the read's own verdict on itself: `Ok(true)` when the whole
+    /// chain was read, verified and folded into this record, `Ok(false)` when
+    /// it was not. Only the first answer may lift the handover fence — see
+    /// [`Provider::read_accepted_chain`] for what "the whole chain" means and
+    /// why a partial read must never be mistaken for a chain with nothing in
+    /// it.
     pub async fn backfill_session_authority(
         &mut self,
         session_id: &str,
         rest: &RestClient,
-    ) -> anyhow::Result<()> {
-        use nostr::{Alphabet, SingleLetterTag};
-
+    ) -> anyhow::Result<bool> {
         let Some(record) = self.state.session(session_id) else {
-            return Ok(());
+            return Ok(false);
         };
         let Some(genesis_ref) = record.genesis_ref.clone() else {
-            return Ok(()); // Legacy sessions have no chain (R20).
+            // Legacy sessions have no chain (R20), so there is nothing to
+            // verify and nothing the fence is waiting on.
+            return Ok(true);
         };
         let channel_id = record.channel_id;
         let mut applied_seq = record.authority_seq;
-        let Some(relay_self) = self.relay_self.clone() else {
-            tracing::debug!(
-                target: "csp::authority",
-                "no relay identity witnessed — skipping authority backfill"
-            );
-            return Ok(());
-        };
-        let Ok(relay_author) = nostr::PublicKey::from_hex(&relay_self) else {
+
+        let chain = self
+            .read_accepted_chain(channel_id, &genesis_ref, rest)
+            .await;
+        if let Some(reason) = &chain.incomplete {
             tracing::warn!(
                 target: "csp::authority",
-                "witnessed relay identity is not a valid pubkey — skipping authority backfill"
+                %session_id,
+                %genesis_ref,
+                "authority chain could not be read to its end: {reason}"
             );
-            return Ok(());
-        };
+            return Ok(false);
+        }
 
-        let filter = nostr::Filter::new()
-            .kind(Kind::Custom(KIND_SYSTEM_MESSAGE as u16))
-            .author(relay_author)
-            .custom_tags(
-                SingleLetterTag::lowercase(Alphabet::H),
-                [channel_id.to_string()],
-            )
-            .limit(AUTHORITY_BACKFILL_QUERY_LIMIT);
-        let rows = match rest.query(&[filter]).await {
-            Ok(rows) => rows,
-            Err(error) => {
-                tracing::warn!(
-                    target: "csp::authority",
-                    %session_id,
-                    "authority backfill query failed: {error}"
-                );
-                return Ok(());
-            }
-        };
-        let Some(rows) = rows.as_array() else {
-            tracing::warn!(
-                target: "csp::authority",
-                "authority backfill query returned a non-array response"
-            );
-            return Ok(());
-        };
-
-        let mut accepted: Vec<authority::AcceptedTransition> = rows
-            .iter()
-            .filter_map(|row| serde_json::from_value::<Event>(row.clone()).ok())
-            .filter(|event| authority::looks_like_acceptance_receipt(&event.content))
-            .filter_map(|event| {
-                authority::verify_acceptance_receipt(&event, &relay_self, channel_id)
-                    .map_err(|error| {
-                        tracing::warn!(
-                            target: "csp::authority",
-                            "skipping unverifiable stored acceptance receipt: {error}"
-                        );
-                    })
-                    .ok()
-            })
-            .filter(|accepted| accepted.genesis_ref == genesis_ref)
-            .collect();
-        accepted.sort_by_key(|accepted| accepted.seq);
-
-        for accepted in accepted {
+        for accepted in chain.links {
             if accepted.seq <= applied_seq {
                 continue;
             }
+            // `read_accepted_chain` already proved contiguity from seq 1, so a
+            // gap here means the *record* is ahead of the chain — impossible
+            // unless something applied a link this read cannot see. Refuse to
+            // call that a complete read.
             if accepted.seq != applied_seq + 1 {
                 tracing::warn!(
                     target: "csp::authority",
                     %session_id,
                     applied_seq,
                     next_seq = accepted.seq,
-                    "authority chain has a receipt gap — later grants stay unapplied"
+                    "authority chain does not continue from what this record applied"
                 );
-                break;
+                return Ok(false);
             }
             if self
                 .resolve_and_apply_grant(session_id, &accepted, rest)
@@ -4863,19 +5350,92 @@ impl Provider {
             {
                 applied_seq = accepted.seq;
             } else {
-                // An unverifiable link is never skipped over: everything past
-                // it waits until it can be verified.
-                break;
+                // A verified receipt whose named transition cannot be resolved
+                // or verified: an unreadable link in the middle of *this*
+                // chain. Everything past it waits, and — the part that used to
+                // be missing — the read is not complete, so the fence stays up
+                // rather than reading an unapplied takeover as no takeover.
+                tracing::warn!(
+                    target: "csp::authority",
+                    %session_id,
+                    seq = accepted.seq,
+                    "an accepted link could not be resolved; the chain is not verified"
+                );
+                return Ok(false);
             }
         }
-        // The chain was read end to end. Whatever it said — a claim, a void,
-        // or nothing at all — this process now *knows*, which is the only
-        // thing the reverification gate is asking. Note that this is reached
-        // only past every early return above: a failed query, a non-array
-        // answer, a missing genesis and an unwitnessed relay identity all
-        // leave the umbrella pending, because none of them read anything.
-        self.claims_pending_reverification.remove(&genesis_ref);
-        Ok(())
+        Ok(true)
+    }
+
+    /// Verify one umbrella's chain across **every** local record of it, and
+    /// clear the fence only if all of them now agree.
+    ///
+    /// The pending flag is umbrella-wide but verification happens per record,
+    /// and those two facts have to be reconciled somewhere. Here: a genesis is
+    /// released only when every local record of it read the whole chain *and*
+    /// they all ended at the same applied head. One sibling's success must not
+    /// unlock another sibling that is still sitting at an older `NoClaim` —
+    /// admission reads each record's own `handover`, so a half-verified
+    /// umbrella would admit a turn on the half that never learned about the
+    /// takeover.
+    ///
+    /// Returns whether the umbrella is now verified.
+    async fn verify_umbrella_chain(&mut self, genesis_ref: &str, rest: &RestClient) -> bool {
+        let session_ids: Vec<String> = self
+            .state
+            .sessions()
+            .filter(|record| !record.closed && record.genesis_ref.as_deref() == Some(genesis_ref))
+            .map(|record| record.session_id.clone())
+            .collect();
+        // An umbrella whose last record closed has nothing left to verify and
+        // nothing left to hold.
+        if session_ids.is_empty() {
+            self.claims_pending_reverification.remove(genesis_ref);
+            return true;
+        }
+        let mut complete = true;
+        for session_id in &session_ids {
+            match self.backfill_session_authority(session_id, rest).await {
+                Ok(true) => {}
+                Ok(false) => complete = false,
+                Err(error) => {
+                    tracing::warn!(
+                        target: "csp::authority",
+                        %session_id,
+                        "authority verification failed: {error}"
+                    );
+                    complete = false;
+                }
+            }
+        }
+        if !complete {
+            self.claims_pending_reverification
+                .insert(genesis_ref.to_owned());
+            return false;
+        }
+        // Every sibling read the whole chain; they must also have landed on
+        // the same head, or one of them is carrying an older answer than the
+        // fence is about to start trusting.
+        let heads: BTreeSet<u32> = self
+            .state
+            .sessions()
+            .filter(|record| !record.closed && record.genesis_ref.as_deref() == Some(genesis_ref))
+            .map(|record| record.authority_seq)
+            .collect();
+        if heads.len() > 1 {
+            tracing::warn!(
+                target: "csp::authority",
+                %genesis_ref,
+                heads = ?heads,
+                "this umbrella's local executions applied different chain heads; the fence \
+                 stays up until they agree"
+            );
+            self.claims_pending_reverification
+                .insert(genesis_ref.to_owned());
+            return false;
+        }
+        self.claims_pending_reverification.remove(genesis_ref);
+        true
     }
 
     /// Re-read the chains that could not be read at startup, and release the
@@ -4895,6 +5455,9 @@ impl Provider {
         };
         let pending: Vec<String> = self.claims_pending_reverification.iter().cloned().collect();
         for genesis_ref in pending {
+            if !self.verify_umbrella_chain(&genesis_ref, &rest).await {
+                continue;
+            }
             let session_ids: Vec<String> = self
                 .state
                 .sessions()
@@ -4903,24 +5466,6 @@ impl Provider {
                 })
                 .map(|record| record.session_id.clone())
                 .collect();
-            // A genesis whose last record closed while it was pending has
-            // nothing left to verify or to hold.
-            if session_ids.is_empty() {
-                self.claims_pending_reverification.remove(&genesis_ref);
-                continue;
-            }
-            for session_id in &session_ids {
-                if let Err(error) = self.backfill_session_authority(session_id, &rest).await {
-                    tracing::warn!(
-                        target: "csp::authority",
-                        %session_id,
-                        "authority re-verification failed: {error}"
-                    );
-                }
-            }
-            if self.claims_pending_reverification.contains(&genesis_ref) {
-                continue;
-            }
             tracing::info!(
                 target: "csp::authority",
                 %genesis_ref,
@@ -4958,24 +5503,22 @@ impl Provider {
         }
     }
 
-    /// Backfill every live genesis-bearing session's authority chain.
-    /// Best-effort: called at startup so grants accepted while the provider
-    /// was down are folded in before the first command is served.
+    /// Verify every live umbrella's authority chain.
+    ///
+    /// Best-effort: called at startup so claims and grants accepted while the
+    /// provider was down are folded in before the first command is served. An
+    /// umbrella whose chain cannot be read to its end stays (or becomes)
+    /// pending, so its executions refuse by name instead of being admitted on
+    /// the assumption that nothing changed.
     pub async fn backfill_authority_chains(&mut self, rest: &RestClient) {
-        let session_ids: Vec<String> = self
+        let genesis_refs: BTreeSet<String> = self
             .state
             .sessions()
-            .filter(|record| !record.closed && record.genesis_ref.is_some())
-            .map(|record| record.session_id.clone())
+            .filter(|record| !record.closed)
+            .filter_map(|record| record.genesis_ref.clone())
             .collect();
-        for session_id in session_ids {
-            if let Err(error) = self.backfill_session_authority(&session_id, rest).await {
-                tracing::warn!(
-                    target: "csp::authority",
-                    %session_id,
-                    "authority backfill failed: {error}"
-                );
-            }
+        for genesis_ref in genesis_refs {
+            self.verify_umbrella_chain(&genesis_ref, rest).await;
         }
     }
 
@@ -5955,12 +6498,22 @@ impl Provider {
                 // map. Lifecycle create/hire prompts also start turns, but
                 // cannot name a governed assignment operation.
                 let team_wake_eligible = self.in_flight.contains_key(&command_id);
+                // Whose turn this is, when the provider knows: a 44220 that
+                // came through `on_turn` names its verified signer. A
+                // lifecycle-opened turn (a create's `initialTurn`) has no
+                // entry here and records `None`, which the fence reads as "ask
+                // whether this body may act at all".
+                let operator_pubkey = self
+                    .in_flight
+                    .get(&command_id)
+                    .map(|turn| turn.operator_pubkey.clone());
                 self.state.update_session(&session_id, |record| {
                     record.open_turn = Some(OpenTurn {
                         turn_id: turn_id.clone(),
                         command_id: Some(command_id.clone()),
                         team_wake_eligible,
                         started_at_ms: now_ms(),
+                        operator_pubkey: operator_pubkey.clone(),
                     });
                 })?;
                 // CI continuations already claimed these ledgers before their
@@ -6656,12 +7209,75 @@ impl Provider {
     /// Drain the outbox into `sink`.
     pub async fn flush<S: EventSink>(&mut self, sink: &S) -> anyhow::Result<usize> {
         self.flush_terminal_dispositions()?;
+        self.purge_outbox_for_retired()?;
         Ok(self.outbox.flush(sink).await?)
     }
 
     async fn flush_one<S: EventSink>(&mut self, sink: &S) -> anyhow::Result<usize> {
         self.flush_terminal_dispositions()?;
+        self.purge_outbox_for_retired()?;
         Ok(self.outbox.flush_one(sink).await?)
+    }
+
+    /// Drop every queued fact that would advertise a retired execution.
+    ///
+    /// Called at retirement **and** before every flush. The second call is the
+    /// defence in depth root asked for, and it is what makes this restart-safe:
+    /// `retired` is persisted, so a provider that comes up over a state file
+    /// carrying a retirement purges the queue its predecessor left behind
+    /// before it publishes a single row of it.
+    ///
+    /// # What goes, and what deliberately stays
+    ///
+    /// Goes: per-generation **metadata** (44223), **transcript** items (44225)
+    /// and **leases** (24223) naming a retired execution's exact target. Each
+    /// of those is an assertion *about the session* — that it exists, that it
+    /// is live, that this is what happened in it — and every one of them
+    /// recreates the deleted record on the relay under a brand-new event id
+    /// the deletion never named.
+    ///
+    /// Stays: **lifecycle receipts** (44224), unconditionally. They answer a
+    /// command somebody sent, they are addressed to that sender rather than to
+    /// the session, and the `SESSION_RETIRED` refusal that tells an operator
+    /// why nothing is happening is itself one of them. Suppressing the answers
+    /// along with the advertisements would replace a ghost session with a
+    /// silence, which is the same failure wearing the other coat.
+    ///
+    /// Scoped by the exact `cs-target` tag, not by channel: an unrelated
+    /// session in the same room keeps everything it has queued.
+    fn purge_outbox_for_retired(&mut self) -> anyhow::Result<()> {
+        let retired: HashSet<String> = self
+            .state
+            .sessions()
+            .filter(|record| record.is_retired())
+            .map(|record| coding_session_target_key(&self.target_for(record)))
+            .collect();
+        if retired.is_empty() {
+            return Ok(());
+        }
+        let dropped = self.outbox.discard(|entry| {
+            if !matches!(
+                entry.kind,
+                KIND_CODING_SESSION_METADATA
+                    | KIND_CODING_SESSION_TRANSCRIPT
+                    | KIND_CODING_SESSION_LEASE
+            ) {
+                return false;
+            }
+            entry.event.tags.iter().any(|tag| {
+                let tag = tag.as_slice();
+                tag.len() == 2 && tag[0] == "cs-target" && retired.contains(&tag[1])
+            })
+        })?;
+        if dropped > 0 {
+            tracing::warn!(
+                target: "csp::retirement",
+                dropped,
+                "discarded queued facts for retired executions; a deleted session is never \
+                 re-advertised, and the receipts that answer commands were kept"
+            );
+        }
+        Ok(())
     }
 
     /// How long the runtime should wait before its next delivery pass.
@@ -6710,6 +7326,38 @@ fn validate_genesis_envelope(
 ///
 /// Selection is always by event id. The payload and channel are checked only
 /// after that exact event has been found; neither is ever used as a lookup.
+/// One paged, verified read of a genesis's accepted authority chain.
+///
+/// `links` are the acceptance receipts the read could verify for that exact
+/// genesis, ascending by `seq`. `incomplete` names why the read cannot be
+/// called the whole chain — and it is the field the handover fence turns on,
+/// because a read that might have stopped early is byte-for-byte
+/// indistinguishable from a chain with no claim in it, and those two answers
+/// fence in opposite directions.
+struct AcceptedChain {
+    links: Vec<authority::AcceptedTransition>,
+    incomplete: Option<String>,
+}
+
+/// Whether a 40099 body claims to be about `genesis_ref`.
+///
+/// **Triage, never authority.** It is read out of content that has already
+/// failed verification, so nothing it says may be applied; the single question
+/// it answers is "is this unreadable receipt about the chain I am reading, or
+/// somebody else's?" — which decides whether the fence stays up or the row is
+/// ignored as unrelated traffic.
+fn claims_genesis(content: &str, genesis_ref: &str) -> bool {
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct GenesisOnly {
+        genesis_ref: Option<String>,
+    }
+    serde_json::from_str::<GenesisOnly>(content)
+        .ok()
+        .and_then(|body| body.genesis_ref)
+        .is_some_and(|claimed| claimed == genesis_ref)
+}
+
 async fn resolve_genesis_founder(
     relay: &HarnessRelay,
     channel_id: Uuid,
@@ -7216,6 +7864,8 @@ mod tests {
     mod handover_ci_tests;
     #[path = "handover_fence_tests.rs"]
     mod handover_fence_tests;
+    #[path = "handover_integration_tests.rs"]
+    mod handover_integration_tests;
     #[path = "handover_retirement_tests.rs"]
     mod handover_retirement_tests;
     #[path = "hire_requester_tests.rs"]
@@ -7272,6 +7922,14 @@ mod tests {
         queries: Arc<Mutex<Vec<serde_json::Value>>>,
         published: Arc<Mutex<Vec<Event>>>,
         reject_next_publish: Arc<AtomicBool>,
+        /// The `self` key this fake serves at NIP-11, when it serves one.
+        ///
+        /// A real relay's identity is fetched, not configured into the client,
+        /// and a provider that cannot fetch it verifies nothing. Serving it
+        /// here lets a test witness the identity the way production does —
+        /// which matters because "no identity" is now a refusal rather than a
+        /// quiet degradation.
+        relay_self: Arc<Mutex<Option<String>>>,
     }
 
     #[derive(Clone)]
@@ -7280,6 +7938,9 @@ mod tests {
         queries: Arc<Mutex<Vec<serde_json::Value>>>,
         published: Arc<Mutex<Vec<Event>>>,
         reject_next_publish: Arc<AtomicBool>,
+        /// The identity this fake advertises, so a test can serve one, take it
+        /// away, or put it back mid-run.
+        relay_self: Arc<Mutex<Option<String>>>,
     }
 
     /// Minimal NIP-01 filter matching for the fake relay's `/query` bridge:
@@ -7320,6 +7981,19 @@ mod tests {
                 return false;
             }
         }
+        // `until` is inclusive, and it is what bounded paging pages *with*:
+        // without it here, a second page returns the first page again and a
+        // capped-read test can never reach the rows behind the cap.
+        if let Some(until) = filter.get("until").and_then(serde_json::Value::as_u64) {
+            if event.created_at.as_secs() > until {
+                return false;
+            }
+        }
+        if let Some(since) = filter.get("since").and_then(serde_json::Value::as_u64) {
+            if event.created_at.as_secs() < since {
+                return false;
+            }
+        }
         // Addressable/correlation tag. A CI result carries its correlation
         // digest here, which is the only way to ask for one exact run attempt.
         if let Some(wanted) = filter.get("#d").and_then(serde_json::Value::as_array) {
@@ -7337,11 +8011,34 @@ mod tests {
         true
     }
 
-    async fn test_relay_ws(
+    /// `/` is two things on a real relay: the WebSocket endpoint and the
+    /// NIP-11 document. This fake had only the first, which is why no test
+    /// could witness an identity the way production does.
+    async fn test_relay_root(
         State(state): State<TestRelayState>,
-        ws: WebSocketUpgrade,
-    ) -> impl axum::response::IntoResponse {
-        ws.on_upgrade(move |socket| async move { serve_test_relay_socket(socket, state).await })
+        request: axum::extract::Request,
+    ) -> axum::response::Response {
+        use axum::extract::FromRequestParts;
+        use axum::response::IntoResponse;
+
+        let (mut parts, _body) = request.into_parts();
+        match WebSocketUpgrade::from_request_parts(&mut parts, &()).await {
+            Ok(ws) => ws
+                .on_upgrade(
+                    move |socket| async move { serve_test_relay_socket(socket, state).await },
+                )
+                .into_response(),
+            // Not an upgrade: answer NIP-11. A fake with no identity omits
+            // `self` entirely, which is what a relay that has not been
+            // configured with one does.
+            Err(_) => {
+                let document = match state.relay_self.lock().expect("relay self lock").clone() {
+                    Some(relay_self) => serde_json::json!({ "self": relay_self }),
+                    None => serde_json::json!({}),
+                };
+                Json(document).into_response()
+            }
+        }
     }
 
     async fn serve_test_relay_socket(mut socket: WebSocket, state: TestRelayState) {
@@ -7434,7 +8131,7 @@ mod tests {
             .push(query.clone());
         let filters: Vec<serde_json::Value> = query.as_array().cloned().unwrap_or_default();
         let events = state.events.lock().expect("events lock");
-        let matched: Vec<&Event> = events
+        let mut matched: Vec<&Event> = events
             .iter()
             .filter(|event| {
                 filters
@@ -7442,6 +8139,24 @@ mod tests {
                     .any(|filter| test_filter_matches(filter, event))
             })
             .collect();
+        // Newest-first and page-capped, like the real relay
+        // (`crates/buzz-db/src/event.rs`). Without both, a fake relay hands
+        // every caller the whole history and the paging a capped read forces
+        // is never exercised — which is exactly the gap that let an
+        // authority backfill mistake a truncated page for a complete chain.
+        matched.sort_by(|left, right| {
+            right
+                .created_at
+                .cmp(&left.created_at)
+                .then_with(|| right.id.cmp(&left.id))
+        });
+        if let Some(limit) = filters
+            .iter()
+            .filter_map(|filter| filter.get("limit").and_then(serde_json::Value::as_u64))
+            .min()
+        {
+            matched.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
+        }
         Json(serde_json::to_value(matched).expect("serialize events"))
     }
 
@@ -7480,14 +8195,21 @@ mod tests {
         let queries = Arc::new(Mutex::new(Vec::new()));
         let published = Arc::new(Mutex::new(Vec::new()));
         let reject_next_publish = Arc::new(AtomicBool::new(false));
+        // A real relay publishes an identity, so the fake does too by default:
+        // a provider that witnesses it can verify receipts, and one that never
+        // asks stays exactly as unverified as it was. Tests that sign receipts
+        // themselves call `set_relay_self` with their own key first, and
+        // `witness_relay_identity` never overwrites a known identity.
+        let relay_self = Arc::new(Mutex::new(Some(Keys::generate().public_key().to_hex())));
         let state = TestRelayState {
             events: events.clone(),
             queries: queries.clone(),
             published: published.clone(),
             reject_next_publish: reject_next_publish.clone(),
+            relay_self: relay_self.clone(),
         };
         let app: Router = Router::new()
-            .route("/", get(test_relay_ws))
+            .route("/", get(test_relay_root))
             .route("/query", post(test_relay_query))
             .with_state(state);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -7508,6 +8230,7 @@ mod tests {
                 queries,
                 published,
                 reject_next_publish,
+                relay_self,
             },
             server,
         )
@@ -8971,7 +9694,7 @@ mod tests {
     /// is visibly blocked rather than merely slow.
     async fn spawn_hanging_query_relay(keys: &Keys) -> (HarnessRelay, tokio::task::JoinHandle<()>) {
         let app = Router::new()
-            .route("/", get(test_relay_ws))
+            .route("/", get(test_relay_root))
             .route(
                 "/query",
                 post(|| async {
@@ -8984,6 +9707,7 @@ mod tests {
                 queries: Arc::new(Mutex::new(Vec::new())),
                 published: Arc::new(Mutex::new(Vec::new())),
                 reject_next_publish: Arc::new(AtomicBool::new(false)),
+                relay_self: Arc::new(Mutex::new(None)),
             });
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
@@ -9901,6 +10625,12 @@ mod tests {
         );
         let (mut relay, queries, server) =
             spawn_test_relay(&provider.config.keys, Some(genesis.clone())).await;
+        // A relay publishes its identity and a provider witnesses it; without one
+        // no receipt verifies, so a genesis-bearing create is refused by name
+        // rather than admitted on the assumption that nothing has been handed
+        // over. Doing it here is what production does at startup.
+        provider.set_rest_client(relay.rest_client());
+        provider.witness_relay_identity().await;
 
         provider
             .handle_relay_event(&mut relay, channel_id, &create)
@@ -9917,17 +10647,32 @@ mod tests {
             Some(genesis.pubkey.to_hex().as_str())
         );
         {
-            // Exactly two relay reads on a governed create, and each is named
-            // rather than counted: the genesis resolved by exact id, then this
-            // umbrella's session-policy partition (kind 44245), which is the
-            // read that supplies the one policy field this provider enforces.
+            // Four relay reads on a governed create, each named rather than
+            // counted. The genesis resolves by exact id; the umbrella's
+            // authority chain is read twice — once to decide the handover
+            // fence before anything is provisioned, once to fold the chain
+            // into the new record — and the session-policy partition (kind
+            // 44245) supplies the one policy field this provider enforces.
+            //
+            // The two chain reads are the price of fencing a create *before*
+            // an adapter starts: the first happens when there is no record to
+            // fold into yet, and the second when there is. Collapsing them
+            // would mean either fencing after the spawn or seeding a record
+            // from an unverified read.
             let captured = queries.lock().expect("queries lock");
-            assert_eq!(captured.len(), 2, "{captured:?}");
+            assert_eq!(captured.len(), 4, "{captured:?}");
             assert_eq!(captured[0][0]["ids"][0], genesis.id.to_hex());
             assert_eq!(captured[0][0]["kinds"][0], KIND_CODING_SESSION_GENESIS);
-            assert_eq!(captured[1][0]["kinds"][0], KIND_CODING_SESSION_POLICY);
+            for chain_read in &captured[1..3] {
+                assert_eq!(chain_read[0]["kinds"][0], KIND_SYSTEM_MESSAGE);
+                assert!(
+                    chain_read[0].get("authors").is_some(),
+                    "a chain read only trusts the witnessed relay identity: {captured:?}"
+                );
+            }
+            assert_eq!(captured[3][0]["kinds"][0], KIND_CODING_SESSION_POLICY);
             assert!(
-                captured[1][0].get("ids").is_none(),
+                captured[3][0].get("ids").is_none(),
                 "the policy read is a channel partition, not an id lookup: {captured:?}"
             );
         }
@@ -13007,6 +13752,7 @@ mod tests {
                         command_id: Some("turn-cmd-1".into()),
                         team_wake_eligible: true,
                         started_at_ms: now_ms(),
+                        operator_pubkey: None,
                     }),
                     closed: false,
                     handover: ClaimState::NoClaim,

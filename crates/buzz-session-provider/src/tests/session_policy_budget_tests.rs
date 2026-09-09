@@ -219,6 +219,12 @@ async fn a_create_reads_the_umbrellas_published_policy() {
     );
     let (mut relay, _queries, server) =
         spawn_test_relay_with_events(&provider.config.keys, vec![genesis.clone(), policy]).await;
+    // A relay publishes its identity and a provider witnesses it; without one
+    // no receipt verifies, so a genesis-bearing create is refused by name
+    // rather than admitted on the assumption that nothing has been handed
+    // over. Doing it here is what production does at startup.
+    provider.set_rest_client(relay.rest_client());
+    provider.witness_relay_identity().await;
 
     provider
         .handle_relay_event(&mut relay, channel_id, &create)

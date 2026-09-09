@@ -179,6 +179,12 @@ async fn a_hired_seats_brief_is_attributed_to_the_seat_that_asked_for_it() {
     let (mut relay, _queries, server) =
         spawn_test_relay_with_events(&provider.config.keys, vec![genesis.clone(), hire.clone()])
             .await;
+    // A relay publishes its identity and a provider witnesses it; without one
+    // no receipt verifies, so a genesis-bearing create is refused by name
+    // rather than admitted on the assumption that nothing has been handed
+    // over. Doing it here is what production does at startup.
+    provider.set_rest_client(relay.rest_client());
+    provider.witness_relay_identity().await;
 
     provider
         .handle_relay_event(&mut relay, channel_id, &create)
@@ -245,6 +251,12 @@ async fn a_disputed_requester_is_disclosed_and_never_rendered_as_attribution() {
     let (mut relay, _queries, server) =
         spawn_test_relay_with_events(&provider.config.keys, vec![genesis.clone(), hire.clone()])
             .await;
+    // A relay publishes its identity and a provider witnesses it; without one
+    // no receipt verifies, so a genesis-bearing create is refused by name
+    // rather than admitted on the assumption that nothing has been handed
+    // over. Doing it here is what production does at startup.
+    provider.set_rest_client(relay.rest_client());
+    provider.witness_relay_identity().await;
 
     provider
         .handle_relay_event(&mut relay, channel_id, &create)
@@ -301,6 +313,12 @@ async fn a_create_with_no_hire_ref_is_delivered_exactly_as_before() {
     );
     let (mut relay, _queries, server) =
         spawn_test_relay_with_events(&provider.config.keys, vec![genesis.clone()]).await;
+    // A relay publishes its identity and a provider witnesses it; without one
+    // no receipt verifies, so a genesis-bearing create is refused by name
+    // rather than admitted on the assumption that nothing has been handed
+    // over. Doing it here is what production does at startup.
+    provider.set_rest_client(relay.rest_client());
+    provider.witness_relay_identity().await;
 
     provider
         .handle_relay_event(&mut relay, channel_id, &create)

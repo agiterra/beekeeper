@@ -405,6 +405,36 @@ impl Outbox {
             .min()
     }
 
+    /// Durably drop every queued row `discard` selects, without publishing it.
+    ///
+    /// Retirement's other half. Suppressing *future* metadata for a deleted
+    /// session is not enough: a 44223 queued while the relay was unreachable
+    /// is already signed and already durable, and it cannot have been named by
+    /// a deletion that happened after it was written — so on the next
+    /// successful flush it lands and recreates exactly the ghost session row
+    /// retirement exists to remove (root's P1).
+    ///
+    /// A dropped row is acked rather than deleted, which is what makes this
+    /// crash-safe: the ledger already means "this row is finished", the replay
+    /// on open already honours it, and no new row type has to be understood by
+    /// a reader written before this existed.
+    ///
+    /// Returns how many rows were dropped. The caller chooses the predicate,
+    /// and is responsible for keeping the answers a command is still owed —
+    /// see [`crate::Provider::purge_outbox_for_retired`].
+    pub fn discard(&mut self, discard: impl Fn(&OutboxEntry) -> bool) -> io::Result<usize> {
+        let doomed: Vec<String> = self
+            .pending
+            .iter()
+            .filter(|row| discard(&row.entry))
+            .map(|row| row.entry.id.clone())
+            .collect();
+        for id in &doomed {
+            self.ack(id)?;
+        }
+        Ok(doomed.len())
+    }
+
     fn ack(&mut self, id: &str) -> io::Result<()> {
         self.append(&LedgerRow::Ack { id: id.to_owned() })?;
         self.pending.retain(|row| row.entry.id != id);

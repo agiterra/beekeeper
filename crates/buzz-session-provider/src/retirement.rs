@@ -357,6 +357,12 @@ impl Provider {
                  nothing further and every command answers SESSION_RETIRED"
             );
         }
+        // The queue the previous process left behind. Suppressing future
+        // publishes is only half of retirement: a metadata event signed and
+        // queued before the outage is already durable and cannot have been
+        // named by a later deletion, so without this it lands on the next
+        // flush and recreates the ghost record.
+        self.purge_outbox_for_retired()?;
         // A retired umbrella needs no claim re-verification: `SESSION_RETIRED`
         // is the stricter answer and it is already durable, so holding its
         // metadata behind a chain read would only delay a publish that is

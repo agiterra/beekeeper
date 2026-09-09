@@ -457,6 +457,21 @@ pub struct OpenTurn {
     pub team_wake_eligible: bool,
     /// Turn start, milliseconds since the Unix epoch.
     pub started_at_ms: i64,
+    /// Who drove this turn, when the provider knows.
+    ///
+    /// Persisted so the handover fence can tell *whose* work is running when a
+    /// claim lands mid-turn. A `transfer` that moves the claim to a new
+    /// claimant on the **same** body has to stop the old claimant's turn and
+    /// leave the new one's alone, and without this the two are
+    /// indistinguishable — the record knows a turn is open and nothing about
+    /// who opened it.
+    ///
+    /// `None` for a lifecycle-opened turn (a create's `initialTurn`) and for
+    /// every record written before the field existed; the fence then falls
+    /// back to asking whether this **body** may act at all, which is the
+    /// question it asked before this field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operator_pubkey: Option<String>,
 }
 
 /// Persisted catalog advertisement state.
@@ -1616,6 +1631,7 @@ mod tests {
             command_id: Some("assignment-command".into()),
             team_wake_eligible: true,
             started_at_ms: 1,
+            operator_pubkey: None,
         });
         let mut value = serde_json::to_value(&written).expect("serialize");
         value["openTurn"]

@@ -179,6 +179,15 @@ pub enum LifecycleDecision {
 /// A validated, resolved create request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreatePlan {
+    /// The umbrella's claim as this provider verified it from the accepted
+    /// chain, ahead of any adapter start.
+    ///
+    /// `NoClaim` at decision time and replaced by `on_lifecycle` for a
+    /// genesis-bearing create. It is what the new record is seeded with, so an
+    /// execution minted on a machine that has never seen this umbrella still
+    /// carries the claim its siblings elsewhere carry — without it the record
+    /// is born `NoClaim` and every later turn on it walks past the fence.
+    pub verified_claim: ClaimState,
     /// The create command being answered.
     pub command_id: String,
     /// The matched runtime's `instance_ref` — which descriptor serves this
@@ -617,14 +626,15 @@ pub fn decide_lifecycle(
     // umbrella for the first time) fences nothing: it has folded no claim, and
     // inventing one from an unverified read would refuse the very continuation
     // this whole feature exists to allow.
+    // Deliberately **not** gated on `claims_pending_reverification` here. That
+    // flag says "some execution of this umbrella has not folded the chain",
+    // which is the right answer for a turn on one of those executions and the
+    // wrong one for a create: `on_lifecycle` reads and verifies the chain for
+    // this create specifically, which is stronger evidence than a stale flag,
+    // and refusing on the flag alone would leave a provider unable to ever
+    // join an umbrella it once failed to read. The siblings stay fenced by the
+    // flag; this create is judged on what was actually read.
     if let Some(genesis_ref) = genesis_ref.as_deref() {
-        if context.claims_pending_reverification.contains(genesis_ref) {
-            return LifecycleDecision::Fail {
-                command_id: payload.command_id,
-                code: AUTHORITY_NOT_REVERIFIED,
-                message: awaiting_reverification_message(),
-            };
-        }
         if let Some(refusal) = umbrella_fence(
             context.state,
             channel_id,
@@ -740,6 +750,10 @@ pub fn decide_lifecycle(
     };
 
     LifecycleDecision::Create(Box::new(CreatePlan {
+        // Nothing is known about the umbrella's claim at decision time: this
+        // decision runs before any relay read. `on_lifecycle` resolves the
+        // genesis and then the chain, and replaces this.
+        verified_claim: ClaimState::NoClaim,
         command_id: payload.command_id.clone(),
         runtime_instance_ref: provider_instance_ref.as_str().to_owned(),
         channel_id,
@@ -1344,7 +1358,21 @@ pub fn handover_fence(
             ),
         });
     }
-    match &record.handover {
+    claim_fence(&record.handover, operator_pubkey, provider_pubkey)
+}
+
+/// The handover half of [`handover_fence`], over a bare claim.
+///
+/// Split out because the **create** path has to ask the same question before
+/// any record exists: a provider seeing an umbrella for the first time reads
+/// the accepted chain, folds it, and must apply exactly this rule to the claim
+/// it just learned — not a weaker one, and not a second copy of it.
+pub fn claim_fence(
+    claim: &ClaimState,
+    operator_pubkey: &str,
+    provider_pubkey: &str,
+) -> Option<FenceRefusal> {
+    match claim {
         ClaimState::NoClaim => None,
         ClaimState::Voided {
             last, voided_by, ..
@@ -2997,6 +3025,7 @@ mod tests {
                 target: turn_target("s1", 1),
                 created_at: 1_000,
                 operation_key: None,
+                operator_pubkey: String::new(),
             },
         );
         // A cancel already in an actor's mailbox whose ledger append failed:

@@ -41,7 +41,7 @@ use buzz_core::coding_session_authority_transition::{
 /// Signed by the claimant, which is what the relay requires of a self-claim;
 /// [`authority::verify_accepted_transition`] does not bind a claim link's
 /// signer to the session owner, so this is the shape that reaches the fold.
-fn takeover_event(
+pub(super) fn takeover_event(
     channel_id: Uuid,
     genesis_ref: &str,
     prev_accepted: Option<String>,
@@ -67,7 +67,7 @@ fn takeover_event(
 /// Deliberately built here rather than imported from another test module: the
 /// receipt is the artifact this lane depends on most, and a local copy makes
 /// the exact bytes the provider must accept visible on this page.
-fn claim_receipt(relay_keys: &Keys, channel_id: Uuid, transition: &Event) -> Event {
+pub(super) fn claim_receipt(relay_keys: &Keys, channel_id: Uuid, transition: &Event) -> Event {
     let payload =
         buzz_core::coding_session_authority_transition::decode_coding_session_authority_transition(
             &transition.content,
@@ -184,7 +184,7 @@ async fn umbrella(
 
 /// The founder's `grant-operator` for `grantee` at `seq` — the standing a
 /// claimant must already hold before the relay will accept its `takeover`.
-fn grant_for(
+pub(super) fn grant_for(
     channel_id: Uuid,
     genesis_ref: &str,
     prev_accepted: Option<String>,
@@ -841,6 +841,10 @@ async fn provider_with_claimed_umbrella(
 
     let (relay, _control, server) = spawn_recording_test_relay(&provider_keys, vec![genesis]).await;
     provider.set_rest_client(relay.rest_client());
+    // Witnessed the way production witnesses it. Without an identity a
+    // genesis-bearing create is refused `AUTHORITY_NOT_REVERIFIED`, which is
+    // its own test; these are about the *claim* fence.
+    provider.witness_relay_identity().await;
     (provider, relay, server, session_ref, genesis_ref)
 }
 
