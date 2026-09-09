@@ -16,7 +16,7 @@ use buzz_core::kind::{
     KIND_APPROVAL_DENY, KIND_APPROVAL_GRANT, KIND_AUTH, KIND_BOOKMARK_LIST, KIND_BOOKMARK_SET,
     KIND_CANVAS, KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_CLOSURE,
     KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_GOAL,
-    KIND_CODING_SESSION_LEASE, KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+    KIND_CODING_SESSION_HANDOVER, KIND_CODING_SESSION_LEASE, KIND_CODING_SESSION_LIFECYCLE_COMMAND,
     KIND_CODING_SESSION_LIFECYCLE_RECEIPT, KIND_CODING_SESSION_METADATA, KIND_CODING_SESSION_NAME,
     KIND_CODING_SESSION_OBSERVATION, KIND_CODING_SESSION_POLICY,
     KIND_CODING_SESSION_PROVIDER_CATALOG, KIND_CODING_SESSION_TEAM_TRANSACTION,
@@ -361,8 +361,8 @@ fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static s
         KIND_AGENT_TURN_METRIC => Ok(Scope::MessagesWrite),
         // Coding sessions: the operator-signed session origin, goal/name
         // revisions, authority-chain transitions, closure facts (44226–44230),
-        // signed team transactions (44244), session policies (44245) and
-        // observations (44246),
+        // signed team transactions (44244), session policies (44245),
+        // observations (44246) and handover records (44247),
         // the operator-authored commands (44220/44221), and the
         // provider-authored facts they produce (44222-44225). All are
         // durable, channel-scoped writes consumed by an out-of-relay
@@ -382,7 +382,8 @@ fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static s
         | KIND_CODING_SESSION_TRANSCRIPT
         | KIND_CODING_SESSION_TEAM_TRANSACTION
         | KIND_CODING_SESSION_POLICY
-        | KIND_CODING_SESSION_OBSERVATION => Ok(Scope::MessagesWrite),
+        | KIND_CODING_SESSION_OBSERVATION
+        | KIND_CODING_SESSION_HANDOVER => Ok(Scope::MessagesWrite),
         // NIP-56 reports are ordinary member writes into the mod-only queue.
         // Ingest persists them to `moderation_reports` and suppresses public
         // storage/fanout; reports are signals, never enforcement triggers.
@@ -762,6 +763,7 @@ pub(crate) fn requires_h_channel_scope(kind: u32) -> bool {
             | KIND_CODING_SESSION_TEAM_TRANSACTION
             | KIND_CODING_SESSION_POLICY
             | KIND_CODING_SESSION_OBSERVATION
+            | KIND_CODING_SESSION_HANDOVER
     )
 }
 
@@ -786,6 +788,7 @@ pub(crate) fn is_coding_session_kind(kind: u32) -> bool {
             | KIND_CODING_SESSION_TEAM_TRANSACTION
             | KIND_CODING_SESSION_POLICY
             | KIND_CODING_SESSION_OBSERVATION
+            | KIND_CODING_SESSION_HANDOVER
     )
 }
 
@@ -1028,6 +1031,27 @@ fn hire_authority_verdict(
                 .into(),
         )
     }
+}
+
+/// Refuse a kind only the relay may author.
+///
+/// A tiny function rather than an inline `if` so the gate is testable without a
+/// database, a socket or an authenticated connection — the whole point of it is
+/// that it fires *before* any of those matter.
+///
+/// **Signer-blind on purpose.** It refuses the kind, not the author, including
+/// the relay's own key: the relay never submits its system messages through
+/// ingest at all. `side_effects::emit_system_message` signs with the relay
+/// keypair and writes through `db.insert_event` plus a direct pubsub fan-out,
+/// so every acceptance receipt and deletion receipt this relay publishes takes
+/// a path that does not pass here. A signer exemption would therefore buy
+/// nothing and would hand anyone who ever obtained a relay key a way in
+/// through the front door.
+fn refuse_relay_only_kind(kind: u32) -> Result<(), IngestError> {
+    if buzz_core::kind::is_relay_only_kind(kind) {
+        return Err(IngestError::Rejected("restricted: relay-only kind".into()));
+    }
+    Ok(())
 }
 
 fn coding_session_membership_verdict(is_member: bool) -> Result<(), String> {
@@ -3034,6 +3058,16 @@ fn coding_session_authority_transition_refusal_result(
         buzz_db::AuthorityTransitionRefusal::SeatRoleMismatch => {
             "invalid: revoke-seat role does not match the actor's active seat".to_string()
         }
+        buzz_db::AuthorityTransitionRefusal::ClaimantNotSigner => {
+            "invalid: a takeover is a self-claim — granteePubkey must be the signer; use \
+             transfer to hand a claim to somebody else"
+                .to_string()
+        }
+        buzz_db::AuthorityTransitionRefusal::NoActiveClaim => {
+            "invalid: this session has no claim to transfer — no takeover was accepted, or the \
+             claim was voided when its claimant lost standing; publish a takeover instead"
+                .to_string()
+        }
     };
     IngestResult {
         event_id: event_id_hex,
@@ -3387,9 +3421,7 @@ async fn ingest_event_inner(
         )));
     }
 
-    if buzz_core::kind::is_relay_only_kind(kind_u32) {
-        return Err(IngestError::Rejected("restricted: relay-only kind".into()));
-    }
+    refuse_relay_only_kind(kind_u32)?;
 
     // Share the event with the verify task via Arc instead of deep-cloning it
     // (tags + up to 256 KB of content). spawn_blocking only needs 'static, not
@@ -4088,6 +4120,27 @@ async fn ingest_event_inner(
     // here would be redundant and could only drift from the first.
     if kind_u32 == KIND_CODING_SESSION_OBSERVATION {
         buzz_core::coding_session_observation::validate_coding_session_observation_envelope(&event)
+            .map_err(|error| IngestError::Rejected(format!("invalid: {error}")))?;
+    }
+
+    // NIP-CSH, the same division a third time: structure only. The schema, the
+    // five ordered two-field tags, the closed type/preserved/artifact/outcome/
+    // mode vocabularies, every bound, and the parity between
+    // `d`/`csh-genesis`/`csh-type` and the content they restate are all
+    // answerable from this one event. Whether the author held standing to
+    // checkpoint — or whether a continuation's `claimRef` is the claim in
+    // force — is not: that is
+    // `buzz_core::coding_session_handover_fold`'s question against the
+    // accepted NIP-CSAT chain. A relay that adjudicated it here would be
+    // deciding who may take a session over at ingest, which is exactly the
+    // authority the chain exists to serialize.
+    //
+    // No `coding_session_content_cap` entry, for 44246's reason:
+    // `decode_coding_session_handover` already refuses content over
+    // MAX_CODING_SESSION_HANDOVER_CONTENT_BYTES, and a second bound here could
+    // only drift from the first.
+    if kind_u32 == KIND_CODING_SESSION_HANDOVER {
+        buzz_core::coding_session_handover::validate_coding_session_handover_envelope(&event)
             .map_err(|error| IngestError::Rejected(format!("invalid: {error}")))?;
     }
 
@@ -4951,6 +5004,10 @@ mod coding_session_policy_tests;
 #[cfg(test)]
 #[path = "ingest_coding_session_observation_tests.rs"]
 mod coding_session_observation_tests;
+
+#[cfg(test)]
+#[path = "ingest_coding_session_handover_tests.rs"]
+mod coding_session_handover_tests;
 
 #[cfg(test)]
 mod tests {
@@ -7694,7 +7751,7 @@ mod tests {
 
     /// Every coding-session kind, in kind order. Kept next to the tests that
     /// sweep it so the next kind lands in the sweep the moment it exists.
-    const CODING_SESSION_TEST_KINDS: [u32; 14] = [
+    const CODING_SESSION_TEST_KINDS: [u32; 15] = [
         KIND_CODING_SESSION_COMMAND,
         KIND_CODING_SESSION_LIFECYCLE_COMMAND,
         KIND_CODING_SESSION_PROVIDER_CATALOG,
@@ -7709,6 +7766,7 @@ mod tests {
         KIND_CODING_SESSION_TEAM_TRANSACTION,
         KIND_CODING_SESSION_POLICY,
         KIND_CODING_SESSION_OBSERVATION,
+        KIND_CODING_SESSION_HANDOVER,
     ];
 
     #[test]
@@ -7719,7 +7777,8 @@ mod tests {
                 (44220..=44230).contains(&kind)
                     || kind == KIND_CODING_SESSION_TEAM_TRANSACTION
                     || kind == KIND_CODING_SESSION_POLICY
-                    || kind == KIND_CODING_SESSION_OBSERVATION,
+                    || kind == KIND_CODING_SESSION_OBSERVATION
+                    || kind == KIND_CODING_SESSION_HANDOVER,
                 "is_coding_session_kind disagrees at kind {kind}"
             );
         }

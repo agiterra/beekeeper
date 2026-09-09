@@ -219,6 +219,7 @@ impl Watched {
             routing: None,
             bee_stamp: None,
             pack_ref: None,
+            handover: None,
         };
         let content = serde_json::to_string(&metadata).expect("metadata json");
         buzz_core::coding_session_payload::decode_coding_session_metadata(&content)

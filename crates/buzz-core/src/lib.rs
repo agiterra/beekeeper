@@ -15,8 +15,11 @@ pub mod build_info;
 pub mod channel;
 /// Relay-recorded terminal CI results and their exact correlation contract.
 pub mod ci_result;
+/// The canonical execution-claim fold over an accepted 44228 chain: who holds
+/// a session, on which body, and when a regrant does *not* hand it back.
+pub mod coding_session_authority_claim;
 /// NIP-CSAT (draft): append-only coding-session authority-chain transitions
-/// (44228) — one `grant-operator` step at a time today.
+/// (44228) — grants, seats, and the `takeover`/`transfer` claims.
 pub mod coding_session_authority_transition;
 /// NIP-CSPC: the kind:44222 provider catalog wire schema and its canonical
 /// reader — the only list of models this product offers.
@@ -33,6 +36,12 @@ pub mod coding_session_context;
 pub mod coding_session_genesis;
 /// NIP-CSG: append-only human-authored session-goal revisions (44227).
 pub mod coding_session_goal;
+/// NIP-CSH: signed coding-session handover records (44247) — durable
+/// checkpoints of the work, and the continuations that pick it up.
+pub mod coding_session_handover;
+/// The canonical projection of one umbrella's handover records: standing,
+/// latest authorized checkpoint, active continuation, retirement.
+pub mod coding_session_handover_fold;
 /// One name per thing: the four coding-session identity words (provider
 /// instance alias, provider instance id, runtime word, driver slug).
 pub mod coding_session_identity;

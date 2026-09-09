@@ -207,6 +207,14 @@ pub async fn evict_all_channel_subscriptions(
     }
 }
 
+/// The `type` this relay stamps on a whole-session deletion receipt.
+///
+/// Its verifier is `buzz_session_provider::authority::verify_deletion_receipt`,
+/// which compares this exact string; the two are held together by name here
+/// and by the test that asserts it there, the same way
+/// `ACCEPTANCE_RECEIPT_TYPE` and the authority receipt above are.
+pub const CODING_SESSION_DELETION_RECEIPT_TYPE: &str = "coding_session_deletion_accepted";
+
 /// Dispatch side effects for a stored event.
 pub async fn handle_side_effects(
     tenant: &TenantContext,
@@ -1473,6 +1481,16 @@ async fn handle_coding_session_authority_transition_accepted(
     });
     if let (Some(object), Some(role)) = (receipt.as_object_mut(), payload.role) {
         object.insert("role".into(), serde_json::Value::String(role));
+    }
+    // The body a `takeover`/`transfer` named, carried through to every
+    // consumer that folds receipts rather than re-reading the chain. Without
+    // it a provider learns *that* the session was claimed and not *which
+    // machine* now carries it, which is the one fact the fence compares
+    // against its own key (`docs/HANDOVER_IMPL.md` §1, §3). Present exactly
+    // when the transition carried one, so every receipt signed before claims
+    // existed keeps its exact shape.
+    if let (Some(object), Some(body_pubkey)) = (receipt.as_object_mut(), payload.body_pubkey) {
+        object.insert("bodyPubkey".into(), serde_json::Value::String(body_pubkey));
     }
     emit_system_message(tenant, state, channel_id, receipt).await
 }
@@ -3373,6 +3391,12 @@ async fn handle_standard_deletion_event(
         return handle_a_tag_deletion(tenant, event, state).await;
     }
 
+    // The session this deletion retired, if it retired one. Collected in the
+    // loop and answered once at the end, because the receipt is about the
+    // *session*, not about each of the twenty-odd events a session delete
+    // names.
+    let mut retired_session: Option<(Vec<u8>, String, Uuid)> = None;
+
     for target_id in target_ids {
         let target_event = match state
             .db
@@ -3409,6 +3433,42 @@ async fn handle_standard_deletion_event(
 
         if !deleted {
             continue;
+        }
+
+        // A genesis row only ever goes soft-deleted as part of a whole-session
+        // deletion: `refuse_permanent_identity_deletion` refuses it on its
+        // own, and `authorize_coding_session_deletion` has already decided
+        // that this actor — the founder, or an owner of the containing project
+        // — may perform it and that the chain goes whole. So *this* line, on
+        // the far side of a committed soft delete, is the only place that can
+        // truthfully say "the relay applied a session deletion", which is
+        // exactly what the receipt asserts. A replay finds the row already
+        // deleted, `deleted` is false, and no second receipt is minted.
+        if event_kind_u32(&target_event.event) == KIND_CODING_SESSION_GENESIS {
+            match (
+                decode_coding_session_genesis(&target_event.event.content),
+                extract_h_tag_channel(&target_event.event),
+            ) {
+                (Ok(payload), Some(genesis_channel)) => {
+                    retired_session = Some((
+                        target_event.event.id.to_bytes().to_vec(),
+                        payload.session_ref,
+                        genesis_channel,
+                    ));
+                }
+                _ => {
+                    // Nothing is asserted about a genesis this relay cannot
+                    // read back. The deletion still applied — the row is gone
+                    // — but a receipt naming a session reference we had to
+                    // guess at would be worse than none, and providers keep
+                    // the founder-signed path (§3.2 (b)) for exactly this.
+                    tracing::warn!(
+                        genesis_id = %hex::encode(&target_id),
+                        "deleted a coding-session genesis this relay cannot decode or scope; \
+                         publishing no deletion receipt for it"
+                    );
+                }
+            }
         }
 
         // Thread counters were decremented in the same transaction — push a
@@ -3485,7 +3545,128 @@ async fn handle_standard_deletion_event(
         }
     }
 
+    if let Some((genesis_id, session_ref, channel_id)) = retired_session {
+        emit_coding_session_deletion_receipt(
+            tenant,
+            state,
+            channel_id,
+            &genesis_id,
+            &session_ref,
+            event,
+        )
+        .await?;
+    }
+
     Ok(())
+}
+
+/// Announce, under the relay's own key, that a whole-session deletion was
+/// applied.
+///
+/// A provider must retire an umbrella before it republishes anything, and it
+/// cannot verify a project owner's deletion on its own: the owner is not the
+/// founder, and "was this actor an owner of the containing project" is a
+/// question only the relay can answer. Without this receipt the only
+/// verifiable retirement is a founder-signed one
+/// (`docs/HANDOVER_IMPL.md` §3.2 (b)), which leaves every owner deletion
+/// invisible to the machines that must stop working on it.
+///
+/// The shape is deliberately the authority receipt's: kind 40099, in the
+/// session's own channel, signed by the relay identity a provider already
+/// witnessed at connect time, with a `type` a reader routes on. Four facts and
+/// no prose — the immutable genesis, its session reference, the deletion event
+/// that did it, and the channel — because a provider that has to parse a
+/// sentence to decide whether to stop is a provider that will get it wrong.
+async fn emit_coding_session_deletion_receipt(
+    tenant: &TenantContext,
+    state: &Arc<AppState>,
+    channel_id: Uuid,
+    genesis_id: &[u8],
+    session_ref: &str,
+    deletion_event: &Event,
+) -> anyhow::Result<()> {
+    emit_system_message(
+        tenant,
+        state,
+        channel_id,
+        coding_session_deletion_receipt_content(
+            genesis_id,
+            session_ref,
+            &deletion_event.id.to_hex(),
+            channel_id,
+        ),
+    )
+    .await
+}
+
+/// The receipt's exact content object, in one place so a test can assert its
+/// shape without a database, a relay identity or a live channel.
+///
+/// Split from [`emit_coding_session_deletion_receipt`] deliberately: the shape
+/// is the contract a provider parses, and the emission is plumbing. Only one of
+/// those two can be checked cheaply, and it is the one that matters.
+fn coding_session_deletion_receipt_content(
+    genesis_id: &[u8],
+    session_ref: &str,
+    deletion_event_id: &str,
+    channel_id: Uuid,
+) -> serde_json::Value {
+    serde_json::json!({
+        "type": CODING_SESSION_DELETION_RECEIPT_TYPE,
+        "genesisRef": hex::encode(genesis_id),
+        "sessionRef": session_ref,
+        "deletionEventId": deletion_event_id,
+        "channelId": channel_id.to_string(),
+    })
+}
+
+#[cfg(test)]
+mod deletion_receipt_tests {
+    use super::*;
+
+    /// The four facts and the type, in the exact spelling
+    /// `buzz_session_provider::authority::verify_deletion_receipt` parses.
+    /// Both sides are `camelCase`, both name the immutable genesis rather than
+    /// the reusable session label, and the receipt says which deletion did it
+    /// so a provider can tell one retirement from a later re-founding.
+    #[test]
+    fn the_deletion_receipt_carries_exactly_the_four_facts_a_provider_verifies() {
+        let channel_id = Uuid::from_u128(0x1234_5678_9abc_4def_8123_4567_89ab_cdef);
+        let content = coding_session_deletion_receipt_content(
+            &[0xab; 32],
+            "dc580cfb-6c80-4fc2-8f4e-dfc328acf222",
+            &"cd".repeat(32),
+            channel_id,
+        );
+        assert_eq!(
+            content,
+            serde_json::json!({
+                "type": "coding_session_deletion_accepted",
+                "genesisRef": "ab".repeat(32),
+                "sessionRef": "dc580cfb-6c80-4fc2-8f4e-dfc328acf222",
+                "deletionEventId": "cd".repeat(32),
+                "channelId": channel_id.to_string(),
+            })
+        );
+        // The genesis is hex-encoded from bytes, never printed as a debug
+        // slice: a provider comparing it against its own `genesis_ref` string
+        // would never match otherwise.
+        assert_eq!(
+            content["genesisRef"].as_str().map(str::len),
+            Some(64),
+            "the genesis reference is a lowercase 64-hex id"
+        );
+    }
+
+    /// The type string is the whole routing key on the provider's side, so it
+    /// is asserted here rather than only where it is defined.
+    #[test]
+    fn the_receipt_type_is_the_word_the_provider_routes_on() {
+        assert_eq!(
+            CODING_SESSION_DELETION_RECEIPT_TYPE,
+            "coding_session_deletion_accepted"
+        );
+    }
 }
 
 /// Extract channel UUID from `h` tag (NIP-29 group ID).

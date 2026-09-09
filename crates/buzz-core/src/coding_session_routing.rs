@@ -3450,6 +3450,7 @@ mod tests {
             routing: None,
             bee_stamp: None,
             pack_ref: None,
+            handover: None,
         };
         let json = serde_json::to_string(&metadata).expect("json");
         assert!(

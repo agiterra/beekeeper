@@ -199,6 +199,19 @@ export const KIND_CODING_SESSION_POLICY = 44245;
  */
 export const KIND_CODING_SESSION_OBSERVATION = 44246;
 
+/**
+ * Kind:44247 handover (NIP-CSH) — a durable checkpoint of the work, or the
+ * record of a claimant continuing it.
+ *
+ * In `CODING_SESSION_EVENT_KINDS` since its reader landed
+ * (`features/coding-sessions/hooks/useCodingSessionHandover.ts`), which is the
+ * rule that list states: a kind joins it in the same change as the reader,
+ * because it also drives which kinds the e2e mock relay serves. The integer is
+ * mirrored in `mobile/lib/shared/relay/nostr_models.dart`, which CLAUDE.md
+ * requires not to drift from this file.
+ */
+export const KIND_CODING_SESSION_HANDOVER = 44247;
+
 // ── Project Pulse (44240) ────────────────────────────────────────────────────
 //
 // NIP-PU: an author's explicit claim about a project — a plan, milestone,
@@ -214,10 +227,12 @@ export const KIND_PULSE_ENTRY = 44240;
 // newly added member.
 //
 // It is NOT every allocated coding-session kind: 44245 (policy) and 44246
-// (observation) are deliberately absent, because Desktop does not read either
-// off the wire yet and this list also drives which kinds the e2e mock relay
-// serves (`src/testing/e2eBridgeSessionFacts.ts`). Nothing leaks from the
-// omission — the chat timeline is an allowlist
+// (observation) are deliberately absent, because Desktop reads neither off the
+// wire (both go through a native fold), and this list also drives which kinds
+// the e2e mock relay
+// serves (`src/testing/e2eBridgeSessionFacts.ts`). 44247 (handover) **is**
+// here: `useCodingSessionHandover` reads it off the wire on a live REQ.
+// Nothing leaks from the omissions — the chat timeline is an allowlist
 // (`CHANNEL_TIMELINE_CONTENT_KINDS`), so a kind absent from both sets is
 // absent from the timeline too. Add them here when a reader for them lands,
 // and bump the count in `kinds.test.mjs`.
@@ -235,6 +250,7 @@ export const CODING_SESSION_EVENT_KINDS = [
   KIND_CODING_SESSION_NAME,
   KIND_CODING_SESSION_CLOSURE,
   KIND_CODING_SESSION_TEAM_TRANSACTION,
+  KIND_CODING_SESSION_HANDOVER,
 ] as const;
 
 // Human-visible "new content" message kinds. Used as the unread trigger set

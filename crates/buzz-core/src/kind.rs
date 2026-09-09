@@ -805,6 +805,46 @@ pub const KIND_CODING_SESSION_POLICY: u32 = 44245;
 /// The wire contract is `docs/nips/NIP-CSOB.md`.
 pub const KIND_CODING_SESSION_OBSERVATION: u32 = 44246;
 
+/// NIP-CSH: Coding-session handover — a durable checkpoint of the work, or the
+/// record of a claimant continuing it.
+///
+/// Regular stored event (append-only), channel-scoped via `h`, with
+/// `d=sessionRef` for grouping. Content is strict public JSON
+/// ([`crate::coding_session_handover::CodingSessionHandoverPayload`]) carrying
+/// exactly one of two closed types — `checkpoint` (the accepted task,
+/// decisions, revision, artifacts, tests, unresolved questions, next action
+/// and what could not be preserved) or `continuation` (which claim was acted
+/// on, whether the work was resumed natively or reconstructed, and on which
+/// execution). Ordered tags: `h`, `d`, `csh-v`, `csh-genesis`, `csh-type`.
+///
+/// **The relay validates structure only**, exactly as it does for 44244,
+/// 44245 and 44246. Whether the author held standing to checkpoint, and
+/// whether a continuation's `claimRef` is the claim in force, are the
+/// consuming fold's questions against the accepted NIP-CSAT chain
+/// ([`crate::coding_session_handover_fold`]) — a relay that adjudicated them
+/// would be asserting standing it cannot verify.
+///
+/// **Why this is not a 44246 observation.** An observation settles nothing and
+/// can deny nothing; a checkpoint is the thing another participant
+/// *reconstructs work from*, and a continuation is the record of somebody
+/// having taken the session over. Those are read against authority, retained
+/// unbounded per umbrella rather than bounded per author-and-gate, and
+/// excluded by name when their author lacked standing — none of which 44246's
+/// fold does or should do.
+///
+/// **Allocation.** 44247 is the lowest unused and unreserved kind in this fork
+/// and in vanilla: 44231 (checkpoint), 44232 (native snapshot), 44233/44234
+/// (git transition/check) and 44235–44239 (headroom) are reserved by the
+/// continuity research, 44240 is the shipped Pulse entry with 44241–44243
+/// reserved by the Pulse plan, 44244 is the team transaction, 44245 the policy
+/// and 44246 the observation. Both greps were run on 2026-09-08 before this
+/// constant existed: `git grep -c 44247` over this tree matched nothing but
+/// this kind's own contract document (`docs/HANDOVER_IMPL.md`, then untracked),
+/// and `git grep 44247 vanilla/main` (`12201c49b`) matched nothing at all.
+///
+/// The wire contract is `docs/HANDOVER_IMPL.md` §2.
+pub const KIND_CODING_SESSION_HANDOVER: u32 = 44247;
+
 // Forum / social (45000–45999)
 // V1 used addressable range (30001–30003) — wrong.
 /// A forum post (thread root).
@@ -1545,6 +1585,7 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_CODING_SESSION_TEAM_TRANSACTION,
     KIND_CODING_SESSION_POLICY,
     KIND_CODING_SESSION_OBSERVATION,
+    KIND_CODING_SESSION_HANDOVER,
     KIND_WORKFLOW_DEF,
     KIND_LONG_FORM,
     KIND_USER_STATUS,
@@ -1652,6 +1693,31 @@ pub const fn is_command_kind(kind: u32) -> bool {
 
 /// Returns `true` if `kind` may only be authored by the relay.
 /// Client submission of these kinds must be rejected.
+///
+/// # Why kind 40099 is on this list
+///
+/// A system message is the relay **speaking as itself**: membership rows,
+/// moderation tombstones, and — since the authority chain landed — the
+/// receipts that say a 44228 link was accepted and, since the handover work,
+/// that a whole session was deleted. Every reader in this tree already checks
+/// the signer against the witnessed NIP-11 identity before believing one
+/// (`buzz_session_provider::authority::verify_acceptance_receipt` and
+/// `verify_deletion_receipt`), so a forged 40099 was never *exploitable*. It
+/// was, however, **publishable**: any channel member could write bytes
+/// claiming a session had been handed over or deleted, and every surface that
+/// renders 40099 as a system row would have shown it. The deletion receipt
+/// makes that worse than cosmetic — it is the one 40099 whose meaning is
+/// "stop working on this session" — so the kind is refused at ingest rather
+/// than left to each consumer's diligence (review finding N8).
+///
+/// **This gate refuses the kind, not a signer.** The relay's own system
+/// messages never travel through ingest: `emit_system_message` signs with the
+/// relay keypair and writes through `db.insert_event` plus a direct pubsub
+/// fan-out (`buzz_relay::handlers::side_effects`). So a relay-signed 40099
+/// submitted over the wire is refused too, and nothing the relay actually does
+/// goes near this branch. A grep of this tree on 2026-09-08 found no client
+/// publisher of 40099 anywhere — `bee`, the provider, Desktop, the web client
+/// and mobile all only *read*, filter or fixture it.
 pub const fn is_relay_only_kind(kind: u32) -> bool {
     matches!(
         kind,
@@ -1662,6 +1728,7 @@ pub const fn is_relay_only_kind(kind: u32) -> bool {
             | KIND_THREAD_SUMMARY
             | KIND_WINDOW_BOUNDS
             | KIND_CI_RESULT
+            | KIND_SYSTEM_MESSAGE
     )
 }
 
@@ -1831,6 +1898,17 @@ const _: () = assert!(!is_parameterized_replaceable(
 const _: () = assert!(KIND_CODING_SESSION_OBSERVATION <= u16::MAX as u32);
 // The next free number, and nothing between it and the policy.
 const _: () = assert!(KIND_CODING_SESSION_OBSERVATION == KIND_CODING_SESSION_POLICY + 1);
+// A handover record is append-only history for the strongest reason on this
+// list: a checkpoint is what somebody else reconstructs work from, and a
+// replaceable one would let a later write change what a person already acted
+// on. Its `d` tag groups an umbrella so a reader can fold every record of one
+// session; it never opts this regular kind into NIP-33 replacement.
+const _: () = assert!(!is_ephemeral(KIND_CODING_SESSION_HANDOVER));
+const _: () = assert!(!is_replaceable(KIND_CODING_SESSION_HANDOVER));
+const _: () = assert!(!is_parameterized_replaceable(KIND_CODING_SESSION_HANDOVER));
+const _: () = assert!(KIND_CODING_SESSION_HANDOVER <= u16::MAX as u32);
+// The next free number, and nothing between it and the observation.
+const _: () = assert!(KIND_CODING_SESSION_HANDOVER == KIND_CODING_SESSION_OBSERVATION + 1);
 // Moderation kinds fit u16 and are neither replaceable nor ephemeral:
 // 1984 is a regular event (persisted to the queue, never fanned out);
 // 9040–9044 are direct commands (executed, never stored).
@@ -1857,6 +1935,29 @@ mod tests {
     fn nip43_membership_snapshot_is_relay_only() {
         assert!(is_relay_only_kind(KIND_NIP43_MEMBERSHIP_LIST));
         assert!(!is_relay_only_kind(KIND_NIP43_LEAVE_REQUEST));
+    }
+
+    /// Review finding N8: kind 40099 is the relay speaking as itself, and the
+    /// deletion receipt made it session-stopping. A client may not submit one.
+    ///
+    /// The kinds beside it are the ones a client legitimately writes into the
+    /// same rooms, asserted here so a future edit cannot widen the gate by
+    /// accident.
+    #[test]
+    fn a_system_message_is_relay_only_and_its_neighbours_are_not() {
+        assert!(is_relay_only_kind(KIND_SYSTEM_MESSAGE));
+        for client_kind in [
+            KIND_STREAM_MESSAGE,
+            KIND_REACTION,
+            KIND_CODING_SESSION_AUTHORITY_TRANSITION,
+            KIND_CODING_SESSION_HANDOVER,
+            KIND_DELETION,
+        ] {
+            assert!(
+                !is_relay_only_kind(client_kind),
+                "kind {client_kind} is written by clients and must stay submittable"
+            );
+        }
     }
 
     #[test]

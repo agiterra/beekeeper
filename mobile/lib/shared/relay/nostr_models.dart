@@ -80,7 +80,7 @@ abstract final class EventKind {
   /// input bytes for the owner's PTY, ≤ 8 KiB of base64 per event.
   static const shellInput = 24312;
 
-  // --- Coding sessions (44220-44230, 44244-44246, 24223) --------------------
+  // --- Coding sessions (44220-44230, 44244-44247, 24223) --------------------
   // Keep in sync with `desktop/src/shared/constants/kinds.ts`. Mobile reads
   // the fact kinds and, since 2026-09-07, also publishes the member-signed
   // command kinds (44220 turns, 44221 stop, 44227/44229/44230 goal, name,
@@ -138,6 +138,14 @@ abstract final class EventKind {
   /// here because this table and
   /// `desktop/src/shared/constants/kinds.ts` must not drift (CLAUDE.md).
   static const codingSessionObservation = 44246;
+
+  /// Kind:44247 handover (NIP-CSH) — a durable checkpoint of the work, or the
+  /// record of a claimant continuing it.
+  ///
+  /// Mobile neither writes nor reads the record yet; the integer is mirrored
+  /// here because this table and
+  /// `desktop/src/shared/constants/kinds.ts` must not drift (CLAUDE.md).
+  static const codingSessionHandover = 44247;
 
   /// Kind:24223 ephemeral provider lease proving the provider is reachable.
   static const codingSessionLease = 24223;

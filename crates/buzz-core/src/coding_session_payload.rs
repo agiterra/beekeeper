@@ -196,6 +196,36 @@ pub const COMMAND_ID_CONFLICT: &str = "COMMAND_ID_CONFLICT";
 /// subscription filter and a slot in the file the provider must rewrite
 /// atomically.
 pub const CI_CONTINUATION_STORE_FULL: &str = "CI_CONTINUATION_STORE_FULL";
+/// The umbrella this execution belongs to has been handed over, and this
+/// command is not the claimant acting on the claimed body.
+///
+/// Answered by the **provider**, from the claim it folded out of the accepted
+/// authority chain
+/// ([`crate::coding_session_authority_claim::ClaimState`]) — never by the
+/// relay, which stores the claim link and adjudicates nothing about
+/// executions. Three situations produce it, and a surface should say which:
+/// this provider is not the claimed body, the sender is not the claimant, or
+/// the claim was voided and nobody holds the session until a fresh accepted
+/// `takeover`/`transfer` is published.
+///
+/// It exists because the alternative is worse than a refusal: a machine that
+/// comes back online and silently resumes work somebody else has taken over
+/// produces two divergent executions of one task, and nothing on the wire
+/// says which one is real.
+pub const HANDOVER_FENCED: &str = "HANDOVER_FENCED";
+/// The umbrella has been deleted, so nothing under it runs again.
+///
+/// Answered by the **provider**, and only from an accepted deletion it
+/// verified: a relay-signed deletion receipt naming this genesis, or a kind 5
+/// signed by the record's own founder together with an authenticated read
+/// showing the relay applied it (`docs/HANDOVER_IMPL.md` §3.2). A missing or
+/// failed read is never retirement authority — "I could not check" and "it was
+/// deleted" are different answers, and only one of them stops a session.
+///
+/// Terminal: a retired record publishes no metadata, is skipped by seat
+/// requests and restaging, and answers this to every command. Nothing is
+/// republished or reconstructed to make a deleted session resumable.
+pub const SESSION_RETIRED: &str = "SESSION_RETIRED";
 
 /// Ceiling on a receipt error code, in UTF-8 bytes.
 ///
@@ -1088,6 +1118,108 @@ pub struct SessionMetadata {
     /// regression that keeps it so.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pack_ref: Option<PackRef>,
+    /// Who holds this session, and on which execution body — present exactly
+    /// when a handover claim stands over this execution's umbrella.
+    ///
+    /// The eighth independent additive key. It exists so a returning provider
+    /// **discloses the fence in the same breath as the status**: without it,
+    /// `status: disconnected` over an execution somebody else has taken over
+    /// reads as an ordinary outage, and the desktop would have to make a
+    /// second query to find out otherwise. Omitted rather than written as an
+    /// explicit `null` when no claim stands, so every pre-amendment consumer's
+    /// exact-key check keeps accepting every session that was never handed
+    /// over.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handover: Option<SessionMetadataHandover>,
+}
+
+/// Whether the claim this metadata discloses still stands.
+///
+/// The word a reader needs and cannot infer. A provider publishing a fenced
+/// execution has two very different things to say — "B holds this session on
+/// that body" and "B held it, lost standing, and nobody holds it now" — and
+/// both are published from the same three fields, because
+/// [`crate::coding_session_authority_claim::ClaimState::last`] answers a
+/// voided session with the claim as it stood. Without this word the second
+/// case reads exactly like the first, and a surface would tell a person to go
+/// ask a claimant who no longer holds anything (review finding N7).
+///
+/// There is deliberately no third token for "no claim": that state is the
+/// **absence** of the `handover` key, and inventing a `"none"` variant would
+/// give two encodings of one fact.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SessionMetadataHandoverState {
+    /// A claim is in force: `claimant` holds this umbrella on `bodyPubkey`,
+    /// and only that pair may steer it.
+    Active,
+    /// The claim was voided when its claimant lost standing. The three fields
+    /// describe the claim **as it stood**, for disclosure only — nobody holds
+    /// the session, and the fence stays up for everybody until a fresh
+    /// accepted `takeover`/`transfer`.
+    Voided,
+}
+
+impl SessionMetadataHandoverState {
+    /// The exact wire token for this state.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Voided => "voided",
+        }
+    }
+}
+
+/// The claim this execution's umbrella is under, as its provider advertises
+/// it.
+///
+/// Four fields, all required and all non-null — the same exactness
+/// [`PackRef`] is held to, and for the same reason: a partial answer here
+/// ("somebody took over" with no body, or a body with no claimant) would send
+/// a person looking for something the record cannot name. The seq is
+/// deliberately absent: this is a disclosure for a reader, and the chain is
+/// the place to ask ordering questions.
+///
+/// `state` is what keeps a **voided** claim from reading as a live one; see
+/// [`SessionMetadataHandoverState`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SessionMetadataHandover {
+    /// Whether this claim still stands.
+    pub state: SessionMetadataHandoverState,
+    /// Pubkey (lowercase 64-hex) holding the session — or, when `state` is
+    /// `voided`, the pubkey that held it.
+    pub claimant: String,
+    /// Provider authority pubkey of the execution body that claimant uses (or
+    /// used).
+    pub body_pubkey: String,
+    /// Event id of the accepted `takeover`/`transfer` that set the claim.
+    pub accepted_event_id: String,
+}
+
+impl SessionMetadataHandover {
+    /// Validate the four fields as the wire requires them.
+    ///
+    /// # Errors
+    /// A sentence naming the field that is wrong.
+    pub fn validate(&self) -> Result<(), String> {
+        for (field, value) in [
+            ("claimant", &self.claimant),
+            ("bodyPubkey", &self.body_pubkey),
+            ("acceptedEventId", &self.accepted_event_id),
+        ] {
+            if value.len() != 64
+                || !value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            {
+                return Err(format!(
+                    "metadata handover.{field} must be a lowercase 64-hex id (got {value:?})"
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 /// The persona pack a seat was staged from, named exactly.
@@ -1338,17 +1470,17 @@ pub struct TurnBudget {
 
 /// Expected JSON key sets for [`SessionMetadata`], oldest first.
 ///
-/// Seven independent additive amendments have landed on this struct at
+/// Eight independent additive amendments have landed on this struct at
 /// different times — the `sessionRef` echo, B1's four coordinate-fact keys,
 /// the agent seat's `role`, D9's `turnBudget`, the `routing` echo, the
-/// `beeStamp` observation, then L23's `packRef` — and each one is present or
-/// absent on its own, so the base key set has **one hundred and twenty-eight**
-/// valid shapes, not four: base, and base
+/// `beeStamp` observation, L23's `packRef`, then the handover claim's
+/// `handover` — and each one is present or absent on its own, so the base key
+/// set has **two hundred and fifty-six** valid shapes, not four: base, and base
 /// plus any combination of `sessionRef`, `role`, `turnBudget`, `routing`,
-/// `beeStamp`, `packRef`, and the four fact keys taken together. Mirrors the
+/// `beeStamp`, `packRef`, `handover`, and the four fact keys taken together. Mirrors the
 /// exact-fields discipline in `coding_session_lifecycle_command.rs`
 /// (`rejects_action_shapes_between_and_beyond_the_two_forms`): every shape in
-/// between or beyond those one hundred and twenty-eight — a partial subset of
+/// between or beyond those two hundred and fifty-six — a partial subset of
 /// the four fact keys, or any field this struct does not know — is rejected,
 /// not tolerated.
 const METADATA_BASE_FIELDS: &[&str] = &[
@@ -1388,6 +1520,13 @@ const METADATA_BEE_STAMP_FIELD: &str = "beeStamp";
 /// one hundred and twenty-eight. Like `routing` and `beeStamp`, an explicit
 /// null is refused **naming the key**: a host with nothing to stage omits it.
 const METADATA_PACK_REF_FIELD: &str = "packRef";
+/// The handover amendment's one additive key. Independent of the other seven,
+/// so it doubles the accepted shape count from one hundred and twenty-eight to
+/// two hundred and fifty-six. Like `routing`, `beeStamp` and `packRef`, an
+/// explicit null is refused **naming the key**: a provider with no claim to
+/// disclose omits it, and `"handover": null` is a producer inventing a shape
+/// rather than a session nobody took over.
+const METADATA_HANDOVER_FIELD: &str = "handover";
 
 /// Strictly decode and validate signed metadata content (kind 44223).
 ///
@@ -1436,6 +1575,14 @@ pub fn decode_coding_session_metadata(content: &str) -> Result<SessionMetadata, 
     {
         return Err("coding-session metadata packRef must not be null".to_string());
     }
+    let has_handover = object.contains_key(METADATA_HANDOVER_FIELD);
+    if has_handover
+        && object
+            .get(METADATA_HANDOVER_FIELD)
+            .is_some_and(serde_json::Value::is_null)
+    {
+        return Err("coding-session metadata handover must not be null".to_string());
+    }
     let has_all_facts = METADATA_FACT_FIELDS
         .iter()
         .all(|key| object.contains_key(*key));
@@ -1467,6 +1614,9 @@ pub fn decode_coding_session_metadata(content: &str) -> Result<SessionMetadata, 
     }
     if has_pack_ref {
         expected.push(METADATA_PACK_REF_FIELD);
+    }
+    if has_handover {
+        expected.push(METADATA_HANDOVER_FIELD);
     }
     let recognized = object.keys().all(|key| expected.contains(&key.as_str()));
     let complete = expected.iter().all(|key| object.contains_key(*key));
@@ -1569,6 +1719,9 @@ fn validate_session_metadata(metadata: &SessionMetadata) -> Result<(), String> {
         .is_some_and(|value| value.unsigned_abs() > MAX_SAFE_GENERATION)
     {
         return Err("metadata verifiedAt must be a safe integer".to_owned());
+    }
+    if let Some(handover) = &metadata.handover {
+        handover.validate()?;
     }
     if let Some(pack_ref) = &metadata.pack_ref {
         // The seat's role decides the pack, so a `packRef` naming a role the
@@ -2358,6 +2511,7 @@ mod tests {
             routing: None,
             bee_stamp: None,
             pack_ref: None,
+            handover: None,
         };
         let value = serde_json::to_value(&metadata).expect("serialize");
         assert_eq!(
@@ -2431,6 +2585,7 @@ mod tests {
             routing: None,
             bee_stamp: None,
             pack_ref: None,
+            handover: None,
         };
         let unclaimed = serde_json::to_value(&metadata).expect("serialize");
         assert!(
@@ -2688,6 +2843,121 @@ mod tests {
         );
     }
 
+    /// The handover amendment: the key is absent on every unclaimed session,
+    /// round-trips exactly when present, and refuses an explicit null by name.
+    #[test]
+    fn decode_metadata_accepts_the_handover_shape_and_refuses_a_null() {
+        let without = pack_ref_base();
+        let decoded_without =
+            decode_coding_session_metadata(&without.to_string()).expect("pre-amendment form");
+        assert!(decoded_without.handover.is_none());
+        let encoded_without = serde_json::to_value(&decoded_without).expect("re-encode");
+        assert!(
+            !encoded_without
+                .as_object()
+                .expect("an object")
+                .contains_key("handover"),
+            "an absent handover must not become a null on the way back out"
+        );
+
+        let mut with = without.clone();
+        with["handover"] = valid_handover("active");
+        let decoded = decode_coding_session_metadata(&with.to_string()).expect("claimed form");
+        let handover = decoded.handover.clone().expect("a handover");
+        assert_eq!(handover.state, SessionMetadataHandoverState::Active);
+        assert_eq!(handover.claimant, "bb".repeat(32));
+        assert_eq!(handover.body_pubkey, "dd".repeat(32));
+        assert_eq!(handover.accepted_event_id, "ee".repeat(32));
+        let mut encoded = serde_json::to_value(&decoded).expect("re-encode");
+        assert_eq!(
+            encoded.get("handover"),
+            with.get("handover"),
+            "the handover must round-trip byte-identically"
+        );
+        encoded
+            .as_object_mut()
+            .expect("an object")
+            .remove("handover");
+        assert_eq!(
+            encoded, encoded_without,
+            "publishing a handover must change nothing else on the event"
+        );
+
+        let mut null_handover = without;
+        null_handover["handover"] = serde_json::Value::Null;
+        let error = decode_coding_session_metadata(&null_handover.to_string())
+            .expect_err("an explicit null is refused");
+        assert!(
+            error.contains("handover"),
+            "the refusal must name the key it refused: {error}"
+        );
+    }
+
+    /// Review finding N7: a voided claim must not read as a live one.
+    ///
+    /// Both states carry the same three references — the provider publishes
+    /// the claim as it stood — so the only thing telling them apart is the
+    /// word, and it is required rather than defaulted: a producer that omits
+    /// it is refused instead of being read as `active`.
+    #[test]
+    fn a_voided_claim_says_so_and_the_state_word_is_required() {
+        let mut voided = pack_ref_base();
+        voided["handover"] = valid_handover("voided");
+        let decoded = decode_coding_session_metadata(&voided.to_string()).expect("voided form");
+        let handover = decoded.handover.expect("a handover");
+        assert_eq!(handover.state, SessionMetadataHandoverState::Voided);
+        assert_eq!(handover.state.as_str(), "voided");
+        // Same three references as an active claim: only the word differs, so
+        // a reader that ignored it would show a fenced session as steerable.
+        assert_eq!(handover.claimant, "bb".repeat(32));
+
+        let mut missing_state = pack_ref_base();
+        missing_state["handover"] = valid_handover("active");
+        missing_state["handover"]
+            .as_object_mut()
+            .expect("an object")
+            .remove("state");
+        assert!(
+            decode_coding_session_metadata(&missing_state.to_string()).is_err(),
+            "an absent state must be refused, never defaulted to active"
+        );
+
+        for bad in ["none", "Active", "no-claim", ""] {
+            let mut wrong = pack_ref_base();
+            wrong["handover"] = valid_handover(bad);
+            assert!(
+                decode_coding_session_metadata(&wrong.to_string()).is_err(),
+                "state {bad:?} must be refused"
+            );
+        }
+    }
+
+    /// Every reference in a handover is a lowercase 64-hex id, and a
+    /// malformed one is refused naming the field.
+    #[test]
+    fn a_handover_with_a_malformed_reference_is_refused_by_name() {
+        for (field, value) in [
+            ("claimant", "not-hex"),
+            ("bodyPubkey", "DD"),
+            ("acceptedEventId", ""),
+        ] {
+            let mut wrong = pack_ref_base();
+            wrong["handover"] = valid_handover("active");
+            wrong["handover"][field] = serde_json::json!(value);
+            let error = decode_coding_session_metadata(&wrong.to_string())
+                .expect_err("a malformed reference is refused");
+            assert!(error.contains(field), "{error}");
+        }
+
+        let mut smuggled = pack_ref_base();
+        smuggled["handover"] = valid_handover("active");
+        smuggled["handover"]["seq"] = serde_json::json!(2);
+        assert!(
+            decode_coding_session_metadata(&smuggled.to_string()).is_err(),
+            "the handover object rejects unknown keys rather than ignoring them"
+        );
+    }
+
     /// Finding 31, stated as a test: a 44223 signed before `packRef` existed
     /// must keep decoding, and every other pre-amendment shape with it.
     #[test]
@@ -2854,6 +3124,16 @@ mod tests {
             "branch": null,
             "capabilities": Capabilities::v1_claude(),
             "role": "builder"
+        })
+    }
+
+    /// A `handover` in the given state, every reference well-formed.
+    fn valid_handover(state: &str) -> serde_json::Value {
+        serde_json::json!({
+            "state": state,
+            "claimant": "bb".repeat(32),
+            "bodyPubkey": "dd".repeat(32),
+            "acceptedEventId": "ee".repeat(32)
         })
     }
 
@@ -3149,6 +3429,7 @@ mod tests {
             routing: None,
             bee_stamp: None,
             pack_ref: None,
+            handover: None,
         };
         let content = serde_json::to_string(&metadata).expect("serialize");
         assert!(

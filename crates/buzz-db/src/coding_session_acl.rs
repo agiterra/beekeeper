@@ -289,9 +289,15 @@ pub async fn session_authority_for_hire(
             CodingSessionAuthorityTransitionType::RevokeSeat => {
                 active.remove(&transition.grantee_pubkey);
             }
+            // This projection is the seat set and nothing else. A claim
+            // (`takeover`/`transfer`) moves who is carrying the session, which
+            // the provider's fence answers from the same chain; it grants no
+            // seat and revokes none.
             CodingSessionAuthorityTransitionType::GrantOperator
             | CodingSessionAuthorityTransitionType::GrantViewer
-            | CodingSessionAuthorityTransitionType::Revoke => {}
+            | CodingSessionAuthorityTransitionType::Revoke
+            | CodingSessionAuthorityTransitionType::Takeover
+            | CodingSessionAuthorityTransitionType::Transfer => {}
         }
         expected_prev = Some(event_id);
     }

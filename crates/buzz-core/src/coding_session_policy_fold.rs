@@ -73,8 +73,14 @@ pub fn signer_may_steer_at(
             CodingSessionAuthorityTransitionType::GrantOperator => active = true,
             CodingSessionAuthorityTransitionType::GrantViewer
             | CodingSessionAuthorityTransitionType::Revoke => active = false,
+            // A seat is not a steering grant, and neither is a claim: a
+            // `takeover` says who is *carrying* the work, which the fence
+            // answers, and letting it grant steering here would make a claim a
+            // back door into policy authorship.
             CodingSessionAuthorityTransitionType::GrantSeat
-            | CodingSessionAuthorityTransitionType::RevokeSeat => {}
+            | CodingSessionAuthorityTransitionType::RevokeSeat
+            | CodingSessionAuthorityTransitionType::Takeover
+            | CodingSessionAuthorityTransitionType::Transfer => {}
         }
     }
     active

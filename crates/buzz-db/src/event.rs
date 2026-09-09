@@ -2513,6 +2513,24 @@ pub enum AuthorityTransitionRefusal {
     NoSuchSeat,
     /// A seat revocation's role did not match the actor's active role.
     SeatRoleMismatch,
+    /// A `takeover` named a claimant other than its own signer.
+    ///
+    /// A takeover is a **self-claim**: the signer says it is picking up this
+    /// session's work on a body it controls. Naming somebody else would
+    /// volunteer them into carrying work they never agreed to, and the
+    /// transition type for handing a claim over deliberately is `transfer`.
+    /// (`SelfNomination`'s inverse: there a signer may not appoint *itself*, and
+    /// here it may not appoint anyone else.)
+    ClaimantNotSigner,
+    /// A `transfer` was submitted for a session with no claim in force.
+    ///
+    /// There is nothing to hand over: either no `takeover` was ever accepted,
+    /// or the claim was voided when its claimant lost standing — and a voided
+    /// claim is deliberately **not** transferable, because the pubkey that
+    /// would be doing the handing has already been removed. The way back is a
+    /// fresh `takeover` by the founder or a live operator, which is the
+    /// visible act the fence exists to require.
+    NoActiveClaim,
 }
 
 /// Outcome of an attempted coding-session authority-transition (kind 44228)
@@ -2604,6 +2622,10 @@ struct StoredAuthorityTransition {
     transition_type: CodingSessionAuthorityTransitionType,
     grantee_pubkey: String,
     role: Option<String>,
+    /// The execution body a `takeover`/`transfer` named; `None` for every
+    /// other type. Read back because the claim fold needs it: a claim whose
+    /// body this row dropped could not be folded at all.
+    body_pubkey: Option<String>,
 }
 
 /// Fold accepted transitions (already sorted or not — sorted here) up to but
@@ -2628,11 +2650,43 @@ fn fold_authority_grants(
             CodingSessionAuthorityTransitionType::Revoke => {
                 grants.remove(&t.grantee_pubkey);
             }
+            // A seat is not a steering grant, and a claim is not one either:
+            // `takeover` says who is carrying the work, never who may steer.
             CodingSessionAuthorityTransitionType::GrantSeat
-            | CodingSessionAuthorityTransitionType::RevokeSeat => {}
+            | CodingSessionAuthorityTransitionType::RevokeSeat
+            | CodingSessionAuthorityTransitionType::Takeover
+            | CodingSessionAuthorityTransitionType::Transfer => {}
         }
     }
     grants
+}
+
+/// Fold the accepted chain's claim state up to but excluding `before_seq`,
+/// through the one canonical rule every consumer uses
+/// ([`buzz_core::coding_session_authority_claim::fold_current_claim`]).
+///
+/// Excluding this transition's own `seq` is what keeps a resubmission
+/// idempotent, exactly as the grant and seat folds above do: a replayed
+/// `transfer` recomputes the same pre-state it was originally validated
+/// against, even though its own application already moved the claim.
+fn fold_authority_claim(
+    transitions: &[StoredAuthorityTransition],
+    before_seq: u32,
+) -> buzz_core::coding_session_authority_claim::ClaimState {
+    let mut ordered: Vec<&StoredAuthorityTransition> = transitions
+        .iter()
+        .filter(|transition| transition.seq < before_seq)
+        .collect();
+    ordered.sort_by_key(|transition| transition.seq);
+    buzz_core::coding_session_authority_claim::fold_current_claim(ordered.into_iter().map(
+        |transition| buzz_core::coding_session_authority_claim::ClaimLink {
+            seq: transition.seq,
+            accepted_event_id: hex::encode(&transition.event_id),
+            transition_type: transition.transition_type,
+            grantee_pubkey: transition.grantee_pubkey.clone(),
+            body_pubkey: transition.body_pubkey.clone(),
+        },
+    ))
 }
 
 fn fold_authority_seats(
@@ -2657,7 +2711,9 @@ fn fold_authority_seats(
             }
             CodingSessionAuthorityTransitionType::GrantOperator
             | CodingSessionAuthorityTransitionType::GrantViewer
-            | CodingSessionAuthorityTransitionType::Revoke => {}
+            | CodingSessionAuthorityTransitionType::Revoke
+            | CodingSessionAuthorityTransitionType::Takeover
+            | CodingSessionAuthorityTransitionType::Transfer => {}
         }
     }
     seats
@@ -2709,6 +2765,7 @@ async fn stored_authority_transitions_tx(
                 transition_type: payload.transition_type,
                 grantee_pubkey: payload.grantee_pubkey,
                 role: payload.role,
+                body_pubkey: payload.body_pubkey,
             })
         })
         .collect())
@@ -2820,11 +2877,71 @@ pub async fn insert_coding_session_authority_transition_event(
         CodingSessionAuthorityTransitionType::GrantSeat
             | CodingSessionAuthorityTransitionType::RevokeSeat
     );
-    if !is_seat_transition && !signer_is_owner {
+    let is_claim_transition = payload.transition_type.is_claim();
+    if !is_seat_transition && !is_claim_transition && !signer_is_owner {
         tx.rollback().await?;
         return Ok(CodingSessionAuthorityTransitionInsertOutcome::Refused {
             refusal: AuthorityTransitionRefusal::SignerNotOwner { owner_pubkey },
         });
+    }
+    // A claim is the one authority act the founder does not have to perform.
+    // The whole point of the mechanism is that work continues when the founder
+    // is *absent*, so a live operator may take a session over — and the relay
+    // serializes the race between two of them, exactly as it serializes every
+    // other link. Standing is read from the chain as it stood before this
+    // link, never from a role slug and never from the submission itself.
+    if is_claim_transition {
+        match payload.transition_type {
+            CodingSessionAuthorityTransitionType::Takeover => {
+                if !(signer_is_owner || signer_is_operator) {
+                    tx.rollback().await?;
+                    return Ok(CodingSessionAuthorityTransitionInsertOutcome::Refused {
+                        refusal: AuthorityTransitionRefusal::SignerNotAuthorized,
+                    });
+                }
+                if payload.grantee_pubkey != signer_hex {
+                    tx.rollback().await?;
+                    return Ok(CodingSessionAuthorityTransitionInsertOutcome::Refused {
+                        refusal: AuthorityTransitionRefusal::ClaimantNotSigner,
+                    });
+                }
+            }
+            CodingSessionAuthorityTransitionType::Transfer => {
+                let claim_before = fold_authority_claim(&others, payload.seq);
+                // "Nothing to transfer" is answered before "you may not
+                // transfer it": a founder handed the more specific refusal can
+                // act on it, and a voided claim answers this arm too — the way
+                // back from a void is a fresh takeover, never a transfer by
+                // somebody who no longer holds anything.
+                let Some(claim) = claim_before.active() else {
+                    tx.rollback().await?;
+                    return Ok(CodingSessionAuthorityTransitionInsertOutcome::Refused {
+                        refusal: AuthorityTransitionRefusal::NoActiveClaim,
+                    });
+                };
+                if !(signer_is_owner || claim.claimant == signer_hex) {
+                    tx.rollback().await?;
+                    return Ok(CodingSessionAuthorityTransitionInsertOutcome::Refused {
+                        refusal: AuthorityTransitionRefusal::SignerNotAuthorized,
+                    });
+                }
+                // The new claimant must already be able to steer this session:
+                // a transfer moves the claim, it does not mint a grant. A
+                // grantee with no standing would be fenced out of the very
+                // session it was just handed.
+                let grantee_is_owner =
+                    hex::decode(&payload.grantee_pubkey).ok().as_deref() == Some(&owner_pubkey);
+                let grantee_is_operator =
+                    grants_before.get(&payload.grantee_pubkey) == Some(&"operator");
+                if !(grantee_is_owner || grantee_is_operator) {
+                    tx.rollback().await?;
+                    return Ok(CodingSessionAuthorityTransitionInsertOutcome::Refused {
+                        refusal: AuthorityTransitionRefusal::SignerNotAuthorized,
+                    });
+                }
+            }
+            _ => {}
+        }
     }
     if is_seat_transition && !(signer_is_owner || signer_is_operator || signer_is_lead) {
         tx.rollback().await?;
@@ -2943,8 +3060,13 @@ pub async fn insert_coding_session_authority_transition_event(
                 .execute(&mut *tx)
                 .await?;
             }
+            // Neither a seat nor a claim touches the read ACL: a claim moves
+            // who is *carrying* the session, and the grant that let them read
+            // it is already in this table.
             CodingSessionAuthorityTransitionType::GrantSeat
-            | CodingSessionAuthorityTransitionType::RevokeSeat => {}
+            | CodingSessionAuthorityTransitionType::RevokeSeat
+            | CodingSessionAuthorityTransitionType::Takeover
+            | CodingSessionAuthorityTransitionType::Transfer => {}
         }
     }
 
@@ -6187,5 +6309,596 @@ mod tests {
             );
             assert_eq!(refused, RIVALS - 1, "round {round}");
         }
+    }
+
+    // ── Claims: takeover and transfer (docs/HANDOVER_IMPL.md §1) ───────────
+    //
+    // The rules these prove are the ones the whole fence rests on: who may
+    // take a session over, that a takeover is a self-claim, who may hand it
+    // on, and that a voided claim is not transferable — only re-claimable.
+
+    /// Accept a chain of links, one at a time, returning each accepted id so
+    /// the next link can name it.
+    async fn accept_link(
+        pool: &PgPool,
+        community: CommunityId,
+        channel: Uuid,
+        event: &nostr::Event,
+    ) -> String {
+        let outcome =
+            insert_coding_session_authority_transition_event(pool, community, event, channel, None)
+                .await
+                .expect("insert link");
+        match outcome {
+            CodingSessionAuthorityTransitionInsertOutcome::Accepted { .. } => event.id.to_hex(),
+            other => panic!("link must be accepted, got {other:?}"),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn claim_event(
+        keys: &Keys,
+        channel: Uuid,
+        genesis_ref: &str,
+        prev_accepted: Option<String>,
+        seq: u32,
+        claimant: &str,
+        body_pubkey: &str,
+        transfer: bool,
+    ) -> nostr::Event {
+        let payload = if transfer {
+            buzz_core::coding_session_authority_transition::CodingSessionAuthorityTransitionPayload::new_transfer(
+                genesis_ref.to_owned(),
+                prev_accepted,
+                seq,
+                claimant.to_owned(),
+                body_pubkey.to_owned(),
+            )
+        } else {
+            buzz_core::coding_session_authority_transition::CodingSessionAuthorityTransitionPayload::new_takeover(
+                genesis_ref.to_owned(),
+                prev_accepted,
+                seq,
+                claimant.to_owned(),
+                body_pubkey.to_owned(),
+            )
+        };
+        make_seat_authority_transition_event(keys, channel, &payload)
+    }
+
+    /// Grant `operator` a live operator grant on a fresh session, returning
+    /// `(genesis_ref, head_event_id)`.
+    async fn session_with_one_operator(
+        pool: &PgPool,
+        community: CommunityId,
+        channel: Uuid,
+        founder: &Keys,
+        operator: &Keys,
+    ) -> (String, String) {
+        let genesis = found_genesis_for_authority_tests(pool, community, channel, founder).await;
+        let genesis_ref = genesis.id.to_hex();
+        let grant = make_authority_transition_event(
+            founder,
+            channel,
+            &genesis_ref,
+            None,
+            1,
+            &operator.public_key().to_hex(),
+        );
+        let head = accept_link(pool, community, channel, &grant).await;
+        (genesis_ref, head)
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn a_live_operator_may_take_a_session_over() {
+        let pool = setup_pool().await;
+        let community = CommunityId::from_uuid(make_test_community(&pool).await);
+        let channel = make_test_channel(&pool, *community.as_uuid(), None).await;
+        let founder = Keys::generate();
+        let operator = Keys::generate();
+        let (genesis_ref, head) =
+            session_with_one_operator(&pool, community, channel, &founder, &operator).await;
+
+        let takeover = claim_event(
+            &operator,
+            channel,
+            &genesis_ref,
+            Some(head),
+            2,
+            &operator.public_key().to_hex(),
+            &Keys::generate().public_key().to_hex(),
+            false,
+        );
+        let outcome = insert_coding_session_authority_transition_event(
+            &pool, community, &takeover, channel, None,
+        )
+        .await
+        .expect("takeover");
+        assert!(matches!(
+            outcome,
+            CodingSessionAuthorityTransitionInsertOutcome::Accepted {
+                was_inserted: true,
+                ..
+            }
+        ));
+    }
+
+    /// The founder may claim its own session too — the mechanism is for
+    /// absence, and the founder returning to take back a session it handed
+    /// out is exactly the `[Take back]` path.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn the_founder_may_take_its_own_session_over() {
+        let pool = setup_pool().await;
+        let community = CommunityId::from_uuid(make_test_community(&pool).await);
+        let channel = make_test_channel(&pool, *community.as_uuid(), None).await;
+        let founder = Keys::generate();
+        let genesis = found_genesis_for_authority_tests(&pool, community, channel, &founder).await;
+        let takeover = claim_event(
+            &founder,
+            channel,
+            &genesis.id.to_hex(),
+            None,
+            1,
+            &founder.public_key().to_hex(),
+            &Keys::generate().public_key().to_hex(),
+            false,
+        );
+        let outcome = insert_coding_session_authority_transition_event(
+            &pool, community, &takeover, channel, None,
+        )
+        .await
+        .expect("takeover");
+        assert!(matches!(
+            outcome,
+            CodingSessionAuthorityTransitionInsertOutcome::Accepted { .. }
+        ));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn a_takeover_naming_anyone_but_its_signer_is_refused() {
+        let pool = setup_pool().await;
+        let community = CommunityId::from_uuid(make_test_community(&pool).await);
+        let channel = make_test_channel(&pool, *community.as_uuid(), None).await;
+        let founder = Keys::generate();
+        let operator = Keys::generate();
+        let (genesis_ref, head) =
+            session_with_one_operator(&pool, community, channel, &founder, &operator).await;
+
+        let volunteered = claim_event(
+            &operator,
+            channel,
+            &genesis_ref,
+            Some(head),
+            2,
+            &Keys::generate().public_key().to_hex(),
+            &Keys::generate().public_key().to_hex(),
+            false,
+        );
+        let outcome = insert_coding_session_authority_transition_event(
+            &pool,
+            community,
+            &volunteered,
+            channel,
+            None,
+        )
+        .await
+        .expect("takeover");
+        assert!(
+            matches!(
+                outcome,
+                CodingSessionAuthorityTransitionInsertOutcome::Refused {
+                    refusal: AuthorityTransitionRefusal::ClaimantNotSigner,
+                }
+            ),
+            "a takeover may not volunteer somebody else"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn a_takeover_by_a_pubkey_with_no_standing_is_refused() {
+        let pool = setup_pool().await;
+        let community = CommunityId::from_uuid(make_test_community(&pool).await);
+        let channel = make_test_channel(&pool, *community.as_uuid(), None).await;
+        let founder = Keys::generate();
+        let stranger = Keys::generate();
+        let genesis = found_genesis_for_authority_tests(&pool, community, channel, &founder).await;
+        let takeover = claim_event(
+            &stranger,
+            channel,
+            &genesis.id.to_hex(),
+            None,
+            1,
+            &stranger.public_key().to_hex(),
+            &Keys::generate().public_key().to_hex(),
+            false,
+        );
+        let outcome = insert_coding_session_authority_transition_event(
+            &pool, community, &takeover, channel, None,
+        )
+        .await
+        .expect("takeover");
+        assert!(matches!(
+            outcome,
+            CodingSessionAuthorityTransitionInsertOutcome::Refused {
+                refusal: AuthorityTransitionRefusal::SignerNotAuthorized,
+            }
+        ));
+    }
+
+    /// A viewer is not an operator: the grant that lets somebody *read* a
+    /// session never lets them take it over.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn a_viewer_may_not_take_a_session_over() {
+        let pool = setup_pool().await;
+        let community = CommunityId::from_uuid(make_test_community(&pool).await);
+        let channel = make_test_channel(&pool, *community.as_uuid(), None).await;
+        let founder = Keys::generate();
+        let viewer = Keys::generate();
+        let genesis = found_genesis_for_authority_tests(&pool, community, channel, &founder).await;
+        let genesis_ref = genesis.id.to_hex();
+        let grant = make_seat_authority_transition_event(
+            &founder,
+            channel,
+            &buzz_core::coding_session_authority_transition::CodingSessionAuthorityTransitionPayload::new(
+                CodingSessionAuthorityTransitionType::GrantViewer,
+                genesis_ref.clone(),
+                None,
+                1,
+                viewer.public_key().to_hex(),
+            ),
+        );
+        let head = accept_link(&pool, community, channel, &grant).await;
+
+        let takeover = claim_event(
+            &viewer,
+            channel,
+            &genesis_ref,
+            Some(head),
+            2,
+            &viewer.public_key().to_hex(),
+            &Keys::generate().public_key().to_hex(),
+            false,
+        );
+        let outcome = insert_coding_session_authority_transition_event(
+            &pool, community, &takeover, channel, None,
+        )
+        .await
+        .expect("takeover");
+        assert!(matches!(
+            outcome,
+            CodingSessionAuthorityTransitionInsertOutcome::Refused {
+                refusal: AuthorityTransitionRefusal::SignerNotAuthorized,
+            }
+        ));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn a_transfer_with_no_claim_to_move_is_refused_by_name() {
+        let pool = setup_pool().await;
+        let community = CommunityId::from_uuid(make_test_community(&pool).await);
+        let channel = make_test_channel(&pool, *community.as_uuid(), None).await;
+        let founder = Keys::generate();
+        let operator = Keys::generate();
+        let (genesis_ref, head) =
+            session_with_one_operator(&pool, community, channel, &founder, &operator).await;
+
+        let transfer = claim_event(
+            &founder,
+            channel,
+            &genesis_ref,
+            Some(head),
+            2,
+            &operator.public_key().to_hex(),
+            &Keys::generate().public_key().to_hex(),
+            true,
+        );
+        let outcome = insert_coding_session_authority_transition_event(
+            &pool, community, &transfer, channel, None,
+        )
+        .await
+        .expect("transfer");
+        assert!(matches!(
+            outcome,
+            CodingSessionAuthorityTransitionInsertOutcome::Refused {
+                refusal: AuthorityTransitionRefusal::NoActiveClaim,
+            }
+        ));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn the_claimant_may_transfer_to_a_live_operator() {
+        let pool = setup_pool().await;
+        let community = CommunityId::from_uuid(make_test_community(&pool).await);
+        let channel = make_test_channel(&pool, *community.as_uuid(), None).await;
+        let founder = Keys::generate();
+        let first = Keys::generate();
+        let second = Keys::generate();
+        let (genesis_ref, head) =
+            session_with_one_operator(&pool, community, channel, &founder, &first).await;
+        let second_grant = make_authority_transition_event(
+            &founder,
+            channel,
+            &genesis_ref,
+            Some(&head),
+            2,
+            &second.public_key().to_hex(),
+        );
+        let head = accept_link(&pool, community, channel, &second_grant).await;
+        let takeover = claim_event(
+            &first,
+            channel,
+            &genesis_ref,
+            Some(head),
+            3,
+            &first.public_key().to_hex(),
+            &Keys::generate().public_key().to_hex(),
+            false,
+        );
+        let head = accept_link(&pool, community, channel, &takeover).await;
+
+        let transfer = claim_event(
+            &first,
+            channel,
+            &genesis_ref,
+            Some(head),
+            4,
+            &second.public_key().to_hex(),
+            &Keys::generate().public_key().to_hex(),
+            true,
+        );
+        let outcome = insert_coding_session_authority_transition_event(
+            &pool, community, &transfer, channel, None,
+        )
+        .await
+        .expect("transfer");
+        assert!(matches!(
+            outcome,
+            CodingSessionAuthorityTransitionInsertOutcome::Accepted { .. }
+        ));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn a_transfer_by_anyone_but_the_claimant_or_the_founder_is_refused() {
+        let pool = setup_pool().await;
+        let community = CommunityId::from_uuid(make_test_community(&pool).await);
+        let channel = make_test_channel(&pool, *community.as_uuid(), None).await;
+        let founder = Keys::generate();
+        let claimant = Keys::generate();
+        let other = Keys::generate();
+        let (genesis_ref, head) =
+            session_with_one_operator(&pool, community, channel, &founder, &claimant).await;
+        let other_grant = make_authority_transition_event(
+            &founder,
+            channel,
+            &genesis_ref,
+            Some(&head),
+            2,
+            &other.public_key().to_hex(),
+        );
+        let head = accept_link(&pool, community, channel, &other_grant).await;
+        let takeover = claim_event(
+            &claimant,
+            channel,
+            &genesis_ref,
+            Some(head),
+            3,
+            &claimant.public_key().to_hex(),
+            &Keys::generate().public_key().to_hex(),
+            false,
+        );
+        let head = accept_link(&pool, community, channel, &takeover).await;
+
+        // `other` holds a live operator grant and still may not move a claim
+        // it does not hold.
+        let stolen = claim_event(
+            &other,
+            channel,
+            &genesis_ref,
+            Some(head),
+            4,
+            &other.public_key().to_hex(),
+            &Keys::generate().public_key().to_hex(),
+            true,
+        );
+        let outcome = insert_coding_session_authority_transition_event(
+            &pool, community, &stolen, channel, None,
+        )
+        .await
+        .expect("transfer");
+        assert!(matches!(
+            outcome,
+            CodingSessionAuthorityTransitionInsertOutcome::Refused {
+                refusal: AuthorityTransitionRefusal::SignerNotAuthorized,
+            }
+        ));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn a_transfer_to_a_pubkey_with_no_grant_is_refused() {
+        let pool = setup_pool().await;
+        let community = CommunityId::from_uuid(make_test_community(&pool).await);
+        let channel = make_test_channel(&pool, *community.as_uuid(), None).await;
+        let founder = Keys::generate();
+        let claimant = Keys::generate();
+        let (genesis_ref, head) =
+            session_with_one_operator(&pool, community, channel, &founder, &claimant).await;
+        let takeover = claim_event(
+            &claimant,
+            channel,
+            &genesis_ref,
+            Some(head),
+            2,
+            &claimant.public_key().to_hex(),
+            &Keys::generate().public_key().to_hex(),
+            false,
+        );
+        let head = accept_link(&pool, community, channel, &takeover).await;
+
+        let stranger = Keys::generate();
+        let transfer = claim_event(
+            &claimant,
+            channel,
+            &genesis_ref,
+            Some(head),
+            3,
+            &stranger.public_key().to_hex(),
+            &Keys::generate().public_key().to_hex(),
+            true,
+        );
+        let outcome = insert_coding_session_authority_transition_event(
+            &pool, community, &transfer, channel, None,
+        )
+        .await
+        .expect("transfer");
+        assert!(
+            matches!(
+                outcome,
+                CodingSessionAuthorityTransitionInsertOutcome::Refused {
+                    refusal: AuthorityTransitionRefusal::SignerNotAuthorized,
+                }
+            ),
+            "a transfer moves a claim; it does not mint the grant that makes it usable"
+        );
+    }
+
+    /// The rule the whole `ClaimState` shape exists for, proved at the relay:
+    /// revoke the claimant and the claim is **voided**, so there is nothing
+    /// left to transfer — not even for the founder. The way back is a fresh
+    /// takeover.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn a_voided_claim_cannot_be_transferred_and_a_regrant_does_not_restore_it() {
+        let pool = setup_pool().await;
+        let community = CommunityId::from_uuid(make_test_community(&pool).await);
+        let channel = make_test_channel(&pool, *community.as_uuid(), None).await;
+        let founder = Keys::generate();
+        let claimant = Keys::generate();
+        let (genesis_ref, head) =
+            session_with_one_operator(&pool, community, channel, &founder, &claimant).await;
+        let takeover = claim_event(
+            &claimant,
+            channel,
+            &genesis_ref,
+            Some(head),
+            2,
+            &claimant.public_key().to_hex(),
+            &Keys::generate().public_key().to_hex(),
+            false,
+        );
+        let head = accept_link(&pool, community, channel, &takeover).await;
+
+        let revoke = make_seat_authority_transition_event(
+            &founder,
+            channel,
+            &buzz_core::coding_session_authority_transition::CodingSessionAuthorityTransitionPayload::new(
+                CodingSessionAuthorityTransitionType::Revoke,
+                genesis_ref.clone(),
+                Some(head),
+                3,
+                claimant.public_key().to_hex(),
+            ),
+        );
+        let head = accept_link(&pool, community, channel, &revoke).await;
+
+        // Regrant the same pubkey: standing to steer returns, the claim does
+        // not.
+        let regrant = make_authority_transition_event(
+            &founder,
+            channel,
+            &genesis_ref,
+            Some(&head),
+            4,
+            &claimant.public_key().to_hex(),
+        );
+        let head = accept_link(&pool, community, channel, &regrant).await;
+
+        let transfer = claim_event(
+            &founder,
+            channel,
+            &genesis_ref,
+            Some(head.clone()),
+            5,
+            &claimant.public_key().to_hex(),
+            &Keys::generate().public_key().to_hex(),
+            true,
+        );
+        let outcome = insert_coding_session_authority_transition_event(
+            &pool, community, &transfer, channel, None,
+        )
+        .await
+        .expect("transfer");
+        assert!(
+            matches!(
+                outcome,
+                CodingSessionAuthorityTransitionInsertOutcome::Refused {
+                    refusal: AuthorityTransitionRefusal::NoActiveClaim,
+                }
+            ),
+            "a regrant must not resurrect a voided claim, got {outcome:?}"
+        );
+
+        // A fresh takeover is the way back, and it is accepted.
+        let reclaim = claim_event(
+            &claimant,
+            channel,
+            &genesis_ref,
+            Some(head),
+            5,
+            &claimant.public_key().to_hex(),
+            &Keys::generate().public_key().to_hex(),
+            false,
+        );
+        let outcome = insert_coding_session_authority_transition_event(
+            &pool, community, &reclaim, channel, None,
+        )
+        .await
+        .expect("reclaim");
+        assert!(matches!(
+            outcome,
+            CodingSessionAuthorityTransitionInsertOutcome::Accepted { .. }
+        ));
+    }
+
+    /// Every legacy type keeps its original refusal exactly: adding two claim
+    /// types must not have widened who may grant or revoke.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn a_live_operator_still_may_not_grant_or_revoke() {
+        let pool = setup_pool().await;
+        let community = CommunityId::from_uuid(make_test_community(&pool).await);
+        let channel = make_test_channel(&pool, *community.as_uuid(), None).await;
+        let founder = Keys::generate();
+        let operator = Keys::generate();
+        let (genesis_ref, head) =
+            session_with_one_operator(&pool, community, channel, &founder, &operator).await;
+
+        let grant = make_authority_transition_event(
+            &operator,
+            channel,
+            &genesis_ref,
+            Some(&head),
+            2,
+            &Keys::generate().public_key().to_hex(),
+        );
+        let outcome = insert_coding_session_authority_transition_event(
+            &pool, community, &grant, channel, None,
+        )
+        .await
+        .expect("grant");
+        assert!(matches!(
+            outcome,
+            CodingSessionAuthorityTransitionInsertOutcome::Refused {
+                refusal: AuthorityTransitionRefusal::SignerNotOwner { .. },
+            }
+        ));
     }
 }

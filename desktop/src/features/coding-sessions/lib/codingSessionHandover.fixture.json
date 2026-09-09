@@ -1,0 +1,521 @@
+{
+  "events": [
+    {
+      "content": "{\"body\":{\"artifacts\":[{\"kind\":\"wip-ref\",\"ref\":\"refs/heads/wip/builder/1f2e3d4c\",\"repoRef\":\"30617:aa/beekeeper\",\"sha\":\"2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\"}],\"assignmentRefs\":[\"abababababababababababababababababababababababababababababababab\"],\"decisions\":[{\"eventId\":\"cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\",\"summary\":\"The claim is umbrella-wide\"}],\"missing\":[\"uncommitted changes in target/, above the patch bound\"],\"nextAction\":\"Fetch the wip ref and continue from 2b2b\",\"prevCheckpointRef\":null,\"revision\":{\"baseSha\":\"1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\",\"branch\":\"work/handover\",\"dirty\":true,\"headSha\":\"2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\",\"preserved\":\"partial\",\"repoRef\":\"30617:aa/beekeeper\"},\"task\":\"Fold handover records for one umbrella\",\"tests\":[{\"command\":\"cargo test -p buzz-core\",\"name\":\"core\",\"outcome\":\"failed\"}],\"unresolved\":[\"Whether a voided claim fences sibling executions\"]},\"genesisRef\":\"ce5d87ed1b9b4416bb0aa37ea0fb451f211289c54099882917f4ad538d51519b\",\"schema\":\"buzz-coding-session-handover/v1\",\"sessionRef\":\"dc580cfb-6c80-4fc2-8f4e-dfc328acf222\",\"type\":\"checkpoint\"}",
+      "created_at": 1800000100,
+      "id": "8ce637dc70a8238fc95a047375e8311fb7b1f26d9ba2a7cdda4577a50e513351",
+      "kind": 44247,
+      "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+      "sig": "f55630480501c462efd22c59ab414cc48f1f06aa737284b91737d15d8219e9fbfd954edaf671d5ee788bcd42db5ae7de02fe6f99c91842975a2bc995755548ca",
+      "tags": [
+        [
+          "h",
+          "d3e440ea-89f8-4aee-8a02-17edc3e7272e"
+        ],
+        [
+          "d",
+          "dc580cfb-6c80-4fc2-8f4e-dfc328acf222"
+        ],
+        [
+          "csh-v",
+          "csh1"
+        ],
+        [
+          "csh-genesis",
+          "ce5d87ed1b9b4416bb0aa37ea0fb451f211289c54099882917f4ad538d51519b"
+        ],
+        [
+          "csh-type",
+          "checkpoint"
+        ]
+      ]
+    },
+    {
+      "content": "{\"body\":{\"artifacts\":[{\"kind\":\"wip-ref\",\"ref\":\"refs/heads/wip/builder/1f2e3d4c\",\"repoRef\":\"30617:aa/beekeeper\",\"sha\":\"2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\"}],\"assignmentRefs\":[\"abababababababababababababababababababababababababababababababab\"],\"decisions\":[{\"eventId\":\"cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\",\"summary\":\"The claim is umbrella-wide\"}],\"missing\":[\"uncommitted changes in target/, above the patch bound\"],\"nextAction\":\"Apply the patch artifact before continuing\",\"prevCheckpointRef\":\"8ce637dc70a8238fc95a047375e8311fb7b1f26d9ba2a7cdda4577a50e513351\",\"revision\":{\"baseSha\":\"1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\",\"branch\":\"work/handover\",\"dirty\":true,\"headSha\":\"2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\",\"preserved\":\"partial\",\"repoRef\":\"30617:aa/beekeeper\"},\"task\":\"Fold handover records for one umbrella\",\"tests\":[{\"command\":\"cargo test -p buzz-core\",\"name\":\"core\",\"outcome\":\"failed\"}],\"unresolved\":[\"Whether a voided claim fences sibling executions\"]},\"genesisRef\":\"ce5d87ed1b9b4416bb0aa37ea0fb451f211289c54099882917f4ad538d51519b\",\"schema\":\"buzz-coding-session-handover/v1\",\"sessionRef\":\"dc580cfb-6c80-4fc2-8f4e-dfc328acf222\",\"type\":\"checkpoint\"}",
+      "created_at": 1800000100,
+      "id": "5bb28890f6e9385a891760bba737b6f0432f3656ba8d20209b5635b8cf27eab6",
+      "kind": 44247,
+      "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+      "sig": "4bd99b81c1bd3408bbe8a9582da9e348c97d518c1e57d5ffe2eb79a146b043cad82adf645d763e15fbb046dfae93c1cae279f05094ecc8f43b35a030c168577c",
+      "tags": [
+        [
+          "h",
+          "d3e440ea-89f8-4aee-8a02-17edc3e7272e"
+        ],
+        [
+          "d",
+          "dc580cfb-6c80-4fc2-8f4e-dfc328acf222"
+        ],
+        [
+          "csh-v",
+          "csh1"
+        ],
+        [
+          "csh-genesis",
+          "ce5d87ed1b9b4416bb0aa37ea0fb451f211289c54099882917f4ad538d51519b"
+        ],
+        [
+          "csh-type",
+          "checkpoint"
+        ]
+      ]
+    },
+    {
+      "content": "{\"body\":{\"checkpointRef\":\"5bb28890f6e9385a891760bba737b6f0432f3656ba8d20209b5635b8cf27eab6\",\"claimRef\":\"29f1e5ce28722428730d1f11274d9718a1d855ce81e2c1d640fefa02c1cb9ca6\",\"missing\":[\"uncommitted changes on A's machine (dirty=true, no patch)\"],\"mode\":\"reconstructed\",\"note\":null,\"recovered\":[\"wip-ref refs/heads/wip/builder/1f2e3d4c at 2b2b2b2b\"],\"target\":{\"driver\":\"claude-agent-acp\",\"generation\":1,\"instanceId\":\"provider-b\",\"sessionId\":\"sess-b-1\"}},\"genesisRef\":\"ce5d87ed1b9b4416bb0aa37ea0fb451f211289c54099882917f4ad538d51519b\",\"schema\":\"buzz-coding-session-handover/v1\",\"sessionRef\":\"dc580cfb-6c80-4fc2-8f4e-dfc328acf222\",\"type\":\"continuation\"}",
+      "created_at": 1800000600,
+      "id": "ac664898d6db34fff6338e64bf57f9787db1d37d5d800d2aad4dd11d2628bb8b",
+      "kind": 44247,
+      "pubkey": "466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27",
+      "sig": "8d4601709bdf9d2f00ee73b4af51fa4b187765d8bec61c48da462445e43c4cee869318b8d2f5f81a238feae083aa320bc2e9fd06ed5a7f06e318f7235fadc83d",
+      "tags": [
+        [
+          "h",
+          "d3e440ea-89f8-4aee-8a02-17edc3e7272e"
+        ],
+        [
+          "d",
+          "dc580cfb-6c80-4fc2-8f4e-dfc328acf222"
+        ],
+        [
+          "csh-v",
+          "csh1"
+        ],
+        [
+          "csh-genesis",
+          "ce5d87ed1b9b4416bb0aa37ea0fb451f211289c54099882917f4ad538d51519b"
+        ],
+        [
+          "csh-type",
+          "continuation"
+        ]
+      ]
+    },
+    {
+      "content": "{\"body\":{\"artifacts\":[{\"kind\":\"wip-ref\",\"ref\":\"refs/heads/wip/builder/1f2e3d4c\",\"repoRef\":\"30617:aa/beekeeper\",\"sha\":\"2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\"}],\"assignmentRefs\":[\"abababababababababababababababababababababababababababababababab\"],\"decisions\":[{\"eventId\":\"cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\",\"summary\":\"The claim is umbrella-wide\"}],\"missing\":[\"uncommitted changes in target/, above the patch bound\"],\"nextAction\":\"A stranger's plan\",\"prevCheckpointRef\":null,\"revision\":{\"baseSha\":\"1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\",\"branch\":\"work/handover\",\"dirty\":true,\"headSha\":\"2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\",\"preserved\":\"partial\",\"repoRef\":\"30617:aa/beekeeper\"},\"task\":\"Fold handover records for one umbrella\",\"tests\":[{\"command\":\"cargo test -p buzz-core\",\"name\":\"core\",\"outcome\":\"failed\"}],\"unresolved\":[\"Whether a voided claim fences sibling executions\"]},\"genesisRef\":\"ce5d87ed1b9b4416bb0aa37ea0fb451f211289c54099882917f4ad538d51519b\",\"schema\":\"buzz-coding-session-handover/v1\",\"sessionRef\":\"dc580cfb-6c80-4fc2-8f4e-dfc328acf222\",\"type\":\"checkpoint\"}",
+      "created_at": 1800000200,
+      "id": "a370465b3b0c4dbbc11dc54085fddf01a3d7c630ed7f08490c3648c7448399b1",
+      "kind": 44247,
+      "pubkey": "8985087b1818714f67e494a076ca0284c060fabc5d2ba66885b4ac60f801d3f5",
+      "sig": "779a0a3010e8c90fe9b2dc481a877368ee7b614e3de89e7836e180c7b28a1105609963ede38737ccad5a72ceec09fb370dd559a4cfac3305e723ebc3e0e9957d",
+      "tags": [
+        [
+          "h",
+          "d3e440ea-89f8-4aee-8a02-17edc3e7272e"
+        ],
+        [
+          "d",
+          "dc580cfb-6c80-4fc2-8f4e-dfc328acf222"
+        ],
+        [
+          "csh-v",
+          "csh1"
+        ],
+        [
+          "csh-genesis",
+          "ce5d87ed1b9b4416bb0aa37ea0fb451f211289c54099882917f4ad538d51519b"
+        ],
+        [
+          "csh-type",
+          "checkpoint"
+        ]
+      ]
+    },
+    {
+      "content": "{\"genesisRef\":\"ce5d87ed1b9b4416bb0aa37ea0fb451f211289c54099882917f4ad538d51519b\",\"prevAccepted\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"seq\":2,\"type\":\"takeover\",\"granteePubkey\":\"466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27\",\"bodyPubkey\":\"ed83704c95d829046f1ac27806211132102c34e9ac7ffa1b71110658e5b9d1bd\"}",
+      "created_at": 1800000500,
+      "id": "29f1e5ce28722428730d1f11274d9718a1d855ce81e2c1d640fefa02c1cb9ca6",
+      "kind": 44228,
+      "pubkey": "466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27",
+      "sig": "98c76152cfef598f728f2ab9d69e99aa1b92177f233de3abbcf92df1094cc96caf82973f670660022ad767fa3860b0c13fa66586c2c22255ee666b1faca796b5",
+      "tags": [
+        [
+          "h",
+          "d3e440ea-89f8-4aee-8a02-17edc3e7272e"
+        ],
+        [
+          "csat-v",
+          "csat1-1"
+        ],
+        [
+          "csat-genesis",
+          "ce5d87ed1b9b4416bb0aa37ea0fb451f211289c54099882917f4ad538d51519b"
+        ]
+      ]
+    },
+    {
+      "acceptedEventId": "29f1e5ce28722428730d1f11274d9718a1d855ce81e2c1d640fefa02c1cb9ca6",
+      "bodyPubkey": "ed83704c95d829046f1ac27806211132102c34e9ac7ffa1b71110658e5b9d1bd",
+      "genesisRef": "ce5d87ed1b9b4416bb0aa37ea0fb451f211289c54099882917f4ad538d51519b",
+      "granteePubkey": "466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27",
+      "seq": 2,
+      "transitionType": "takeover",
+      "type": "coding_session_authority_transition_accepted"
+    }
+  ],
+  "fold": {
+    "activeContinuation": "ac664898d6db34fff6338e64bf57f9787db1d37d5d800d2aad4dd11d2628bb8b",
+    "checkpoints": [
+      {
+        "author": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+        "body": {
+          "artifacts": [
+            {
+              "kind": "wip-ref",
+              "ref": "refs/heads/wip/builder/1f2e3d4c",
+              "repoRef": "30617:aa/beekeeper",
+              "sha": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b"
+            }
+          ],
+          "assignmentRefs": [
+            "abababababababababababababababababababababababababababababababab"
+          ],
+          "decisions": [
+            {
+              "eventId": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+              "summary": "The claim is umbrella-wide"
+            }
+          ],
+          "missing": [
+            "uncommitted changes in target/, above the patch bound"
+          ],
+          "nextAction": "Apply the patch artifact before continuing",
+          "prevCheckpointRef": "8ce637dc70a8238fc95a047375e8311fb7b1f26d9ba2a7cdda4577a50e513351",
+          "revision": {
+            "baseSha": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+            "branch": "work/handover",
+            "dirty": true,
+            "headSha": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+            "preserved": "partial",
+            "repoRef": "30617:aa/beekeeper"
+          },
+          "task": "Fold handover records for one umbrella",
+          "tests": [
+            {
+              "command": "cargo test -p buzz-core",
+              "name": "core",
+              "outcome": "failed"
+            }
+          ],
+          "unresolved": [
+            "Whether a voided claim fences sibling executions"
+          ]
+        },
+        "createdAt": 1800000100,
+        "eventId": "5bb28890f6e9385a891760bba737b6f0432f3656ba8d20209b5635b8cf27eab6",
+        "standing": "authorized",
+        "supersededBy": null
+      },
+      {
+        "author": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+        "body": {
+          "artifacts": [
+            {
+              "kind": "wip-ref",
+              "ref": "refs/heads/wip/builder/1f2e3d4c",
+              "repoRef": "30617:aa/beekeeper",
+              "sha": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b"
+            }
+          ],
+          "assignmentRefs": [
+            "abababababababababababababababababababababababababababababababab"
+          ],
+          "decisions": [
+            {
+              "eventId": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+              "summary": "The claim is umbrella-wide"
+            }
+          ],
+          "missing": [
+            "uncommitted changes in target/, above the patch bound"
+          ],
+          "nextAction": "Fetch the wip ref and continue from 2b2b",
+          "prevCheckpointRef": null,
+          "revision": {
+            "baseSha": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+            "branch": "work/handover",
+            "dirty": true,
+            "headSha": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+            "preserved": "partial",
+            "repoRef": "30617:aa/beekeeper"
+          },
+          "task": "Fold handover records for one umbrella",
+          "tests": [
+            {
+              "command": "cargo test -p buzz-core",
+              "name": "core",
+              "outcome": "failed"
+            }
+          ],
+          "unresolved": [
+            "Whether a voided claim fences sibling executions"
+          ]
+        },
+        "createdAt": 1800000100,
+        "eventId": "8ce637dc70a8238fc95a047375e8311fb7b1f26d9ba2a7cdda4577a50e513351",
+        "standing": "superseded",
+        "supersededBy": "5bb28890f6e9385a891760bba737b6f0432f3656ba8d20209b5635b8cf27eab6"
+      },
+      {
+        "author": "8985087b1818714f67e494a076ca0284c060fabc5d2ba66885b4ac60f801d3f5",
+        "body": {
+          "artifacts": [
+            {
+              "kind": "wip-ref",
+              "ref": "refs/heads/wip/builder/1f2e3d4c",
+              "repoRef": "30617:aa/beekeeper",
+              "sha": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b"
+            }
+          ],
+          "assignmentRefs": [
+            "abababababababababababababababababababababababababababababababab"
+          ],
+          "decisions": [
+            {
+              "eventId": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+              "summary": "The claim is umbrella-wide"
+            }
+          ],
+          "missing": [
+            "uncommitted changes in target/, above the patch bound"
+          ],
+          "nextAction": "A stranger's plan",
+          "prevCheckpointRef": null,
+          "revision": {
+            "baseSha": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+            "branch": "work/handover",
+            "dirty": true,
+            "headSha": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+            "preserved": "partial",
+            "repoRef": "30617:aa/beekeeper"
+          },
+          "task": "Fold handover records for one umbrella",
+          "tests": [
+            {
+              "command": "cargo test -p buzz-core",
+              "name": "core",
+              "outcome": "failed"
+            }
+          ],
+          "unresolved": [
+            "Whether a voided claim fences sibling executions"
+          ]
+        },
+        "createdAt": 1800000200,
+        "eventId": "a370465b3b0c4dbbc11dc54085fddf01a3d7c630ed7f08490c3648c7448399b1",
+        "standing": "unauthorized",
+        "supersededBy": null
+      }
+    ],
+    "claim": {
+      "acceptedEventId": "29f1e5ce28722428730d1f11274d9718a1d855ce81e2c1d640fefa02c1cb9ca6",
+      "bodyPubkey": "ed83704c95d829046f1ac27806211132102c34e9ac7ffa1b71110658e5b9d1bd",
+      "claimant": "466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27",
+      "seq": 2,
+      "state": "active"
+    },
+    "claimSince": 1800000500,
+    "continuations": [
+      {
+        "author": "466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27",
+        "body": {
+          "checkpointRef": "5bb28890f6e9385a891760bba737b6f0432f3656ba8d20209b5635b8cf27eab6",
+          "claimRef": "29f1e5ce28722428730d1f11274d9718a1d855ce81e2c1d640fefa02c1cb9ca6",
+          "missing": [
+            "uncommitted changes on A's machine (dirty=true, no patch)"
+          ],
+          "mode": "reconstructed",
+          "note": null,
+          "recovered": [
+            "wip-ref refs/heads/wip/builder/1f2e3d4c at 2b2b2b2b"
+          ],
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "provider-b",
+            "sessionId": "sess-b-1"
+          }
+        },
+        "claimRef": "29f1e5ce28722428730d1f11274d9718a1d855ce81e2c1d640fefa02c1cb9ca6",
+        "createdAt": 1800000600,
+        "eventId": "ac664898d6db34fff6338e64bf57f9787db1d37d5d800d2aad4dd11d2628bb8b",
+        "mode": "reconstructed",
+        "standing": "authorized"
+      }
+    ],
+    "excluded": [
+      {
+        "eventId": "a370465b3b0c4dbbc11dc54085fddf01a3d7c630ed7f08490c3648c7448399b1",
+        "reason": "checkpoint by 8985087b1818714f67e494a076ca0284c060fabc5d2ba66885b4ac60f801d3f5 is not used for reconstruction: that pubkey was neither the founder nor a live operator nor an active seat of this umbrella when it was written"
+      },
+      {
+        "eventId": "8ce637dc70a8238fc95a047375e8311fb7b1f26d9ba2a7cdda4577a50e513351",
+        "reason": "checkpoint replaced by 5bb28890f6e9385a891760bba737b6f0432f3656ba8d20209b5635b8cf27eab6, which its own author wrote as the next one: a reconstruction starts from the newest statement, not the newest timestamp"
+      }
+    ],
+    "latestAuthorizedCheckpoint": "5bb28890f6e9385a891760bba737b6f0432f3656ba8d20209b5635b8cf27eab6",
+    "retired": false
+  },
+  "retired": {
+    "events": [
+      {
+        "content": "{\"body\":{\"artifacts\":[{\"kind\":\"wip-ref\",\"ref\":\"refs/heads/wip/builder/1f2e3d4c\",\"repoRef\":\"30617:aa/beekeeper\",\"sha\":\"2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\"}],\"assignmentRefs\":[\"abababababababababababababababababababababababababababababababab\"],\"decisions\":[{\"eventId\":\"cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\",\"summary\":\"The claim is umbrella-wide\"}],\"missing\":[\"uncommitted changes in target/, above the patch bound\"],\"nextAction\":\"Fetch the wip ref and continue from 2b2b\",\"prevCheckpointRef\":null,\"revision\":{\"baseSha\":\"1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\",\"branch\":\"work/handover\",\"dirty\":true,\"headSha\":\"2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\",\"preserved\":\"partial\",\"repoRef\":\"30617:aa/beekeeper\"},\"task\":\"Fold handover records for one umbrella\",\"tests\":[{\"command\":\"cargo test -p buzz-core\",\"name\":\"core\",\"outcome\":\"failed\"}],\"unresolved\":[\"Whether a voided claim fences sibling executions\"]},\"genesisRef\":\"ce5d87ed1b9b4416bb0aa37ea0fb451f211289c54099882917f4ad538d51519b\",\"schema\":\"buzz-coding-session-handover/v1\",\"sessionRef\":\"dc580cfb-6c80-4fc2-8f4e-dfc328acf222\",\"type\":\"checkpoint\"}",
+        "created_at": 1800000100,
+        "id": "8ce637dc70a8238fc95a047375e8311fb7b1f26d9ba2a7cdda4577a50e513351",
+        "kind": 44247,
+        "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+        "sig": "f55630480501c462efd22c59ab414cc48f1f06aa737284b91737d15d8219e9fbfd954edaf671d5ee788bcd42db5ae7de02fe6f99c91842975a2bc995755548ca",
+        "tags": [
+          [
+            "h",
+            "d3e440ea-89f8-4aee-8a02-17edc3e7272e"
+          ],
+          [
+            "d",
+            "dc580cfb-6c80-4fc2-8f4e-dfc328acf222"
+          ],
+          [
+            "csh-v",
+            "csh1"
+          ],
+          [
+            "csh-genesis",
+            "ce5d87ed1b9b4416bb0aa37ea0fb451f211289c54099882917f4ad538d51519b"
+          ],
+          [
+            "csh-type",
+            "checkpoint"
+          ]
+        ]
+      },
+      {
+        "content": "{\"body\":{\"checkpointRef\":\"5bb28890f6e9385a891760bba737b6f0432f3656ba8d20209b5635b8cf27eab6\",\"claimRef\":\"29f1e5ce28722428730d1f11274d9718a1d855ce81e2c1d640fefa02c1cb9ca6\",\"missing\":[\"uncommitted changes on A's machine (dirty=true, no patch)\"],\"mode\":\"reconstructed\",\"note\":null,\"recovered\":[\"wip-ref refs/heads/wip/builder/1f2e3d4c at 2b2b2b2b\"],\"target\":{\"driver\":\"claude-agent-acp\",\"generation\":1,\"instanceId\":\"provider-b\",\"sessionId\":\"sess-b-1\"}},\"genesisRef\":\"ce5d87ed1b9b4416bb0aa37ea0fb451f211289c54099882917f4ad538d51519b\",\"schema\":\"buzz-coding-session-handover/v1\",\"sessionRef\":\"dc580cfb-6c80-4fc2-8f4e-dfc328acf222\",\"type\":\"continuation\"}",
+        "created_at": 1800000600,
+        "id": "ac664898d6db34fff6338e64bf57f9787db1d37d5d800d2aad4dd11d2628bb8b",
+        "kind": 44247,
+        "pubkey": "466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27",
+        "sig": "8d4601709bdf9d2f00ee73b4af51fa4b187765d8bec61c48da462445e43c4cee869318b8d2f5f81a238feae083aa320bc2e9fd06ed5a7f06e318f7235fadc83d",
+        "tags": [
+          [
+            "h",
+            "d3e440ea-89f8-4aee-8a02-17edc3e7272e"
+          ],
+          [
+            "d",
+            "dc580cfb-6c80-4fc2-8f4e-dfc328acf222"
+          ],
+          [
+            "csh-v",
+            "csh1"
+          ],
+          [
+            "csh-genesis",
+            "ce5d87ed1b9b4416bb0aa37ea0fb451f211289c54099882917f4ad538d51519b"
+          ],
+          [
+            "csh-type",
+            "continuation"
+          ]
+        ]
+      }
+    ],
+    "fold": {
+      "activeContinuation": null,
+      "checkpoints": [
+        {
+          "author": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+          "body": {
+            "artifacts": [
+              {
+                "kind": "wip-ref",
+                "ref": "refs/heads/wip/builder/1f2e3d4c",
+                "repoRef": "30617:aa/beekeeper",
+                "sha": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b"
+              }
+            ],
+            "assignmentRefs": [
+              "abababababababababababababababababababababababababababababababab"
+            ],
+            "decisions": [
+              {
+                "eventId": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+                "summary": "The claim is umbrella-wide"
+              }
+            ],
+            "missing": [
+              "uncommitted changes in target/, above the patch bound"
+            ],
+            "nextAction": "Fetch the wip ref and continue from 2b2b",
+            "prevCheckpointRef": null,
+            "revision": {
+              "baseSha": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+              "branch": "work/handover",
+              "dirty": true,
+              "headSha": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+              "preserved": "partial",
+              "repoRef": "30617:aa/beekeeper"
+            },
+            "task": "Fold handover records for one umbrella",
+            "tests": [
+              {
+                "command": "cargo test -p buzz-core",
+                "name": "core",
+                "outcome": "failed"
+              }
+            ],
+            "unresolved": [
+              "Whether a voided claim fences sibling executions"
+            ]
+          },
+          "createdAt": 1800000100,
+          "eventId": "8ce637dc70a8238fc95a047375e8311fb7b1f26d9ba2a7cdda4577a50e513351",
+          "standing": "authorized",
+          "supersededBy": null
+        }
+      ],
+      "claim": {
+        "state": "no-claim"
+      },
+      "claimSince": null,
+      "continuations": [
+        {
+          "author": "466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27",
+          "body": {
+            "checkpointRef": "5bb28890f6e9385a891760bba737b6f0432f3656ba8d20209b5635b8cf27eab6",
+            "claimRef": "29f1e5ce28722428730d1f11274d9718a1d855ce81e2c1d640fefa02c1cb9ca6",
+            "missing": [
+              "uncommitted changes on A's machine (dirty=true, no patch)"
+            ],
+            "mode": "reconstructed",
+            "note": null,
+            "recovered": [
+              "wip-ref refs/heads/wip/builder/1f2e3d4c at 2b2b2b2b"
+            ],
+            "target": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "provider-b",
+              "sessionId": "sess-b-1"
+            }
+          },
+          "claimRef": "29f1e5ce28722428730d1f11274d9718a1d855ce81e2c1d640fefa02c1cb9ca6",
+          "createdAt": 1800000600,
+          "eventId": "ac664898d6db34fff6338e64bf57f9787db1d37d5d800d2aad4dd11d2628bb8b",
+          "mode": "reconstructed",
+          "standing": "authorized"
+        }
+      ],
+      "excluded": [
+        {
+          "eventId": "8ce637dc70a8238fc95a047375e8311fb7b1f26d9ba2a7cdda4577a50e513351",
+          "reason": "this session was deleted: nothing here is reconstructed or resumed"
+        },
+        {
+          "eventId": "ac664898d6db34fff6338e64bf57f9787db1d37d5d800d2aad4dd11d2628bb8b",
+          "reason": "this session was deleted: nothing here is reconstructed or resumed"
+        }
+      ],
+      "latestAuthorizedCheckpoint": null,
+      "retired": true
+    }
+  }
+}

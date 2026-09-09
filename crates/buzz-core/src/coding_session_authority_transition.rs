@@ -7,14 +7,26 @@
 //!
 //! # Closed transition types today
 //!
-//! `grant-operator`, `grant-viewer`, `revoke`, `grant-seat`, and `revoke-seat`
-//! are implemented — see [`CodingSessionAuthorityTransitionType`]. The type
-//! is carried as a string enum precisely so further types (`transfer`,
-//! `takeover`) are additive
-//! later: adding a variant does not change the shape of an existing,
-//! already-signed transition, and a relay that only understands the current
-//! set correctly rejects any other value as unknown rather than guessing at
-//! its meaning.
+//! `grant-operator`, `grant-viewer`, `revoke`, `grant-seat`, `revoke-seat`,
+//! `takeover` and `transfer` are implemented — see
+//! [`CodingSessionAuthorityTransitionType`]. The type is carried as a string
+//! enum precisely so further types are additive later: adding a variant does
+//! not change the shape of an existing, already-signed transition, and a relay
+//! that only understands the current set correctly rejects any other value as
+//! unknown rather than guessing at its meaning. `takeover` and `transfer` were
+//! the two names this module reserved from the start; they landed with the
+//! absent-participant handover (`docs/HANDOVER_IMPL.md` §1) and each carries
+//! one extra field, `bodyPubkey`.
+//!
+//! # The claim, and why it is not a grant
+//!
+//! A grant says who *may* steer; a claim says who *is* steering, and on which
+//! execution body. `takeover` is a self-claim — the signer names itself as
+//! claimant — and `transfer` hands that claim to somebody else. The fold that
+//! turns a chain into the current claim is
+//! [`crate::coding_session_authority_claim`], shared by the relay's acceptance
+//! rules, the provider's fence and the Desktop twin so all three answer "who
+//! holds this session" the same way.
 //!
 //! # The chain, not just the link
 //!
@@ -80,6 +92,52 @@ pub enum CodingSessionAuthorityTransitionType {
     GrantSeat,
     /// Revokes one actor's exact authoritative team role seat.
     RevokeSeat,
+    /// One authorized participant claims this session's work for itself, on a
+    /// named execution body.
+    ///
+    /// A **self-claim only**: `granteePubkey` must equal the signer, so nobody
+    /// can be volunteered into carrying someone else's work. `bodyPubkey` is
+    /// the provider authority pubkey of the body the claimant will use, which
+    /// is what every consumer fences against — a returning machine that is not
+    /// that body refuses turns rather than silently resuming competing work.
+    Takeover,
+    /// The current claimant (or the founder) hands the claim to another
+    /// authorized participant, naming the body it will run on.
+    ///
+    /// `granteePubkey` is the **new** claimant, never the signer's own record
+    /// of itself; `bodyPubkey` is the new body. Unlike `takeover` this is not a
+    /// self-claim, which is exactly why the relay checks the signer against the
+    /// folded current claim rather than against the grantee.
+    Transfer,
+}
+
+impl CodingSessionAuthorityTransitionType {
+    /// The exact wire token this type is written as, in content and in every
+    /// receipt that restates it.
+    ///
+    /// One function so a consumer that has to print or compare the token —
+    /// the relay's receipt, the provider's fence, a refusal message — never
+    /// re-spells it by hand.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::GrantOperator => "grant-operator",
+            Self::GrantViewer => "grant-viewer",
+            Self::Revoke => "revoke",
+            Self::GrantSeat => "grant-seat",
+            Self::RevokeSeat => "revoke-seat",
+            Self::Takeover => "takeover",
+            Self::Transfer => "transfer",
+        }
+    }
+
+    /// Whether this type sets the session's execution claim.
+    ///
+    /// The two claiming types are the only ones that carry `bodyPubkey`, and
+    /// the only ones [`crate::coding_session_authority_claim`] treats as
+    /// setting a claim.
+    pub const fn is_claim(self) -> bool {
+        matches!(self, Self::Takeover | Self::Transfer)
+    }
 }
 
 /// Durable coding-session authority-transition JSON payload.
@@ -108,6 +166,21 @@ pub struct CodingSessionAuthorityTransitionPayload {
     /// Required normalized role for seat transitions; absent on legacy grant transitions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub role: Option<String>,
+    /// The **provider authority pubkey** of the execution body the claimant
+    /// will use — required for `takeover` and `transfer`, absent for every
+    /// other type.
+    ///
+    /// This is what makes a claim fenceable. "B has taken over" alone would
+    /// leave a returning provider with no way to tell whether *it* is the body
+    /// now carrying the work; naming the body turns that into an equality
+    /// check against the provider's own key
+    /// (`docs/HANDOVER_IMPL.md` §3). It is a pubkey, not a session target: an
+    /// execution generation changes, and the claim outlives it.
+    ///
+    /// Serialized only when present, so every transition signed before this
+    /// field existed keeps its exact five- or six-key shape on the wire.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body_pubkey: Option<String>,
 }
 
 impl CodingSessionAuthorityTransitionPayload {
@@ -126,6 +199,7 @@ impl CodingSessionAuthorityTransitionPayload {
             transition_type,
             grantee_pubkey: grantee_pubkey.into(),
             role: None,
+            body_pubkey: None,
         }
     }
 
@@ -144,6 +218,7 @@ impl CodingSessionAuthorityTransitionPayload {
             seq,
             grantee_pubkey: grantee_pubkey.into(),
             role: Some(role.into()),
+            body_pubkey: None,
         }
     }
 
@@ -162,6 +237,52 @@ impl CodingSessionAuthorityTransitionPayload {
             seq,
             grantee_pubkey: grantee_pubkey.into(),
             role: Some(role.into()),
+            body_pubkey: None,
+        }
+    }
+
+    /// Build a `takeover` transition payload: a self-claim of this session.
+    ///
+    /// `claimant` must be the signer's own pubkey — the relay refuses any
+    /// other, and [`Self::validate`] cannot know the signer, so the caller
+    /// passes the same key it will sign with.
+    pub fn new_takeover(
+        genesis_ref: impl Into<String>,
+        prev_accepted: Option<String>,
+        seq: u32,
+        claimant: impl Into<String>,
+        body_pubkey: impl Into<String>,
+    ) -> Self {
+        Self {
+            transition_type: CodingSessionAuthorityTransitionType::Takeover,
+            genesis_ref: genesis_ref.into(),
+            prev_accepted,
+            seq,
+            grantee_pubkey: claimant.into(),
+            role: None,
+            body_pubkey: Some(body_pubkey.into()),
+        }
+    }
+
+    /// Build a `transfer` transition payload: hand the claim to `claimant`.
+    ///
+    /// The signer is the current claimant or the founder; that is the relay's
+    /// check against the folded chain, not this payload's.
+    pub fn new_transfer(
+        genesis_ref: impl Into<String>,
+        prev_accepted: Option<String>,
+        seq: u32,
+        claimant: impl Into<String>,
+        body_pubkey: impl Into<String>,
+    ) -> Self {
+        Self {
+            transition_type: CodingSessionAuthorityTransitionType::Transfer,
+            genesis_ref: genesis_ref.into(),
+            prev_accepted,
+            seq,
+            grantee_pubkey: claimant.into(),
+            role: None,
+            body_pubkey: Some(body_pubkey.into()),
         }
     }
 
@@ -214,11 +335,35 @@ impl CodingSessionAuthorityTransitionPayload {
             }
             CodingSessionAuthorityTransitionType::GrantOperator
             | CodingSessionAuthorityTransitionType::GrantViewer
-            | CodingSessionAuthorityTransitionType::Revoke => {
+            | CodingSessionAuthorityTransitionType::Revoke
+            | CodingSessionAuthorityTransitionType::Takeover
+            | CodingSessionAuthorityTransitionType::Transfer => {
                 if self.role.is_some() {
                     return Err("non-seat authority transition must not carry role".into());
                 }
             }
+        }
+        // A claim names the body it will run on; nothing else may name one.
+        // Both halves are refusals rather than tolerations: a `takeover`
+        // without a body cannot be fenced against, and a `revoke` carrying one
+        // is a producer inventing a shape a consumer would have to guess at.
+        match (self.transition_type.is_claim(), self.body_pubkey.as_deref()) {
+            (true, Some(body)) => validate_event_id_hex("bodyPubkey", body)?,
+            (true, None) => {
+                return Err(
+                    "takeover and transfer require bodyPubkey: the execution body the claimant \
+                     will use is what every consumer fences against"
+                        .into(),
+                )
+            }
+            (false, Some(_)) => {
+                return Err(
+                    "only takeover and transfer may carry bodyPubkey — no other transition \
+                     names an execution body"
+                        .into(),
+                )
+            }
+            (false, None) => {}
         }
         Ok(())
     }
@@ -243,10 +388,12 @@ fn validate_event_id_hex(field: &str, value: &str) -> Result<(), String> {
 ///
 /// Legacy transitions accept exactly `{genesisRef, prevAccepted, seq, type,
 /// granteePubkey}`; seat transitions accept exactly those keys plus required
-/// `role`. Nothing between or beyond is accepted, and `prevAccepted`'s key
-/// must be present even though its value may be `null`. A `type` value
-/// outside the pinned [`CodingSessionAuthorityTransitionType`] vocabulary
-/// fails to decode and is rejected the same as any other malformed field.
+/// `role`; claim transitions (`takeover`, `transfer`) accept exactly those
+/// keys plus required `bodyPubkey`. Nothing between or beyond is accepted, and
+/// `prevAccepted`'s key must be present even though its value may be `null`. A
+/// `type` value outside the pinned
+/// [`CodingSessionAuthorityTransitionType`] vocabulary fails to decode and is
+/// rejected the same as any other malformed field.
 pub fn decode_coding_session_authority_transition(
     content: &str,
 ) -> Result<CodingSessionAuthorityTransitionPayload, String> {
@@ -272,8 +419,20 @@ pub fn decode_coding_session_authority_transition(
         "granteePubkey",
         "role",
     ];
+    /// A claim's exact shape: the five legacy keys plus the body it names.
+    /// Required on write *and* on read — a claim with no body could not be
+    /// fenced, so there is no legacy shape to stay compatible with.
+    const CLAIM_EXPECTED: [&str; 6] = [
+        "genesisRef",
+        "prevAccepted",
+        "seq",
+        "type",
+        "granteePubkey",
+        "bodyPubkey",
+    ];
     let expected: &[&str] = match object.get("type").and_then(Value::as_str) {
         Some("grant-seat" | "revoke-seat") => &SEAT_EXPECTED,
+        Some("takeover" | "transfer") => &CLAIM_EXPECTED,
         _ => &LEGACY_EXPECTED,
     };
     let complete = expected.iter().all(|key| object.contains_key(*key));
@@ -541,10 +700,11 @@ mod tests {
         let genesis_ref = event_id_hex("ab");
         let grantee = event_id_hex("cd");
         for bad_type in [
-            "\"transfer\"",
-            "\"takeover\"",
+            "\"handover\"",
+            "\"claim\"",
             "\"GRANT-OPERATOR\"",
             "\"grant_operator\"",
+            "\"TAKEOVER\"",
             "1",
             "null",
         ] {
@@ -568,6 +728,185 @@ mod tests {
     fn rejects_non_object_and_malformed_json() {
         for rejected in ["not json", "[1,2,3]", "\"a string\"", "42", "null"] {
             assert!(decode_coding_session_authority_transition(rejected).is_err());
+        }
+    }
+
+    // ── Claims: takeover and transfer (docs/HANDOVER_IMPL.md §1) ────────────
+
+    fn claim_json(kind: &str, body: &str) -> String {
+        format!(
+            r#"{{"genesisRef":"{gr}","prevAccepted":null,"seq":1,"type":"{kind}","granteePubkey":"{gp}","bodyPubkey":"{body}"}}"#,
+            gr = event_id_hex("ab"),
+            gp = event_id_hex("cd"),
+        )
+    }
+
+    #[test]
+    fn a_takeover_round_trips_through_the_exact_claim_shape() {
+        let payload = CodingSessionAuthorityTransitionPayload::new_takeover(
+            event_id_hex("ab"),
+            None,
+            1,
+            event_id_hex("cd"),
+            event_id_hex("ef"),
+        );
+        payload.validate().expect("a well-formed takeover");
+        let content = serde_json::to_string(&payload).expect("serialize");
+        assert_eq!(content, claim_json("takeover", &event_id_hex("ef")));
+        assert_eq!(
+            decode_coding_session_authority_transition(&content).expect("decode"),
+            payload
+        );
+        assert_eq!(payload.transition_type.as_str(), "takeover");
+        assert!(payload.transition_type.is_claim());
+    }
+
+    #[test]
+    fn a_transfer_round_trips_and_names_the_new_claimant() {
+        let payload = CodingSessionAuthorityTransitionPayload::new_transfer(
+            event_id_hex("ab"),
+            Some(event_id_hex("11")),
+            2,
+            event_id_hex("cd"),
+            event_id_hex("ef"),
+        );
+        payload.validate().expect("a well-formed transfer");
+        let content = serde_json::to_string(&payload).expect("serialize");
+        let decoded = decode_coding_session_authority_transition(&content).expect("decode");
+        assert_eq!(decoded, payload);
+        assert_eq!(decoded.grantee_pubkey, event_id_hex("cd"));
+        assert_eq!(
+            decoded.body_pubkey.as_deref(),
+            Some(event_id_hex("ef").as_str())
+        );
+        assert_eq!(decoded.transition_type.as_str(), "transfer");
+    }
+
+    /// The field is required for a claim, refused everywhere else, and must be
+    /// a lowercase 64-hex pubkey.
+    #[test]
+    fn body_pubkey_is_required_for_claims_and_refused_elsewhere() {
+        for kind in ["takeover", "transfer"] {
+            // Missing entirely.
+            let missing = format!(
+                r#"{{"genesisRef":"{gr}","prevAccepted":null,"seq":1,"type":"{kind}","granteePubkey":"{gp}"}}"#,
+                gr = event_id_hex("ab"),
+                gp = event_id_hex("cd"),
+            );
+            assert!(
+                decode_coding_session_authority_transition(&missing).is_err(),
+                "{kind} without bodyPubkey must be refused"
+            );
+            // Present but malformed.
+            for bad in [
+                event_id_hex("ef").to_uppercase(),
+                event_id_hex("ef")[..63].to_owned(),
+                String::new(),
+            ] {
+                assert!(
+                    decode_coding_session_authority_transition(&claim_json(kind, &bad)).is_err(),
+                    "{kind} with bodyPubkey {bad:?} must be refused"
+                );
+            }
+            // A role alongside a claim is refused: a claim is not a seat.
+            let with_role = format!(
+                r#"{{"genesisRef":"{gr}","prevAccepted":null,"seq":1,"type":"{kind}","granteePubkey":"{gp}","bodyPubkey":"{body}","role":"lead"}}"#,
+                gr = event_id_hex("ab"),
+                gp = event_id_hex("cd"),
+                body = event_id_hex("ef"),
+            );
+            assert!(decode_coding_session_authority_transition(&with_role).is_err());
+        }
+
+        for kind in ["grant-operator", "grant-viewer", "revoke"] {
+            let smuggled = format!(
+                r#"{{"genesisRef":"{gr}","prevAccepted":null,"seq":1,"type":"{kind}","granteePubkey":"{gp}","bodyPubkey":"{body}"}}"#,
+                gr = event_id_hex("ab"),
+                gp = event_id_hex("cd"),
+                body = event_id_hex("ef"),
+            );
+            assert!(
+                decode_coding_session_authority_transition(&smuggled).is_err(),
+                "{kind} must not carry bodyPubkey"
+            );
+        }
+
+        let seat_with_body = format!(
+            r#"{{"genesisRef":"{gr}","prevAccepted":null,"seq":1,"type":"grant-seat","granteePubkey":"{gp}","role":"builder","bodyPubkey":"{body}"}}"#,
+            gr = event_id_hex("ab"),
+            gp = event_id_hex("cd"),
+            body = event_id_hex("ef"),
+        );
+        assert!(decode_coding_session_authority_transition(&seat_with_body).is_err());
+    }
+
+    /// The one compatibility promise: adding the field changed no existing
+    /// transition's bytes. Every legacy and seat shape serializes exactly as
+    /// it did before `bodyPubkey` existed.
+    #[test]
+    fn legacy_and_seat_shapes_serialize_byte_identically_to_before() {
+        let legacy = CodingSessionAuthorityTransitionPayload::new_grant_operator(
+            event_id_hex("ab"),
+            None,
+            1,
+            event_id_hex("cd"),
+        );
+        assert_eq!(
+            serde_json::to_string(&legacy).expect("serialize"),
+            valid_json(&event_id_hex("ab"), "null", 1, &event_id_hex("cd")),
+        );
+        assert!(!serde_json::to_string(&legacy)
+            .expect("serialize")
+            .contains("bodyPubkey"));
+
+        let seat = CodingSessionAuthorityTransitionPayload::new_grant_seat(
+            event_id_hex("ab"),
+            None,
+            1,
+            event_id_hex("cd"),
+            "builder",
+        );
+        assert_eq!(
+            serde_json::to_string(&seat).expect("serialize"),
+            format!(
+                r#"{{"genesisRef":"{gr}","prevAccepted":null,"seq":1,"type":"grant-seat","granteePubkey":"{gp}","role":"builder"}}"#,
+                gr = event_id_hex("ab"),
+                gp = event_id_hex("cd"),
+            ),
+        );
+    }
+
+    /// Every pinned token, including the two claims, round-trips through the
+    /// enum's own spelling.
+    #[test]
+    fn as_str_is_the_wire_token_for_every_pinned_type() {
+        for (token, variant) in [
+            (
+                "grant-operator",
+                CodingSessionAuthorityTransitionType::GrantOperator,
+            ),
+            (
+                "grant-viewer",
+                CodingSessionAuthorityTransitionType::GrantViewer,
+            ),
+            ("revoke", CodingSessionAuthorityTransitionType::Revoke),
+            (
+                "grant-seat",
+                CodingSessionAuthorityTransitionType::GrantSeat,
+            ),
+            (
+                "revoke-seat",
+                CodingSessionAuthorityTransitionType::RevokeSeat,
+            ),
+            ("takeover", CodingSessionAuthorityTransitionType::Takeover),
+            ("transfer", CodingSessionAuthorityTransitionType::Transfer),
+        ] {
+            assert_eq!(variant.as_str(), token);
+            assert_eq!(
+                serde_json::to_value(variant).expect("serialize"),
+                serde_json::Value::String(token.to_owned())
+            );
+            assert_eq!(variant.is_claim(), matches!(token, "takeover" | "transfer"));
         }
     }
 }

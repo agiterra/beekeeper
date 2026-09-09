@@ -12,6 +12,7 @@ import {
   KIND_CODING_SESSION_CLOSURE,
   KIND_CODING_SESSION_GENESIS,
   KIND_CODING_SESSION_GOAL,
+  KIND_CODING_SESSION_HANDOVER,
   KIND_CODING_SESSION_LEASE,
   KIND_CODING_SESSION_LIFECYCLE_COMMAND,
   KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
@@ -127,7 +128,7 @@ test("codingSessionKinds_matchBuzzCoreValues", () => {
       name: 44229,
     },
   );
-  assert.equal(CODING_SESSION_EVENT_KINDS.length, 13);
+  assert.equal(CODING_SESSION_EVENT_KINDS.length, 14);
   assert.equal(
     KIND_CODING_SESSION_LEASE >= 20000 && KIND_CODING_SESSION_LEASE <= 29999,
     true,
@@ -205,4 +206,26 @@ test("the observation kind stays out of the chat timeline and the mock relay set
     false,
   );
   assert.equal(CHANNEL_EVENT_KINDS.includes(KIND_REPO_STATE), false);
+});
+
+test("the handover kind is read off the wire and served by the mock relay", () => {
+  // 44247 (NIP-CSH) is the checkpoint/continuation record.
+  // `useCodingSessionHandover` reads it — a bounded query plus a live REQ — so
+  // by this list's own rule it belongs in `CODING_SESSION_EVENT_KINDS`, which
+  // is also what the e2e mock relay serves. It stays out of the chat timeline:
+  // that set is an allowlist of human-visible message kinds.
+  assert.equal(KIND_CODING_SESSION_HANDOVER, 44247);
+  assert.equal(
+    KIND_CODING_SESSION_HANDOVER,
+    KIND_CODING_SESSION_OBSERVATION + 1,
+    "44247 is the next kind after the observation, with nothing between",
+  );
+  assert.equal(
+    CODING_SESSION_EVENT_KINDS.includes(KIND_CODING_SESSION_HANDOVER),
+    true,
+  );
+  assert.equal(
+    CHANNEL_TIMELINE_CONTENT_KINDS.includes(KIND_CODING_SESSION_HANDOVER),
+    false,
+  );
 });
