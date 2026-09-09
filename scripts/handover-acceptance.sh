@@ -18,7 +18,14 @@
 #     relay's own smart-HTTP transport with NIP-98 credentials
 #     (`git-credential-nostr`), so the kind:30618 ref state a handover
 #     checkpoint points at is produced by the relay, not asserted by this
-#     script.
+#     script;
+#   - **two different working directories for B**: the folder its provider is
+#     configured to run this project and channel in (`checkout-b-default`, a
+#     plain clone) and the folder B recovers into (`checkout-b-work`). They are
+#     deliberately not the same. A composition that pre-seeds one folder for
+#     both cannot tell a reconstruction that placed the work from one that
+#     opened the model on an untouched tree and said "recovered" anyway — the
+#     defect this split exists to catch.
 #
 # Nothing here is hand-signed as the relay: every 40099 receipt, every 30618,
 # every acceptance is produced by the relay binary itself, and every assertion
@@ -44,6 +51,9 @@
 #     `fenced`/retired seat-request behaviour is proven only by the provider's
 #     own unit suite (`crates/buzz-session-provider/src/tests/handover_*`).
 #   - **Native Windows.** Deferred and labelled (§9).
+#   - **A host that disagrees with the projects file.** The binding is checked
+#     as written and as the adapter observed it; a desktop host rewriting the
+#     same file underneath a running provider is not modelled.
 #   - **Blossom-sized captures.** Every patch here fits inside a NIP-34 patch
 #     event; the blob path above the event limit is not exercised.
 #
@@ -445,9 +455,19 @@ seed_from_relay() {
     "refs/heads/main:refs/remotes/origin/main"
   git -C "${dir}" checkout -q -B main refs/remotes/origin/main
 }
-CHECKOUT_B="${WORKDIR}/checkout-b"
+# Two folders for B, deliberately different, because the seam this composition
+# has to test is exactly the one a single folder hides. `B-default` is where
+# B's provider is configured to run *anything* in this project and channel — a
+# plain clone, nobody's handover. `B-work` is the checkout B recovers into with
+# `--cwd`. If a reconstruction does not bind the create to `B-work`, the model
+# opens in `B-default` and works on an untouched tree while the continuation
+# says "recovered": a pre-seeded projects file pointing both names at one
+# directory would report that as a pass.
+CHECKOUT_B_DEFAULT="${WORKDIR}/checkout-b-default"
+CHECKOUT_B="${WORKDIR}/checkout-b-work"
 CHECKOUT_B9="${WORKDIR}/checkout-b9"
 CHECKOUT_B10="${WORKDIR}/checkout-b10"
+seed_from_relay "${CHECKOUT_B_DEFAULT}" "owner-b"
 seed_from_relay "${CHECKOUT_B}" "owner-b"
 seed_from_relay "${CHECKOUT_B9}" "owner-b"
 seed_from_relay "${CHECKOUT_B10}" "owner-b"
@@ -487,6 +507,11 @@ while IFS= read -r line; do
     *'"method":"session/prompt"'*)
       LAST_PROMPT="$id"
       printf '%s\n' "$line" >> "${FABLE_ACP_REQUEST_LOG}"
+      # One line per prompt, index-aligned with the request log: the directory
+      # this adapter *process* was spawned in. Recorded as context, never as
+      # the answer to "where does the agent work" — ACP passes that as the
+      # `cwd` field on `session/new`, which is what the assertions read.
+      printf '%s\n' "$PWD" >> "${FABLE_CWD_LOG}"
       printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"%s","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"working"}}}}\n' "$SESSION_ID"
       printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\n' "$id" ;;
     *'"method":"session/cancel"'*)
@@ -518,22 +543,24 @@ mkdir -p "${STATE_DIR_A}" "${STATE_DIR_B}"
 PROJECTS_A="${WORKDIR}/projects-a.json"
 PROJECTS_B="${WORKDIR}/projects-b.json"
 cat > "${PROJECTS_A}" <<EOF
-{"version":1,"channels":{"${CHANNEL}":"${CHECKOUT_A}"}}
+{"version":1,"pending":{},"projects":{"${PROJECT}":"${CHECKOUT_A}"},"channels":{"${CHANNEL}":"${CHECKOUT_A}"}}
 EOF
 cat > "${PROJECTS_B}" <<EOF
-{"version":1,"channels":{"${CHANNEL}":"${CHECKOUT_B}"}}
+{"version":1,"pending":{},"projects":{"${PROJECT}":"${CHECKOUT_B_DEFAULT}"},"channels":{"${CHANNEL}":"${CHECKOUT_B_DEFAULT}"}}
 EOF
 ACP_LOG_A="${WORKDIR}/acp-a.jsonl"; : > "${ACP_LOG_A}"
 ACP_LOG_B="${WORKDIR}/acp-b.jsonl"; : > "${ACP_LOG_B}"
 METHODS_LOG_A="${WORKDIR}/methods-a.log"; : > "${METHODS_LOG_A}"
 METHODS_LOG_B="${WORKDIR}/methods-b.log"; : > "${METHODS_LOG_B}"
+CWD_LOG_A="${WORKDIR}/cwd-a.log"; : > "${CWD_LOG_A}"
+CWD_LOG_B="${WORKDIR}/cwd-b.log"; : > "${CWD_LOG_B}"
 
 # Spawn one provider generation. `LAST_PID` is the caller's handle; the pid is
 # also appended to the pid file so cleanup finds it whichever subshell spawned
 # it. Mirrors `spawn_provider` in scripts/ci-continuation-acceptance.sh.
 spawn_provider() {
   local key="$1" state_dir="$2" projects_file="$3" runtimes_json="$4" \
-        log_file="$5" methods_log="$6" acp_log="$7"
+        log_file="$5" methods_log="$6" acp_log="$7" cwd_log="$8"
   BUZZ_PRIVATE_KEY="${key}" \
     BUZZ_RELAY_URL="${RELAY_URL}" \
     BUZZ_CSP_STATE_DIR="${state_dir}" \
@@ -541,6 +568,7 @@ spawn_provider() {
     BUZZ_CSP_RUNTIMES="${runtimes_json}" \
     FABLE_ACP_REQUEST_LOG="${acp_log}" \
     FABLE_METHODS_LOG="${methods_log}" \
+    FABLE_CWD_LOG="${cwd_log}" \
     RUST_LOG=info \
     "${PROVIDER_BIN}" > "${log_file}" 2>&1 &
   LAST_PID=$!
@@ -616,13 +644,13 @@ with open(sys.argv[1], encoding='utf-8') as source:
 log "starting P_A and P_B (fake ACP adapters, no model)..."
 CATALOG_BEFORE_A="$(channel_catalog_count)"
 spawn_provider "${PROVIDER_A_KEY}" "${STATE_DIR_A}" "${PROJECTS_A}" "${RUNTIMES_JSON}" \
-  "${WORKDIR}/provider-a.log" "${METHODS_LOG_A}" "${ACP_LOG_A}"
+  "${WORKDIR}/provider-a.log" "${METHODS_LOG_A}" "${ACP_LOG_A}" "${CWD_LOG_A}"
 PROVIDER_A_PID="${LAST_PID}"
 PROVIDER_A_HEX="$(wait_provider_pubkey "${PROVIDER_A_PID}" "${WORKDIR}/provider-a.log")"
 CATALOG_AFTER_A="$(wait_catalog_above "${CATALOG_BEFORE_A}")"
 
 spawn_provider "${PROVIDER_B_KEY}" "${STATE_DIR_B}" "${PROJECTS_B}" "${RUNTIMES_JSON}" \
-  "${WORKDIR}/provider-b.log" "${METHODS_LOG_B}" "${ACP_LOG_B}"
+  "${WORKDIR}/provider-b.log" "${METHODS_LOG_B}" "${ACP_LOG_B}" "${CWD_LOG_B}"
 PROVIDER_B_PID="${LAST_PID}"
 PROVIDER_B_HEX="$(wait_provider_pubkey "${PROVIDER_B_PID}" "${WORKDIR}/provider-b.log")"
 wait_catalog_above "${CATALOG_AFTER_A}" >/dev/null
@@ -800,6 +828,75 @@ print(rows[0]['liveness'] if rows else 'absent')
   done
   err "${target} never read live within 120s (last: ${live}); --native cannot be exercised"
   return 1
+}
+
+# The physical path of a directory, so macOS's /tmp -> /private/tmp symlink
+# never decides an assertion about where something ran.
+real_path() { py -c "import os, sys; print(os.path.realpath(sys.argv[1]))" "$1"; }
+
+# The directory the adapter *process* was spawned in for prompt `index`.
+# Context only — see `session_cwd_for_prompt` for the directory that decides
+# where an agent works.
+prompt_process_cwd() {
+  py -c "
+import os, sys
+with open(sys.argv[1], encoding='utf-8') as source:
+    lines = [line.strip() for line in source if line.strip()]
+index = int(sys.argv[2])
+print(os.path.realpath(lines[index]) if index < len(lines) else 'not recorded')
+" "$1" "$2"
+}
+
+# The working directory ACP told the adapter to use for prompt number `index`
+# (0-based, index-aligned with the request log).
+#
+# **This is the `session/new` `cwd` parameter, not the child process's own
+# directory.** ACP conveys the working directory as a field on the request; the
+# adapter process itself legitimately runs wherever the provider does, and an
+# earlier version of this helper read the stub's `$PWD` and reported the
+# provider's directory as "where the work resumed" — a false alarm that would
+# have been filed as a defect. The stub's `$PWD` is still recorded, and still
+# reads as the provider's own directory, which is exactly why it is context and
+# not evidence.
+#
+# The session ids are paired by order: the stub appends every minted id to
+# `<request log>.cursors` in the same order it logs the `session/new` requests,
+# so the Nth new pairs with the Nth cursor. A prompt is then resolved through
+# its own `sessionId`, which also covers a native resume — where the prompt
+# rides a session opened long before, by a different command.
+session_cwd_for_prompt() {
+  py -c "
+import json, os, sys
+log_path, index = sys.argv[1], int(sys.argv[2])
+requests = []
+with open(log_path, encoding='utf-8') as source:
+    for line in source:
+        line = line.strip()
+        if line:
+            requests.append(json.loads(line))
+news = [r for r in requests if r.get('method') == 'session/new']
+with open(log_path + '.cursors', encoding='utf-8') as source:
+    cursors = [line.strip() for line in source if line.strip()]
+assert len(cursors) >= len(news), (len(cursors), len(news))
+opened = {cursor: new['params'].get('cwd') for new, cursor in zip(news, cursors)}
+prompts = [r for r in requests if r.get('method') == 'session/prompt']
+assert index < len(prompts), f'no prompt #{index} (have {len(prompts)})'
+session_id = prompts[index]['params'].get('sessionId')
+cwd = opened.get(session_id)
+assert cwd, f'prompt #{index} names session {session_id!r}, which no session/new opened: {sorted(opened)}'
+print(os.path.realpath(cwd))
+" "$1" "$2"
+}
+
+# How many 44228 links this genesis's chain has right now — the count a refusal
+# that happens *before* any claim must leave untouched.
+authority_link_count() {
+  bee_a events query --kinds 44228 --channel "${CHANNEL}" | py -c "
+import json, sys
+genesis = sys.argv[1]
+print(sum(1 for event in json.load(sys.stdin)
+          if ['csat-genesis', genesis] in event.get('tags', [])))
+" "$1"
 }
 
 # Every commit id the relay's kind-30618 ref state currently names for the repo.
@@ -1118,11 +1215,49 @@ step_3() {
   log "waiting out the relay's 180s kind-24223 lease snapshot so nothing reads live…"
   wait_no_live_execution "${S1}" "${G1}"
 
+  # ── the negative probe, first, while the chain is still untouched ────────
+  # A reconstruction that cannot bind the create to `--cwd` would open the
+  # model in whatever folder the provider is configured for — here a plain
+  # clone with none of the recovered work — while the continuation says
+  # "recovered". That must be refused, and refused *before* a claim: a run that
+  # takes the session over and then discovers it cannot place the work has
+  # already fenced the absent participant for nothing.
+  local links_before links_after probe_exit
+  links_before="$(authority_link_count "${G1}")"
+  set +e
+  env -u BUZZ_CSP_PROJECTS_FILE \
+    BUZZ_PRIVATE_KEY="${B_KEY}" NOSTR_PRIVATE_KEY="${B_KEY}" "${BEE_BIN}" \
+    sessions handover continue --channel "${CHANNEL}" --session-ref "${S1}" \
+    --genesis "${G1}" --cwd "${CHECKOUT_B}" --body "${PROVIDER_B_HEX}" \
+    --provider-instance "${INSTANCE}" --remote origin --wait-secs 120 --json \
+    > "${WORKDIR}/continue-no-projects.json" 2> "${WORKDIR}/continue-no-projects.err"
+  probe_exit=$?
+  set -e
+  [[ "${probe_exit}" -ne 0 ]] || {
+    err "continue reconstructed with no projects file to bind --cwd to; the model would have run in the provider's default folder"
+    cat "${WORKDIR}/continue-no-projects.json" >&2
+    return 1
+  }
+  grep -Fq -- "--projects-file" "${WORKDIR}/continue-no-projects.err" || {
+    err "the refusal does not name the remedy (--projects-file):"
+    cat "${WORKDIR}/continue-no-projects.err" >&2
+    return 1
+  }
+  links_after="$(authority_link_count "${G1}")"
+  [[ "${links_before}" == "${links_after}" ]] || {
+    err "the refused run still extended the authority chain (${links_before} -> ${links_after} links): it claimed the session and then refused to place the work"
+    return 1
+  }
+
+  # ── the real run ────────────────────────────────────────────────────────
   # No --native, no --reconstruct: the point is that the DEFAULT plan picks
-  # reconstruction because nothing is reachable.
+  # reconstruction because nothing is reachable. `--projects-file` is the seam
+  # the create is bound through; B-work is NOT where this provider would
+  # otherwise run anything in this channel.
   continue_json="$(bee_b_git sessions handover continue --channel "${CHANNEL}" \
     --session-ref "${S1}" --genesis "${G1}" --cwd "${CHECKOUT_B}" \
     --body "${PROVIDER_B_HEX}" --provider-instance "${INSTANCE}" \
+    --projects-file "${PROJECTS_B}" \
     --remote origin --wait-secs 120 --json)"
   printf '%s\n' "${continue_json}" > "${WORKDIR}/continue-1.json"
   py -c "
@@ -1185,7 +1320,8 @@ print(rows[0]['acceptedEventId'])
   # 3. The reconstruction is a real join on P_B: same sessionRef/genesisRef, a
   #    `created` receipt from P_B, and exactly one new ACP prompt carrying the
   #    checkpoint's own task and next action.
-  q 44221 | py -c "
+  local create_command_id
+  create_command_id="$(q 44221 | py -c "
 import json, sys
 events = json.load(sys.stdin)
 author, session_ref, genesis_ref, provider_b = sys.argv[1:]
@@ -1204,7 +1340,26 @@ joined = [
 ]
 assert len(joined) == 1, f'expected one session.create by B joining {session_ref}, found {len(joined)}'
 assert joined[0][2]['providerAuthorityPubkey'] == provider_b, joined[0][2]
-" "${B_HEX}" "${S1}" "${G1}" "${PROVIDER_B_HEX}"
+print(joined[0][1]['commandId'])
+" "${B_HEX}" "${S1}" "${G1}" "${PROVIDER_B_HEX}")"
+
+  # 3a. The create was bound to B-work through the provider's own seam.
+  py -c "
+import json, os, sys
+path, command_id, expected = sys.argv[1:]
+with open(path, encoding='utf-8') as source:
+    projects = json.load(source)
+pending = projects.get('pending') or {}
+assert command_id in pending, (
+    f'the projects file carries no pending entry for create {command_id}', sorted(pending))
+got = os.path.realpath(pending[command_id])
+assert got == os.path.realpath(expected), (got, os.path.realpath(expected))
+# The fallbacks must still point somewhere else, or this proves nothing.
+for key in ('projects', 'channels'):
+    for value in (projects.get(key) or {}).values():
+        assert os.path.realpath(value) != got, (
+            f'{key} already points at the recovered checkout, so a pending hint was never needed')
+" "${PROJECTS_B}" "${create_command_id}" "${CHECKOUT_B}"
 
   q 44224 | py -c "
 import json, sys, helpers
@@ -1219,11 +1374,23 @@ assert len(created) == 1, f'expected exactly one created receipt for {target_b},
 assert created[0]['pubkey'] == provider_b, created[0]
 " "${PROVIDER_B_HEX}" "${target_b}"
 
-  local after_b task next_action
+  local after_b task next_action delivered_cwd
   after_b="$(acp_prompt_count "${ACP_LOG_B}")"
   [[ "$(( after_b - baseline_b ))" -eq 1 ]] || {
     err "P_B's ACP log gained $(( after_b - baseline_b )) prompts, expected exactly 1"; return 1
   }
+
+  # 3b. The directory ACP handed the adapter for this turn. B-default is a
+  # real, plausible, wrong answer sitting right next to it — the answer this
+  # provider would have given for anything else in this channel.
+  delivered_cwd="$(session_cwd_for_prompt "${ACP_LOG_B}" "${baseline_b}")"
+  [[ "${delivered_cwd}" == "$(real_path "${CHECKOUT_B}")" ]] || {
+    err "the reconstruction's session was opened on ${delivered_cwd}, not the recovered checkout $(real_path "${CHECKOUT_B}")"
+    [[ "${delivered_cwd}" == "$(real_path "${CHECKOUT_B_DEFAULT}")" ]] \
+      && err "  — that is B's default folder for this channel: the create was never bound to --cwd"
+    return 1
+  }
+  log "the reconstructed session opened on ${delivered_cwd}; its adapter *process* runs in $(prompt_process_cwd "${CWD_LOG_B}" "${baseline_b}"), which is the provider's own directory and not the seam"
   # The task and next action come from the checkpoint the FOLD names latest —
   # the product's own selection, which is the thing a reconstruction is
   # supposed to follow. Both are asserted non-empty first: an empty task would
@@ -1252,6 +1419,45 @@ assert task in text, f'the delivered prompt does not carry the checkpoint task:\
 assert next_action in text, f'the delivered prompt does not carry the next action:\n{text}'
 " "${ACP_LOG_B}" "${baseline_b}" "${task}" "${next_action}"
 
+  # 3c. The execution's own report of the folder, from the provider's bounded
+  # git probe (`git_probe.rs`) rather than from anything the CLI wrote: the
+  # branch and the commit it sees must be the recovered ones. Polled, because
+  # `branch`/`observedCommit` are null until that probe completes.
+  local metadata_ok=""
+  for _ in $(seq 1 60); do
+    metadata_ok="$(q 44223 | py -c "
+import json, sys, helpers
+provider, target, branch, head_sha = sys.argv[1:]
+rows = []
+for event in json.load(sys.stdin):
+    if event['pubkey'] != provider:
+        continue
+    content = json.loads(event['content'])
+    if helpers.target_to_key(content['session']) != target:
+        continue
+    if content.get('branch') is None and content.get('observedCommit') is None:
+        continue
+    rows.append((event['created_at'], event['id'], content))
+if not rows:
+    print('')
+    raise SystemExit(0)
+rows.sort()
+first = rows[0][2]
+problems = []
+if first.get('branch') != branch:
+    problems.append(f\"branch={first.get('branch')!r} (wanted {branch!r})\")
+if (first.get('observedCommit') or '').lower() != head_sha.lower():
+    problems.append(f\"observedCommit={first.get('observedCommit')!r} (wanted {head_sha!r})\")
+print('ok' if not problems else 'BAD ' + '; '.join(problems))
+" "${PROVIDER_B_HEX}" "${target_b}" "handover/${S1:0:8}" "${HEAD_SHA_A}")"
+    [[ -n "${metadata_ok}" ]] && break
+    sleep 1
+  done
+  [[ "${metadata_ok}" == "ok" ]] || {
+    err "P_B's first observed metadata for the reconstructed execution: ${metadata_ok:-no branch/observedCommit published within 60s}"
+    return 1
+  }
+
   # 4. The continuation record itself, as the relay stored it.
   q 44247 | py -c "
 import json, sys, helpers
@@ -1265,9 +1471,13 @@ assert body['mode'] == 'reconstructed', body
 assert body['claimRef'] == takeover_id, body
 assert helpers.target_to_key(body['target']) == target_b, body
 assert body['recovered'], body
+# A continuation that had to disclose the execution opened elsewhere is a
+# different (honest) outcome, and not the one this step is asserting.
+for line in body['missing']:
+    assert 'not the recovered checkout' not in line, line
 " "${CONTINUATION_1}" "${B_HEX}" "${takeover_id}" "${target_b}"
 
-  pass 3 "P_A killed; with no live lease the default plan reconstructed: takeover ${takeover_id:0:12}… accepted with bodyPubkey=P_B, B's checkout is on ${branch} at ${HEAD_SHA_A:0:12} with tracked+staged+unstaged+untracked+binary bytes restored, one session.create joined ${S1} on P_B (created receipt, exactly one new ACP prompt carrying the task and next action), and continuation ${CONTINUATION_1:0:12}… records reconstructed with recovered lines"
+  pass 3 "P_A killed; with no live lease the default plan reconstructed: a run with no projects file was refused naming --projects-file and left the chain at ${links_before} links; takeover ${takeover_id:0:12}… then accepted with bodyPubkey=P_B; B's checkout is on ${branch} at ${HEAD_SHA_A:0:12} with tracked+staged+unstaged+untracked+binary bytes restored; the create ${create_command_id} was bound through the projects file's pending hint to B-work (while its project and channel entries still point at B-default), ACP opened the session on B-work, and P_B's first observed metadata reports branch handover/${S1:0:8} at ${HEAD_SHA_A:0:12}; one session.create joined ${S1} on P_B (created receipt, exactly one new ACP prompt carrying the task and next action), and continuation ${CONTINUATION_1:0:12}… records reconstructed with recovered lines and no relocation disclosure"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1283,7 +1493,7 @@ step_4() {
 
   restart_epoch="$(date +%s)"
   spawn_provider "${PROVIDER_A_KEY}" "${STATE_DIR_A}" "${PROJECTS_A}" "${RUNTIMES_JSON}" \
-    "${WORKDIR}/provider-a-restart.log" "${METHODS_LOG_A}" "${ACP_LOG_A}"
+    "${WORKDIR}/provider-a-restart.log" "${METHODS_LOG_A}" "${ACP_LOG_A}" "${CWD_LOG_A}"
   local restarted_pid restarted_hex
   restarted_pid="${LAST_PID}"
   restarted_hex="$(wait_provider_pubkey "${restarted_pid}" "${WORKDIR}/provider-a-restart.log")"
@@ -1613,6 +1823,7 @@ assert len(wip) == 1 and wip[0]['sha'] == sys.argv[2], body['artifacts']
   set +e
   bee_b_git sessions handover continue --channel "${CHANNEL}" --session-ref "${s3}" --genesis "${g3}" \
     --cwd "${CHECKOUT_B9}" --body "${PROVIDER_B_HEX}" --provider-instance "${INSTANCE}" \
+    --projects-file "${PROJECTS_B}" \
     --reconstruct --remote origin --wait-secs 120 --json \
     > "${WORKDIR}/continue-9-refused.json" 2> "${WORKDIR}/continue-9-refused.err"
   refused_exit=$?
@@ -1636,6 +1847,7 @@ assert len(wip) == 1 and wip[0]['sha'] == sys.argv[2], body['artifacts']
   allowed_json="$(bee_b_git sessions handover continue --channel "${CHANNEL}" \
     --session-ref "${s3}" --genesis "${g3}" --cwd "${CHECKOUT_B9}" \
     --body "${PROVIDER_B_HEX}" --provider-instance "${INSTANCE}" \
+    --projects-file "${PROJECTS_B}" \
     --reconstruct --allow-no-artifact --remote origin --wait-secs 120 --json)"
   printf '%s\n' "${allowed_json}" > "${WORKDIR}/continue-9-allowed.json"
   py -c "
@@ -1736,7 +1948,8 @@ for event in json.load(sys.stdin):
     BUZZ_PRIVATE_KEY="${B_KEY}" NOSTR_PRIVATE_KEY="${B_KEY}" "${BEE_BIN}" \
       sessions handover continue --channel "${CHANNEL}" --session-ref "${s4}" \
       --genesis "${g4}" --cwd "${checkout}" --body "${PROVIDER_B_HEX}" \
-      --provider-instance "${INSTANCE}" --reconstruct --remote origin --wait-secs 120 --json \
+      --provider-instance "${INSTANCE}" --projects-file "${PROJECTS_B}" \
+      --reconstruct --remote origin --wait-secs 120 --json \
       > "${WORKDIR}/continue-10-killed-${attempt}.json" 2>&1 &
     cli_pid=$!
     record_pid "${cli_pid}"
@@ -1789,7 +2002,8 @@ assert fold['activeContinuation'] is None, fold['activeContinuation']
 
   bee_b_git sessions handover continue --channel "${CHANNEL}" --session-ref "${s4}" \
     --genesis "${g4}" --cwd "${checkout}" --body "${PROVIDER_B_HEX}" \
-    --provider-instance "${INSTANCE}" --reconstruct --remote origin --wait-secs 120 --json \
+    --provider-instance "${INSTANCE}" --projects-file "${PROJECTS_B}" \
+    --reconstruct --remote origin --wait-secs 120 --json \
     > "${WORKDIR}/continue-10-rerun.json"
 
   handover_status a "${s4}" "${g4}" | py -c "
@@ -1853,7 +2067,7 @@ for event in json.load(sys.stdin):
   wait_pid_exit "${PROVIDER_B_PID}"
   restart_epoch="$(date +%s)"
   spawn_provider "${PROVIDER_B_KEY}" "${STATE_DIR_B}" "${PROJECTS_B}" "${RUNTIMES_JSON}" \
-    "${WORKDIR}/provider-b-restart.log" "${METHODS_LOG_B}" "${ACP_LOG_B}"
+    "${WORKDIR}/provider-b-restart.log" "${METHODS_LOG_B}" "${ACP_LOG_B}" "${CWD_LOG_B}"
   restarted_pid="${LAST_PID}"
   restarted_hex="$(wait_provider_pubkey "${restarted_pid}" "${WORKDIR}/provider-b-restart.log")"
   [[ "${restarted_hex}" == "${PROVIDER_B_HEX}" ]] || { err "restarted P_B is ${restarted_hex}"; return 1; }
@@ -1941,6 +2155,15 @@ text = ''.join(block.get('text', '') for block in prompts[int(index)]['params'][
 assert 'run the gate on the branch already open' in text, text
 " "${ACP_LOG_A}" "${baseline}"
 
+  # A native resume is the original context on the original machine: it must run
+  # in A's own folder. Nothing was recovered and nothing should have moved.
+  local native_cwd
+  native_cwd="$(session_cwd_for_prompt "${ACP_LOG_A}" "${baseline}")"
+  [[ "${native_cwd}" == "$(real_path "${CHECKOUT_A}")" ]] || {
+    err "the native resume was delivered to a session opened on ${native_cwd}, not A's own checkout $(real_path "${CHECKOUT_A}")"
+    return 1
+  }
+
   # A is not the claimant, so A's own turn on its own execution is fenced.
   send_expect a "${target_a5}" "my machine, my turn" "turn_refused:HANDOVER_FENCED" "step 12 (A fenced out)" 5 >/dev/null
 
@@ -1948,7 +2171,7 @@ assert 'run the gate on the branch already open' in text, text
     --body-self --json > "${WORKDIR}/claim-12-back.json"
   send_expect a "${target_a5}" "taken back" "turn_started:" "step 12 (A takes it back)" 10 >/dev/null
 
-  pass 12 "with P_A alive, B's --native continuation reached E_A on P_A (exactly one new ACP prompt carrying the checkpoint's next action) and recorded native-resume; A's own turn was then HANDOVER_FENCED until A's founder takeover on its own body admitted it again"
+  pass 12 "with P_A alive, B's --native continuation reached E_A on P_A (exactly one new ACP prompt carrying the checkpoint's next action, run in A's own checkout and no other) and recorded native-resume; A's own turn was then HANDOVER_FENCED until A's founder takeover on its own body admitted it again"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════

@@ -122,15 +122,43 @@ relay serves lease state from a snapshot with a three-minute TTL, so B will
 see `live` for a while after A's machine is gone, and acting before it lapses
 tests nothing.
 
-**6.4 B continues.** On B, in a fresh checkout of the same repository, run
-`bee sessions handover continue --cwd <checkout>`. Pass **no** mode flag: the
-point is that the default picks reconstruction because nothing is reachable.
+**6.4 B continues.** Set B up so the answer cannot be accidental: B's provider
+must already be configured to run this project and channel in **some other
+folder** — its ordinary working directory, a plain clone with none of A's work
+— and B recovers into a *different*, fresh checkout. If both are the same
+folder, every check below passes whether or not the reconstruction placed
+anything, which is exactly how this went unnoticed once already.
+
+On B, run `bee sessions handover continue --cwd <fresh checkout>
+--projects-file <B's provider projects file>` (or with `BUZZ_CSP_PROJECTS_FILE`
+set). Pass **no** mode flag: the point is that the default picks reconstruction
+because nothing is reachable.
+
 Expected: the claim is accepted (one relay receipt naming B as claimant and
-B's provider as the body); B's checkout lands on a `handover/…` branch at the
-checkpoint's head with the staged, unstaged, untracked and binary bytes back;
-a new execution joins the *same* session reference on B's provider; and its
-first turn carries the checkpoint's task and next action. Open the file with
-the binary content and confirm the bytes, not the file name.
+B's provider as the body); B's checkout lands on `handover/<first 8 of the
+session reference>` at the checkpoint's head with the staged, unstaged,
+untracked and binary bytes back; a new execution joins the *same* session
+reference on B's provider; and its first turn carries the checkpoint's task and
+next action. Open the file with the binary content and confirm the bytes, not
+the file name.
+
+Then confirm the work is where the agent can see it, which is a separate
+question from whether it was fetched:
+
+- the projects file gained a `pending` entry for the create's `commandId`
+  pointing at the recovered checkout, while its `projects`/`channels` entries
+  still point at B's ordinary folder;
+- the session's own view reports the recovered branch and commit — not B's
+  default folder's — in the execution's status;
+- ask the agent, in its first reply, what branch it is on and whether it can
+  see the uncommitted file. **A continuation that says "recovered" while the
+  model is looking at an untouched tree is the failure this step exists for**,
+  and it looks like success from every other angle.
+
+Run it once **without** the projects file too. Expected: a refusal that names
+the remedy, and no claim — check the authority chain did not grow. A run that
+fences the absent participant and then discovers it cannot place the work has
+taken the session away for nothing.
 
 Then work in it. The reconstruction is a **new execution** — the original
 agent's native context stayed on A's disk — so read the first agent reply for
@@ -164,9 +192,15 @@ a deleted session resumable.
 
 **6.9 The native leg.** With A's provider alive and B holding a grant, run
 `bee sessions handover continue --native` from B. Expected: B's next action
-runs on A's own execution, in A's own context, and the record says
-`native-resume` — never `reconstructed`. A's own turn is then fenced until A
+runs on A's own execution, **in A's own working directory** — nothing is
+fetched, nothing is placed, and no folder changes — and the record says
+`native-resume`, never `reconstructed`. A's own turn is then fenced until A
 takes the session back.
+
+Note what taking it back does and does not do: the fence lifts, but an
+execution whose provider died does not come back to life with it. Expect a
+named refusal (`NO_LIVE_EXECUTION`) rather than a running turn, and re-address
+the owed turn rather than assuming the session resumed.
 
 **6.10 Native Windows — DEFERRED.** Everything above assumes B's provider runs
 where its checkout is. A native Windows provider (paths, credential helper,
@@ -178,7 +212,8 @@ somebody has done it on the metal.
 
 Record, for every step: the event ids (checkpoint, claim receipt,
 continuation), the exact targets before and after, the branch and sha B's
-checkout landed on, and the refusal codes you saw with your own eyes. A UI
+checkout landed on, **the directory the agent actually ran in**, and the
+refusal codes you saw with your own eyes. A UI
 that renders a fence is not evidence that a provider enforced one.
 
 ## Report the result
