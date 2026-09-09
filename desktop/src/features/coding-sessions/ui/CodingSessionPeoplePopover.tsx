@@ -3,14 +3,26 @@ import * as React from "react";
 import { toast } from "sonner";
 
 import { PersonaShareRecipients } from "@/features/agents/ui/PersonaShareRecipients";
+import { useKnownAgentPubkeys } from "@/features/agents/useKnownAgentPubkeys";
 import { useUsersBatchQuery } from "@/features/profile/hooks";
-import { ProfileAvatar } from "@/features/profile/ui/ProfileAvatar";
+import {
+  buildCodingSessionIngressAuthorityIdentity,
+  OPEN_CODING_SESSION_INGRESS_AUTHORITY,
+} from "@/features/coding-sessions/lib/codingSessionIngressAuthority";
+import { peekCodingSessionIngressStore } from "@/features/coding-sessions/lib/codingSessionIngressStoreCache";
 import {
   useCodingSessionGrantMutation,
   useCodingSessionRevokeMutation,
   useCodingSessionRoster,
   type CodingSessionRosterEntry,
 } from "@/features/coding-sessions/lib/codingSessionRoster";
+import {
+  codingSessionRosterBadgesSettled,
+  codingSessionRowKind,
+  codingSessionRowKindIsFinal,
+  deriveCodingSessionProviderRuntimeLabels,
+} from "@/features/coding-sessions/lib/codingSessionRowKind";
+import { CodingSessionPersonRow } from "@/features/coding-sessions/ui/CodingSessionPersonRow";
 import { useIdentityQuery } from "@/shared/api/hooks";
 import type { UserSearchResult } from "@/shared/api/types";
 import {
@@ -20,7 +32,7 @@ import {
   SESSION_GRANTABLE_ROLES,
   type EntityRole,
 } from "@/shared/lib/entityRoles";
-import { truncatePubkey } from "@/shared/lib/pubkey";
+import { normalizePubkey, truncatePubkey } from "@/shared/lib/pubkey";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -31,7 +43,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/shared/ui/alert-dialog";
-import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 import {
   Dialog,
@@ -51,6 +62,9 @@ import {
  * the batch stays small enough that a mid-batch failure reads clearly. */
 const INVITE_LIMIT = 8;
 
+/** Stable identity for "no provider fact reached this roster". */
+const NO_PROVIDER_LABELS: ReadonlyMap<string, string | null> = new Map();
+
 /**
  * The session People surface: the authority-chain roster (founder pinned as
  * Owner, live grants, pending invites) with owner-only management — invite
@@ -65,12 +79,24 @@ export function CodingSessionPeoplePopover({
   genesisRef,
   onOpenChange,
   open,
+  providerAuthorityLabels,
 }: {
   channelId: string;
   founderPubkey: string | null;
   genesisRef: string | null;
   onOpenChange: (open: boolean) => void;
   open: boolean;
+  /**
+   * Provider authority keys → the runtime label their facts reached.
+   *
+   * Optional and unset at every call site today: the popover reads the same
+   * fact out of the verified ingress store itself (below). It exists as the
+   * one seam a caller that *already holds* the umbrella can hand down —
+   * `providerAuthorityLabels={new Map(umbrella.executions.map((execution) =>
+   * [execution.signerPubkey, execution.activeGeneration.runtime]))}` — without
+   * this file having to reach for a hook it would otherwise have to mount.
+   */
+  providerAuthorityLabels?: ReadonlyMap<string, string | null>;
 }) {
   const identityQuery = useIdentityQuery();
   const self = identityQuery.data?.pubkey?.toLowerCase();
@@ -93,6 +119,55 @@ export function CodingSessionPeoplePopover({
   );
   const profilesQuery = useUsersBatchQuery(memberPubkeys);
   const profiles = profilesQuery.data?.profiles;
+
+  // The additive agent baseline (`knownAgentPubkeys.ts`): managed on this disk
+  // ∪ relay-registered, published over context by `KnownAgentPubkeysProvider`.
+  // Reading it adds no query observer. Folded with the profile flag below, it
+  // is strictly wider than `profile?.isAgent` alone — which is why a managed
+  // or relay-registered agent whose owner never attested now reads as one.
+  const knownAgentPubkeys = useKnownAgentPubkeys();
+
+  /**
+   * The provider authority keys behind this channel's executions, with the
+   * runtime label their own signed facts reached.
+   *
+   * Read straight out of the verified ingress store this window already holds
+   * — `CodingSessionWorkspace` mounts `useCodingSessionCatalog(channelId, …,
+   * { authorityMode: "open" })`, which acquires exactly this store identity
+   * (`useTrustedCodingSessionIngress.ts`: `${authorityIdentity}|${channels}`,
+   * a single channel needing no separator). `peek` never creates one, so this
+   * adds no relay subscription, no history fetch, and no query key; it only
+   * reads bytes that already passed the full signature/authority classifier.
+   *
+   * Deliberately re-read per dialog open rather than subscribed: a modal's
+   * lifetime is shorter than a provider's, and the fail direction is silence.
+   * A cold store yields no providers and every row falls back to its other
+   * evidence — never a claim that some key *is* a provider.
+   */
+  const peekedProviderLabels = React.useMemo(() => {
+    if (providerAuthorityLabels !== undefined) return NO_PROVIDER_LABELS;
+    if (!open || channelId.length === 0) return NO_PROVIDER_LABELS;
+    const store = peekCodingSessionIngressStore(
+      `${buildCodingSessionIngressAuthorityIdentity(
+        OPEN_CODING_SESSION_INGRESS_AUTHORITY,
+      )}|${channelId}`,
+    );
+    if (store === null) return NO_PROVIDER_LABELS;
+    return deriveCodingSessionProviderRuntimeLabels(
+      channelId,
+      store.snapshot([channelId]).metadata,
+    );
+  }, [channelId, open, providerAuthorityLabels]);
+  const providerLabels = providerAuthorityLabels ?? peekedProviderLabels;
+
+  // Kind badges wait for a real profile result, so a row's one identity word
+  // cannot pop in late — except where the chain already settled it (owner,
+  // provider, seat), which needs no profile at all.
+  const badgesSettled = codingSessionRosterBadgesSettled({
+    memberCount: memberPubkeys.length,
+    profilesUpdatedAt: profilesQuery.dataUpdatedAt,
+    profilesFailed: profilesQuery.isError,
+  });
 
   const displayName = React.useCallback(
     (pubkey: string) =>
@@ -124,6 +199,7 @@ export function CodingSessionPeoplePopover({
     React.useState<EntityRole>("collaborator");
   const [revokeTarget, setRevokeTarget] =
     React.useState<CodingSessionRosterEntry | null>(null);
+  const rosterRef = React.useRef<HTMLElement>(null);
 
   React.useEffect(() => {
     if (open) return;
@@ -157,7 +233,21 @@ export function CodingSessionPeoplePopover({
 
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
-      <DialogContent className="max-w-md" data-testid="coding-session-people">
+      <DialogContent
+        className="max-w-md"
+        data-testid="coding-session-people"
+        onOpenAutoFocus={(event) => {
+          // Radix otherwise focuses the first tabbable descendant, which is
+          // the invite search field — and that field opens its recipient
+          // popover `onFocus`, so the dialog's opening frame covered the
+          // roster with the agent directory. This surface's first job is
+          // saying who has access; inviting is its second. Focus lands on the
+          // roster region (programmatic only, `tabIndex={-1}`), so Escape and
+          // the focus trap still work and one Tab reaches the invite.
+          event.preventDefault();
+          rosterRef.current?.focus();
+        }}
+      >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Users aria-hidden className="size-4" />
@@ -170,86 +260,77 @@ export function CodingSessionPeoplePopover({
           </DialogDescription>
         </DialogHeader>
 
-        {rosterQuery.isPending ? (
-          <p className="py-4 text-center text-sm text-muted-foreground">
-            Loading session access…
-          </p>
-        ) : rosterQuery.isError ? (
-          <p className="py-4 text-center text-sm text-muted-foreground">
-            Could not load the session roster.
-          </p>
-        ) : sortedEntries.length === 0 ? (
-          <p className="py-4 text-center text-sm text-muted-foreground">
-            No one has access to this session yet.
-          </p>
-        ) : (
-          <ul className="flex max-h-72 flex-col gap-1 overflow-y-auto">
-            {sortedEntries.map((entry) => {
-              const profile = profiles?.[entry.pubkey];
-              const name = displayName(entry.pubkey);
-              const isOwnerRow = entry.role === "owner";
-              return (
-                <li
-                  className="flex min-h-8 items-center gap-2 px-1"
-                  data-testid={`coding-session-people-row-${entry.pubkey}`}
-                  key={entry.pubkey}
-                >
-                  <ProfileAvatar
-                    avatarUrl={profile?.avatarUrl ?? null}
-                    className="h-6 w-6 text-2xs shadow-none"
-                    iconClassName="h-3 w-3"
-                    label={name}
-                  />
-                  <span className="min-w-0 flex-1 truncate text-sm">
-                    {name}
-                  </span>
-                  {profile?.isAgent ? (
-                    <Badge variant="outline">Agent</Badge>
-                  ) : null}
-                  {entry.pending ? (
-                    <span
-                      className="shrink-0 text-xs text-muted-foreground italic"
-                      title="Waiting for the relay's acceptance receipt"
-                    >
-                      Inviting…
-                    </span>
-                  ) : isOwnerRow ? (
-                    <Badge variant="secondary">
-                      {ENTITY_ROLE_LABELS.owner}
-                    </Badge>
-                  ) : isOwner ? (
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <button
-                          aria-label={`Manage access for ${name}`}
-                          className="flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                          data-testid={`coding-session-people-menu-${entry.pubkey}`}
-                          type="button"
-                        >
-                          {ENTITY_ROLE_LABELS[entry.role]}
-                          <ChevronDown className="size-3" />
-                        </button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem
-                          className="text-destructive focus:text-destructive"
-                          data-testid={`coding-session-people-revoke-${entry.pubkey}`}
-                          onSelect={() => setRevokeTarget(entry)}
-                        >
-                          Revoke access
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  ) : (
-                    <span className="shrink-0 text-xs text-muted-foreground">
-                      {ENTITY_ROLE_LABELS[entry.role]}
-                    </span>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        )}
+        <section
+          aria-label="Session access"
+          className="flex flex-col gap-2 outline-hidden"
+          data-testid="coding-session-people-roster"
+          ref={rosterRef}
+          tabIndex={-1}
+        >
+          {rosterQuery.isPending ? (
+            <p className="py-4 text-center text-sm text-muted-foreground">
+              Loading session access…
+            </p>
+          ) : rosterQuery.isError ? (
+            <p className="py-4 text-center text-sm text-muted-foreground">
+              Could not load the session roster.
+            </p>
+          ) : sortedEntries.length === 0 ? (
+            <p className="py-4 text-center text-sm text-muted-foreground">
+              No one has access to this session yet.
+            </p>
+          ) : (
+            <>
+              <ul className="flex max-h-72 flex-col gap-1 overflow-y-auto">
+                {sortedEntries.map((entry) => {
+                  const profile = profiles?.[entry.pubkey];
+                  const normalized = normalizePubkey(entry.pubkey);
+                  const providerLabel = providerLabels.has(normalized)
+                    ? (providerLabels.get(normalized) ?? null)
+                    : null;
+                  const kind = codingSessionRowKind({
+                    isFounder: entry.role === "owner",
+                    isProvider: providerLabels.has(normalized),
+                    seatRole: entry.seatRole ?? null,
+                    // Additive merge, exactly as `knownAgentPubkeys.ts`
+                    // prescribes: the shared baseline widened by this
+                    // surface's own verified profile flag, never narrowed.
+                    isAgent:
+                      knownAgentPubkeys.has(normalized) ||
+                      profile?.isAgent === true,
+                  });
+                  return (
+                    <CodingSessionPersonRow
+                      avatarUrl={profile?.avatarUrl ?? null}
+                      entry={entry}
+                      hasProfile={profile !== undefined}
+                      isFounderViewer={isOwner}
+                      key={entry.pubkey}
+                      kind={
+                        badgesSettled || codingSessionRowKindIsFinal(kind)
+                          ? kind
+                          : null
+                      }
+                      name={displayName(entry.pubkey)}
+                      onRevoke={() => setRevokeTarget(entry)}
+                      providerLabel={providerLabel}
+                    />
+                  );
+                })}
+              </ul>
+              {/* The `ul` above stays shrinkable on purpose — that is what
+                  makes it scroll at `max-h-72`. This disclosure does not: it
+                  is a claim about what the surface can and cannot verify, and
+                  squeezing it is the same mistake as squeezing a row. */}
+              <p className="shrink-0 text-2xs text-muted-foreground">
+                Session access only — nothing here changes project membership.
+                This app can verify that a key is an agent; it can never verify
+                that a key is a person, so a key with no agent evidence is shown
+                as unidentified rather than as one.
+              </p>
+            </>
+          )}
+        </section>
 
         {isOwner ? (
           <div className="flex flex-col gap-3 border-t border-border/60 pt-4">
@@ -259,6 +340,13 @@ export function CodingSessionPeoplePopover({
               // selectable by name in this one picker.
               allowAgents
               allowDirectPubkeyEntry
+              // Opens on People, with the People / Agents / All control
+              // showing. Without this the view derives from `allowAgents`
+              // (`resolveShareRecipientKind` ⇒ "all"), which is how the one
+              // picker that most needs the filter was the one surface not
+              // rendering it — an agent-heavy first page over the person the
+              // reader came here to invite. Agents stay one press away.
+              kind="people"
               disabled={grantMutation.isPending}
               excludedPubkeys={memberPubkeys}
               limit={INVITE_LIMIT}

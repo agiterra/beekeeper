@@ -76,6 +76,19 @@ export type CodingSessionRosterEntry = {
   pubkey: string;
   role: EntityRole;
   pending?: boolean;
+  /**
+   * The receipt-backed `grant-seat` role slug this key holds in this session.
+   * **Absent** — not null — when it holds none.
+   *
+   * The fold has always computed `activeSeats`; this projection threw it away,
+   * so a seated key rendered as an anonymous "Collaborator" with nothing said
+   * about the role it was hired into. Purely additive: it admits no row, drops
+   * no row, and changes no existing field, and omit-when-absent (the same
+   * shape convention as `role`/`bodyPubkey` on the transition payload above)
+   * keeps every seatless row byte-identical to what it was. A seat is a
+   * session fact and never project membership.
+   */
+  seatRole?: string | null;
 };
 
 /** UI vocabulary for a wire grant role: operator ⇒ collaborator. */
@@ -217,12 +230,20 @@ export function codingSessionRosterEntries(
   fold: CodingSessionRosterFold,
 ): CodingSessionRosterEntry[] {
   const founder = founderPubkey?.toLowerCase() ?? null;
+  const seatRoleFor = (pubkey: string) => {
+    const seatRole = fold.activeSeats.get(pubkey);
+    return seatRole === undefined ? {} : { seatRole };
+  };
   const entries: CodingSessionRosterEntry[] = founder
-    ? [{ pubkey: founder, role: "owner" }]
+    ? [{ pubkey: founder, role: "owner", ...seatRoleFor(founder) }]
     : [];
   for (const [pubkey, role] of fold.accepted) {
     if (pubkey === founder) continue;
-    entries.push({ pubkey, role: entityRoleForRosterRole(role) });
+    entries.push({
+      pubkey,
+      role: entityRoleForRosterRole(role),
+      ...seatRoleFor(pubkey),
+    });
   }
   const listed = new Set(entries.map((entry) => entry.pubkey));
   for (const invite of fold.pending) {
@@ -232,6 +253,7 @@ export function codingSessionRosterEntries(
       pubkey: invite.pubkey,
       role: entityRoleForRosterRole(invite.role),
       pending: true,
+      ...seatRoleFor(invite.pubkey),
     });
   }
   return entries;
