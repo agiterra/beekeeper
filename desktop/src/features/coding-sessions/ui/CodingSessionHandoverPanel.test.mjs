@@ -461,3 +461,14 @@ test("the holder is told what the claimed body is actually doing", () => {
   assert.match(unknown, /Reconnect/);
   assert.match(unknown, /Resend to the resumed execution/);
 });
+
+test("an unknown outcome is `Unsettled`, never `Refused`", () => {
+  const markup = render({
+    model: model({ claim: ACTIVE }),
+    noticeMessage:
+      "The create was signed and sent, but nothing has answered it yet.",
+  });
+  assert.match(markup, /data-testid="coding-session-handover-notice"/);
+  assert.match(markup, /Unsettled/);
+  assert.doesNotMatch(markup, /Refused/);
+});

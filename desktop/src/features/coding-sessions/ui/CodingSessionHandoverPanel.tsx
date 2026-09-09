@@ -34,6 +34,7 @@ export function CodingSessionHandoverPanel({
   onOpenEvidence,
   busy = null,
   errorMessage = null,
+  noticeMessage = null,
   nowMs = Date.now(),
   workdirField = null,
   continueBlockedReason = null,
@@ -50,6 +51,14 @@ export function CodingSessionHandoverPanel({
   /** Which action is in flight, so its button says what it is doing. */
   busy?: "continue" | "take-back" | null;
   errorMessage?: string | null;
+  /**
+   * An outcome nobody can state yet — not a refusal.
+   *
+   * Rendered under its own word, because "Refused" over a create that may
+   * still be sitting in the relay would be the app asserting the one thing it
+   * does not know.
+   */
+  noticeMessage?: string | null;
   nowMs?: number;
   /**
    * The checkout picker this reconstruction will run in.
@@ -314,6 +323,14 @@ export function CodingSessionHandoverPanel({
         >
           This read of {capped.join(" and ")} came back at its limit, so what is
           above may be part of the history rather than all of it.
+        </p>
+      )}
+      {noticeMessage === null ? null : (
+        <p
+          className="mt-2 text-xs text-foreground"
+          data-testid="coding-session-handover-notice"
+        >
+          <span className="font-medium">Unsettled</span> — {noticeMessage}
         </p>
       )}
       {errorMessage === null ? null : (

@@ -17,6 +17,7 @@ import {
   landForeignTakeoverLive,
   openHandoverSession,
   recordedCheckouts,
+  recordedHintClears,
   recordedHints,
   stubHandoverCheckout,
 } from "./helpers/handoverAssertions";
@@ -125,6 +126,14 @@ test("B takes the session over, reconstructs it, and the panel says what came ac
     return null;
   });
   expect(hint.commandId).toBe(createCommandId);
+  // …and dropped once a provider answered that exact command: settled, so it
+  // has nothing left to steer.
+  await expect
+    .poll(async () => (await recordedHintClears(page)).length, {
+      timeout: 20_000,
+    })
+    .toBeGreaterThan(0);
+  expect((await recordedHintClears(page))[0].commandId).toBe(createCommandId);
 
   // The outcome is labelled, the evidence is linkable, and the disclosure
   // survives the wip ref having landed.
@@ -154,6 +163,46 @@ test("B takes the session over, reconstructs it, and the panel says what came ac
   // The checkout itself is asserted above, from the stub's own record: it
   // never reaches the bridge's command log, because the stub answers first.
   expect(await recordedCheckouts(page)).toHaveLength(1);
+});
+
+test("a create nobody has answered keeps its folder hint and says the outcome is unknown", async ({
+  page,
+}) => {
+  // Lost acknowledgement: the create goes out and no provider answers inside
+  // the window's budget. The relay may still deliver it later — so the hint
+  // must survive, and the panel must say the outcome is unknown rather than
+  // reporting a failure it cannot prove.
+  await openHandoverSession(page, "claimable");
+  await stubHandoverCheckout(page);
+  await expect(page.getByTestId("coding-session-handover")).toBeVisible({
+    timeout: 20_000,
+  });
+  await page.getByTestId("coding-session-workdir-input").fill(CHECKOUT_PATH);
+  await page.getByTestId("coding-session-handover-continue").click();
+  await acceptPublishedTakeover(page);
+  // Deliberately: no `answerPublishedCreate` — nothing ever answers.
+
+  const notice = page.getByTestId("coding-session-handover-notice");
+  await expect(notice).toContainText(
+    "The create was signed and sent, but nothing has answered it yet",
+    { timeout: 30_000 },
+  );
+  await expect(notice).toContainText("The folder hint stays staged");
+  // An outcome nobody can state is never dressed as a refusal.
+  await expect(notice).toContainText("Unsettled");
+  await expect(page.getByTestId("coding-session-handover-error")).toHaveCount(
+    0,
+  );
+  // The hint was staged and never cleared: a late delivery still lands in the
+  // recovered checkout.
+  const hints = await recordedHints(page);
+  expect(hints).toHaveLength(1);
+  expect(hints[0].path).toBe(CHECKOUT_PATH);
+  expect(await recordedHintClears(page)).toEqual([]);
+  await waitForAnimations(page);
+  await page
+    .getByTestId("coding-session-handover")
+    .screenshot({ path: `${SHOTS}/09-create-outcome-unknown.png` });
 });
 
 test("a takeover that lands while the session is open reaches the panel", async ({

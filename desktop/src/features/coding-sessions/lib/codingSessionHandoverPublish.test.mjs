@@ -4,8 +4,10 @@ import test from "node:test";
 import {
   claimCodingSessionHandover,
   continueCodingSessionHandover,
+  isProvenRelayRefusal,
   renderCodingSessionCheckpointTurn,
   resolveCheckpointPatch,
+  resumeCodingSessionHandoverContinuation,
 } from "./codingSessionHandoverPublish.ts";
 import { decodeCodingSessionHandoverEvent } from "./codingSessionHandoverWire.ts";
 
@@ -732,7 +734,8 @@ test("a refused create drops the hint it staged", async () => {
       return {};
     },
     publishCreate: async () => {
-      throw new Error("relay refused the create");
+      // The relay's own words, in the form that proves it stored nothing.
+      throw new Error("blocked: this pubkey may not create sessions here");
     },
   });
   const result = await continueCodingSessionHandover(
@@ -741,6 +744,7 @@ test("a refused create drops the hint it staged", async () => {
   );
   assert.equal(result.ok, false);
   assert.equal(result.step, "create");
+  assert.equal(result.outcome, "refused");
   assert.deepEqual(cleared, [result.progress.createCommandId]);
 });
 
@@ -833,4 +837,203 @@ test("the prompt is written after the recovery, and says the same thing the wire
       `the agent must be told what the wire says is missing: ${line}`,
     );
   }
+});
+
+// ---------------------------------------------------------------------------
+// An exception is not proof that nothing was accepted.
+// ---------------------------------------------------------------------------
+
+test("a lost acknowledgement keeps the hint, and says the outcome is unknown", async () => {
+  // The publish resolved; no receipt arrives inside the budget. The create may
+  // still be sitting in the relay, to be delivered minutes from now — so the
+  // folder hint must survive, or that delivery starts in the old folder.
+  const cleared = [];
+  const dependencies = deps({
+    clearCreateHint: async (commandId) => {
+      cleared.push(commandId);
+      return {};
+    },
+    fetchEvents: async (filter) => (filter.kinds?.[0] === 44223 ? [] : []),
+  });
+  const result = await runContinue(dependencies);
+  assert.equal(result.ok, false);
+  assert.equal(result.step, "created");
+  assert.equal(result.outcome, "unknown");
+  assert.equal(result.progress.hintRetained, true);
+  assert.deepEqual(cleared, [], "the hint outlives a silence it cannot read");
+});
+
+test("a read that failed mid-wait keeps the hint too", async () => {
+  const cleared = [];
+  const dependencies = deps({
+    clearCreateHint: async (commandId) => {
+      cleared.push(commandId);
+      return {};
+    },
+    fetchEvents: async () => {
+      throw new Error("the relay read failed");
+    },
+  });
+  const result = await runContinue(dependencies);
+  assert.equal(result.outcome, "unknown");
+  assert.equal(result.progress.hintRetained, true);
+  assert.deepEqual(cleared, []);
+});
+
+test("a relay refusal proves nothing was stored, so the hint goes", async () => {
+  const cleared = [];
+  const dependencies = deps({
+    clearCreateHint: async (commandId) => {
+      cleared.push(commandId);
+      return {};
+    },
+    publishCreate: async (input) => {
+      lastCommandId = input.commandId;
+      // NIP-01's machine-readable prefix: only ever carried by an `OK: false`.
+      throw new Error("invalid: coding-session lifecycle command is malformed");
+    },
+  });
+  const result = await continueCodingSessionHandover(
+    continueInput({ artifacts: [], checkpointAuthor: AUTHOR }),
+    dependencies,
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.step, "create");
+  assert.equal(result.outcome, "refused");
+  assert.equal(cleared.length, 1);
+});
+
+test("a publish timeout is not a refusal: the flow waits for the receipt anyway", async () => {
+  const cleared = [];
+  const dependencies = deps({
+    clearCreateHint: async (commandId) => {
+      cleared.push(commandId);
+      return {};
+    },
+    publishCreate: async (input) => {
+      lastCommandId = input.commandId;
+      throw new Error("Timed out while creating the coding session.");
+    },
+  });
+  // The receipt is there all along — the publish only *looked* like a failure.
+  const result = await runContinue(dependencies);
+  assert.equal(result.ok, true, result.ok ? "" : result.reason);
+  assert.equal(
+    result.progress.target.sessionId,
+    "session-b",
+    "an accepted create is still an accepted create",
+  );
+  assert.deepEqual(cleared, [lastCommandId], "settled, so the hint is dropped");
+});
+
+test("a late delivery resumes: proof runs, then the hint is dropped", async () => {
+  const cleared = [];
+  let receiptVisible = false;
+  const dependencies = deps({
+    clearCreateHint: async (commandId) => {
+      cleared.push(commandId);
+      return {};
+    },
+    fetchEvents: async (filter) => {
+      if (filter.kinds?.[0] === 44223) return [metadataEvent()];
+      return receiptVisible ? [createdReceipt()] : [];
+    },
+  });
+  const first = await runContinue(dependencies);
+  assert.equal(first.outcome, "unknown");
+  assert.deepEqual(cleared, []);
+
+  // The provider picks the durable create up after this window gave up.
+  receiptVisible = true;
+  const resumed = await resumeCodingSessionHandoverContinuation(
+    {
+      channelId: CHANNEL,
+      sessionRef: SESSION,
+      genesisRef: GENESIS,
+      claimEventId: first.progress.claimEventId,
+      commandId: first.progress.createCommandId,
+      checkpointRef: CHECKPOINT,
+      checkout: continueInput().checkout,
+      checkoutReport: first.progress.checkout,
+      recovered: first.progress.checkout?.recovered ?? [],
+      missing: [],
+    },
+    dependencies,
+  );
+  assert.equal(resumed.ok, true, resumed.ok ? "" : resumed.reason);
+  assert.equal(
+    resumed.progress.checkoutConfirmed,
+    true,
+    "the proof still runs",
+  );
+  assert.equal(resumed.progress.hintRetained, false);
+  assert.deepEqual(
+    cleared,
+    [first.progress.createCommandId],
+    "cleared only once the create actually settled",
+  );
+  const decoded = decodeCodingSessionHandoverEvent({
+    event: dependencies.published.at(-1),
+    channelRef: CHANNEL,
+    sessionRef: SESSION,
+    genesisRef: GENESIS,
+  });
+  assert.equal(decoded.value.type, "continuation");
+});
+
+test("only machine-readable relay refusals count as proof", () => {
+  for (const proven of [
+    "invalid: bad envelope",
+    "blocked: not a member",
+    "rate-limited: retry in 30s",
+    "auth-required: please AUTH",
+  ]) {
+    assert.equal(isProvenRelayRefusal(new Error(proven)), true, proven);
+  }
+  for (const unknown of [
+    "Timed out while creating the coding session.",
+    "Failed to create the coding session.",
+    "Relay disconnected for community switch.",
+    "NetworkError when attempting to fetch resource.",
+    "Relay rejected the event.",
+  ]) {
+    assert.equal(isProvenRelayRefusal(new Error(unknown)), false, unknown);
+  }
+});
+
+test("a provider that answered `failed` settles the create, so the hint goes", async () => {
+  const cleared = [];
+  const dependencies = deps({
+    clearCreateHint: async (commandId) => {
+      cleared.push(commandId);
+      return {};
+    },
+    fetchEvents: async (filter) => {
+      if (filter.kinds?.[0] === 44223) return [];
+      // The exact shape `LifecycleReceipt::failed` signs: no session, and a
+      // coded error.
+      const receipt = createdReceipt();
+      const content = JSON.parse(receipt.content);
+      return [
+        {
+          ...receipt,
+          content: JSON.stringify({
+            ...content,
+            status: "failed",
+            session: null,
+            error: {
+              code: "PROVIDER_UNAVAILABLE",
+              message: "the runtime would not start",
+            },
+          }),
+        },
+      ];
+    },
+  });
+  const result = await runContinue(dependencies);
+  assert.equal(result.ok, false);
+  assert.equal(result.outcome, "refused");
+  assert.match(result.reason, /answered this create with failed/);
+  assert.equal(result.progress.hintRetained, false);
+  assert.deepEqual(cleared, [lastCommandId], "an answered create is settled");
 });

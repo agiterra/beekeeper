@@ -25,17 +25,32 @@ import { relayClient } from "@/shared/api/relayClient";
 import type { RelaySubscriptionFilter } from "@/shared/api/relayClientShared";
 import { signRelayEvent } from "@/shared/api/tauri";
 import type { RelayEvent } from "@/shared/api/types";
-import {
-  hasStrictLifecycleReceiptJson,
-  hasStrictLifecycleReceiptValues,
-} from "@/shared/coordination/sessionCoordinationStrictJson";
+
 import { KIND_GIT_PATCH } from "@/shared/constants/kinds";
 import {
   clearCodingSessionCreateHint,
   stageCodingSessionCreateHint,
 } from "@/shared/api/tauriCodingSessionWorkdirs";
-import { hasStrictMetadataJson } from "@/shared/coordination/sessionCoordinationStrictJson";
-import { buildCodingSessionTargetKey } from "./codingSessionCommand";
+
+import {
+  awaitCodingSessionCreateSettlement,
+  confirmRecoveredCheckout,
+  defaultWait,
+  isProvenRelayRefusal,
+  SETTLE_ATTEMPTS,
+  SETTLE_DELAY_MS,
+  type CodingSessionHandoverCheckoutReport,
+} from "./codingSessionHandoverSettlement";
+
+// Re-exported so the flow stays one import for its callers and its tests: the
+// split below is about file size, not about two vocabularies.
+export {
+  awaitCodingSessionCreated,
+  awaitCodingSessionCreateSettlement,
+  isProvenRelayRefusal,
+  CODING_SESSION_HANDOVER_UNKNOWN_CREATE,
+  type CodingSessionHandoverCheckoutReport,
+} from "./codingSessionHandoverSettlement";
 import {
   buildCodingSessionHandoverContent,
   buildCodingSessionHandoverTags,
@@ -53,19 +68,6 @@ import {
   fetchCodingSessionRosterFold,
   publishCodingSessionAuthorityTransition,
 } from "./codingSessionRoster";
-
-/** How long a settle waits, in the grant path's own units. */
-const SETTLE_ATTEMPTS = 25;
-const SETTLE_DELAY_MS = 200;
-const LIFECYCLE_RECEIPT_KIND = 44224;
-
-/** What `handover_prepare_checkout` answers. Mirrors the Rust report. */
-export type CodingSessionHandoverCheckoutReport = {
-  branch: string;
-  checkedOutSha: string;
-  recovered: string[];
-  missing: string[];
-};
 
 /** Everything the continue flow needs, so a test can drive all of it. */
 export type CodingSessionHandoverPublishDependencies = {
@@ -100,8 +102,6 @@ export type CodingSessionHandoverPublishDependencies = {
   settleAttempts?: number;
 };
 
-const METADATA_KIND = 44223;
-
 /** The argument shape of the `handover_prepare_checkout` Tauri command. */
 export type CodingSessionHandoverCheckoutRequest = {
   cwd: string;
@@ -117,10 +117,6 @@ export type CodingSessionHandoverCheckoutRequest = {
   patchText?: string | null;
   baseSha?: string | null;
 };
-
-function defaultWait(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => globalThis.setTimeout(resolve, milliseconds));
-}
 
 /** Sign and publish one 44247 record. */
 export async function publishCodingSessionHandoverRecord(
@@ -217,145 +213,6 @@ function lostClaimMessage(
   return `Another link won this chain first: the relay's accepted head is ${head.eventId} at seq ${head.seq}, not this takeover. The session is held by whoever that link names — the panel above now says who. Nothing was reconstructed.`;
 }
 
-/** Wait, bounded, for the `created` receipt naming this command's target. */
-export async function awaitCodingSessionCreated(
-  input: { channelId: string; commandId: string },
-  dependencies: CodingSessionHandoverPublishDependencies = {},
-): Promise<CodingSessionHandoverTarget> {
-  const fetchEvents =
-    dependencies.fetchEvents ??
-    ((filter: RelaySubscriptionFilter) => relayClient.fetchEvents(filter));
-  const wait = dependencies.wait ?? defaultWait;
-  const attempts = Math.max(1, dependencies.settleAttempts ?? SETTLE_ATTEMPTS);
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const events = await fetchEvents({
-      kinds: [LIFECYCLE_RECEIPT_KIND],
-      "#h": [input.channelId],
-      "#csl-command": [input.commandId],
-      limit: 8,
-    });
-    for (const event of events) {
-      const target = readCreatedTarget(event, input.commandId);
-      if (target) return target;
-    }
-    if (attempt + 1 < attempts) await wait(SETTLE_DELAY_MS);
-  }
-  throw new Error(
-    "The create went out, but no provider answered it with a created receipt, so nothing carries this session's work yet.",
-  );
-}
-
-function readCreatedTarget(
-  event: RelayEvent,
-  commandId: string,
-): CodingSessionHandoverTarget | null {
-  if (event.kind !== LIFECYCLE_RECEIPT_KIND) return null;
-  let content: unknown;
-  try {
-    content = JSON.parse(event.content);
-  } catch {
-    return null;
-  }
-  if (
-    !hasStrictLifecycleReceiptJson(event.content, content) ||
-    !hasStrictLifecycleReceiptValues(content) ||
-    content.commandId !== commandId ||
-    content.status !== "created"
-  ) {
-    return null;
-  }
-  const session = content.session as Record<string, unknown>;
-  return {
-    driver: session.driver as string,
-    instanceId: session.instanceId as string,
-    sessionId: session.sessionId as string,
-    generation: session.generation as number,
-  };
-}
-
-/**
- * Read the new execution's own first metadata and check it is where this host
- * put the work.
- *
- * The provider publishes its branch and observed commit; the patch is applied
- * uncommitted, so `HEAD` stays at the checkpoint's sha. A match is the only
- * thing that lets this flow call the reconstruction recovered — a mismatch
- * means the model is running in some other folder, which is exactly the state
- * a "recovered" label would hide.
- */
-async function confirmRecoveredCheckout(
-  input: {
-    channelId: string;
-    target: CodingSessionHandoverTarget;
-    branch: string | null;
-    headSha: string;
-  },
-  dependencies: CodingSessionHandoverPublishDependencies = {},
-): Promise<{ confirmed: boolean; missing: string | null }> {
-  const fetchEvents =
-    dependencies.fetchEvents ??
-    ((filter: RelaySubscriptionFilter) => relayClient.fetchEvents(filter));
-  const wait = dependencies.wait ?? defaultWait;
-  const attempts = Math.max(1, dependencies.settleAttempts ?? SETTLE_ATTEMPTS);
-  const targetKey = buildCodingSessionTargetKey(input.target);
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    let events: RelayEvent[] = [];
-    try {
-      events = await fetchEvents({
-        kinds: [METADATA_KIND],
-        "#h": [input.channelId],
-        "#cs-target": [targetKey],
-        limit: 4,
-      });
-    } catch {
-      // A failed read is not a mismatch; the loop tries again and the
-      // absence sentence below is the honest answer if it never arrives.
-    }
-    for (const event of events) {
-      const facts = readMetadataFacts(event);
-      if (facts === null) continue;
-      if (
-        input.branch !== null &&
-        facts.branch === input.branch &&
-        facts.observedCommit?.toLowerCase() === input.headSha.toLowerCase()
-      ) {
-        return { confirmed: true, missing: null };
-      }
-      return {
-        confirmed: false,
-        missing: `the execution reports branch ${facts.branch ?? "none"} at ${facts.observedCommit ?? "no commit"}, not the recovered checkout — it is running somewhere else`,
-      };
-    }
-    if (attempt + 1 < attempts) await wait(SETTLE_DELAY_MS);
-  }
-  return {
-    confirmed: false,
-    missing:
-      "the execution published no metadata, so this app could not confirm it is running in the recovered checkout",
-  };
-}
-
-/** The branch and commit one 44223 reports, or null when it is not one. */
-function readMetadataFacts(
-  event: RelayEvent,
-): { branch: string | null; observedCommit: string | null } | null {
-  if (event.kind !== METADATA_KIND) return null;
-  let content: unknown;
-  try {
-    content = JSON.parse(event.content);
-  } catch {
-    return null;
-  }
-  if (!hasStrictMetadataJson(event.content, content)) return null;
-  return {
-    branch: typeof content.branch === "string" ? content.branch : null,
-    observedCommit:
-      typeof content.observedCommit === "string"
-        ? content.observedCommit
-        : null,
-  };
-}
-
 /** How far the continue flow got, whatever happened next. */
 export type CodingSessionHandoverContinueProgress = {
   claimEventId: string | null;
@@ -367,6 +224,11 @@ export type CodingSessionHandoverContinueProgress = {
    * recovered checkout. `null` when there was nothing to confirm.
    */
   checkoutConfirmed: boolean | null;
+  /**
+   * Whether the staged folder hint was deliberately left in place because the
+   * create's outcome is unknown.
+   */
+  hintRetained: boolean;
   continuationEventId: string | null;
 };
 
@@ -376,6 +238,16 @@ export type CodingSessionHandoverContinueResult =
       ok: false;
       /** The step that refused, named so a reader can act on it. */
       step: "claim" | "checkout" | "create" | "created" | "continuation";
+      /**
+       * Whether this failure **proves** nothing was accepted.
+       *
+       * `refused` is a relay saying no in machine-readable words. `unknown`
+       * is everything else at or after the publish attempt: a timeout, a
+       * dropped socket, a read that failed. The difference decides whether
+       * the staged folder hint may be dropped, and whether a caller should
+       * keep watching for a late receipt.
+       */
+      outcome?: "refused" | "unknown";
       reason: string;
       progress: CodingSessionHandoverContinueProgress;
     };
@@ -554,6 +426,7 @@ export async function continueCodingSessionHandover(
     createCommandId: null,
     target: null,
     checkoutConfirmed: null,
+    hintRetained: false,
     continuationEventId: null,
   };
 
@@ -629,6 +502,8 @@ export async function continueCodingSessionHandover(
 
   const commandId = createCodingSessionLifecycleCommandId();
   progress.createCommandId = commandId;
+  /** A publish that threw without proving non-acceptance, carried forward. */
+  let publishError: string | null = null;
   const publishCreate =
     dependencies.publishCreate ?? publishCodingSessionCreate;
   const stageCreateHint =
@@ -678,22 +553,61 @@ export async function continueCodingSessionHandover(
       initialTurn,
     });
   } catch (error) {
-    // A hint with no create to steer would sit there waiting for whatever
-    // command next reused the id.
-    await clearCreateHint(commandId).catch(() => {});
-    return { ok: false, step: "create", reason: reasonOf(error), progress };
+    // **An exception is not proof that nothing was accepted.** A durable
+    // create can be signed, reach the relay, and be delivered to a provider
+    // minutes later; a timeout or a dropped socket says only that this
+    // window stopped hearing. The hint is therefore dropped **only** when the
+    // relay refused the event in words that prove it was never stored (the
+    // NIP-01 machine-readable prefixes, which only ever ride an `OK: false`).
+    // Anything else keeps the hint staged, so a late delivery still lands in
+    // the recovered checkout.
+    if (isProvenRelayRefusal(error)) {
+      await clearCreateHint(commandId);
+      return {
+        ok: false,
+        step: "create",
+        outcome: "refused",
+        reason: reasonOf(error),
+        progress,
+      };
+    }
+    publishError = reasonOf(error);
   }
 
-  let target: CodingSessionHandoverTarget;
-  try {
-    target = await awaitCodingSessionCreated(
-      { channelId: input.channelId, commandId },
-      dependencies,
-    );
-  } catch (error) {
+  const settlement = await awaitCodingSessionCreateSettlement(
+    { channelId: input.channelId, commandId },
+    dependencies,
+  );
+  if (settlement.settled === "failed") {
+    // A provider answered and will not carry this work: settled, so the hint
+    // has nothing left to steer.
     await clearCreateHint(commandId).catch(() => {});
-    return { ok: false, step: "created", reason: reasonOf(error), progress };
+    return {
+      ok: false,
+      step: "created",
+      outcome: "refused",
+      reason: `the provider answered this create with ${settlement.status}`,
+      progress,
+    };
   }
+  if (settlement.settled === "unknown") {
+    // Same rule, one step later: no receipt inside this window's budget, or a
+    // read that failed, leaves the create's outcome **unknown**. The hint
+    // stays staged for it and the caller keeps watching rather than calling
+    // the flow failed.
+    progress.hintRetained = true;
+    return {
+      ok: false,
+      step: "created",
+      outcome: "unknown",
+      reason:
+        publishError === null
+          ? settlement.reason
+          : `${publishError} (and no receipt followed: ${settlement.reason})`,
+      progress,
+    };
+  }
+  const target = settlement.target;
   progress.target = target;
   // The hint has done its job the moment a provider reports a session.
   await clearCreateHint(commandId).catch(() => {});
@@ -732,6 +646,121 @@ export async function continueCodingSessionHandover(
           checkpointRef: input.checkpointRef,
           target,
           recovered,
+          missing,
+          note: input.note ?? null,
+        },
+      },
+      dependencies,
+    );
+    progress.continuationEventId = event.id;
+  } catch (error) {
+    return {
+      ok: false,
+      step: "continuation",
+      reason: reasonOf(error),
+      progress,
+    };
+  }
+  return { ok: true, progress };
+}
+
+/**
+ * Pick a create back up when its receipt arrives after this window gave up.
+ *
+ * The unknown outcome is not an ending: the relay may have stored the create
+ * and a provider may answer it minutes later. This waits again (a longer,
+ * still bounded budget), and when the receipt lands it does exactly what the
+ * flow would have done — prove the checkout, publish the continuation, and
+ * only then drop the staged hint, because only now is the create's outcome
+ * settled.
+ */
+export async function resumeCodingSessionHandoverContinuation(
+  input: {
+    channelId: string;
+    sessionRef: string;
+    genesisRef: string;
+    claimEventId: string;
+    commandId: string;
+    checkpointRef: string | null;
+    checkout: CodingSessionHandoverCheckoutRequest | null;
+    checkoutReport: CodingSessionHandoverCheckoutReport | null;
+    recovered: readonly string[];
+    missing: readonly string[];
+    note?: string | null;
+  },
+  dependencies: CodingSessionHandoverPublishDependencies = {},
+): Promise<CodingSessionHandoverContinueResult> {
+  const clearCreateHint =
+    dependencies.clearCreateHint ?? clearCodingSessionCreateHint;
+  const progress: CodingSessionHandoverContinueProgress = {
+    claimEventId: input.claimEventId,
+    checkout: input.checkoutReport,
+    createCommandId: input.commandId,
+    target: null,
+    checkoutConfirmed: null,
+    hintRetained: true,
+    continuationEventId: null,
+  };
+  const settlement = await awaitCodingSessionCreateSettlement(
+    { channelId: input.channelId, commandId: input.commandId },
+    dependencies,
+  );
+  if (settlement.settled !== "created") {
+    if (settlement.settled === "failed") {
+      await clearCreateHint(input.commandId).catch(() => {});
+      progress.hintRetained = false;
+      return {
+        ok: false,
+        step: "created",
+        outcome: "refused",
+        reason: `the provider answered this create with ${settlement.status}`,
+        progress,
+      };
+    }
+    // Still unknown, and still staged: nothing here proves the create was
+    // refused, so nothing here may drop the hint.
+    return {
+      ok: false,
+      step: "created",
+      outcome: "unknown",
+      reason: settlement.reason,
+      progress,
+    };
+  }
+  const target = settlement.target;
+  progress.target = target;
+  // Settled: a provider answered this exact command. Now the hint has done
+  // its job.
+  await clearCreateHint(input.commandId).catch(() => {});
+  progress.hintRetained = false;
+
+  const missing = [...input.missing];
+  if (input.checkout) {
+    const confirmation = await confirmRecoveredCheckout(
+      {
+        channelId: input.channelId,
+        target,
+        branch: input.checkoutReport?.branch ?? null,
+        headSha: input.checkout.sha,
+      },
+      dependencies,
+    );
+    progress.checkoutConfirmed = confirmation.confirmed;
+    if (confirmation.missing !== null) missing.push(confirmation.missing);
+  }
+  try {
+    const event = await publishCodingSessionHandoverRecord(
+      {
+        channelId: input.channelId,
+        sessionRef: input.sessionRef,
+        genesisRef: input.genesisRef,
+        type: "continuation",
+        body: {
+          claimRef: input.claimEventId,
+          mode: "reconstructed",
+          checkpointRef: input.checkpointRef,
+          target,
+          recovered: [...input.recovered],
           missing,
           note: input.note ?? null,
         },

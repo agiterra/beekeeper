@@ -653,6 +653,9 @@ export async function stubHandoverCheckout(page: Page): Promise<void> {
     (
       window as unknown as { __HANDOVER_HINTS__: unknown[] }
     ).__HANDOVER_HINTS__ = [];
+    (
+      window as unknown as { __HANDOVER_HINT_CLEARS__: unknown[] }
+    ).__HANDOVER_HINT_CLEARS__ = [];
     internals.invoke = async (command: string, args?: unknown) => {
       if (command === "stage_coding_session_create_hint") {
         (
@@ -661,6 +664,9 @@ export async function stubHandoverCheckout(page: Page): Promise<void> {
         return { pending: {}, projects: {}, channels: {}, recent: [] };
       }
       if (command === "clear_coding_session_create_hint") {
+        (
+          window as unknown as { __HANDOVER_HINT_CLEARS__: unknown[] }
+        ).__HANDOVER_HINT_CLEARS__.push(args);
         return { pending: {}, projects: {}, channels: {}, recent: [] };
       }
       if (command === "handover_prepare_checkout") {
@@ -688,6 +694,22 @@ export async function recordedHints(
         path: string;
         projectRef: string | null;
       }>,
+  );
+}
+
+/**
+ * Every `clear_coding_session_create_hint` the app has issued so far.
+ *
+ * Recorded here rather than read from the bridge's command log, because this
+ * stub answers the command before the bridge ever sees it.
+ */
+export async function recordedHintClears(
+  page: Page,
+): Promise<Array<{ commandId: string }>> {
+  return page.evaluate(
+    () =>
+      (window as unknown as { __HANDOVER_HINT_CLEARS__?: unknown[] })
+        .__HANDOVER_HINT_CLEARS__ as Array<{ commandId: string }>,
   );
 }
 

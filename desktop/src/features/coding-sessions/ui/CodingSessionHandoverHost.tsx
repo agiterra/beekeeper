@@ -10,8 +10,10 @@ import {
 import { truncatePubkey } from "@/shared/lib/pubkey";
 import { useCodingSessionHandover } from "../hooks/useCodingSessionHandover";
 import {
-  continueCodingSessionHandover,
+  CODING_SESSION_HANDOVER_UNKNOWN_CREATE,
   claimCodingSessionHandover,
+  continueCodingSessionHandover,
+  resumeCodingSessionHandoverContinuation,
   type CodingSessionHandoverCheckoutReport,
   type CodingSessionHandoverCheckoutRequest,
 } from "../lib/codingSessionHandoverPublish";
@@ -134,6 +136,9 @@ export function CodingSessionHandoverHost({
     };
   }, []);
   const [actionError, setActionError] = React.useState<string | null>(null);
+  // An outcome nobody can state yet is its own state, not an error: the panel
+  // says "Unsettled", never "Refused".
+  const [actionNotice, setActionNotice] = React.useState<string | null>(null);
 
   const generations = React.useMemo(
     () => codingSessionHandoverGenerations(executions, resolveReachability),
@@ -189,6 +194,13 @@ export function CodingSessionHandoverHost({
     }
     setBusy("continue");
     setActionError(null);
+    setActionNotice(null);
+    const checkoutRequest = checkoutRequestFor(
+      checkpoint,
+      scope.sessionRef,
+      workdirPath,
+      relayOrigin,
+    );
     try {
       const result = await continueCodingSessionHandover(
         {
@@ -219,17 +231,42 @@ export function CodingSessionHandoverHost({
           // applies must be the checkpoint author's own.
           artifacts: checkpoint.body.artifacts,
           checkpointAuthor: checkpoint.author,
-          checkout: checkoutRequestFor(
-            checkpoint,
-            scope.sessionRef,
-            workdirPath,
-            relayOrigin,
-          ),
+          checkout: checkoutRequest,
           declaredMissing: checkpoint.body.missing,
         },
         { prepareCheckout: invokeHandoverPrepareCheckout },
       );
-      if (!result.ok) {
+      if (!result.ok && result.outcome === "unknown") {
+        // Not a failure: an outcome nobody can state yet. The hint is still
+        // staged for that command, and this keeps watching for the receipt
+        // instead of leaving a person to guess.
+        setActionNotice(
+          `${CODING_SESSION_HANDOVER_UNKNOWN_CREATE} ${result.reason}`,
+        );
+        const resumed = await resumeCodingSessionHandoverContinuation(
+          {
+            channelId,
+            sessionRef: scope.sessionRef,
+            genesisRef: scope.genesisRef,
+            claimEventId: result.progress.claimEventId ?? "",
+            commandId: result.progress.createCommandId ?? "",
+            checkpointRef: checkpoint.eventId,
+            checkout: checkoutRequest,
+            checkoutReport: result.progress.checkout,
+            recovered: result.progress.checkout?.recovered ?? [],
+            missing: [
+              ...checkpoint.body.missing,
+              ...(result.progress.checkout?.missing ?? []),
+            ],
+          },
+          { prepareCheckout: invokeHandoverPrepareCheckout },
+        );
+        setActionNotice(
+          resumed.ok
+            ? null
+            : `${CODING_SESSION_HANDOVER_UNKNOWN_CREATE} ${resumed.reason}`,
+        );
+      } else if (!result.ok) {
         setActionError(`${result.step}: ${result.reason}`);
       }
     } catch (error) {
@@ -266,6 +303,7 @@ export function CodingSessionHandoverHost({
     }
     setBusy("take-back");
     setActionError(null);
+    setActionNotice(null);
     try {
       await claimCodingSessionHandover({
         channelId,
@@ -324,6 +362,7 @@ export function CodingSessionHandoverHost({
       <CodingSessionHandoverPanel
         busy={busy}
         errorMessage={actionError}
+        noticeMessage={actionNotice}
         model={model}
         capped={read.capped}
         continueBlockedReason={blockedReason}
