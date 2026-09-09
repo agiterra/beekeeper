@@ -8,6 +8,7 @@
 
 use std::collections::BTreeMap;
 
+use buzz_core::coding_session_authority_claim::{fold_current_claim, ClaimLink, ClaimState};
 use buzz_core::coding_session_authority_transition::{
     decode_coding_session_authority_transition, CodingSessionAuthorityTransitionPayload,
     CodingSessionAuthorityTransitionType, CODING_SESSION_AUTHORITY_TRANSITION_TAG_VERSION,
@@ -39,9 +40,20 @@ struct AuthorityAcceptanceReceipt {
     grantee_pubkey: String,
     #[serde(default)]
     role: Option<String>,
+    /// The execution body a claim receipt names.
+    ///
+    /// **Absent here is what broke every chain read after the first
+    /// takeover.** The relay stamps `bodyPubkey` onto takeover/transfer
+    /// receipts (`buzz-relay/src/handlers/side_effects.rs`), and this struct
+    /// is `deny_unknown_fields`, so the first accepted claim made every
+    /// subsequent projection fail with "unknown field `bodyPubkey`" — which
+    /// is to say all four handover verbs stopped working the moment one of
+    /// them succeeded (composition run 5).
+    #[serde(default)]
+    body_pubkey: Option<String>,
 }
 
-async fn fetch_trusted_relay_self(client: &BuzzClient) -> Result<String, CliError> {
+pub(super) async fn fetch_trusted_relay_self(client: &BuzzClient) -> Result<String, CliError> {
     let raw = client
         .get_public("/")
         .await
@@ -107,6 +119,7 @@ pub(super) async fn fetch_projected_authority(
     .map_err(|error| CliError::Other(format!("invalid accepted authority chain: {error}")))
 }
 
+#[derive(Debug)]
 pub(super) struct ProjectedAuthority {
     pub(super) grants: Vec<CodingSessionTeamActiveGrant>,
     pub(super) seats: Vec<CodingSessionTeamActiveSeat>,
@@ -123,6 +136,31 @@ pub(super) struct ProjectedAuthority {
     /// record, and a later grant must not retroactively bless one
     /// (REVIEW-B2 F1).
     pub(super) policy_grants: Vec<CodingSessionPolicyGrant>,
+    /// Who holds this whole session, folded from the same accepted chain by
+    /// [`fold_current_claim`].
+    ///
+    /// Deliberately beside `grants` rather than derived from it: a grant says
+    /// who may steer, a claim says who took the session over, and the two
+    /// answer different questions at the fence. `Voided` is not `NoClaim`
+    /// (`docs/HANDOVER_IMPL.md` §1).
+    pub(crate) claim: ClaimState,
+    /// `created_at` of the relay receipt that accepted the claim link in
+    /// force, in unix seconds, or `None` when there is no claim.
+    ///
+    /// The receipt's time rather than the transition's: acceptance is what put
+    /// the claim in force, and it is the only one of the two this projection
+    /// verified against the trusted relay key.
+    pub(crate) claim_since: Option<u64>,
+    /// When each still-live grant was accepted, in unix seconds.
+    ///
+    /// `grants` says who may steer *now*; a handover record's standing is
+    /// judged at the record's own `created_at`, so the reader needs the
+    /// moment the grant landed as well as the fact of it
+    /// (`HandoverFoldContext::grants`).
+    pub(crate) grant_accepted_at: BTreeMap<String, u64>,
+    /// When each still-live seat was accepted, in unix seconds, under the same
+    /// rule as [`Self::grant_accepted_at`].
+    pub(crate) seat_accepted_at: BTreeMap<String, u64>,
 }
 
 fn validate_accepted_authority_transition(
@@ -200,6 +238,13 @@ pub(super) fn project_receipt_backed_authority_chain(
         let role_key_present = value
             .as_object()
             .is_some_and(|object| object.contains_key("role"));
+        // Keyed on the key's presence, not the parsed value, for the reason
+        // the lifecycle receipt's `turnId` is: an explicit `"bodyPubkey": null`
+        // is a receipt claiming the relay saw no body, which is a different
+        // claim from a receipt that carries no such key.
+        let body_key_present = value
+            .as_object()
+            .is_some_and(|object| object.contains_key("bodyPubkey"));
         let receipt: AuthorityAcceptanceReceipt = serde_json::from_value(value)
             .map_err(|error| format!("malformed authority acceptance receipt: {error}"))?;
         if receipt.receipt_type != AUTHORITY_ACCEPTANCE_RECEIPT_TYPE {
@@ -215,6 +260,26 @@ pub(super) fn project_receipt_backed_authority_chain(
                 "authority receipt role presence does not match its transition type".into(),
             );
         }
+        // A claim receipt names the body it fences to and every other receipt
+        // names none: a grant receipt carrying one would be describing a fence
+        // nobody raised, and a takeover receipt without one names a claim the
+        // fold could not apply.
+        let is_claim_receipt = receipt.transition_type.is_claim();
+        if is_claim_receipt != body_key_present || is_claim_receipt != receipt.body_pubkey.is_some()
+        {
+            return Err(
+                "authority receipt bodyPubkey presence does not match its transition type".into(),
+            );
+        }
+        if let Some(body_pubkey) = &receipt.body_pubkey {
+            if body_pubkey.len() != 64
+                || !body_pubkey
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            {
+                return Err("authority receipt bodyPubkey is not a lowercase 64-hex pubkey".into());
+            }
+        }
         let transition = transitions
             .get(&receipt.accepted_event_id)
             .ok_or_else(|| "authority receipt references a missing transition".to_owned())?;
@@ -225,6 +290,11 @@ pub(super) fn project_receipt_backed_authority_chain(
             || payload.transition_type != receipt.transition_type
             || payload.grantee_pubkey != receipt.grantee_pubkey
             || payload.role != receipt.role
+            // The receipt is the relay's statement about the transition, so a
+            // body they disagree about means one of the two is not describing
+            // this link — and the fence would be raised on whichever the
+            // reader happened to trust.
+            || payload.body_pubkey != receipt.body_pubkey
         {
             return Err("authority receipt facts do not match the accepted transition".into());
         }
@@ -248,6 +318,13 @@ pub(super) fn project_receipt_backed_authority_chain(
     let mut seats = BTreeMap::new();
     let mut seat_grant_refs = BTreeMap::new();
     let mut policy_grants = Vec::with_capacity(links.len());
+    // Every accepted link, in seq order, reduced to what the canonical claim
+    // fold reads. Kept as links rather than as a running state so the answer
+    // comes from `fold_current_claim` and not from a second copy of its rules.
+    let mut claim_links: Vec<ClaimLink> = Vec::new();
+    let mut claim_accepted_at: BTreeMap<String, u64> = BTreeMap::new();
+    let mut grant_accepted_at: BTreeMap<String, u64> = BTreeMap::new();
+    let mut seat_accepted_at: BTreeMap<String, u64> = BTreeMap::new();
     for (offset, (event_id, signer, payload, accepted_at)) in links.iter().enumerate() {
         let expected_seq = u32::try_from(offset + 1)
             .map_err(|_| "authority chain exceeds u32 sequence space".to_owned())?;
@@ -264,21 +341,64 @@ pub(super) fn project_receipt_backed_authority_chain(
         let signer_is_lead = seats
             .get(signer)
             .is_some_and(|seat: &CodingSessionTeamActiveSeat| seat.role == "lead");
-        let is_seat_transition = matches!(
-            payload.transition_type,
+        // The claim as it stands *before* this link, which is what a
+        // `transfer`'s signer is judged against.
+        let claim_before = fold_current_claim(claim_links.iter().cloned());
+        let signer_is_authorized = match payload.transition_type {
+            // A seat may be granted by the founder, a live operator, or an
+            // active lead.
             CodingSessionAuthorityTransitionType::GrantSeat
-                | CodingSessionAuthorityTransitionType::RevokeSeat
-        );
-        let signer_is_authorized = if is_seat_transition {
-            signer_is_founder || signer_is_operator || signer_is_lead
-        } else {
-            signer_is_founder
+            | CodingSessionAuthorityTransitionType::RevokeSeat => {
+                signer_is_founder || signer_is_operator || signer_is_lead
+            }
+            // §1: a takeover is a self-claim by the founder or a live
+            // operator. `signer_is_operator` is read from `grants` as it
+            // stands *before* this link, which is the "grants_before" the
+            // relay's own acceptance rule names.
+            CodingSessionAuthorityTransitionType::Takeover => {
+                signer_is_founder || signer_is_operator
+            }
+            // §1: a transfer is signed by the current claimant or the founder,
+            // and there must be a claim in force to transfer.
+            //
+            // Both halves, spelled the same way the relay spells them
+            // (`buzz-db/src/event.rs`, `NoActiveClaim` before
+            // `SignerNotAuthorized`): the way back from a voided claim is a
+            // fresh takeover, never a transfer, so a founder-signed transfer
+            // from `NoClaim` or `Voided` is refused here exactly as the relay
+            // refuses it. Unreachable against a relay that already enforces
+            // it — which is the point: a projection that accepted a link the
+            // relay would not is a second, disagreeing answer to one question.
+            CodingSessionAuthorityTransitionType::Transfer => claim_before
+                .active()
+                .is_some_and(|claim| signer_is_founder || claim.claimant == *signer),
+            _ => signer_is_founder,
         };
         if !signer_is_authorized {
             return Err(format!(
                 "authority transition {event_id} has an unauthorized signer"
             ));
         }
+        if payload.transition_type == CodingSessionAuthorityTransitionType::Takeover
+            && payload.grantee_pubkey != *signer
+        {
+            // The inverse of `SelfNomination`: a takeover names its own signer
+            // as claimant, so a link that claims the session for somebody else
+            // is a transfer that skipped the transfer rules.
+            return Err(format!(
+                "authority transition {event_id} is a takeover whose claimant is not its signer"
+            ));
+        }
+        if payload.transition_type.is_claim() {
+            claim_accepted_at.insert(event_id.clone(), *accepted_at);
+        }
+        claim_links.push(ClaimLink {
+            seq: payload.seq,
+            accepted_event_id: event_id.clone(),
+            transition_type: payload.transition_type,
+            grantee_pubkey: payload.grantee_pubkey.clone(),
+            body_pubkey: payload.body_pubkey.clone(),
+        });
         if payload.transition_type == CodingSessionAuthorityTransitionType::GrantSeat
             && payload.grantee_pubkey == *signer
         {
@@ -306,6 +426,7 @@ pub(super) fn project_receipt_backed_authority_chain(
                         may_steer: true,
                     },
                 );
+                grant_accepted_at.insert(payload.grantee_pubkey.clone(), *accepted_at);
             }
             CodingSessionAuthorityTransitionType::GrantViewer => {
                 grants.insert(
@@ -316,11 +437,13 @@ pub(super) fn project_receipt_backed_authority_chain(
                         may_steer: false,
                     },
                 );
+                grant_accepted_at.remove(&payload.grantee_pubkey);
             }
             CodingSessionAuthorityTransitionType::Revoke => {
                 if grants.remove(&payload.grantee_pubkey).is_none() {
                     return Err("revoke names a pubkey with no active grant".into());
                 }
+                grant_accepted_at.remove(&payload.grantee_pubkey);
             }
             CodingSessionAuthorityTransitionType::GrantSeat => {
                 let role = payload
@@ -335,6 +458,7 @@ pub(super) fn project_receipt_backed_authority_chain(
                     },
                 );
                 seat_grant_refs.insert(payload.grantee_pubkey.clone(), event_id.clone());
+                seat_accepted_at.insert(payload.grantee_pubkey.clone(), *accepted_at);
             }
             CodingSessionAuthorityTransitionType::RevokeSeat => {
                 let expected_role = payload
@@ -345,14 +469,24 @@ pub(super) fn project_receipt_backed_authority_chain(
                     Some(seat) if seat.role == expected_role => {
                         seats.remove(&payload.grantee_pubkey);
                         seat_grant_refs.remove(&payload.grantee_pubkey);
+                        seat_accepted_at.remove(&payload.grantee_pubkey);
                     }
                     Some(_) => return Err("revoke-seat role does not match active seat".into()),
                     None => return Err("revoke-seat names no active seat".into()),
                 }
             }
+            // A claim moves who holds the whole session; it grants and revokes
+            // nothing, so the grant and seat maps are untouched. The claim
+            // itself is folded from `claim_links` below.
+            CodingSessionAuthorityTransitionType::Takeover
+            | CodingSessionAuthorityTransitionType::Transfer => {}
         }
         expected_prev = Some(event_id);
     }
+    let claim = fold_current_claim(claim_links.into_iter());
+    let claim_since = claim
+        .active()
+        .and_then(|current| claim_accepted_at.get(&current.accepted_event_id).copied());
     Ok(ProjectedAuthority {
         grants: grants.into_values().collect(),
         seats: seats.into_values().collect(),
@@ -361,5 +495,9 @@ pub(super) fn project_receipt_backed_authority_chain(
         head_seq: u32::try_from(links.len())
             .map_err(|_| "authority chain exceeds u32 sequence space".to_owned())?,
         policy_grants,
+        claim,
+        claim_since,
+        grant_accepted_at,
+        seat_accepted_at,
     })
 }

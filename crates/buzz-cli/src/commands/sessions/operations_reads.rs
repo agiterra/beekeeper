@@ -8,6 +8,7 @@
 //! ([`super::policy`]), so the reader and the writers can never disagree about
 //! which events belong to a session.
 
+use buzz_core::coding_session_authority_claim::ClaimState;
 use buzz_core::coding_session_genesis::{
     decode_coding_session_genesis, CODING_SESSION_GENESIS_TAG_VERSION,
 };
@@ -148,7 +149,42 @@ pub(crate) async fn fetch_session_authority(
     }
     let authority =
         fetch_projected_authority(client, channel, genesis, &event.pubkey.to_hex()).await?;
+    let claim = authority.claim.clone();
+    let claim_since = authority.claim_since.and_then(|at| i64::try_from(at).ok());
+    let grant_accepted_at = authority.grant_accepted_at.clone();
+    let seat_accepted_at = authority.seat_accepted_at.clone();
+    let seat_roles: Vec<(String, String)> = authority
+        .seats
+        .iter()
+        .map(|seat| (seat.actor_pubkey.clone(), seat.role.clone()))
+        .collect();
+    let head_event_id = authority.head_event_id.clone();
+    let head_seq = authority.head_seq;
     Ok(SessionAuthority {
+        head_event_id,
+        head_seq,
+        claim,
+        claim_since,
+        grants: authority
+            .grants
+            .iter()
+            .filter(|grant| grant.may_steer)
+            .filter_map(|grant| {
+                grant_accepted_at
+                    .get(&grant.actor_pubkey)
+                    .and_then(|at| i64::try_from(*at).ok())
+                    .map(|at| (grant.actor_pubkey.clone(), at))
+            })
+            .collect(),
+        seats: seat_roles
+            .into_iter()
+            .filter_map(|(pubkey, role)| {
+                seat_accepted_at
+                    .get(&pubkey)
+                    .and_then(|at| i64::try_from(*at).ok())
+                    .map(|at| (pubkey.clone(), role, at))
+            })
+            .collect(),
         context: CodingSessionTeamFoldContext {
             channel_ref: channel.to_owned(),
             session_ref: session_ref.to_owned(),
@@ -170,6 +206,22 @@ pub(crate) async fn fetch_session_authority(
 pub(crate) struct SessionAuthority {
     /// What the kind-44244 fold judges against.
     pub(crate) context: CodingSessionTeamFoldContext,
+    /// Who holds this whole session, folded from the accepted chain
+    /// (`docs/HANDOVER_IMPL.md` §1). `Voided` is not `NoClaim`.
+    pub(crate) claim: ClaimState,
+    /// When the claim link in force was accepted, in unix seconds.
+    pub(crate) claim_since: Option<i64>,
+    /// Live steering grants as `(pubkey, accepted_at)` — the shape
+    /// [`buzz_core::coding_session_handover_fold::HandoverFoldContext`] judges
+    /// a checkpoint's standing at its own time with.
+    pub(crate) grants: Vec<(String, i64)>,
+    /// Live seats as `(pubkey, role, accepted_at)`, under the same rule.
+    pub(crate) seats: Vec<(String, String, i64)>,
+    /// Event id of the accepted chain's newest link, or `None` when the chain
+    /// is empty. A new link must name it as `prevAccepted`.
+    pub(crate) head_event_id: Option<String>,
+    /// That link's chain sequence number; a new link is `head_seq + 1`.
+    pub(crate) head_seq: u32,
     /// The grant/revoke history with acceptance times, which kind 44245 needs
     /// because a policy is judged at the moment it was published.
     pub(crate) policy_grants: Vec<CodingSessionPolicyGrant>,

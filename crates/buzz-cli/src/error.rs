@@ -51,6 +51,20 @@ pub enum CliError {
     #[error("{0}")]
     Unconfirmed(String),
 
+    /// A relay read came back without the row a decision needed, so the fact
+    /// the command had to establish is simply unknown.
+    ///
+    /// Distinct from [`CliError::NotFound`], which reports an absence the
+    /// caller asked about and can act on. This one says a *precondition*
+    /// could not be verified — the answer is neither yes nor no — so the
+    /// command fails closed rather than guessing. `bee sessions handover`
+    /// raises it when the relay returns no genesis for a session and no
+    /// signed deletion receipt explains it: absence is never deletion
+    /// authority (`docs/HANDOVER_IMPL.md` §3.2), and calling it "deleted"
+    /// would publish a deletion nobody performed.
+    #[error("{0}")]
+    Unverifiable(String),
+
     /// Catch-all for unexpected failures
     #[error("{0}")]
     Other(String),
@@ -117,6 +131,9 @@ pub fn exit_code(e: &CliError) -> i32 {
         CliError::DeliveryUnknown(_) => 2,
         CliError::Refused(_) => 1,
         CliError::Unconfirmed(_) => 5,
+        // 2 = network/relay: what failed is a relay read, and a caller
+        // retrying against a healthy relay is the right next move.
+        CliError::Unverifiable(_) => 2,
         CliError::Other(_) => 4,
     }
 }
@@ -141,6 +158,7 @@ pub fn print_error(e: &CliError) {
         CliError::DeliveryUnknown(_) => "delivery_unknown",
         CliError::Refused(_) => "refused",
         CliError::Unconfirmed(_) => "unconfirmed",
+        CliError::Unverifiable(_) => "unverifiable",
         CliError::Other(_) => "error",
     };
     let obj = serde_json::json!({

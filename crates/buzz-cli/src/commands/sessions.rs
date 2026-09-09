@@ -72,6 +72,16 @@ mod crew_tests;
 #[cfg(test)]
 mod crew_wire_tests;
 pub mod explain;
+// Lane C: absent-participant handover (`docs/HANDOVER_IMPL.md` §4). Split by
+// topic so no file passes 1,000 lines: the four verbs, the git half, and the
+// rendering.
+pub mod handover;
+pub(crate) mod handover_checkpoint;
+pub(crate) mod handover_claim;
+pub(crate) mod handover_continue;
+pub(crate) mod handover_git;
+pub(crate) mod handover_reconstruct;
+pub mod handover_render;
 mod hire_evidence;
 #[cfg(test)]
 mod hire_evidence_tests;
@@ -2635,6 +2645,7 @@ pub async fn dispatch(
             .await
         }
         SessionsCmd::Policy(cmd) => policy::cmd_policy(client, cmd).await,
+        SessionsCmd::Handover(cmd) => handover::dispatch(cmd, client).await,
         SessionsCmd::Send {
             channel,
             to,
@@ -3100,6 +3111,7 @@ mod tests {
             routing: None,
             bee_stamp: None,
             pack_ref: None,
+            handover: None,
         }
     }
 

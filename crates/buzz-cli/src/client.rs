@@ -1154,6 +1154,33 @@ impl BuzzClient {
             )));
         }
 
+        // 4-6. Hash, PUT, and fall back to the legacy endpoint if needed.
+        self.upload_blob_bytes(bytes, &mime).await
+    }
+
+    /// Upload arbitrary bytes to the relay's Blossom endpoint under `mime`.
+    ///
+    /// The transport half of [`Self::upload_file`], reachable on its own for
+    /// callers that hold bytes rather than a path, and a media type the
+    /// image/video allow-list does not cover. `bee sessions handover
+    /// checkpoint` is the first: a working-tree patch too large for a NIP-34
+    /// patch event travels as a blob addressed by the sha256 this returns, and
+    /// it is neither an image nor a video.
+    ///
+    /// The caller owns the size question. This method enforces no ceiling of
+    /// its own, because the ceilings that exist are per-purpose (the image and
+    /// video maxima above, the handover capture bound) and a third one here
+    /// would refuse in a voice that named none of them.
+    ///
+    /// # Errors
+    /// The relay's own status and body on refusal; a network error on
+    /// transport failure after retries.
+    pub async fn upload_blob_bytes(
+        &self,
+        bytes: Vec<u8>,
+        mime: &str,
+    ) -> Result<BlobDescriptor, CliError> {
+        let mime = mime.to_owned();
         // 4. SHA-256
         let sha256 = hex::encode(Sha256::digest(&bytes));
 

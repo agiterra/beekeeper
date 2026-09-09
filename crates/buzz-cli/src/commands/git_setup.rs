@@ -2209,8 +2209,17 @@ fn prediction_operators(authority: &[nostr::Event], genesis_ref: &str) -> Vec<St
             | CodingSessionAuthorityTransitionType::Revoke => {
                 operators.retain(|held| held != &grantee);
             }
+            // A seat is not an operator grant, and a claim
+            // (`takeover`/`transfer`) moves who *holds* the session rather
+            // than who may steer it: the operator set this function answers
+            // with is unchanged by either. The session-level fence a claim
+            // raises is decided by
+            // `buzz_core::coding_session_authority_claim::fold_current_claim`,
+            // not here.
             CodingSessionAuthorityTransitionType::GrantSeat
-            | CodingSessionAuthorityTransitionType::RevokeSeat => {}
+            | CodingSessionAuthorityTransitionType::RevokeSeat
+            | CodingSessionAuthorityTransitionType::Takeover
+            | CodingSessionAuthorityTransitionType::Transfer => {}
         }
     }
     operators

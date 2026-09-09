@@ -3016,6 +3016,24 @@ pub enum SessionsCmd {
         #[arg(long)]
         genesis: Option<String>,
     },
+    /// Continue another participant's work: check point it, claim it, pick it up.
+    ///
+    /// Three mechanisms that already exist, wired together. A **checkpoint**
+    /// (kind 44247) says what the work is, durably enough for somebody else to
+    /// pick it up — including what could **not** be preserved. A **claim** is
+    /// one more link on the session's accepted 44228 chain, so racing claims
+    /// are resolved by the relay and every consumer folds one answer. A
+    /// **continuation** records what the claimant then did, labelled
+    /// `native-resume` or `reconstructed` and never conflated.
+    ///
+    /// A claim hands over the **whole session**: it is rooted at the genesis,
+    /// so every execution and every assignment under the umbrella moves and is
+    /// fenced together. There is no per-execution handover in this version.
+    #[command(
+        subcommand,
+        after_help = "Examples:\n  bee sessions handover status --channel <uuid> --session-ref <uuid>\n  bee sessions handover checkpoint --channel <uuid> --session-ref <uuid> --task '<what the work is>' --next '<next action>'\n\nNote:\n  A claim hands over the whole session, not one execution.\n\nRecipe:\n  bee sessions handover status --channel <uuid> --session-ref <uuid>"
+    )]
+    Handover(HandoverCmd),
     /// Set, read, or withdraw this umbrella's session policy (kind 44245).
     ///
     /// One signed record saying how a mission is meant to be run: posture,
@@ -3753,6 +3771,197 @@ pub enum SessionWorktreeCmd {
         #[arg(long = "execution-live")]
         execution_live: bool,
     },
+}
+
+/// `bee sessions handover` — continue another participant's work.
+#[derive(Subcommand)]
+pub enum HandoverCmd {
+    /// Publish what this work is, durably enough to be picked up (kind 44247).
+    ///
+    /// Reads the worktree, pushes HEAD to `refs/heads/wip/<role-or-owner>/<session8>`
+    /// without forcing, captures the whole working tree as one patch against
+    /// HEAD, and carries that patch as a NIP-34 patch event — or, above the
+    /// relay's own message limit, as a Blossom blob. The capture is complete
+    /// or enumerated: any file too large for the bounds is omitted **by path**
+    /// and listed under `missing`, and `revision.preserved` says all, partial
+    /// or none accordingly. A failed push is a `missing` line and no wip
+    /// artifact.
+    #[command(
+        after_help = "Examples:\n  bee sessions handover checkpoint --channel <uuid> --session-ref <uuid> --task 'finish the fold' --next 'run just ci'\n  bee sessions handover checkpoint --channel <uuid> --session-ref <uuid> --cwd /path/to/worktree --json\n\nNote:\n  This publishes a record. It fences nothing and steers nothing — run `handover claim` for that."
+    )]
+    Checkpoint(HandoverCheckpointArgs),
+    /// Take the whole session over: publish a `takeover` on its 44228 chain.
+    ///
+    /// Waits, bounded, for the relay's signed acceptance receipt. On a
+    /// stale-head refusal it re-reads the chain **once**, names the claimant
+    /// who won, and exits 5 — it never retries blindly into a race it lost.
+    #[command(
+        after_help = "Examples:\n  bee sessions handover claim --channel <uuid> --session-ref <uuid> --body <providerAuthorityPubkey>\n  bee sessions handover claim --channel <uuid> --session-ref <uuid> --body-self --json\n\nNote:\n  --body names the provider authority of the execution body the claim fences to, not a person."
+    )]
+    Claim(HandoverClaimArgs),
+    /// Claim the session and pick the work up, natively or by reconstruction.
+    #[command(
+        after_help = "Examples:\n  bee sessions handover continue --channel <uuid> --session-ref <uuid> --cwd /path/to/checkout --provider-instance <alias> --body-self\n  bee sessions handover continue --channel <uuid> --session-ref <uuid> --native\n\nNote:\n  Reachability is a live kind-24223 lease on the candidate execution's current generation; nothing weaker counts."
+    )]
+    Continue(HandoverContinueArgs),
+    /// Print the handover fold: claim, checkpoint, continuations, fences.
+    #[command(
+        after_help = "Examples:\n  bee sessions handover status --channel <uuid> --session-ref <uuid>\n  bee sessions handover status --channel <uuid> --session-ref <uuid> --json"
+    )]
+    Status(HandoverStatusArgs),
+}
+
+/// Arguments for `bee sessions handover checkpoint`.
+#[derive(clap::Args, Clone)]
+pub struct HandoverCheckpointArgs {
+    /// Channel UUID containing the session.
+    #[arg(long)]
+    pub channel: String,
+    /// Canonical umbrella session UUID.
+    #[arg(long = "session-ref")]
+    pub session_ref: String,
+    /// Session genesis event id. Resolved from the relay when omitted.
+    #[arg(long)]
+    pub genesis: Option<String>,
+    /// The accepted task, in your own words.
+    #[arg(long)]
+    pub task: Option<String>,
+    /// The next useful action for whoever picks this up.
+    #[arg(long = "next")]
+    pub next: Option<String>,
+    /// One open question the next participant inherits. Repeatable.
+    #[arg(long)]
+    pub unresolved: Vec<String>,
+    /// A decision already taken, as `<eventId>` or `<eventId>:<summary>`.
+    /// Repeatable. A bare id records that no summary was stated.
+    #[arg(long)]
+    pub decision: Vec<String>,
+    /// A kind-44244 assignment id this work answers. Repeatable.
+    #[arg(long)]
+    pub assignment: Vec<String>,
+    /// One test row as `name:outcome:command`, outcome in passed|failed|not-run.
+    /// Repeatable; split on the first two colons so a command may contain colons.
+    #[arg(long)]
+    pub test: Vec<String>,
+    /// Worktree to read. Defaults to the current directory.
+    #[arg(long)]
+    pub cwd: Option<PathBuf>,
+    /// Repository coordinate. Derived from the checkout's remote when omitted.
+    #[arg(long)]
+    pub repo: Option<String>,
+    /// Repository owner pubkey for the NIP-34 patch coordinate. Defaults to
+    /// this caller's own pubkey, which is printed so it is never a silent guess.
+    #[arg(long = "repo-owner")]
+    pub repo_owner: Option<String>,
+    /// Seat role for the wip ref's first segment. Defaults to `owner`.
+    #[arg(long)]
+    pub role: Option<String>,
+    /// Remote to push the wip ref to. Resolved from git's own push
+    /// configuration when omitted; never a hard-coded name.
+    #[arg(long)]
+    pub remote: Option<String>,
+    /// Do not push HEAD. The commits are then listed under `missing`.
+    #[arg(long = "no-push", default_value_t = false)]
+    pub no_push: bool,
+    /// Print one JSON object instead of lines.
+    #[arg(long, default_value_t = false)]
+    pub json: bool,
+}
+
+/// Arguments for `bee sessions handover claim`.
+#[derive(clap::Args, Clone)]
+pub struct HandoverClaimArgs {
+    /// Channel UUID containing the session.
+    #[arg(long)]
+    pub channel: String,
+    /// Canonical umbrella session UUID.
+    #[arg(long = "session-ref")]
+    pub session_ref: String,
+    /// Session genesis event id. Resolved from the relay when omitted.
+    #[arg(long)]
+    pub genesis: Option<String>,
+    /// Provider authority pubkey of the execution body this claim fences to.
+    #[arg(long)]
+    pub body: Option<String>,
+    /// Use the provider authority this caller's own session creates have named
+    /// in this channel. Refused when that is ambiguous.
+    #[arg(long = "body-self", default_value_t = false, conflicts_with = "body")]
+    pub body_self: bool,
+    /// Seconds to wait for the relay's signed acceptance receipt.
+    #[arg(long = "wait-secs", default_value_t = 30)]
+    pub wait_secs: u64,
+    /// Print one JSON object instead of lines.
+    #[arg(long, default_value_t = false)]
+    pub json: bool,
+}
+
+/// Arguments for `bee sessions handover continue`.
+#[derive(clap::Args, Clone)]
+pub struct HandoverContinueArgs {
+    /// Channel UUID containing the session.
+    #[arg(long)]
+    pub channel: String,
+    /// Canonical umbrella session UUID.
+    #[arg(long = "session-ref")]
+    pub session_ref: String,
+    /// Session genesis event id. Resolved from the relay when omitted.
+    #[arg(long)]
+    pub genesis: Option<String>,
+    /// Checkout to reconstruct into. Without it nothing is fetched or applied,
+    /// and every artifact is listed as not fetched.
+    #[arg(long)]
+    pub cwd: Option<PathBuf>,
+    /// Provider authority pubkey of the execution body this claim fences to.
+    #[arg(long)]
+    pub body: Option<String>,
+    /// Use the provider authority this caller's own session creates have named.
+    #[arg(long = "body-self", default_value_t = false, conflicts_with = "body")]
+    pub body_self: bool,
+    /// Require a native resume on the original provider.
+    #[arg(long, default_value_t = false)]
+    pub native: bool,
+    /// Require a reconstruction, skipping the reachability read.
+    #[arg(long, default_value_t = false, conflicts_with = "native")]
+    pub reconstruct: bool,
+    /// Continue even though no authorized checkpoint exists, and label it so.
+    #[arg(long = "allow-no-checkpoint", default_value_t = false)]
+    pub allow_no_checkpoint: bool,
+    /// Fetch a wip ref the relay's kind-30618 state does not name, and say so.
+    #[arg(long = "allow-no-artifact", default_value_t = false)]
+    pub allow_no_artifact: bool,
+    /// Provider instance alias to reconstruct on. Required for a reconstruction.
+    #[arg(long = "provider-instance")]
+    pub provider_instance: Option<String>,
+    /// Remote to fetch the wip ref from. Resolved from git's configuration
+    /// when omitted; never a hard-coded name.
+    #[arg(long)]
+    pub remote: Option<String>,
+    /// One sentence to put on the continuation record.
+    #[arg(long)]
+    pub note: Option<String>,
+    /// Seconds to wait for each receipt.
+    #[arg(long = "wait-secs", default_value_t = 60)]
+    pub wait_secs: u64,
+    /// Print one JSON object instead of lines.
+    #[arg(long, default_value_t = false)]
+    pub json: bool,
+}
+
+/// Arguments for `bee sessions handover status`.
+#[derive(clap::Args, Clone)]
+pub struct HandoverStatusArgs {
+    /// Channel UUID containing the session.
+    #[arg(long)]
+    pub channel: String,
+    /// Canonical umbrella session UUID.
+    #[arg(long = "session-ref")]
+    pub session_ref: String,
+    /// Session genesis event id. Resolved from the relay when omitted.
+    #[arg(long)]
+    pub genesis: Option<String>,
+    /// Print the HandoverFold plus the execution list as one JSON object.
+    #[arg(long, default_value_t = false)]
+    pub json: bool,
 }
 
 /// `bee sessions observe` — publish one NIP-CSOB observation (44246).
@@ -5614,6 +5823,7 @@ mod tests {
                 "export",
                 "grant",
                 "grant-seat",
+                "handover",
                 "hire",
                 "inbox",
                 "list",
@@ -5727,7 +5937,7 @@ mod tests {
             // appended here and two of them independently wrote 35 (item 108's
             // exact-count trap); the finalizer set it once, after every lane,
             // and both tests re-run green.
-            ("sessions", 36),
+            ("sessions", 37),
             ("social", 7),
             ("terminals", 6),
             ("upload", 1),

@@ -238,6 +238,13 @@ fn the_steering_set_is_the_founder_and_the_grants_that_still_stand() {
                 transition_type: CodingSessionAuthorityTransitionType::Revoke,
             },
         ],
+        // Nothing in this fixture hands the session over (Lane C).
+        claim: buzz_core::coding_session_authority_claim::ClaimState::NoClaim,
+        claim_since: None,
+        grants: Vec::new(),
+        seats: Vec::new(),
+        head_event_id: None,
+        head_seq: 0,
     };
 
     let signers = steering_signers(&authority, 3_000);

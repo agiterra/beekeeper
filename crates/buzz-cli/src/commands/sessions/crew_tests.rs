@@ -113,6 +113,7 @@ fn metadata_event(
         routing: None,
         bee_stamp: None,
         pack_ref: None,
+        handover: None,
     };
     json!({
         "id": id,
@@ -4073,6 +4074,7 @@ fn signed_hire_with_status(command_id: &str, status: ReceiptStatus) -> SignedHir
         routing: None,
         bee_stamp: None,
         pack_ref: None,
+        handover: None,
     };
     let metadata = build_coding_session_metadata(
         channel,
@@ -4223,6 +4225,7 @@ fn rival_seated_create(
             routing: None,
             bee_stamp: None,
             pack_ref: None,
+            handover: None,
         };
         let metadata = build_coding_session_metadata(
             channel,
@@ -4585,6 +4588,12 @@ fn projected(seats: &[(&str, &str)]) -> super::operations::ProjectedAuthority {
         policy_grants: Vec::new(),
         head_event_id: Some("d".repeat(64)),
         head_seq: 4,
+        // No handover has happened on this fixture's session, which is a
+        // different answer from "a claim was made and voided" (Lane C).
+        claim: buzz_core::coding_session_authority_claim::ClaimState::NoClaim,
+        claim_since: None,
+        grant_accepted_at: std::collections::BTreeMap::new(),
+        seat_accepted_at: std::collections::BTreeMap::new(),
     }
 }
 

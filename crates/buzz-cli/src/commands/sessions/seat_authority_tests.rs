@@ -26,6 +26,10 @@ fn authority() -> ProjectedAuthority {
         policy_grants: Vec::new(),
         head_event_id: Some("22".repeat(32)),
         head_seq: 2,
+        claim: buzz_core::coding_session_authority_claim::ClaimState::NoClaim,
+        claim_since: None,
+        grant_accepted_at: std::collections::BTreeMap::new(),
+        seat_accepted_at: std::collections::BTreeMap::new(),
     }
 }
 
