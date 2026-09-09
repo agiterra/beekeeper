@@ -28,6 +28,7 @@ import {
   KIND_PULSE_ENTRY,
 } from "@/shared/constants/kinds";
 import type { RelayEvent } from "@/shared/api/types";
+import { BUDGET_WINDOW_MS } from "@/shared/api/relaySendBudget";
 import { waitForAnimations } from "../helpers/animations";
 import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
 
@@ -40,7 +41,7 @@ import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
  * which stores arbitrary kinds and matches them by `filter.kinds` + `#a` —
  * exactly the filter the Pulse read issues.
  *
- * Session facts take the other path on purpose: 44223/44227/44229/44230 carry
+ * Session facts take the other path on purpose: 24223/44223/44227/44229 carry
  * no `a` tag, so the Pulse read finds them by `#h` over the project's own
  * channels. They are seeded into a real mock channel with
  * `__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__`, and the project head that names that
@@ -619,19 +620,24 @@ async function seedSessionFacts(page: Page, events: RelayEvent[]) {
 }
 
 async function waitForLeaseLiveSubscription(page: Page) {
+  // Startup discovery can fill more than one read window before Pulse opens
+  // its subscription. Wait for actual readiness across those windows, without
+  // weakening the live release/stale/live assertions that follow.
   await expect
-    .poll(() =>
-      page.evaluate(
-        ({ channelName, kind }) =>
-          window.__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
-            channelName,
-            kind,
-          }) ?? false,
-        {
-          channelName: GENERAL_CHANNEL_NAME,
-          kind: KIND_CODING_SESSION_LEASE,
-        },
-      ),
+    .poll(
+      () =>
+        page.evaluate(
+          ({ channelName, kind }) =>
+            window.__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
+              channelName,
+              kind,
+            }) ?? false,
+          {
+            channelName: GENERAL_CHANNEL_NAME,
+            kind: KIND_CODING_SESSION_LEASE,
+          },
+        ),
+      { timeout: 3 * BUDGET_WINDOW_MS },
     )
     .toBe(true);
 }
