@@ -1,0 +1,150 @@
+{
+  "errors": [
+    {
+      "message": "relay closed the subscription before the 44244 page finished",
+      "scope": "declared:3c4d5e6f-7081-4293-a4b5-c6d7e8f90123"
+    }
+  ],
+  "schema": "buzz-pulse-declared-work/v1",
+  "sessions": [
+    {
+      "assignments": [
+        {
+          "acceptanceSteps": [
+            "cargo test -p buzz-core pulse_declared_work",
+            "pnpm biome check"
+          ],
+          "assigneeActor": "466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27",
+          "assigneeRole": "builder",
+          "assignerPubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+          "baseSha": "9a1c4e7b2d3f40516273849506172839405a6b7c",
+          "branch": "work/declared-work-fable",
+          "brief": "Implement the bounded assigned slice and report the gates.",
+          "createdAt": 1756790160,
+          "dispositions": [
+            {
+              "authorPubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+              "createdAt": 1756800120,
+              "decision": "changes-requested",
+              "eventId": "8f253fab46c5226169c1c4a6b86d62ee7bead8ac7e892128c4f33b8aec15bdc9",
+              "reportRef": "96e21f48819b54779e637cb98492039038d99711cf8977364a6afb5fde0a4c5d"
+            }
+          ],
+          "fileOwnership": [
+            "crates/buzz-core/src/pulse_declared_work.rs",
+            "desktop/src/features/project-pulse/lib/"
+          ],
+          "objective": "Build the declared-work wire",
+          "reports": [
+            {
+              "authorPubkey": "466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27",
+              "authorUnseated": false,
+              "baseSha": "9a1c4e7b2d3f40516273849506172839405a6b7c",
+              "branch": "work/declared-work-fable",
+              "createdAt": 1756798440,
+              "deviations": ["Left the surface to Lane U."],
+              "eventId": "96e21f48819b54779e637cb98492039038d99711cf8977364a6afb5fde0a4c5d",
+              "files": ["crates/buzz-core/src/pulse_declared_work.rs"],
+              "headSha": "c1d2e3f4a5b60718293a4b5c6d7e8f9001122334",
+              "residuals": ["Pagination is Lane Q's."],
+              "summary": "Projection, decoder and fixture are green.",
+              "testCount": 2
+            }
+          ],
+          "settlement": {
+            "acknowledgementEventId": null,
+            "dispositionEventId": null,
+            "governedReportEventId": null,
+            "settled": false
+          },
+          "sourceEventId": "e7de872a4de106a34dcba1714bde6b9c448950c5e5cb69612d5bbcfcce6d9f27",
+          "status": "reported",
+          "supersedes": null
+        }
+      ],
+      "channelId": "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2",
+      "excludedCount": 0,
+      "founderPubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+      "genesisRef": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "latestObservationAt": 1756800600,
+      "lifecycle": "open",
+      "name": "Declared work in Pulse",
+      "sessionKey": "0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0",
+      "sessionRef": "0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0",
+      "terminal": null,
+      "unreadable": null
+    },
+    {
+      "assignments": [
+        {
+          "acceptanceSteps": [
+            "cargo test -p buzz-core pulse_declared_work",
+            "pnpm biome check"
+          ],
+          "assigneeActor": "2c0b7cf95324a07d05398b240174dc0c2be444d96b159aa6c7f7b1e668680991",
+          "assigneeRole": "builder",
+          "assignerPubkey": "3c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b1",
+          "baseSha": "9a1c4e7b2d3f40516273849506172839405a6b7c",
+          "branch": "work/declared-work-fable",
+          "brief": "Implement the bounded assigned slice and report the gates.",
+          "createdAt": 1756700000,
+          "dispositions": [
+            {
+              "authorPubkey": "3c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b1",
+              "createdAt": 1756720000,
+              "decision": "approve",
+              "eventId": "753b46bd22d2466407b3c2a7f9590445cedd69fa235c68a13b8e182ebc0e127b",
+              "reportRef": "b1ba8e02089b486b83da74c62a4b8042dfdb1d396a26ad6a779336ac445a8e4e"
+            }
+          ],
+          "fileOwnership": [
+            "crates/buzz-core/src/pulse_declared_work.rs",
+            "desktop/src/features/project-pulse/lib/"
+          ],
+          "objective": "Land the session read",
+          "reports": [
+            {
+              "authorPubkey": "2c0b7cf95324a07d05398b240174dc0c2be444d96b159aa6c7f7b1e668680991",
+              "authorUnseated": false,
+              "baseSha": "9a1c4e7b2d3f40516273849506172839405a6b7c",
+              "branch": "work/declared-work-fable",
+              "createdAt": 1756710000,
+              "deviations": ["Left the surface to Lane U."],
+              "eventId": "b1ba8e02089b486b83da74c62a4b8042dfdb1d396a26ad6a779336ac445a8e4e",
+              "files": ["crates/buzz-core/src/pulse_declared_work.rs"],
+              "headSha": "c1d2e3f4a5b60718293a4b5c6d7e8f9001122334",
+              "residuals": ["Pagination is Lane Q's."],
+              "summary": "Projection, decoder and fixture are green.",
+              "testCount": 2
+            }
+          ],
+          "settlement": {
+            "acknowledgementEventId": "1acb9a6abd6c7f47b91c3ee8ee3df2b399cfcf7012f27fced520152b8e739de6",
+            "dispositionEventId": "753b46bd22d2466407b3c2a7f9590445cedd69fa235c68a13b8e182ebc0e127b",
+            "governedReportEventId": "b1ba8e02089b486b83da74c62a4b8042dfdb1d396a26ad6a779336ac445a8e4e",
+            "settled": true
+          },
+          "sourceEventId": "84acea24b731391adaa7b7c6f72ceb34d3e281cf1783d6df317aa2a02d41bb96",
+          "status": "settled",
+          "supersedes": null
+        }
+      ],
+      "channelId": "1a2b3c4d-5e6f-4071-8293-a4b5c6d7e8f9",
+      "excludedCount": 0,
+      "founderPubkey": "3c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b1",
+      "genesisRef": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "latestObservationAt": 1756740000,
+      "lifecycle": "closed",
+      "name": null,
+      "sessionKey": "2b3c4d5e-6f70-4182-93a4-b5c6d7e8f901",
+      "sessionRef": "2b3c4d5e-6f70-4182-93a4-b5c6d7e8f901",
+      "terminal": {
+        "at": 1756740000,
+        "eventId": "331eec91d0f7d3893dd68bfd10da064bad4399991af35539050c4b9781eca7fa",
+        "type": "mission.completed"
+      },
+      "unreadable": null
+    }
+  ],
+  "viewerPubkey": "3d3b7169aa11c2d0f0b7a1e6d5c4b3a2918070605040302010fedcba98765432"
+}

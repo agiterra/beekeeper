@@ -91,6 +91,9 @@ pub mod private_managed_agent;
 /// Project Pulse entries (44240): the explicit coordination claim contract.
 pub mod project_pack_source;
 pub mod pulse;
+/// Declared work in Project Pulse: assignments, their evidence, and the one
+/// word the canonical fold settles them with.
+pub mod pulse_declared_work;
 /// Pure Project Pulse v2 digest model and fold shared by every adapter.
 pub mod pulse_fold;
 /// What Pulse knows about a mission without asking anyone to report.

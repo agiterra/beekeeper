@@ -259,6 +259,7 @@ pub(crate) fn invoke_handler(
         team_readiness,
         fold_coding_session_team_transactions,
         pulse_mission_rows,
+        pulse_declared_work,
         build_coding_session_policy_event,
         build_coding_session_team_transaction_event,
         coding_session_land,
