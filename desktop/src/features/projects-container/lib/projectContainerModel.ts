@@ -301,7 +301,8 @@ export function dedupProjectEvents(events: RelayEvent[]): RelayEvent[] {
 
 /**
  * NIP-09: a project is deleted only when a deletion event signed by the
- * project owner `a`-references its coordinate.
+ * project owner `a`-references its coordinate at or after the head's timestamp.
+ * Older tombstones cannot hide a project recreated at the same coordinate.
  */
 export function isProjectContainerDeleted(
   project: ProjectContainer,
@@ -310,6 +311,7 @@ export function isProjectContainerDeleted(
   return deletionEvents.some(
     (event) =>
       event.pubkey.toLowerCase() === project.owner &&
+      event.created_at >= project.createdAt &&
       event.tags.some((tag) => tag[0] === "a" && tag[1] === project.address),
   );
 }

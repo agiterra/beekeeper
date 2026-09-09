@@ -5,6 +5,7 @@ import { relayClient } from "@/shared/api/relayClient";
 
 import {
   addProjectMembers,
+  createProjectContainer,
   publishProjectContainer,
   removeProjectMembers,
 } from "./useCreateProjectContainer.ts";
@@ -268,3 +269,225 @@ test("publishProjectContainer emits icon and color tags only when set and valid"
     stubs.teardown();
   }
 });
+
+function existingProject(overrides = {}) {
+  return {
+    id: "existing-head",
+    pubkey: OWNER,
+    kind: 30621,
+    created_at: 1,
+    tags: [
+      ["d", "skunkworks"],
+      ["name", "Skunkworks"],
+    ],
+    content: "",
+    sig: "sig",
+    ...overrides,
+  };
+}
+
+function projectDeletion(overrides = {}) {
+  return existingProject({
+    id: "deletion",
+    kind: 5,
+    tags: [["a", `30621:${OWNER}:skunkworks`]],
+    ...overrides,
+  });
+}
+
+async function withCreationRead(eventsOrError, run) {
+  const stubs = setupStubs();
+  const originalBatch = relayClient.fetchEventsBatch;
+  const filters = [];
+  relayClient.fetchEventsBatch = async (requested) => {
+    filters.push(requested);
+    if (eventsOrError instanceof Error) throw eventsOrError;
+    return eventsOrError;
+  };
+  try {
+    await run({ ...stubs, filters });
+  } finally {
+    relayClient.fetchEventsBatch = originalBatch;
+    stubs.teardown();
+  }
+}
+
+test("create checks the exact owned head and address tombstone in one bounded batch", async () => {
+  await withCreationRead([], async ({ filters, signedEvents }) => {
+    await createProjectContainer({ name: "  Skunkworks  " });
+    assert.deepEqual(filters, [
+      [
+        { kinds: [30621], authors: [OWNER], "#d": ["skunkworks"], limit: 1 },
+        {
+          kinds: [5],
+          authors: [OWNER],
+          "#a": [`30621:${OWNER}:skunkworks`],
+          limit: 1,
+        },
+      ],
+    ]);
+    assert.equal(signedEvents.length, 1);
+    assert.deepEqual(tagValues(signedEvents[0], "name"), ["Skunkworks"]);
+  });
+});
+
+test("create refuses an old owned head without signing an overwrite", async () => {
+  // Exact discovery has no community-wide 200-head cutoff: this target may
+  // precede any number of unrelated projects and still occupies its address.
+  await withCreationRead(
+    [existingProject({ created_at: 1 })],
+    async ({ signedEvents }) => {
+      await assert.rejects(
+        createProjectContainer({ name: "Skunkworks" }),
+        /already have a project/,
+      );
+      assert.equal(signedEvents.length, 0);
+    },
+  );
+});
+
+test("another owner's same slug and our other slug do not occupy this address", async () => {
+  await withCreationRead(
+    [
+      existingProject({ pubkey: MEMBER_A }),
+      existingProject({ tags: [["d", "other-project"]] }),
+    ],
+    async ({ signedEvents }) => {
+      await createProjectContainer({ name: "Skunkworks" });
+      assert.equal(signedEvents.length, 1);
+    },
+  );
+});
+
+test("owner address tombstone retains existing project recreation semantics", async () => {
+  await withCreationRead(
+    [existingProject(), projectDeletion()],
+    async ({ signedEvents }) => {
+      await createProjectContainer({ name: "Skunkworks" });
+      assert.equal(signedEvents.length, 1);
+    },
+  );
+});
+
+for (const [label, deletion] of [
+  ["foreign author", projectDeletion({ pubkey: MEMBER_A })],
+  ["other address", projectDeletion({ tags: [["a", `30621:${OWNER}:other`]] })],
+  ["event-only reference", projectDeletion({ tags: [["e", "existing-head"]] })],
+  ["non-deletion event", projectDeletion({ kind: 1 })],
+]) {
+  test(`create does not treat ${label} as an address tombstone`, async () => {
+    await withCreationRead(
+      [existingProject(), deletion],
+      async ({ signedEvents }) => {
+        await assert.rejects(
+          createProjectContainer({ name: "Skunkworks" }),
+          /already have a project/,
+        );
+        assert.equal(signedEvents.length, 0);
+      },
+    );
+  });
+}
+
+for (const tags of [
+  [
+    ["d", ""],
+    ["d", "skunkworks"],
+  ],
+  [
+    ["d", "other"],
+    ["d", "skunkworks"],
+  ],
+]) {
+  test(`malformed matching head ${JSON.stringify(tags)} is not absence`, async () => {
+    await withCreationRead(
+      [existingProject({ tags }), projectDeletion()],
+      async ({ signedEvents }) => {
+        await assert.rejects(
+          createProjectContainer({ name: "Skunkworks" }),
+          /Could not verify/,
+        );
+        assert.equal(signedEvents.length, 0);
+      },
+    );
+  });
+}
+
+for (const reason of ["Query refused", "Query timed out"]) {
+  test(`create signs nothing when ${reason.toLowerCase()}`, async () => {
+    await withCreationRead(new Error(reason), async ({ signedEvents }) => {
+      await assert.rejects(
+        createProjectContainer({ name: "Skunkworks" }),
+        new RegExp(reason),
+      );
+      assert.equal(signedEvents.length, 0);
+    });
+  });
+}
+
+for (const [label, head] of [
+  ["conflict", existingProject()],
+  ["absence", null],
+]) {
+  test(`create retains ${label} checking through the existing HTTP-to-WS fallback`, async () => {
+    const stubs = setupStubs();
+    const originalHistory = relayClient.fetchHistory;
+    const fallbacks = [];
+    // The real batch API invokes query_relay_filters. The unsupported-command
+    // error from setupStubs exercises its real WS fallback, not a fake batch.
+    relayClient.fetchHistory = async (filter) => {
+      fallbacks.push(filter);
+      return filter.kinds.includes(30621) && head ? [head] : [];
+    };
+    try {
+      const create = createProjectContainer({ name: "Skunkworks" });
+      if (head) await assert.rejects(create, /already have a project/);
+      else await create;
+      assert.equal(fallbacks.length, 2);
+      assert.deepEqual(fallbacks[0], {
+        kinds: [30621],
+        authors: [OWNER],
+        "#d": ["skunkworks"],
+        limit: 1,
+      });
+      assert.deepEqual(fallbacks[1], {
+        kinds: [5],
+        authors: [OWNER],
+        "#a": [`30621:${OWNER}:skunkworks`],
+        limit: 1,
+      });
+      assert.equal(stubs.signedEvents.length, head ? 0 : 1);
+    } finally {
+      relayClient.fetchHistory = originalHistory;
+      stubs.teardown();
+    }
+  });
+}
+
+test("an older address tombstone cannot clear a newer recreated project head", async () => {
+  await withCreationRead(
+    [existingProject({ created_at: 20 }), projectDeletion({ created_at: 10 })],
+    async ({ signedEvents }) => {
+      await assert.rejects(
+        createProjectContainer({ name: "Skunkworks" }),
+        /already have a project/,
+      );
+      assert.equal(signedEvents.length, 0);
+    },
+  );
+});
+
+for (const deletionTime of [20, 21]) {
+  test(`address tombstone at ${deletionTime} covers the project head at 20`, async () => {
+    await withCreationRead(
+      [
+        existingProject({ created_at: 20 }),
+        projectDeletion({ created_at: deletionTime }),
+      ],
+      async ({ signedEvents }) => {
+        await createProjectContainer({ name: "Skunkworks" });
+        assert.equal(signedEvents.length, 1);
+      },
+    );
+  });
+}

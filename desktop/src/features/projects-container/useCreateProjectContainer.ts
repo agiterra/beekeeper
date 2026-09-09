@@ -3,16 +3,13 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { relayClient } from "@/shared/api/relayClient";
 import { signRelayEvent } from "@/shared/api/tauri";
 import { getIdentity } from "@/shared/api/tauriIdentity";
-import { KIND_PROJECT } from "@/shared/constants/kinds";
+import { KIND_DELETION, KIND_PROJECT } from "@/shared/constants/kinds";
 
-import {
-  fetchProjectContainers,
-  projectContainersQueryKey,
-  type ProjectContainer,
-} from "./hooks";
+import { projectContainersQueryKey, type ProjectContainer } from "./hooks";
 import {
   eventToProjectContainer,
   GENERAL_PROJECT_DTAG,
+  isProjectContainerDeleted,
   normalizeProjectColor,
   PROJECT_ACCESS_TAG,
   PROJECT_COLOR_TAG,
@@ -126,7 +123,8 @@ export async function publishProjectContainer(input: {
   return project;
 }
 
-async function createProjectContainer(
+/** Create a project after checking its exact owned coordinate on the relay. */
+export async function createProjectContainer(
   input: CreateProjectContainerInput,
 ): Promise<ProjectContainer> {
   const name = input.name.trim();
@@ -140,13 +138,36 @@ async function createProjectContainer(
 
   const identity = await getIdentity();
   const ownerPubkey = identity.pubkey.toLowerCase();
-  const existing = await fetchProjectContainers();
-  if (
-    existing.some(
-      (project) => project.owner === ownerPubkey && project.dtag === dtag,
+  // This is an explicit action, not project discovery. Read only the address
+  // being created through the existing HTTP batch/admission path; broad WS
+  // discovery can spend several read-budget windows before a write starts.
+  const existing = await relayClient.fetchEventsBatch([
+    { kinds: [KIND_PROJECT], authors: [ownerPubkey], "#d": [dtag], limit: 1 },
+    {
+      kinds: [KIND_DELETION],
+      authors: [ownerPubkey],
+      "#a": [`${KIND_PROJECT}:${ownerPubkey}:${dtag}`],
+      limit: 1,
+    },
+  ]);
+  const deletions = existing.filter((event) => event.kind === KIND_DELETION);
+  for (const event of existing) {
+    if (
+      event.kind !== KIND_PROJECT ||
+      event.pubkey.toLowerCase() !== ownerPubkey ||
+      !event.tags.some((tag) => tag[0] === "d" && tag[1] === dtag)
     )
-  ) {
-    throw new Error(`You already have a project named "${dtag}".`);
+      continue;
+    const project = eventToProjectContainer(event);
+    // A malformed head matching the requested d tag is not proof of absence.
+    if (!project || project.dtag !== dtag) {
+      throw new Error(
+        `Could not verify whether project "${dtag}" already exists.`,
+      );
+    }
+    if (!isProjectContainerDeleted(project, deletions)) {
+      throw new Error(`You already have a project named "${dtag}".`);
+    }
   }
 
   return publishProjectContainer({

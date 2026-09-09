@@ -193,10 +193,12 @@ test("isProjectContainerDeleted requires owner-signed deletion", () => {
   const project = eventToProjectContainer(makeProjectEvent());
   const ownerDeletion = {
     pubkey: OWNER,
+    created_at: 100,
     tags: [["a", project.address]],
   };
   const foreignDeletion = {
     pubkey: OTHER,
+    created_at: 100,
     tags: [["a", project.address]],
   };
   assert.equal(isProjectContainerDeleted(project, [foreignDeletion]), false);
@@ -428,4 +430,45 @@ test("makeLocalGeneral carries no icon or color", () => {
   const general = makeLocalGeneral();
   assert.equal(general.icon, null);
   assert.equal(general.color, null);
+});
+
+for (const [deletedAt, expected] of [
+  [99, false],
+  [100, true],
+  [101, true],
+]) {
+  test(`project head at 100 is deleted by address tombstone at ${deletedAt}: ${expected}`, () => {
+    const project = eventToProjectContainer(
+      makeProjectEvent({ createdAt: 100 }),
+    );
+    assert.equal(
+      isProjectContainerDeleted(project, [
+        {
+          pubkey: OWNER,
+          created_at: deletedAt,
+          tags: [["a", project.address]],
+        },
+      ]),
+      expected,
+    );
+  });
+}
+
+test("deduped recreated project remains visible after an older address tombstone", () => {
+  const heads = dedupProjectEvents([
+    makeProjectEvent({ createdAt: 100 }),
+    makeProjectEvent({ createdAt: 300 }),
+  ]);
+  const deletion = {
+    pubkey: OWNER,
+    created_at: 200,
+    tags: [["a", `30621:${OWNER}:platform`]],
+  };
+  const visible = heads
+    .map(eventToProjectContainer)
+    .filter(
+      (project) => project && !isProjectContainerDeleted(project, [deletion]),
+    );
+  assert.equal(visible.length, 1);
+  assert.equal(visible[0].createdAt, 300);
 });
