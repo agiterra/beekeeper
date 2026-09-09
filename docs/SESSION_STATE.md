@@ -5,6 +5,52 @@ authority (§4), a protocol for a specific experiment, or history. This file
 is updated on every build and whenever live use produces a finding; if it
 disagrees with an older document about *current state*, this one wins.
 
+## September 8 Mac bundle discovery — repair in progress
+
+Windows cross-account acceptance is deferred until September 9 at Brian's request;
+Mac validation and Fable's declared-work Pulse implementation continue independently.
+
+The clean `0d8f4ce95` candidate passed `just check` and packaged successfully with
+all eight sidecars, role resources and strict ad-hoc signature verification. Its
+CLI reports `0d8f4ce9`, built `2026-09-08T23:45:22Z`. It is not installed. The
+installed CLI still reports `497943d3`, built `2026-09-08T14:25:45Z`.
+Evidence: `../review-2026-09-08-release-candidate/build.log`, `check-next.log`.
+
+The isolated relay-backed desktop release smoke passed 3/3 on `0d8f4ce95`:
+DM history survives a first live message, foreground actions precede resume
+fetches, and all 10,000 dense timeline rows are reachable with matching ID hashes,
+zero duplicate/order/render-timeout observations and at most 250 mounted rows.
+Evidence: `release-smoke.log` and `release-smoke/deep-local-relay-timeline.json`
+in the same evidence directory.
+
+Full `just ci` stopped in the workspace tests after 6,950 passes and 12
+credential-helper spawn failures. These were validation-artifact contamination:
+root reused the Cargo target for an isolated Tauri test checkout whose empty
+sidecar stubs replaced the real helper. The verified bundle restored the
+zero-byte artifacts; the isolated checkout now carries real sidecars, and the
+same 12-test binary passed on retry (`credential-helper-retry.log`). Preserve
+`ci.log` as the failed run. Client suites, remaining Rust tests/doc-tests and
+native validation are being completed separately; no full `just ci` success is
+claimed. Do not share a Cargo target between a Tauri checkout with placeholder
+sidecars and another checkout's running binary tests.
+
+Before replacement, process inspection found the installed app's provider at
+`.../beekeeper/target/debug/buzz-session-provider`, rather than its app bundle.
+`managed_agents/discovery.rs::command_search_dirs` ranked the compiled-in
+workspace and current working directory ahead of the executable directory.
+A new app could therefore continue running stale supporting executables. The
+repair in `work/packaged-sidecars-astra` makes this search use only the bundle's
+`Contents/MacOS` directory when launched from a macOS `.app`; ordinary development
+retains its profile order and explicit command paths retain their meaning.
+Missing bundle files no longer fall back through the implicit workspace search;
+normal external command/PATH discovery is otherwise unchanged. Regression tests
+plant competing old build files and cover bundled, missing, development and
+explicit-path cases. All 126 native discovery tests passed, including all four
+new regressions (`packaged-sidecars-tests.log`). File-size checks and all-target native Clippy passed
+(`packaged-sidecars-file-size.log`, `packaged-sidecars-clippy.log`). `installed-provider-before.log` records the
+failed real-process assertion against the still-installed old app. No app
+replacement yet.
+
 ## September 8 release validation and next feature — active
 
 Fable acknowledged the declared-work Pulse assignment and created
