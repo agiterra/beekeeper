@@ -665,16 +665,12 @@ test("every coordination state renders, each from the evidence that proves it", 
   );
 });
 
-test("a lease read that failed is a floor, never a quiet fleet", async ({
+test("a failed session and lease bundle is incomplete, never a quiet fleet", async ({
   page,
 }) => {
   await boot(page, { rejectKinds: [KIND_CODING_SESSION_LEASE] });
   await seedSessionFacts(page, seededSessionFacts());
   await openPanel(page);
-
-  await expect(page.getByTestId("agent-progress-lane")).toHaveCount(5, {
-    timeout: 15_000,
-  });
 
   // The notice says what failed, and refuses the reassuring reading.
   const notice = page.getByTestId("agent-progress-incomplete");
@@ -682,14 +678,15 @@ test("a lease read that failed is a floor, never a quiet fleet", async ({
   await expect(notice).toContainText("did not complete");
   await expect(notice).toContainText("not a claim that nothing is running");
 
-  // With the lease snapshot missing, nothing can be called reachable — and the
-  // counts say "at least" rather than presenting a floor as a census.
+  // Sessions and leases now share one atomic batch. A rejected lease filter
+  // rejects that entire read; it cannot supply five supposedly known lanes.
+  await expect(page.getByTestId("agent-progress-lane")).toHaveCount(0);
   await expect(page.getByTestId("agent-progress-footer-counts")).toContainText(
-    "At least 5 sessions",
+    "This read did not complete — no sessions in what it returned",
   );
-  await expect(page.getByTestId("agent-progress-panel")).not.toContainText(
-    "Reachable",
-  );
+  await expect(
+    page.getByTestId("agent-progress-lane-coordination"),
+  ).toHaveCount(0);
   // The adjacent project shelf has metadata but no lease projection. It must
   // report that history neutrally instead of contradicting this panel with a
   // green current-liveness claim in the same window. The state is a coloured

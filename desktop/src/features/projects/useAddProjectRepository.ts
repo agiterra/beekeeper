@@ -60,7 +60,9 @@ export async function addProjectRepository(
   repository: Repository;
 }> {
   const {
-    fetchEvents = relayClient.fetchEvents.bind(relayClient),
+    // These are fresh, exact action guards, not broad discovery reads.
+    fetchEvents = (filter: FetchEventsInput) =>
+      relayClient.fetchEventsBatch([filter]),
     publishOwnedAgentAnnouncements = publishOwnedAgentProjectAnnouncements,
     publishOwnerAnnouncement = publishProjectOwnerAnnouncement,
   } = deps ?? {};

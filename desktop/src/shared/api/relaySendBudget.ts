@@ -1,3 +1,5 @@
+import { KIND_AGENT_OBSERVER_FRAME } from "../constants/kinds";
+
 /**
  * Proactive send budget for the relay WebSocket.
  *
@@ -12,11 +14,13 @@
  *
  * Lanes:
  * - `read`      — REQ / COUNT. Waits for a slot; never touches the reserve.
- * - `write`     — durable EVENT. Waits for a slot; may use the full burst.
+ * - `write`     — durable EVENT or observer control. Waits for a slot; may
+ *                 use the full burst. Controls remain charged to both windows.
  * - `ephemeral` — kind 20000–29999 EVENT (typing, presence, terminal frames).
  *                 Counted by the relay exactly like a durable EVENT (Andy's
  *                 decision: no exemption), so it shares the minute counter but
- *                 stays out of the write reserve. Droppable senders call
+ *                 stays out of the write reserve, except explicit observer
+ *                 controls (Stop/model switch). Droppable senders call
  *                 `tryAcquire`; awaited senders (`publishEvent`) call `acquire`.
  * - `free`      — AUTH / CLOSE: the relay does not count them.
  *
@@ -85,6 +89,21 @@ export function classifySendLane(payload: readonly unknown[]): SendLane {
       typeof event === "object" && event !== null && "kind" in event
         ? (event as { kind?: unknown }).kind
         : undefined;
+    // A user control must not queue behind the read storm it may be trying
+    // to stop. This is priority within the same limits, never a free frame.
+    const tags =
+      typeof event === "object" && event !== null && "tags" in event
+        ? (event as { tags?: unknown }).tags
+        : undefined;
+    if (
+      kind === KIND_AGENT_OBSERVER_FRAME &&
+      Array.isArray(tags) &&
+      tags.some(
+        (tag) =>
+          Array.isArray(tag) && tag[0] === "frame" && tag[1] === "control",
+      )
+    )
+      return "write";
     return typeof kind === "number" && isEphemeralKind(kind)
       ? "ephemeral"
       : "write";

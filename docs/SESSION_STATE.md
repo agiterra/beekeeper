@@ -5,6 +5,49 @@ authority (§4), a protocol for a specific experiment, or history. This file
 is updated on every build and whenever live use produces a finding; if it
 disagrees with an older document about *current state*, this one wins.
 
+## September 9 main-landing validation in progress
+
+Brian requested landing the combined topic on main before further feature work.
+Remote main remains `9eb64eecf`; the published topic checkpoint is `015869379`.
+The following release repairs are integrated locally, with no authority-rule
+changes:
+
+- Mission starts bounded cold history alongside live admission and always reads
+  again after the live fence. Tests cover fence/history ordering, cancellation,
+  catch-up failures and retained observations; the store still unions event IDs.
+- Project discovery and exact mutation guards use authenticated batched snapshots
+  with their original filters, limits and fallback. The General placeholder follows
+  its unambiguous published container. Repository create/retry/lost-ACK/duplicate
+  and direct-link browser cases all pass (12/12).
+- Observer controls use the existing write reserve while remaining charged to
+  both send windows. All four Stop browser cases pass; saturation unit tests
+  preserve both limits.
+- Relay membership uses the same bounded authenticated snapshot path so archive
+  controls do not wait behind channel discovery. All five original archive
+  authority cases pass, including no-authority denial.
+- Browser readiness checks the actual message consumer rather than any global
+  subscription, with explicit handling for identity-wide read state. Mock seeded
+  activity is visible synchronously while awaiters still wait for the observer
+  control-result consumer. Setup disclosures, bundled-read failure expectations,
+  and layout fixture seeding now match the current UI and transport contracts.
+
+Evidence under `../review-2026-09-08-release-candidate/`: the first combined
+`just ci` completed successfully (`main-landing-ci-final.log`, desktop 9125,
+mobile 1993), and `just test` passed (`main-landing-integration.log`). Later
+membership/mock fixes require the final committed-tree gate. Mission browser
+36/36 passed in `main-landing-focused-pass2.log`; that run also records two
+archive failures before the membership repair. The original archive spec then
+passed 5/5 in `main-landing-identity-final.log`. Project plus Agent Progress is
+14/14 in `main-landing-project-progress.log`. File-size ratchet passes.
+
+The broad browser run is still a gate, not a success claim. Its first pass was
+stopped after exposing additional fixture/readiness failures; its log is
+`main-landing-smoke-pass2-interrupted.log`. A fresh complete run uses an immutable
+E2E build on port 4192, three workers and zero retries (`main-landing-full-smoke.log`).
+No main push, app installation or new production deployment is claimed here.
+Native Windows remains unavailable. Opus's directory-default follow-up is paused
+separately until landing completes.
+
 ## September 9 People integration review
 
 Opus candidate `e222b137e`, `a715e0915`, and `ed3cf6acd` integrated as

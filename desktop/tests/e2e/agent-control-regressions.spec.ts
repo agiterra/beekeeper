@@ -91,10 +91,9 @@ async function clickStop(page: Page) {
   const stop = page.getByTestId("agent-session-stop-turn");
   await expect(stop).toBeVisible();
   await expect(stop).toBeEnabled();
-  // Activate the real menu item with the keyboard. The clock-controlled
-  // timeout case must not depend on pointer stability during Radix motion.
-  await stop.focus();
-  await stop.press("Enter");
+  // Wait for the real menu item to become stable before activating it.
+  // Programmatic focus during menu opening can be replaced by its autofocus.
+  await stop.click();
 }
 
 test.describe("agent control browser regressions", () => {

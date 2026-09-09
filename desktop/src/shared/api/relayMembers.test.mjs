@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { relayClient } from "./relayClient.ts";
 
 import {
   canManageCommunityMembers,
@@ -111,4 +112,33 @@ test("an available snapshot never warns", () => {
     }),
     false,
   );
+});
+
+test("the default membership read uses a bounded authenticated snapshot and fails closed", async () => {
+  const original = relayClient.fetchEventsBatch;
+  const pubkey = "a".repeat(64);
+  const reads = [];
+  try {
+    relayClient.fetchEventsBatch = async (filters) => {
+      reads.push(filters);
+      return [{ created_at: 1, tags: [["member", pubkey, "admin"]] }];
+    };
+    const lookup = await loadRelayMembershipLookup(pubkey, true);
+    assert.equal(lookup.membership?.role, "admin");
+    assert.deepEqual(reads, [[{ kinds: [13534], limit: 1 }]]);
+    relayClient.fetchEventsBatch = async () => [];
+    assert.equal(
+      (await loadRelayMembershipLookup(pubkey, true)).membership,
+      null,
+    );
+    relayClient.fetchEventsBatch = async () => {
+      throw new Error("auth refused");
+    };
+    await assert.rejects(
+      loadRelayMembershipLookup(pubkey, true),
+      /auth refused/,
+    );
+  } finally {
+    relayClient.fetchEventsBatch = original;
+  }
 });

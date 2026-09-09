@@ -970,7 +970,8 @@ test.describe("crew front door", () => {
       .getByTestId("new-coding-session-goal")
       .fill("Close ledger item 77.");
     await page
-      .getByRole("button", { name: "Change setup", exact: true })
+      .getByTestId("new-coding-session-configuration")
+      .locator("summary")
       .click();
     await page
       .getByTestId("new-coding-session-lead-select")

@@ -104,10 +104,12 @@ export function relayMembershipLookupFromEvent(
 }
 
 async function fetchMembershipListEvent(): Promise<RelayEvent | null> {
-  return relayClient.fetchFirstEvent({
-    kinds: [KIND_NIP43_MEMBERSHIP_LIST],
-    limit: 1,
-  });
+  // This bounded permission snapshot must not queue behind channel discovery.
+  // The authenticated batch retains the same filter and WebSocket fallback.
+  const events = await relayClient.fetchEventsBatch([
+    { kinds: [KIND_NIP43_MEMBERSHIP_LIST], limit: 1 },
+  ]);
+  return events[0] ?? null;
 }
 
 /** Loads the NIP-43 snapshot only when the relay advertises membership support. */

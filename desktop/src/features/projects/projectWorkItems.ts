@@ -79,9 +79,8 @@ type FetchEventsInput = Parameters<(typeof relayClient)["fetchEvents"]>[0];
 /** Loads aggregate issue and pull-request data with bounded relay fan-out. */
 export async function fetchProjectsWorkItems<TProject extends ProjectReference>(
   projects: TProject[],
-  fetchEvents: (
-    filter: FetchEventsInput,
-  ) => Promise<RelayEvent[]> = relayClient.fetchEvents.bind(relayClient),
+  fetchEvents: (filter: FetchEventsInput) => Promise<RelayEvent[]> = (filter) =>
+    relayClient.fetchEventsBatch([filter]),
 ): Promise<ProjectsWorkItemsResult<TProject>> {
   const repoAddresses = [
     ...new Set(

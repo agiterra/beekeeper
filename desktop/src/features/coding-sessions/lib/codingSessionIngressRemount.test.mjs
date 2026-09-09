@@ -285,18 +285,18 @@ test("both ingress subscriptions rebuild when the session view is re-entered", a
   const first = renderHook(() => useBothIngressHooks(client), { wrapper });
   await settleUntil(
     () =>
-      historyCalls.length === 4 &&
+      historyCalls.length === 7 &&
       liveSubscriptions.length === 2 &&
       first.result.current.trusted.metadata.length === 1 &&
       first.result.current.creates.observations.length === 1,
     "both hooks to fetch history, arm live subscriptions, and ingest",
   );
 
-  // Four reads, two hooks: the trusted ingress backfills in one filter, while
-  // the create observations read one filter per kind so per-turn 44224 volume
+  // Seven reads, two hooks: the trusted ingress backfills in one filter, while
+  // the create observations read each kind cold and again after the live fence; 44224 volume
   // cannot evict the creates they join to. Live subscriptions carry no row
   // budget, so there is still exactly one per hook.
-  assert.equal(historyCalls.length, 4, "one history read per kind budget");
+  assert.equal(historyCalls.length, 7, "one history read per kind budget");
   assert.equal(liveSubscriptions.length, 2, "one live subscription per hook");
   assert.equal(first.result.current.trusted.metadata.length, 1);
   assert.equal(first.result.current.creates.observations.length, 1);
@@ -314,14 +314,14 @@ test("both ingress subscriptions rebuild when the session view is re-entered", a
   const second = renderHook(() => useBothIngressHooks(client), { wrapper });
   await settleUntil(
     () =>
-      historyCalls.length === 8 &&
+      historyCalls.length === 14 &&
       liveSubscriptions.length === 4 &&
       second.result.current.trusted.metadata.length === 1 &&
       second.result.current.creates.observations.length === 1,
     "the remounted hooks to refetch history and re-arm live subscriptions",
   );
 
-  assert.equal(historyCalls.length, 8, "history must be refetched on remount");
+  assert.equal(historyCalls.length, 14, "history must be refetched on remount");
   assert.equal(liveSubscriptions.length, 4, "live subs must be re-armed");
   assert.equal(
     liveSubscriptions.filter((subscription) => !subscription.closed).length,
@@ -377,7 +377,7 @@ test("both ingress subscriptions rebuild when the session view is re-entered", a
   ipcHandlers.clear();
 });
 
-test("a channel added during create fences live before its first history backfill", async () => {
+test("a channel added during create loads cold history then closes the live-admission gap", async () => {
   const { createEvent, metadataEvent, receiptEvent } =
     await buildRelayHistory();
   const useBothIngressHooks = await loadHooks();
@@ -418,8 +418,8 @@ test("a channel added during create fences live before its first history backfil
   // second subscription took to appear, not merely for one tick.
   assert.equal(
     historyCalls.length,
-    0,
-    "history must not run before the live fences are ready",
+    3,
+    "three bounded create-history filters start before live admission",
   );
 
   // The provider facts land while React is still wiring the newly-created
@@ -432,13 +432,17 @@ test("a channel added during create fences live before its first history backfil
   });
   await settleUntil(
     () =>
-      historyCalls.length === 4 &&
+      historyCalls.length === 7 &&
       result.current.trusted.metadata.length === 1 &&
       result.current.creates.observations.length === 1,
     "the post-fence history read to land in both stores",
   );
 
-  assert.equal(historyCalls.length, 4, "one post-fence read per kind budget");
+  assert.equal(
+    historyCalls.length,
+    7,
+    "cold creates plus one post-fence read per kind budget",
+  );
   assert.equal(result.current.trusted.metadata.length, 1);
   assert.equal(result.current.creates.observations.length, 1);
 
@@ -718,7 +722,11 @@ test("returning to a session paints its verified facts before the relay answers"
   // was away, so the surface is painting retained facts *while* the refresh
   // runs — not instead of it.
   assert.equal(second.result.current.trusted.isLoading, true);
-  assert.equal(historyCalls, 0, "no relay read has resolved yet");
+  assert.equal(
+    historyCalls,
+    3,
+    "cold create reads started but none has resolved",
+  );
 
   second.unmount();
   queryClient.clear();

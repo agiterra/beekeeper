@@ -308,15 +308,18 @@ test("filters are explicit and history plus live evidence stays exactly scoped",
     useCodingSessionMissionEvidence(scope(), client),
   );
   await settleUntil(
-    () => !mounted.result.current.isLoading && client.fetches.length === 3,
+    () => !mounted.result.current.isLoading && client.fetches.length === 6,
     "history fold",
   );
   assert.deepEqual(
     client.fetches.map((filter) => filter.kinds[0]),
-    [...CODING_SESSION_MISSION_EVIDENCE_KINDS],
+    [
+      ...CODING_SESSION_MISSION_EVIDENCE_KINDS,
+      ...CODING_SESSION_MISSION_EVIDENCE_KINDS,
+    ],
   );
   assert.deepEqual(
-    client.fetches,
+    client.fetches.slice(0, 3),
     buildCodingSessionMissionEvidenceFilters(
       scope(),
       MISSION_EVIDENCE_HISTORY_LIMIT,
@@ -324,7 +327,12 @@ test("filters are explicit and history plus live evidence stays exactly scoped",
     ),
   );
   assert.deepEqual(client.fetches[2].authors, [RELAY]);
-  assert.equal(client.batches.length, 1, "three filters, one bundled read");
+  assert.equal(
+    client.batches.length,
+    2,
+    "cold and post-fence reads each bundle three filters",
+  );
+  assert.deepEqual(client.batches[0], client.batches[1]);
   assert.equal(client.subscriptions.length, 3);
   assert.equal(mounted.result.current.retainedEventCount, 2);
   assert.equal(mounted.result.current.inspectorInput.rejectedEventCount, 2);
@@ -701,7 +709,11 @@ test("revoked seats reach native as inactive and refresh recovers a fold error",
       !mounted.result.current.isLoading,
     "successful refresh",
   );
-  assert.equal(client.fetches.length, 6);
+  assert.equal(
+    client.fetches.length,
+    9,
+    "failed cold fold plus refreshed cold and catch-up reads",
+  );
   mounted.unmount();
 });
 
@@ -829,4 +841,143 @@ test("D6/D-T8: the accepted seat chain and the fold's unseated reports reach the
     seatReport.id,
   ]);
   mounted.unmount();
+});
+
+test("cold Mission evidence projects before admission and unions gap history with live events", async () => {
+  installNative();
+  const parent = assignment();
+  const gapReport = report(parent.id, "Caught admission gap", { createdAt: 2 });
+  const liveTerminal = blocked(parent.id, { createdAt: 3 });
+  let releaseLive;
+  let onEvent;
+  let reads = 0;
+  const client = {
+    fetchEventsBatch: async () => (++reads === 1 ? [parent] : [gapReport]),
+    subscribeLiveMany: async (_, receive) => {
+      onEvent = receive;
+      return new Promise((resolve) => {
+        releaseLive = () => resolve(() => {});
+      });
+    },
+  };
+  const { act, renderHook, settleUntil } = await harness();
+  const mounted = renderHook(() =>
+    useCodingSessionMissionEvidence(scope(), client),
+  );
+  await settleUntil(
+    () => !mounted.result.current.isLoading,
+    "cold history without live admission",
+  );
+  assert.equal(reads, 1);
+  assert.equal(mounted.result.current.retainedEventCount, 1);
+  await act(async () => {
+    onEvent(liveTerminal);
+    releaseLive();
+  });
+  await settleUntil(
+    () => mounted.result.current.retainedEventCount === 3,
+    "union of cold, gap, and live evidence",
+  );
+  assert.equal(reads, 2);
+  assert.equal(
+    mounted.result.current.inspectorInput.reports[0].summary,
+    "Caught admission gap",
+  );
+  assert.equal(
+    mounted.result.current.inspectorInput.missionState.kind,
+    "blocked",
+  );
+  mounted.unmount();
+});
+
+test("post-fence catch-up failure stays explicit after later live events", async () => {
+  installNative();
+  const parent = assignment();
+  let releaseLive;
+  let onEvent;
+  let reads = 0;
+  const client = {
+    fetchEventsBatch: async () => {
+      if (++reads === 1) return [parent];
+      throw new Error("catch-up unavailable");
+    },
+    subscribeLiveMany: async (_, receive) => {
+      onEvent = receive;
+      return new Promise((resolve) => {
+        releaseLive = () => resolve(() => {});
+      });
+    },
+  };
+  const { act, renderHook, settleUntil } = await harness();
+  const mounted = renderHook(() =>
+    useCodingSessionMissionEvidence(scope(), client),
+  );
+  await settleUntil(() => !mounted.result.current.isLoading, "cold history");
+  await act(async () => releaseLive());
+  await settleUntil(
+    () => mounted.result.current.errorMessage === "catch-up unavailable",
+    "catch-up failure",
+  );
+  await act(async () => onEvent(blocked(parent.id, { createdAt: 2 })));
+  assert.equal(mounted.result.current.errorMessage, "catch-up unavailable");
+  assert.equal(mounted.result.current.authority, null);
+  mounted.unmount();
+});
+
+test("late cold projection cannot erase a live admission error", async () => {
+  let finishFold;
+  installNative({
+    fold: (request) =>
+      new Promise((resolve) => {
+        finishFold = () => resolve(nativeResponse(request));
+      }),
+  });
+  let rejectLive;
+  const client = {
+    fetchEventsBatch: async () => [assignment()],
+    subscribeLiveMany: async () =>
+      new Promise((_, reject) => {
+        rejectLive = reject;
+      }),
+  };
+  const { act, renderHook, settleUntil } = await harness();
+  const mounted = renderHook(() =>
+    useCodingSessionMissionEvidence(scope(), client),
+  );
+  await settleUntil(() => Boolean(finishFold), "pending cold projection");
+  await act(async () => rejectLive(new Error("admission denied")));
+  assert.equal(mounted.result.current.errorMessage, "admission denied");
+  await act(async () => finishFold());
+  assert.equal(mounted.result.current.errorMessage, "admission denied");
+  assert.equal(mounted.result.current.authority, null);
+  mounted.unmount();
+});
+
+test("unmount closes a late live fence without starting catch-up", async () => {
+  installNative();
+  let releaseLive;
+  let closed = false;
+  let reads = 0;
+  const client = {
+    fetchEventsBatch: async () => {
+      reads += 1;
+      return [];
+    },
+    subscribeLiveMany: async () =>
+      new Promise((resolve) => {
+        releaseLive = () =>
+          resolve(() => {
+            closed = true;
+          });
+      }),
+  };
+  const { act, renderHook, settleUntil } = await harness();
+  const mounted = renderHook(() =>
+    useCodingSessionMissionEvidence(scope(), client),
+  );
+  await settleUntil(() => !mounted.result.current.isLoading, "cold projection");
+  mounted.unmount();
+  await act(async () => releaseLive());
+  assert.equal(closed, true);
+  assert.equal(reads, 1);
 });

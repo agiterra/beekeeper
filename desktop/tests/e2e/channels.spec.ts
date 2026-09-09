@@ -230,26 +230,29 @@ async function waitForMockLiveSubscription(
   kind?: number,
 ) {
   await expect
-    .poll(async () => {
-      return page.evaluate(
-        ({ currentChannelName, kind }) => {
-          return (
-            (
-              window as Window & {
-                __BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?: (input: {
-                  channelName: string;
-                  kind?: number;
-                }) => boolean;
-              }
-            ).__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
-              channelName: currentChannelName,
-              kind,
-            }) ?? false
-          );
-        },
-        { currentChannelName: channelName, kind },
-      );
-    })
+    .poll(
+      async () => {
+        return page.evaluate(
+          ({ currentChannelName, kind }) => {
+            return (
+              (
+                window as Window & {
+                  __BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?: (input: {
+                    channelName: string;
+                    kind?: number;
+                  }) => boolean;
+                }
+              ).__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
+                channelName: currentChannelName,
+                kind,
+              }) ?? false
+            );
+          },
+          { currentChannelName: channelName, kind },
+        );
+      },
+      { timeout: 20_000 },
+    )
     .toBe(true);
 }
 
@@ -1887,11 +1890,20 @@ test("scrollable channel with recent messages hides intro actions until top", as
   await page.getByTestId("create-channel-submit").click();
   await expect(page.getByTestId("chat-title")).toHaveText(channelName);
 
-  for (const message of messages) {
-    await page.getByTestId("message-input").fill(message);
-    await page.getByTestId("send-message").click();
-    await expect(page.getByTestId("message-timeline")).toContainText(message);
-  }
+  // Seed history for this layout test rather than spending the user's
+  // per-minute send budget on 24 setup messages.
+  await waitForMockLiveSubscription(page, channelName);
+  await page.evaluate(
+    ({ channelName, messages }) => {
+      for (const content of messages) {
+        window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({ channelName, content });
+      }
+    },
+    { channelName, messages },
+  );
+  await expect(page.getByTestId("message-timeline")).toContainText(
+    messages[messages.length - 1],
+  );
 
   await page.getByTestId("channel-general").click();
   await expect(page.getByTestId("chat-title")).toHaveText("general");
@@ -2433,6 +2445,7 @@ test("sidebar shows unread indicator for newly active channels", async ({
         channelName: "random",
         content: "Unread update for #random",
         kind: 40002,
+        createdAt: Math.floor(Date.now() / 1000) + 1,
         pubkey,
       });
     },
@@ -2461,11 +2474,16 @@ test("sidebar shows unread indicator for new forum posts", async ({ page }) => {
   await expect(page.getByTestId("channel-unread-watercooler")).toHaveCount(0);
   await waitForMockLiveSubscription(page, "watercooler");
 
-  // watercooler carries seeded forum posts, and how many of them the catch-up
-  // scan has folded in by now depends on what ran before this test. Count from
-  // wherever it has settled rather than assuming an empty channel.
-  await page.waitForTimeout(2000);
-  const seededUnread = await readChannelUnreadCount(page, "watercooler");
+  // Read the seeded forum first so the new post has a known unread baseline.
+  await page.getByTestId("channel-watercooler").click();
+  await expect(page.getByTestId("channel-watercooler")).toHaveAttribute(
+    "data-active",
+    "true",
+  );
+  await expect(page.getByTestId("channel-unread-watercooler")).toHaveCount(0);
+  await page.getByTestId("channel-general").click();
+  await expect(page.getByTestId("chat-title")).toHaveText("general");
+  await waitForMockLiveSubscription(page, "watercooler");
 
   // Emit as alice — the unread tracker ignores self-authored messages.
   await page.evaluate(
@@ -2474,6 +2492,7 @@ test("sidebar shows unread indicator for new forum posts", async ({ page }) => {
         channelName: "watercooler",
         content: "Unread update for the forum",
         kind: 45001,
+        createdAt: Math.floor(Date.now() / 1000) + 1,
         pubkey,
       });
     },
@@ -2484,9 +2503,7 @@ test("sidebar shows unread indicator for new forum posts", async ({ page }) => {
     "font-weight",
     "700",
   );
-  await expect
-    .poll(() => readChannelUnreadCount(page, "watercooler"))
-    .toBe(seededUnread + 1);
+  await expect.poll(() => readChannelUnreadCount(page, "watercooler")).toBe(1);
 
   await page.getByTestId("channel-watercooler").click();
   await expect(page.getByTestId("chat-title")).toHaveText("watercooler");
@@ -2503,6 +2520,7 @@ test("sidebar clears unread indicator after opening a DM", async ({ page }) => {
     window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
       channelName: "alice-tyler",
       content: "Unread update for the DM",
+      createdAt: Math.floor(Date.now() / 1000) + 1,
       pubkey,
     });
   }, TEST_IDENTITIES.alice.pubkey);

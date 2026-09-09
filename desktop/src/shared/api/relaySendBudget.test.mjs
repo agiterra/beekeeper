@@ -173,3 +173,44 @@ test("reset releases every waiter and clears every charge", async () => {
   assert.equal(b.framesInWindow(), 0);
   assert.equal(pendingTimers.size, 0, "the wake timer was cancelled");
 });
+
+test("observer controls use reserved capacity but still spend both event budgets", () => {
+  const b = budget();
+  for (let i = 0; i < LOCAL_BURST_CAPACITY - WRITE_RESERVE; i++)
+    b.tryAcquire("read");
+  const control = ["EVENT", { kind: 24200, tags: [["frame", "control"]] }];
+  assert.equal(classifySendLane(control), "write");
+  assert.equal(b.tryAcquire(classifySendLane(control)), true);
+  assert.equal(b.eventsInMinute(), 1);
+  assert.equal(b.framesInWindow(), LOCAL_BURST_CAPACITY - WRITE_RESERVE + 1);
+  for (let i = 1; i < WRITE_RESERVE; i++)
+    assert.equal(b.tryAcquire(classifySendLane(control)), true);
+  assert.equal(
+    b.tryAcquire(classifySendLane(control)),
+    false,
+    "the full burst still blocks controls",
+  );
+  tickTo(5001);
+  for (let i = WRITE_RESERVE; i < LOCAL_EVENTS_PER_MINUTE; i++) {
+    if (!b.tryAcquire(classifySendLane(control))) tickTo(fakeNow + 5001);
+    else continue;
+    assert.equal(b.tryAcquire(classifySendLane(control)), true);
+  }
+  assert.equal(
+    b.tryAcquire(classifySendLane(control)),
+    false,
+    "minute capacity still blocks controls",
+  );
+});
+
+test("observer output and unrelated or malformed frame tags cannot use the control reserve", () => {
+  for (const event of [
+    { kind: 24200, tags: [["frame", "control_result"]] },
+    { kind: 24200, tags: [["frame", "activity"]] },
+    { kind: 20002, tags: [["frame", "control"]] },
+    { kind: 24200, tags: [null, "control"] },
+    { kind: 24200, tags: "control" },
+    { kind: 24200 },
+  ])
+    assert.equal(classifySendLane(["EVENT", event]), "ephemeral");
+});

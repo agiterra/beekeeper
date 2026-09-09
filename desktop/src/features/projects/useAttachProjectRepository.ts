@@ -18,7 +18,8 @@ export type AttachProjectRepositoryInput = {
   repository: Repository;
 };
 
-async function attachProjectRepository({
+/** Attach using a fresh signed head; rejects missing or concurrently changed heads. */
+export async function attachProjectRepository({
   ownerControlAgentPubkey,
   project,
   repository,
@@ -26,12 +27,14 @@ async function attachProjectRepository({
   const targetOwner = project.owner.toLowerCase();
 
   // Fetch the live signed project head immediately before mutating.
-  const liveHeads = await relayClient.fetchEvents({
-    kinds: [KIND_PROJECT_ANNOUNCEMENT],
-    authors: [targetOwner],
-    "#d": [project.dtag],
-    limit: 1,
-  });
+  const liveHeads = await relayClient.fetchEventsBatch([
+    {
+      kinds: [KIND_PROJECT_ANNOUNCEMENT],
+      authors: [targetOwner],
+      "#d": [project.dtag],
+      limit: 1,
+    },
+  ]);
   const liveHead = liveHeads[0];
   if (!liveHead) {
     throw new Error(

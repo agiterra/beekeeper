@@ -1,3 +1,4 @@
+import { mockLiveReadinessMatches } from "./e2eBridgeLiveReadiness";
 import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
 import { emit, listen } from "@tauri-apps/api/event";
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
@@ -1230,6 +1231,7 @@ type WsHandler = (message: unknown) => void;
 const GLOBAL_MOCK_SUBSCRIPTION = "*";
 
 type MockSubscription = {
+  filters: MockFilter[];
   channelId: string;
   kinds: number[] | null;
   /** `#p` values from the REQ filters, if any — lets specs assert an
@@ -4774,20 +4776,19 @@ function emitMockGlobalEvent(event: RelayEvent) {
 }
 
 function hasMockLiveSubscription(channelId: string, kind?: number) {
+  const active =
+    document.querySelector(
+      `[data-channel-id="${channelId}"][data-active="true"]`,
+    ) !== null;
   for (const socket of mockSockets.values()) {
     for (const subscription of socket.subscriptions.values()) {
       if (
-        (subscription.channelId === channelId ||
-          subscription.channelId === GLOBAL_MOCK_SUBSCRIPTION) &&
-        (kind === undefined ||
-          !subscription.kinds ||
-          subscription.kinds.includes(kind))
+        mockLiveReadinessMatches(subscription.filters, channelId, kind, active)
       ) {
         return true;
       }
     }
   }
-
   return false;
 }
 
@@ -10614,6 +10615,7 @@ function sendToMockSocket(
         return;
       }
       socket.subscriptions.set(subId, {
+        filters,
         channelId: onlyChannelId ?? GLOBAL_MOCK_SUBSCRIPTION,
         kinds: kinds.size > 0 ? [...kinds] : null,
         ownerPubkeys: [...ownerPubkeys],
@@ -11511,7 +11513,6 @@ export function maybeInstallE2eTauriMocks() {
     // local session owner, so a later relay-delivered control_result traverses
     // the same observer-store authorization gate as a real agent frame.
     _testRegisterKnownAgents("e2e-active-turn", [agentPubkey]);
-    await ensureRelayObserverSubscription();
     seedTurnSeq += 1;
     const event = {
       seq: seedTurnSeq,
@@ -11525,6 +11526,9 @@ export function maybeInstallE2eTauriMocks() {
     };
     syncAgentTurnsFromEvents(agentPubkey, [event]);
     syncAgentObserverEvents(agentPubkey, [event]);
+    // Seeded store facts are synchronous; callers awaiting this helper also
+    // wait for the observer consumer needed by later relay control results.
+    await ensureRelayObserverSubscription();
   };
   window.__BUZZ_E2E_SEED_OBSERVER_EVENTS__ = ({ agentPubkey, events }) => {
     injectObserverEventsForE2E(agentPubkey, events);

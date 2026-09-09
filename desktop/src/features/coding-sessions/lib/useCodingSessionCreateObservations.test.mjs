@@ -61,7 +61,7 @@ const TARGET = {
   generation: 1,
 };
 
-test("creates ride their own subscription and only bind once the receipt lands", async () => {
+test("cold creates load before live admission and a gap receipt joins in post-fence catch-up", async () => {
   const { act, renderHook } = await import("@testing-library/react");
   const React = (await import("react")).default;
   const { QueryClient, QueryClientProvider } = await import(
@@ -134,6 +134,7 @@ test("creates ride their own subscription and only bind once the receipt lands",
     ],
   }));
 
+  let releaseLive;
   const historyCalls = [];
   const historyBatches = [];
   const liveSubscriptions = [];
@@ -144,12 +145,14 @@ test("creates ride their own subscription and only bind once the receipt lands",
     fetchEventsBatch: async (filters) => {
       historyBatches.push(filters);
       historyCalls.push(...filters);
-      return [createEvent];
+      return historyBatches.length === 1 ? [createEvent] : [receiptEvent];
     },
     subscribeLive: async (filter, onEvent) => {
       const subscription = { filter, onEvent };
       liveSubscriptions.push(subscription);
-      return () => {};
+      return new Promise((resolve) => {
+        releaseLive = () => resolve(() => {});
+      });
     },
     subscribeToReconnects: () => () => {},
   };
@@ -199,9 +202,15 @@ test("creates ride their own subscription and only bind once the receipt lands",
   assert.deepEqual(result.current.observations, []);
 
   await act(async () => {
-    liveSubscriptions[0].onEvent(receiptEvent);
+    releaseLive();
   });
 
+  await settle();
+  assert.equal(
+    historyBatches.length,
+    2,
+    "a receipt in the admission gap requires a second history read",
+  );
   assert.equal(result.current.observations.length, 1);
   assert.equal(result.current.observations[0].signerPubkey, OPERATOR_PUBKEY);
   assert.equal(result.current.observations[0].sessionRef, SESSION_REF);
@@ -334,7 +343,7 @@ test("a member who runs no providers still sees who founded the session", async 
     });
   }
 
-  assert.equal(historyCalls.length, 3);
+  assert.equal(historyCalls.length, 6);
   assert.equal(result.current.observations.length, 1);
   assert.equal(result.current.observations[0].signerPubkey, OPERATOR_PUBKEY);
   assert.deepEqual(result.current.observations[0].target, TARGET);
@@ -342,4 +351,45 @@ test("a member who runs no providers still sees who founded the session", async 
   unmount();
   queryClient.clear();
   ipcHandlers.clear();
+});
+
+test("a live fence during the pending cold read is not coalesced away", async () => {
+  const { act, renderHook } = await import("@testing-library/react");
+  const { useCodingSessionCreateObservations } = await import(
+    "./useCodingSessionCreateObservations.ts"
+  );
+  let releaseCold;
+  let releaseLive;
+  let reads = 0;
+  const client = {
+    fetchEvents: async () => [],
+    fetchEventsBatch: async () => {
+      reads += 1;
+      if (reads === 1)
+        return new Promise((resolve) => {
+          releaseCold = resolve;
+        });
+      return [];
+    },
+    subscribeLive: async () =>
+      new Promise((resolve) => {
+        releaseLive = () => resolve(() => {});
+      }),
+    subscribeToReconnects: () => () => {},
+  };
+  const mounted = renderHook(() =>
+    useCodingSessionCreateObservations([CHANNEL_ID], client),
+  );
+  await act(async () => {});
+  assert.equal(reads, 1, "cold history must start without admission");
+  await act(async () => releaseLive());
+  assert.equal(reads, 1, "reads remain serialized");
+  await act(async () => releaseCold([]));
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+  assert.equal(
+    reads,
+    2,
+    "post-fence read survives coalescing with the cold read",
+  );
+  mounted.unmount();
 });

@@ -61,8 +61,8 @@ export type { ProjectContainer };
 
 export async function fetchProjectContainers(): Promise<ProjectContainer[]> {
   const [events, deletionEvents] = await Promise.all([
-    relayClient.fetchEvents({ kinds: [KIND_PROJECT], limit: 200 }),
-    relayClient.fetchEvents({ kinds: [KIND_DELETION], limit: 500 }),
+    relayClient.fetchEventsBatch([{ kinds: [KIND_PROJECT], limit: 200 }]),
+    relayClient.fetchEventsBatch([{ kinds: [KIND_DELETION], limit: 500 }]),
   ]);
 
   const projects: ProjectContainer[] = [];

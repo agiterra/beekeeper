@@ -140,6 +140,7 @@ export function useCodingSessionMissionEvidence(
     let relayPubkey: string | null = null;
     let initialLoad = true;
     let historySettled = false;
+    let loadFailed = false;
     setState({
       identity: runIdentity,
       isLoading: true,
@@ -152,6 +153,9 @@ export function useCodingSessionMissionEvidence(
 
     const publishError = (error: unknown, fallback: string) => {
       if (cancelled) return;
+      loadFailed = true;
+      historySettled = false;
+      projectionRevision += 1;
       setState({
         identity: runIdentity,
         isLoading: false,
@@ -166,7 +170,7 @@ export function useCodingSessionMissionEvidence(
     };
 
     const project = async () => {
-      if (!relayPubkey) return;
+      if (!relayPubkey || loadFailed) return;
       const revision = ++projectionRevision;
       try {
         const projection = await projectCodingSessionMissionEvidence({
@@ -213,30 +217,33 @@ export function useCodingSessionMissionEvidence(
           0,
           relayPubkey,
         );
-        // The live fence is one REQ carrying all three filters, opened
-        // before the history read so nothing lands in the gap; the history
-        // is one bundled `POST /query` (three filters, three limits).
-        const unsubscribe = await client.subscribeLiveMany(
-          liveFilters,
-          (event) => ingest([event]),
+        const historyFilters = buildCodingSessionMissionEvidenceFilters(
+          stableScope,
+          MISSION_EVIDENCE_HISTORY_LIMIT,
+          relayPubkey,
         );
-        if (cancelled) {
-          unsubscribe();
-          return;
-        }
-        unsubscribes.push(unsubscribe);
-
-        const history = await client.fetchEventsBatch(
-          buildCodingSessionMissionEvidenceFilters(
-            stableScope,
-            MISSION_EVIDENCE_HISTORY_LIMIT,
-            relayPubkey,
-          ),
-        );
-        if (cancelled) return;
-        store.ingest(history);
-        historySettled = true;
-        await project();
+        // Start bounded HTTP history while the one live REQ awaits admission.
+        // Cold history is useful immediately, but cannot close the live gap:
+        // a second, post-fence read below is mandatory, unioned into the store.
+        const live = client
+          .subscribeLiveMany(liveFilters, (event) => ingest([event]))
+          .then((unsubscribe) => {
+            if (cancelled) unsubscribe();
+            else unsubscribes.push(unsubscribe);
+          });
+        const coldHistory = client
+          .fetchEventsBatch(historyFilters)
+          .then(async (history) => {
+            if (cancelled || loadFailed) return;
+            store.ingest(history);
+            historySettled = true;
+            await project();
+          });
+        await Promise.all([live, coldHistory]);
+        if (cancelled || loadFailed) return;
+        const history = await client.fetchEventsBatch(historyFilters);
+        if (cancelled || loadFailed) return;
+        if (store.ingest(history)) await project();
       } catch (error) {
         if (!cancelled && initialLoad) {
           publishError(error, "Failed to load Mission evidence.");

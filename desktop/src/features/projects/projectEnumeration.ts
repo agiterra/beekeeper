@@ -96,7 +96,9 @@ export function fetchProjectEventsExhaustively(
   pageSize = PROJECT_ENUMERATION_PAGE_SIZE,
 ): Promise<RelayEvent[]> {
   return enumerateProjectEvents(
-    (filter) => relayClient.fetchEvents(filter),
+    // Snapshot pages do not need a WebSocket subscription slot. Keep the
+    // exact per-page filters and boundary drain on the authenticated batch path.
+    (filter) => relayClient.fetchEventsBatch([filter]),
     kinds,
     pageSize,
     extraFilter,

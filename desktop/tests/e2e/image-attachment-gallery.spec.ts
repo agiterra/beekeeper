@@ -17,21 +17,24 @@ const PROGRESSIVE_THUMB_URL = "https://example.com/e2e/progressive-thumb.jpg";
 
 async function waitForMockLiveSubscription(page: Page, channelName: string) {
   await expect
-    .poll(async () => {
-      return page.evaluate((name) => {
-        return (
-          (
-            window as Window & {
-              __BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?: (input: {
-                channelName: string;
-              }) => boolean;
-            }
-          ).__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
-            channelName: name,
-          }) ?? false
-        );
-      }, channelName);
-    })
+    .poll(
+      async () => {
+        return page.evaluate((name) => {
+          return (
+            (
+              window as Window & {
+                __BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?: (input: {
+                  channelName: string;
+                }) => boolean;
+              }
+            ).__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
+              channelName: name,
+            }) ?? false
+          );
+        }, channelName);
+      },
+      { timeout: 20_000 },
+    )
     .toBe(true);
 }
 

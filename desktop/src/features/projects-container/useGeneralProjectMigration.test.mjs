@@ -44,18 +44,26 @@ function setupStubs({ channels = [], repoEvents = [], projectEvents = [] }) {
     },
   };
   const originalFetchEvents = relayClient.fetchEvents;
+  const originalFetchEventsBatch = relayClient.fetchEventsBatch;
   const originalPublishEvent = relayClient.publishEvent;
   relayClient.fetchEvents = async (filter) => {
     if (filter.kinds.includes(KIND_PROJECT)) return projectEvents;
     if (filter.kinds.includes(KIND_REPO_ANNOUNCEMENT)) return repoEvents;
     return []; // deletions
   };
+  relayClient.fetchEventsBatch = async (filters) =>
+    (
+      await Promise.all(
+        filters.map((filter) => relayClient.fetchEvents(filter)),
+      )
+    ).flat();
   relayClient.publishEvent = async () => {};
   return {
     signedEvents,
     teardown: () => {
       delete globalThis.window.__TAURI_INTERNALS__;
       relayClient.fetchEvents = originalFetchEvents;
+      relayClient.fetchEventsBatch = originalFetchEventsBatch;
       relayClient.publishEvent = originalPublishEvent;
     },
   };

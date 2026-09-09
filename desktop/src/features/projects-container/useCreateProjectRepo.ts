@@ -61,12 +61,16 @@ export async function createProjectRepo(
 
   // D-tag clobber guard: an existing 30617 at this coordinate — standalone
   // or in another project — would be silently overwritten by this write.
-  const existing = await relayClient.fetchEvents({
-    kinds: [KIND_REPO_ANNOUNCEMENT],
-    authors: [ownerPubkey],
-    "#d": [templates.dtag],
-    limit: 1,
-  });
+  // This explicit action must not wait behind broad WebSocket discovery.
+  // The batch path keeps the same authenticated exact-coordinate lookup.
+  const existing = await relayClient.fetchEventsBatch([
+    {
+      kinds: [KIND_REPO_ANNOUNCEMENT],
+      authors: [ownerPubkey],
+      "#d": [templates.dtag],
+      limit: 1,
+    },
+  ]);
   if (existing.length > 0) {
     throw new Error(
       `A repository named "${templates.dtag}" already exists (as a standalone repository or in another project). Choose a different name to avoid overwriting it.`,
@@ -86,11 +90,13 @@ export async function createProjectRepo(
     // a resubmit would strand the user on the duplicate-name guard above.
     let alreadyStored = false;
     try {
-      const stored = await relayClient.fetchEvents({
-        ids: [event.id],
-        kinds: [KIND_REPO_ANNOUNCEMENT],
-        limit: 1,
-      });
+      const stored = await relayClient.fetchEventsBatch([
+        {
+          ids: [event.id],
+          kinds: [KIND_REPO_ANNOUNCEMENT],
+          limit: 1,
+        },
+      ]);
       alreadyStored = stored.length > 0;
     } catch {
       // Ignore — if the query itself fails, surface the publish error.

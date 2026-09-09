@@ -1261,6 +1261,8 @@ test("the route rail has the handle and the collapse the Inspector has", async (
   // not the read; a stored width nothing lays out is a preference that does
   // nothing.
   await page.reload();
+  // Mock relay storage is page-local; restore it without resetting viewer preferences.
+  await seedAndOpen(page);
   await expect(
     page.getByTestId("coding-session-umbrella-workspace"),
   ).toBeVisible({ timeout: 15_000 });

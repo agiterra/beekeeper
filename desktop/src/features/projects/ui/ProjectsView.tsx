@@ -1,5 +1,7 @@
 import * as React from "react";
 
+import { resolveProjectScope } from "@/features/projects/lib/projectScopeSelection";
+
 import { useAppNavigation } from "@/app/navigation/useAppNavigation";
 import {
   useDisplayProjectContainers,
@@ -195,11 +197,7 @@ export function ProjectsView({
   // A stored scope pointing at a deleted/unknown project must not silently
   // filter everything out — treat it as "all".
   const effectiveProjectScope = React.useMemo(
-    () =>
-      projectScope !== "all" &&
-      !projectContainers.some((container) => container.id === projectScope)
-        ? "all"
-        : projectScope,
+    () => resolveProjectScope(projectScope, projectContainers),
     [projectScope, projectContainers],
   );
   /** The container the scope dropdown has selected; null on "All Projects".

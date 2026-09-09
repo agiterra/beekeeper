@@ -48,18 +48,28 @@ function setupStubs({ repoEvents = [], projectEvents = [] } = {}) {
     },
   };
   const originalFetchEvents = relayClient.fetchEvents;
+  const originalFetchEventsBatch = relayClient.fetchEventsBatch;
+  const batchReads = [];
   const originalPublishEvent = relayClient.publishEvent;
   relayClient.fetchEvents = async (filter) => {
     if (filter.kinds.includes(KIND_PROJECT)) return projectEvents;
     if (filter.kinds.includes(KIND_REPO_ANNOUNCEMENT)) return repoEvents;
     return [];
   };
+  relayClient.fetchEventsBatch = async (filters) => {
+    batchReads.push(filters);
+    return filters.flatMap((filter) =>
+      filter.kinds.includes(KIND_REPO_ANNOUNCEMENT) ? repoEvents : [],
+    );
+  };
   relayClient.publishEvent = async () => {};
   return {
     signedEvents,
+    batchReads,
     teardown: () => {
       delete globalThis.window.__TAURI_INTERNALS__;
       relayClient.fetchEvents = originalFetchEvents;
+      relayClient.fetchEventsBatch = originalFetchEventsBatch;
       relayClient.publishEvent = originalPublishEvent;
     },
   };
@@ -210,7 +220,7 @@ test("createProjectRepo rejects a duplicate repo coordinate before publishing", 
 test("createProjectRepo recovers when only the publish acknowledgement was lost", async () => {
   const stubs = setupStubs();
   const originalPublishEvent = relayClient.publishEvent;
-  const originalFetchEvents = relayClient.fetchEvents;
+  const originalFetchEventsBatch = relayClient.fetchEventsBatch;
   try {
     relayClient.publishEvent = async (event) => {
       if (event.kind === KIND_REPO_ANNOUNCEMENT) {
@@ -218,7 +228,7 @@ test("createProjectRepo recovers when only the publish acknowledgement was lost"
       }
     };
     // The relay stored the event: the id-keyed recovery query finds it.
-    relayClient.fetchEvents = async (filter) => {
+    relayClient.fetchEventsBatch = async ([filter]) => {
       if (filter.ids) return [stubs.signedEvents[0]];
       return [];
     };
@@ -231,7 +241,7 @@ test("createProjectRepo recovers when only the publish acknowledgement was lost"
     assert.equal(result.dtag, "widget-lib");
   } finally {
     relayClient.publishEvent = originalPublishEvent;
-    relayClient.fetchEvents = originalFetchEvents;
+    relayClient.fetchEventsBatch = originalFetchEventsBatch;
     stubs.teardown();
   }
 });
@@ -291,6 +301,48 @@ test("createProjectRepo publishes the real General first for the local placehold
         `${KIND_REPO_ANNOUNCEMENT}:${OWNER}:widget-lib`,
       ),
     );
+  } finally {
+    stubs.teardown();
+  }
+});
+
+test("repository creation checks its exact coordinate without waiting for discovery reads", async () => {
+  const stubs = setupStubs();
+  try {
+    relayClient.fetchEvents = async () => {
+      throw new Error("WebSocket discovery reads are unavailable");
+    };
+    const result = await createProjectRepo({
+      project: makeProject(),
+      name: "Widget Lib",
+    });
+    assert.equal(result.dtag, "widget-lib");
+    assert.deepEqual(stubs.batchReads, [
+      [
+        {
+          kinds: [KIND_REPO_ANNOUNCEMENT],
+          authors: [OWNER],
+          "#d": ["widget-lib"],
+          limit: 1,
+        },
+      ],
+    ]);
+  } finally {
+    stubs.teardown();
+  }
+});
+
+test("repository creation does not treat a failed duplicate lookup as absence", async () => {
+  const stubs = setupStubs();
+  try {
+    relayClient.fetchEventsBatch = async () => {
+      throw new Error("Could not authenticate repository lookup");
+    };
+    await assert.rejects(
+      createProjectRepo({ project: makeProject(), name: "widget-lib" }),
+      /Could not authenticate repository lookup/,
+    );
+    assert.equal(stubs.signedEvents.length, 0);
   } finally {
     stubs.teardown();
   }

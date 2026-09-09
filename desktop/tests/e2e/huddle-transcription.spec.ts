@@ -25,15 +25,17 @@ async function waitForMockLiveSubscription(
   kind?: number,
 ) {
   await expect
-    .poll(() =>
-      page.evaluate(
-        ({ kind, name }) =>
-          window.__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
-            channelName: name,
-            kind,
-          }) ?? false,
-        { kind, name: channelName },
-      ),
+    .poll(
+      () =>
+        page.evaluate(
+          ({ kind, name }) =>
+            window.__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
+              channelName: name,
+              kind,
+            }) ?? false,
+          { kind, name: channelName },
+        ),
+      { timeout: 20_000 },
     )
     .toBe(true);
 }

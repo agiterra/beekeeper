@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { relayClient } from "@/shared/api/relayClient";
+
 import { addProjectRepository } from "./useAddProjectRepository.ts";
 
 // ── Partial-publish retry heals through the real mutation ───────────────────
@@ -199,4 +201,58 @@ test("a dangling member with an unmoved head still resumes", async () => {
     [30617],
   );
   assert.equal(result.repository.dtag, "mobile");
+});
+
+test("default action reads use authenticated batches and keep both exact guards", async () => {
+  const originalBatch = relayClient.fetchEventsBatch;
+  const originalFetch = relayClient.fetchEvents;
+  const reads = [];
+  relayClient.fetchEvents = async () => {
+    throw new Error("Discovery unavailable");
+  };
+  relayClient.fetchEventsBatch = async (filters) => {
+    reads.push(filters);
+    return filters[0].kinds.includes(30621) ? [makeDanglingLiveHead()] : [];
+  };
+  try {
+    await addProjectRepository(
+      { name: "Mobile", project: makeProject() },
+      {
+        publishOwnerAnnouncement: async (template) => ({
+          event: makeRepositoryEvent(template.createdAt),
+        }),
+      },
+    );
+    assert.deepEqual(reads, [
+      [{ kinds: [30621], authors: [OWNER], "#d": ["platform"], limit: 1 }],
+      [{ kinds: [30617], authors: [OWNER], "#d": ["mobile"], limit: 1 }],
+    ]);
+  } finally {
+    relayClient.fetchEventsBatch = originalBatch;
+    relayClient.fetchEvents = originalFetch;
+  }
+});
+
+test("failed action authentication never permits a repository write", async () => {
+  const originalBatch = relayClient.fetchEventsBatch;
+  let publications = 0;
+  relayClient.fetchEventsBatch = async () => {
+    throw new Error("Authentication refused");
+  };
+  try {
+    await assert.rejects(
+      addProjectRepository(
+        { name: "Mobile", project: makeProject() },
+        {
+          publishOwnerAnnouncement: async () => {
+            publications += 1;
+          },
+        },
+      ),
+      /Authentication refused/,
+    );
+    assert.equal(publications, 0);
+  } finally {
+    relayClient.fetchEventsBatch = originalBatch;
+  }
 });

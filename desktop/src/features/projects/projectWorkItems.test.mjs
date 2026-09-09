@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { relayClient } from "@/shared/api/relayClient";
+
 import { fetchProjectsWorkItems } from "./projectWorkItems.ts";
 
 // ── Work-item deduplication ─────────────────────────────────────────────────
@@ -136,4 +138,27 @@ test("fetchProjectsWorkItems returns a single row for a PR present in both proje
   );
   // Sanity: the stub was actually called (proves we ran the production path).
   assert.ok(callCount >= 1, "fetchEvents must have been called");
+});
+
+test("default work-item snapshot reads keep repository scopes on the batch path", async () => {
+  const original = relayClient.fetchEventsBatch;
+  const reads = [];
+  relayClient.fetchEventsBatch = async (filters) => {
+    reads.push(filters);
+    return [];
+  };
+  try {
+    const result = await fetchProjectsWorkItems([
+      { repositories: [{ repoAddress: REPO_ADDRESS }] },
+    ]);
+    assert.deepEqual(result.issues.items, []);
+    assert.deepEqual(result.pullRequests.failedSections, []);
+    assert.equal(reads.length, 4);
+    for (const [filter] of reads) {
+      assert.deepEqual(filter["#a"], [REPO_ADDRESS]);
+      assert.equal(filter.limit, 2000);
+    }
+  } finally {
+    relayClient.fetchEventsBatch = original;
+  }
 });

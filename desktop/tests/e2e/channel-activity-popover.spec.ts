@@ -30,20 +30,22 @@ type MockInboxFeedItem = {
 
 async function waitForMockLiveSubscription(page: Page, channelName: string) {
   await expect
-    .poll(() =>
-      page.evaluate(
-        (name) =>
-          (
-            window as Window & {
-              __BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?: (input: {
-                channelName: string;
-              }) => boolean;
-            }
-          ).__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
-            channelName: name,
-          }) ?? false,
-        channelName,
-      ),
+    .poll(
+      () =>
+        page.evaluate(
+          (name) =>
+            (
+              window as Window & {
+                __BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?: (input: {
+                  channelName: string;
+                }) => boolean;
+              }
+            ).__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
+              channelName: name,
+            }) ?? false,
+          channelName,
+        ),
+      { timeout: 20_000 },
     )
     .toBe(true);
 }

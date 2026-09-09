@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { relayClient } from "@/shared/api/relayClient";
+
 import {
   enumerateProjectEvents,
+  fetchProjectEventsExhaustively,
   buildProjectsFromFetcher,
 } from "./projectEnumeration.ts";
 
@@ -244,4 +247,44 @@ test("buildProjectsFromFetcher still suppresses deleted heads via the scoped fet
 
   const projects = await buildProjectsFromFetcher(fetchExhaustively);
   assert.deepEqual(projects, [], "deleted repo must not surface as a project");
+});
+
+test("snapshot enumeration uses authenticated pages with its boundary drain intact", async () => {
+  const original = relayClient.fetchEventsBatch;
+  const reads = [];
+  const rows = [relayEvent("a", 3), relayEvent("b", 2), relayEvent("c", 1)];
+  const fetchPage = fetcherFor(rows);
+  relayClient.fetchEventsBatch = async (filters) => {
+    reads.push(filters);
+    return fetchPage(filters[0]);
+  };
+  try {
+    const actual = await fetchProjectEventsExhaustively([30617], undefined, 2);
+    assert.equal(actual.length, 3);
+    assert.ok(
+      reads.some(([filter]) => filter.since === 2 && filter.until === 2),
+    );
+    assert.ok(
+      reads.every(
+        ([filter]) => filter.kinds[0] === 30617 && filter.limit === 2,
+      ),
+    );
+  } finally {
+    relayClient.fetchEventsBatch = original;
+  }
+});
+
+test("snapshot authentication failure remains a failed enumeration", async () => {
+  const original = relayClient.fetchEventsBatch;
+  relayClient.fetchEventsBatch = async () => {
+    throw new Error("Authentication refused");
+  };
+  try {
+    await assert.rejects(
+      fetchProjectEventsExhaustively([30617]),
+      /Authentication refused/,
+    );
+  } finally {
+    relayClient.fetchEventsBatch = original;
+  }
 });

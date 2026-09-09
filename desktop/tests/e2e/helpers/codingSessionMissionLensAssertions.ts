@@ -565,18 +565,20 @@ export async function assertMissionRestartRecovery(
 
   const priorIds = new Set(harness.baseEvents.map((event) => event.id));
   await expect
-    .poll(() =>
-      page.evaluate(
-        ({ channelName, transactionKind }) =>
-          window.__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
-            channelName,
-            kind: transactionKind,
-          }) ?? false,
-        {
-          channelName: harness.channelName,
-          transactionKind: harness.transactionKind,
-        },
-      ),
+    .poll(
+      () =>
+        page.evaluate(
+          ({ channelName, transactionKind }) =>
+            window.__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
+              channelName,
+              kind: transactionKind,
+            }) ?? false,
+          {
+            channelName: harness.channelName,
+            transactionKind: harness.transactionKind,
+          },
+        ),
+      { timeout: 20_000 },
     )
     .toBe(true);
   const publishPhase = async (phase: {

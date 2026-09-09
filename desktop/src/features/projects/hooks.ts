@@ -216,6 +216,12 @@ function eventToRepoState(event: RelayEvent): RepoState {
   };
 }
 
+// Bounded surface snapshots use authenticated HTTP, retaining the native
+// per-filter WebSocket fallback when this relay does not support the batch.
+const fetchProjectSnapshot = (
+  filter: Parameters<typeof relayClient.fetchEvents>[0],
+) => relayClient.fetchEventsBatch([filter]);
+
 async function fetchRepoState(project: Repository): Promise<RepoState | null> {
   const relaySelf = await getRelaySelf();
   const trustedAuthors = [
@@ -225,7 +231,7 @@ async function fetchRepoState(project: Repository): Promise<RepoState | null> {
       ),
     ),
   ];
-  const events = await relayClient.fetchEvents({
+  const events = await fetchProjectSnapshot({
     kinds: [KIND_REPO_STATE],
     authors: trustedAuthors,
     "#d": [project.dtag],
@@ -238,7 +244,7 @@ async function fetchRepoState(project: Repository): Promise<RepoState | null> {
 async function fetchProjectIssues(
   project: Repository,
 ): Promise<ProjectIssue[]> {
-  const issuePromise = relayClient.fetchEvents({
+  const issuePromise = fetchProjectSnapshot({
     kinds: [KIND_GIT_ISSUE],
     "#a": [project.repoAddress],
     limit: 200,
@@ -246,7 +252,7 @@ async function fetchProjectIssues(
   const [issueEvents, statusEvents, commentEvents, assignmentEvents] =
     await Promise.all([
       issuePromise,
-      relayClient.fetchEvents({
+      fetchProjectSnapshot({
         kinds: [
           KIND_GIT_STATUS_OPEN,
           KIND_GIT_STATUS_MERGED,
@@ -256,7 +262,7 @@ async function fetchProjectIssues(
         "#a": [project.repoAddress],
         limit: 500,
       }),
-      relayClient.fetchEvents({
+      fetchProjectSnapshot({
         kinds: [KIND_TEXT_NOTE],
         "#a": [project.repoAddress],
         limit: 500,
@@ -282,22 +288,22 @@ async function fetchProjectPullRequests(
 ): Promise<ProjectPullRequest[]> {
   const [pullRequestEvents, updateEvents, commentEvents, statusEvents] =
     await Promise.all([
-      relayClient.fetchEvents({
+      fetchProjectSnapshot({
         kinds: [KIND_GIT_PULL_REQUEST],
         "#a": [project.repoAddress],
         limit: 200,
       }),
-      relayClient.fetchEvents({
+      fetchProjectSnapshot({
         kinds: [KIND_GIT_PR_UPDATE],
         "#a": [project.repoAddress],
         limit: 500,
       }),
-      relayClient.fetchEvents({
+      fetchProjectSnapshot({
         kinds: [KIND_TEXT_NOTE],
         "#a": [project.repoAddress],
         limit: 500,
       }),
-      relayClient.fetchEvents({
+      fetchProjectSnapshot({
         kinds: [
           KIND_GIT_STATUS_OPEN,
           KIND_GIT_STATUS_MERGED,
@@ -531,7 +537,7 @@ export async function fetchRepositoryActivitySummaries(
   repositories: Repository[],
 ): Promise<Record<string, ProjectActivitySummary>> {
   if (repositories.length === 0) return {};
-  const events = await relayClient.fetchEvents({
+  const events = await fetchProjectSnapshot({
     kinds: [
       KIND_GIT_ISSUE,
       KIND_GIT_STATUS_OPEN,

@@ -137,6 +137,7 @@ export function useCodingSessionCreateObservations(
     let unsubscribeLive: (() => void) | null = null;
     let liveSubscribePending = false;
     let historyLoading = false;
+    let postFenceHistoryPending = false;
     let historyError: string | null = null;
     let liveError: string | null = null;
 
@@ -170,6 +171,7 @@ export function useCodingSessionCreateObservations(
 
     const historyController = createCodingSessionDiscoveryController({
       async load() {
+        postFenceHistoryPending = false;
         // One filter per kind, each with its own row budget — per-turn 44224
         // volume must never be able to push a channel's creates out of the
         // newest-first window this store bootstraps from — bundled into one
@@ -197,6 +199,11 @@ export function useCodingSessionCreateObservations(
         historyLoading = false;
         historyError = null;
         publish();
+        // The fence can arrive while the cold read is in flight. The
+        // controller coalesces requests, so re-arm after it leaves that read.
+        if (postFenceHistoryPending) {
+          queueMicrotask(() => historyController.request());
+        }
       },
       onError(error, retry) {
         historyLoading = retry.willRetry;
@@ -206,6 +213,9 @@ export function useCodingSessionCreateObservations(
             ? error.message
             : "Failed to load coding-session create history.";
         publish();
+        if (postFenceHistoryPending) {
+          queueMicrotask(() => historyController.request());
+        }
       },
       retrySeed: `creates:${scopeIdentity}`,
     });
@@ -235,9 +245,9 @@ export function useCodingSessionCreateObservations(
           unsubscribeLive = unsubscribe;
           liveError = null;
           publish();
-          // Backfill only after live is fenced so a create/receipt emitted
-          // while this channel is entering the sidebar cannot fall between
-          // an early empty history read and a late subscription.
+          // Always catch up after the fence, including when the cold read
+          // was still pending at admission. The store unions both histories.
+          postFenceHistoryPending = true;
           historyController.request();
         })
         .catch((error) => {
@@ -253,6 +263,8 @@ export function useCodingSessionCreateObservations(
 
     publish();
     establishLive();
+    // HTTP cold history does not need a WebSocket admission slot.
+    historyController.request();
     const disarm = armCodingSessionDiscoveryOnConnect(client, () => {
       if (unsubscribeLive) historyController.request();
       else establishLive();

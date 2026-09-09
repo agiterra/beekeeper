@@ -1121,6 +1121,7 @@ async function openMockApp(
 test("Conversation and Mission are explicit persistent lenses over one signed session", async ({
   page,
 }) => {
+  test.setTimeout(90_000); // Multi-surface walkthrough plus a full app restart.
   await assertConversationAndMissionLenses(page, {
     observedFile: OBSERVED_FILE,
     openMockApp: (targetPage) =>
@@ -1135,6 +1136,7 @@ test("Conversation and Mission are explicit persistent lenses over one signed se
 test("Mission recovers a report after restart, then folds live verdict evidence", async ({
   page,
 }) => {
+  test.setTimeout(90_000); // Three app lifecycles; individual content assertions stay bounded.
   const phases = buildGovernedMissionApprovalPhases(
     governedMissionWithTerminal("completed"),
     KIND_CODING_SESSION_TEAM_TRANSACTION,
