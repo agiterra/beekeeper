@@ -712,6 +712,7 @@ function ReadyCodingSessionWorkspace({
           }))}
           taskCount={taskDock.activeModel?.tasks.length ?? 0}
           taskRailOpen={taskDock.open}
+          workspaceReuse={{ channelId, sessionRef }}
         />
         <CodingSessionFounderLine
           founderPubkey={founderPubkey}

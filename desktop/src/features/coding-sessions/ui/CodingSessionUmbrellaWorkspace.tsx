@@ -707,6 +707,7 @@ export function UmbrellaCodingSessionWorkspace({
         agentFocusItems={agentFocusItems}
         authoritativeTitle={authoritativeTitle}
         canRename={canRename}
+        channelId={channelId}
         channelName={channelName}
         composerTaskDock={composerTaskDock}
         contextLoads={contextLoads}

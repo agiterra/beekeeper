@@ -52,6 +52,7 @@ export function CodingSessionUmbrellaHeaderRow({
   agentFocusItems,
   authoritativeTitle,
   canRename,
+  channelId,
   channelName,
   composerTaskDock,
   contextLoads,
@@ -96,6 +97,8 @@ export function CodingSessionUmbrellaHeaderRow({
   agentFocusItems: CodingSessionAgentFocusItem[];
   authoritativeTitle: string;
   canRename: boolean;
+  /** The session channel, for the overflow's workspace-reuse draft. */
+  channelId: string;
   channelName: string | null;
   composerTaskDock: ReturnType<typeof useCodingSessionTaskDock>;
   contextLoads: HeaderProps["contextLoads"];
@@ -206,6 +209,7 @@ export function CodingSessionUmbrellaHeaderRow({
           surfaceHost.toggle(id);
         }}
         providerAuthorityPubkey={focusedExecution.signerPubkey}
+        workspaceReuse={{ channelId, sessionRef: umbrella.sessionRef }}
         sessionTitle={authoritativeTitle}
         sessionClosed={sessionClosed}
         status={umbrellaWorkspaceStatus(umbrella)}

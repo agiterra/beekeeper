@@ -1331,8 +1331,11 @@ test("A7: the header's six actions are one menu, and Stop all says what it stops
   const items = page.locator('[data-testid^="coding-session-overflow-"]');
   const labels = await items.allTextContents();
   expect(labels.length).toBeGreaterThan(0);
-  // The order A7 fixes, over whichever of the six this session offers.
+  // The order A7 fixes, over whichever of the six this session offers —
+  // preceded by the workspace item, which creates rather than ends and so
+  // sits above the destructive run.
   const order = [
+    "New session in this workspace",
     "Add provider…",
     "Stop all",
     "Close session",

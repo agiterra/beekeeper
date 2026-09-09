@@ -2,12 +2,14 @@ import {
   Download,
   Ellipsis,
   ExternalLink,
+  FolderPlus,
   OctagonX,
   RotateCcw,
   Square,
   UserPlus,
 } from "lucide-react";
 
+import { NEW_SESSION_IN_WORKSPACE_LABEL } from "@/features/coding-sessions/lib/codingSessionWorkspaceReuseCopy";
 import { cn } from "@/shared/lib/cn";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 
@@ -32,9 +34,12 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
  */
 export function CodingSessionHeaderOverflow({
   isExporting = false,
+  newSessionInWorkspaceDetail,
   onAddProvider,
   onCloseSession,
   onExport,
+  onNewSessionInWorkspace,
+  onOpenChange,
   onPopout,
   onReopenSession,
   onStopAll,
@@ -42,9 +47,30 @@ export function CodingSessionHeaderOverflow({
   stopAllSentence,
 }: {
   isExporting?: boolean;
+  /**
+   * The workspace item's second line, resolved by whoever opened this menu.
+   *
+   * Omitted means *say nothing*: this menu holds a callback, not a read, and
+   * a line invented here would be a second answer to a question the sidebar
+   * row already answers from the same hook. Silence is honest; a sentence
+   * that disagrees with the row is not.
+   */
+  newSessionInWorkspaceDetail?: string;
   onAddProvider?: () => void;
   onCloseSession?: () => void;
   onExport?: () => void;
+  /**
+   * Opens a draft on this session's own directory — a read and a dialog, no
+   * more (`useNewSessionInWorkspaceAction`). The item carries the shared
+   * label so this menu and the sidebar row's context menu cannot drift.
+   */
+  onNewSessionInWorkspace?: () => void;
+  /**
+   * Fires when the menu opens and closes. The workspace read runs on open —
+   * never on render, hover or scroll — so the caller resolves here and hands
+   * the answer back through {@link newSessionInWorkspaceDetail}.
+   */
+  onOpenChange?: (open: boolean) => void;
   onPopout?: () => void;
   onReopenSession?: () => void;
   onStopAll?: () => void;
@@ -61,6 +87,20 @@ export function CodingSessionHeaderOverflow({
   stopAllSentence: string;
 }) {
   const items: OverflowItem[] = [];
+  // First, and above the destructive run: it creates rather than ends, and
+  // it is the only item here that starts something new. Its second line is
+  // whatever the opener resolved — the same string, from the same hook, that
+  // the sidebar row's item shows for this session — or nothing at all.
+  if (onNewSessionInWorkspace) {
+    items.push({
+      detail: newSessionInWorkspaceDetail,
+      icon: <FolderPlus aria-hidden className="size-3.5" />,
+      key: "new-session-in-workspace",
+      label: NEW_SESSION_IN_WORKSPACE_LABEL,
+      onSelect: onNewSessionInWorkspace,
+      testId: "coding-session-overflow-new-session-in-workspace",
+    });
+  }
   if (onAddProvider) {
     items.push({
       icon: <UserPlus aria-hidden className="size-3.5" />,
@@ -124,7 +164,7 @@ export function CodingSessionHeaderOverflow({
   if (items.length === 0) return null;
 
   return (
-    <Popover>
+    <Popover onOpenChange={onOpenChange}>
       <PopoverTrigger asChild>
         <button
           aria-label="Session actions"

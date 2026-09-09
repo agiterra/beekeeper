@@ -615,3 +615,93 @@ test("a pop-out or dialog gets a close control it can name", () => {
   // itself. One dismisses a window; the other ends shared work.
   assert.doesNotMatch(markup, /data-testid="coding-session-close"/);
 });
+
+/**
+ * The `⋯` menu is now mounted on every session header, not only Mission's.
+ *
+ * It is the home for "New session in this workspace", which the brief
+ * requires to be reachable from an open session — and before this, the menu
+ * existed only for a multi-execution session in Mission lens, so an ordinary
+ * single-execution session had no header route to it at all.
+ *
+ * The bargain is that nothing else moved: outside Mission the menu holds
+ * exactly that one item, and the flat run of buttons beside it is byte for
+ * byte what it was (I8).
+ */
+const FLAT_RUN_PROPS = {
+  channelName: "Hive Sessions",
+  generationLabel: "generation 1",
+  isExporting: false,
+  onAddProvider() {},
+  onCloseSession() {},
+  onExport() {},
+  onPopout() {},
+  onStopAll() {},
+  sessionTitle: "Keystone Session",
+  status: { kind: "idle", label: "Idle" },
+  stopAllCount: 1,
+};
+
+const OVERFLOW_TRIGGER = /<button aria-label="Session actions".*?<\/button>/s;
+
+test("a session header offers the ⋯ menu; without a session it does not", () => {
+  const withoutSession = renderToStaticMarkup(
+    React.createElement(CodingSessionHeader, FLAT_RUN_PROPS),
+  );
+  // A pending, loading or unavailable header has no session whose workspace
+  // could be looked up, so it gets no menu rather than an empty one.
+  assert.doesNotMatch(withoutSession, /data-testid="coding-session-overflow"/);
+
+  const withSession = renderToStaticMarkup(
+    React.createElement(CodingSessionHeader, {
+      ...FLAT_RUN_PROPS,
+      workspaceReuse: { channelId: "channel-1", sessionRef: "session-1" },
+    }),
+  );
+  assert.match(withSession, /data-testid="coding-session-overflow"/);
+  assert.equal(
+    withSession.match(/data-testid="coding-session-overflow"/g).length,
+    1,
+  );
+});
+
+test("mounting the ⋯ menu leaves the Conversation flat run byte-identical", () => {
+  const withoutSession = renderToStaticMarkup(
+    React.createElement(CodingSessionHeader, FLAT_RUN_PROPS),
+  );
+  const withSession = renderToStaticMarkup(
+    React.createElement(CodingSessionHeader, {
+      ...FLAT_RUN_PROPS,
+      workspaceReuse: { channelId: "channel-1", sessionRef: "session-1" },
+    }),
+  );
+  // Remove the trigger the menu added; what is left must be the old header,
+  // character for character.
+  assert.match(withSession, OVERFLOW_TRIGGER);
+  assert.equal(withSession.replace(OVERFLOW_TRIGGER, ""), withoutSession);
+  // The run itself, in the order it has always had; the menu is appended
+  // after it, at the right end, where Mission's `⋯` already sits.
+  for (const testId of [
+    "coding-session-add-provider",
+    "coding-session-stop-all",
+    "coding-session-close",
+    "coding-session-export",
+    "coding-session-header-popout",
+  ]) {
+    assert.match(withSession, new RegExp(`data-testid="${testId}"`));
+  }
+});
+
+test("Mission still collapses its six actions and gains no flat button", () => {
+  const mission = renderToStaticMarkup(
+    React.createElement(CodingSessionHeader, {
+      ...FLAT_RUN_PROPS,
+      missionActions: true,
+      workspaceReuse: { channelId: "channel-1", sessionRef: "session-1" },
+    }),
+  );
+  assert.match(mission, /data-testid="coding-session-overflow"/);
+  assert.doesNotMatch(mission, /data-testid="coding-session-stop-all"/);
+  assert.doesNotMatch(mission, /data-testid="coding-session-close"/);
+  assert.doesNotMatch(mission, /data-testid="coding-session-add-provider"/);
+});

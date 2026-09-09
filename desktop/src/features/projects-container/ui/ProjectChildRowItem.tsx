@@ -1,7 +1,9 @@
+import * as React from "react";
 import {
   Archive,
   Bot,
   Eye,
+  FolderPlus,
   LoaderCircle,
   RotateCcw,
   Square,
@@ -10,6 +12,8 @@ import {
 } from "lucide-react";
 
 import type { RemoteTerminal } from "@/features/builtin-shell/observe/useProjectTerminals";
+import { useNewSessionInWorkspaceAction } from "@/features/coding-sessions/hooks/useNewSessionInWorkspaceAction";
+import { NEW_SESSION_IN_WORKSPACE_LABEL } from "@/features/coding-sessions/lib/codingSessionWorkspaceReuseCopy";
 import { ShellSessionRow } from "@/features/builtin-shell/ui/ShellSessionRow";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import { resolveUserLabel } from "@/features/profile/lib/identity";
@@ -199,6 +203,7 @@ export function ProjectChildRowItem({
                     generationId: entry.generationId,
                   })
           }
+          onKeyDown={openContextMenuFromKeyboard}
           type="button"
           title={
             pending ? "Waiting for the session provider" : details || undefined
@@ -274,52 +279,55 @@ export function ProjectChildRowItem({
           data-session-closure={settled ? "closed" : "open"}
           data-session-status={entry.status.kind}
         >
-          {canClose || canArchive || canReopen || canDelete ? (
-            <ContextMenu>
-              <ContextMenuTrigger asChild>{button}</ContextMenuTrigger>
-              <ContextMenuContent>
-                {canClose ? (
-                  <ContextMenuItem
-                    data-testid="project-coding-session-close"
-                    onSelect={() => onRequestCloseCodingSession?.(entry)}
-                  >
-                    <Square />
-                    Close session
-                  </ContextMenuItem>
-                ) : null}
-                {canArchive ? (
-                  <ContextMenuItem
-                    data-testid="project-coding-session-archive"
-                    onSelect={() => onRequestArchiveCodingSession?.(entry)}
-                  >
-                    <Archive />
-                    Archive session
-                  </ContextMenuItem>
-                ) : null}
-                {canReopen ? (
-                  <ContextMenuItem
-                    data-testid="project-coding-session-reopen"
-                    onSelect={() => onRequestReopenCodingSession?.(entry)}
-                  >
-                    <RotateCcw />
-                    Reopen session
-                  </ContextMenuItem>
-                ) : null}
-                {canDelete ? (
-                  <ContextMenuItem
-                    className="text-destructive focus:text-destructive"
-                    data-testid="project-coding-session-delete"
-                    onSelect={() => onRequestDeleteCodingSession?.(entry)}
-                  >
-                    <Trash2 />
-                    Delete session
-                  </ContextMenuItem>
-                ) : null}
-              </ContextMenuContent>
-            </ContextMenu>
-          ) : (
-            button
-          )}
+          {/* The menu is mounted for every session row now, not only for rows
+              with a close/archive/reopen/delete to offer. "New session in this
+              workspace" is always available — availability decides what it
+              opens, never whether it exists (contract §3) — so gating the menu
+              on the other four would have hidden it on exactly the rows that
+              have no other action. */}
+          <ContextMenu>
+            <ContextMenuTrigger asChild>{button}</ContextMenuTrigger>
+            <ContextMenuContent>
+              <NewSessionInWorkspaceMenuItem entry={entry} />
+              {canClose ? (
+                <ContextMenuItem
+                  data-testid="project-coding-session-close"
+                  onSelect={() => onRequestCloseCodingSession?.(entry)}
+                >
+                  <Square />
+                  Close session
+                </ContextMenuItem>
+              ) : null}
+              {canArchive ? (
+                <ContextMenuItem
+                  data-testid="project-coding-session-archive"
+                  onSelect={() => onRequestArchiveCodingSession?.(entry)}
+                >
+                  <Archive />
+                  Archive session
+                </ContextMenuItem>
+              ) : null}
+              {canReopen ? (
+                <ContextMenuItem
+                  data-testid="project-coding-session-reopen"
+                  onSelect={() => onRequestReopenCodingSession?.(entry)}
+                >
+                  <RotateCcw />
+                  Reopen session
+                </ContextMenuItem>
+              ) : null}
+              {canDelete ? (
+                <ContextMenuItem
+                  className="text-destructive focus:text-destructive"
+                  data-testid="project-coding-session-delete"
+                  onSelect={() => onRequestDeleteCodingSession?.(entry)}
+                >
+                  <Trash2 />
+                  Delete session
+                </ContextMenuItem>
+              ) : null}
+            </ContextMenuContent>
+          </ContextMenu>
         </SidebarMenuItem>
       );
     }
@@ -390,4 +398,85 @@ export function ProjectChildRowItem({
       );
     }
   }
+}
+
+/**
+ * "New session in this workspace" on a sidebar session row.
+ *
+ * It mounts exactly when the menu opens — Radix renders context-menu content
+ * only while open — which is where the workspace read belongs: a sidebar
+ * draws these rows hundreds of times, and a disk stat per draw would be a
+ * filesystem walk per scroll tick. So the read starts here, on mount, and the
+ * second line fills in when it answers.
+ *
+ * Selecting it opens a draft and nothing else: no signature, no start, resume
+ * or stop, no branch or grant change, no directory created
+ * (`useNewSessionInWorkspaceAction`).
+ */
+function NewSessionInWorkspaceMenuItem({
+  entry,
+}: {
+  entry: ProjectCodingSessionShelfEntry;
+}) {
+  const action = useNewSessionInWorkspaceAction({
+    channelId: entry.channelId,
+    executionProviderPubkey: entry.session.providerAuthorityPubkey,
+    projectId: entry.projectId,
+    sessionRef: entry.sessionRef,
+  });
+  const { resolveNow } = action;
+  React.useEffect(() => {
+    resolveNow();
+  }, [resolveNow]);
+  return (
+    <ContextMenuItem
+      data-testid="project-coding-session-new-session-in-workspace"
+      onSelect={action.start}
+    >
+      <FolderPlus />
+      <span className="flex min-w-0 flex-col">
+        <span>{NEW_SESSION_IN_WORKSPACE_LABEL}</span>
+        <span
+          className="text-2xs text-muted-foreground"
+          data-testid="project-coding-session-new-session-in-workspace-detail"
+        >
+          {action.detail}
+        </span>
+      </span>
+    </ContextMenuItem>
+  );
+}
+
+/**
+ * The keyboard route to the row's own context menu.
+ *
+ * Radix's `ContextMenuTrigger` listens for a pointer's `contextmenu` and
+ * nothing else, so until now every action on this row was unreachable without
+ * a right-click — including this feature's only sidebar entry point. Rather
+ * than mount a second, differently-populated `⋯` menu beside it (two menus
+ * drift; that is how a control starts lying about what it offers), the
+ * platform keys dispatch the very event the pointer would: same trigger, same
+ * menu, same items, anchored to the row.
+ *
+ * Exported for its own test: the dispatch is the whole behaviour, and it is
+ * the half a Playwright run cannot isolate from Radix's own handling.
+ */
+export function openContextMenuFromKeyboard(
+  event: React.KeyboardEvent<HTMLElement>,
+) {
+  const wantsMenu =
+    event.key === "ContextMenu" || (event.shiftKey && event.key === "F10");
+  if (!wantsMenu || event.defaultPrevented) return;
+  event.preventDefault();
+  const row = event.currentTarget;
+  const rect = row.getBoundingClientRect();
+  row.dispatchEvent(
+    new MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+      clientX: Math.round(rect.left + 12),
+      clientY: Math.round(rect.bottom - 8),
+      view: row.ownerDocument.defaultView,
+    }),
+  );
 }

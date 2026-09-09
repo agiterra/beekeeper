@@ -48,6 +48,7 @@ import { Button } from "@/shared/ui/button";
 import { cn } from "@/shared/lib/cn";
 
 import { CodingSessionHeaderOverflow } from "./CodingSessionHeaderOverflow";
+import { useNewSessionInWorkspaceAction } from "@/features/coding-sessions/hooks/useNewSessionInWorkspaceAction";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 import { CODING_SESSION_ROUTE_RAIL_ID } from "./CodingSessionRouteRail";
 import { CODING_SESSION_TASK_RAIL_ID } from "./CodingSessionTaskRail";
@@ -162,6 +163,15 @@ type CodingSessionHeaderProps = {
   closeLabel?: string;
   onExport?: () => void;
   /**
+   * The session this header belongs to, for the `⋯` menu's "New session in
+   * this workspace" item. Absent — a pending, loading or unavailable header —
+   * the item is not offered, because there is no session whose workspace
+   * could be looked up. `providerAuthorityPubkey` is reused as the viewed
+   * execution's provider, which is the comparison that tells a foreign
+   * execution from one whose location is simply unknown.
+   */
+  workspaceReuse?: { channelId: string; sessionRef: string | null } | null;
+  /**
    * Opens the session People surface (roster + invite/share). Absent when
    * the session has no authority chain to share (no genesis).
    */
@@ -252,7 +262,23 @@ export function CodingSessionHeader({
   taskCount = 0,
   taskRailOpen = false,
   viewControl,
+  workspaceReuse = null,
 }: CodingSessionHeaderProps) {
+  // "New session in this workspace" — the `⋯` menu's one item, resolved on
+  // menu open by the same hook the sidebar row's item uses, so a session
+  // cannot read two ways at once. The hook itself reads nothing until asked.
+  const newSessionHere = useNewSessionInWorkspaceAction({
+    channelId: workspaceReuse?.channelId ?? null,
+    executionProviderPubkey: providerAuthorityPubkey,
+    sessionRef: workspaceReuse?.sessionRef ?? null,
+  });
+  const { resolveNow: resolveNewSessionHere } = newSessionHere;
+  const handleOverflowOpenChange = React.useCallback(
+    (open: boolean) => {
+      if (open) resolveNewSessionHere();
+    },
+    [resolveNewSessionHere],
+  );
   const title = sessionTitle?.trim() || "Coding session";
   // A demoted status carries its own history clause; the badge states both so
   // the header never presents a stale report as the current condition.
@@ -563,25 +589,6 @@ export function CodingSessionHeader({
           ) : null}
         </fieldset>
       ) : null}
-      {missionActions ? (
-        <CodingSessionHeaderOverflow
-          isExporting={isExporting}
-          onAddProvider={onAddProvider}
-          onCloseSession={onCloseSession}
-          onExport={onExport}
-          onPopout={onPopout}
-          onReopenSession={onReopenSession}
-          onStopAll={onStopAll}
-          stopAllLabel={
-            stopAllLabel ??
-            `Stop all (${stopAllCount} ${stopAllCount === 1 ? "seat" : "seats"})`
-          }
-          stopAllSentence={
-            stopAllSentence ??
-            `Stop ${stopAllCount} ${stopAllCount === 1 ? "seat" : "seats"}. A stopped seat cannot be resumed.`
-          }
-        />
-      ) : null}
       {!missionActions && onAddProvider ? (
         <Button
           aria-label="Add a provider to this session"
@@ -667,6 +674,33 @@ export function CodingSessionHeader({
           <span className={compact ? "sr-only" : undefined}>Pop out</span>
         </Button>
       ) : null}
+      {/* Always mounted, and empty-safe: the overflow renders nothing at all
+          when it has no items. Mission still collapses its six actions in
+          here; every other lens passes none of them, so what appears outside
+          Mission is a `⋯` holding exactly one item — the workspace one — and
+          the flat button run below is untouched (I8). */}
+      <CodingSessionHeaderOverflow
+        isExporting={isExporting}
+        newSessionInWorkspaceDetail={newSessionHere.detail}
+        onAddProvider={missionActions ? onAddProvider : undefined}
+        onCloseSession={missionActions ? onCloseSession : undefined}
+        onExport={missionActions ? onExport : undefined}
+        onNewSessionInWorkspace={
+          workspaceReuse ? newSessionHere.start : undefined
+        }
+        onOpenChange={handleOverflowOpenChange}
+        onPopout={missionActions ? onPopout : undefined}
+        onReopenSession={missionActions ? onReopenSession : undefined}
+        onStopAll={missionActions ? onStopAll : undefined}
+        stopAllLabel={
+          stopAllLabel ??
+          `Stop all (${stopAllCount} ${stopAllCount === 1 ? "seat" : "seats"})`
+        }
+        stopAllSentence={
+          stopAllSentence ??
+          `Stop ${stopAllCount} ${stopAllCount === 1 ? "seat" : "seats"}. A stopped seat cannot be resumed.`
+        }
+      />
     </header>
   );
 }
