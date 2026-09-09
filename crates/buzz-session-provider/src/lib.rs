@@ -5062,12 +5062,16 @@ impl Provider {
          provider cancelled it at once and refuses every later command on this execution; the \
          runtime may still finish a tool call it had already started.";
 
-    /// The sentence an admitted-but-unstarted turn is refused with.
+    /// The sentence a turn refused *before it was ever dequeued* carries.
     ///
     /// Distinct from [`Self::HANDOVER_INTERRUPT_REASON`] because the fact is
-    /// different and a person acting on it needs to know which: nothing ran.
-    /// The command reached this provider's mailbox and was stopped before the
-    /// runtime ever saw it, so there is no partial work to reconcile.
+    /// different and a person acting on it needs to know which: nothing ran,
+    /// so there is no partial work to reconcile. It is only used when the
+    /// actor confirms the turn was still queued
+    /// ([`session::FencedAt::Queued`]) — saying "never ran" about a prompt
+    /// that raced out would be the comfortable answer rather than the true
+    /// one, which is exactly the class of claim this fence exists to stop
+    /// making.
     const HANDOVER_UNSTARTED_REASON: &'static str =
         "this session was handed over before this turn reached the agent, so it never ran and \
          will not be retried; the session is now held by someone else";
@@ -5126,10 +5130,19 @@ impl Provider {
             // (2) first: a command admitted but not yet started is stopped
             //     before the runtime is asked for anything, which is the whole
             //     point of doing it ahead of the cancel below.
+            // The record's *running* command is stage (1)'s, not this one's:
+            // answering it here as well would give one command two terminal
+            // answers under two different sentences.
+            let running = record
+                .open_turn
+                .as_ref()
+                .and_then(|open_turn| open_turn.command_id.clone());
             let admitted: Vec<(String, String)> = self
                 .in_flight
                 .iter()
-                .filter(|(_, turn)| turn.session_id == session_id)
+                .filter(|(command_id, turn)| {
+                    turn.session_id == session_id && running.as_deref() != Some(command_id.as_str())
+                })
                 .map(|(command_id, turn)| (command_id.clone(), turn.operator_pubkey.clone()))
                 .collect();
             for (command_id, operator) in admitted {
@@ -5145,6 +5158,30 @@ impl Provider {
                     "{} — refusing a turn that was admitted but had not started",
                     refusal.message
                 );
+                // Refuse it *in the actor's queue* as well as on the books.
+                // Removing the in-flight entry alone left the command sitting
+                // in the mailbox, and the actor prompted for it moments later
+                // — the turn was refused in the ledger and delivered to the
+                // runtime, which is the worst of both answers. The actor drops
+                // it at dequeue instead.
+                //
+                // The answer that comes back decides what the receipt says. A
+                // turn still queued genuinely never ran; one already dequeued
+                // is being interrupted, and gets the sentence that states the
+                // tool-call limit rather than a claim that nothing happened.
+                let fenced_at = match self.sessions.handle(&session_id) {
+                    Some(handle) => handle.fence_command(&command_id),
+                    // No actor at all: nothing can have been dequeued.
+                    None => session::FencedAt::Queued,
+                };
+                let reason = match fenced_at {
+                    session::FencedAt::Queued => Self::HANDOVER_UNSTARTED_REASON,
+                    session::FencedAt::AlreadyDequeued => {
+                        // It is running, or about to be. Cancel it, and say so.
+                        self.interrupt_open_turn(&session_id, &command_id);
+                        Self::HANDOVER_INTERRUPT_REASON
+                    }
+                };
                 // Durable before the receipt, as every other terminal turn
                 // refusal is: a replay must be answered from the ledger rather
                 // than republished.
@@ -5154,7 +5191,7 @@ impl Provider {
                     &command_id,
                     &target,
                     payload::HANDOVER_FENCED,
-                    Self::HANDOVER_UNSTARTED_REASON,
+                    reason,
                 );
                 self.enqueue_receipt(record.channel_id, &command_id, &receipt)?;
                 stopped_something = true;
@@ -8240,6 +8277,19 @@ mod tests {
         queries: Arc<Mutex<Vec<serde_json::Value>>>,
         published: Arc<Mutex<Vec<Event>>>,
         reject_next_publish: Arc<AtomicBool>,
+        /// Events this fake withholds until it has already served one
+        /// authority-chain read.
+        ///
+        /// The only way to actually exercise the window a create has to be
+        /// safe in: its first chain read decides the fence *before* an adapter
+        /// starts, and its second runs after the record exists. Staging the
+        /// takeover in `events` up front means both reads see it and the
+        /// window is never entered; inserting it from a watcher task races the
+        /// reads. Withholding it here is exact — the relay genuinely did not
+        /// have it yet on the first read.
+        deferred: Arc<Mutex<Vec<Event>>>,
+        /// How many authority-chain reads this fake has served.
+        chain_reads: Arc<Mutex<usize>>,
         /// The `self` key this fake serves at NIP-11, when it serves one.
         ///
         /// A real relay's identity is fetched, not configured into the client,
@@ -8256,6 +8306,8 @@ mod tests {
         queries: Arc<Mutex<Vec<serde_json::Value>>>,
         published: Arc<Mutex<Vec<Event>>>,
         reject_next_publish: Arc<AtomicBool>,
+        /// Events revealed only from the second authority-chain read onwards.
+        deferred: Arc<Mutex<Vec<Event>>>,
         /// The identity this fake advertises, so a test can serve one, take it
         /// away, or put it back mid-run.
         relay_self: Arc<Mutex<Option<String>>>,
@@ -8448,9 +8500,34 @@ mod tests {
             .expect("queries lock")
             .push(query.clone());
         let filters: Vec<serde_json::Value> = query.as_array().cloned().unwrap_or_default();
+        // An authority-chain read is the one query shape this fake counts: a
+        // 40099 partition scoped to the witnessed relay identity.
+        let is_chain_read = filters.iter().any(|filter| {
+            filter
+                .get("kinds")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|kinds| {
+                    kinds
+                        .iter()
+                        .any(|kind| kind.as_u64() == Some(u64::from(KIND_SYSTEM_MESSAGE)))
+                })
+                && filter.get("authors").is_some()
+        });
+        let mut served = state.chain_reads.lock().expect("chain reads lock");
         let events = state.events.lock().expect("events lock");
-        let mut matched: Vec<&Event> = events
-            .iter()
+        let deferred = state.deferred.lock().expect("deferred lock");
+        // Withheld until one chain read has already been answered, so the
+        // *second* read is the first to see them.
+        let visible: Vec<&Event> = if *served >= 1 {
+            events.iter().chain(deferred.iter()).collect()
+        } else {
+            events.iter().collect()
+        };
+        if is_chain_read {
+            *served = served.saturating_add(1);
+        }
+        let mut matched: Vec<&Event> = visible
+            .into_iter()
             .filter(|event| {
                 filters
                     .iter()
@@ -8518,12 +8595,16 @@ mod tests {
         // asks stays exactly as unverified as it was. Tests that sign receipts
         // themselves call `set_relay_self` with their own key first, and
         // `witness_relay_identity` never overwrites a known identity.
+        let deferred: Arc<Mutex<Vec<Event>>> = Arc::default();
+        let chain_reads: Arc<Mutex<usize>> = Arc::default();
         let relay_self = Arc::new(Mutex::new(Some(Keys::generate().public_key().to_hex())));
         let state = TestRelayState {
             events: events.clone(),
             queries: queries.clone(),
             published: published.clone(),
             reject_next_publish: reject_next_publish.clone(),
+            deferred: deferred.clone(),
+            chain_reads,
             relay_self: relay_self.clone(),
         };
         let app: Router = Router::new()
@@ -8548,6 +8629,7 @@ mod tests {
                 queries,
                 published,
                 reject_next_publish,
+                deferred,
                 relay_self,
             },
             server,
@@ -10026,6 +10108,8 @@ mod tests {
                 queries: Arc::new(Mutex::new(Vec::new())),
                 published: Arc::new(Mutex::new(Vec::new())),
                 reject_next_publish: Arc::new(AtomicBool::new(false)),
+                deferred: Arc::default(),
+                chain_reads: Arc::default(),
                 relay_self: Arc::new(Mutex::new(None)),
             });
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")

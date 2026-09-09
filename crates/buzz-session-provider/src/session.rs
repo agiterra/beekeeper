@@ -18,8 +18,9 @@
 //! (`pool.rs`, the `control_rx` arm): dropping the future leaves the client's
 //! `last_prompt_id` set, which is exactly what the cleanup drain needs.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use tokio::sync::{mpsc, watch};
@@ -643,6 +644,47 @@ pub struct SessionHandle {
     session_id: String,
     tx: mpsc::Sender<SessionCommand>,
     shutdown: watch::Sender<bool>,
+    /// Late-refusal bookkeeping shared with the actor. See [`FenceState`].
+    fenced: Arc<Mutex<FenceState>>,
+}
+
+/// What the provider learned when it refused a command it had already
+/// delivered.
+///
+/// The distinction is the whole reason this type exists: the two outcomes are
+/// different facts about the world and a person acting on the receipt needs to
+/// know which one happened. Deciding it under the same lock the actor records
+/// its dequeue in makes the answer knowable rather than guessed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FencedAt {
+    /// The turn was still queued. The actor has not looked at it and now never
+    /// will: nothing reached the runtime, and there is no partial work.
+    Queued,
+    /// The actor had already taken it out of the queue. A prompt has gone to
+    /// the runtime, or is about to, so this is an interruption rather than a
+    /// turn that never ran.
+    AlreadyDequeued,
+}
+
+/// The two sets the provider and one actor share to settle a late refusal.
+///
+/// The mailbox is an `mpsc` queue: once a turn is in it there is no way to
+/// take it back out, and `shutdown` is too blunt — it ends the actor, which is
+/// wrong when only *one operator's* work is fenced and the claimant is still
+/// working on this same body. So admission is re-asked at **dequeue**.
+///
+/// Shared rather than sent, for the same reason `shutdown` is a `watch`: a
+/// control fact must not queue behind the very work it is about. And under one
+/// mutex rather than two, because the ordering *is* the answer — either the
+/// actor recorded its dequeue before the provider took the lock, or the
+/// provider's refusal is in place before the actor can read it.
+#[derive(Debug, Default)]
+pub struct FenceState {
+    /// Command ids refused after delivery, to be dropped at dequeue.
+    fenced: HashSet<String>,
+    /// Command ids the actor has taken out of the queue and not yet finished.
+    /// At most the one turn running, plus anything an abrupt actor exit left.
+    dequeued: HashSet<String>,
 }
 
 impl SessionHandle {
@@ -674,6 +716,28 @@ impl SessionHandle {
     /// Whether the actor is still running.
     pub fn is_live(&self) -> bool {
         !self.tx.is_closed()
+    }
+
+    /// Refuse a command that is already in this actor's mailbox, and report
+    /// which of the two things that means.
+    ///
+    /// [`FencedAt::Queued`] is a promise: the actor has not dequeued this
+    /// command and, because the flag is now set under the same lock it checks,
+    /// it never will prompt for it. [`FencedAt::AlreadyDequeued`] is the
+    /// honest other answer — the turn is running or about to, and the caller
+    /// should cancel it and say so rather than claim nothing happened.
+    ///
+    /// A poisoned lock answers `AlreadyDequeued`, which is the conservative
+    /// direction: it claims less.
+    pub fn fence_command(&self, command_id: &str) -> FencedAt {
+        let Ok(mut state) = self.fenced.lock() else {
+            return FencedAt::AlreadyDequeued;
+        };
+        if state.dequeued.contains(command_id) {
+            return FencedAt::AlreadyDequeued;
+        }
+        state.fenced.insert(command_id.to_owned());
+        FencedAt::Queued
     }
 
     /// Signal durable retirement on a control path that cannot be blocked by
@@ -745,6 +809,7 @@ impl SessionManager {
         let session_id = request.target.session_id.clone();
         let (tx, rx) = mpsc::channel(SESSION_MAILBOX_DEPTH);
         let (shutdown, shutdown_rx) = watch::channel(false);
+        let fenced: Arc<Mutex<FenceState>> = Arc::default();
         let actor = SessionActor {
             client,
             acp_session_id: startup.acp_session_id.clone(),
@@ -758,6 +823,7 @@ impl SessionManager {
             first_turn_preamble: startup.pending_briefing.clone(),
             agent_version: startup.agent_version.clone(),
             media: request.media.clone(),
+            fenced: Arc::clone(&fenced),
         };
         tokio::spawn(actor.run(rx, shutdown_rx));
         Ok(StartedSession {
@@ -766,6 +832,7 @@ impl SessionManager {
                 session_id,
                 tx,
                 shutdown,
+                fenced,
             },
         })
     }
@@ -805,6 +872,7 @@ impl SessionManager {
                 session_id: session_id.to_owned(),
                 tx,
                 shutdown,
+                fenced: Arc::default(),
             },
         );
         shutdown_rx
@@ -921,7 +989,7 @@ impl SharedWorkdirRoot {
     fn describe(&self) -> &'static str {
         match self.kind {
             SharedWorkdirKind::Operator => {
-                "that directory is shared by every agent on this computer (and may be your own                  home directory)"
+                "that directory is shared by every agent on this computer (and may be your own home directory)"
             }
             SharedWorkdirKind::AppCheckout => {
                 "that is the checkout the app runs from, shared with the person driving it"
@@ -1800,6 +1868,8 @@ struct SessionActor {
     /// Reads a turn's attachments back from the relay. See
     /// [`crate::attachments`].
     media: Option<crate::attachments::MediaFetcher>,
+    /// Late-refusal bookkeeping shared with the provider; see [`FenceState`].
+    fenced: Arc<Mutex<FenceState>>,
 }
 
 /// Unwrap the CI-only admission marker while retaining it through actor queues.
@@ -1873,7 +1943,42 @@ impl SessionActor {
                     operator_pubkey,
                     framing,
                 }) => {
-                    if let Some(exit_reason) = self
+                    // Admission, re-asked at the last moment it can be asked.
+                    // A turn refused after it was delivered is still sitting
+                    // in this queue, and the provider cannot reach into an
+                    // `mpsc` to take it back — so it is dropped here instead
+                    // of prompted. The provider has already published its
+                    // refusal and recorded it durably; nothing more is owed to
+                    // it, and emitting a `TurnStarted` for a turn that will
+                    // never run would contradict that answer.
+                    // Two things under one lock, and the pairing is what
+                    // makes the provider's answer knowable: either this turn
+                    // was refused before the actor got here — drop it, nothing
+                    // reached the runtime — or it is recorded as dequeued, so
+                    // a refusal arriving from now on is told it is
+                    // interrupting rather than preventing.
+                    let dropped = match self.fenced.lock() {
+                        Ok(mut state) => {
+                            if state.fenced.remove(&command_id) {
+                                true
+                            } else {
+                                state.dequeued.insert(command_id.clone());
+                                false
+                            }
+                        }
+                        Err(_) => false,
+                    };
+                    if dropped {
+                        tracing::warn!(
+                            target: "csp::session",
+                            session_id = %self.session_id,
+                            %command_id,
+                            "dropping a queued turn the provider refused before it was dequeued"
+                        );
+                        continue;
+                    }
+                    let dequeued_id = command_id.clone();
+                    let outcome = self
                         .run_turn(
                             &mut rx,
                             &mut shutdown,
@@ -1885,8 +1990,11 @@ impl SessionActor {
                             framing,
                             guarded_ci,
                         )
-                        .await
-                    {
+                        .await;
+                    if let Ok(mut state) = self.fenced.lock() {
+                        state.dequeued.remove(&dequeued_id);
+                    }
+                    if let Some(exit_reason) = outcome {
                         reason = exit_reason;
                         break 'actor;
                     }
@@ -5053,6 +5161,7 @@ done
             session_id: "s1".into(),
             tx,
             shutdown,
+            fenced: Arc::default(),
         };
         handle
             .deliver(SessionCommand::Interrupt {
@@ -5075,6 +5184,7 @@ done
             session_id: "s1".into(),
             tx,
             shutdown,
+            fenced: Arc::default(),
         };
         handle
             .deliver(SessionCommand::Turn {
@@ -5100,6 +5210,7 @@ done
             session_id: "s1".into(),
             tx,
             shutdown,
+            fenced: Arc::default(),
         };
         assert_eq!(
             handle.deliver(SessionCommand::Shutdown),
@@ -5120,6 +5231,7 @@ done
                 session_id: "live".into(),
                 tx: live_tx,
                 shutdown: live_shutdown,
+                fenced: Arc::default(),
             },
         );
         let (dead_tx, dead_rx) = mpsc::channel(1);
@@ -5131,6 +5243,7 @@ done
                 session_id: "dead".into(),
                 tx: dead_tx,
                 shutdown: dead_shutdown,
+                fenced: Arc::default(),
             },
         );
 

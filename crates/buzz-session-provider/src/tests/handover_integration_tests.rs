@@ -1927,9 +1927,12 @@ async fn a_claim_between_admission_and_start_stops_the_turn_before_it_runs() {
     // raced out and was cancelled. What is **not** allowed is a prompt that
     // simply runs — which is what happened before the in-flight set was
     // consulted, because `open_turn` was still empty in this window.
-    if prompts_after == prompts_before {
-        // Nothing reached the runtime at all.
-    } else {
+    // Two outcomes are possible — the actor may or may not have dequeued the
+    // turn before the receipt was processed — and the disposition has to match
+    // the one that happened. Whichever it is, the prompt must not be left
+    // running.
+    let raced_out = prompts_after != prompts_before;
+    if raced_out {
         assert!(
             seen.iter().any(|method| method == "session/cancel"),
             "a prompt that raced out must be cancelled, not left running: {seen:?}"
@@ -1955,13 +1958,28 @@ async fn a_claim_between_admission_and_start_stops_the_turn_before_it_runs() {
         })
         .expect("the admitted turn was refused by name");
     assert_eq!(receipt["error"]["code"], HANDOVER_FENCED);
-    assert!(
-        receipt["error"]["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("never ran")),
-        "the sentence says nothing ran, which is the fact that differs from an \
-         interrupted turn: {receipt}"
-    );
+    let message = receipt["error"]["message"]
+        .as_str()
+        .expect("a refusal sentence");
+    // Not "either sentence is fine": the receipt has to name the fact that
+    // actually happened. A turn the actor never dequeued genuinely never ran;
+    // one whose prompt raced out is an interruption, and says so — including
+    // the limit that the runtime may finish a tool call it had started.
+    if raced_out {
+        assert!(
+            message.contains("may still finish a tool call it had already started"),
+            "a raced-out prompt is reported as an interruption: {message}"
+        );
+        assert!(
+            !message.contains("never ran"),
+            "and never claims nothing happened: {message}"
+        );
+    } else {
+        assert!(
+            message.contains("never ran"),
+            "a turn the actor never dequeued is reported as never having run: {message}"
+        );
+    }
 
     // A replay is answered from the ledger, not republished.
     let before = sink
@@ -2516,12 +2534,16 @@ async fn the_claimants_own_reconstruct_runs_its_first_turn_on_the_claimed_body()
     .await;
     provider.set_rest_client(relay.rest_client());
 
-    // The takeover is accepted while the adapter is starting, so the second
-    // read — the one after the record is persisted — is the first to see it.
+    // The takeover is *withheld* from the first authority read and revealed to
+    // every read after it. That is the window under test: the create's own
+    // pre-startup fence check sees an unclaimed umbrella, and the second read
+    // — the one after the record is persisted — is the first to see the claim.
+    // Staging it in `events` up front would let both reads see it, and the
+    // window would never be entered.
     {
-        let mut events = control.events.lock().expect("events");
-        events.push(takeover.clone());
-        events.push(claim_receipt(&relay_keys, channel_id, &takeover));
+        let mut deferred = control.deferred.lock().expect("deferred");
+        deferred.push(takeover.clone());
+        deferred.push(claim_receipt(&relay_keys, channel_id, &takeover));
     }
 
     let create = join_create_with_turn(
@@ -2632,10 +2654,16 @@ async fn the_old_bodys_create_with_a_first_turn_is_still_fenced() {
     )
     .await;
     provider.set_rest_client(relay.rest_client());
+    // The takeover is *withheld* from the first authority read and revealed to
+    // every read after it. That is the window under test: the create's own
+    // pre-startup fence check sees an unclaimed umbrella, and the second read
+    // — the one after the record is persisted — is the first to see the claim.
+    // Staging it in `events` up front would let both reads see it, and the
+    // window would never be entered.
     {
-        let mut events = control.events.lock().expect("events");
-        events.push(takeover.clone());
-        events.push(claim_receipt(&relay_keys, channel_id, &takeover));
+        let mut deferred = control.deferred.lock().expect("deferred");
+        deferred.push(takeover.clone());
+        deferred.push(claim_receipt(&relay_keys, channel_id, &takeover));
     }
 
     // Signed by the founder — the machine that lost the session, starting again.
@@ -2671,6 +2699,223 @@ async fn the_old_bodys_create_with_a_first_turn_is_still_fenced() {
             .iter()
             .any(|method| method == "session/prompt"),
         "and no first prompt went out: {:?}",
+        methods(&log)
+    );
+
+    relay.shutdown().await;
+    server.abort();
+}
+
+/// A transfer to a new claimant on the **same** body stops the old claimant's
+/// work — all of it — and leaves the body usable for the new one.
+///
+/// The hole this closes: refusing a queued turn removed it from the provider's
+/// books and left it sitting in the actor's `mpsc` mailbox, and the shutdown
+/// that would have taken the mailbox with it runs only when the *body* is
+/// fenced — which a same-body transfer is not. So A's queued prompt was
+/// refused in the ledger and delivered to the runtime anyway: the worst of
+/// both answers.
+#[tokio::test]
+async fn a_same_body_transfer_stops_the_old_claimants_queued_turn_too() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let cwd = dir.path().join("checkout");
+    std::fs::create_dir_all(&cwd).expect("mkdir");
+    let channel_id = Uuid::new_v4();
+    let projects = write_projects(dir.path(), channel_id, &cwd);
+    let relay_keys = Keys::generate();
+    let successor = Keys::generate();
+    let successor_hex = successor.public_key().to_hex();
+    let provider_keys = Keys::generate();
+    let body = provider_keys.public_key().to_hex();
+    let session_ref = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+
+    let log = dir.path().join("methods.log");
+    let state_dir = dir.path().join("state");
+    let agent = fake_agent(
+        state_dir_parent(&state_dir),
+        "stalling-logged-agent",
+        &stalling_logged_agent(&log.to_string_lossy()),
+    );
+    let mut provider = Provider::new(config_of(
+        provider_keys.clone(),
+        &state_dir,
+        Some(&projects),
+        agent,
+    ))
+    .expect("provider");
+    provider.set_relay_self(relay_keys.public_key().to_hex());
+
+    // The founder holds the session on this body; the claim then moves to a
+    // second person **on the same body**.
+    let founder = test_operator_keys();
+    let founder_hex = founder.public_key().to_hex();
+    let genesis = genesis_event(channel_id, session_ref);
+    let genesis_ref = genesis.id.to_hex();
+    let grant = grant_for(channel_id, &genesis_ref, None, 1, &successor_hex);
+    let founder_claim = takeover_event(
+        channel_id,
+        &genesis_ref,
+        Some(grant.id.to_hex()),
+        2,
+        founder,
+        &body,
+    );
+    let transfer = {
+        let payload = buzz_core::coding_session_authority_transition::
+            CodingSessionAuthorityTransitionPayload::new_transfer(
+                genesis_ref.clone(),
+                Some(founder_claim.id.to_hex()),
+                3,
+                successor_hex.clone(),
+                body.clone(),
+            );
+        buzz_sdk::builders::build_coding_session_authority_transition(channel_id, &payload)
+            .expect("transfer builder")
+            .sign_with_keys(founder)
+            .expect("sign transfer")
+    };
+    let (mut relay, _control, server) = spawn_recording_test_relay(
+        &provider_keys,
+        vec![
+            genesis,
+            grant.clone(),
+            founder_claim.clone(),
+            transfer.clone(),
+        ],
+    )
+    .await;
+    provider.set_rest_client(relay.rest_client());
+
+    let create = create_event_with_genesis_ref(
+        &provider,
+        channel_id,
+        "create-governed",
+        session_ref,
+        &genesis_ref,
+    );
+    provider
+        .handle_relay_event(&mut relay, channel_id, &create)
+        .await
+        .expect("create");
+    let record = provider.state().sessions().next().expect("session").clone();
+    let target = record.target(&provider.config.instance_id);
+
+    for transition in [&grant, &founder_claim] {
+        let receipt = claim_receipt(&relay_keys, channel_id, transition);
+        provider
+            .handle_relay_event(&mut relay, channel_id, &receipt)
+            .await
+            .expect("apply accepted link");
+    }
+    assert!(
+        matches!(&provider.state().session(&target.session_id).expect("record").handover,
+            ClaimState::Active(claim) if claim.claimant == founder_hex),
+        "the founder holds it on this body"
+    );
+
+    // The founder starts a turn that never finishes, and queues a second
+    // behind it.
+    for (command_id, text) in [
+        ("turn-running", "long job"),
+        ("turn-queued", "and then this"),
+    ] {
+        let turn = command_event_by(
+            channel_id,
+            command_id,
+            &target,
+            serde_json::json!({ "type": "thread.turn.start", "text": text }),
+            founder,
+        );
+        provider
+            .handle_relay_event(&mut relay, channel_id, &turn)
+            .await
+            .expect("turn");
+        if command_id == "turn-running" {
+            pump_until_turn_started(&mut provider).await;
+        }
+    }
+    assert!(wait_for_method(&log, "session/prompt").await);
+    let prompts_before = methods(&log)
+        .iter()
+        .filter(|method| *method == "session/prompt")
+        .count();
+    assert_eq!(prompts_before, 1, "only the running turn has prompted");
+
+    // The claim moves to the successor, on this same body.
+    provider
+        .handle_relay_event(
+            &mut relay,
+            channel_id,
+            &claim_receipt(&relay_keys, channel_id, &transfer),
+        )
+        .await
+        .expect("apply the transfer");
+
+    assert!(
+        wait_for_method(&log, "session/cancel").await,
+        "the old claimant's running turn is cancelled: {:?}",
+        methods(&log)
+    );
+    // The queued one is dropped at dequeue rather than prompted. Give the
+    // actor time to reach it — it has to finish cancelling first.
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert_eq!(
+        methods(&log)
+            .iter()
+            .filter(|method| *method == "session/prompt")
+            .count(),
+        prompts_before,
+        "the old claimant's queued turn never reached the runtime: {:?}",
+        methods(&log)
+    );
+    assert!(
+        provider.state().is_command_refused("turn-queued"),
+        "and it is durably refused"
+    );
+
+    let sink = CollectingSink::new();
+    provider.flush(&sink).await.expect("flush");
+    let queued_receipt = sink
+        .contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT)
+        .into_iter()
+        .find(|receipt| {
+            receipt["commandId"] == "turn-queued" && receipt["status"] == "turn_refused"
+        })
+        .expect("the queued turn was refused by name");
+    assert_eq!(queued_receipt["error"]["code"], HANDOVER_FENCED);
+    assert!(
+        queued_receipt["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("never ran")),
+        "a turn the actor never dequeued is reported as never having run: {queued_receipt}"
+    );
+
+    // The body is *not* fenced — the claim names it — so the successor can
+    // work here immediately.
+    assert_eq!(
+        provider.sessions.live_count(),
+        1,
+        "the actor is still there for the new claimant"
+    );
+    let successor_turn = command_event_by(
+        channel_id,
+        "turn-by-successor",
+        &target,
+        serde_json::json!({ "type": "thread.turn.start", "text": "carrying on" }),
+        &successor,
+    );
+    provider
+        .handle_relay_event(&mut relay, channel_id, &successor_turn)
+        .await
+        .expect("the successor's turn");
+    pump_until_turn_started(&mut provider).await;
+    assert_eq!(
+        methods(&log)
+            .iter()
+            .filter(|method| *method == "session/prompt")
+            .count(),
+        prompts_before + 1,
+        "and the new claimant's turn does reach the runtime: {:?}",
         methods(&log)
     );
 
