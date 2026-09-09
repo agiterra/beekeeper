@@ -732,6 +732,15 @@ pub fn decide_lifecycle(
         }
     }
 
+    if let Some(message) =
+        consumed_hint_without_record(context.projects, context.state, &payload.command_id)
+    {
+        return LifecycleDecision::Fail {
+            command_id: payload.command_id,
+            code: PROJECT_CWD_UNRESOLVED,
+            message,
+        };
+    }
     let Some(cwd) =
         context
             .projects
@@ -1746,6 +1755,150 @@ pub struct ProjectsFile {
     pub projects: BTreeMap<String, PathBuf>,
     /// Fallback directory per channel.
     pub channels: BTreeMap<Uuid, PathBuf>,
+    /// Directory holding one-shot per-command hint files, beside the projects
+    /// file itself. Never part of the file's own JSON.
+    #[serde(skip)]
+    pub hints_dir: Option<PathBuf>,
+}
+
+/// Name of the directory holding one-shot create hints, beside the projects
+/// file.
+///
+/// It exists because `pending[commandId]` is not a durable place to leave one.
+/// The desktop rematerializes the whole projects file from its canonical store
+/// whenever anything unrelated is saved, which erases a `pending` entry the CLI
+/// wrote moments earlier and before the create is admitted — a race whose only
+/// symptom is a session that ran in the wrong directory. A separate directory
+/// the rematerialization never touches removes the race rather than narrowing
+/// it.
+pub const PENDING_HINTS_DIR: &str = "pending-hints";
+
+/// One `pending-hints/<commandId>.json` file.
+///
+/// `writtenAt` is not consulted for resolution — a hint is either the one this
+/// command names or it is nothing — but it is what lets the provider prune
+/// files whose create never arrived, so an abandoned hint cannot sit on disk
+/// naming a directory forever.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingHint {
+    /// The create's `commandId`. Must match the file name's stem, or the file
+    /// is ignored: a hint that disagrees with its own name is not evidence
+    /// about either command.
+    pub command_id: String,
+    /// Absolute path of the directory the session should run in.
+    pub path: PathBuf,
+    /// When the CLI wrote it, Unix seconds.
+    #[serde(default)]
+    pub written_at: u64,
+}
+
+/// The marker a consumed hint leaves behind.
+///
+/// A hint is **not deleted** when it is spent, and the difference matters.
+/// Deleting it makes "this command's directory was already decided" look
+/// exactly like "this command never had a hint", so a create that arrives late
+/// — a replay, or the same durable create after a lost state file — would
+/// resolve to the project or channel default and run the work in a different
+/// folder than the one it ran in the first time. Silently. The marker records
+/// what was decided so that case is answered by name instead.
+///
+/// `sessionId` is optional so the shape the rename leaves behind mid-crash (a
+/// `.consumed` file still holding the [`PendingHint`] body) still reads.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConsumedHint {
+    /// The create's `commandId`.
+    pub command_id: String,
+    /// The directory that was resolved for it.
+    pub path: PathBuf,
+    /// The execution the create minted, when it minted one.
+    #[serde(default)]
+    pub session_id: Option<String>,
+}
+
+/// Path of the live hint file for one command.
+pub fn pending_hint_path(hints_dir: &Path, command_id: &str) -> PathBuf {
+    hints_dir.join(format!("{command_id}.json"))
+}
+
+/// Path of the marker left when that hint is consumed.
+pub fn consumed_hint_path(hints_dir: &Path, command_id: &str) -> PathBuf {
+    hints_dir.join(format!("{command_id}.consumed"))
+}
+
+/// The marker for `command_id`, if this command's hint has been spent.
+///
+/// A marker that cannot be read at all is treated as present-but-opaque by the
+/// caller rather than as absent: the whole point is that "already decided"
+/// never degrades into "never had one".
+pub fn read_consumed_hint(hints_dir: &Path, command_id: &str) -> Option<ConsumedHint> {
+    let path = consumed_hint_path(hints_dir, command_id);
+    let body = std::fs::read_to_string(&path).ok()?;
+    match serde_json::from_str::<ConsumedHint>(&body) {
+        Ok(hint) => Some(hint),
+        Err(error) => {
+            tracing::warn!(
+                target: "csp::projects",
+                "consumed-hint marker {} is unreadable: {error}",
+                path.display()
+            );
+            Some(ConsumedHint {
+                command_id: command_id.to_owned(),
+                path: PathBuf::new(),
+                session_id: None,
+            })
+        }
+    }
+}
+
+/// Whether this command's hint has already been spent.
+pub fn hint_is_consumed(hints_dir: &Path, command_id: &str) -> bool {
+    consumed_hint_path(hints_dir, command_id).exists()
+}
+
+/// Read the one-shot hint for `command_id`, if there is a usable one.
+///
+/// Every failure is "no hint": a missing file, unreadable bytes, malformed
+/// JSON, a `commandId` that disagrees with the file name, or a path that is
+/// not an existing absolute directory. Each is warned about and none is fatal,
+/// because the alternative to falling through to the project and channel
+/// entries is a create refused for a reason the operator did not cause.
+pub fn read_pending_hint(hints_dir: &Path, command_id: &str) -> Option<PathBuf> {
+    let path = pending_hint_path(hints_dir, command_id);
+    let body = match std::fs::read_to_string(&path) {
+        Ok(body) => body,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(error) => {
+            tracing::warn!(
+                target: "csp::projects",
+                "cannot read create hint {}: {error}",
+                path.display()
+            );
+            return None;
+        }
+    };
+    let hint: PendingHint = match serde_json::from_str(&body) {
+        Ok(hint) => hint,
+        Err(error) => {
+            tracing::warn!(
+                target: "csp::projects",
+                "ignoring malformed create hint {}: {error}",
+                path.display()
+            );
+            return None;
+        }
+    };
+    if hint.command_id != command_id {
+        tracing::warn!(
+            target: "csp::projects",
+            "ignoring create hint {} whose commandId names {:?}",
+            path.display(),
+            hint.command_id
+        );
+        return None;
+    }
+    usable_directory(&hint.path).then_some(hint.path)
 }
 
 impl ProjectsFile {
@@ -1758,24 +1911,43 @@ impl ProjectsFile {
         let Some(path) = path else {
             return Self::default();
         };
+        // Set on every path below, including the ones that read nothing: a
+        // create's one-shot hint lives beside this file rather than in it, and
+        // a projects file that is missing or unreadable says nothing about
+        // whether a hint was written.
+        let hints_dir = path.parent().map(|parent| parent.join(PENDING_HINTS_DIR));
+        let empty = || Self {
+            hints_dir: hints_dir.clone(),
+            ..Self::default()
+        };
         let body = match std::fs::read_to_string(path) {
             Ok(body) => body,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Self::default(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return empty(),
             Err(error) => {
                 tracing::warn!(target: "csp::projects", "cannot read {}: {error}", path.display());
-                return Self::default();
+                return empty();
             }
         };
-        match serde_json::from_str(&body) {
+        let mut file: Self = match serde_json::from_str(&body) {
             Ok(file) => file,
             Err(error) => {
                 tracing::warn!(target: "csp::projects", "cannot parse {}: {error}", path.display());
                 Self::default()
             }
-        }
+        };
+        file.hints_dir = hints_dir;
+        file
     }
 
-    /// Resolve a working directory: pending hint, then project, then channel.
+    /// Resolve a working directory: in-file pending hint, then the one-shot
+    /// hint file, then project, then channel.
+    ///
+    /// The hint **file** sits second rather than first because an in-file
+    /// `pending` entry is the stronger statement when it survived: the host
+    /// wrote it into its own canonical store. The file is what covers the case
+    /// where that entry did not survive, which is the ordinary case whenever
+    /// the desktop saved anything between the CLI writing it and the create
+    /// arriving (see [`PENDING_HINTS_DIR`]).
     ///
     /// A configured path that is not an existing absolute directory resolves to
     /// `None` — the same outcome as no entry at all — because handing a relative
@@ -1786,22 +1958,80 @@ impl ProjectsFile {
         project_ref: Option<&str>,
         channel_id: Uuid,
     ) -> Option<PathBuf> {
-        let candidates = [
-            self.pending.get(command_id),
+        if let Some(path) = self
+            .pending
+            .get(command_id)
+            .filter(|path| usable_directory(path))
+        {
+            return Some(path.clone());
+        }
+        if let Some(path) = self
+            .hints_dir
+            .as_deref()
+            .and_then(|hints_dir| read_pending_hint(hints_dir, command_id))
+        {
+            return Some(path);
+        }
+        // A spent hint still answers for its own command. Falling through to
+        // the project or channel default here is the silent wrong-folder case
+        // this whole mechanism exists to remove; a marker whose path is
+        // unusable resolves to nothing at all, which
+        // [`consumed_hint_without_record`] turns into a named refusal.
+        if let Some(hints_dir) = self.hints_dir.as_deref() {
+            if let Some(consumed) = read_consumed_hint(hints_dir, command_id) {
+                return usable_directory(&consumed.path).then_some(consumed.path);
+            }
+        }
+        [
             project_ref.and_then(|project_ref| self.projects.get(project_ref)),
             self.channels.get(&channel_id),
-        ];
-        candidates
-            .into_iter()
-            .flatten()
-            .find(|path| usable_directory(path))
-            .cloned()
+        ]
+        .into_iter()
+        .flatten()
+        .find(|path| usable_directory(path))
+        .cloned()
     }
 
     /// Project coordinates advertised in the catalog's optional `projects[]`.
     pub fn project_refs(&self) -> impl Iterator<Item = &str> {
         self.projects.keys().map(String::as_str)
     }
+}
+
+/// The refusal a create earns when its hint was already spent but this
+/// provider has no record of the execution it was spent on.
+///
+/// The ordering makes this unreachable in the ordinary crash: the record is
+/// persisted *before* the marker is written, so a marker implies a record. It
+/// becomes reachable when the state file is lost and the hints directory is
+/// not — and in that state the honest answer is "this command's directory was
+/// already decided and I no longer know what ran there", not a fresh session
+/// in whatever folder the channel default happens to name today.
+///
+/// Returns the message, or `None` when there is nothing to refuse.
+pub fn consumed_hint_without_record(
+    projects: &ProjectsFile,
+    state: &StateStore,
+    command_id: &str,
+) -> Option<String> {
+    let hints_dir = projects.hints_dir.as_deref()?;
+    let consumed = read_consumed_hint(hints_dir, command_id)?;
+    if state
+        .sessions()
+        .any(|record| record.command_id == command_id)
+    {
+        return None;
+    }
+    Some(format!(
+        "this create's working-directory hint was already consumed for {}, but this provider \
+         has no record of the execution it started; refusing rather than starting a second one \
+         somewhere else",
+        if consumed.path.as_os_str().is_empty() {
+            "an unreadable path".to_owned()
+        } else {
+            consumed.path.display().to_string()
+        }
+    ))
 }
 
 fn usable_directory(path: &Path) -> bool {
@@ -2125,6 +2355,7 @@ mod tests {
                 .into_iter()
                 .collect(),
             channels: [(channel, channel_dir.clone())].into_iter().collect(),
+            hints_dir: None,
         };
         let content = create_content("create-1", &format!("\"{project_ref}\""), AUTHORITY);
 
@@ -2824,13 +3055,27 @@ mod tests {
     fn a_missing_or_unreadable_projects_file_degrades_to_empty() {
         let dir = tempfile::tempdir().expect("tempdir");
         assert_eq!(ProjectsFile::load(None), ProjectsFile::default());
+        // Empty of *entries* — but the hints directory beside the file is
+        // still named, because a projects file that is missing or unreadable
+        // says nothing about whether a create wrote a one-shot hint.
+        let beside = Some(dir.path().join(PENDING_HINTS_DIR));
+        let absent = ProjectsFile::load(Some(&dir.path().join("absent.json")));
         assert_eq!(
-            ProjectsFile::load(Some(&dir.path().join("absent.json"))),
-            ProjectsFile::default()
+            absent,
+            ProjectsFile {
+                hints_dir: beside.clone(),
+                ..ProjectsFile::default()
+            }
         );
         let broken = dir.path().join("broken.json");
         std::fs::write(&broken, b"{ not json").expect("write");
-        assert_eq!(ProjectsFile::load(Some(&broken)), ProjectsFile::default());
+        assert_eq!(
+            ProjectsFile::load(Some(&broken)),
+            ProjectsFile {
+                hints_dir: beside,
+                ..ProjectsFile::default()
+            }
+        );
     }
 
     #[test]

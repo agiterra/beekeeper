@@ -1647,3 +1647,783 @@ async fn once_the_identity_is_witnessed_the_old_body_is_refused_by_the_fence() {
     relay.shutdown().await;
     server.abort();
 }
+
+// =========================================================================
+// Timing gaps root's corrective review named
+// =========================================================================
+
+/// The quiesce has to run on **every** path that folds a claim, not only the
+/// live receipt.
+///
+/// The gap: a receipt whose transition will not resolve marks the umbrella
+/// pending and stops nothing, and the tick retry that later folds the takeover
+/// released the fence without ever cancelling the turn the old body was still
+/// running. Two code paths, one of which stopped work and one of which did
+/// not — and the one that did not is the one that runs after an outage.
+#[tokio::test]
+async fn a_tick_that_folds_a_claim_stops_the_work_the_receipt_could_not() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let cwd = dir.path().join("checkout");
+    std::fs::create_dir_all(&cwd).expect("mkdir");
+    let channel_id = Uuid::new_v4();
+    let projects = write_projects(dir.path(), channel_id, &cwd);
+    let relay_keys = Keys::generate();
+    let claimant = Keys::generate();
+    let claimant_hex = claimant.public_key().to_hex();
+    let provider_keys = Keys::generate();
+    let session_ref = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+    let other_body = "dd".repeat(32);
+
+    let log = dir.path().join("methods.log");
+    let state_dir = dir.path().join("state");
+    let agent = fake_agent(
+        state_dir_parent(&state_dir),
+        "stalling-logged-agent",
+        &stalling_logged_agent(&log.to_string_lossy()),
+    );
+    let mut provider = Provider::new(config_of(
+        provider_keys.clone(),
+        &state_dir,
+        Some(&projects),
+        agent,
+    ))
+    .expect("provider");
+    provider.set_relay_self(relay_keys.public_key().to_hex());
+
+    let genesis = genesis_event(channel_id, session_ref);
+    let genesis_ref = genesis.id.to_hex();
+    let grant = grant_for(channel_id, &genesis_ref, None, 1, &claimant_hex);
+    let takeover = takeover_event(
+        channel_id,
+        &genesis_ref,
+        Some(grant.id.to_hex()),
+        2,
+        &claimant,
+        &other_body,
+    );
+    // The takeover *transition* is withheld, so its receipt cannot be applied
+    // when it arrives.
+    let (mut relay, control, server) =
+        spawn_recording_test_relay(&provider_keys, vec![genesis, grant.clone()]).await;
+    provider.set_rest_client(relay.rest_client());
+
+    let create = create_event_with_genesis_ref(
+        &provider,
+        channel_id,
+        "create-governed",
+        session_ref,
+        &genesis_ref,
+    );
+    provider
+        .handle_relay_event(&mut relay, channel_id, &create)
+        .await
+        .expect("create");
+    let record = provider.state().sessions().next().expect("session").clone();
+    let target = record.target(&provider.config.instance_id);
+
+    let turn = command_event_by(
+        channel_id,
+        "turn-in-flight",
+        &target,
+        serde_json::json!({ "type": "thread.turn.start", "text": "long job" }),
+        test_operator_keys(),
+    );
+    provider
+        .handle_relay_event(&mut relay, channel_id, &turn)
+        .await
+        .expect("turn");
+    pump_until_turn_started(&mut provider).await;
+
+    // A second turn queues behind the running one.
+    let queued = command_event_by(
+        channel_id,
+        "turn-queued",
+        &target,
+        serde_json::json!({ "type": "thread.turn.start", "text": "and then this" }),
+        test_operator_keys(),
+    );
+    provider
+        .handle_relay_event(&mut relay, channel_id, &queued)
+        .await
+        .expect("queue a second turn");
+
+    // The receipts arrive; the takeover's transition cannot be resolved, so
+    // the umbrella is only marked uncertain.
+    for transition in [&grant, &takeover] {
+        let receipt = claim_receipt(&relay_keys, channel_id, transition);
+        control.events.lock().expect("events").push(receipt.clone());
+        provider
+            .handle_relay_event(&mut relay, channel_id, &receipt)
+            .await
+            .expect("apply what can be applied");
+    }
+    assert!(
+        provider
+            .claims_pending_reverification
+            .contains(&genesis_ref),
+        "the unresolvable takeover left the umbrella uncertain"
+    );
+    assert!(
+        !methods(&log)
+            .iter()
+            .any(|method| method == "session/cancel"),
+        "nothing is cancelled yet — the claim has not been folded"
+    );
+
+    // The transition becomes readable and the tick folds it. *This* is the
+    // path that used to release the fence without stopping anything.
+    control.events.lock().expect("events").push(takeover);
+    provider.retry_pending_claim_verification().await;
+
+    assert!(
+        wait_for_method(&log, "session/cancel").await,
+        "the tick's fold cancelled the running turn: {:?}",
+        methods(&log)
+    );
+    let prompts = methods(&log)
+        .iter()
+        .filter(|method| *method == "session/prompt")
+        .count();
+    assert_eq!(
+        prompts,
+        1,
+        "the queued second prompt never reached the runtime: {:?}",
+        methods(&log)
+    );
+    assert_eq!(provider.sessions.live_count(), 0);
+    assert!(provider
+        .state()
+        .session(&target.session_id)
+        .expect("record")
+        .open_turn
+        .is_none());
+
+    let sink = CollectingSink::new();
+    provider.flush(&sink).await.expect("flush");
+    assert!(
+        transcript_items_in_sequence(&sink)
+            .into_iter()
+            .filter_map(|row| row["item"]["result"].as_str().map(str::to_owned))
+            .any(|text| text.contains(HANDOVER_FENCED)),
+        "and a terminal row says why"
+    );
+
+    relay.shutdown().await;
+    server.abort();
+}
+
+/// A claim landing between mailbox delivery and `TurnStarted`.
+///
+/// `on_turn` records a turn in flight the moment the actor's mailbox takes it;
+/// `open_turn` is only written when the runtime answers `TurnStarted`. A
+/// receipt processed in that window used to find no open turn and do nothing —
+/// and the prompt went out immediately afterwards.
+#[tokio::test]
+async fn a_claim_between_admission_and_start_stops_the_turn_before_it_runs() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let cwd = dir.path().join("checkout");
+    std::fs::create_dir_all(&cwd).expect("mkdir");
+    let channel_id = Uuid::new_v4();
+    let projects = write_projects(dir.path(), channel_id, &cwd);
+    let relay_keys = Keys::generate();
+    let claimant = Keys::generate();
+    let claimant_hex = claimant.public_key().to_hex();
+    let provider_keys = Keys::generate();
+    let session_ref = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+    let other_body = "dd".repeat(32);
+
+    let log = dir.path().join("methods.log");
+    let state_dir = dir.path().join("state");
+    let agent = fake_agent(
+        state_dir_parent(&state_dir),
+        "stalling-logged-agent",
+        &stalling_logged_agent(&log.to_string_lossy()),
+    );
+    let mut provider = Provider::new(config_of(
+        provider_keys.clone(),
+        &state_dir,
+        Some(&projects),
+        agent,
+    ))
+    .expect("provider");
+    provider.set_relay_self(relay_keys.public_key().to_hex());
+
+    let genesis = genesis_event(channel_id, session_ref);
+    let genesis_ref = genesis.id.to_hex();
+    let grant = grant_for(channel_id, &genesis_ref, None, 1, &claimant_hex);
+    let takeover = takeover_event(
+        channel_id,
+        &genesis_ref,
+        Some(grant.id.to_hex()),
+        2,
+        &claimant,
+        &other_body,
+    );
+    let (mut relay, _control, server) = spawn_recording_test_relay(
+        &provider_keys,
+        vec![genesis, grant.clone(), takeover.clone()],
+    )
+    .await;
+    provider.set_rest_client(relay.rest_client());
+
+    let create = create_event_with_genesis_ref(
+        &provider,
+        channel_id,
+        "create-governed",
+        session_ref,
+        &genesis_ref,
+    );
+    provider
+        .handle_relay_event(&mut relay, channel_id, &create)
+        .await
+        .expect("create");
+    let record = provider.state().sessions().next().expect("session").clone();
+    let target = record.target(&provider.config.instance_id);
+    let prompts_before = methods(&log)
+        .iter()
+        .filter(|method| *method == "session/prompt")
+        .count();
+
+    // Admitted into the mailbox — and deliberately **not** pumped, so
+    // `TurnStarted` has not been recorded and `open_turn` is still empty.
+    let turn = command_event_by(
+        channel_id,
+        "turn-admitted-not-started",
+        &target,
+        serde_json::json!({ "type": "thread.turn.start", "text": "about to run" }),
+        test_operator_keys(),
+    );
+    provider
+        .handle_relay_event(&mut relay, channel_id, &turn)
+        .await
+        .expect("admit the turn");
+    assert!(
+        provider
+            .state()
+            .session(&target.session_id)
+            .expect("record")
+            .open_turn
+            .is_none(),
+        "the window under test: admitted, not yet started"
+    );
+
+    for transition in [&grant, &takeover] {
+        let receipt = claim_receipt(&relay_keys, channel_id, transition);
+        provider
+            .handle_relay_event(&mut relay, channel_id, &receipt)
+            .await
+            .expect("apply accepted link");
+    }
+
+    // Give the actor every chance to send the prompt it was handed.
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let seen = methods(&log);
+    let prompts_after = seen
+        .iter()
+        .filter(|method| *method == "session/prompt")
+        .count();
+    // Two honest outcomes, and the race between the provider task and the
+    // actor's own task decides which: either the prompt never left, or it
+    // raced out and was cancelled. What is **not** allowed is a prompt that
+    // simply runs — which is what happened before the in-flight set was
+    // consulted, because `open_turn` was still empty in this window.
+    if prompts_after == prompts_before {
+        // Nothing reached the runtime at all.
+    } else {
+        assert!(
+            seen.iter().any(|method| method == "session/cancel"),
+            "a prompt that raced out must be cancelled, not left running: {seen:?}"
+        );
+    }
+    assert!(
+        provider
+            .state()
+            .is_command_refused("turn-admitted-not-started"),
+        "and it is durably refused, so its replay is silent"
+    );
+
+    let sink = CollectingSink::new();
+    provider.flush(&sink).await.expect("flush");
+    // The admission's own `turn_queued` stands; what must follow it is the
+    // terminal refusal.
+    let receipt = sink
+        .contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT)
+        .into_iter()
+        .find(|receipt| {
+            receipt["commandId"] == "turn-admitted-not-started"
+                && receipt["status"] == "turn_refused"
+        })
+        .expect("the admitted turn was refused by name");
+    assert_eq!(receipt["error"]["code"], HANDOVER_FENCED);
+    assert!(
+        receipt["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("never ran")),
+        "the sentence says nothing ran, which is the fact that differs from an \
+         interrupted turn: {receipt}"
+    );
+
+    // A replay is answered from the ledger, not republished.
+    let before = sink
+        .contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT)
+        .len();
+    provider
+        .handle_relay_event(&mut relay, channel_id, &turn)
+        .await
+        .expect("replay");
+    let after = CollectingSink::new();
+    provider.flush(&after).await.expect("flush");
+    assert!(
+        after
+            .contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT)
+            .is_empty(),
+        "replay published nothing new (was {before})"
+    );
+
+    relay.shutdown().await;
+    server.abort();
+}
+
+/// The create's *second* authority read decides whether its first prompt goes
+/// out.
+///
+/// The create was fenced against a chain read before its adapter started. A
+/// takeover accepted between that read and this one is what the second read
+/// learns, and ignoring it — which is what "backfill best-effort, then
+/// dispatch on the budget check alone" did — ran the first prompt on a body
+/// that had just been fenced.
+#[tokio::test]
+async fn a_takeover_accepted_during_startup_stops_the_creates_first_prompt() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let cwd = dir.path().join("checkout");
+    std::fs::create_dir_all(&cwd).expect("mkdir");
+    let channel_id = Uuid::new_v4();
+    let projects = write_projects(dir.path(), channel_id, &cwd);
+    let relay_keys = Keys::generate();
+    let claimant = Keys::generate();
+    let claimant_hex = claimant.public_key().to_hex();
+    let provider_keys = Keys::generate();
+    let session_ref = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+    let other_body = "dd".repeat(32);
+
+    let log = dir.path().join("methods.log");
+    let state_dir = dir.path().join("state");
+    let agent = fake_agent(
+        state_dir_parent(&state_dir),
+        "stalling-logged-agent",
+        &stalling_logged_agent(&log.to_string_lossy()),
+    );
+    let mut provider = Provider::new(config_of(
+        provider_keys.clone(),
+        &state_dir,
+        Some(&projects),
+        agent,
+    ))
+    .expect("provider");
+    provider.set_relay_self(relay_keys.public_key().to_hex());
+
+    let genesis = genesis_event(channel_id, session_ref);
+    let genesis_ref = genesis.id.to_hex();
+    let grant = grant_for(channel_id, &genesis_ref, None, 1, &claimant_hex);
+    let takeover = takeover_event(
+        channel_id,
+        &genesis_ref,
+        Some(grant.id.to_hex()),
+        2,
+        &claimant,
+        &other_body,
+    );
+    // The relay serves the whole chain *including* its receipts. The create's
+    // own pre-startup read runs against it too, so this test pins the second
+    // read's verdict by asserting on the receipt and the prompt count.
+    let (mut relay, _control, server) = spawn_recording_test_relay(
+        &provider_keys,
+        vec![
+            genesis,
+            grant.clone(),
+            takeover.clone(),
+            claim_receipt(&relay_keys, channel_id, &grant),
+            claim_receipt(&relay_keys, channel_id, &takeover),
+        ],
+    )
+    .await;
+    provider.set_rest_client(relay.rest_client());
+
+    // A genesis-bearing create that carries an `initialTurn`: the one turn
+    // path that never passes through `decide_turn`.
+    let source = create_event_with_genesis_ref(
+        &provider,
+        channel_id,
+        "create-under-takeover",
+        session_ref,
+        &genesis_ref,
+    );
+    let mut content: serde_json::Value =
+        serde_json::from_str(&source.content).expect("create JSON");
+    content["action"]["initialTurn"] = "start on the thing".into();
+    let create = signed_lifecycle_event(channel_id, content.to_string());
+    provider
+        .handle_relay_event(&mut relay, channel_id, &create)
+        .await
+        .expect("the create is decided");
+
+    let sink = CollectingSink::new();
+    provider.flush(&sink).await.expect("flush");
+    let receipt = sink
+        .contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT)
+        .into_iter()
+        .find(|receipt| receipt["commandId"] == "create-under-takeover")
+        .expect("answered");
+    assert!(
+        receipt["error"]["code"] == HANDOVER_FENCED
+            || receipt["error"]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains(HANDOVER_FENCED)),
+        "the create is answered by the fence: {receipt}"
+    );
+    assert!(
+        !methods(&log)
+            .iter()
+            .any(|method| method == "session/prompt"),
+        "and its first prompt never went out: {:?}",
+        methods(&log)
+    );
+
+    relay.shutdown().await;
+    server.abort();
+}
+
+// =========================================================================
+// The one-shot working-directory hint
+// =========================================================================
+
+/// Write a CLI-style one-shot hint beside `projects`.
+fn write_hint(projects: &Path, command_id: &str, path: &Path, written_at: u64) {
+    let hints = projects
+        .parent()
+        .expect("projects parent")
+        .join(crate::commands::PENDING_HINTS_DIR);
+    std::fs::create_dir_all(&hints).expect("mkdir hints");
+    std::fs::write(
+        crate::commands::pending_hint_path(&hints, command_id),
+        serde_json::json!({
+            "commandId": command_id,
+            "path": path,
+            "writtenAt": written_at,
+        })
+        .to_string(),
+    )
+    .expect("write hint");
+}
+
+fn hints_dir_of(projects: &Path) -> std::path::PathBuf {
+    projects
+        .parent()
+        .expect("projects parent")
+        .join(crate::commands::PENDING_HINTS_DIR)
+}
+
+/// The race this file replaces: the CLI writes `pending[commandId]` into the
+/// generated projects file, and the desktop rematerializes that file from its
+/// canonical store on any unrelated save — erasing the entry before the create
+/// is admitted, and running the work in the channel default instead. Silently.
+///
+/// The hint lives in a directory the rematerialization never touches, so the
+/// rewrite below (which is what the desktop's save looks like from here) does
+/// not change where the session runs. And the marker is written only **after**
+/// the record that carries the resolved directory is durable.
+#[tokio::test]
+async fn a_hint_file_survives_the_projects_file_being_rewritten() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let channel_id = Uuid::new_v4();
+    let default_dir = dir.path().join("channel-default");
+    let hinted_dir = dir.path().join("where-the-work-is");
+    for path in [&default_dir, &hinted_dir] {
+        std::fs::create_dir_all(path).expect("mkdir");
+    }
+    let projects = write_projects(dir.path(), channel_id, &default_dir);
+    write_hint(&projects, "create-hinted", &hinted_dir, now_secs());
+
+    // The desktop saves something unrelated and rewrites the file from its own
+    // store: no `pending` entry survives.
+    let projects = write_projects(dir.path(), channel_id, &default_dir);
+
+    let state_dir = dir.path().join("state");
+    let log = dir.path().join("methods.log");
+    let agent = fake_agent(
+        state_dir_parent(&state_dir),
+        "stalling-logged-agent",
+        &stalling_logged_agent(&log.to_string_lossy()),
+    );
+    let mut provider = Provider::new(config_of(
+        Keys::generate(),
+        &state_dir,
+        Some(&projects),
+        agent,
+    ))
+    .expect("provider");
+
+    let create = create_event(&provider, channel_id, "create-hinted");
+    provider
+        .handle_command_event(channel_id, &create)
+        .await
+        .expect("create");
+
+    let record = provider.state().sessions().next().expect("session").clone();
+    assert_eq!(
+        record.cwd, hinted_dir,
+        "the session runs where the hint said, not in the channel default"
+    );
+
+    // Consumed only after the record was persisted, and consumed as a marker
+    // rather than a deletion.
+    let hints = hints_dir_of(&projects);
+    assert!(
+        !crate::commands::pending_hint_path(&hints, "create-hinted").exists(),
+        "the live hint is spent"
+    );
+    let marker = crate::commands::read_consumed_hint(&hints, "create-hinted")
+        .expect("a marker records what was decided");
+    assert_eq!(marker.path, hinted_dir);
+    assert_eq!(
+        marker.session_id.as_deref(),
+        Some(record.session_id.as_str())
+    );
+}
+
+/// A restart between admission and persistence leaves the hint **live**, so
+/// the replayed durable create resolves to the same directory rather than
+/// falling through to a default.
+///
+/// This is why the hint is spent at settlement rather than when the command is
+/// answered: consuming it earlier would make the retry of the same work land
+/// somewhere else.
+#[tokio::test]
+async fn a_restart_before_the_record_is_persisted_re_reads_the_same_hint() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let channel_id = Uuid::new_v4();
+    let default_dir = dir.path().join("channel-default");
+    let hinted_dir = dir.path().join("where-the-work-is");
+    for path in [&default_dir, &hinted_dir] {
+        std::fs::create_dir_all(path).expect("mkdir");
+    }
+    let projects = write_projects(dir.path(), channel_id, &default_dir);
+    write_hint(&projects, "create-hinted", &hinted_dir, now_secs());
+    let hints = hints_dir_of(&projects);
+
+    // The provider dies before it ever handles the create: nothing was
+    // persisted, and nothing was consumed.
+    {
+        let state_dir = dir.path().join("state");
+        let _dead = Provider::new(config_of(
+            Keys::generate(),
+            &state_dir,
+            Some(&projects),
+            "missing-agent".into(),
+        ))
+        .expect("provider");
+    }
+    assert!(
+        crate::commands::pending_hint_path(&hints, "create-hinted").exists(),
+        "an unsettled hint is still live after a restart"
+    );
+
+    let state_dir = dir.path().join("state");
+    let log = dir.path().join("methods.log");
+    let agent = fake_agent(
+        state_dir_parent(&state_dir),
+        "stalling-logged-agent",
+        &stalling_logged_agent(&log.to_string_lossy()),
+    );
+    let mut provider = Provider::new(config_of(
+        Keys::generate(),
+        &state_dir,
+        Some(&projects),
+        agent,
+    ))
+    .expect("provider");
+    let create = create_event(&provider, channel_id, "create-hinted");
+    provider
+        .handle_command_event(channel_id, &create)
+        .await
+        .expect("create");
+    assert_eq!(
+        provider.state().sessions().next().expect("session").cwd,
+        hinted_dir,
+        "the replayed create resolves the same directory"
+    );
+}
+
+/// A marker with no local record is the state a lost state file leaves behind.
+/// The directory for this command was already decided and this provider no
+/// longer knows what ran there — so it refuses by name rather than starting a
+/// second execution in whatever the channel default happens to be today.
+#[tokio::test]
+async fn a_consumed_marker_without_a_record_refuses_rather_than_defaulting() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let channel_id = Uuid::new_v4();
+    let default_dir = dir.path().join("channel-default");
+    let hinted_dir = dir.path().join("where-the-work-is");
+    for path in [&default_dir, &hinted_dir] {
+        std::fs::create_dir_all(path).expect("mkdir");
+    }
+    let projects = write_projects(dir.path(), channel_id, &default_dir);
+    let hints = hints_dir_of(&projects);
+    std::fs::create_dir_all(&hints).expect("mkdir hints");
+    std::fs::write(
+        crate::commands::consumed_hint_path(&hints, "create-hinted"),
+        serde_json::json!({
+            "commandId": "create-hinted",
+            "path": hinted_dir,
+            "sessionId": "an-execution-this-provider-forgot",
+        })
+        .to_string(),
+    )
+    .expect("write marker");
+
+    let state_dir = dir.path().join("state");
+    let log = dir.path().join("methods.log");
+    let agent = fake_agent(
+        state_dir_parent(&state_dir),
+        "stalling-logged-agent",
+        &stalling_logged_agent(&log.to_string_lossy()),
+    );
+    let mut provider = Provider::new(config_of(
+        Keys::generate(),
+        &state_dir,
+        Some(&projects),
+        agent,
+    ))
+    .expect("provider");
+
+    let create = create_event(&provider, channel_id, "create-hinted");
+    provider
+        .handle_command_event(channel_id, &create)
+        .await
+        .expect("the create is decided");
+
+    let sink = CollectingSink::new();
+    provider.flush(&sink).await.expect("flush");
+    let receipt = sink
+        .contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT)
+        .into_iter()
+        .find(|receipt| receipt["commandId"] == "create-hinted")
+        .expect("answered");
+    assert_eq!(
+        receipt["error"]["code"],
+        crate::payload::PROJECT_CWD_UNRESOLVED
+    );
+    assert!(
+        receipt["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains(&hinted_dir.display().to_string())),
+        "the refusal names the directory that was already decided: {receipt}"
+    );
+    assert_eq!(provider.state().sessions().count(), 0);
+    assert!(methods(&log).is_empty(), "{:?}", methods(&log));
+}
+
+/// A malformed hint, and a relative one, are both ignored — the create falls
+/// through to the ordinary project and channel entries rather than being
+/// refused for a file the operator did not write.
+#[tokio::test]
+async fn a_malformed_or_relative_hint_is_ignored_and_falls_through() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let channel_id = Uuid::new_v4();
+    let default_dir = dir.path().join("channel-default");
+    std::fs::create_dir_all(&default_dir).expect("mkdir");
+    let projects = write_projects(dir.path(), channel_id, &default_dir);
+    let hints = hints_dir_of(&projects);
+    std::fs::create_dir_all(&hints).expect("mkdir hints");
+    std::fs::write(
+        crate::commands::pending_hint_path(&hints, "create-malformed"),
+        b"{ not json",
+    )
+    .expect("write");
+    std::fs::write(
+        crate::commands::pending_hint_path(&hints, "create-relative"),
+        serde_json::json!({
+            "commandId": "create-relative",
+            "path": "relative/elsewhere",
+            "writtenAt": now_secs(),
+        })
+        .to_string(),
+    )
+    .expect("write");
+
+    for command_id in ["create-malformed", "create-relative"] {
+        let state_dir = dir.path().join(format!("state-{command_id}"));
+        let mut provider = provider(&state_dir, Some(&projects));
+        let create = create_event(&provider, channel_id, command_id);
+        provider
+            .handle_command_event(channel_id, &create)
+            .await
+            .expect("create");
+        assert_eq!(
+            provider.state().sessions().next().expect("session").cwd,
+            default_dir,
+            "{command_id} fell through to the channel entry"
+        );
+    }
+}
+
+/// Pruning touches settled markers and nothing else.
+///
+/// A **live** hint is never expired: a create delayed by an outage is exactly
+/// what the hint exists for, and expiring it would put that work in the wrong
+/// folder — the failure this whole mechanism removes. A marker is pruned only
+/// once its command is in the consumed-command ledger, because that ledger is
+/// what says the command was genuinely answered.
+#[test]
+fn pruning_spares_live_hints_and_unsettled_markers() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let channel_id = Uuid::new_v4();
+    let cwd = dir.path().join("checkout");
+    std::fs::create_dir_all(&cwd).expect("mkdir");
+    let projects = write_projects(dir.path(), channel_id, &cwd);
+    let hints = hints_dir_of(&projects);
+    let mut provider = provider(&dir.path().join("state"), Some(&projects));
+
+    // Ancient by mtime, all three.
+    let ancient = std::time::SystemTime::now() - std::time::Duration::from_secs(48 * 60 * 60);
+    write_hint(&projects, "still-coming", &cwd, 0);
+    for (name, consumed) in [("settled", true), ("unsettled", false)] {
+        std::fs::write(
+            crate::commands::consumed_hint_path(&hints, name),
+            serde_json::json!({ "commandId": name, "path": cwd }).to_string(),
+        )
+        .expect("write marker");
+        if consumed {
+            provider
+                .state
+                .consume_command(name, now_secs())
+                .expect("ledger");
+        }
+    }
+    for path in [
+        crate::commands::pending_hint_path(&hints, "still-coming"),
+        crate::commands::consumed_hint_path(&hints, "settled"),
+        crate::commands::consumed_hint_path(&hints, "unsettled"),
+    ] {
+        let file = std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .expect("open");
+        file.set_modified(ancient).expect("age the file");
+    }
+
+    provider.prune_stale_pending_hints();
+
+    assert!(
+        crate::commands::pending_hint_path(&hints, "still-coming").exists(),
+        "a live hint is never pruned on age"
+    );
+    assert!(
+        crate::commands::consumed_hint_path(&hints, "unsettled").exists(),
+        "nor is a marker whose command this provider never answered"
+    );
+    assert!(
+        !crate::commands::consumed_hint_path(&hints, "settled").exists(),
+        "only a settled marker is pruned"
+    );
+}

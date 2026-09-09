@@ -183,6 +183,11 @@ const AUTHORITY_BACKFILL_QUERY_LIMIT: usize = 1000;
 /// is far past any real channel; hitting it means something is wrong, and the
 /// honest answer to that is "I do not know", not "nothing has changed".
 const AUTHORITY_BACKFILL_MAX_PAGES: usize = 32;
+/// How long an unconsumed create hint may sit on disk before it is pruned.
+///
+/// Long enough that a create delayed by an outage still finds its hint, short
+/// enough that an abandoned one cannot answer a command a day later.
+const PENDING_HINT_MAX_AGE_SECS: u64 = 24 * 60 * 60;
 /// Replay-floor slack for channels with no consumed-command watermark.
 ///
 /// A 44221 can legally precede the floor it would replay from: a membership
@@ -445,6 +450,7 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
                 // refusing. Identity first: the chain read needs it.
                 provider.witness_relay_identity().await;
                 provider.retry_pending_claim_verification().await;
+                provider.prune_stale_pending_hints();
             }
             // The replay reorder window closing is a delivery, not a timer
             // tick: the turns it holds are already the operator's, they are
@@ -2431,6 +2437,9 @@ impl Provider {
                 if actor_seats.seat(&command_id).is_some() {
                     self.forget_actor_seat(&command_id);
                 }
+                // Durably refused — `consume_command` above is the ledger
+                // write — so the hint is settled and spent.
+                self.consume_pending_hint(&command_id, None);
                 let receipt = LifecycleReceipt::failed(&command_id, code, &message);
                 tracing::warn!(target: "csp", %command_id, code, "lifecycle command rejected: {message}");
                 self.enqueue_receipt(channel_id, &command_id, &receipt)
@@ -2459,6 +2468,7 @@ impl Provider {
                             if plan.actor.is_some() {
                                 self.forget_actor_seat(&plan.command_id);
                             }
+                            self.consume_pending_hint(&plan.command_id, None);
                             let receipt = LifecycleReceipt::failed(
                                 &plan.command_id,
                                 GENESIS_NOT_FOUND,
@@ -2565,6 +2575,7 @@ impl Provider {
                         if plan.actor.is_some() {
                             self.forget_actor_seat(&plan.command_id);
                         }
+                        self.consume_pending_hint(&plan.command_id, None);
                         tracing::warn!(
                             target: "csp::authority",
                             command_id = %plan.command_id,
@@ -2611,6 +2622,123 @@ impl Provider {
                 target: "csp::seats",
                 "could not record which generations still need seat custody: {error}"
             );
+        }
+    }
+
+    /// The hints directory beside this provider's projects file, if it has one.
+    fn hints_dir(&self) -> Option<std::path::PathBuf> {
+        self.config
+            .projects_file
+            .as_deref()
+            .and_then(std::path::Path::parent)
+            .map(|parent| parent.join(commands::PENDING_HINTS_DIR))
+    }
+
+    /// Spend this command's one-shot working-directory hint, at settlement.
+    ///
+    /// **Settlement, not answer.** The hint is spent when the outcome is
+    /// durable: after the create's `SessionRecord` is persisted (which is what
+    /// carries the resolved cwd), or after a refusal has been written to the
+    /// consumed-command ledger. Spending it earlier would leave a window where
+    /// a crash loses both the hint and the record, and the retry of the same
+    /// durable create would resolve to the project or channel default — the
+    /// same work, silently, in a different folder.
+    ///
+    /// Spending is a **rename**, not a delete: `<commandId>.json` becomes
+    /// `<commandId>.consumed`, one syscall, so the live hint disappearing and
+    /// the marker appearing are the same event. The marker is then rewritten
+    /// with the path that was actually resolved and the session it started; a
+    /// crash between the two leaves a marker still holding the hint's own
+    /// body, which reads as the same path with no session id — degraded, and
+    /// still not a fall-through to a default.
+    fn consume_pending_hint(&self, command_id: &str, resolved: Option<(&Path, &str)>) {
+        let Some(hints_dir) = self.hints_dir() else {
+            return;
+        };
+        let live = commands::pending_hint_path(&hints_dir, command_id);
+        let marker = commands::consumed_hint_path(&hints_dir, command_id);
+        match std::fs::rename(&live, &marker) {
+            Ok(()) => {}
+            // No hint for this command, or it is already spent. Either way
+            // there is nothing to record.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+            Err(error) => {
+                tracing::warn!(
+                    target: "csp::projects",
+                    %command_id,
+                    "could not consume the create hint {}: {error}",
+                    live.display()
+                );
+                return;
+            }
+        }
+        let Some((path, session_id)) = resolved else {
+            tracing::debug!(
+                target: "csp::projects",
+                %command_id,
+                "consumed a refused create's working-directory hint"
+            );
+            return;
+        };
+        let body = serde_json::json!({
+            "commandId": command_id,
+            "path": path,
+            "sessionId": session_id,
+            "consumedAt": now_secs(),
+        })
+        .to_string();
+        if let Err(error) = crate::state::atomic_write(&marker, body.as_bytes()) {
+            tracing::warn!(
+                target: "csp::projects",
+                %command_id,
+                "the consumed-hint marker kept the hint's own body: {error}"
+            );
+        }
+    }
+
+    /// Prune consumed-hint markers whose command is long settled.
+    ///
+    /// Two conditions, and both are load-bearing. **Only markers** — a live
+    /// hint is never pruned on age, because a create delayed by an outage is
+    /// exactly the case the hint exists for and expiring it would put that
+    /// work in the wrong folder. **Only when the command is in the
+    /// consumed-command ledger** — that ledger is what says this provider has
+    /// genuinely answered the command, so a marker whose command could still
+    /// arrive is kept regardless of how old the file is.
+    pub fn prune_stale_pending_hints(&self) {
+        let Some(hints_dir) = self.hints_dir() else {
+            return;
+        };
+        let Ok(entries) = std::fs::read_dir(&hints_dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(std::ffi::OsStr::to_str) != Some("consumed") {
+                continue;
+            }
+            let Some(command_id) = path.file_stem().and_then(std::ffi::OsStr::to_str) else {
+                continue;
+            };
+            if !self.state.is_command_consumed(command_id) {
+                continue;
+            }
+            let age = entry
+                .metadata()
+                .ok()
+                .and_then(|meta| meta.modified().ok())
+                .and_then(|modified| modified.elapsed().ok())
+                .map_or(0, |elapsed| elapsed.as_secs());
+            if age < PENDING_HINT_MAX_AGE_SECS {
+                continue;
+            }
+            if let Err(error) = std::fs::remove_file(&path) {
+                tracing::warn!(
+                    target: "csp::projects",
+                    "could not prune the settled create hint {}: {error}",
+                    path.display()
+                );
+            }
         }
     }
 
@@ -2857,7 +2985,7 @@ impl Provider {
             provider_instance_ref: descriptor.instance_ref.clone(),
             runtime: descriptor.runtime.clone(),
             driver: descriptor.driver.clone(),
-            cwd: plan.cwd,
+            cwd: plan.cwd.clone(),
             project_ref: plan.project_ref.clone(),
             repo_ref: plan.repo_ref.clone(),
             session_ref: plan.session_ref.clone(),
@@ -2904,6 +3032,14 @@ impl Provider {
             retired: None,
         };
         self.state.insert_session(record)?;
+        // Settlement: the record carrying the resolved cwd is now durable, so
+        // the one-shot hint that produced it is spent and leaves a marker
+        // saying what it produced. Deliberately after the persist and never
+        // before it — see `consume_pending_hint`.
+        self.consume_pending_hint(
+            &plan.command_id,
+            Some((plan.cwd.as_path(), target.session_id.as_str())),
+        );
         // A seated create is the first moment this generation's custody could
         // ever need re-staging, so the request is stated as soon as the record
         // that implies it is durable.
@@ -2992,18 +3128,71 @@ impl Provider {
         // this one exists. Fold those verified grants in now; live receipts
         // extend from here. Best-effort: a failed backfill leaves the session
         // founder-only until the next receipt or restart, never open.
-        if plan.genesis_ref.is_some() {
-            if let Some(relay) = relay {
-                let rest = relay.rest_client();
-                if let Err(error) = self
-                    .backfill_session_authority(&target.session_id, &rest)
-                    .await
-                {
-                    tracing::warn!(
-                        target: "csp::authority",
-                        session_id = %target.session_id,
-                        "authority backfill at create failed: {error}"
-                    );
+        //
+        // And its verdict is *kept*, because the initial turn below is handed
+        // straight to the actor's mailbox without passing through
+        // `decide_turn`. The create was already fenced against a chain read
+        // before this adapter started; this is the second read, after the
+        // record exists, and between those two moments a takeover can be
+        // accepted. Ignoring what it learned is how a fenced execution still
+        // ran its first prompt.
+        let mut authority_refusal: Option<String> = None;
+        if let Some(genesis_ref) = plan.genesis_ref.clone() {
+            match relay {
+                Some(relay) => {
+                    let rest = relay.rest_client();
+                    match self
+                        .backfill_session_authority(&target.session_id, &rest)
+                        .await
+                    {
+                        Ok(true) => {}
+                        // Incomplete is not unclaimed: the umbrella joins the
+                        // pending set and the first turn waits rather than
+                        // running on the assumption that nothing changed.
+                        Ok(false) => {
+                            self.claims_pending_reverification
+                                .insert(genesis_ref.clone());
+                            authority_refusal = Some(format!(
+                                "{}: this umbrella's authority chain could not be verified, so \
+                                 whether the session has been handed over is not yet known and \
+                                 the first turn was not delivered",
+                                commands::AUTHORITY_NOT_REVERIFIED
+                            ));
+                        }
+                        Err(error) => {
+                            tracing::warn!(
+                                target: "csp::authority",
+                                session_id = %target.session_id,
+                                "authority backfill at create failed: {error}"
+                            );
+                            self.claims_pending_reverification
+                                .insert(genesis_ref.clone());
+                            authority_refusal = Some(format!(
+                                "{}: this umbrella's authority chain could not be read, so the \
+                                 first turn was not delivered",
+                                commands::AUTHORITY_NOT_REVERIFIED
+                            ));
+                        }
+                    }
+                }
+                None => {
+                    self.claims_pending_reverification
+                        .insert(genesis_ref.clone());
+                    authority_refusal = Some(format!(
+                        "{}: no relay reader was available to verify this umbrella's authority \
+                         chain, so the first turn was not delivered",
+                        commands::AUTHORITY_NOT_REVERIFIED
+                    ));
+                }
+            }
+            // What the second read actually learned. A takeover or a void
+            // accepted between the create's own fence check and this moment
+            // lands here, and the prompt does not go out.
+            if authority_refusal.is_none() {
+                if let Some(refusal) = self.state.session(&target.session_id).and_then(|record| {
+                    commands::handover_fence(record, &initial_operator, &self.pubkey_hex)
+                }) {
+                    authority_refusal = Some(format!("{}: {}", refusal.code, refusal.message));
                 }
             }
         }
@@ -3043,6 +3232,9 @@ impl Provider {
             )
         });
         let dispatch_error = match (&plan.initial_turn, self.sessions.handle(&target.session_id)) {
+            // The handover fence and the authority read, ahead of the budget:
+            // a turn nobody may send is not a turn that spent an allowance.
+            (Some(_), _) if authority_refusal.is_some() => authority_refusal.clone(),
             _ if budget_refusal.is_some() => budget_refusal.map(|(used, limit, source)| {
                 format!(
                     "{}: {}, so the first turn was not delivered",
@@ -3107,6 +3299,24 @@ impl Provider {
             session_id = %target.session_id,
             "session created"
         );
+        // If the second chain read learned a claim that fences this body, the
+        // adapter that was started a moment ago can never take a turn. Release
+        // it here — after the create's own receipt and metadata, so the
+        // consumer sees the session appear and then go `disconnected` with the
+        // handover block on it, rather than a create that answers nothing.
+        if plan.genesis_ref.is_some()
+            && self
+                .state
+                .session(&target.session_id)
+                .is_some_and(|record| {
+                    commands::handover_fence(record, &self.pubkey_hex, &self.pubkey_hex)
+                        .is_some_and(|refusal| refusal.code == payload::HANDOVER_FENCED)
+                })
+        {
+            if let Some(genesis_ref) = plan.genesis_ref.clone() {
+                self.enforce_claim_for_genesis(&genesis_ref)?;
+            }
+        }
         Ok(())
     }
 
@@ -4822,7 +5032,7 @@ impl Provider {
         // for the umbrella, after every local record of it has folded, so a
         // record cannot be interrupted on a claim its sibling has applied and
         // it has not.
-        self.fence_open_turns_for_genesis(&accepted.genesis_ref)?;
+        self.enforce_claim_for_genesis(&accepted.genesis_ref)?;
         Ok(())
     }
 
@@ -4841,102 +5051,165 @@ impl Provider {
          provider cancelled it at once and refuses every later command on this execution; the \
          runtime may still finish a tool call it had already started.";
 
-    /// Stop work already running on a body this umbrella's claim has just
-    /// fenced.
+    /// The sentence an admitted-but-unstarted turn is refused with.
+    ///
+    /// Distinct from [`Self::HANDOVER_INTERRUPT_REASON`] because the fact is
+    /// different and a person acting on it needs to know which: nothing ran.
+    /// The command reached this provider's mailbox and was stopped before the
+    /// runtime ever saw it, so there is no partial work to reconcile.
+    const HANDOVER_UNSTARTED_REASON: &'static str =
+        "this session was handed over before this turn reached the agent, so it never ran and \
+         will not be retried; the session is now held by someone else";
+
+    /// Stop work this umbrella's claim has just fenced — running, queued, or
+    /// merely admitted.
     ///
     /// Turn *admission* stops the next command. It does nothing about the
-    /// prompt already in the adapter, or the turns already sitting in its
-    /// mailbox — and those are precisely the two divergent executions the
-    /// fence exists to prevent, since the machine that lost the session is by
-    /// definition the one that was mid-flight when it lost it (root's P1).
+    /// three kinds of work that are already past it, and each was its own way
+    /// for two live executions of one task to exist:
     ///
-    /// So, for every local record of the genesis whose open turn the fence now
-    /// refuses: request the cancel through the same path
-    /// `thread.turn.interrupt` uses, then shut the actor down — an interrupt
-    /// alone cancels the running turn and leaves anything queued behind it to
-    /// run next, which would be the fence stopping one prompt and admitting
-    /// the one after it. A truthful terminal row goes into the transcript, the
-    /// interrupted command is recorded as refused so its replay is silent, and
-    /// `open_turn` is cleared.
+    /// 1. **The prompt in the adapter.** Cancelled through the same path
+    ///    `thread.turn.interrupt` uses, with a truthful terminal row and a
+    ///    durable refusal so the replay is silent.
+    /// 2. **A command admitted but not yet started.** `on_turn` records a turn
+    ///    in flight the moment the mailbox takes it; `open_turn` is only
+    ///    written when the runtime answers `TurnStarted`. A claim landing in
+    ///    that window used to see no open turn and do nothing, and the prompt
+    ///    went out afterwards. These are refused by name and dropped from the
+    ///    in-flight set before the runtime is asked anything.
+    /// 3. **Custody of the actor itself.** An interrupt empties the running
+    ///    turn, not the mailbox, so anything queued behind it would simply run
+    ///    next. When the **body** is fenced the actor is shut down, which is
+    ///    the only way to say that nothing further runs here.
     ///
-    /// Whose turn it is matters: the fence is asked with the turn's own
-    /// operator ([`crate::state::OpenTurn::operator_pubkey`]), so a `transfer`
-    /// that hands the claim to a new claimant on the **same** body stops the
-    /// old claimant's work and leaves the new claimant's running. A turn with
-    /// no recorded operator — a create's `initialTurn`, or a record written
-    /// before the field existed — falls back to asking whether this body may
-    /// act at all.
+    /// Whose work it is decides all three. The fence is asked with each turn's
+    /// own operator ([`crate::state::OpenTurn::operator_pubkey`] and
+    /// [`InFlightTurn::operator_pubkey`]), so a `transfer` to a new claimant on
+    /// the **same** body stops the old claimant's work and leaves the new
+    /// claimant's alone — and a body that is still the claimed one keeps its
+    /// actor. A turn with no recorded operator (a create's `initialTurn`, or a
+    /// record written before the field existed) falls back to asking whether
+    /// this body may act at all.
     ///
-    /// Idempotent: a record with no open turn, or one the fence admits, is
-    /// left completely alone, so a replayed receipt interrupts nothing twice.
-    fn fence_open_turns_for_genesis(&mut self, genesis_ref: &str) -> anyhow::Result<()> {
-        let fenced: Vec<(String, crate::state::OpenTurn, String)> = self
+    /// Idempotent, and safe to call after any claim progress: a record with
+    /// nothing fenced is left completely alone, so a replayed receipt and a
+    /// tick retry that folds the same link stop nothing twice.
+    fn enforce_claim_for_genesis(&mut self, genesis_ref: &str) -> anyhow::Result<()> {
+        let sessions: Vec<SessionRecord> = self
             .state
             .sessions()
             .filter(|record| !record.closed && record.genesis_ref.as_deref() == Some(genesis_ref))
-            .filter_map(|record| {
-                let open_turn = record.open_turn.clone()?;
+            .cloned()
+            .collect();
+
+        for record in sessions {
+            let session_id = record.session_id.clone();
+            let target = self.target_for(&record);
+            // Is this *body* fenced at all — the question asked with the
+            // provider as its own operator. `false` means the claim names this
+            // machine and only some operators are out.
+            let body_fenced = commands::handover_fence(&record, &self.pubkey_hex, &self.pubkey_hex)
+                .is_some_and(|refusal| refusal.code == payload::HANDOVER_FENCED);
+            let mut stopped_something = false;
+
+            // (2) first: a command admitted but not yet started is stopped
+            //     before the runtime is asked for anything, which is the whole
+            //     point of doing it ahead of the cancel below.
+            let admitted: Vec<(String, String)> = self
+                .in_flight
+                .iter()
+                .filter(|(_, turn)| turn.session_id == session_id)
+                .map(|(command_id, turn)| (command_id.clone(), turn.operator_pubkey.clone()))
+                .collect();
+            for (command_id, operator) in admitted {
+                let Some(refusal) = commands::handover_fence(&record, &operator, &self.pubkey_hex)
+                    .filter(|refusal| refusal.code == payload::HANDOVER_FENCED)
+                else {
+                    continue; // The claimant's own admitted work proceeds.
+                };
+                tracing::warn!(
+                    target: "csp::authority",
+                    %session_id,
+                    %command_id,
+                    "{} — refusing a turn that was admitted but had not started",
+                    refusal.message
+                );
+                // Durable before the receipt, as every other terminal turn
+                // refusal is: a replay must be answered from the ledger rather
+                // than republished.
+                self.state.record_refusal(&command_id, now_secs())?;
+                self.in_flight.remove(&command_id);
+                let receipt = LifecycleReceipt::turn_refused(
+                    &command_id,
+                    &target,
+                    payload::HANDOVER_FENCED,
+                    Self::HANDOVER_UNSTARTED_REASON,
+                );
+                self.enqueue_receipt(record.channel_id, &command_id, &receipt)?;
+                stopped_something = true;
+            }
+
+            // (1) the prompt the runtime already has.
+            if let Some(open_turn) = record.open_turn.clone() {
                 let operator = open_turn
                     .operator_pubkey
                     .clone()
                     .unwrap_or_else(|| self.pubkey_hex.clone());
-                let refusal = commands::handover_fence(record, &operator, &self.pubkey_hex)?;
-                // Retirement has its own quiescence path and its own code;
-                // this one is only about the handover fence.
-                (refusal.code == payload::HANDOVER_FENCED)
-                    .then(|| (record.session_id.clone(), open_turn, refusal.message))
-            })
-            .collect();
-
-        for (session_id, open_turn, why) in fenced {
-            let Some(record) = self.state.session(&session_id).cloned() else {
-                continue;
-            };
-            let target = self.target_for(&record);
-            tracing::warn!(
-                target: "csp::authority",
-                %session_id,
-                turn_id = %open_turn.turn_id,
-                "{why} — cancelling the running turn and releasing this execution"
-            );
-            // The cancel first: it is the only part of this that races the
-            // adapter, and every line below only records what was decided.
-            self.interrupt_open_turn(
-                &session_id,
-                open_turn
-                    .command_id
-                    .as_deref()
-                    .unwrap_or(&open_turn.turn_id),
-            );
-            let elapsed =
-                u64::try_from(now_ms().saturating_sub(open_turn.started_at_ms)).unwrap_or_default();
-            self.enqueue_transcript(
-                record.channel_id,
-                &target,
-                Some(&open_turn.turn_id),
-                payload::result_item(
-                    payload::ResultSubtype::Error,
-                    elapsed,
-                    Self::HANDOVER_INTERRUPT_REASON,
-                    payload::TurnCost::default(),
-                    payload::TurnUsageReport::default(),
-                ),
-                Priority::High,
-            )?;
-            // Durable, so a redelivery of the interrupted command is answered
-            // `AlreadyRefused` and never republished.
-            if let Some(command_id) = open_turn.command_id.as_deref() {
-                self.state.record_refusal(command_id, now_secs())?;
-                self.in_flight.remove(command_id);
+                if let Some(refusal) =
+                    commands::handover_fence(&record, &operator, &self.pubkey_hex)
+                        .filter(|refusal| refusal.code == payload::HANDOVER_FENCED)
+                {
+                    tracing::warn!(
+                        target: "csp::authority",
+                        %session_id,
+                        turn_id = %open_turn.turn_id,
+                        "{} — cancelling the running turn",
+                        refusal.message
+                    );
+                    // The cancel first: it is the only part of this that races
+                    // the adapter, and everything below only records what was
+                    // decided.
+                    self.interrupt_open_turn(
+                        &session_id,
+                        open_turn
+                            .command_id
+                            .as_deref()
+                            .unwrap_or(&open_turn.turn_id),
+                    );
+                    let elapsed = u64::try_from(now_ms().saturating_sub(open_turn.started_at_ms))
+                        .unwrap_or_default();
+                    self.enqueue_transcript(
+                        record.channel_id,
+                        &target,
+                        Some(&open_turn.turn_id),
+                        payload::result_item(
+                            payload::ResultSubtype::Error,
+                            elapsed,
+                            Self::HANDOVER_INTERRUPT_REASON,
+                            payload::TurnCost::default(),
+                            payload::TurnUsageReport::default(),
+                        ),
+                        Priority::High,
+                    )?;
+                    if let Some(command_id) = open_turn.command_id.as_deref() {
+                        self.state.record_refusal(command_id, now_secs())?;
+                        self.in_flight.remove(command_id);
+                    }
+                    self.state.update_session(&session_id, |record| {
+                        record.open_turn = None;
+                    })?;
+                    stopped_something = true;
+                }
             }
-            self.state.update_session(&session_id, |record| {
-                record.open_turn = None;
-            })?;
-            // Everything queued behind the cancelled turn goes with it. An
-            // interrupt empties the running turn, not the mailbox.
-            self.sessions.shutdown(&session_id);
-            self.discard_context_packages(&session_id);
-            self.publish_metadata(record.channel_id, &target, SessionStatus::Disconnected)?;
+
+            // (3) custody. Only when the body itself is fenced: on the claimed
+            //     body the claimant is still working here, and taking its
+            //     actor away would be the fence undoing the handover.
+            if body_fenced && (stopped_something || self.sessions.handle(&session_id).is_some()) {
+                self.sessions.shutdown(&session_id);
+                self.discard_context_packages(&session_id);
+                self.publish_metadata(record.channel_id, &target, SessionStatus::Disconnected)?;
+            }
         }
         Ok(())
     }
@@ -5407,6 +5680,25 @@ impl Provider {
                     complete = false;
                 }
             }
+        }
+        // Before the verdict, not after it, and regardless of it: a chain
+        // that only *partly* read can still have folded a takeover, and the
+        // work it fences must stop whether or not the umbrella is released.
+        // This is the path the live-receipt case used to be the only caller
+        // of — a receipt whose transition would not resolve marked the
+        // umbrella pending, and the tick that later folded it cleared the
+        // fence without ever stopping the old body's turn.
+        if let Err(error) = self.enforce_claim_for_genesis(genesis_ref) {
+            tracing::error!(
+                target: "csp::authority",
+                %genesis_ref,
+                "work fenced by this umbrella's claim could not be stopped: {error}"
+            );
+            // The claim is durable and admission already refuses; failing to
+            // quiesce must not also release the fence.
+            self.claims_pending_reverification
+                .insert(genesis_ref.to_owned());
+            return false;
         }
         if !complete {
             self.claims_pending_reverification
