@@ -1,5 +1,7 @@
 import * as React from "react";
 
+import type { NewCodingSessionWorkspaceReuse } from "./ui/NewCodingSessionDialog";
+
 /**
  * Who has the "new coding session" dialog open, and for what.
  *
@@ -22,7 +24,41 @@ export type NewCodingSessionRequest =
       /** Pre-selected channel, or null to let the picker choose a default. */
       channelId: string | null;
     }
-  | { kind: "project"; projectId: string };
+  | { kind: "project"; projectId: string }
+  /**
+   * Reuse one session's existing checkout for a *new* conversation.
+   *
+   * The workspace travels with the request because nothing downstream can
+   * re-derive it: the launcher's prefill order puts a channel's remembered
+   * folder above any fallback, so a request that carried only the session ref
+   * would silently open on the channel's directory instead of the one the
+   * person chose. `channelId`/`projectId` are where the new session lands,
+   * which is a separate question from where it runs.
+   *
+   * What may be persisted here is decided by one question: can this still be
+   * true after a reload? The request is written to `sessionStorage` and
+   * re-read on the next launch, so anything with a clock in it becomes a lie
+   * in storage.
+   *
+   * - `path` and `branch` are what the worktree was cut as. They stay.
+   * - `branchSource` may be persisted **only when it is `"recorded"`** — the
+   *   branch a worktree was created on is a creation-time fact and does not
+   *   go stale. `"live"` is never stored: "on disk now" restored from
+   *   storage would be a claim about the present made from a record, so the
+   *   draft reads the head itself, on open.
+   * - `alsoHere` — the other sessions recorded at this directory — must not
+   *   be added. It is not the `branchSource` case: it is a count taken at one
+   *   moment, and a stale "3 other sessions are here" is worse than not
+   *   saying it. That line belongs where it is resolved fresh, on the menu
+   *   that opens this draft.
+   */
+  | {
+      kind: "workspace";
+      channelId: string | null;
+      projectId: string | null;
+      sessionRef: string;
+      workspace: NewCodingSessionWorkspaceReuse;
+    };
 
 const STORAGE_KEY = "buzz.new-coding-session-dialog.v1";
 
@@ -54,6 +90,55 @@ function persist(next: NewCodingSessionRequest | null) {
   }
 }
 
+/**
+ * The workspace arm, decoded whole or not at all.
+ *
+ * A stored request is what survives a reload, and a field this parser forgets
+ * is a field that silently disappears — a half-read workspace request would
+ * reopen the launcher with no directory and the worktree toggle back on,
+ * which is an ordinary launch wearing this one's title. Anything malformed is
+ * refused so the dialog stays closed rather than opening on a guess.
+ */
+function parseWorkspaceRequest(parsed: object): NewCodingSessionRequest | null {
+  if (!("sessionRef" in parsed)) return null;
+  if (typeof parsed.sessionRef !== "string" || parsed.sessionRef.length === 0) {
+    return null;
+  }
+  if (!("channelId" in parsed) || !("projectId" in parsed)) return null;
+  const channelId = parsed.channelId;
+  const projectId = parsed.projectId;
+  if (typeof channelId !== "string" && channelId !== null) return null;
+  if (typeof projectId !== "string" && projectId !== null) return null;
+  if (!("workspace" in parsed)) return null;
+  const workspace = parsed.workspace;
+  if (typeof workspace !== "object" || workspace === null) return null;
+  if (!("path" in workspace) || !("branch" in workspace)) return null;
+  if (typeof workspace.path !== "string" || workspace.path.length === 0) {
+    return null;
+  }
+  if (typeof workspace.branch !== "string" && workspace.branch !== null) {
+    return null;
+  }
+  // Absent is the ordinary case (nothing claimed). `"recorded"` is the only
+  // value that may be stored, so anything else — `"live"` above all — is a
+  // request written by something that did not go through the opener, and is
+  // refused rather than shown.
+  const branchSource =
+    "branchSource" in workspace ? workspace.branchSource : null;
+  if (branchSource !== "recorded" && branchSource !== null) return null;
+  return {
+    kind: "workspace",
+    channelId,
+    projectId,
+    sessionRef: parsed.sessionRef,
+    workspace: {
+      path: workspace.path,
+      branch: workspace.branch,
+      branchSource,
+    },
+  };
+}
+
 /** Decode a stored request, rejecting anything that is not one. */
 export function parseNewCodingSessionRequest(
   raw: string | null,
@@ -69,6 +154,9 @@ export function parseNewCodingSessionRequest(
       (typeof parsed.channelId === "string" || parsed.channelId === null)
     ) {
       return { kind: "channel", channelId: parsed.channelId };
+    }
+    if (parsed.kind === "workspace") {
+      return parseWorkspaceRequest(parsed);
     }
     if (
       parsed.kind === "project" &&
@@ -98,6 +186,39 @@ export function openNewCodingSessionDialog(channelId?: string | null): void {
 export function openNewProjectCodingSessionDialog(projectId: string): void {
   restored = true;
   request = { kind: "project", projectId };
+  persist(request);
+  emit();
+}
+
+/**
+ * Open the dialog on one session's existing checkout.
+ *
+ * Opening is the whole effect: nothing is signed, no session starts, resumes
+ * or stops, no branch moves, and no directory is created. The caller has
+ * already verified the path on this computer — this store carries it, it does
+ * not check it.
+ */
+export function openNewCodingSessionDialogInWorkspace(input: {
+  channelId?: string | null;
+  projectId?: string | null;
+  sessionRef: string;
+  workspace: NewCodingSessionWorkspaceReuse;
+}): void {
+  restored = true;
+  request = {
+    kind: "workspace",
+    channelId: input.channelId ?? null,
+    projectId: input.projectId ?? null,
+    sessionRef: input.sessionRef,
+    workspace: {
+      path: input.workspace.path,
+      branch: input.workspace.branch,
+      // A live head is dropped here rather than stored: the draft re-reads it
+      // on open, and a stored one would outlive the moment it was true.
+      branchSource:
+        input.workspace.branchSource === "recorded" ? "recorded" : null,
+    },
+  };
   persist(request);
   emit();
 }

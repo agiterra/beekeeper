@@ -9,6 +9,7 @@ import {
 import {
   NewCodingSessionDialog,
   type NewCodingSessionProjectContext,
+  type NewCodingSessionWorkspaceReuse,
 } from "@/features/coding-sessions/ui/NewCodingSessionDialog";
 import { matchProjectCwdRepo } from "@/features/builtin-shell/lib/projectShellCwd";
 import { selectLaunchRepoRef } from "@/features/coding-sessions/lib/codingSessionLaunchRepoRef";
@@ -58,10 +59,22 @@ export function ProjectNewCodingSessionDialog({
   onOpenChange,
   open,
   projectId,
+  workspaceReuse = null,
 }: {
   onOpenChange: (open: boolean) => void;
   open: boolean;
   projectId: string;
+  /**
+   * A directory a "New session in this workspace" draft reuses, forwarded
+   * unchanged.
+   *
+   * It travels *through* this wrapper rather than around it: the project's
+   * coordinate and repository binding are resolved here and signed into the
+   * create, and a reuse draft needs both as much as any other session. It
+   * changes nothing about how they are resolved — reusing a folder answers
+   * where the session runs, not which project it belongs to.
+   */
+  workspaceReuse?: NewCodingSessionWorkspaceReuse | null;
 }) {
   const { projects, reposByProject, unclaimedRepos } = useProjectContainers();
   // Transports included: the resolver's rule 0 and the session buckets both
@@ -276,6 +289,7 @@ export function ProjectNewCodingSessionDialog({
       onOpenChange={onOpenChange}
       open={open}
       projectContext={projectContext}
+      workspaceReuse={workspaceReuse}
     />
   );
 }

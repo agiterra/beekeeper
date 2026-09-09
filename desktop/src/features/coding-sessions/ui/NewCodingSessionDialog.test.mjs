@@ -6,7 +6,9 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { acpAuthMethodsQueryKey } from "@/features/agents/hooks";
 import {
+  newCodingSessionFormProps,
   NewCodingSessionChannelPicker,
+  NewCodingSessionWorkspaceDisclosure,
   NewCodingSessionProjectDestination,
   resolveRefreshedNewCodingSessionTarget,
 } from "./NewCodingSessionDialog.tsx";
@@ -447,4 +449,85 @@ test("the project destination card never names the transport channel", () => {
   // otherwise.
   assert.doesNotMatch(markup, /channel/i);
   assert.doesNotMatch(markup, /#/);
+});
+
+// A "New session in this workspace" draft opened from a project session has
+// two facts to keep at once, and neither can be re-derived downstream: the
+// project's placement and repository binding, which the create signs, and the
+// one-off directory the draft reuses. Reusing a folder answers where a session
+// runs — never which project it belongs to.
+
+test("a reuse draft keeps the project's placement and repository binding", () => {
+  const projectContext = {
+    projectId: "p1",
+    projectName: "Buzz Glue",
+    projectRef: "30621:owner:buzz-glue",
+    repoRef: "30617:owner:beekeeper",
+    channelId: "c1",
+    defaultWorkdir: "/Users/x/Code/repo",
+    ensureChannelId: async () => "c1",
+  };
+  const props = newCodingSessionFormProps({
+    channelId: undefined,
+    onDone() {},
+    projectContext,
+    workspaceReuse: { path: "/Users/x/Code/repo-wt-a", branch: "wt-a" },
+  });
+
+  assert.equal(props.projectContext.projectRef, "30621:owner:buzz-glue");
+  assert.equal(props.projectContext.repoRef, "30617:owner:beekeeper");
+  assert.deepEqual(props.workspaceReuse, {
+    path: "/Users/x/Code/repo-wt-a",
+    branch: "wt-a",
+  });
+  // The project's canonical checkout is still offered as the fallback it has
+  // always been; what changes is that the reuse path outranks it in the form.
+  assert.equal(props.projectContext.defaultWorkdir, "/Users/x/Code/repo");
+});
+
+test("an ordinary draft carries no workspace at all", () => {
+  const props = newCodingSessionFormProps({
+    channelId: "c1",
+    onDone() {},
+    projectContext: null,
+    workspaceReuse: null,
+  });
+
+  assert.equal(props.workspaceReuse, null);
+  assert.equal(props.projectContext, null);
+  assert.equal(props.channelId, "c1");
+});
+
+test("a reuse draft names the folder and says what reusing it means", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(NewCodingSessionWorkspaceDisclosure, {
+      workspaceReuse: { path: "/Users/x/Code/repo-wt-a", branch: "wt-a" },
+    }),
+  );
+
+  assert.match(markup, /data-testid="coding-session-workspace-reuse"/);
+  // The absolute path, in full — a base name would not distinguish two
+  // checkouts of the same repository.
+  assert.match(markup, /\/Users\/x\/Code\/repo-wt-a/);
+  assert.match(markup, /wt-a/);
+  // Both required sentences, verbatim.
+  assert.match(markup, /New conversation; uses these files\./);
+  assert.match(markup, /Includes uncommitted changes already in this folder\./);
+  // …and nothing that claims the earlier session was continued or taken over.
+  assert.doesNotMatch(
+    markup,
+    /isolated|forked|inherited|continued|taken over/i,
+  );
+});
+
+test("an ordinary draft discloses no workspace at all", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(NewCodingSessionWorkspaceDisclosure, {
+      workspaceReuse: null,
+    }),
+  );
+
+  assert.equal(markup, "");
+  assert.doesNotMatch(markup, /coding-session-workspace-reuse/);
+  assert.doesNotMatch(markup, /New conversation/);
 });
