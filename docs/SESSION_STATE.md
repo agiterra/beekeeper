@@ -19,7 +19,21 @@ hive; `installed-provider-verified.log` confirms the provider is a child of the
 installed desktop and runs from that same app bundle (CLI source `22a60a24`).
 Computer Use also confirms the native UI is responsive. The earlier
 `installed-provider-after.log` remains the failed startup observation, not a pass.
-Native session acceptance is being exercised separately from successful startup.
+Native resume and continuation passed against the real provider and hive:
+`Read-only project inspection`, session `320ab46d-c048-40fa-95e1-51900826b60d`,
+generation 2. UI Reconnect became Idle/Can control; the signed transcript records
+`session_resumed`, command `csc-4375da88-652d-422a-9153-21beb9fff45c`, the exact
+follow-up, and a successful 5528 ms answer beginning "Continuity confirmed" that
+correctly recalls the earlier report. No tool calls were requested or recorded.
+Evidence: `native-continuation-transcript.txt` in the build evidence directory.
+
+Open UI observation: the native accessibility tree showed empty generation-2
+conversation blocks, without the prompt/answer, both live and after navigating
+away/back. The relay contains them. Determine whether this is transcript rendering
+or off-screen accessibility behavior before claiming a display defect. The older
+`Continuity acceptance` generation 3 also showed unresolved genesis authority and
+no conversation, while the read-only inspection resolved authority successfully.
+These observations do not invalidate the provider continuation evidence.
 
 Validation completed independently:
 
