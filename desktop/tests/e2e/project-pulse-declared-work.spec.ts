@@ -255,12 +255,14 @@ test("Open session navigates to the execution and publishes nothing", async ({
   // An allowlist, not a denylist: a write the denylist's regex had not been
   // taught to recognise would have passed silently. Every command the bridge
   // recorded between the click and the route change has to be one of these
-  // three reads — a huddle-state poll and the two deep-link queue drains the
-  // shell runs on every navigation. Nothing publishes, signs or starts a turn.
+  // reads — a huddle-state poll, the two deep-link queue drains the shell
+  // runs on every navigation, and the workspace's batched history lookup.
+  // Nothing publishes, signs or starts a turn.
   const READ_ONLY_ON_NAVIGATION = new Set([
     "get_huddle_state",
     "take_pending_entity_deep_link",
     "take_pending_navigation_deep_link",
+    "query_relay_filters",
   ]);
   const unexpected = [...new Set(after.commands)].filter(
     (command) => !READ_ONLY_ON_NAVIGATION.has(command),

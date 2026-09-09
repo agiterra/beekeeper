@@ -5,6 +5,62 @@ authority (§4), a protocol for a specific experiment, or history. This file
 is updated on every build and whenever live use produces a finding; if it
 disagrees with an older document about *current state*, this one wins.
 
+## September 9 handover integration — candidate under review
+
+Fable's five signed commits `101cab4c0`, `8cb84ce23`, `11ad61380`, `c8a0d2088`,
+`cd383db3f` were cherry-picked with signoff onto root `1264758be`, ending at
+`eb6c5aa55`. Integration was clean and preserves both root project-creation and
+Pulse UUID corrections. Not pushed, deployed, or installed. The installed Mac
+app remains c2195f1f8 as described below.
+
+The candidate adds whole-session authority claims, checkpoint/continuation
+records, CLI and desktop controls, provider fencing and deletion retirement.
+Fable's real-relay/CLI/two-provider composition logs
+`../review-role-adoption-fable-logs/handover-composition-{7,8}.log` each contain
+12 passes. Both providers run on one host with stub model adapters; this is not
+cross-machine or native Windows acceptance. Root independently passed the combined composition 12/12 in 240 seconds,
+desktop units 8908/8908, TypeScript/E2E build and checks, and targeted browser
+cases 16/16. The first browser run passed15/16: its navigation read-only
+allowlist omitted the new legitimate query_relay_filters history read. The
+minimal test-only correction preserves no-sign/no-publish checks; the retry
+had retries disabled. Original failure evidence is retained. Logs are in
+`../review-2026-09-08-release-candidate/handover-integrated-*.log`.
+
+Fresh review found provider gaps beyond that successful story. In the candidate,
+`backfill_session_authority` clears the pending fence even after a gap or failed
+link breaks its loop (`lib.rs:4853–4894`); bounded discovery and sibling handling
+also need completeness checks. A fresh provider with no local umbrella record
+passes create admission, then backfills but directly dispatches its initial
+turn without checking the recovered claim (`commands.rs:616–619`,
+`lib.rs:2829–2912`). Applying a claim does not yet stop a previously running
+ACP turn. Fable owns corrective provider work and actual-turn regressions; root
+has not papered over these paths in UI. Provider retirement also leaves
+already queued outbox metadata eligible to flush after deletion. Reproduction
+designs: `handover-provider-independent-review.md` in the same evidence directory.
+
+Artifact review found the CLI still passes an unvalidated artifact ref to git
+fetch (`handover_git.rs:525`), despite equivalent native validation. Both CLI
+and desktop restore a chosen folder but omit binding it to the provider create
+command, so the agent may run in its separately configured old folder. Desktop
+should reuse stageCodingSessionCreateHint; CLI must bind or verify provider-local
+cwd. The initial prompt also omits measured recovery failures, and native remote
+selection hardcodes origin. All were delegated to Fable with exact code paths
+and two-folder/hostile-ref regressions. Candidate acceptance remains pending.
+
+Separate bounded Fable follow-ups cover honest takeback wording from actual
+execution liveness and the previously untested Blossom patch upload/download
+path. The shared Desktop mailbox holds exact file ownership; root reviews are
+read-only and root Cargo/Redis composition is isolated from Fable's tests.
+
+Windows is available at the office on September9, using the other test account.
+Baseline build/test brief: `/Users/brian/Desktop/BEEKEEPER-WINDOWS-AGENT-BRIEF-2026-09-09.md`.
+It tells the local agent to fetch published main into an isolated worktree,
+verify actual native Windows sidecars, and test identity/Roles/session restart/
+visibility/Pulse/terminal. The unpublished handover candidate is explicitly
+excluded until corrections and a compatible relay are ready. Hive NIP-11 read
+during this review returned software_commit=unknown and build_time
+2026-09-08T01:40:54Z; no deployed handover support was inferred.
+
 ## September 8 installed Mac candidate — declared work integrated
 
 Installed `~/Applications/Beekeeper Dev.app` now contains source **c2195f1f8**,
