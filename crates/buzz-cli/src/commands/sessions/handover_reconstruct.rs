@@ -376,24 +376,25 @@ pub(super) async fn create_execution(
             routing: None,
         },
     };
-    // The binding, before the create is published: the provider re-reads this
-    // file on every lifecycle command and `resolve` consults
-    // `pending[commandId]` **first**
+    // The binding, written **before** the create is published. The provider
+    // resolves a create's working directory in the order
+    // `pending[commandId]` → this hint file → project → channel
     // (`crates/buzz-session-provider/src/commands.rs`,
-    // `ProjectsFile::resolve`), so the entry has to be there when the command
-    // arrives.
+    // `ProjectsFile::resolve`), re-reading on every lifecycle command, so the
+    // hint has to be on disk by the time the command arrives — and a failure
+    // to write it has to stop the run before anything is claimed.
     if let (Some(path), Some(cwd)) = (projects_file, recovered_cwd) {
         let binding = bind_pending_directory(path, &command_id, cwd)?;
         notes.verified(format!(
-            "bound this create's commandId to {} in {}, which is what the provider resolves its \
-             working directory from",
-            binding.directory.display(),
-            binding.path.display()
+            "wrote the pending hint {} binding this create to {}, which is what the provider \
+             resolves its working directory from",
+            binding.hint_path.display(),
+            binding.directory.display()
         ));
         notes.not_verified(BINDING_IS_HOST_LOCAL.to_owned());
     } else if recovered_cwd.is_some() {
         notes.not_verified(
-            "no projects file was bound, so where the new execution runs is whatever its \
+            "no pending hint was written, so where the new execution runs is whatever its \
              provider already had mapped — not necessarily the recovered checkout"
                 .to_owned(),
         );
@@ -497,30 +498,38 @@ pub(super) fn create_answer(
 
 // ── binding the create to the recovered checkout ─────────────────────────
 
-/// The provider's host-local map from session coordinates to directories.
+/// Where a reconstruction tells the provider its create should run.
 ///
-/// **This is the seam this command cannot reach over the wire.** A
-/// `session.create` names a `sessionRef`, a `repoRef` and a provider — it does
-/// not name a directory, and there is no field for one. The provider resolves
-/// the working directory from its own `BUZZ_CSP_PROJECTS_FILE`
-/// (`crates/buzz-session-provider/src/commands.rs`, `ProjectsFile::resolve`),
-/// consulting `pending[commandId]` **first**, then the project, then the
-/// channel. So a reconstruction that fetched a wip ref into `--cwd` and then
-/// published a create would have the model open the *project's* old folder
-/// while the continuation said "recovered" — the artifacts in one directory,
-/// the agent in another.
+/// **Not `projects.json`.** That file is *generated*: the desktop
+/// rematerializes it from its own canonical store whenever any unrelated hint
+/// is saved, so a pending entry written into it is erased at an arbitrary
+/// moment — quite possibly between this command publishing the create and the
+/// provider admitting it. The entry would be gone exactly when it was needed,
+/// and nothing would say so. So the binding goes in a **one-shot hint file**
+/// beside it, which nothing regenerates:
 ///
-/// Writing the pending entry is therefore part of reconstructing, and the fact
-/// that it lives in a host file rather than on the wire is disclosed every
-/// time rather than assumed.
+/// ```text
+/// <dir of the projects file>/pending-hints/<createCommandId>.json
+/// {"commandId":"…","path":"/absolute/recovered/cwd","writtenAt":1700000000}
+/// ```
 ///
-/// Read and written as a JSON `Value` rather than through a typed struct on
-/// purpose: this process must not drop a key a newer provider understands and
-/// this build does not.
+/// The provider resolves `pending[commandId]` → this hint file → project →
+/// channel, and consumes the file when it admits or refuses the create.
+///
+/// # Why this seam exists at all
+///
+/// A `session.create` names a `sessionRef`, a `repoRef` and a provider — it
+/// has no field for a directory, and there is nowhere on the wire to put one.
+/// The provider resolves the working directory from its own host-local
+/// configuration (`crates/buzz-session-provider/src/commands.rs`,
+/// `ProjectsFile::resolve`). So a reconstruction that fetched a wip ref into
+/// `--cwd` and then published a create would have the model open the
+/// *project's* old folder while the continuation said "recovered": the
+/// artifacts in one directory, the agent in another.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct ProjectsBinding {
-    /// Where the file is.
-    pub(super) path: PathBuf,
+    /// The hint file that was written.
+    pub(super) hint_path: PathBuf,
     /// The absolute directory bound to the create.
     pub(super) directory: PathBuf,
 }
@@ -529,17 +538,41 @@ pub(super) struct ProjectsBinding {
 /// command defaults `--projects-file` to.
 pub(super) const PROJECTS_FILE_ENV: &str = "BUZZ_CSP_PROJECTS_FILE";
 
+/// The directory of one-shot hints, beside the projects file.
+pub(super) const PENDING_HINTS_DIR: &str = "pending-hints";
+
+/// Mode for the hints directory: the owner's, and nobody else's.
+#[cfg(unix)]
+const HINT_DIR_MODE: u32 = 0o700;
+
+/// Mode for a hint file. It names a path on this machine, so it is not
+/// world-readable.
+#[cfg(unix)]
+const HINT_FILE_MODE: u32 = 0o600;
+
+/// The `pending-hints` directory for a given projects file.
+pub(super) fn pending_hints_dir(projects_file: &Path) -> PathBuf {
+    projects_file
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(PENDING_HINTS_DIR)
+}
+
 /// The remedy sentence a caller with no projects file is given.
 pub(super) fn projects_file_remedy(cwd: &Path) -> String {
     format!(
         "the provider resolves its working directory from its projects file, not from this \
          command; pass --projects-file <the provider's {PROJECTS_FILE_ENV}> (desktop: \
-         <state-dir>/projects.json) or configure the project's directory to {}",
+         <state-dir>/projects.json) or configure the project's directory to {}. The flag is used \
+         to locate the directory: the binding is written as a one-shot hint at \
+         <dir of the projects file>/{PENDING_HINTS_DIR}/<createCommandId>.json, and the projects \
+         file itself is never modified — it is generated, and anything written into it is erased \
+         the next time the desktop rematerializes it",
         cwd.display()
     )
 }
 
-/// Resolve the projects file to bind through, or refuse with the remedy.
+/// Resolve the projects file to bind beside, or refuse with the remedy.
 ///
 /// Refused **before** anything is claimed: a claim moves the fence for
 /// everybody, and taking a session over only to discover the new execution
@@ -558,22 +591,39 @@ pub(super) fn resolve_projects_file(
     }
 }
 
-/// Bind `command_id` to `directory` in the provider's projects file.
+/// Write the one-shot hint binding `command_id` to `directory`.
 ///
-/// Read-modify-write, atomic at the rename: the provider re-reads this file on
-/// every lifecycle command, so a half-written file is one it would read as
-/// empty and answer `PROJECT_CWD_UNRESOLVED` to. The temporary file is created
-/// in the same directory so the rename cannot cross a filesystem.
+/// Atomic at the rename, because the provider may read this directory at any
+/// moment and a half-written hint is one it would refuse to parse. The
+/// temporary file is created in the same directory so the rename cannot cross
+/// a filesystem, and it carries its mode before the rename so the file is
+/// never briefly world-readable under its real name.
+///
+/// The projects file itself is **neither read nor written**.
 ///
 /// # Errors
-/// A malformed existing file is **refused rather than replaced**: the provider
-/// reads an unparseable projects file as empty, so rewriting it here would
-/// quietly discard whatever mapping its owner had.
+/// A directory that cannot be created, a `commandId` that is not safe as a
+/// file name, or a working directory that does not resolve to an absolute
+/// path — each before the create is published, so a failure here never leaves
+/// a claimed session with an unbound execution.
 pub(super) fn bind_pending_directory(
-    path: &Path,
+    projects_file: &Path,
     command_id: &str,
     directory: &Path,
 ) -> Result<ProjectsBinding, CliError> {
+    // The command id becomes a path component. It is a UUID this process
+    // minted, so this can only fail if that ever changes — which is exactly
+    // when a path traversal would otherwise become possible.
+    if command_id.is_empty()
+        || !command_id
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '-')
+    {
+        return Err(CliError::Other(format!(
+            "refusing to write a pending hint for command id {command_id:?}: it is used as a file \
+             name and must be alphanumeric"
+        )));
+    }
     let directory = directory.canonicalize().map_err(|error| {
         CliError::Usage(format!(
             "the recovered checkout {} cannot be resolved to an absolute path ({error}), and the \
@@ -582,78 +632,77 @@ pub(super) fn bind_pending_directory(
         ))
     })?;
 
-    let mut document: Value = match std::fs::read_to_string(path) {
-        Ok(body) if body.trim().is_empty() => json!({}),
-        Ok(body) => serde_json::from_str(&body).map_err(|error| {
-            CliError::Usage(format!(
-                "the projects file {} does not parse ({error}). The provider reads an unparseable \
-                 projects file as empty, so this command will not rewrite it and lose whatever \
-                 mapping it holds — fix the file, then re-run.",
-                path.display()
-            ))
-        })?,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => json!({}),
-        Err(error) => {
-            return Err(CliError::Usage(format!(
-                "the projects file {} cannot be read: {error}",
-                path.display()
-            )))
-        }
-    };
-    let object = document.as_object_mut().ok_or_else(|| {
+    let hints = pending_hints_dir(projects_file);
+    let existed = hints.is_dir();
+    std::fs::create_dir_all(&hints).map_err(|error| {
         CliError::Usage(format!(
-            "the projects file {} is not a JSON object",
-            path.display()
+            "cannot create the pending-hints directory {} ({error}), so the recovered checkout \
+             could not be bound to this create and nothing was claimed",
+            hints.display()
         ))
     })?;
-    // `version` only when the file had none: an existing value is the owner's.
-    object.entry("version").or_insert_with(|| json!(1));
-    let pending = object
-        .entry("pending")
-        .or_insert_with(|| json!({}))
-        .as_object_mut()
-        .ok_or_else(|| {
-            CliError::Usage(format!(
-                "the projects file {} has a `pending` that is not an object",
-                path.display()
-            ))
-        })?;
-    pending.insert(
-        command_id.to_owned(),
-        json!(directory.to_string_lossy().into_owned()),
-    );
+    #[cfg(unix)]
+    if !existed {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&hints, std::fs::Permissions::from_mode(HINT_DIR_MODE)).map_err(
+            |error| {
+                CliError::Usage(format!(
+                    "cannot set the mode of {}: {error}",
+                    hints.display()
+                ))
+            },
+        )?;
+    }
+    #[cfg(not(unix))]
+    let _ = existed;
 
-    let body = serde_json::to_string_pretty(&document)
-        .map_err(|error| CliError::Other(format!("projects file serialization failed: {error}")))?;
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    std::fs::create_dir_all(parent).map_err(|error| {
-        CliError::Usage(format!(
-            "cannot create {} for the projects file: {error}",
-            parent.display()
-        ))
-    })?;
-    let temporary = parent.join(format!(".buzz-projects-{}.tmp", uuid::Uuid::new_v4()));
-    std::fs::write(&temporary, format!("{body}\n")).map_err(|error| {
+    let body = serde_json::to_string(&json!({
+        "commandId": command_id,
+        "path": directory.to_string_lossy(),
+        "writtenAt": chrono::Utc::now().timestamp(),
+    }))
+    .map_err(|error| CliError::Other(format!("pending hint serialization failed: {error}")))?;
+
+    let hint_path = hints.join(format!("{command_id}.json"));
+    let temporary = hints.join(format!(".{command_id}.{}.tmp", uuid::Uuid::new_v4()));
+    std::fs::write(&temporary, &body).map_err(|error| {
         CliError::Usage(format!("cannot write {}: {error}", temporary.display()))
     })?;
-    std::fs::rename(&temporary, path).map_err(|error| {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Err(error) =
+            std::fs::set_permissions(&temporary, std::fs::Permissions::from_mode(HINT_FILE_MODE))
+        {
+            let _ = std::fs::remove_file(&temporary);
+            return Err(CliError::Usage(format!(
+                "cannot set the mode of {}: {error}",
+                temporary.display()
+            )));
+        }
+    }
+    // Rename replaces any hint already written for this command id: a rerun
+    // that recovered into a different checkout must bind the new one, and two
+    // hints for one create would be a question nobody can answer.
+    std::fs::rename(&temporary, &hint_path).map_err(|error| {
         let _ = std::fs::remove_file(&temporary);
         CliError::Usage(format!(
-            "cannot replace {} with the updated projects file: {error}",
-            path.display()
+            "cannot place the pending hint at {}: {error}",
+            hint_path.display()
         ))
     })?;
 
     Ok(ProjectsBinding {
-        path: path.to_path_buf(),
+        hint_path,
         directory,
     })
 }
 
 /// The sentence every reconstruction prints about where the binding lives.
 pub(super) const BINDING_IS_HOST_LOCAL: &str =
-    "the working directory is bound in the provider's own projects file on this machine, never on \
-     the wire: a create names a session and a provider, and has no field for a directory";
+    "the working directory is bound by a one-shot hint file on this machine, never on the wire: a \
+     create names a session and a provider, and has no field for a directory. The provider \
+     consumes the hint when it admits or refuses the create.";
 
 /// Check that the new execution is actually running in the recovered checkout.
 ///

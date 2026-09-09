@@ -504,119 +504,166 @@ fn a_patch_is_never_applied_onto_a_base_that_did_not_land() {
 
 // ── binding the create to the recovered checkout ─────────────────────────
 
-/// The provider's own decoder, so what this command writes is checked against
-/// the type that will read it rather than against a copy of it.
-fn provider_reads(body: &str) -> serde_json::Value {
-    serde_json::from_str(body).expect("the provider parses this file with serde_json")
-}
-
-#[test]
-fn the_written_projects_file_carries_the_pending_entry_in_the_providers_key_set() {
-    use super::super::handover_reconstruct::bind_pending_directory;
-
+/// A projects file with real content, and a scratch checkout to bind.
+fn hint_fixture() -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
     let dir = tempfile::tempdir().expect("tempdir");
     let work = dir.path().join("recovered");
     std::fs::create_dir_all(&work).expect("mkdir");
-    let path = dir.path().join("projects.json");
-
-    let binding = bind_pending_directory(&path, "cmd-1", &work).expect("bind");
-    let body = std::fs::read_to_string(&path).expect("read back");
-    let document = provider_reads(&body);
-
-    // The provider's exact key set: version, pending, projects, channels,
-    // camelCase, all `#[serde(default)]`
-    // (`crates/buzz-session-provider/src/commands.rs`, `ProjectsFile`).
-    assert_eq!(document["version"], serde_json::json!(1));
-    assert_eq!(
-        document["pending"]["cmd-1"],
-        serde_json::json!(binding.directory.to_string_lossy()),
-        "the pending hint is keyed by the create's commandId, which is what \
-         ProjectsFile::resolve consults first"
-    );
-    assert!(
-        binding.directory.is_absolute(),
-        "a relative path is ignored by usable_directory, so the binding stores an absolute one"
-    );
-    // Round-trips through a struct with the provider's shape.
-    #[derive(serde::Deserialize)]
-    #[serde(rename_all = "camelCase", default)]
-    #[derive(Default)]
-    struct ProvidersShape {
-        version: u32,
-        pending: std::collections::BTreeMap<String, std::path::PathBuf>,
-        projects: std::collections::BTreeMap<String, std::path::PathBuf>,
-        channels: std::collections::BTreeMap<uuid::Uuid, std::path::PathBuf>,
-    }
-    let decoded: ProvidersShape = serde_json::from_str(&body).expect("provider decode");
-    assert_eq!(decoded.version, 1);
-    assert_eq!(decoded.pending.get("cmd-1"), Some(&binding.directory));
-    assert!(decoded.projects.is_empty());
-    assert!(decoded.channels.is_empty());
-}
-
-#[test]
-fn an_existing_projects_file_keeps_every_entry_it_already_had() {
-    use super::super::handover_reconstruct::bind_pending_directory;
-
-    let dir = tempfile::tempdir().expect("tempdir");
-    let work = dir.path().join("recovered");
-    std::fs::create_dir_all(&work).expect("mkdir");
-    let path = dir.path().join("projects.json");
-    // Including a key this build does not know: read-modify-write is done on
-    // the JSON, not through a typed struct, so a newer provider's field is not
-    // silently dropped by an older CLI.
-    let existing = serde_json::json!({
-        "version": 2,
-        "pending": { "older-command": "/tmp/older" },
-        "projects": { "30078:ab:proj": "/tmp/project-a" },
-        "channels": { "e0d3f1b8-8c66-4c62-9ef1-3fa933b32f86": "/tmp/channel-a" },
-        "somethingNewer": { "kept": true },
-    });
+    let projects = dir.path().join("projects.json");
     std::fs::write(
-        &path,
-        serde_json::to_string_pretty(&existing).expect("json"),
+        &projects,
+        serde_json::json!({
+            "version": 1,
+            "pending": {},
+            "projects": { "30078:ab:proj": "/tmp/project-a" },
+            "channels": {},
+        })
+        .to_string(),
     )
     .expect("seed");
+    (dir, projects, work)
+}
 
-    let binding = bind_pending_directory(&path, "cmd-2", &work).expect("bind");
-    let after = provider_reads(&std::fs::read_to_string(&path).expect("read back"));
+#[test]
+fn the_pending_hint_is_written_beside_the_projects_file_with_the_exact_body_and_mode() {
+    use super::super::handover_reconstruct::{bind_pending_directory, pending_hints_dir};
+
+    let (_dir, projects, work) = hint_fixture();
+    let before = std::fs::read(&projects).expect("read before");
+
+    let binding = bind_pending_directory(&projects, "cmd-1", &work).expect("bind");
 
     assert_eq!(
-        after["version"],
-        serde_json::json!(2),
-        "the owner's version stands"
+        binding.hint_path,
+        pending_hints_dir(&projects).join("cmd-1.json"),
+        "the hint is <dir of the projects file>/pending-hints/<createCommandId>.json"
     );
-    assert_eq!(after["projects"], existing["projects"]);
-    assert_eq!(after["channels"], existing["channels"]);
-    assert_eq!(after["somethingNewer"], existing["somethingNewer"]);
+    let body: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&binding.hint_path).expect("read hint"))
+            .expect("hint is JSON");
+    assert_eq!(body["commandId"], serde_json::json!("cmd-1"));
     assert_eq!(
-        after["pending"]["older-command"],
-        serde_json::json!("/tmp/older"),
-        "another create's pending hint is not this command's to remove"
+        body["path"],
+        serde_json::json!(binding.directory.to_string_lossy()),
+        "the path is the absolute recovered checkout — the provider ignores a relative one"
+    );
+    assert!(
+        body["writtenAt"]
+            .as_i64()
+            .is_some_and(|at| at > 1_600_000_000),
+        "writtenAt is unix seconds: {body}"
     );
     assert_eq!(
-        after["pending"]["cmd-2"],
-        serde_json::json!(binding.directory.to_string_lossy())
+        body.as_object().expect("object").len(),
+        3,
+        "exactly the three keys the provider reads: {body}"
+    );
+
+    // The generated file is not a place to keep state, and this proves it is
+    // left alone: the desktop rematerializes projects.json from its own store
+    // on any unrelated hint save, so an entry written there would be erased at
+    // an arbitrary moment — quite possibly between publishing the create and
+    // the provider admitting it.
+    assert_eq!(
+        std::fs::read(&projects).expect("read after"),
+        before,
+        "the projects file is byte-identical: it is never read and never written"
+    );
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            std::fs::metadata(&binding.hint_path)
+                .expect("hint metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600,
+            "a hint names a path on this machine and is not world-readable"
+        );
+        assert_eq!(
+            std::fs::metadata(pending_hints_dir(&projects))
+                .expect("dir metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700,
+            "and the directory this command created is the owner's alone"
+        );
+    }
+}
+
+#[test]
+fn a_pre_existing_hint_for_the_same_create_is_replaced() {
+    use super::super::handover_reconstruct::{bind_pending_directory, pending_hints_dir};
+
+    let (dir, projects, first) = hint_fixture();
+    let second = dir.path().join("recovered-again");
+    std::fs::create_dir_all(&second).expect("mkdir");
+
+    bind_pending_directory(&projects, "cmd-2", &first).expect("first bind");
+    let binding = bind_pending_directory(&projects, "cmd-2", &second).expect("second bind");
+
+    let hints: Vec<_> = std::fs::read_dir(pending_hints_dir(&projects))
+        .expect("read dir")
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name())
+        .collect();
+    assert_eq!(
+        hints.len(),
+        1,
+        "one create has one hint: two would be a question nobody can answer — {hints:?}"
+    );
+    let body: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&binding.hint_path).expect("read hint"))
+            .expect("json");
+    assert_eq!(
+        body["path"],
+        serde_json::json!(second.canonicalize().expect("second").to_string_lossy()),
+        "a rerun that recovered somewhere else binds the new checkout"
     );
 }
 
 #[test]
-fn a_malformed_projects_file_is_refused_rather_than_replaced() {
+fn a_hints_directory_that_cannot_be_created_refuses_before_anything_is_claimed() {
     use super::super::handover_reconstruct::bind_pending_directory;
 
-    let dir = tempfile::tempdir().expect("tempdir");
-    let work = dir.path().join("recovered");
-    std::fs::create_dir_all(&work).expect("mkdir");
-    let path = dir.path().join("projects.json");
-    std::fs::write(&path, "{ this is not json").expect("seed");
+    let (dir, _projects, work) = hint_fixture();
+    // A regular file where the hints directory must go, so `create_dir_all`
+    // cannot succeed.
+    let blocked = dir.path().join("blocked");
+    std::fs::create_dir_all(&blocked).expect("mkdir");
+    std::fs::write(blocked.join("pending-hints"), "not a directory").expect("seed");
+    let projects = blocked.join("projects.json");
 
-    let error = bind_pending_directory(&path, "cmd-3", &work).expect_err("must refuse");
-    assert!(error.to_string().contains("does not parse"), "got {error}");
-    assert_eq!(
-        std::fs::read_to_string(&path).expect("read"),
-        "{ this is not json",
-        "the owner's file is left exactly as it was"
+    let error = bind_pending_directory(&projects, "cmd-3", &work).expect_err("must refuse");
+    assert!(
+        error
+            .to_string()
+            .contains("cannot create the pending-hints directory"),
+        "got {error}"
     );
+    assert!(
+        error.to_string().contains("nothing was claimed"),
+        "the refusal says the session was not taken over: {error}"
+    );
+}
+
+#[test]
+fn a_command_id_that_is_not_a_safe_file_name_is_refused() {
+    use super::super::handover_reconstruct::bind_pending_directory;
+
+    let (_dir, projects, work) = hint_fixture();
+    // The id is minted as a UUID by this process, so this is unreachable
+    // today — which is the point: it becomes a path component, and a future
+    // change that let one through would be a traversal.
+    for hostile in ["../escape", "a/b", "", "with space"] {
+        assert!(
+            bind_pending_directory(&projects, hostile, &work).is_err(),
+            "{hostile:?} must not become a file name"
+        );
+    }
 }
 
 #[test]
@@ -627,20 +674,23 @@ fn no_projects_file_refuses_with_the_remedy_before_anything_is_claimed() {
     let cwd = dir.path().join("recovered");
     std::fs::create_dir_all(&cwd).expect("mkdir");
 
-    // The env default is the provider's own variable; with neither it nor the
-    // flag, this refuses. Read without mutating the process environment, so
-    // the test cannot race another.
     let remedy = projects_file_remedy(&cwd);
     assert!(
         remedy.contains(
-            "the provider resolves its working directory from its projects file, \
-                         not from this command"
+            "the provider resolves its working directory from its projects file, not from this \
+             command"
         ) && remedy.contains("--projects-file")
             && remedy.contains("BUZZ_CSP_PROJECTS_FILE")
             && remedy.contains("<state-dir>/projects.json")
             && remedy.contains(&cwd.display().to_string()),
         "the refusal names the mechanism, the flag, the variable, the desktop path and the \
          directory: {remedy}"
+    );
+    assert!(
+        remedy.contains("pending-hints/<createCommandId>.json")
+            && remedy.contains("the projects file itself is never modified"),
+        "and says where the hint is actually written, and that the generated file is left \
+         alone: {remedy}"
     );
 
     // An explicit flag always wins, whatever the environment says.
@@ -652,48 +702,46 @@ fn no_projects_file_refuses_with_the_remedy_before_anything_is_claimed() {
 }
 
 #[test]
-fn a_pending_entry_beats_the_projects_mapping_for_the_same_create() {
+fn the_hint_binds_the_recovered_checkout_and_leaves_the_projects_mapping_alone() {
     use super::super::handover_reconstruct::bind_pending_directory;
 
     // Two folders: the projects file maps the project to A, and `--cwd` is B.
-    // `ProjectsFile::resolve` tries `pending[commandId]` before
-    // `projects[projectRef]`
-    // (`crates/buzz-session-provider/src/commands.rs`, the `candidates` array
-    // in `resolve`), so the entry this writes is the one that wins.
+    // The provider resolves `pending[commandId]` → this hint file → project →
+    // channel (`crates/buzz-session-provider/src/commands.rs`, the
+    // `candidates` array in `ProjectsFile::resolve`, which Lane X is extending
+    // with the hint step), so the hint is what decides — and it decides by
+    // precedence, without touching anybody's configuration.
     let dir = tempfile::tempdir().expect("tempdir");
     let folder_a = dir.path().join("project-a");
     let folder_b = dir.path().join("recovered-b");
     std::fs::create_dir_all(&folder_a).expect("mkdir a");
     std::fs::create_dir_all(&folder_b).expect("mkdir b");
-    let path = dir.path().join("projects.json");
-    std::fs::write(
-        &path,
-        serde_json::json!({
-            "version": 1,
-            "pending": {},
-            "projects": { "30078:ab:proj": folder_a.to_string_lossy() },
-            "channels": {},
-        })
-        .to_string(),
-    )
-    .expect("seed");
+    let projects = dir.path().join("projects.json");
+    let mapping = serde_json::json!({
+        "version": 1,
+        "pending": {},
+        "projects": { "30078:ab:proj": folder_a.to_string_lossy() },
+        "channels": {},
+    })
+    .to_string();
+    std::fs::write(&projects, &mapping).expect("seed");
 
-    let binding = bind_pending_directory(&path, "cmd-4", &folder_b).expect("bind");
-    let after = provider_reads(&std::fs::read_to_string(&path).expect("read"));
+    let binding = bind_pending_directory(&projects, "cmd-4", &folder_b).expect("bind");
 
+    let body: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&binding.hint_path).expect("read")).expect("json");
     assert_eq!(
-        after["pending"]["cmd-4"],
-        serde_json::json!(binding.directory.to_string_lossy()),
-        "the pending hint is the recovered checkout"
+        body["path"],
+        serde_json::json!(folder_b.canonicalize().expect("b").to_string_lossy()),
+        "the hint names the recovered checkout"
     );
     assert_eq!(
-        after["projects"]["30078:ab:proj"],
-        serde_json::json!(folder_a.to_string_lossy()),
-        "and the project's own mapping is untouched — the pending hint wins by precedence, \
-         not by overwriting somebody's configuration"
+        std::fs::read_to_string(&projects).expect("read"),
+        mapping,
+        "and the project's own mapping is untouched, byte for byte"
     );
     assert_ne!(
-        binding.directory.canonicalize().expect("b"),
+        binding.directory,
         folder_a.canonicalize().expect("a"),
         "the two folders really are different"
     );
