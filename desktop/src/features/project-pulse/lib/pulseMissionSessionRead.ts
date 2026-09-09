@@ -48,6 +48,11 @@ import type {
   PulseMissionSeatInput,
   PulseMissionSessionInput,
 } from "./invokePulseMissionRows";
+import type {
+  PulseDeclaredWorkLifecycle,
+  PulseDeclaredWorkSessionInput,
+  PulseDeclaredWorkSignedEvent,
+} from "./pulseDeclaredWorkWire";
 
 /**
  * The native command's own cap (`MAX_PULSE_MISSION_ROWS`). A request carrying
@@ -80,6 +85,25 @@ export type PulseMissionGenesis = {
   channelRef: string;
   genesisRef: string;
   founderPubkey: string;
+};
+
+/**
+ * Which records one gather reads per session.
+ *
+ * `mission` is this module's original behaviour, unchanged to the byte: team
+ * records, policy records, observations, and the channel's lifecycle commands
+ * and receipts. `team-only` is the declared-work read — genesis, authority
+ * transitions and relay receipts exactly as before, then **kind 44244 alone**.
+ *
+ * The result keeps the same {@link PulseMissionSessionInput} shape with the
+ * unread lists empty, because the declared-work request builder maps that
+ * shape onto the native command's own input. Empty here means "not asked
+ * for", and nothing downstream reads those lists: the declared-work fold
+ * consumes 44244 and the session's lifecycle comes from the digest, never
+ * from an absent read.
+ */
+export type PulseMissionSessionReadOptions = {
+  records?: "mission" | "team-only";
 };
 
 /** What the gather produced: what it opened, and what it could not. */
@@ -164,6 +188,77 @@ export function selectPulseMissionSessions(
       return byteOrder(left.sessionKey, right.sessionKey);
     })
     .slice(0, Math.max(0, limit));
+}
+
+/** One session a declared-work read can page over, open or closed. */
+export type PulseDeclaredWorkVisibleSession = {
+  sessionKey: string;
+  sessionRef: string | null;
+  name: string | null;
+  lifecycle: PulseDeclaredWorkLifecycle;
+  latestObservationAt: number | null;
+};
+
+/** Sessions per declared-work page, and the most pages one scan will read. */
+export const PULSE_DECLARED_WORK_PAGE_SIZE = 8;
+export const PULSE_DECLARED_WORK_MAX_PAGES = 4;
+
+/**
+ * Every session the digest proved — **open and closed** — newest observation
+ * first, unobserved last, ties on the session key.
+ *
+ * Closed sessions are in scope here and out of scope for
+ * {@link pulseMissionOpenSessions} because closing an execution settles
+ * nothing: an unsettled assignment in a closed session is still unresolved,
+ * and a read that started from open sessions alone would render it as work
+ * that does not exist.
+ */
+export function pulseDeclaredWorkSessions(
+  digest: {
+    sessions: readonly {
+      sessionKey: string;
+      sessionRef: string | null;
+      name: string | null;
+      lifecycle: string;
+      latestObservationAt: number | null;
+    }[];
+  } | null,
+): PulseDeclaredWorkVisibleSession[] {
+  if (!digest) return [];
+  return digest.sessions
+    .map((session) => ({
+      sessionKey: session.sessionKey,
+      sessionRef: session.sessionRef,
+      name: session.name,
+      lifecycle:
+        session.lifecycle === "closed"
+          ? ("closed" as const)
+          : ("open" as const),
+      latestObservationAt: session.latestObservationAt,
+    }))
+    .sort((left, right) => {
+      if (left.latestObservationAt !== right.latestObservationAt) {
+        if (left.latestObservationAt === null) return 1;
+        if (right.latestObservationAt === null) return -1;
+        return right.latestObservationAt - left.latestObservationAt;
+      }
+      return byteOrder(left.sessionKey, right.sessionKey);
+    });
+}
+
+/**
+ * Page *n* of an ordered visible-session list: `[8n, 8n + 8)`.
+ *
+ * Pages are disjoint slices of one sorted list, which is what lets the
+ * projection dedupe across pages by key rather than by position.
+ */
+export function pulseDeclaredWorkPage<T>(
+  sessions: readonly T[],
+  pageIndex: number,
+): T[] {
+  if (!Number.isInteger(pageIndex) || pageIndex < 0) return [];
+  const start = pageIndex * PULSE_DECLARED_WORK_PAGE_SIZE;
+  return sessions.slice(start, start + PULSE_DECLARED_WORK_PAGE_SIZE);
 }
 
 /**
@@ -390,10 +485,39 @@ export async function readPulseMissionSessions(
     fetchEvents: PulseMissionEventFetcher;
     relaySelf: () => Promise<string | null>;
   },
+  options: PulseMissionSessionReadOptions = {},
 ): Promise<PulseMissionSessionReadResult> {
+  const recordsMode = options.records ?? "mission";
   const readErrors: PulseMissionReadError[] = [];
+  // `selectPulseMissionSessions` *silently* keeps the newest eight. That is
+  // the right answer for the mission read, whose scope sentence says so, and
+  // the wrong one for a paged declared-work read: a page trimmed here would
+  // drop sessions the scan sentence has already counted as scanned. A caller
+  // that hands over more than one page has a bug, and it is named rather than
+  // absorbed.
+  if (
+    recordsMode === "team-only" &&
+    input.openSessions.length > MAX_PULSE_MISSION_SESSIONS
+  ) {
+    throw new Error(
+      `pulse declared work: a team-only read was handed ${input.openSessions.length} sessions, but one page is at most ${MAX_PULSE_MISSION_SESSIONS}; slice the visible sessions with pulseDeclaredWorkPage before reading`,
+    );
+  }
   const selected = selectPulseMissionSessions(input.openSessions);
   if (selected.length === 0) return { sessions: [], readErrors };
+
+  // The per-session record reads this mode needs, and no others. `team-only`
+  // asks for kind 44244 alone: the declared-work fold reads nothing else, and
+  // an observation or policy page fetched to be discarded is relay work a
+  // reader never sees.
+  const scopedRecordReads: readonly (readonly [number, string])[] =
+    recordsMode === "team-only"
+      ? [[KIND_CODING_SESSION_TEAM_TRANSACTION, "team record"]]
+      : [
+          [KIND_CODING_SESSION_TEAM_TRANSACTION, "team record"],
+          [KIND_CODING_SESSION_POLICY, "policy record"],
+          [KIND_CODING_SESSION_OBSERVATION, "observation"],
+        ];
 
   // Acceptance receipts are only trustworthy from the community's own relay
   // key. Without it nothing below can be verified, so nothing below is sent.
@@ -466,7 +590,15 @@ export async function readPulseMissionSessions(
       });
       continue;
     }
-    const scope = `missions:${genesis.channelRef}`;
+    // A record-read failure is named for the read that asked. In `mission`
+    // mode that is the channel's mission read, unchanged. In `team-only` mode
+    // it is one session's declared work: `missions:<channel>` would read as
+    // the wrong feature, and two sessions in one channel would report their
+    // failures under one indistinguishable scope.
+    const scope =
+      recordsMode === "team-only"
+        ? `declared:${session.sessionKey}`
+        : `missions:${genesis.channelRef}`;
 
     const transitions = await readBounded(
       dependencies.fetchEvents,
@@ -510,11 +642,7 @@ export async function readPulseMissionSessions(
 
     const records: Record<string, RelayEvent[]> = {};
     let recordsFailed = false;
-    for (const [kind, what] of [
-      [KIND_CODING_SESSION_TEAM_TRANSACTION, "team record"],
-      [KIND_CODING_SESSION_POLICY, "policy record"],
-      [KIND_CODING_SESSION_OBSERVATION, "observation"],
-    ] as const) {
+    for (const [kind, what] of scopedRecordReads) {
       const read = await readBounded(
         dependencies.fetchEvents,
         {
@@ -539,27 +667,32 @@ export async function readPulseMissionSessions(
     // with the umbrella's `d`, so a `#d` filter here would match nothing and
     // every mission would resolve no provider while looking as though it had
     // been asked. The native adapter splits the page by session and genesis.
-    for (const [kind, what] of [
-      [KIND_CODING_SESSION_LIFECYCLE_COMMAND, "lifecycle command"],
-      [KIND_CODING_SESSION_LIFECYCLE_RECEIPT, "lifecycle receipt"],
-    ] as const) {
-      const read = await readBounded(
-        dependencies.fetchEvents,
-        {
-          kinds: [kind],
-          "#h": [genesis.channelRef],
-          limit: PULSE_MISSION_RECORD_QUERY_LIMIT,
-        },
-        what,
-      );
-      if (!read.ok) {
-        readErrors.push({ scope, message: read.error });
-        recordsFailed = true;
-        break;
+    //
+    // A declared-work read skips them: the fold behind it reads 44244 only,
+    // and provider reachability is not a fact this section renders.
+    if (recordsMode !== "team-only") {
+      for (const [kind, what] of [
+        [KIND_CODING_SESSION_LIFECYCLE_COMMAND, "lifecycle command"],
+        [KIND_CODING_SESSION_LIFECYCLE_RECEIPT, "lifecycle receipt"],
+      ] as const) {
+        const read = await readBounded(
+          dependencies.fetchEvents,
+          {
+            kinds: [kind],
+            "#h": [genesis.channelRef],
+            limit: PULSE_MISSION_RECORD_QUERY_LIMIT,
+          },
+          what,
+        );
+        if (!read.ok) {
+          readErrors.push({ scope, message: read.error });
+          recordsFailed = true;
+          break;
+        }
+        records[String(kind)] = read.events;
       }
-      records[String(kind)] = read.events;
+      if (recordsFailed) continue;
     }
-    if (recordsFailed) continue;
 
     const built = buildPulseMissionSessionInput({
       session,
@@ -586,4 +719,58 @@ export async function readPulseMissionSessions(
   }
 
   return { sessions, readErrors };
+}
+
+/**
+ * Map one gathered umbrella onto the declared-work command's input.
+ *
+ * `lifecycle` is not in {@link PulseMissionSessionInput} and is not inferred
+ * here: it comes from the digest's own coordination fold, which is the only
+ * thing in this app that proves an umbrella closed. A `team-only` gather does
+ * not read the lifecycle kinds at all, so guessing one from an empty list
+ * would report every session open.
+ *
+ * The signed events are copied field by field rather than spread: the native
+ * request refuses unknown fields, and a relay event carries client-only keys
+ * (`localKey`, `pending`) that a spread would send.
+ */
+export function buildPulseDeclaredWorkSessionInput(
+  read: PulseMissionSessionInput,
+  lifecycle: PulseDeclaredWorkLifecycle,
+): PulseDeclaredWorkSessionInput {
+  return {
+    sessionKey: read.sessionKey,
+    channelRef: read.channelRef,
+    sessionRef: read.sessionRef,
+    genesisRef: read.genesisRef,
+    founderPubkey: read.founderPubkey,
+    name: read.name,
+    lifecycle,
+    latestObservationAt: read.latestObservationAt,
+    activeSeats: read.activeSeats.map((seat) => ({
+      actorPubkey: seat.actorPubkey,
+      role: seat.role,
+    })),
+    activeGrants: read.activeGrants.map((grant) => ({
+      actorPubkey: grant.actorPubkey,
+      grantEventRef: grant.grantEventRef,
+      maySteer: grant.maySteer,
+      acceptedAt: grant.acceptedAt,
+      granted: grant.granted,
+    })),
+    teamEvents: read.teamEvents.map(signedEvent),
+  };
+}
+
+/** One relay event as the native request spells it, and nothing more. */
+function signedEvent(event: RelayEvent): PulseDeclaredWorkSignedEvent {
+  return {
+    id: event.id,
+    pubkey: event.pubkey,
+    created_at: event.created_at,
+    kind: event.kind,
+    tags: event.tags,
+    content: event.content,
+    sig: event.sig,
+  };
 }

@@ -728,3 +728,22 @@ export function usePulseMissionRows(
     coordinate ? readPulseMissionRows(coordinate) : null,
   );
 }
+
+// ── Declared work ────────────────────────────────────────────────────────────
+//
+// The third read is paged, and it lives in `pulseDeclaredWorkQueries.ts` —
+// this module was at the repository's 1000-line ceiling and a gate that says
+// "split the file" is not a gate to squeeze under. Re-exported here so the
+// three Pulse reads still have one import path.
+
+export {
+  fetchPulseDeclaredWorkPage,
+  type PulseDeclaredWorkPage,
+  type PulseDeclaredWorkPageInput,
+  pulseDeclaredWorkNextPageParam,
+  pulseDeclaredWorkQueryKey,
+  type PulseDeclaredWorkQuery,
+  pulseDeclaredWorkState,
+  type PulseDeclaredWorkState,
+  usePulseDeclaredWork,
+} from "./pulseDeclaredWorkQueries";

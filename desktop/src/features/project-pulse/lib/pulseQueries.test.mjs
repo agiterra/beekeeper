@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 import {
@@ -532,4 +533,317 @@ test("a session whose team records could not be read is disclosed, not dropped",
   // unread disclosure fires beside this one.
   assert.equal(sent.request.openSessionCount, 1);
   assert.deepEqual(sent.request.sessions, []);
+});
+
+// ── Declared work: a paged read over visible sessions ────────────────────────
+//
+// The third read, and the only paged one. Its bounds are the two things a
+// reader can be lied to about: which sessions were scanned, and whether the
+// list is complete. Both are pinned here as pure functions, because the
+// section renders whatever these say.
+
+const DECLARED_FIXTURE = JSON.parse(
+  readFileSync(
+    new URL("./pulseDeclaredWork.fixture.json", import.meta.url),
+    "utf8",
+  ),
+);
+const DECLARED_CHANNELS = DECLARED_FIXTURE.sessions.map(
+  (session) => session.channelId,
+);
+const DECLARED_CHANNEL = DECLARED_CHANNELS[0];
+
+function declaredSession(sessionKey, sessionRef, lifecycle, observedAt) {
+  return {
+    sessionKey,
+    sessionRef,
+    name: null,
+    goal: null,
+    lifecycle,
+    coordinationState: lifecycle === "closed" ? "closed" : "open_unverified",
+    latestObservationAt: observedAt,
+    observedAgeSeconds: null,
+    generations: [],
+    sourceEventIds: [],
+  };
+}
+
+test("a declared-work read is keyed by coordinate and channel set, not by order", async () => {
+  const { pulseDeclaredWorkQueryKey } = await import(
+    "@/features/project-pulse/lib/pulseQueries"
+  );
+  assert.deepEqual(pulseDeclaredWorkQueryKey(PROJECT, ["b", "a"]), [
+    "project-pulse-declared",
+    PROJECT,
+    "a,b",
+  ]);
+  assert.deepEqual(
+    pulseDeclaredWorkQueryKey(PROJECT, ["b", "a"]),
+    pulseDeclaredWorkQueryKey(PROJECT, ["a", "b"]),
+  );
+  assert.notDeepEqual(
+    pulseDeclaredWorkQueryKey(PROJECT, ["a"]),
+    pulseDeclaredWorkQueryKey(PROJECT, ["a", "b"]),
+  );
+});
+
+test("the next page is offered only while sessions remain and the cap allows", async () => {
+  const { pulseDeclaredWorkNextPageParam } = await import(
+    "@/features/project-pulse/lib/pulseQueries"
+  );
+  // Unread sessions remain.
+  assert.equal(pulseDeclaredWorkNextPageParam(0, 13), 1);
+  assert.equal(pulseDeclaredWorkNextPageParam(1, 17), 2);
+  // The page boundary is exact: eight sessions are one page, not two.
+  assert.equal(pulseDeclaredWorkNextPageParam(0, 8), undefined);
+  assert.equal(pulseDeclaredWorkNextPageParam(0, 9), 1);
+  // The cap binds even when sessions are left, which is what the scan
+  // sentence's "the read stops at 32 sessions" is about.
+  assert.equal(pulseDeclaredWorkNextPageParam(2, 99), 3);
+  assert.equal(pulseDeclaredWorkNextPageParam(3, 99), undefined);
+});
+
+test("a later page that failed keeps the pages that came back", async () => {
+  const { pulseDeclaredWorkState } = await import(
+    "@/features/project-pulse/lib/pulseQueries"
+  );
+  const first = { pageIndex: 0, response: DECLARED_FIXTURE, sessionKeys: [] };
+  const state = pulseDeclaredWorkState(
+    {
+      data: { pages: [first] },
+      error: new Error("relay unreachable"),
+      isPending: false,
+      isFetching: false,
+      isFetchingNextPage: false,
+      isFetchNextPageError: true,
+      hasNextPage: true,
+      fetchNextPage: () => {},
+      refetch: () => {},
+    },
+    13,
+  );
+  assert.equal(state.kind, "ready");
+  // Whole pages, not bare responses: the projection needs the keys each page
+  // asked about to tell a session that could not be read from one no page has
+  // reached yet.
+  assert.deepEqual(state.pages, [first]);
+  assert.equal(state.loadedPageCount, 1);
+  assert.deepEqual(state.pageErrors, [
+    { pageIndex: 1, message: "relay unreachable" },
+  ]);
+  assert.equal(state.visibleSessionCount, 13);
+});
+
+test("a declared-work read with no page at all is unreadable, never empty", async () => {
+  const { pulseDeclaredWorkState } = await import(
+    "@/features/project-pulse/lib/pulseQueries"
+  );
+  const query = {
+    data: undefined,
+    error: new Error("pulse declared work: response is missing sessions"),
+    isPending: false,
+    isFetching: false,
+    isFetchingNextPage: false,
+    isFetchNextPageError: false,
+    hasNextPage: false,
+    fetchNextPage: () => {},
+    refetch: () => {},
+  };
+  const failed = pulseDeclaredWorkState(query, 3);
+  assert.equal(failed.kind, "unreadable");
+  assert.deepEqual(failed.pages, []);
+  assert.equal(
+    failed.message,
+    "pulse declared work: response is missing sessions",
+  );
+
+  const loading = pulseDeclaredWorkState(
+    { ...query, error: null, isPending: true, isFetching: true },
+    3,
+  );
+  assert.equal(loading.kind, "loading");
+  assert.equal(loading.message, null);
+});
+
+test("a page sends only its own sessions, each with the digest's lifecycle", async () => {
+  const { fetchPulseDeclaredWorkPage } = await import(
+    "@/features/project-pulse/lib/pulseQueries"
+  );
+  const sessions = Array.from({ length: 9 }, (_value, index) =>
+    declaredSession(
+      `s-${index}`,
+      `${String(index).repeat(8)}-1111-2222-3333-444444444444`,
+      index % 2 === 0 ? "open" : "closed",
+      1_756_800_000 - index,
+    ),
+  );
+  const fetchEvents = async (filter) =>
+    filter.kinds[0] === 44226
+      ? sessions.map((session, index) =>
+          genesisEvent(
+            DECLARED_CHANNEL,
+            session.sessionRef,
+            `${String(index).repeat(2)}${"ab".repeat(31)}`,
+          ),
+        )
+      : [];
+  const asked = [];
+  const invoke = async (_command, args) => {
+    asked.push(args);
+    return DECLARED_FIXTURE;
+  };
+  const first = await fetchPulseDeclaredWorkPage(
+    PROJECT,
+    DECLARED_CHANNELS,
+    { digest: digestOf(sessions), pageIndex: 0 },
+    { invoke, fetchEvents, relaySelf: async () => RELAY_SELF },
+  );
+  assert.equal(first.pageIndex, 0);
+  assert.deepEqual(first.sessionKeys, [
+    "s-0",
+    "s-1",
+    "s-2",
+    "s-3",
+    "s-4",
+    "s-5",
+    "s-6",
+    "s-7",
+  ]);
+  const sent = asked[0].request ?? asked[0];
+  // Exactly the page: the ninth session belongs to page two, and sending it
+  // here would count it as scanned by a request that never asked for it.
+  assert.deepEqual(
+    sent.sessions.map((session) => session.sessionKey),
+    first.sessionKeys,
+  );
+  // The lifecycle is the digest's. A team-only gather reads no lifecycle
+  // records at all, so a default of "open" would report every closed session
+  // open — and closing settles nothing, which is exactly the distinction the
+  // section exists to keep.
+  assert.deepEqual(
+    sent.sessions.map((session) => session.lifecycle),
+    ["open", "closed", "open", "closed", "open", "closed", "open", "closed"],
+  );
+
+  const second = await fetchPulseDeclaredWorkPage(
+    PROJECT,
+    DECLARED_CHANNELS,
+    { digest: digestOf(sessions), pageIndex: 1 },
+    { invoke, fetchEvents, relaySelf: async () => RELAY_SELF },
+  );
+  assert.deepEqual(second.sessionKeys, ["s-8"]);
+  const sentSecond = asked[1].request ?? asked[1];
+  assert.deepEqual(
+    sentSecond.sessions.map((session) => session.sessionKey),
+    ["s-8"],
+  );
+});
+
+test("a page whose session could not be read discloses it and sends the rest", async () => {
+  const { fetchPulseDeclaredWorkPage } = await import(
+    "@/features/project-pulse/lib/pulseQueries"
+  );
+  const sessions = [
+    declaredSession("s-1", SESSION_ONE, "open", 1_756_800_000),
+    declaredSession(
+      "s-2",
+      "bbbbbbbb-1111-2222-3333-444444444444",
+      "closed",
+      1_756_700_000,
+    ),
+  ];
+  let sent = null;
+  await fetchPulseDeclaredWorkPage(
+    PROJECT,
+    DECLARED_CHANNELS,
+    { digest: digestOf(sessions), pageIndex: 0 },
+    {
+      invoke: async (_command, args) => {
+        sent = args.request ?? args;
+        return DECLARED_FIXTURE;
+      },
+      // Only the first session has a genesis record; the second one's founder
+      // and authority chain are unknown, so it is named rather than sent.
+      fetchEvents: async (filter) =>
+        filter.kinds[0] === 44226
+          ? [genesisEvent(DECLARED_CHANNEL, SESSION_ONE, "ab".repeat(32))]
+          : [],
+      relaySelf: async () => RELAY_SELF,
+    },
+  );
+  assert.deepEqual(
+    sent.sessions.map((session) => session.sessionKey),
+    ["s-1"],
+  );
+  const disclosed = sent.readErrors.find((error) =>
+    error.scope.includes("s-2"),
+  );
+  assert.notEqual(disclosed, undefined);
+  assert.match(disclosed.message, /genesis/i);
+});
+
+test("a failed refresh marks the read stale; it does not blame a page", async () => {
+  const { pulseDeclaredWorkState } = await import(
+    "@/features/project-pulse/lib/pulseQueries"
+  );
+  const state = pulseDeclaredWorkState(
+    {
+      data: {
+        pages: [
+          { pageIndex: 0, response: DECLARED_FIXTURE, sessionKeys: ["s-1"] },
+        ],
+      },
+      error: new Error("relay unreachable"),
+      isPending: false,
+      isFetching: false,
+      // The failure was a refresh of what is already loaded, not an attempt to
+      // add a page. Page 1 was never asked for, so naming it would report a
+      // read that never happened as one that failed.
+      isFetchNextPageError: false,
+      isFetchingNextPage: false,
+      hasNextPage: true,
+      fetchNextPage: () => {},
+      refetch: () => {},
+    },
+    13,
+  );
+  assert.equal(state.kind, "ready");
+  assert.deepEqual(state.pageErrors, []);
+  assert.equal(state.message, "relay unreachable");
+});
+
+test("an empty declared-work state hands back frozen empties, by identity", async () => {
+  const { pulseDeclaredWorkState } = await import(
+    "@/features/project-pulse/lib/pulseQueries"
+  );
+  const query = {
+    data: undefined,
+    error: null,
+    isPending: true,
+    isFetching: true,
+    isFetchNextPageError: false,
+    isFetchingNextPage: false,
+    hasNextPage: false,
+    fetchNextPage: () => {},
+    refetch: () => {},
+  };
+  const first = pulseDeclaredWorkState(query, 0);
+  const second = pulseDeclaredWorkState(query, 0);
+  // A fresh `[]` per render defeats the section's memo on every paint, and the
+  // projection under it is not cheap.
+  assert.equal(first.pageErrors, second.pageErrors);
+  assert.equal(first.pages, second.pages);
+
+  const loaded = {
+    pageIndex: 0,
+    response: DECLARED_FIXTURE,
+    sessionKeys: ["s-1"],
+  };
+  const ready = pulseDeclaredWorkState(
+    { ...query, data: { pages: [loaded] }, isPending: false },
+    1,
+  );
+  // And the loaded pages are React Query's own array, by reference.
+  assert.equal(ready.pages, ready.pages);
+  assert.equal(ready.pageErrors, first.pageErrors);
 });

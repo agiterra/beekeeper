@@ -2,9 +2,14 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  buildPulseDeclaredWorkSessionInput,
   buildPulseMissionSessionInput,
   indexPulseMissionGenesis,
   MAX_PULSE_MISSION_SESSIONS,
+  PULSE_DECLARED_WORK_MAX_PAGES,
+  PULSE_DECLARED_WORK_PAGE_SIZE,
+  pulseDeclaredWorkPage,
+  pulseDeclaredWorkSessions,
   pulseMissionGrantInputs,
   pulseMissionOpenSessions,
   pulseMissionSeatInputs,
@@ -359,4 +364,228 @@ test("a complete read sends the session and records nothing", async () => {
   assert.equal(kinds.includes("44244"), true);
   assert.equal(kinds.includes("44245"), true);
   assert.equal(kinds.includes("44246"), true);
+});
+
+// ── Declared work: which sessions, in which page, read how ──────────────────
+//
+// The declared-work read differs from the mission read on three axes, and each
+// one is a separate way to publish a falsehood: it includes **closed**
+// sessions (closing settles nothing), it **pages** rather than truncating at
+// eight (a trimmed page would be counted as scanned), and it reads **only**
+// kind 44244 (a page fetched to be discarded is relay work nobody sees).
+
+function visible(sessionKey, latestObservationAt, lifecycle = "open") {
+  return {
+    sessionKey,
+    sessionRef: SESSION,
+    name: null,
+    lifecycle,
+    latestObservationAt,
+  };
+}
+
+test("every session is visible to a declared-work read, closed ones included", () => {
+  const sessions = pulseDeclaredWorkSessions({
+    sessions: [visible("open-one", 10), visible("closed-one", 20, "closed")],
+  });
+  // Closing an execution settles nothing: an unsettled assignment inside a
+  // closed session is still unresolved, and a read that started from open
+  // sessions alone would render it as work that does not exist.
+  assert.deepEqual(
+    sessions.map((session) => [session.sessionKey, session.lifecycle]),
+    [
+      ["closed-one", "closed"],
+      ["open-one", "open"],
+    ],
+  );
+});
+
+test("visible sessions order newest first, unobserved last, ties by key", () => {
+  const sessions = pulseDeclaredWorkSessions({
+    sessions: [
+      visible("b", null),
+      visible("c", 30),
+      visible("a", null),
+      visible("z", 30),
+      visible("m", 40),
+    ],
+  });
+  assert.deepEqual(
+    sessions.map((session) => session.sessionKey),
+    ["m", "c", "z", "a", "b"],
+  );
+});
+
+test("a null digest is no sessions, never an assumed one", () => {
+  assert.deepEqual(pulseDeclaredWorkSessions(null), []);
+});
+
+test("pages are disjoint eight-session slices of the ordered list", () => {
+  assert.equal(PULSE_DECLARED_WORK_PAGE_SIZE, 8);
+  assert.equal(PULSE_DECLARED_WORK_MAX_PAGES, 4);
+  const sessions = Array.from({ length: 19 }, (_value, index) => index);
+  assert.deepEqual(
+    pulseDeclaredWorkPage(sessions, 0),
+    [0, 1, 2, 3, 4, 5, 6, 7],
+  );
+  assert.deepEqual(
+    pulseDeclaredWorkPage(sessions, 1),
+    [8, 9, 10, 11, 12, 13, 14, 15],
+  );
+  assert.deepEqual(pulseDeclaredWorkPage(sessions, 2), [16, 17, 18]);
+  assert.deepEqual(pulseDeclaredWorkPage(sessions, 3), []);
+  assert.deepEqual(pulseDeclaredWorkPage(sessions, -1), []);
+});
+
+test("a team-only read asks for kind 44244 and for nothing else per session", async () => {
+  const { asked, fetchEvents } = reader();
+  const result = await readPulseMissionSessions(
+    { channelIds: [CHANNEL], openSessions: [session("s-1", 20)] },
+    { fetchEvents, relaySelf: async () => RELAY_SELF },
+    { records: "team-only" },
+  );
+  assert.deepEqual(result.readErrors, []);
+  assert.equal(result.sessions.length, 1);
+  const kinds = asked.map((filter) => filter.kinds.join(","));
+  // Genesis, the authority chain and its relay receipts are read exactly as
+  // the mission read reads them — the seats and grants this session is sent
+  // with are still proven, not assumed.
+  assert.equal(kinds.includes("44226"), true);
+  assert.equal(kinds.includes("44228"), true);
+  assert.equal(kinds.includes("40099"), true);
+  assert.equal(kinds.includes("44244"), true);
+  // And nothing the declared-work fold does not read.
+  for (const unread of ["44245", "44246", "44221", "44224", "30618"]) {
+    assert.equal(
+      kinds.includes(unread),
+      false,
+      `a team-only read must not ask for kind ${unread}: ${JSON.stringify(kinds)}`,
+    );
+  }
+  // The lists it did not read come back empty, and empty here means "not
+  // asked for" — the lifecycle the request carries comes from the digest.
+  const sent = result.sessions[0];
+  assert.deepEqual(sent.policyEvents, []);
+  assert.deepEqual(sent.observationEvents, []);
+  assert.deepEqual(sent.lifecycleCommands, []);
+  assert.deepEqual(sent.lifecycleReceipts, []);
+  assert.deepEqual(sent.refState, []);
+});
+
+test("the default read is unchanged: every mission page is still asked for", async () => {
+  const { asked, fetchEvents } = reader();
+  await readPulseMissionSessions(
+    { channelIds: [CHANNEL], openSessions: [session("s-1", 20)] },
+    { fetchEvents, relaySelf: async () => RELAY_SELF },
+  );
+  const kinds = asked.map((filter) => filter.kinds.join(","));
+  for (const asked_kind of ["44244", "44245", "44246", "44221", "44224"]) {
+    assert.equal(
+      kinds.includes(asked_kind),
+      true,
+      `the default read must still ask for kind ${asked_kind}`,
+    );
+  }
+});
+
+test("a team-only read refuses more than one page rather than trimming it", async () => {
+  const { fetchEvents } = reader();
+  const sessions = Array.from({ length: 9 }, (_value, index) =>
+    session(`s-${index}`, 100 - index),
+  );
+  // `selectPulseMissionSessions` would silently keep eight. That is right for
+  // the mission read, whose scope sentence says so, and wrong here: the scan
+  // sentence has already counted these sessions as scanned.
+  await assert.rejects(
+    () =>
+      readPulseMissionSessions(
+        { channelIds: [CHANNEL], openSessions: sessions },
+        { fetchEvents, relaySelf: async () => RELAY_SELF },
+        { records: "team-only" },
+      ),
+    /at most 8/,
+  );
+});
+
+test("the declared-work request carries the digest's lifecycle and the read's records", () => {
+  const older = record(44244, "aa".repeat(32), 10);
+  const newer = record(44244, "bb".repeat(32), 20);
+  const built = buildPulseMissionSessionInput({
+    session: session("s-1", 20),
+    genesis: {
+      channelRef: CHANNEL,
+      genesisRef: GENESIS,
+      founderPubkey: FOUNDER,
+    },
+    relayPubkey: RELAY_SELF,
+    transitions: [],
+    receipts: [],
+    teamEvents: [newer, older],
+    policyEvents: [],
+    observationEvents: [],
+    lifecycleCommands: [],
+    lifecycleReceipts: [],
+  });
+  assert.equal(built.ok, true);
+  const request = buildPulseDeclaredWorkSessionInput(built.value, "closed");
+  assert.equal(request.sessionKey, "s-1");
+  assert.equal(request.channelRef, CHANNEL);
+  assert.equal(request.sessionRef, SESSION);
+  assert.equal(request.genesisRef, GENESIS);
+  assert.equal(request.founderPubkey, FOUNDER);
+  assert.equal(request.name, null);
+  assert.equal(request.latestObservationAt, 20);
+  // The lifecycle is the digest's, never inferred from an unread page.
+  assert.equal(request.lifecycle, "closed");
+  assert.deepEqual(request.activeSeats, []);
+  assert.deepEqual(request.activeGrants, []);
+  // Ascending, and byte-identical to the signed events — the Rust side
+  // verifies these signatures itself.
+  assert.deepEqual(
+    request.teamEvents.map((event) => event.id),
+    [older.id, newer.id],
+  );
+  assert.deepEqual(Object.keys(request.teamEvents[0]).sort(), [
+    "content",
+    "created_at",
+    "id",
+    "kind",
+    "pubkey",
+    "sig",
+    "tags",
+  ]);
+});
+
+test("a team-only record failure is scoped to the session, not to missions", async () => {
+  const failing = async (filter) => {
+    if (filter.kinds[0] === 44226) {
+      return [genesisEvent(CHANNEL, SESSION, GENESIS)];
+    }
+    if (filter.kinds[0] === 44244) throw new Error("relay unreachable");
+    return [];
+  };
+  const declared = await readPulseMissionSessions(
+    { channelIds: [CHANNEL], openSessions: [session("s-1", 20)] },
+    { fetchEvents: failing, relaySelf: async () => RELAY_SELF },
+    { records: "team-only" },
+  );
+  assert.deepEqual(declared.sessions, []);
+  const disclosed = declared.readErrors.find((error) =>
+    error.message.includes("relay unreachable"),
+  );
+  // `missions:<channel>` would name the wrong feature, and two sessions in one
+  // channel would report their failures under one indistinguishable scope.
+  assert.equal(disclosed.scope, "declared:s-1");
+
+  // The mission read's own scope is unchanged.
+  const mission = await readPulseMissionSessions(
+    { channelIds: [CHANNEL], openSessions: [session("s-1", 20)] },
+    { fetchEvents: failing, relaySelf: async () => RELAY_SELF },
+  );
+  assert.equal(
+    mission.readErrors.find((error) =>
+      error.message.includes("relay unreachable"),
+    ).scope,
+    `missions:${CHANNEL}`,
+  );
 });
