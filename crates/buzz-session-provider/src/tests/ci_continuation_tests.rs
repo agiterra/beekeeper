@@ -1209,7 +1209,7 @@ async fn an_expired_ready_record_is_refused_after_recovery() {
     drop(running);
 
     let mut restarted = provider(&dir.path().join("state"), Some(&projects));
-    restarted.recover().expect("recover");
+    restarted.recover().await.expect("recover");
     restarted.run_ci_continuation_tick().await.expect("tick");
     let sink = CollectingSink::new();
     restarted.flush(&sink).await.expect("flush");
@@ -1392,7 +1392,7 @@ async fn a_restart_before_the_result_keeps_the_registration_and_delivers_later()
     };
 
     let mut restarted = provider(&state_dir, Some(&projects));
-    restarted.recover().expect("recover");
+    restarted.recover().await.expect("recover");
     let record = restarted
         .ci_continuations
         .record("cic-1")
@@ -1470,7 +1470,7 @@ async fn a_restart_after_the_result_is_ready_still_delivers_the_turn() {
     }
 
     let mut restarted = provider(&state_dir, Some(&projects));
-    restarted.recover().expect("recover");
+    restarted.recover().await.expect("recover");
     // A session record with no live actor after a restart answers the turn
     // terminally rather than running it — the honest outcome, and the one the
     // command ledger records exactly once.
@@ -1538,7 +1538,7 @@ async fn recovery_drops_a_registration_whose_command_is_already_answered() {
     }
 
     let mut restarted = provider(&state_dir, Some(&projects));
-    restarted.recover().expect("recover");
+    restarted.recover().await.expect("recover");
     assert!(
         restarted.ci_continuations.record("cic-1").is_none(),
         "the command ledger is the fence; the record has nothing left to promise"
@@ -1654,7 +1654,7 @@ async fn a_ci_start_claim_is_durable_before_prompt_permission_and_survives_a_cra
     assert_eq!(operations[0]["commandId"], "cic-expiry");
     drop(running);
     let mut restarted = provider(&dir.path().join("state"), Some(&projects));
-    restarted.recover().expect("recover");
+    restarted.recover().await.expect("recover");
     assert!(restarted.state.is_command_consumed("cic-expiry"));
     assert!(!restarted
         .admit_ci_turn_start(&target.session_id, "cic-expiry")
@@ -1978,7 +1978,7 @@ async fn a_claim_lost_to_a_crash_is_reported_once_and_never_re_admitted() {
     let (projects, target) = projects;
 
     let mut restarted = provider(&state_dir, Some(&projects));
-    restarted.recover().expect("recover");
+    restarted.recover().await.expect("recover");
     let sink = CollectingSink::new();
     restarted.flush(&sink).await.expect("flush");
 
@@ -2009,7 +2009,7 @@ async fn a_claim_lost_to_a_crash_is_reported_once_and_never_re_admitted() {
     // A second restart has nothing left to say.
     drop(restarted);
     let mut again = provider(&state_dir, Some(&projects));
-    again.recover().expect("recover");
+    again.recover().await.expect("recover");
     let second = CollectingSink::new();
     again.flush(&second).await.expect("flush");
     assert!(
@@ -2079,7 +2079,10 @@ async fn terminal_queue_drop_fences_ci_redelivery_after_a_ledger_failure_and_res
     let config = running.config.clone();
     drop(running);
     let mut restarted = Provider::new(config).expect("same provider identity");
-    restarted.recover().expect("recover terminal decision");
+    restarted
+        .recover()
+        .await
+        .expect("recover terminal decision");
     restarted.run_ci_continuation_tick().await.expect("tick");
     let sink = CollectingSink::new();
     restarted.flush(&sink).await.expect("flush");
@@ -2111,7 +2114,10 @@ async fn a_terminal_answer_survives_restart_when_its_outbox_projection_failed() 
     let config = running.config.clone();
     drop(running);
     let mut restarted = Provider::new(config).expect("same provider identity");
-    restarted.recover().expect("recover exact fenced answer");
+    restarted
+        .recover()
+        .await
+        .expect("recover exact fenced answer");
     let sink = CollectingSink::new();
     restarted.flush(&sink).await.expect("flush");
     assert_eq!(
@@ -2141,7 +2147,10 @@ async fn a_failed_claim_snapshot_does_not_disappear_silently_on_recovery() {
     let config = running.config.clone();
     drop(running);
     let mut restarted = Provider::new(config).expect("same provider identity");
-    restarted.recover().expect("recover consumed Ready record");
+    restarted
+        .recover()
+        .await
+        .expect("recover consumed Ready record");
     let sink = CollectingSink::new();
     restarted.flush(&sink).await.expect("flush");
     let receipts = sink.contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT);
@@ -2178,7 +2187,7 @@ async fn a_persisted_started_turn_is_not_reported_as_lost_before_prompt() {
     let config = running.config.clone();
     drop(running);
     let mut restarted = Provider::new(config).expect("same provider identity");
-    restarted.recover().expect("recover observed start");
+    restarted.recover().await.expect("recover observed start");
     let sink = CollectingSink::new();
     restarted.flush(&sink).await.expect("flush");
     let stages = receipt_stages(&sink, "cic-expiry");

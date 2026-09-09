@@ -9,7 +9,7 @@
 //! through the shared `buzz_core::coding_session_command` type, so the
 //! provider and the relay can never disagree about what is valid.
 
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
@@ -17,6 +17,7 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use buzz_core::ci_result::{correlation_id, CiResultIdentity};
+use buzz_core::coding_session_authority_claim::ClaimState;
 use buzz_core::coding_session_command::{
     CodingSessionAction, CodingSessionCommandPayload, CodingSessionDelivery, CodingSessionTarget,
     TurnAttachment,
@@ -31,10 +32,11 @@ use buzz_core::coding_session_runtime::RuntimeDescriptor;
 use crate::ci_continuation_store::{AdmitRefusal, Admitted, CiContinuationStore};
 use crate::payload::{
     ACTOR_UNAVAILABLE, BUDGET_EXHAUSTED, CI_CONTINUATION_EXPIRED, CI_CONTINUATION_STORE_FULL,
-    COMMAND_ID_CONFLICT, DUPLICATE_OPERATION, PROJECT_CWD_UNRESOLVED, PROVIDER_UNAVAILABLE,
-    SESSION_CLOSED, SESSION_LIMIT, STALE_GENERATION, UNAUTHORIZED_OPERATOR, UNKNOWN_TARGET,
+    COMMAND_ID_CONFLICT, DUPLICATE_OPERATION, HANDOVER_FENCED, PROJECT_CWD_UNRESOLVED,
+    PROVIDER_UNAVAILABLE, SESSION_CLOSED, SESSION_LIMIT, SESSION_RETIRED, STALE_GENERATION,
+    UNAUTHORIZED_OPERATOR, UNKNOWN_TARGET,
 };
-use crate::state::StateStore;
+use crate::state::{SessionRecord, StateStore};
 
 /// The refusal code for a registration whose requested expiry lies beyond the
 /// window this provider will hold a command for.
@@ -392,6 +394,14 @@ pub struct CommandContext<'a> {
     /// the same reason as `in_flight`, and bounded: see
     /// `crate::DELIVERED_CANCEL_FENCE_CAPACITY`.
     pub delivered_cancels: &'a VecDeque<String>,
+    /// Genesis refs whose authority chain this process has **not** managed to
+    /// re-read since it started.
+    ///
+    /// Populated by `recover` from every open genesis-bearing record and
+    /// emptied one genesis at a time as backfills succeed. Empty for a
+    /// provider that has never recovered, so nothing that does not restart
+    /// pays for this. See [`AUTHORITY_NOT_REVERIFIED`].
+    pub claims_pending_reverification: &'a HashSet<String>,
 }
 
 impl CommandContext<'_> {
@@ -481,6 +491,48 @@ pub fn decide_lifecycle(
             &payload.action,
             CodingSessionLifecycleAction::SessionResume { .. }
         );
+        // A chain this process has not re-read yet cannot answer whether the
+        // session has been handed over, and "not known" must not read as "not
+        // handed over".
+        if claim_awaits_reverification(context, record) {
+            return LifecycleDecision::Fail {
+                command_id: payload.command_id,
+                code: AUTHORITY_NOT_REVERIFIED,
+                message: awaiting_reverification_message(),
+            };
+        }
+        // The handover fence (§3), before the resume ACL for the same reason
+        // it precedes `operator_may_steer`: once a session is handed over,
+        // "the founder may always" is no longer the rule, and
+        // `UNAUTHORIZED_OPERATOR` would name the wrong reason.
+        //
+        // A **stop** is exempt in exactly one case, and the distinction is the
+        // difference between an operator tidying up and an operator destroying
+        // somebody else's work. When the claim names *another* body, this
+        // machine is holding a stranded execution of its own and its founder
+        // may shut it down; when the claim names **this** provider, the
+        // process here is the claimant's live continuation and killing it
+        // would undo the handover by force. A voided umbrella has no
+        // claimant's work left to protect, so its orphaned process stays
+        // stoppable — otherwise a voided claim would strand a process that
+        // nobody, founder included, could ever release. Retirement exempts
+        // nothing: a deleted session answers `SESSION_RETIRED` to every
+        // command, stops included.
+        let stop_may_proceed = !is_resume
+            && !matches!(
+                &record.handover,
+                ClaimState::Active(claim) if claim.body_pubkey == context.provider_pubkey
+            );
+        let fence = handover_fence(record, context.operator_pubkey, context.provider_pubkey);
+        if let Some(refusal) = fence
+            .filter(|refusal| refusal.code == SESSION_RETIRED || is_resume || !stop_may_proceed)
+        {
+            return LifecycleDecision::Fail {
+                command_id: payload.command_id,
+                code: refusal.code,
+                message: refusal.message,
+            };
+        }
         let authorized = if is_resume {
             operator_may_resume(record, context.operator_pubkey)
         } else {
@@ -543,6 +595,50 @@ pub fn decide_lifecycle(
     else {
         unreachable!()
     };
+
+    // The fence over a **create**, and the reason it cannot be left to the
+    // turn path: a create mints a record, spawns an adapter and dispatches its
+    // `initialTurn` directly, none of which passes through
+    // [`decide_turn_command`]. Without this, the machine that lost the session
+    // simply starts a second execution under the same umbrella and the fence
+    // never sees it.
+    //
+    // Asked of the umbrella rather than of one record, because the record this
+    // create would mint does not exist yet. The three answers that matter:
+    //
+    // * this provider is the claimed body and the sender is the claimant —
+    //   which is exactly B's own reconstruct or native continuation — admitted;
+    // * this provider is not the claimed body, or the sender is not the
+    //   claimant — A coming back and starting again — `HANDOVER_FENCED`;
+    // * the claim was voided — nobody starts anything under this umbrella
+    //   until a fresh accepted takeover — `HANDOVER_FENCED`.
+    //
+    // A provider holding no record of this genesis (B's machine, seeing the
+    // umbrella for the first time) fences nothing: it has folded no claim, and
+    // inventing one from an unverified read would refuse the very continuation
+    // this whole feature exists to allow.
+    if let Some(genesis_ref) = genesis_ref.as_deref() {
+        if context.claims_pending_reverification.contains(genesis_ref) {
+            return LifecycleDecision::Fail {
+                command_id: payload.command_id,
+                code: AUTHORITY_NOT_REVERIFIED,
+                message: awaiting_reverification_message(),
+            };
+        }
+        if let Some(refusal) = umbrella_fence(
+            context.state,
+            channel_id,
+            genesis_ref,
+            context.operator_pubkey,
+            context.provider_pubkey,
+        ) {
+            return LifecycleDecision::Fail {
+                command_id: payload.command_id,
+                code: refusal.code,
+                message: refusal.message,
+            };
+        }
+    }
 
     // The command is addressed to *this* signer, so no other process will ever
     // answer it. A ref naming no descriptor therefore fails loudly — silence
@@ -791,6 +887,44 @@ pub fn decide_turn_command(
             command_id: command.command_id,
             target: command.target,
         });
+    }
+    // A chain this process has not re-read since it started cannot say whether
+    // this session has been handed over. Refusing by name beats guessing that
+    // nothing changed while the provider was down.
+    if claim_awaits_reverification(context, record) {
+        return TurnDecision::Fail {
+            command_id: command.command_id,
+            target: command.target,
+            code: AUTHORITY_NOT_REVERIFIED,
+            message: awaiting_reverification_message(),
+        };
+    }
+    // The handover fence, before the ordinary steering ACL and deliberately
+    // so: once a session has been handed over, "the founder may always steer"
+    // is no longer the rule, and answering `UNAUTHORIZED_OPERATOR` to the
+    // founder of a session somebody else now holds would name the wrong
+    // reason. §3 of `docs/HANDOVER_IMPL.md`. The refusal is recorded in the
+    // durable refusal ledger by `on_turn`'s `Fail` arm before it is published,
+    // like every other turn refusal.
+    //
+    // A plain `thread.turn.interrupt` is outside the fence, on exactly the
+    // reasoning the budget gate below already uses: cancelling starts no work,
+    // spends no turn, and produces no second execution of anything. A fence
+    // that stopped a founder cancelling a runaway turn while still letting
+    // them stop the whole process would be strictly worse than useless. A
+    // **retired** session still refuses even an interrupt: there is no turn
+    // under a deleted umbrella to cancel.
+    if let Some(refusal) = handover_fence(record, context.operator_pubkey, context.provider_pubkey)
+        .filter(|refusal| {
+            refusal.code == SESSION_RETIRED || !matches!(command.action, TurnAction::Interrupt)
+        })
+    {
+        return TurnDecision::Fail {
+            command_id: command.command_id,
+            target: command.target,
+            code: refusal.code,
+            message: refusal.message,
+        };
     }
     if !operator_may_steer(record, context.operator_pubkey) {
         return TurnDecision::Fail {
@@ -1073,6 +1207,182 @@ fn duplicate_operation_owner(
 /// predate that field and remain ungoverned; genesis-bearing records can
 /// never fall open when their founder is absent. `grant-operator` never moves
 /// ownership, so the granted-operator set is deliberately not consulted here.
+/// A named refusal the handover fence produces, ready to publish.
+///
+/// Carries the code and the sentence together because the two are one answer:
+/// every message here names the claimant, the body, and — when it applies —
+/// that the claim was voided, so an operator reading the receipt learns *who*
+/// holds the session rather than only that they do not.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FenceRefusal {
+    /// [`SESSION_RETIRED`] or [`HANDOVER_FENCED`].
+    pub code: &'static str,
+    /// The operator-facing sentence.
+    pub message: String,
+}
+
+/// The refusal a genesis-bearing record answers with until its authority
+/// chain has been re-read since this process started.
+///
+/// Provider-local, like [`crate::native_restore::NO_RESUME_CURSOR`]: it
+/// describes a fact about *this* process's knowledge, not a rule the wire has
+/// an opinion about.
+///
+/// It exists because the two halves of the chain fail in opposite directions.
+/// A grant that cannot be verified is simply never applied, so an unreadable
+/// chain leaves an execution founder-only — closed, and safe. A **claim** that
+/// cannot be verified leaves the persisted `handover` at whatever it was
+/// before the restart, which for the machine that has just come back from an
+/// outage is `NoClaim` — open, and exactly the divergence the fence exists to
+/// stop. So a record whose chain this process has not managed to re-read
+/// refuses rather than guessing that nothing has changed.
+pub const AUTHORITY_NOT_REVERIFIED: &str = "AUTHORITY_NOT_REVERIFIED";
+
+/// The strictest fence any local record of one umbrella imposes.
+///
+/// The claim is umbrella-wide, but the *records* of an umbrella can disagree
+/// for one process-lifetime reason: a record created a moment ago starts at
+/// `authority_seq` 0 with no claim folded into it yet, while its siblings
+/// carry the claim. Reading only one of them — the first, or the newest —
+/// would let a fresh sibling admit work the umbrella is fenced against, so
+/// this reads **all** of them and returns the first refusal it finds.
+///
+/// `None` means no local record of this genesis is fenced, which for an
+/// umbrella this provider holds no records of at all is the honest answer: it
+/// has folded no claim, so it fences nothing, and the ordinary rules apply.
+pub fn umbrella_fence(
+    state: &StateStore,
+    channel_id: Uuid,
+    genesis_ref: &str,
+    operator_pubkey: &str,
+    provider_pubkey: &str,
+) -> Option<FenceRefusal> {
+    state
+        .sessions()
+        .filter(|record| {
+            record.channel_id == channel_id && record.genesis_ref.as_deref() == Some(genesis_ref)
+        })
+        .find_map(|record| handover_fence(record, operator_pubkey, provider_pubkey))
+}
+
+/// The claim an umbrella's local records agree on, folded furthest along the
+/// chain.
+///
+/// Used to **seed** a record being created under an umbrella this provider
+/// already knows about. Without it a `session.create` mints a record at
+/// `NoClaim` and every later turn on it walks straight past the fence, which
+/// is the same divergence by a different door.
+///
+/// "Furthest along" is `authority_seq`: every record of a genesis is extended
+/// together by [`crate::Provider::resolve_and_apply_grant`], so they normally
+/// agree, and where they do not it is because one of them is newer and has
+/// applied fewer links.
+pub fn umbrella_claim(state: &StateStore, channel_id: Uuid, genesis_ref: &str) -> ClaimState {
+    state
+        .sessions()
+        .filter(|record| {
+            record.channel_id == channel_id && record.genesis_ref.as_deref() == Some(genesis_ref)
+        })
+        .max_by_key(|record| record.authority_seq)
+        .map(|record| record.handover.clone())
+        .unwrap_or_default()
+}
+
+/// Whether this record's chain still has to be re-read before it may act.
+///
+/// Only ever true for a genesis-bearing record, and only between a `recover`
+/// that could not reach the relay and the first backfill that succeeds for
+/// that genesis. A provider that has never recovered — every unit test that
+/// builds one directly — has an empty pending set and is unaffected.
+fn claim_awaits_reverification(context: &CommandContext<'_>, record: &SessionRecord) -> bool {
+    record
+        .genesis_ref
+        .as_deref()
+        .is_some_and(|genesis_ref| context.claims_pending_reverification.contains(genesis_ref))
+}
+
+/// The sentence an unverified chain refuses with.
+fn awaiting_reverification_message() -> String {
+    "this execution's authority chain has not been re-verified since this provider restarted, \
+     so whether the session has been handed over is not yet known; it will be admitted or \
+     refused by name once the chain can be read"
+        .to_owned()
+}
+
+/// Whether the handover fence refuses this command, and why.
+///
+/// The one implementation of `docs/HANDOVER_IMPL.md` §3's rule, called from
+/// every path that would let an execution act: turn admission
+/// ([`decide_turn_command`], which the CI continuation's
+/// `admit_ci_turn_start` also runs through), `session.resume`
+/// ([`decide_lifecycle`]), native restore ([`crate::native_restore`]) and
+/// team-wake admission ([`crate::team_wake`]).
+///
+/// The claim is **umbrella-wide**: every execution rooted at the handed-over
+/// genesis carries the same [`crate::state::SessionRecord::handover`], so a
+/// sibling execution of the claimed one is fenced alongside it. That is the
+/// v1 scope decision, not an accident of this function.
+///
+/// `operator_pubkey == provider_pubkey` is the provider acting as itself — a
+/// team wake it minted. On the **claimed body** that proceeds: the claimant
+/// chose this machine to carry the work, and its own bookkeeping turns are
+/// how the work continues. On any other body it is refused like everything
+/// else, because a provider minting a wake for a session it no longer holds
+/// is exactly the divergence the fence exists to stop.
+pub fn handover_fence(
+    record: &SessionRecord,
+    operator_pubkey: &str,
+    provider_pubkey: &str,
+) -> Option<FenceRefusal> {
+    if let Some(retired) = &record.retired {
+        return Some(FenceRefusal {
+            code: SESSION_RETIRED,
+            message: format!(
+                "this session was deleted by accepted deletion {}; nothing under it runs again, \
+                 and no part of it will be republished or reconstructed",
+                retired.deletion_event_id
+            ),
+        });
+    }
+    match &record.handover {
+        ClaimState::NoClaim => None,
+        ClaimState::Voided {
+            last, voided_by, ..
+        } => Some(FenceRefusal {
+            code: HANDOVER_FENCED,
+            message: format!(
+                "this session was handed over to {} on execution body {}, and that claim was \
+                 voided by {}; nobody may steer it until a fresh accepted takeover or transfer \
+                 is published",
+                last.claimant, last.body_pubkey, voided_by
+            ),
+        }),
+        ClaimState::Active(claim) => {
+            if claim.body_pubkey != provider_pubkey {
+                return Some(FenceRefusal {
+                    code: HANDOVER_FENCED,
+                    message: format!(
+                        "this session is held by {} on execution body {}; this provider ({}) is \
+                         not that body, so nothing here acts on it",
+                        claim.claimant, claim.body_pubkey, provider_pubkey
+                    ),
+                });
+            }
+            if operator_pubkey != claim.claimant && operator_pubkey != provider_pubkey {
+                return Some(FenceRefusal {
+                    code: HANDOVER_FENCED,
+                    message: format!(
+                        "this session is held by {} on execution body {}; only that claimant may \
+                         steer it until the claim is transferred or a fresh takeover is accepted",
+                        claim.claimant, claim.body_pubkey
+                    ),
+                });
+            }
+            None
+        }
+    }
+}
+
 fn operator_owns_session(record: &crate::state::SessionRecord, operator_pubkey: &str) -> bool {
     match record.founder_pubkey.as_deref() {
         Some(founder) => founder == operator_pubkey,
@@ -1571,7 +1881,16 @@ mod tests {
             actor_seats,
             in_flight: no_commands_in_flight(),
             delivered_cancels: no_delivered_cancels(),
+            claims_pending_reverification: no_pending_reverification(),
         }
+    }
+
+    /// The empty pending-reverification set: a provider that has not recovered
+    /// is verified by construction, which is what every decision test here
+    /// describes.
+    fn no_pending_reverification() -> &'static HashSet<String> {
+        static EMPTY: std::sync::OnceLock<HashSet<String>> = std::sync::OnceLock::new();
+        EMPTY.get_or_init(HashSet::new)
     }
 
     /// The empty accepted-not-started set, leaked once so every decision test
@@ -1670,6 +1989,8 @@ mod tests {
             bootstrap_transport: None,
             open_turn: None,
             closed: false,
+            handover: ClaimState::NoClaim,
+            retired: None,
             pack_ref: None,
         }
     }

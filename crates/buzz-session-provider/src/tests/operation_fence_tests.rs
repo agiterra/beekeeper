@@ -217,7 +217,7 @@ async fn a_duplicate_replayed_after_a_restart_is_refused_from_the_durable_ledger
     };
 
     let mut restarted = provider(&state_dir, Some(&projects));
-    restarted.recover().expect("recover");
+    restarted.recover().await.expect("recover");
     assert_eq!(
         restarted
             .state()
@@ -325,7 +325,7 @@ async fn a_crash_while_queued_releases_the_fence_without_leaking_a_second_turn()
     };
 
     let mut restarted = stalling_provider(&state_dir, Some(&projects));
-    restarted.recover().expect("recover");
+    restarted.recover().await.expect("recover");
     assert_eq!(
         restarted
             .state()
@@ -512,7 +512,7 @@ async fn the_same_pointer_to_a_later_generation_is_a_different_operation() {
 
     let mut restarted =
         Provider::new(config_of(keys, &state_dir, Some(&projects), agent)).expect("provider");
-    restarted.recover().expect("recover");
+    restarted.recover().await.expect("recover");
     let previous = restarted
         .state()
         .session(&session_id)
@@ -934,7 +934,7 @@ async fn the_owner_is_admitted_when_only_the_operation_ledger_recorded_it() {
     std::fs::write(&commands_path, kept).expect("write command ledger");
 
     let mut restarted = provider(&state_dir, Some(&projects));
-    restarted.recover().expect("recover");
+    restarted.recover().await.expect("recover");
     assert!(
         !restarted.state().is_command_consumed("wake-owner"),
         "the crash window is only interesting while the command is unconsumed"

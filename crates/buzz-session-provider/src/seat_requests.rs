@@ -79,6 +79,27 @@ pub struct SeatRequest {
     /// than trusting this, because a pack source can move between restarts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pack_ref: Option<PackRef>,
+    /// Whether the handover fence stops this generation from acting.
+    ///
+    /// A fenced row is still *stated* rather than dropped, because the two
+    /// silences mean different things to the host: a row that disappears says
+    /// the generation is gone, and this says the generation is still here and
+    /// still this provider's, but somebody else holds the session
+    /// (`docs/HANDOVER_IMPL.md` §3). The host skips staging custody for it —
+    /// putting a usable key on disk for a body that cannot take a turn is the
+    /// cost of getting this wrong — and can say why.
+    ///
+    /// Secret-free like every other field here: it is a boolean derived from
+    /// the accepted authority chain, which is public. Absent (false) for every
+    /// unfenced row, so a host built before this field reads exactly the file
+    /// it read before.
+    #[serde(default, skip_serializing_if = "is_not_fenced")]
+    pub fenced: bool,
+}
+
+/// Whether a row writes no `fenced` key at all.
+fn is_not_fenced(fenced: &bool) -> bool {
+    !*fenced
 }
 
 /// The whole `seat-requests.json`.
@@ -111,13 +132,20 @@ pub fn seat_requests_path(state_dir: &Path) -> PathBuf {
 
 /// The row one session record contributes, or `None` when it contributes none.
 ///
-/// Two filters, both deliberate. A **closed** record's generation is retired,
-/// so re-staging custody for it would put a usable key on disk for an
+/// Three filters now, all deliberate. A **closed** record's generation is
+/// retired, so re-staging custody for it would put a usable key on disk for an
 /// execution that can never take another turn. An **unseated** record runs as
 /// the operator, holds no seat, and needs nothing staged — it restores from
-/// its cursor alone.
-fn request_for(record: &SessionRecord) -> Option<SeatRequest> {
-    if record.closed {
+/// its cursor alone. A **retired** record's whole umbrella has been deleted
+/// (`docs/HANDOVER_IMPL.md` §3.2): it is omitted rather than marked, because
+/// unlike a fence it will never be lifted, and a row that asked the host to
+/// stage a key for a deleted session would be asking it to prepare work that
+/// cannot exist.
+///
+/// A **fenced** record is stated with [`SeatRequest::fenced`] instead of being
+/// dropped — see that field for why the two silences must not be the same one.
+fn request_for(record: &SessionRecord, provider_pubkey: &str) -> Option<SeatRequest> {
+    if record.closed || record.is_retired() {
         return None;
     }
     let actor = record.actor.clone()?;
@@ -132,15 +160,34 @@ fn request_for(record: &SessionRecord) -> Option<SeatRequest> {
         session_id: record.session_id.clone(),
         generation: record.generation,
         pack_ref: record.pack_ref.clone(),
+        fenced: is_fenced(record, provider_pubkey),
     })
 }
 
+/// Whether the handover fence stops this record's generation from acting.
+///
+/// Asked as the provider asks it of its own wakes — operator and body both
+/// this provider — because that is exactly the question the host needs
+/// answered: *could this machine take a turn on this session at all?* A claim
+/// held by somebody else on **this** body still answers yes, because the
+/// claimant steers through this provider, and its seat must therefore stay
+/// staged.
+fn is_fenced(record: &SessionRecord, provider_pubkey: &str) -> bool {
+    crate::commands::handover_fence(record, provider_pubkey, provider_pubkey).is_some()
+}
+
 /// Every row `records` implies, in the order the records are given.
-pub fn derive_seat_requests<'a, I>(records: I) -> Vec<SeatRequest>
+///
+/// `provider_pubkey` is this provider's authority pubkey — the body a claim
+/// either names or does not.
+pub fn derive_seat_requests<'a, I>(records: I, provider_pubkey: &str) -> Vec<SeatRequest>
 where
     I: IntoIterator<Item = &'a SessionRecord>,
 {
-    records.into_iter().filter_map(request_for).collect()
+    records
+        .into_iter()
+        .filter_map(|record| request_for(record, provider_pubkey))
+        .collect()
 }
 
 /// Rewrite `seat-requests.json` to describe exactly the open seated
@@ -152,14 +199,18 @@ where
 /// set writes an empty `requests` array rather than deleting the file, so a
 /// reader can tell "the provider says nothing is seated" from "the provider
 /// has not written yet".
-pub fn write_seat_requests<'a, I>(state_dir: &Path, records: I) -> io::Result<()>
+pub fn write_seat_requests<'a, I>(
+    state_dir: &Path,
+    records: I,
+    provider_pubkey: &str,
+) -> io::Result<()>
 where
     I: IntoIterator<Item = &'a SessionRecord>,
 {
     let file = SeatRequestsFile {
         version: SEAT_REQUESTS_VERSION,
         provider_pid: std::process::id(),
-        requests: derive_seat_requests(records),
+        requests: derive_seat_requests(records, provider_pubkey),
     };
     let body = serde_json::to_vec_pretty(&file)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;

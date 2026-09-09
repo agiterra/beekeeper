@@ -112,6 +112,14 @@ pub(crate) enum RestoreObstacle {
     ActorUnavailable,
     /// The generation already has a live process; there is nothing to restore.
     AlreadyLive,
+    /// The umbrella has been handed over or deleted, so nothing under it may
+    /// be reopened on this body (`docs/HANDOVER_IMPL.md` §3).
+    ///
+    /// Carries the fence's own answer rather than re-deriving one: the code
+    /// and the sentence a restore refuses with are exactly the ones a turn
+    /// would have refused with, so a person chasing "why did nothing happen"
+    /// reads one story and not two.
+    Fenced(crate::commands::FenceRefusal),
 }
 
 impl RestoreObstacle {
@@ -124,6 +132,7 @@ impl RestoreObstacle {
             Self::Rejected(_) => NATIVE_RESTORE_REJECTED,
             Self::ActorUnavailable => ACTOR_UNAVAILABLE,
             Self::AlreadyLive => SESSION_ALREADY_ATTACHED,
+            Self::Fenced(refusal) => refusal.code,
         }
     }
 
@@ -157,6 +166,7 @@ impl RestoreObstacle {
             Self::AlreadyLive => {
                 "this execution already has a live process on this provider".to_owned()
             }
+            Self::Fenced(refusal) => refusal.message.clone(),
         }
     }
 }
@@ -191,6 +201,20 @@ impl Provider {
         };
         if record.closed {
             return Ok(Err(RestoreObstacle::ProviderUnavailable));
+        }
+        // 1a. The handover fence, before anything is asked of an adapter
+        //     (§3). A restore spawns a process and reattaches a conversation;
+        //     doing that for a session another machine now holds is precisely
+        //     the second live execution of one task that the fence exists to
+        //     prevent, and doing it for a deleted one would reopen work the
+        //     relay no longer has. Asked with this provider as both operator
+        //     and body, because a restore is this provider acting on its own
+        //     initiative: on the claimed body it proceeds, anywhere else it
+        //     refuses by name.
+        if let Some(refusal) =
+            crate::commands::handover_fence(&record, &self.pubkey_hex, &self.pubkey_hex)
+        {
+            return Ok(Err(RestoreObstacle::Fenced(refusal)));
         }
         // 2. No live process.
         if self

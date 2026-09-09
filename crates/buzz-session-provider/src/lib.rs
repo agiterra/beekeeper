@@ -53,6 +53,7 @@ pub mod payload;
 pub mod publish;
 mod reachability;
 pub mod redaction_vault;
+pub mod retirement;
 pub mod seat_bee;
 pub mod seat_requests;
 pub mod session;
@@ -70,6 +71,7 @@ use uuid::Uuid;
 
 use buzz_acp::relay::{HarnessRelay, RelayEventPublisher, RestClient};
 use buzz_acp::{ChannelFilter, TurnUsage};
+use buzz_core::coding_session_authority_claim::{ClaimLink, ClaimState};
 use buzz_core::coding_session_authority_transition::CodingSessionAuthorityTransitionType;
 use buzz_core::coding_session_command::{
     coding_session_target_key, CodingSessionDelivery, CodingSessionTarget,
@@ -91,7 +93,7 @@ use buzz_core::kind::{
     KIND_CODING_SESSION_LIFECYCLE_COMMAND, KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
     KIND_CODING_SESSION_METADATA, KIND_CODING_SESSION_OBSERVATION, KIND_CODING_SESSION_POLICY,
     KIND_CODING_SESSION_PROVIDER_CATALOG, KIND_CODING_SESSION_TEAM_TRANSACTION,
-    KIND_CODING_SESSION_TRANSCRIPT, KIND_MEMBER_ADDED_NOTIFICATION,
+    KIND_CODING_SESSION_TRANSCRIPT, KIND_DELETION, KIND_MEMBER_ADDED_NOTIFICATION,
     KIND_MEMBER_REMOVED_NOTIFICATION, KIND_SYSTEM_MESSAGE,
 };
 use buzz_sdk::builders::{
@@ -113,8 +115,9 @@ use commands::{
 use config::Config;
 use context_projector::{ContextProjectionLimits, ContextProjectionRequest};
 use payload::{
-    Capabilities, LifecycleReceipt, SessionMetadata, SessionStatus, TranscriptEnvelope, TurnBudget,
-    GENESIS_NOT_FOUND, METADATA_SCHEMA, PROVIDER_UNAVAILABLE, SESSION_ALREADY_ATTACHED,
+    Capabilities, LifecycleReceipt, SessionMetadata, SessionMetadataHandover,
+    SessionMetadataHandoverState, SessionStatus, TranscriptEnvelope, TurnBudget, GENESIS_NOT_FOUND,
+    METADATA_SCHEMA, PROVIDER_UNAVAILABLE, SESSION_ALREADY_ATTACHED,
 };
 use publish::{EventSink, Outbox, Priority};
 use session::{
@@ -267,7 +270,6 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
     };
 
     let mut provider = Provider::new(config)?;
-    provider.recover()?;
 
     let pubkey_hex = provider.config.pubkey_hex();
     tracing::info!(
@@ -308,6 +310,14 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
         ),
     }
 
+    // Repair what the last exit left behind — and, because the relay reader
+    // and its witnessed identity are now in hand, do it in the order §3.2
+    // requires: reconcile accepted deletions and re-derive the handover fence
+    // *before* any recovered execution republishes metadata or asks for seat
+    // custody. This used to run before the connection, which is precisely why
+    // a deleted umbrella could come back advertising itself as resumable.
+    provider.recover().await?;
+
     // One bounded listener for every pending CI continuation, started after
     // the relay identity is known: without it no result signer can be
     // verified, and an unverifiable result must never wake an agent.
@@ -331,10 +341,9 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
     relay.subscribe_membership_notifications().await?;
     provider.refresh_catalog(true)?;
 
-    // Grants accepted while this provider was down are re-verified and folded
-    // in before the first command is served; live receipts extend from here.
-    let rest = relay.rest_client();
-    provider.backfill_authority_chains(&rest).await;
+    // Grants accepted while this provider was down were re-verified and folded
+    // in by `recover` above, ahead of the first metadata publish; live receipts
+    // extend from here.
 
     let publisher = relay.event_publisher();
     let mut ticker = tokio::time::interval(RUNTIME_TICK);
@@ -424,6 +433,10 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
                 if let Err(error) = provider.run_ci_continuation_tick().await {
                     tracing::warn!(target: "csp::ci", "CI continuation processing failed: {error}");
                 }
+                // Usually a no-op: only a startup whose relay reads failed
+                // leaves anything here, and this is what lets those executions
+                // stop refusing without waiting for another restart.
+                provider.retry_pending_claim_verification().await;
             }
             // The replay reorder window closing is a delivery, not a timer
             // tick: the turns it holds are already the operator's, they are
@@ -613,6 +626,28 @@ pub struct Provider {
     /// authority-chain consumption fails closed: genesis-bearing sessions
     /// stay founder-only.
     relay_self: Option<String>,
+    /// Genesis refs whose authority chain this process has not yet managed to
+    /// re-read, so their handover claim is **unknown** rather than absent.
+    ///
+    /// Filled by [`Provider::recover`] with every open genesis-bearing record
+    /// and emptied one genesis at a time as
+    /// [`Provider::backfill_session_authority`] succeeds — during recovery,
+    /// and on the runtime tick afterwards. While a genesis is in here its
+    /// records refuse turns, resumes, wakes and creates with
+    /// [`commands::AUTHORITY_NOT_REVERIFIED`] and publish no metadata.
+    ///
+    /// In memory, and deliberately: it is a statement about what *this
+    /// process* has read, not a durable fact about the session. A provider
+    /// that never recovers — every test that builds one directly — has an
+    /// empty set and behaves exactly as before.
+    ///
+    /// It exists because the two halves of the chain fail in opposite
+    /// directions. An unverifiable grant is never applied, so an unreadable
+    /// chain leaves a session founder-only; an unverifiable *claim* leaves the
+    /// persisted `handover` at whatever the machine had before it went down,
+    /// which for the returning machine is "nobody has taken this over". Grants
+    /// fail closed for free; the claim needs this.
+    claims_pending_reverification: HashSet<String>,
     /// Per-session bookkeeping for the bounded verified-context refresh, keyed
     /// by session id exactly like `git_probe_generation`.
     ///
@@ -868,6 +903,7 @@ impl Provider {
             recorded_redactions: HashMap::new(),
             rest_client: None,
             relay_self: None,
+            claims_pending_reverification: HashSet::new(),
             context_refresh: HashMap::new(),
             policy_turn_budgets: HashMap::new(),
             subscribed: BTreeSet::new(),
@@ -921,7 +957,42 @@ impl Provider {
     ///    is reading any of them, and the in-memory session→package binding
     ///    that named them died with the previous process. A resume mints a
     ///    fresh package id and a fresh directory.
-    pub fn recover(&mut self) -> anyhow::Result<()> {
+    ///
+    /// # Ordering, which is the whole of `docs/HANDOVER_IMPL.md` §3.2
+    ///
+    /// Before the stranded loop in (2) republishes anything, two questions are
+    /// asked of the relay, in this order:
+    ///
+    /// 1. **Retirement** — has an accepted whole-session deletion retired this
+    ///    umbrella ([`crate::retirement`])? A retired record publishes no
+    ///    metadata, asks for no custody, and is skipped by the loop entirely.
+    ///    First, because a deleted session must never be advertised even once,
+    ///    and because there is no point folding a claim over a chain whose
+    ///    genesis is gone.
+    /// 2. **The claim** — who holds this umbrella, and on which body
+    ///    ([`Provider::backfill_authority_chains`])? The fence is re-derived
+    ///    from the accepted chain here rather than trusted from the persisted
+    ///    value alone, so a claim made while this provider was down is in
+    ///    force before its first metadata event, not after it.
+    ///
+    /// Both are best-effort reads. A provider with no relay reader — which is
+    /// every unit test that does not wire one — recovers exactly as it did
+    /// before, with the fence it persisted and no retirement it has not
+    /// witnessed. A failed read is never a deletion and never a claim; what it
+    /// *is* is a reason to refuse, which
+    /// [`Provider::claims_pending_reverification`] carries.
+    ///
+    /// One consequence of running this after the connection rather than before
+    /// it: when the relay is unreachable at startup, `run_with` returns from
+    /// `HarnessRelay::connect` and this never runs, so the local repairs above
+    /// — the package sweep, the in-flight turn synthesis, the orphaned-command
+    /// reconciliation — are deferred to the next start that does connect.
+    /// That costs nothing in correctness, because every one of those repairs
+    /// exists to publish something (a terminal transcript row, a receipt,
+    /// metadata) and none of it could have been published without a relay
+    /// anyway. What it buys is the ordering guarantee below, which is only
+    /// obtainable with a reader in hand.
+    pub async fn recover(&mut self) -> anyhow::Result<()> {
         // Best-effort: a state directory that refuses the sweep must not stop
         // the provider from coming back up. The consequence is disk, not
         // correctness — the reader of those files is already gone.
@@ -950,12 +1021,41 @@ impl Provider {
             self.state.consume_command(&command_id, now_secs())?;
         }
 
-        let stranded: Vec<SessionRecord> = self
+        // Every open umbrella starts this process unverified. Anything that
+        // clears itself does so below or on the tick; anything that does not
+        // refuses by name instead of assuming nobody took it over.
+        self.claims_pending_reverification = self
             .state
             .sessions()
             .filter(|record| !record.closed)
+            .filter_map(|record| record.genesis_ref.clone())
+            .collect();
+
+        // Retirement, then the fence, then anything that publishes. See the
+        // ordering section on this function.
+        if let Some(rest) = self.rest_client.clone() {
+            self.reconcile_retirements(&rest).await;
+            self.backfill_authority_chains(&rest).await;
+        }
+        if !self.claims_pending_reverification.is_empty() {
+            tracing::warn!(
+                target: "csp::authority",
+                umbrellas = self.claims_pending_reverification.len(),
+                "authority chains could not be re-read at startup; their executions refuse commands and publish no metadata until they can be"
+            );
+        }
+
+        let stranded: Vec<SessionRecord> = self
+            .state
+            .sessions()
+            .filter(|record| !record.closed && !record.is_retired())
             .cloned()
             .collect();
+        // A record whose chain is unread is deliberately still in `stranded`:
+        // its in-flight turn is still synthesized and its command ledger still
+        // reconciled, because those repair *local* state and say nothing about
+        // who holds the session. Only the metadata publish is held, and
+        // `publish_metadata` holds it.
         for record in stranded {
             let target = self.target_for(&record);
             if let Some(open_turn) = &record.open_turn {
@@ -1139,6 +1239,15 @@ impl Provider {
                 // idle timeout — see `release_settled_umbrella`.
                 KIND_CODING_SESSION_CLOSURE,
                 KIND_SYSTEM_MESSAGE,
+                // A deletion is not a command either, and it is the only
+                // signal that an umbrella is *gone* rather than finished.
+                // Without it a provider that was offline when a session was
+                // deleted came back and republished metadata for it
+                // (`docs/HANDOVER_IMPL.md` §3.2). The relay's signed 40099
+                // deletion receipt arrives on `KIND_SYSTEM_MESSAGE` above; a
+                // founder's own kind 5 arrives here, and is believed only
+                // together with a read showing the relay applied it.
+                KIND_DELETION,
             ]),
             require_mention: false,
         };
@@ -1428,6 +1537,14 @@ impl Provider {
             }
             KIND_SYSTEM_MESSAGE => {
                 self.on_authority_receipt(channel_id, event, relay).await?;
+                // The same 40099 stream carries the relay's signed deletion
+                // receipts. Both readers ignore what is not theirs, so the
+                // ordering here says only that a grant is folded before a
+                // retirement can make the record stop reading it.
+                self.on_possible_deletion(channel_id, event).await?;
+            }
+            KIND_DELETION => {
+                self.on_possible_deletion(channel_id, event).await?;
             }
             KIND_CODING_SESSION_TEAM_TRANSACTION => {
                 self.on_team_transaction(channel_id, event)?;
@@ -1816,6 +1933,27 @@ impl Provider {
         Ok(())
     }
 
+    /// The handover fence as it applies to one umbrella's team wakes.
+    ///
+    /// The claim is umbrella-wide, so **every** local record rooted at the
+    /// scope's genesis is asked and the strictest answer wins
+    /// ([`commands::umbrella_fence`]). Reading only one of them would let a
+    /// record minted moments ago — `authority_seq` 0, no claim folded into it
+    /// yet — speak for an umbrella its siblings are fenced behind.
+    ///
+    /// An umbrella this provider holds no record for is not fenced by
+    /// anything it knows — it has folded no claim — so it returns `None`, and
+    /// the wake is then judged by the ordinary authority rules.
+    fn team_wake_fence(&self, scope: &team_wake::WakeScope) -> Option<commands::FenceRefusal> {
+        commands::umbrella_fence(
+            &self.state,
+            scope.channel_ref,
+            &scope.genesis_ref,
+            &self.pubkey_hex,
+            &self.pubkey_hex,
+        )
+    }
+
     fn retire_team_wake(&mut self, channel_ref: Uuid) -> anyhow::Result<()> {
         self.team_wakes.retire_in_flight(channel_ref)?;
         self.team_wake_backoff.remove(&channel_ref);
@@ -1876,6 +2014,25 @@ impl Provider {
         };
         intent.last_reason_detail = None;
 
+        // The handover fence, ahead of the authority check and of anything
+        // that would mint a command (§3). A wake is a turn this provider
+        // sends on its own behalf, so it is admitted exactly where every
+        // other turn is: on the claimed body, or not at all. Retired rather
+        // than deferred — a claim that moved this umbrella to another machine
+        // is a settled answer, and the claimant's own provider is the one
+        // that carries the work now. Deferring would hold this channel's
+        // single in-flight slot behind a wake that can never be sent.
+        if let Some(refusal) = self.team_wake_fence(&intent.scope) {
+            tracing::info!(
+                target: "csp::team_wake",
+                channel_ref = %channel_ref,
+                code = refusal.code,
+                "discarding team wake candidate on a fenced or retired umbrella: {}",
+                refusal.message
+            );
+            self.retire_team_wake(channel_ref)?;
+            return Ok(());
+        }
         if !team_wake::provider_may_wake(
             &self.pubkey_hex,
             &snapshot.founder_pubkey,
@@ -2288,9 +2445,11 @@ impl Provider {
     /// The consequence of making it fatal would be refusing a create that
     /// otherwise worked, which is strictly worse.
     fn publish_seat_requests(&self) {
-        if let Err(error) =
-            crate::seat_requests::write_seat_requests(&self.config.state_dir, self.state.sessions())
-        {
+        if let Err(error) = crate::seat_requests::write_seat_requests(
+            &self.config.state_dir,
+            self.state.sessions(),
+            &self.pubkey_hex,
+        ) {
             tracing::warn!(
                 target: "csp::seats",
                 "could not record which generations still need seat custody: {error}"
@@ -2563,6 +2722,21 @@ impl Provider {
             bootstrap_transport: startup.bootstrap_transport,
             open_turn: None,
             closed: false,
+            // Seeded from the umbrella, not left at `NoClaim`. A create that
+            // reaches here under a claimed umbrella has already satisfied the
+            // fence — it is the claimant, on the claimed body — but the record
+            // it mints must carry the claim, or every later turn on this new
+            // execution walks straight past a fence its siblings are behind.
+            // An umbrella this provider holds no other record of folds to
+            // `NoClaim`, and the first accepted receipt fills it in.
+            handover: plan
+                .genesis_ref
+                .as_deref()
+                .map(|genesis_ref| {
+                    commands::umbrella_claim(&self.state, plan.channel_id, genesis_ref)
+                })
+                .unwrap_or_default(),
+            retired: None,
         };
         self.state.insert_session(record)?;
         // A seated create is the first moment this generation's custody could
@@ -4541,9 +4715,34 @@ impl Provider {
                 // Seat authority is consumed by NIP-CSTX readers, not by the
                 // provider's steering ACL. The accepted link still advances
                 // `authority_seq` below so later legacy grants do not stall.
+                //
+                // A claim is in the same position for a different reason: it
+                // moves who is *carrying* the session, not who may steer it,
+                // and it is applied by the claim fold immediately below rather
+                // than by this ACL.
                 CodingSessionAuthorityTransitionType::GrantSeat
-                | CodingSessionAuthorityTransitionType::RevokeSeat => {}
+                | CodingSessionAuthorityTransitionType::RevokeSeat
+                | CodingSessionAuthorityTransitionType::Takeover
+                | CodingSessionAuthorityTransitionType::Transfer => {}
             }
+            // §3 claim consumption. Every accepted link is offered to the
+            // canonical claim fold, not just the `takeover`/`transfer` ones:
+            // a `revoke` or a `grant-viewer` of the claimant is what *voids*
+            // a claim, and a `grant-operator` of that same pubkey is the one
+            // that must deliberately not restore it. Folding the whole link
+            // stream through one rule is what keeps that promise; see
+            // [`state::extend_claim`] for why the persisted state is replayed
+            // rather than the rule re-implemented.
+            record.handover = state::extend_claim(
+                &record.handover,
+                ClaimLink {
+                    seq: accepted.seq,
+                    accepted_event_id: accepted.accepted_event_id.clone(),
+                    transition_type: accepted.transition_type,
+                    grantee_pubkey: accepted.grantee_pubkey.clone(),
+                    body_pubkey: accepted.body_pubkey.clone(),
+                },
+            );
             record.authority_seq = accepted.seq;
         })?;
         tracing::info!(
@@ -4669,7 +4868,94 @@ impl Provider {
                 break;
             }
         }
+        // The chain was read end to end. Whatever it said — a claim, a void,
+        // or nothing at all — this process now *knows*, which is the only
+        // thing the reverification gate is asking. Note that this is reached
+        // only past every early return above: a failed query, a non-array
+        // answer, a missing genesis and an unwitnessed relay identity all
+        // leave the umbrella pending, because none of them read anything.
+        self.claims_pending_reverification.remove(&genesis_ref);
         Ok(())
+    }
+
+    /// Re-read the chains that could not be read at startup, and release the
+    /// executions waiting behind them.
+    ///
+    /// Runs on the ordinary runtime tick and does nothing at all in the usual
+    /// case — the set is empty after a successful recovery. When it is not, a
+    /// genesis that now reads clean gets its held metadata published, so an
+    /// execution that spent a minute unverified still ends up advertised with
+    /// whatever the chain actually says about it.
+    pub async fn retry_pending_claim_verification(&mut self) {
+        if self.claims_pending_reverification.is_empty() {
+            return;
+        }
+        let Some(rest) = self.rest_client.clone() else {
+            return;
+        };
+        let pending: Vec<String> = self.claims_pending_reverification.iter().cloned().collect();
+        for genesis_ref in pending {
+            let session_ids: Vec<String> = self
+                .state
+                .sessions()
+                .filter(|record| {
+                    !record.closed && record.genesis_ref.as_deref() == Some(genesis_ref.as_str())
+                })
+                .map(|record| record.session_id.clone())
+                .collect();
+            // A genesis whose last record closed while it was pending has
+            // nothing left to verify or to hold.
+            if session_ids.is_empty() {
+                self.claims_pending_reverification.remove(&genesis_ref);
+                continue;
+            }
+            for session_id in &session_ids {
+                if let Err(error) = self.backfill_session_authority(session_id, &rest).await {
+                    tracing::warn!(
+                        target: "csp::authority",
+                        %session_id,
+                        "authority re-verification failed: {error}"
+                    );
+                }
+            }
+            if self.claims_pending_reverification.contains(&genesis_ref) {
+                continue;
+            }
+            tracing::info!(
+                target: "csp::authority",
+                %genesis_ref,
+                executions = session_ids.len(),
+                "authority chain re-verified; its executions are admitted or fenced by name"
+            );
+            // The metadata `recover` held. Published now with the fence the
+            // chain actually carries, rather than the `disconnected` this
+            // provider would have guessed at when it came up.
+            for session_id in session_ids {
+                let Some(record) = self.state.session(&session_id).cloned() else {
+                    continue;
+                };
+                if record.is_retired() {
+                    continue;
+                }
+                let status = if self
+                    .sessions
+                    .handle(&session_id)
+                    .is_some_and(session::SessionHandle::is_live)
+                {
+                    SessionStatus::Idle
+                } else {
+                    SessionStatus::Disconnected
+                };
+                let target = self.target_for(&record);
+                if let Err(error) = self.publish_metadata(record.channel_id, &target, status) {
+                    tracing::warn!(
+                        target: "csp::authority",
+                        %session_id,
+                        "held metadata could not be published after re-verification: {error}"
+                    );
+                }
+            }
+        }
     }
 
     /// Backfill every live genesis-bearing session's authority chain.
@@ -4718,6 +5004,7 @@ impl Provider {
             actor_seats,
             in_flight: &self.in_flight,
             delivered_cancels: &self.delivered_cancels,
+            claims_pending_reverification: &self.claims_pending_reverification,
         }
     }
 
@@ -4906,6 +5193,33 @@ impl Provider {
             // repository. The surfaces say "no pack staged" rather than naming
             // one that did not run.
             pack_ref: record.and_then(|record| record.pack_ref.clone()),
+            // §3.1: who holds this umbrella, and on which body. Read from the
+            // record's persisted claim state, so a provider that comes back to
+            // an execution somebody else has taken over advertises the fence
+            // in the same event as the status rather than leaving
+            // `disconnected` to read as an ordinary outage.
+            //
+            // `last()`, not `active()`: a **voided** claim is still disclosed,
+            // with the claim as it stood when it was voided — and `state` is
+            // what says which of the two a reader is looking at (review
+            // finding N7). Without that word both cases publish the same three
+            // references, and a surface would point a person at a claimant who
+            // no longer holds anything. A session nobody ever handed over folds
+            // to `NoClaim`, whose `last()` is `None`, and the key is omitted
+            // entirely rather than nulled.
+            handover: record.map(|record| &record.handover).and_then(|claim| {
+                let state = match claim {
+                    ClaimState::NoClaim => return None,
+                    ClaimState::Active(_) => SessionMetadataHandoverState::Active,
+                    ClaimState::Voided { .. } => SessionMetadataHandoverState::Voided,
+                };
+                claim.last().map(|claim| SessionMetadataHandover {
+                    state,
+                    claimant: claim.claimant.clone(),
+                    body_pubkey: claim.body_pubkey.clone(),
+                    accepted_event_id: claim.accepted_event_id.clone(),
+                })
+            }),
         }
     }
 
@@ -5372,6 +5686,45 @@ impl Provider {
         target: &CodingSessionTarget,
         status: SessionStatus,
     ) -> anyhow::Result<()> {
+        // §3.2, and the whole of root's continuity finding: a retired umbrella
+        // publishes nothing, ever again. This is the single choke point every
+        // metadata publish passes through, so the guard lives here rather than
+        // at each of the eight call sites — a new one added later inherits it.
+        // Republishing here is not merely stale: the genesis and the
+        // conversation are deleted on the relay, and a fresh 44223 carrying a
+        // new event id is a *new* record the deletion never named, which is
+        // exactly how a deleted session came back looking resumable.
+        if self
+            .state
+            .session(&target.session_id)
+            .is_some_and(state::SessionRecord::is_retired)
+        {
+            tracing::debug!(
+                target: "csp::retirement",
+                session_id = %target.session_id,
+                "suppressing metadata for a retired session"
+            );
+            return Ok(());
+        }
+        // And held, not suppressed, while this umbrella's authority chain is
+        // unread. `disconnected` over an execution somebody has taken over
+        // reads as an ordinary outage — §3.1 exists to stop exactly that — and
+        // a provider that cannot yet tell the two apart should say nothing
+        // rather than say the comfortable one.
+        // `retry_pending_claim_verification` publishes it once the chain reads.
+        if self
+            .state
+            .session(&target.session_id)
+            .and_then(|record| record.genesis_ref.as_deref())
+            .is_some_and(|genesis_ref| self.claims_pending_reverification.contains(genesis_ref))
+        {
+            tracing::debug!(
+                target: "csp::authority",
+                session_id = %target.session_id,
+                "holding metadata until this umbrella's authority chain is re-verified"
+            );
+            return Ok(());
+        }
         let metadata = self.metadata_for(target, status);
         let content = serde_json::to_string(&metadata)?;
         if self
@@ -6859,6 +7212,12 @@ mod tests {
     mod ci_continuation_tests;
     #[path = "founder_wake_framing_tests.rs"]
     mod founder_wake_framing_tests;
+    #[path = "handover_ci_tests.rs"]
+    mod handover_ci_tests;
+    #[path = "handover_fence_tests.rs"]
+    mod handover_fence_tests;
+    #[path = "handover_retirement_tests.rs"]
+    mod handover_retirement_tests;
     #[path = "hire_requester_tests.rs"]
     mod hire_requester_tests;
     #[path = "observed_gate_row_tests.rs"]
@@ -8154,6 +8513,8 @@ mod tests {
             bootstrap_transport: None,
             open_turn: None,
             closed: false,
+            handover: ClaimState::NoClaim,
+            retired: None,
             pack_ref: None,
         }
     }
@@ -8986,7 +9347,7 @@ mod tests {
         let second = Uuid::new_v4().to_string();
         {
             let mut provider = provider_with_sidecar(&state_dir, None);
-            provider.recover().expect("first recover");
+            provider.recover().await.expect("first recover");
             context_store::write_context_package(&state_dir, &first, &empty_context_package())
                 .expect("write first");
             context_store::write_context_package(&state_dir, &second, &empty_context_package())
@@ -8994,7 +9355,7 @@ mod tests {
         }
 
         let mut restarted = provider_with_sidecar(&state_dir, None);
-        restarted.recover().expect("recover");
+        restarted.recover().await.expect("recover");
         assert!(
             !state_dir.join("context-packages").exists(),
             "no reader survives a restart, so every leftover package is swept"
@@ -12357,7 +12718,7 @@ mod tests {
 
         let mut restarted =
             Provider::new(config_of(keys, &state_dir, Some(&projects), agent)).expect("provider");
-        restarted.recover().expect("recover");
+        restarted.recover().await.expect("recover");
         // Recovery retires the generation the dead process owned; that one
         // `disconnected` metadata is the only thing it may publish.
         let after_recovery = restarted.pending_publishes();
@@ -12436,7 +12797,7 @@ mod tests {
 
         let mut restarted =
             Provider::new(config_of(keys, &state_dir, Some(&projects), agent)).expect("provider");
-        restarted.recover().expect("recover");
+        restarted.recover().await.expect("recover");
         restarted
             .queue_initial_live_leases()
             .expect("recovery lease scan");
@@ -12509,7 +12870,7 @@ mod tests {
             agent.clone(),
         ))
         .expect("provider");
-        restarted.recover().expect("recover");
+        restarted.recover().await.expect("recover");
         let previous = restarted
             .state()
             .session(&session_id)
@@ -12586,7 +12947,7 @@ mod tests {
         drop(restarted);
         let mut after_stop =
             Provider::new(config_of(keys, &state_dir, Some(&projects), agent)).expect("provider");
-        after_stop.recover().expect("recover");
+        after_stop.recover().await.expect("recover");
         assert!(
             after_stop
                 .state()
@@ -12648,6 +13009,8 @@ mod tests {
                         started_at_ms: now_ms(),
                     }),
                     closed: false,
+                    handover: ClaimState::NoClaim,
+                    retired: None,
                     pack_ref: None,
                 })
                 .expect("insert");
@@ -12660,7 +13023,7 @@ mod tests {
         let agent = fake_agent(dir.path(), "good-agent", GOOD_AGENT);
         let mut restarted =
             Provider::new(config_of(keys, &state_dir, None, agent)).expect("provider");
-        restarted.recover().expect("recover");
+        restarted.recover().await.expect("recover");
         let sink = CollectingSink::new();
         restarted.flush(&sink).await.expect("flush");
 
@@ -13695,7 +14058,7 @@ mod tests {
         // context packages of the dead process are swept. Replaying into a
         // provider that skipped it would be testing a startup that does not
         // exist.
-        restarted.recover().expect("recover");
+        restarted.recover().await.expect("recover");
         assert!(restarted.state().is_command_consumed("turn-running"));
         assert!(!restarted.state().is_command_consumed("turn-second"));
         assert!(!restarted.state().is_command_consumed("turn-third"));

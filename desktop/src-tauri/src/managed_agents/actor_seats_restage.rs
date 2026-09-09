@@ -52,6 +52,15 @@ use crate::relay::relay_ws_url_with_override;
 /// provider's state dir.
 pub(crate) const SEAT_REQUESTS_FILE_NAME: &str = "seat-requests.json";
 
+/// The sentence a fenced row is skipped with.
+///
+/// One line, and a named constant, on purpose. Written as a `\`-continued
+/// multi-line literal it read fine in the source and shipped with eighteen
+/// spaces in the middle of it — a wrapped literal is a formatting decision the
+/// operator ends up reading. The test asserts this exact string.
+pub(crate) const FENCED_SKIP_REASON: &str =
+    "HANDOVER_FENCED: this session has been handed over, so its seat is not re-staged on this computer";
+
 /// One row of `seat-requests.json`: an open seated generation whose custody
 /// may need to be re-staged. The provider writes this file; the host only
 /// reads it (see the module docs). Field names are the wire contract with the
@@ -94,6 +103,21 @@ pub(crate) struct SeatRequest {
     /// follow a project branch that has advanced since the generation began.
     #[serde(default)]
     pub pack_ref: Option<packs_cache::PackRef>,
+    /// Whether the provider's handover fence stops this generation acting.
+    ///
+    /// Set when the umbrella has been handed over to somebody else's execution
+    /// body, or when a claim over it was voided (`docs/HANDOVER_IMPL.md` §3).
+    /// A fenced generation still exists and is still this provider's, so the
+    /// provider states the row rather than dropping it — but re-staging it
+    /// would file a usable signing key on disk for a seat that cannot take a
+    /// turn, so this host skips it and says so.
+    ///
+    /// A **retired** generation, by contrast, is absent from the file
+    /// entirely: its umbrella was deleted and it is never coming back. Absent
+    /// here means `false`, which is what every row a pre-fence provider wrote
+    /// means.
+    #[serde(default)]
+    pub fenced: bool,
 }
 
 /// The whole `seat-requests.json`: a version tag plus the open rows.
@@ -190,6 +214,19 @@ pub(crate) fn restage_actor_seats_with(
         }
         if file.pending.contains_key(key) {
             report.already_present += 1;
+            continue;
+        }
+        // Ahead of every other check, including whether the actor is managed
+        // here: a fenced generation cannot take a turn on this machine no
+        // matter how well its custody could be reconstructed, so staging its
+        // key would put a live credential on disk for work this body is not
+        // allowed to do. Skipped and named, never silently dropped — the
+        // report is where an operator finds out the fence is why nothing
+        // restarted.
+        if request.fenced {
+            report
+                .skipped
+                .push((key.to_string(), FENCED_SKIP_REASON.to_string()));
             continue;
         }
         let Some(record) = records.iter().find(|record| record.pubkey == request.actor) else {
@@ -324,7 +361,10 @@ pub(crate) async fn restage_actor_seats_for_provider(
     let mut resolved_packs: BTreeMap<String, Result<SeatPackPreview, String>> = BTreeMap::new();
     for request in &requests_file.requests {
         let key = request.command_id.trim().to_string();
-        if key.is_empty() || existing.pending.contains_key(&key) {
+        // A fenced row is refused by the core below without consulting this
+        // map, so resolving a pack for it would spend a relay read on a seat
+        // that will not be staged.
+        if key.is_empty() || request.fenced || existing.pending.contains_key(&key) {
             continue;
         }
         let Some(record) = records.iter().find(|record| record.pubkey == request.actor) else {

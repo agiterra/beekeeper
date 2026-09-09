@@ -37,6 +37,8 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use buzz_core::coding_session_authority_claim::{fold_current_claim, ClaimLink, ClaimState};
+use buzz_core::coding_session_authority_transition::CodingSessionAuthorityTransitionType;
 use buzz_core::coding_session_command::CodingSessionTarget;
 use buzz_core::coding_session_routing::RoutingRecord;
 
@@ -266,6 +268,132 @@ pub struct SessionRecord {
     pub open_turn: Option<OpenTurn>,
     /// Whether this generation has been retired (no further turns accepted).
     pub closed: bool,
+    /// What this session's accepted authority chain says about its handover
+    /// claim — who holds the whole umbrella, and on which execution body.
+    ///
+    /// Folded from the same verified links that extend
+    /// [`Self::granted_operators`] (`crate::authority`), persisted so the
+    /// fence survives a restart, and re-derived from the chain on recovery
+    /// before any metadata is published. The claim is **umbrella-wide**
+    /// (`docs/HANDOVER_IMPL.md` §1), so every local record rooted at the same
+    /// genesis carries the same value.
+    ///
+    /// [`ClaimState::NoClaim`] — the state of every session nobody has ever
+    /// handed over — serializes as **absent**, so a `state.json` written
+    /// before this field existed decodes unchanged and one written by this
+    /// build gains no key for the sessions that have no claim.
+    #[serde(default, skip_serializing_if = "claim_state_is_absent")]
+    pub handover: ClaimState,
+    /// The accepted whole-session deletion that retired this umbrella, if one
+    /// has been verified.
+    ///
+    /// Terminal and one-way: a retired record publishes no metadata, asks for
+    /// no seat custody, restores nothing, and answers
+    /// [`crate::payload::SESSION_RETIRED`] to every command
+    /// (`docs/HANDOVER_IMPL.md` §3.2). Absent for every record whose umbrella
+    /// has not been deleted, which is the shape every pre-field `state.json`
+    /// already has.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retired: Option<Retirement>,
+}
+
+/// The accepted deletion that retired an umbrella, as this provider verified it.
+///
+/// Kept rather than reduced to a boolean because "deleted" is a claim a
+/// reader is entitled to check: the deletion event id is the kind 5 the relay
+/// applied, and `receipt_event_id` names the relay-signed 40099 receipt when
+/// the retirement came from one rather than from a founder-signed request
+/// plus a confirmed absence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Retirement {
+    /// Event id (lowercase 64-hex) of the accepted kind 5 deletion.
+    pub deletion_event_id: String,
+    /// Event id of the relay-signed 40099 deletion receipt, when the
+    /// retirement was proven by one. `None` means it was proven the other
+    /// way: a founder-signed kind 5 plus an authenticated exact-id read of
+    /// the genesis returning zero rows.
+    pub receipt_event_id: Option<String>,
+    /// When this provider recorded the retirement, milliseconds since the
+    /// Unix epoch. The provider's own observation time, never the deletion's.
+    pub at: i64,
+}
+
+/// Whether a claim state is the one that writes no key at all.
+///
+/// A free function rather than a method on [`ClaimState`] because the absence
+/// rule is this file's storage decision, not the shared type's: `buzz-core`
+/// owns what the three states *mean*, and the provider owns which of them its
+/// `state.json` omits so older files keep decoding.
+fn claim_state_is_absent(state: &ClaimState) -> bool {
+    matches!(state, ClaimState::NoClaim)
+}
+
+/// The shortest link prefix that folds to exactly `state`.
+///
+/// The provider learns its chain one accepted link at a time — a live 40099
+/// receipt, or one step of a backfill — but
+/// [`buzz_core::coding_session_authority_claim::fold_current_claim`] is
+/// deliberately a whole-chain fold that starts at
+/// [`ClaimState::NoClaim`]. Rather than reimplement the claim rule for the
+/// incremental case (two copies of a rule this careful is exactly how a
+/// regrant quietly resurrects a claim), the provider replays the *persisted*
+/// state as the shortest chain that produces it and then folds the new link
+/// with the canonical function.
+///
+/// The prefix is faithful because the fold's whole state is the three
+/// variants: `Active(claim)` is what one `takeover` of that claimant and body
+/// produces, and `Voided { last, voided_by }` is what that same `takeover`
+/// followed by a `revoke` of its claimant produces. `resume_claim_links`
+/// therefore round-trips: folding the prefix alone returns `state`, which
+/// `folding_a_prefix_alone_returns_the_state_it_came_from` pins.
+pub fn resume_claim_links(state: &ClaimState) -> Vec<ClaimLink> {
+    match state {
+        ClaimState::NoClaim => Vec::new(),
+        ClaimState::Active(claim) => vec![ClaimLink {
+            seq: claim.seq,
+            accepted_event_id: claim.accepted_event_id.clone(),
+            transition_type: CodingSessionAuthorityTransitionType::Takeover,
+            grantee_pubkey: claim.claimant.clone(),
+            body_pubkey: Some(claim.body_pubkey.clone()),
+        }],
+        ClaimState::Voided {
+            last,
+            voided_by,
+            seq,
+        } => vec![
+            ClaimLink {
+                seq: last.seq,
+                accepted_event_id: last.accepted_event_id.clone(),
+                transition_type: CodingSessionAuthorityTransitionType::Takeover,
+                grantee_pubkey: last.claimant.clone(),
+                body_pubkey: Some(last.body_pubkey.clone()),
+            },
+            ClaimLink {
+                seq: *seq,
+                accepted_event_id: voided_by.clone(),
+                transition_type: CodingSessionAuthorityTransitionType::Revoke,
+                grantee_pubkey: last.claimant.clone(),
+                body_pubkey: None,
+            },
+        ],
+    }
+}
+
+/// Apply one newly accepted chain link to a persisted claim state.
+///
+/// The single place the provider advances a claim. Both consumption paths —
+/// the live 40099 receipt and the backfill — call this, and both get the
+/// canonical rule (including "a regrant never resurrects a claim") because
+/// the decision itself is made by
+/// [`fold_current_claim`] over [`resume_claim_links`] plus the new link, not
+/// by a second copy of the rule living here.
+pub fn extend_claim(state: &ClaimState, link: ClaimLink) -> ClaimState {
+    fold_current_claim(
+        resume_claim_links(state)
+            .into_iter()
+            .chain(std::iter::once(link)),
+    )
 }
 
 fn default_provider_instance_ref() -> String {
@@ -297,6 +425,11 @@ impl SessionRecord {
             session_id: self.session_id.clone(),
             generation: self.generation,
         }
+    }
+
+    /// Whether an accepted whole-session deletion has retired this umbrella.
+    pub fn is_retired(&self) -> bool {
+        self.retired.is_some()
     }
 
     /// Lifecycle command that minted this exact generation.
@@ -1118,6 +1251,8 @@ mod tests {
             bootstrap_transport: None,
             open_turn: None,
             closed: false,
+            handover: ClaimState::NoClaim,
+            retired: None,
             pack_ref: None,
         }
     }
@@ -1546,5 +1681,97 @@ mod tests {
         fs::write(dir.path().join(STATE_FILE), b"{ not json").expect("write");
         let error = StateStore::open(dir.path(), 3600).expect_err("should refuse to start");
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    }
+
+    /// The incremental fold must agree with the whole-chain one, or the
+    /// provider's persisted fence and the canonical rule can disagree.
+    ///
+    /// Every prefix of a chain is replayed through
+    /// [`resume_claim_links`] + [`extend_claim`], one link at a time, and
+    /// compared with [`fold_current_claim`] over the whole chain. The chain
+    /// deliberately includes the regrant, which is the case a hand-written
+    /// incremental rule gets wrong.
+    #[test]
+    fn folding_link_by_link_agrees_with_folding_the_whole_chain() {
+        use buzz_core::coding_session_authority_claim::fold_current_claim;
+
+        let claimant = "bb".repeat(32);
+        let body = "dd".repeat(32);
+        let link = |seq: u32,
+                    transition_type: CodingSessionAuthorityTransitionType,
+                    grantee: &str,
+                    body: Option<&str>| ClaimLink {
+            seq,
+            accepted_event_id: format!("{seq:02}").repeat(32),
+            transition_type,
+            grantee_pubkey: grantee.to_owned(),
+            body_pubkey: body.map(str::to_owned),
+        };
+        let chain = [
+            link(
+                1,
+                CodingSessionAuthorityTransitionType::GrantOperator,
+                &claimant,
+                None,
+            ),
+            link(
+                2,
+                CodingSessionAuthorityTransitionType::Takeover,
+                &claimant,
+                Some(&body),
+            ),
+            link(
+                3,
+                CodingSessionAuthorityTransitionType::Revoke,
+                &claimant,
+                None,
+            ),
+            // The regrant: standing restored, claim still voided.
+            link(
+                4,
+                CodingSessionAuthorityTransitionType::GrantOperator,
+                &claimant,
+                None,
+            ),
+            link(
+                5,
+                CodingSessionAuthorityTransitionType::Takeover,
+                &claimant,
+                Some(&"ff".repeat(32)),
+            ),
+        ];
+
+        let mut incremental = ClaimState::NoClaim;
+        for length in 1..=chain.len() {
+            incremental = extend_claim(&incremental, chain[length - 1].clone());
+            let batch = fold_current_claim(chain[..length].iter().cloned());
+            assert_eq!(
+                incremental, batch,
+                "link-by-link and whole-chain folds disagree after {length} links"
+            );
+            // And the replayed prefix alone reproduces the state it came from.
+            assert_eq!(
+                fold_current_claim(resume_claim_links(&incremental).into_iter()),
+                incremental
+            );
+        }
+        assert!(matches!(incremental, ClaimState::Active(_)));
+    }
+
+    /// `NoClaim` writes no key, so a `state.json` from before the fence
+    /// existed decodes unchanged and one written now gains nothing for the
+    /// sessions nobody handed over.
+    #[test]
+    fn an_unclaimed_record_serializes_without_a_handover_or_retired_key() {
+        let record = record("session-plain");
+        let encoded = serde_json::to_value(&record).expect("encode");
+        assert!(encoded.get("handover").is_none(), "{encoded}");
+        assert!(encoded.get("retired").is_none(), "{encoded}");
+
+        let mut legacy = encoded.clone();
+        legacy.as_object_mut().expect("object").remove("handover");
+        let decoded: SessionRecord = serde_json::from_value(legacy).expect("legacy decodes");
+        assert_eq!(decoded.handover, ClaimState::NoClaim);
+        assert_eq!(decoded.retired, None);
     }
 }

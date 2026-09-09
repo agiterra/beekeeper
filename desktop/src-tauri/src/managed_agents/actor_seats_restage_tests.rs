@@ -61,6 +61,7 @@ fn request(command_id: &str, actor: &str, role: &str, project_ref: Option<&str>)
         session_id: "sess-1".to_string(),
         generation: 1,
         pack_ref: Some(pack_ref(role)),
+        fenced: false,
     }
 }
 
@@ -388,4 +389,108 @@ fn original_repository_pin_survives_a_moving_project_source() {
     assert!(pinned.git_ref.is_none());
     assert_eq!(pinned.path, "personas/roles");
     assert!(ensure_restage_relay("wss://other.test", RELAY).is_err());
+}
+
+/// A fenced generation is stated by the provider and skipped here: its
+/// umbrella has been handed over, so the seat cannot take a turn on this
+/// computer and filing its signing key would be putting a live credential on
+/// disk for work this body is not allowed to do.
+///
+/// Skipped and *named*, not dropped: the report is where an operator finds out
+/// the fence is why nothing restarted. The unfenced row beside it still
+/// stages, so this is a per-row decision rather than a whole-file one.
+#[test]
+fn a_fenced_request_is_skipped_and_named_while_its_neighbour_still_stages() {
+    let records = vec![agent_record(PUBKEY_A, "nsec1secret")];
+    let mut fenced = request("csl-fenced", PUBKEY_A, "builder", None);
+    fenced.fenced = true;
+    let open = request("csl-open", PUBKEY_A, "builder", None);
+    let mut resolved = BTreeMap::new();
+    resolved.insert("csl-open".to_string(), Ok(staged_plan("builder")));
+    // Deliberately also resolvable: the skip must not depend on the caller
+    // having declined to resolve a pack for it.
+    resolved.insert("csl-fenced".to_string(), Ok(staged_plan("builder")));
+
+    let (file, report) = restage_actor_seats_with(
+        &[fenced, open],
+        &ActorSeatsFile::default(),
+        &records,
+        RELAY,
+        &resolved,
+    );
+
+    assert_eq!(report.requested, 2);
+    assert_eq!(report.staged, 1);
+    assert!(
+        file.pending.contains_key("csl-open"),
+        "the unfenced generation still gets its custody"
+    );
+    assert!(
+        !file.pending.contains_key("csl-fenced"),
+        "a fenced generation gets no key material"
+    );
+    assert_eq!(report.skipped.len(), 1);
+    assert_eq!(report.skipped[0].0, "csl-fenced");
+    // The exact sentence, not a substring: this one is read by an operator,
+    // and it shipped once with eighteen spaces in the middle of it because a
+    // formatter rewrapped the literal.
+    assert_eq!(
+        report.skipped[0].1,
+        "HANDOVER_FENCED: this session has been handed over, so its seat is not re-staged on \
+         this computer"
+    );
+    assert!(
+        !report.skipped[0].1.contains("  "),
+        "no run of spaces survives into the sentence: {:?}",
+        report.skipped[0].1
+    );
+}
+
+/// A retired generation never appears in the file at all — the provider omits
+/// it, because unlike a fence it is never coming back. Nothing is staged, and
+/// nothing is reported as skipped either, because there was no row to skip.
+#[test]
+fn a_retired_generation_has_no_row_to_read() {
+    let records = vec![agent_record(PUBKEY_A, "nsec1secret")];
+    let (file, report) = restage_actor_seats_with(
+        &[],
+        &ActorSeatsFile::default(),
+        &records,
+        RELAY,
+        &BTreeMap::new(),
+    );
+    assert_eq!(report.requested, 0);
+    assert_eq!(report.staged, 0);
+    assert!(report.skipped.is_empty());
+    assert!(file.pending.is_empty());
+}
+
+/// A provider built before the fence existed writes no `fenced` key. Reading
+/// its file must mean "not fenced", not a parse failure.
+#[test]
+fn a_row_without_the_fenced_key_reads_as_unfenced() {
+    let json = serde_json::json!({
+        "version": 1,
+        "requests": [
+            {
+                "commandId": "csl-legacy",
+                "actor": PUBKEY_A,
+                "role": "builder",
+                "sessionId": "sess-1",
+                "generation": 1,
+            },
+            {
+                "commandId": "csl-fenced",
+                "actor": PUBKEY_B,
+                "role": "builder",
+                "sessionId": "sess-2",
+                "generation": 1,
+                "fenced": true,
+            },
+        ],
+    });
+    let file: SeatRequestsFile =
+        serde_json::from_value(json).expect("the provider's shape deserializes");
+    assert!(!file.requests[0].fenced, "absent means not fenced");
+    assert!(file.requests[1].fenced);
 }

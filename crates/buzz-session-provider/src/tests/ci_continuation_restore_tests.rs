@@ -278,7 +278,7 @@ async fn a_waiting_registration_restores_the_generation_and_delivers_one_turn() 
         "restorable-agent",
         &restorable_agent(&log.to_string_lossy()),
     );
-    restarted.recover().expect("recover");
+    restarted.recover().await.expect("recover");
 
     restarted
         .handle_ci_listener_event(ready_report())
@@ -373,7 +373,7 @@ async fn a_ready_registration_restores_the_generation_and_delivers_one_turn() {
         "restorable-agent",
         &restorable_agent(&log.to_string_lossy()),
     );
-    restarted.recover().expect("recover");
+    restarted.recover().await.expect("recover");
 
     restarted.run_ci_continuation_tick().await.expect("tick");
     pump_until_turn_started(&mut restarted).await;
@@ -407,7 +407,7 @@ async fn an_unseated_execution_restores_with_the_cursor_alone() {
         "restorable-agent",
         &restorable_agent(&log.to_string_lossy()),
     );
-    restarted.recover().expect("recover");
+    restarted.recover().await.expect("recover");
 
     restarted.run_ci_continuation_tick().await.expect("tick");
     pump_until_turn_started(&mut restarted).await;
@@ -439,7 +439,7 @@ async fn a_second_delivery_after_a_restore_is_still_fenced_to_one_turn() {
         "restorable-agent",
         &restorable_agent(&log.to_string_lossy()),
     );
-    restarted.recover().expect("recover");
+    restarted.recover().await.expect("recover");
 
     restarted.run_ci_continuation_tick().await.expect("tick");
     pump_until_turn_started(&mut restarted).await;
@@ -489,7 +489,7 @@ async fn a_seat_that_has_not_been_restaged_defers_and_then_delivers_once() {
         "restorable-agent",
         &restorable_agent(&log.to_string_lossy()),
     );
-    restarted.recover().expect("recover");
+    restarted.recover().await.expect("recover");
 
     restarted.run_ci_continuation_tick().await.expect("tick");
     pump_available(&mut restarted).await;
@@ -558,7 +558,7 @@ async fn a_seat_that_never_arrives_expires_naming_custody() {
         "restorable-agent",
         &restorable_agent(&log.to_string_lossy()),
     );
-    restarted.recover().expect("recover");
+    restarted.recover().await.expect("recover");
 
     restarted.run_ci_continuation_tick().await.expect("defer");
     // The registration's window closes with the obstacle still in place.
@@ -603,7 +603,7 @@ async fn an_adapter_that_rejects_the_reattachment_refuses_and_starts_no_conversa
         "load-rejecting-agent",
         &load_rejecting_agent(&log.to_string_lossy()),
     );
-    restarted.recover().expect("recover");
+    restarted.recover().await.expect("recover");
 
     restarted.run_ci_continuation_tick().await.expect("tick");
     pump_available(&mut restarted).await;
@@ -645,7 +645,7 @@ async fn an_adapter_with_no_reattachment_refuses_as_unsupported() {
         "unreattachable-agent",
         &unreattachable_agent(&log.to_string_lossy()),
     );
-    restarted.recover().expect("recover");
+    restarted.recover().await.expect("recover");
 
     restarted.run_ci_continuation_tick().await.expect("tick");
     pump_available(&mut restarted).await;
@@ -679,7 +679,7 @@ async fn an_execution_with_no_cursor_refuses_before_it_spawns() {
         "restorable-agent",
         &restorable_agent(&log.to_string_lossy()),
     );
-    restarted.recover().expect("recover");
+    restarted.recover().await.expect("recover");
     restarted
         .state
         .update_session(&killed.target.session_id, |record| {
@@ -723,7 +723,7 @@ async fn an_execution_whose_runtime_is_gone_refuses_as_provider_unavailable() {
         vec![runtime],
     ))
     .expect("provider");
-    restarted.recover().expect("recover");
+    restarted.recover().await.expect("recover");
 
     restarted.run_ci_continuation_tick().await.expect("tick");
     pump_available(&mut restarted).await;
@@ -830,7 +830,7 @@ async fn restore_rejects_a_different_pack_or_relay_before_spawning() {
         "restorable-agent",
         &restorable_agent(&log.to_string_lossy()),
     );
-    restarted.recover().expect("recover");
+    restarted.recover().await.expect("recover");
     for extra in [
         serde_json::json!({"relayUrl":"wss://wrong.example"}),
         serde_json::json!({"relayUrl":"ws://localhost:3000", "packRef":{
@@ -865,7 +865,7 @@ async fn restore_refuses_an_adapter_that_cannot_keep_the_recorded_model() {
         "restorable-agent",
         &restorable_agent(&log.to_string_lossy()),
     );
-    restarted.recover().expect("recover");
+    restarted.recover().await.expect("recover");
     restarted
         .state
         .update_session(&killed.target.session_id, |record| {

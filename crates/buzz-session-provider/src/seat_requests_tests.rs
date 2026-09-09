@@ -2,10 +2,14 @@
 
 use super::*;
 
+use buzz_core::coding_session_authority_claim::ClaimState;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use uuid::Uuid;
+
+/// This provider's own authority pubkey, as the fence asks about it.
+const TEST_PROVIDER: &str = "99";
 
 /// A minimal open session record. Every test below varies only the fields it
 /// is actually about.
@@ -41,6 +45,8 @@ fn record(session_id: &str, command_id: &str) -> SessionRecord {
         bootstrap_transport: None,
         open_turn: None,
         closed: false,
+        handover: ClaimState::NoClaim,
+        retired: None,
     }
 }
 
@@ -61,7 +67,7 @@ fn a_resumed_generation_asks_for_custody_under_its_own_command_id() {
     seat.generation = 3;
     seat.generation_command_id = Some("resume-2".into());
 
-    let rows = derive_seat_requests([&seat]);
+    let rows = derive_seat_requests([&seat], TEST_PROVIDER);
 
     assert_eq!(rows.len(), 1, "{rows:?}");
     assert_eq!(rows[0].command_id, "resume-2");
@@ -76,7 +82,7 @@ fn a_record_without_a_generation_command_falls_back_to_the_create() {
     let mut seat = seated("session-1", "create-1", &"aa".repeat(32));
     seat.generation_command_id = None;
 
-    let rows = derive_seat_requests([&seat]);
+    let rows = derive_seat_requests([&seat], TEST_PROVIDER);
 
     assert_eq!(rows[0].command_id, "create-1");
 }
@@ -90,7 +96,7 @@ fn closed_and_unseated_generations_ask_for_nothing() {
     stopped.closed = true;
     let open = seated("session-open", "create-o", &"cc".repeat(32));
 
-    let rows = derive_seat_requests([&unseated, &stopped, &open]);
+    let rows = derive_seat_requests([&unseated, &stopped, &open], TEST_PROVIDER);
 
     assert_eq!(rows.len(), 1, "{rows:?}");
     assert_eq!(rows[0].session_id, "session-open");
@@ -103,7 +109,7 @@ fn a_row_carries_the_public_facts_only() {
     let seat = seated("session-1", "create-1", &"aa".repeat(32));
     let dir = tempfile::tempdir().expect("tempdir");
 
-    write_seat_requests(dir.path(), [&seat]).expect("write");
+    write_seat_requests(dir.path(), [&seat], TEST_PROVIDER).expect("write");
 
     let body = std::fs::read_to_string(seat_requests_path(dir.path())).expect("read");
     let parsed: serde_json::Value = serde_json::from_str(&body).expect("json");
@@ -133,8 +139,8 @@ fn a_rewrite_drops_the_rows_that_no_longer_apply() {
     let first = seated("session-1", "create-1", &"aa".repeat(32));
     let second = seated("session-2", "create-2", &"bb".repeat(32));
 
-    write_seat_requests(dir.path(), [&first, &second]).expect("write both");
-    write_seat_requests(dir.path(), [&second]).expect("rewrite");
+    write_seat_requests(dir.path(), [&first, &second], TEST_PROVIDER).expect("write both");
+    write_seat_requests(dir.path(), [&second], TEST_PROVIDER).expect("rewrite");
 
     let file: SeatRequestsFile = serde_json::from_str(
         &std::fs::read_to_string(seat_requests_path(dir.path())).expect("read"),
@@ -150,7 +156,12 @@ fn a_rewrite_drops_the_rows_that_no_longer_apply() {
 fn nothing_seated_writes_an_empty_request_list() {
     let dir = tempfile::tempdir().expect("tempdir");
 
-    write_seat_requests(dir.path(), [&record("session-human", "create-h")]).expect("write");
+    write_seat_requests(
+        dir.path(),
+        [&record("session-human", "create-h")],
+        TEST_PROVIDER,
+    )
+    .expect("write");
 
     let file: SeatRequestsFile = serde_json::from_str(
         &std::fs::read_to_string(seat_requests_path(dir.path())).expect("read"),
