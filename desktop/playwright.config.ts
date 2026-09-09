@@ -55,6 +55,8 @@ export default defineConfig({
         "**/coding-session-connect.spec.ts",
         "**/coding-session-width.spec.ts",
         "**/coding-session-worktree-source.spec.ts",
+        // Lane V — "New session in this workspace": reuse, refusal, no memory.
+        "**/coding-session-workspace-reuse.spec.ts",
         // L11 (worktree lifecycle) — registration line only.
         "**/coding-session-worktree-closure.spec.ts",
         "**/onboarding-docked-cta-screenshots.spec.ts",
