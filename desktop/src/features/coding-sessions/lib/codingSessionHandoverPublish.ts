@@ -31,6 +31,12 @@ import {
 } from "@/shared/coordination/sessionCoordinationStrictJson";
 import { KIND_GIT_PATCH } from "@/shared/constants/kinds";
 import {
+  clearCodingSessionCreateHint,
+  stageCodingSessionCreateHint,
+} from "@/shared/api/tauriCodingSessionWorkdirs";
+import { hasStrictMetadataJson } from "@/shared/coordination/sessionCoordinationStrictJson";
+import { buildCodingSessionTargetKey } from "./codingSessionCommand";
+import {
   buildCodingSessionHandoverContent,
   buildCodingSessionHandoverTags,
   KIND_CODING_SESSION_HANDOVER,
@@ -82,14 +88,29 @@ export type CodingSessionHandoverPublishDependencies = {
     request: CodingSessionHandoverCheckoutRequest,
   ) => Promise<CodingSessionHandoverCheckoutReport>;
   publishCreate?: typeof publishCodingSessionCreate;
+  /** Stage the directory this exact create must run in. */
+  stageCreateHint?: (input: {
+    commandId: string;
+    path: string;
+    projectRef?: string | null;
+  }) => Promise<unknown>;
+  /** Drop a staged hint that no longer has a create to steer. */
+  clearCreateHint?: (commandId: string) => Promise<unknown>;
   wait?: (milliseconds: number) => Promise<void>;
   settleAttempts?: number;
 };
 
+const METADATA_KIND = 44223;
+
 /** The argument shape of the `handover_prepare_checkout` Tauri command. */
 export type CodingSessionHandoverCheckoutRequest = {
   cwd: string;
+  /** An explicit remote name; absent means "resolve it from the checkout". */
   repoRemote?: string | null;
+  /** The repository coordinate the wip ref lives in. */
+  repoRef?: string | null;
+  /** This community's relay origin, so the expected clone URL can be built. */
+  relayOrigin?: string | null;
   wipRef: string;
   sha: string;
   sessionRef: string;
@@ -252,12 +273,100 @@ function readCreatedTarget(
   };
 }
 
+/**
+ * Read the new execution's own first metadata and check it is where this host
+ * put the work.
+ *
+ * The provider publishes its branch and observed commit; the patch is applied
+ * uncommitted, so `HEAD` stays at the checkpoint's sha. A match is the only
+ * thing that lets this flow call the reconstruction recovered — a mismatch
+ * means the model is running in some other folder, which is exactly the state
+ * a "recovered" label would hide.
+ */
+async function confirmRecoveredCheckout(
+  input: {
+    channelId: string;
+    target: CodingSessionHandoverTarget;
+    branch: string | null;
+    headSha: string;
+  },
+  dependencies: CodingSessionHandoverPublishDependencies = {},
+): Promise<{ confirmed: boolean; missing: string | null }> {
+  const fetchEvents =
+    dependencies.fetchEvents ??
+    ((filter: RelaySubscriptionFilter) => relayClient.fetchEvents(filter));
+  const wait = dependencies.wait ?? defaultWait;
+  const attempts = Math.max(1, dependencies.settleAttempts ?? SETTLE_ATTEMPTS);
+  const targetKey = buildCodingSessionTargetKey(input.target);
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    let events: RelayEvent[] = [];
+    try {
+      events = await fetchEvents({
+        kinds: [METADATA_KIND],
+        "#h": [input.channelId],
+        "#cs-target": [targetKey],
+        limit: 4,
+      });
+    } catch {
+      // A failed read is not a mismatch; the loop tries again and the
+      // absence sentence below is the honest answer if it never arrives.
+    }
+    for (const event of events) {
+      const facts = readMetadataFacts(event);
+      if (facts === null) continue;
+      if (
+        input.branch !== null &&
+        facts.branch === input.branch &&
+        facts.observedCommit?.toLowerCase() === input.headSha.toLowerCase()
+      ) {
+        return { confirmed: true, missing: null };
+      }
+      return {
+        confirmed: false,
+        missing: `the execution reports branch ${facts.branch ?? "none"} at ${facts.observedCommit ?? "no commit"}, not the recovered checkout — it is running somewhere else`,
+      };
+    }
+    if (attempt + 1 < attempts) await wait(SETTLE_DELAY_MS);
+  }
+  return {
+    confirmed: false,
+    missing:
+      "the execution published no metadata, so this app could not confirm it is running in the recovered checkout",
+  };
+}
+
+/** The branch and commit one 44223 reports, or null when it is not one. */
+function readMetadataFacts(
+  event: RelayEvent,
+): { branch: string | null; observedCommit: string | null } | null {
+  if (event.kind !== METADATA_KIND) return null;
+  let content: unknown;
+  try {
+    content = JSON.parse(event.content);
+  } catch {
+    return null;
+  }
+  if (!hasStrictMetadataJson(event.content, content)) return null;
+  return {
+    branch: typeof content.branch === "string" ? content.branch : null,
+    observedCommit:
+      typeof content.observedCommit === "string"
+        ? content.observedCommit
+        : null,
+  };
+}
+
 /** How far the continue flow got, whatever happened next. */
 export type CodingSessionHandoverContinueProgress = {
   claimEventId: string | null;
   checkout: CodingSessionHandoverCheckoutReport | null;
   createCommandId: string | null;
   target: CodingSessionHandoverTarget | null;
+  /**
+   * Whether the new execution's own metadata proved it is running in the
+   * recovered checkout. `null` when there was nothing to confirm.
+   */
+  checkoutConfirmed: boolean | null;
   continuationEventId: string | null;
 };
 
@@ -413,8 +522,18 @@ export async function continueCodingSessionHandover(
     projectRef: string | null;
     title: string | null;
     model: string | null;
-    /** The rendered checkpoint that seeds the new execution (§4 step 5). */
-    initialTurn: string;
+    /**
+     * The checkpoint that seeds the new execution (§4 step 5).
+     *
+     * The **body**, not a rendered string: the prompt is written after the
+     * recovery runs, so it can carry the branch and sha that actually landed
+     * and every line this host could not recover. A prompt built before the
+     * fetch describes an intention; this one describes a checkout.
+     */
+    checkpoint: {
+      body: CodingSessionCheckpointBody;
+      authorLabel: string;
+    };
     /** The checkpoint this reconstruction is from, when there is one. */
     checkpointRef: string | null;
     /** What to fetch and apply, when the checkpoint named artifacts. */
@@ -434,6 +553,7 @@ export async function continueCodingSessionHandover(
     checkout: null,
     createCommandId: null,
     target: null,
+    checkoutConfirmed: null,
     continuationEventId: null,
   };
 
@@ -511,6 +631,38 @@ export async function continueCodingSessionHandover(
   progress.createCommandId = commandId;
   const publishCreate =
     dependencies.publishCreate ?? publishCodingSessionCreate;
+  const stageCreateHint =
+    dependencies.stageCreateHint ?? stageCodingSessionCreateHint;
+  const clearCreateHint =
+    dependencies.clearCreateHint ?? clearCodingSessionCreateHint;
+  // Bind the create to the directory the work actually landed in. Without it
+  // the provider resolves a working directory from its own host file — the
+  // command hint first, then project and channel defaults — so a person who
+  // chose a different folder could get the model running in the old mapped
+  // one while this flow published "recovered". The path never goes on the
+  // wire; it is staged on this machine, for this command id only.
+  if (input.checkout) {
+    try {
+      await stageCreateHint({
+        commandId,
+        path: input.checkout.cwd,
+        projectRef: input.projectRef,
+      });
+    } catch (error) {
+      return { ok: false, step: "create", reason: reasonOf(error), progress };
+    }
+  }
+  // The prompt is written **now**: after the fetch, after the patch, with the
+  // branch and sha that exist on disk and every line this host could not
+  // bring across. The `missing` list here is the same list the continuation
+  // signs — one statement, in two places.
+  const initialTurn = renderCodingSessionCheckpointTurn({
+    body: input.checkpoint.body,
+    authorLabel: input.checkpoint.authorLabel,
+    checkout: progress.checkout,
+    recovered,
+    missing,
+  });
   try {
     await publishCreate({
       channelId: input.channelId,
@@ -523,9 +675,12 @@ export async function continueCodingSessionHandover(
       providerAuthorityPubkey: input.bodyPubkey,
       model: input.model,
       title: input.title,
-      initialTurn: input.initialTurn,
+      initialTurn,
     });
   } catch (error) {
+    // A hint with no create to steer would sit there waiting for whatever
+    // command next reused the id.
+    await clearCreateHint(commandId).catch(() => {});
     return { ok: false, step: "create", reason: reasonOf(error), progress };
   }
 
@@ -536,9 +691,30 @@ export async function continueCodingSessionHandover(
       dependencies,
     );
   } catch (error) {
+    await clearCreateHint(commandId).catch(() => {});
     return { ok: false, step: "created", reason: reasonOf(error), progress };
   }
   progress.target = target;
+  // The hint has done its job the moment a provider reports a session.
+  await clearCreateHint(commandId).catch(() => {});
+
+  // Proof, not assumption: the execution's own first metadata must report the
+  // branch this host checked out, at the sha the checkpoint named. Anything
+  // else — another folder, another commit, or no metadata at all — is said
+  // plainly rather than published as "recovered".
+  if (input.checkout) {
+    const confirmation = await confirmRecoveredCheckout(
+      {
+        channelId: input.channelId,
+        target,
+        branch: progress.checkout?.branch ?? null,
+        headSha: input.checkout.sha,
+      },
+      dependencies,
+    );
+    progress.checkoutConfirmed = confirmation.confirmed;
+    if (confirmation.missing !== null) missing.push(confirmation.missing);
+  }
 
   try {
     const event = await publishCodingSessionHandoverRecord(
@@ -590,6 +766,8 @@ function reasonOf(error: unknown): string {
 export function renderCodingSessionCheckpointTurn(input: {
   body: CodingSessionCheckpointBody;
   authorLabel: string;
+  /** What actually landed on disk, when a checkout ran. */
+  checkout?: CodingSessionHandoverCheckoutReport | null;
   recovered?: readonly string[];
   missing?: readonly string[];
 }): string {
@@ -634,6 +812,12 @@ export function renderCodingSessionCheckpointTurn(input: {
       );
     }
   }
+  if (input.checkout) {
+    lines.push(
+      "",
+      `Checked out here: ${input.checkout.branch} at ${input.checkout.checkedOutSha}`,
+    );
+  }
   const recovered = input.recovered ?? [];
   if (recovered.length > 0) {
     lines.push("", "Recovered onto this checkout:");
@@ -648,5 +832,23 @@ export function renderCodingSessionCheckpointTurn(input: {
     for (const line of missing) lines.push(`- ${line}`);
   }
   lines.push("", `Next action: ${body.nextAction}`);
-  return lines.join("\n");
+  return boundedTurn(lines.join("\n"));
+}
+
+/**
+ * The prompt, bounded to 12 KiB, with the truncation said out loud.
+ *
+ * The same ceiling `bee sessions send` enforces. A silently clipped prompt
+ * would drop the `missing` lines at the end — the very ones a continuing
+ * agent most needs.
+ */
+const MAX_TURN_BYTES = 12 * 1024;
+
+function boundedTurn(turn: string): string {
+  const encoder = new TextEncoder();
+  if (encoder.encode(turn).byteLength <= MAX_TURN_BYTES) return turn;
+  const notice = "\n\n[truncated: this handover prompt exceeded 12 KiB]";
+  const room = MAX_TURN_BYTES - encoder.encode(notice).byteLength;
+  const bytes = encoder.encode(turn).slice(0, room);
+  return `${new TextDecoder().decode(bytes)}${notice}`;
 }

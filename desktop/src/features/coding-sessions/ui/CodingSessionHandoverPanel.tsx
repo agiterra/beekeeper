@@ -4,6 +4,7 @@ import { formatCoordinationAge } from "@/shared/coordination/sessionCoordination
 import { truncatePubkey } from "@/shared/lib/pubkey";
 import { Button } from "@/shared/ui/button";
 import { cn } from "@/shared/lib/cn";
+import { CODING_SESSION_READDRESS_LABEL } from "../lib/codingSessionTurnRefusal";
 import type { CodingSessionHandoverModel } from "../lib/codingSessionHandoverModel";
 
 /**
@@ -182,6 +183,26 @@ export function CodingSessionHandoverPanel({
               {link.label} {truncatePubkey(link.eventId)}
             </button>
           ))}
+        </p>
+      )}
+      {model.postClaimNextAction === null ? null : (
+        <p
+          className="mt-2 text-xs text-foreground"
+          data-liveness={model.postClaimNextAction.liveness}
+          data-testid="coding-session-handover-next-action"
+        >
+          {model.postClaimNextAction.sentence}
+          {model.postClaimNextAction.liveness === "live" ? null : (
+            <>
+              {" "}
+              Use <span className="font-medium">Reconnect</span> in the
+              composer, or{" "}
+              <span className="font-medium">
+                “{CODING_SESSION_READDRESS_LABEL}”
+              </span>{" "}
+              for a turn it already owes you.
+            </>
+          )}
         </p>
       )}
       {fenced ? (

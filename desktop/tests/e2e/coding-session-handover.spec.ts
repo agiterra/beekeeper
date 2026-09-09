@@ -6,6 +6,8 @@ import {
   BASE_SHA,
   CHANNEL_NAME,
   CHECKOUT_PATH,
+  PROVIDER_A_PUBKEY,
+  REPO_REF,
   CHECKOUT_REPORT,
   PATCH_TEXT,
   WIP_REF,
@@ -15,6 +17,7 @@ import {
   landForeignTakeoverLive,
   openHandoverSession,
   recordedCheckouts,
+  recordedHints,
   stubHandoverCheckout,
 } from "./helpers/handoverAssertions";
 
@@ -91,12 +94,37 @@ test("B takes the session over, reconstructs it, and the panel says what came ac
     cwd: CHECKOUT_PATH,
     wipRef: WIP_REF,
     sha: WIP_SHA,
+    // The remote is resolved from the checkout against this coordinate, never
+    // assumed to be called `origin`.
+    repoRef: REPO_REF,
     // A's uncommitted bytes came across: the app fetched the NIP-34 patch the
     // checkpoint pointed at, verified its author, and handed the diff itself
     // to the native command — not the pointer.
     patchText: PATCH_TEXT,
     baseSha: BASE_SHA,
   });
+
+  // The create is bound to the folder the person picked, by command id — the
+  // provider resolves `pending[commandId]` before any project or channel
+  // default, so the model cannot come up in the old mapped folder.
+  await expect
+    .poll(async () => (await recordedHints(page)).length, { timeout: 20_000 })
+    .toBeGreaterThan(0);
+  const [hint] = await recordedHints(page);
+  expect(hint.path).toBe(CHECKOUT_PATH);
+  const createCommandId = await page.evaluate(() => {
+    const signed = window.__BUZZ_E2E_SIGNED_EVENTS__ ?? [];
+    for (const event of signed) {
+      if (event.kind !== 44221) continue;
+      const content = JSON.parse(event.content) as {
+        commandId: string;
+        action?: { type?: string };
+      };
+      if (content.action?.type === "session.create") return content.commandId;
+    }
+    return null;
+  });
+  expect(hint.commandId).toBe(createCommandId);
 
   // The outcome is labelled, the evidence is linkable, and the disclosure
   // survives the wip ref having landed.
@@ -195,6 +223,62 @@ test("A's execution reads fenced, in a word, and offers the way back", async ({
   ).toHaveCount(0);
   await waitForAnimations(page);
   await panel.screenshot({ path: `${SHOTS}/03-fenced.png` });
+});
+
+test("taking a dead machine's session back says the fence moved, not that it resumed", async ({
+  page,
+}) => {
+  // The composition's finding, on the screen: A's machine died, the session is
+  // taken back onto it, and the very next turn would come back
+  // `turn_dropped / NO_LIVE_EXECUTION`. The panel must not read a claim
+  // receipt as a running execution.
+  await openHandoverSession(page, "fenced", undefined, {
+    localBodyPubkey: PROVIDER_A_PUBKEY,
+  });
+  const takeBack = page.getByTestId("coding-session-handover-take-back");
+  await expect(takeBack).toBeVisible({ timeout: 20_000 });
+  await takeBack.click();
+  await acceptPublishedTakeover(page);
+
+  const nextAction = page.getByTestId("coding-session-handover-next-action");
+  await expect(nextAction).toBeVisible({ timeout: 20_000 });
+  await expect(nextAction).toHaveAttribute("data-liveness", "not-live");
+  await expect(nextAction).toContainText("No live execution on");
+  await expect(nextAction).toContainText(
+    "Reconnect it, or re-address an owed turn.",
+  );
+  // Both routes are named as the controls really are.
+  await expect(nextAction).toContainText("Reconnect");
+  await expect(nextAction).toContainText("Resend to the resumed execution");
+  await waitForAnimations(page);
+  await page
+    .getByTestId("coding-session-handover")
+    .screenshot({ path: `${SHOTS}/07-taken-back-no-live-execution.png` });
+});
+
+test("taking back a live machine's session sends the holder to the composer", async ({
+  page,
+}) => {
+  await openHandoverSession(page, "fenced", undefined, {
+    localBodyPubkey: PROVIDER_A_PUBKEY,
+    liveLease: true,
+  });
+  const takeBack = page.getByTestId("coding-session-handover-take-back");
+  await expect(takeBack).toBeVisible({ timeout: 20_000 });
+  await takeBack.click();
+  await acceptPublishedTakeover(page);
+
+  const nextAction = page.getByTestId("coding-session-handover-next-action");
+  await expect(nextAction).toBeVisible({ timeout: 20_000 });
+  await expect(nextAction).toHaveAttribute("data-liveness", "live");
+  await expect(nextAction).toContainText(
+    "is live — continue from the composer.",
+  );
+  await expect(nextAction).not.toContainText("Reconnect");
+  await waitForAnimations(page);
+  await page
+    .getByTestId("coding-session-handover")
+    .screenshot({ path: `${SHOTS}/08-taken-back-live.png` });
 });
 
 test("a deleted session says so and offers nothing", async ({ page }) => {

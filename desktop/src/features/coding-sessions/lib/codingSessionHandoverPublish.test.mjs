@@ -87,7 +87,10 @@ function deps(overrides = {}) {
       missing: [],
     }),
     publishCreate: async () => ({ eventId: "ee".repeat(32), kind: 44221 }),
-    fetchEvents: async () => [createdReceipt()],
+    stageCreateHint: async () => ({}),
+    clearCreateHint: async () => ({}),
+    fetchEvents: async (filter) =>
+      filter.kinds?.[0] === 44223 ? [metadataEvent()] : [createdReceipt()],
     wait: async () => {},
     settleAttempts: 2,
   };
@@ -95,6 +98,54 @@ function deps(overrides = {}) {
 }
 
 let lastCommandId = null;
+
+/** The reconstructed execution's own first metadata: where it is running. */
+function metadataEvent(overrides = {}) {
+  return {
+    id: "cc".repeat(32),
+    pubkey: BODY,
+    created_at: 1_800_000_950,
+    kind: 44223,
+    tags: [
+      ["h", CHANNEL],
+      ["csm-v", "csm1-1"],
+      ["cs-target", "unused-by-this-reader"],
+      ["csm-key", "unused-by-this-reader"],
+    ],
+    content: JSON.stringify({
+      schema: "buzz-coding-session-metadata/v1",
+      session: {
+        driver: "acp",
+        instanceId: "instance-b",
+        sessionId: "session-b",
+        generation: 1,
+      },
+      projectRef: null,
+      repoRef: null,
+      title: null,
+      agentRef: null,
+      provider: "acp",
+      runtime: "acp",
+      model: null,
+      status: "running",
+      branch: "handover/683d55b3",
+      capabilities: {
+        threadTurnStart: true,
+        threadTurnInterrupt: true,
+        threadSteer: true,
+        context: false,
+        diff: false,
+        plan: true,
+      },
+      observedCommit: "9".repeat(40),
+      dirty: true,
+      relayReachable: null,
+      verifiedAt: null,
+      ...overrides,
+    }),
+    sig: "0".repeat(128),
+  };
+}
 
 function createdReceipt() {
   return {
@@ -136,7 +187,7 @@ function continueInput(overrides = {}) {
     projectRef: null,
     title: "Handover",
     model: null,
-    initialTurn: "Continue the work",
+    checkpoint: { body: checkpointBody(), authorLabel: "Ada" },
     checkpointRef: CHECKPOINT,
     checkout: {
       cwd: "/tmp/checkout",
@@ -636,4 +687,150 @@ test("a patch is resolved even when the checkpoint named no wip ref", async () =
   });
   assert.equal(result.ok, true, result.ok ? "" : result.reason);
   assert.equal(requests[0].patchText, PATCH_TEXT);
+});
+
+// ---------------------------------------------------------------------------
+// The create must run where the work landed, and must prove it did.
+// ---------------------------------------------------------------------------
+
+test("the recovered directory is staged for this exact create, before it goes out", async () => {
+  const order = [];
+  const staged = [];
+  const dependencies = deps({
+    stageCreateHint: async (input) => {
+      order.push("stage");
+      staged.push(input);
+      return {};
+    },
+    publishCreate: async (input) => {
+      order.push("create");
+      lastCommandId = input.commandId;
+      return { eventId: "ee".repeat(32), kind: 44221 };
+    },
+  });
+  const result = await continueCodingSessionHandover(
+    continueInput({ artifacts: [], checkpointAuthor: AUTHOR }),
+    dependencies,
+  );
+  assert.equal(result.ok, true, result.ok ? "" : result.reason);
+  assert.deepEqual(order, ["stage", "create"], "the hint precedes the create");
+  assert.equal(staged.length, 1);
+  assert.equal(
+    staged[0].path,
+    "/tmp/checkout",
+    "the directory the person chose, not a project default",
+  );
+  assert.equal(staged[0].commandId, result.progress.createCommandId);
+});
+
+test("a refused create drops the hint it staged", async () => {
+  const cleared = [];
+  const dependencies = deps({
+    stageCreateHint: async () => ({}),
+    clearCreateHint: async (commandId) => {
+      cleared.push(commandId);
+      return {};
+    },
+    publishCreate: async () => {
+      throw new Error("relay refused the create");
+    },
+  });
+  const result = await continueCodingSessionHandover(
+    continueInput({ artifacts: [], checkpointAuthor: AUTHOR }),
+    dependencies,
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.step, "create");
+  assert.deepEqual(cleared, [result.progress.createCommandId]);
+});
+
+test("an execution running somewhere else is said, not called recovered", async () => {
+  const dependencies = deps({
+    fetchEvents: async (filter) =>
+      filter.kinds?.[0] === 44223
+        ? [metadataEvent({ branch: "main", observedCommit: "a".repeat(40) })]
+        : [createdReceipt()],
+  });
+  const result = await runContinue(dependencies);
+  assert.equal(result.ok, true, result.ok ? "" : result.reason);
+  assert.equal(result.progress.checkoutConfirmed, false);
+  const missing = decodeCodingSessionHandoverEvent({
+    event: dependencies.published.at(-1),
+    channelRef: CHANNEL,
+    sessionRef: SESSION,
+    genesisRef: GENESIS,
+  }).value.body.missing;
+  assert.ok(
+    missing.some((line) =>
+      /the execution reports branch main at a{40}, not the recovered checkout — it is running somewhere else/.test(
+        line,
+      ),
+    ),
+    missing.join(" | "),
+  );
+});
+
+test("an execution that published nothing is unconfirmed, and says so", async () => {
+  const dependencies = deps({
+    fetchEvents: async (filter) =>
+      filter.kinds?.[0] === 44223 ? [] : [createdReceipt()],
+  });
+  const result = await runContinue(dependencies);
+  assert.equal(result.progress.checkoutConfirmed, false);
+  const missing = decodeCodingSessionHandoverEvent({
+    event: dependencies.published.at(-1),
+    channelRef: CHANNEL,
+    sessionRef: SESSION,
+    genesisRef: GENESIS,
+  }).value.body.missing;
+  assert.ok(
+    missing.some((line) => /published no metadata/.test(line)),
+    missing.join(" | "),
+  );
+});
+
+test("a confirmed checkout adds no missing line at all", async () => {
+  const dependencies = deps();
+  const result = await runContinue(dependencies);
+  assert.equal(result.progress.checkoutConfirmed, true);
+});
+
+test("the prompt is written after the recovery, and says the same thing the wire does", async () => {
+  const prompts = [];
+  const dependencies = deps({
+    prepareCheckout: async () => ({
+      branch: "handover/683d55b3",
+      checkedOutSha: "9".repeat(40),
+      recovered: ["wip-ref refs/heads/wip/builder/abc12345 at 9999"],
+      missing: ["the 812-byte patch did not apply to keep.txt"],
+    }),
+    publishCreate: async (input) => {
+      prompts.push(input.initialTurn);
+      lastCommandId = input.commandId;
+      return { eventId: "ee".repeat(32), kind: 44221 };
+    },
+  });
+  const result = await continueCodingSessionHandover(
+    continueInput({ artifacts: [], checkpointAuthor: AUTHOR }),
+    dependencies,
+  );
+  assert.equal(result.ok, true, result.ok ? "" : result.reason);
+  const prompt = prompts[0];
+  // The branch and sha that actually landed.
+  assert.match(prompt, /Checked out here: handover\/683d55b3 at 9{40}/);
+  assert.match(prompt, /- wip-ref refs\/heads\/wip\/builder\/abc12345 at 9999/);
+  // The one list, in both places.
+  const missing = decodeCodingSessionHandoverEvent({
+    event: dependencies.published.at(-1),
+    channelRef: CHANNEL,
+    sessionRef: SESSION,
+    genesisRef: GENESIS,
+  }).value.body.missing;
+  assert.ok(missing.includes("the 812-byte patch did not apply to keep.txt"));
+  for (const line of missing) {
+    assert.ok(
+      prompt.includes(line),
+      `the agent must be told what the wire says is missing: ${line}`,
+    );
+  }
 });

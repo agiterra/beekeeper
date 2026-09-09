@@ -29,6 +29,7 @@ function model(overrides = {}) {
     metadataFence: null,
     priorContinuation: null,
     supersededCheckpoints: [],
+    postClaimNextAction: null,
     claimedBodyReachable: false,
     retired: false,
     retiredAt: null,
@@ -409,4 +410,54 @@ test("a replaced checkpoint is said out loud, with the reason it was replaced", 
     /An earlier checkpoint was replaced by its own author&#x27;s next one/,
   );
   assert.match(markup, /newest statement, not the newest timestamp/);
+});
+
+test("the holder is told what the claimed body is actually doing", () => {
+  const live = render({
+    model: model({
+      claim: ACTIVE,
+      viewerIsClaimant: true,
+      postClaimNextAction: {
+        liveness: "live",
+        sentence: `The execution on ${BODY_B.slice(0, 8)}…${BODY_B.slice(-4)} is live — continue from the composer.`,
+      },
+    }),
+  });
+  assert.match(live, /data-testid="coding-session-handover-next-action"/);
+  assert.match(live, /is live — continue from the composer\./);
+  assert.doesNotMatch(
+    live,
+    /Reconnect/,
+    "a live execution needs no reconnect route",
+  );
+
+  const dead = render({
+    model: model({
+      claim: ACTIVE,
+      viewerIsClaimant: true,
+      postClaimNextAction: {
+        liveness: "not-live",
+        sentence:
+          "No live execution on 2b2b2b2b…2b2b. Reconnect it, or re-address an owed turn.",
+      },
+    }),
+  });
+  assert.match(dead, /No live execution on 2b2b2b2b…2b2b\./);
+  // The routes are named as the controls really are, not invented.
+  assert.match(dead, /Use <span class="font-medium">Reconnect<\/span> in the/);
+  assert.match(dead, /Resend to the resumed execution/);
+
+  const unknown = render({
+    model: model({
+      claim: ACTIVE,
+      viewerIsClaimant: true,
+      postClaimNextAction: {
+        liveness: "unknown",
+        sentence: "Liveness of 2b2b2b2b…2b2b could not be read.",
+      },
+    }),
+  });
+  assert.match(unknown, /could not be read\./);
+  assert.match(unknown, /Reconnect/);
+  assert.match(unknown, /Resend to the resumed execution/);
 });

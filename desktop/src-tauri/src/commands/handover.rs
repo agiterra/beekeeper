@@ -39,8 +39,18 @@ use crate::commands::project_git_exec::{build_git_auth_config, run_git_status, G
 pub struct HandoverPrepareCheckoutRequest {
     /// The checkout to prepare. Must be an existing, clean git worktree.
     pub cwd: String,
-    /// The remote holding the wip ref. Defaults to `origin`.
+    /// An explicit remote name, when the caller already knows it.
+    ///
+    /// Absent is the ordinary case, and it is **not** a synonym for `origin`:
+    /// the remote is resolved from the checkout's own list against the
+    /// repository the checkpoint names (AGENTS.md § Remotes — the names moved
+    /// once and two guards that hard-coded one broke silently).
     pub repo_remote: Option<String>,
+    /// The `30617:<owner-hex>:<id>` coordinate the checkpoint's wip ref lives
+    /// in, used to recognize the right remote in this checkout.
+    pub repo_ref: Option<String>,
+    /// This community's relay origin, so the expected clone URL can be built.
+    pub relay_origin: Option<String>,
     /// The checkpoint's wip ref, e.g. `refs/heads/wip/builder/9a1c2b3d`.
     pub wip_ref: String,
     /// The sha the checkpoint said that ref stood at.
@@ -133,6 +143,99 @@ fn safe_sha(value: &str, what: &str) -> Result<String, String> {
     Ok(trimmed)
 }
 
+/// The canonical relay-hosted clone URL for a `30617:<owner-hex>:<id>` ref.
+///
+/// The one shape a Buzz relay serves its own repositories at —
+/// `<relay-origin>/git/<owner>/<id>` — and the same one
+/// `deriveRelayCloneUrl` builds on the TypeScript side.
+fn expected_clone_url(repo_ref: &str, relay_origin: &str) -> Option<String> {
+    let mut parts = repo_ref.splitn(3, ':');
+    if parts.next()? != "30617" {
+        return None;
+    }
+    let owner = parts.next()?.to_ascii_lowercase();
+    let id = parts.next()?;
+    if owner.len() != 64 || !owner.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    let origin = relay_origin.trim_end_matches('/');
+    Some(format!("{origin}/git/{owner}/{id}"))
+}
+
+/// Compare two clone URLs the way a person would: host and path, not spelling.
+fn same_repository(left: &str, right: &str) -> bool {
+    fn normalize(url: &str) -> String {
+        url.trim()
+            .trim_end_matches('/')
+            .trim_end_matches(".git")
+            .to_ascii_lowercase()
+            .replace("https://", "")
+            .replace("http://", "")
+    }
+    normalize(left) == normalize(right)
+}
+
+/// The remote in **this checkout** that points at the repository the
+/// checkpoint names.
+///
+/// Never `origin` by assumption. This repository's own remotes were renamed
+/// once and every tool that hard-coded a name broke silently that day, so the
+/// name is read from the checkout and matched against the URL the coordinate
+/// resolves to. Zero matches or several is a refusal that names what was
+/// looked for and what was found — a guess here would fetch somebody else's
+/// branch and check it out as if it were the checkpoint's.
+fn resolve_remote(
+    cwd: &Path,
+    auth: &GitAuthConfig,
+    repo_ref: Option<&str>,
+    relay_origin: Option<&str>,
+) -> Result<String, String> {
+    let (Some(repo_ref), Some(relay_origin)) = (repo_ref, relay_origin) else {
+        return Err(
+            "no repository coordinate or relay origin was supplied, so this app cannot tell which              remote holds the checkpoint's branch; it will not guess a remote name"
+                .to_string(),
+        );
+    };
+    let expected = expected_clone_url(repo_ref, relay_origin)
+        .ok_or_else(|| format!("{repo_ref:?} is not a 30617:<owner>:<id> repository coordinate"))?;
+    let (listed, output, error) = git(&["remote", "-v"], cwd, auth)?;
+    if !listed {
+        return Err(format!("could not list this checkout's remotes: {error}"));
+    }
+    let mut matches: Vec<String> = Vec::new();
+    let mut seen: Vec<String> = Vec::new();
+    for line in output.lines() {
+        let mut fields = line.split_whitespace();
+        let (Some(name), Some(url), Some(kind)) = (fields.next(), fields.next(), fields.next())
+        else {
+            continue;
+        };
+        if kind != "(fetch)" {
+            continue;
+        }
+        seen.push(format!("{name} -> {url}"));
+        if same_repository(url, &expected) && !matches.iter().any(|found| found == name) {
+            matches.push(name.to_string());
+        }
+    }
+    match matches.len() {
+        1 => Ok(matches.remove(0)),
+        0 => Err(format!(
+            "no remote in this checkout fetches from {expected}; it has {}. Nothing was fetched —              this app does not guess a remote name",
+            if seen.is_empty() {
+                "no remotes at all".to_string()
+            } else {
+                seen.join(", ")
+            }
+        )),
+        _ => Err(format!(
+            "{} remotes in this checkout fetch from {expected} ({}); which one holds the              checkpoint's branch is not this app's guess to make",
+            matches.len(),
+            matches.join(", ")
+        )),
+    }
+}
+
 /// `handover/<session8>` — the branch §4 step 5 names.
 fn handover_branch(session_ref: &str) -> Result<String, String> {
     let slug: String = session_ref
@@ -191,7 +294,6 @@ pub(crate) fn prepare_checkout(
     if !cwd.is_dir() {
         return Err(format!("{} is not a directory", cwd.display()));
     }
-    let remote = safe_remote(request.repo_remote.as_deref().unwrap_or("origin"))?;
     let wip_ref = safe_wip_ref(&request.wip_ref)?;
     let sha = safe_sha(&request.sha, "the checkpoint sha")?;
     let branch = handover_branch(&request.session_ref)?;
@@ -200,6 +302,17 @@ pub(crate) fn prepare_checkout(
     if !is_repo {
         return Err(format!("{} is not a git checkout: {stderr}", cwd.display()));
     }
+    // Resolved from the checkout, or named explicitly by the caller. Never
+    // defaulted.
+    let remote = match request.repo_remote.as_deref() {
+        Some(explicit) => safe_remote(explicit)?,
+        None => resolve_remote(
+            &cwd,
+            auth,
+            request.repo_ref.as_deref(),
+            request.relay_origin.as_deref(),
+        )?,
+    };
     // A person's own uncommitted work is never checked out over, stashed, or
     // moved aside to make room for somebody else's session.
     let (_, status, _) = git(&["status", "--porcelain"], &cwd, auth)?;

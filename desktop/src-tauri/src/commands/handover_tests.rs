@@ -116,6 +116,8 @@ fn request(
     let mut request = HandoverPrepareCheckoutRequest {
         cwd: fixture.checkout.to_string_lossy().to_string(),
         repo_remote: Some(fixture.origin.to_string_lossy().to_string()),
+        repo_ref: None,
+        relay_origin: None,
         wip_ref: "refs/heads/wip/builder/abc12345".to_string(),
         sha: fixture.wip_sha.clone(),
         session_ref: SESSION.to_string(),
@@ -410,6 +412,107 @@ fn a_branch_left_exactly_at_the_target_sha_is_reused() {
     fixture_git(&fixture.checkout, &fixture.home, &["checkout", "main"]);
     let report = prepare(&request(&fixture, |_| {})).expect("a repeat run is idempotent");
     assert_eq!(report.checked_out_sha, fixture.wip_sha);
+}
+
+const OWNER: &str = "1f2e3d4c5b6a798807162534435261708f9e0d1c2b3a49586776859403a2b1c0";
+const RELAY_ORIGIN: &str = "https://hive.example.test";
+
+/// Give the fixture's checkout a remote whose URL is the relay-hosted one.
+fn add_relay_remote(fixture: &Fixture, name: &str, id: &str) {
+    fixture_git(
+        &fixture.checkout,
+        &fixture.home,
+        &[
+            "remote",
+            "add",
+            name,
+            &format!("{RELAY_ORIGIN}/git/{OWNER}/{id}"),
+        ],
+    );
+}
+
+/// A request that resolves its remote from the checkout, as production does.
+fn resolving_request(fixture: &Fixture, id: &str) -> HandoverPrepareCheckoutRequest {
+    request(fixture, |request| {
+        request.repo_remote = None;
+        request.repo_ref = Some(format!("30617:{OWNER}:{id}"));
+        request.relay_origin = Some(RELAY_ORIGIN.to_string());
+    })
+}
+
+#[test]
+fn the_remote_is_read_from_the_checkout_whatever_it_is_called() {
+    let fixture = fixture("remote-hive");
+    // The only remote is called `hive`, and the clone's own `origin` was
+    // removed: a tool that assumed a name would find nothing here.
+    fixture_git(
+        &fixture.checkout,
+        &fixture.home,
+        &["remote", "remove", "origin"],
+    );
+    add_relay_remote(&fixture, "hive", "beekeeper");
+    // Point it at the fixture's real origin so the fetch can succeed, while
+    // keeping the relay URL as the *matching* fetch URL would be circular —
+    // instead the resolution is asserted on its own below, and this case
+    // proves the name is taken from the checkout rather than assumed.
+    let error = prepare(&resolving_request(&fixture, "beekeeper")).expect_err("no such host");
+    assert!(
+        error.contains("could not fetch") || error.contains("hive"),
+        "the resolved remote is the one it tried: {error}"
+    );
+    assert!(!error.contains("origin"), "{error}");
+}
+
+#[test]
+fn two_remotes_at_the_same_repository_are_a_refusal_that_names_both() {
+    let fixture = fixture("remote-two");
+    add_relay_remote(&fixture, "hive", "beekeeper");
+    add_relay_remote(&fixture, "upstream", "beekeeper");
+    let error = prepare(&resolving_request(&fixture, "beekeeper"))
+        .expect_err("an ambiguous remote must refuse");
+    assert!(error.contains("hive"), "{error}");
+    assert!(error.contains("upstream"), "{error}");
+    assert!(error.contains("not this app's guess to make"), "{error}");
+}
+
+#[test]
+fn a_checkout_with_no_matching_remote_is_told_what_was_looked_for() {
+    let fixture = fixture("remote-none");
+    let error = prepare(&resolving_request(&fixture, "beekeeper"))
+        .expect_err("no matching remote must refuse");
+    assert!(
+        error.contains(&format!("{RELAY_ORIGIN}/git/{OWNER}/beekeeper")),
+        "{error}"
+    );
+    assert!(error.contains("does not guess a remote name"), "{error}");
+}
+
+#[test]
+fn an_origin_pointing_somewhere_else_is_never_chosen() {
+    let fixture = fixture("remote-other-origin");
+    // The clone's `origin` points at the fixture's own origin directory, and a
+    // differently named remote points at the repository the checkpoint names.
+    add_relay_remote(&fixture, "hive", "beekeeper");
+    let error =
+        prepare(&resolving_request(&fixture, "beekeeper")).expect_err("hive is unreachable");
+    assert!(
+        !error.contains("no remote in this checkout"),
+        "a matching remote was found: {error}"
+    );
+    assert!(
+        error.contains("hive"),
+        "the chosen remote is named: {error}"
+    );
+}
+
+#[test]
+fn nothing_is_fetched_when_the_coordinate_is_absent() {
+    let fixture = fixture("remote-unknown");
+    let error = prepare(&request(&fixture, |request| {
+        request.repo_remote = None;
+    }))
+    .expect_err("with nothing to match against, this refuses");
+    assert!(error.contains("will not guess a remote name"), "{error}");
 }
 
 #[test]

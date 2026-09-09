@@ -1,5 +1,6 @@
 import * as React from "react";
 
+import { useCommunities } from "@/features/communities/useCommunities";
 import { useIdentityQuery } from "@/shared/api/hooks";
 import { invokeTauri } from "@/shared/api/tauri";
 import {
@@ -11,7 +12,6 @@ import { useCodingSessionHandover } from "../hooks/useCodingSessionHandover";
 import {
   continueCodingSessionHandover,
   claimCodingSessionHandover,
-  renderCodingSessionCheckpointTurn,
   type CodingSessionHandoverCheckoutReport,
   type CodingSessionHandoverCheckoutRequest,
 } from "../lib/codingSessionHandoverPublish";
@@ -88,6 +88,8 @@ export function CodingSessionHandoverHost({
   onOpenEvidence?: (eventId: string) => void;
 }) {
   const identity = useIdentityQuery();
+  const { activeCommunity } = useCommunities();
+  const relayOrigin = relayOriginOf(activeCommunity?.relayUrl ?? null);
   const viewerPubkey = identity.data?.pubkey ?? null;
   const { founderPubkey, genesisRef, sessionRef } = umbrella;
   const executions = umbrella.executions;
@@ -203,12 +205,15 @@ export function CodingSessionHandoverHost({
           projectRef,
           title,
           model: null,
-          initialTurn: renderCodingSessionCheckpointTurn({
+          // The prompt is rendered by the flow itself, after the recovery, so
+          // it can name the branch and sha that landed and every line this
+          // host could not bring across.
+          checkpoint: {
             body: checkpoint.body,
             authorLabel:
               resolveName?.(checkpoint.author) ??
               truncatePubkey(checkpoint.author),
-          }),
+          },
           checkpointRef: checkpoint.eventId,
           // The artifacts and their author travel together: the patch this
           // applies must be the checkpoint author's own.
@@ -218,6 +223,7 @@ export function CodingSessionHandoverHost({
             checkpoint,
             scope.sessionRef,
             workdirPath,
+            relayOrigin,
           ),
           declaredMissing: checkpoint.body.missing,
         },
@@ -241,6 +247,7 @@ export function CodingSessionHandoverHost({
     projectRef,
     providerInstanceRef,
     read,
+    relayOrigin,
     repoRef,
     resolveName,
     scope,
@@ -354,6 +361,7 @@ function checkoutRequestFor(
   >,
   sessionRef: string,
   workdir: string | null,
+  relayOrigin: string | null,
 ): CodingSessionHandoverCheckoutRequest | null {
   if (workdir === null) return null;
   const wipRef = checkpoint.body.artifacts.find(
@@ -362,6 +370,11 @@ function checkoutRequestFor(
   if (!wipRef) return null;
   return {
     cwd: workdir,
+    // The repository the branch lives in, and the relay that serves it: the
+    // native command resolves **which remote** from these rather than
+    // assuming a name (AGENTS.md § Remotes).
+    repoRef: wipRef.repoRef ?? checkpoint.body.revision.repoRef,
+    relayOrigin,
     wipRef: wipRef.ref,
     sha: wipRef.sha,
     sessionRef,
@@ -371,6 +384,23 @@ function checkoutRequestFor(
     patchText: null,
     baseSha: null,
   };
+}
+
+/**
+ * The relay's own origin — scheme and host — from its websocket URL.
+ *
+ * `null` rather than a guess when it cannot be parsed: the native command
+ * refuses to pick a remote without it, which is the safe end of that.
+ */
+function relayOriginOf(relayUrl: string | null): string | null {
+  if (!relayUrl) return null;
+  try {
+    const url = new URL(relayUrl);
+    const scheme = url.protocol === "ws:" ? "http:" : "https:";
+    return `${scheme}//${url.host}`;
+  } catch {
+    return null;
+  }
 }
 
 async function invokeHandoverPrepareCheckout(

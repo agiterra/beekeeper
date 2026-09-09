@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { truncatePubkey } from "../../../shared/lib/pubkey.ts";
 import {
   CODING_SESSION_HANDOVER_PARTIAL_DISCLOSURE,
   deriveCodingSessionHandoverModel,
@@ -485,4 +486,71 @@ test("a superseded checkpoint is history, never the one reconstruction reads", (
     [],
     "the replaced statement's own disclosures are not read as the current ones",
   );
+});
+
+// ---------------------------------------------------------------------------
+// A claim receipt moved the fence. It did not start anything.
+// ---------------------------------------------------------------------------
+
+const CLAIMED_BY_VIEWER = {
+  state: "active",
+  claimant: B,
+  bodyPubkey: BODY_A,
+  acceptedEventId: CLAIM,
+  seq: 2,
+};
+
+test("a live claimed body sends the holder to the composer", () => {
+  const model = derive({
+    fold: foldOf({ claim: CLAIMED_BY_VIEWER }),
+    generations: [
+      generation({
+        providerAuthorityPubkey: BODY_A,
+        reachability: "provider_reachable",
+      }),
+    ],
+  });
+  assert.equal(model.viewerIsClaimant, true);
+  assert.deepEqual(model.postClaimNextAction, {
+    liveness: "live",
+    sentence: `The execution on ${truncatePubkey(BODY_A)} is live — continue from the composer.`,
+  });
+});
+
+test("a claimed body with no live execution says so, and names the way out", () => {
+  // The composition's own case: the fence moved to this viewer while the next
+  // turn would come back `turn_dropped / NO_LIVE_EXECUTION`.
+  const model = derive({
+    fold: foldOf({ claim: CLAIMED_BY_VIEWER }),
+    generations: [
+      generation({
+        providerAuthorityPubkey: BODY_A,
+        reachability: "unverified",
+      }),
+    ],
+  });
+  assert.deepEqual(model.postClaimNextAction, {
+    liveness: "not-live",
+    sentence: `No live execution on ${truncatePubkey(BODY_A)}. Reconnect it, or re-address an owed turn.`,
+  });
+});
+
+test("a body this read never saw is unknown, not dead", () => {
+  const model = derive({
+    fold: foldOf({
+      claim: { ...CLAIMED_BY_VIEWER, bodyPubkey: BODY_B },
+    }),
+    generations: [generation({ providerAuthorityPubkey: BODY_A })],
+  });
+  assert.deepEqual(model.postClaimNextAction, {
+    liveness: "unknown",
+    sentence: `Liveness of ${truncatePubkey(BODY_B)} could not be read.`,
+  });
+});
+
+test("somebody else's claim asks nothing of this viewer", () => {
+  const model = derive({
+    fold: foldOf({ claim: { ...CLAIMED_BY_VIEWER, claimant: C } }),
+  });
+  assert.equal(model.postClaimNextAction, null);
 });

@@ -338,6 +338,80 @@ function patchEvent(): RelayEvent {
   ) as unknown as RelayEvent;
 }
 
+/**
+ * A's execution, answering again: the status a live machine publishes.
+ *
+ * Stamped **after** the fixture's `disconnected` metadata, not against the
+ * wall clock: the fold takes the newest signed statement, and this fixture's
+ * base second is deliberately in the future, so a "now" stamp would lose to
+ * the very statement it is meant to replace.
+ */
+function runningMetadataEvent(): RelayEvent {
+  return signed(
+    KIND_CODING_SESSION_METADATA,
+    BASE_CREATED_AT + 100,
+    [
+      ["h", CHANNEL_ID],
+      ["csm-v", CODING_SESSION_METADATA_TAG_VERSION],
+      ["cs-target", buildCodingSessionTargetKey(TARGET)],
+      ["csm-key", codingSessionMetadataSemanticKey(TARGET)],
+    ],
+    JSON.stringify({
+      schema: BUZZ_CODING_SESSION_METADATA_SCHEMA,
+      session: TARGET,
+      projectRef: null,
+      repoRef: null,
+      title: "Absent participant handover",
+      agentRef: null,
+      provider: "claude-agent-acp",
+      runtime: "claude-agent-acp",
+      model: "sonnet",
+      status: "running",
+      branch: "work/handover",
+      capabilities: {
+        threadTurnStart: true,
+        threadTurnInterrupt: true,
+        threadSteer: true,
+        context: false,
+        diff: false,
+        plan: true,
+      },
+      sessionRef: SESSION_REF,
+    }),
+    PROVIDER_A_SECRET,
+  );
+}
+
+/**
+ * A's execution, holding a lease right now.
+ *
+ * On the fixture's own clock, like the metadata above: the fold's TTL is
+ * measured forward from the signed `created_at`, so a lease stamped in this
+ * fixture's second is unexpired for a reader in the present.
+ */
+function liveLeaseEvent(): RelayEvent {
+  return finalizeEvent(
+    {
+      kind: 24223,
+      created_at: BASE_CREATED_AT + 101,
+      tags: [
+        ["h", CHANNEL_ID],
+        ["cslease-v", "cslease1-1"],
+        ["cs-target", buildCodingSessionTargetKey(TARGET)],
+        ["csl-command", COMMAND_ID],
+        ["cslease-seq", "1"],
+      ],
+      content: JSON.stringify({
+        schema: "buzz-coding-session-lease/v1",
+        target: TARGET,
+        state: "live",
+        leaseSequence: 1,
+      }),
+    },
+    PROVIDER_A_SECRET,
+  ) as unknown as RelayEvent;
+}
+
 export type HandoverVariant = "claimable" | "fenced" | "retired";
 
 /** Seed one governed session in the state this scenario is about, and open it. */
@@ -345,6 +419,19 @@ export async function openHandoverSession(
   page: Page,
   variant: HandoverVariant,
   viewport: { width: number; height: number } = { width: 1280, height: 900 },
+  options: {
+    /**
+     * This computer's provider authority.
+     *
+     * Defaults to a machine of its own. The take-back scenarios pass **A's**
+     * provider instead: that is the returning machine taking its own session
+     * back, which is the only way the claimed body is one this fold can see
+     * the liveness of.
+     */
+    localBodyPubkey?: string;
+    /** Seed a live 24223 lease for A's execution before opening. */
+    liveLease?: boolean;
+  } = {},
 ): Promise<{ genesisRef: string; headEventId: string }> {
   const genesis = genesisEvent();
   // Built first: its **real** event id is what the checkpoint's `patch`
@@ -436,7 +523,7 @@ export async function openHandoverSession(
     codingSessionProviderStatus: {
       provisioned: true,
       running: true,
-      providerPubkey: LOCAL_BODY_PUBKEY,
+      providerPubkey: options.localBodyPubkey ?? LOCAL_BODY_PUBKEY,
       instanceId: "b0b0b0b0b0b0b0b0",
     },
     codingSessionProviderRuntimes: [
@@ -479,6 +566,13 @@ export async function openHandoverSession(
   await page.setViewportSize({ width: 1280, height: viewport.height });
   await page.goto("/");
   await page.getByTestId(`channel-${CHANNEL_NAME}`).click();
+  if (options.liveLease) {
+    // A lease alone would not make it reachable: the fold reads a
+    // `disconnected` status as **terminal**, whatever any lease says, and A's
+    // last word in this fixture is `disconnected`. A machine that is answering
+    // again says so first, and then holds a lease.
+    events.push(runningMetadataEvent(), liveLeaseEvent());
+  }
   await page.evaluate(
     ({ channelName, seeds }) => {
       const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
@@ -556,7 +650,19 @@ export async function stubHandoverCheckout(page: Page): Promise<void> {
     (
       window as unknown as { __HANDOVER_CHECKOUTS__: unknown[] }
     ).__HANDOVER_CHECKOUTS__ = [];
+    (
+      window as unknown as { __HANDOVER_HINTS__: unknown[] }
+    ).__HANDOVER_HINTS__ = [];
     internals.invoke = async (command: string, args?: unknown) => {
+      if (command === "stage_coding_session_create_hint") {
+        (
+          window as unknown as { __HANDOVER_HINTS__: unknown[] }
+        ).__HANDOVER_HINTS__.push(args);
+        return { pending: {}, projects: {}, channels: {}, recent: [] };
+      }
+      if (command === "clear_coding_session_create_hint") {
+        return { pending: {}, projects: {}, channels: {}, recent: [] };
+      }
       if (command === "handover_prepare_checkout") {
         (
           window as unknown as { __HANDOVER_CHECKOUTS__: unknown[] }
@@ -566,6 +672,23 @@ export async function stubHandoverCheckout(page: Page): Promise<void> {
       return original(command, args);
     };
   }, CHECKOUT_REPORT);
+}
+
+/** Every `stage_coding_session_create_hint` the app has staged so far. */
+export async function recordedHints(
+  page: Page,
+): Promise<
+  Array<{ commandId: string; path: string; projectRef: string | null }>
+> {
+  return page.evaluate(
+    () =>
+      (window as unknown as { __HANDOVER_HINTS__?: unknown[] })
+        .__HANDOVER_HINTS__ as Array<{
+        commandId: string;
+        path: string;
+        projectRef: string | null;
+      }>,
+  );
 }
 
 /** Every `handover_prepare_checkout` request the app has made so far. */
@@ -601,7 +724,17 @@ export async function queryMockEvents(
  * the matching 40099. Nothing is invented — the receipt names the event the
  * app actually signed.
  */
-export async function acceptPublishedTakeover(page: Page): Promise<RelayEvent> {
+export async function acceptPublishedTakeover(
+  page: Page,
+  /**
+   * Whose takeover to accept.
+   *
+   * Named, because a fenced fixture already carries somebody else's accepted
+   * takeover: receipting the first one found would answer a claim that was
+   * already answered and leave the app's own waiting forever.
+   */
+  claimant: string = VIEWER_PUBKEY,
+): Promise<RelayEvent> {
   const takeover = await expectEventually(page, async () => {
     const events = await queryMockEvents(page, {
       kinds: [KIND_CODING_SESSION_AUTHORITY_TRANSITION],
@@ -611,8 +744,13 @@ export async function acceptPublishedTakeover(page: Page): Promise<RelayEvent> {
     return (
       events.find((event) => {
         try {
-          const content = JSON.parse(event.content) as { type?: string };
-          return content.type === "takeover";
+          const content = JSON.parse(event.content) as {
+            type?: string;
+            granteePubkey?: string;
+          };
+          return (
+            content.type === "takeover" && content.granteePubkey === claimant
+          );
         } catch {
           return false;
         }

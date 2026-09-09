@@ -13,6 +13,7 @@
  * takeover hands over the whole session — every execution and assignment under
  * it — so every label this model feeds says "this session", never "this slice".
  */
+import { truncatePubkey } from "@/shared/lib/pubkey";
 import type { CoordinatedGeneration } from "@/shared/coordination/sessionCoordinationTypes";
 import type { CodingSessionCommandTarget } from "./codingSessionCommand";
 
@@ -55,6 +56,21 @@ export type CodingSessionHandoverFenceReason =
   | "other-body"
   | "not-claimant"
   | "unknown";
+
+/**
+ * What a claim receipt did **not** do: start anything.
+ *
+ * The composition run showed the gap plainly — a session taken back from a
+ * machine that had died read as "yours" while the very next turn came back
+ * `turn_dropped / NO_LIVE_EXECUTION`. A claim moves the fence and nothing
+ * else, so once this viewer holds it the panel says what the claimed body is
+ * actually doing, from the same lease-derived evidence the rest of the model
+ * uses, and names the route out.
+ */
+export type CodingSessionHandoverNextAction = {
+  readonly liveness: "live" | "not-live" | "unknown";
+  readonly sentence: string;
+};
 
 /** The two labelled outcomes §0 refuses to conflate. */
 export type CodingSessionHandoverOutcomeLabel =
@@ -118,6 +134,13 @@ export type CodingSessionHandoverModel = {
    * would be reading a hash order the author overruled.
    */
   readonly supersededCheckpoints: readonly CodingSessionHandoverCheckpoint[];
+  /**
+   * What to do next now that this viewer holds the claim, or `null`.
+   *
+   * Present exactly while the claim is this viewer's: before that the panel is
+   * about somebody else's hold, and after a deletion there is nothing to do.
+   */
+  readonly postClaimNextAction: CodingSessionHandoverNextAction | null;
   /** Whether the claimed body's current generation is provider-reachable. */
   readonly claimedBodyReachable: boolean;
   readonly retired: boolean;
@@ -134,6 +157,40 @@ export type CodingSessionHandoverModel = {
   readonly missing: readonly string[];
   readonly recovered: readonly string[];
 };
+
+/**
+ * The claimed body's liveness, and the sentence that says it.
+ *
+ * Three answers, kept apart: a lease-proven live execution, a generation this
+ * read can see that is **not** live, and no generation for that body at all —
+ * which is unknown, not dead. Only the first means "type in the composer".
+ */
+function nextActionFor(
+  bodyPubkey: string,
+  generations: readonly CodingSessionHandoverGeneration[],
+): CodingSessionHandoverNextAction {
+  const body = truncatePubkey(bodyPubkey);
+  const current = generations.filter(
+    (generation) =>
+      generation.current && generation.providerAuthorityPubkey === bodyPubkey,
+  );
+  if (current.some((row) => row.reachability === "provider_reachable")) {
+    return {
+      liveness: "live",
+      sentence: `The execution on ${body} is live — continue from the composer.`,
+    };
+  }
+  if (current.length > 0) {
+    return {
+      liveness: "not-live",
+      sentence: `No live execution on ${body}. Reconnect it, or re-address an owed turn.`,
+    };
+  }
+  return {
+    liveness: "unknown",
+    sentence: `Liveness of ${body} could not be read.`,
+  };
+}
 
 /**
  * This umbrella's generations, as the shared reachability read proves them.
@@ -307,6 +364,12 @@ export function deriveCodingSessionHandoverModel(input: {
       .reverse()
       .find((row) => row.eventId !== fold.activeContinuation) ?? null;
 
+  // A claim receipt means the fence moved, never that an execution resumed.
+  const postClaimNextAction: CodingSessionHandoverNextAction | null =
+    !fold.retired && claim.state === "active" && viewerIsClaimant
+      ? nextActionFor(claim.bodyPubkey, input.generations)
+      : null;
+
   const supersededCheckpoints = [...fold.checkpoints]
     .reverse()
     .filter((row) => row.standing === "superseded");
@@ -371,6 +434,7 @@ export function deriveCodingSessionHandoverModel(input: {
     metadataFence,
     priorContinuation,
     supersededCheckpoints: Object.freeze(supersededCheckpoints),
+    postClaimNextAction,
     claimedBodyReachable,
     retired: fold.retired,
     retiredAt: input.retiredAt ?? null,
