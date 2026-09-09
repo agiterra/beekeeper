@@ -705,3 +705,76 @@ test("a continuation_registered receipt is not a lifecycle receipt", () => {
     "a stored CI continuation must not read as a generation lifecycle fact",
   );
 });
+
+// §3.1: a returning provider says its execution is `disconnected` **and** who
+// fenced it, so the desktop reads the fence from the coordination fold rather
+// than from a second query — and never infers it from reachability.
+const HANDOVER = {
+  state: "active",
+  claimant: "b".repeat(64),
+  bodyPubkey: "d".repeat(64),
+  acceptedEventId: "e".repeat(64),
+};
+
+test("a fenced provider's handover disclosure decodes, present or absent", () => {
+  assert.equal(isStrictMetadataContent(metadata({ handover: HANDOVER })), true);
+  assert.equal(isStrictMetadataContent(metadata({})), true);
+  // Beside another amendment, because each is present or absent on its own.
+  assert.equal(
+    isStrictMetadataContent(
+      metadata({ sessionRef: SESSION_REF, handover: HANDOVER }),
+    ),
+    true,
+  );
+});
+
+test("an explicit null handover is refused, exactly as buzz-core refuses it", () => {
+  // `validate_session_metadata` answers "coding-session metadata handover must
+  // not be null". A decoder that accepted it would render a session the relay
+  // and every provider consider malformed.
+  assert.equal(isStrictMetadataContent(metadata({ handover: null })), false);
+});
+
+test("a disclosed claim carries the word that says whether it still stands", () => {
+  assert.equal(
+    isStrictMetadataContent(
+      metadata({ handover: { ...HANDOVER, state: "voided" } }),
+    ),
+    true,
+  );
+  // No "none" token: absence of the whole key is how a provider says no claim
+  // stands, so a third word here would be a second way to say it.
+  for (const state of ["none", "", "Active", null, 1]) {
+    assert.equal(
+      isStrictMetadataContent(metadata({ handover: { ...HANDOVER, state } })),
+      false,
+      `state ${JSON.stringify(state)} must be refused`,
+    );
+  }
+  const { state: _state, ...withoutState } = HANDOVER;
+  assert.equal(
+    isStrictMetadataContent(metadata({ handover: withoutState })),
+    false,
+    "a fence with no state could read as live when it is void",
+  );
+});
+
+test("a half-written fence is refused rather than read as `not fenced`", () => {
+  const { bodyPubkey: _body, ...withoutBody } = HANDOVER;
+  assert.equal(
+    isStrictMetadataContent(metadata({ handover: withoutBody })),
+    false,
+  );
+  assert.equal(
+    isStrictMetadataContent(
+      metadata({ handover: { ...HANDOVER, claimant: "not-hex" } }),
+    ),
+    false,
+  );
+  assert.equal(
+    isStrictMetadataContent(
+      metadata({ handover: { ...HANDOVER, extra: "field" } }),
+    ),
+    false,
+  );
+});

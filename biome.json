@@ -33,5 +33,15 @@
     "parser": {
       "tailwindDirectives": true
     }
-  }
+  },
+  "overrides": [
+    {
+      "includes": [
+        "**/*.fixture.json"
+      ],
+      "formatter": {
+        "enabled": false
+      }
+    }
+  ]
 }

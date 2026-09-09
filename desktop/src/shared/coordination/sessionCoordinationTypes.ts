@@ -80,6 +80,30 @@ export type CoordinatedGeneration = {
   lifecycleCommandEventId: string;
   lifecycleReceiptEventId: string;
   sourceEventIds: string[];
+  /**
+   * The handover fence this execution's own provider last disclosed (§3.1).
+   *
+   * Additive and optional on purpose: a provider older than the fence, or one
+   * that is not fenced, publishes nothing here and the key is absent — which
+   * is a different fact from `null` only in that neither is a fence. What it
+   * is never allowed to be is *inferred*: a fenced execution says so in its
+   * own signed metadata, and a reader that guessed from reachability would
+   * call an offline provider fenced and a fenced one merely quiet.
+   */
+  handover?: {
+    /**
+     * Whether the disclosed claim still stands.
+     *
+     * `voided` is not a softer `active`: nobody holds the session and every
+     * body stays fenced until somebody with standing claims it again, so a
+     * reader that dropped this word would show a live holder who does not
+     * exist.
+     */
+    state: "active" | "voided";
+    claimant: string;
+    bodyPubkey: string;
+    acceptedEventId: string;
+  } | null;
 };
 
 /** Durable lifecycle state for an umbrella session. */

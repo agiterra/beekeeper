@@ -34,6 +34,8 @@ export default defineConfig({
         "**/coding-session-mission-lens.spec.ts",
         "**/coding-session-mission-density.spec.ts",
         "**/coding-session-observations.spec.ts",
+        // Absent-participant handover: claim, reconstruct, fence, deletion.
+        "**/coding-session-handover.spec.ts",
         "**/coding-session-founder-acts.spec.ts",
         "**/crew-front-door.spec.ts",
         // LANE-L33 — the shared home disclosure and the nest remedy.

@@ -109,6 +109,13 @@ function isSeatTransitionType(
   return value === "grant-seat" || value === "revoke-seat";
 }
 
+/** The two handover links, which name a body instead of a role (§1). */
+function isClaimTransitionType(
+  value: CodingSessionAuthorityTransitionType,
+): value is "takeover" | "transfer" {
+  return value === "takeover" || value === "transfer";
+}
+
 function isU32Sequence(value: unknown): value is number {
   return (
     typeof value === "number" &&
@@ -256,6 +263,7 @@ export function buildCodingSessionAuthorityTransitionContent(input: {
   type: CodingSessionAuthorityTransitionType;
   granteePubkey: string;
   role?: string;
+  bodyPubkey?: string;
 }): string {
   return JSON.stringify({
     genesisRef: input.genesisRef,
@@ -264,6 +272,11 @@ export function buildCodingSessionAuthorityTransitionContent(input: {
     type: input.type,
     granteePubkey: input.granteePubkey,
     ...(isSeatTransitionType(input.type) ? { role: input.role } : {}),
+    // Trailing and type-scoped, exactly like `role`: every earlier form stays
+    // byte-identical, and a claim link carries the body it will run on.
+    ...(isClaimTransitionType(input.type)
+      ? { bodyPubkey: input.bodyPubkey }
+      : {}),
   });
 }
 
@@ -279,6 +292,8 @@ export function buildCodingSessionAuthorityTransitionEvent(input: {
   type: CodingSessionAuthorityTransitionType;
   granteePubkey: string;
   role?: string;
+  /** Required for `takeover`/`transfer`, refused for every other type. */
+  bodyPubkey?: string;
 }): CodingSessionAuthorityTransitionEventInput {
   if (input.channelId.trim().length === 0) {
     throw new Error("channelId must not be empty");
@@ -302,6 +317,7 @@ export function buildCodingSessionAuthorityTransitionEvent(input: {
     );
   }
   const seatTransition = isSeatTransitionType(input.type);
+  const claimTransition = isClaimTransitionType(input.type);
   if (
     (seatTransition &&
       (typeof input.role !== "string" || !ROLE_SLUG_REGEX.test(input.role))) ||
@@ -309,6 +325,16 @@ export function buildCodingSessionAuthorityTransitionEvent(input: {
   ) {
     throw new Error(
       "role must be one lowercase role slug exactly for a seat transition",
+    );
+  }
+  if (
+    (claimTransition &&
+      (typeof input.bodyPubkey !== "string" ||
+        !HEX64_REGEX.test(input.bodyPubkey.toLowerCase()))) ||
+    (!claimTransition && input.bodyPubkey !== undefined)
+  ) {
+    throw new Error(
+      "bodyPubkey must be one lowercase 64-hex provider authority pubkey exactly for a takeover or transfer",
     );
   }
   return {
@@ -320,6 +346,9 @@ export function buildCodingSessionAuthorityTransitionEvent(input: {
       type: input.type,
       granteePubkey,
       ...(seatTransition ? { role: input.role } : {}),
+      ...(claimTransition
+        ? { bodyPubkey: input.bodyPubkey?.toLowerCase() }
+        : {}),
     }),
     tags: buildCodingSessionAuthorityTransitionTags(
       input.channelId,
@@ -447,6 +476,8 @@ export async function publishCodingSessionAuthorityTransition(
     type: CodingSessionAuthorityTransitionType;
     granteePubkey: string;
     role?: string;
+    /** The body a `takeover`/`transfer` claims (§1). */
+    bodyPubkey?: string;
   },
   dependencies: TransitionPublishDependencies = {},
 ): Promise<RelayEvent> {
@@ -471,6 +502,9 @@ export async function publishCodingSessionAuthorityTransition(
         type: input.type,
         granteePubkey: input.granteePubkey,
         ...(input.role !== undefined ? { role: input.role } : {}),
+        ...(input.bodyPubkey !== undefined
+          ? { bodyPubkey: input.bodyPubkey }
+          : {}),
       }),
     );
     return publisher.publishEvent(

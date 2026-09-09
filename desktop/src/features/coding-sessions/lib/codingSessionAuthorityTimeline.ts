@@ -30,10 +30,28 @@ export type CodingSessionAuthorityTransitionType =
   | "grant-viewer"
   | "revoke"
   | "grant-seat"
-  | "revoke-seat";
+  | "revoke-seat"
+  | "takeover"
+  | "transfer";
 
 const ACCEPTED_TRANSITION_TYPES = new Set<CodingSessionAuthorityTransitionType>(
-  ["grant-operator", "grant-viewer", "revoke", "grant-seat", "revoke-seat"],
+  [
+    "grant-operator",
+    "grant-viewer",
+    "revoke",
+    "grant-seat",
+    "revoke-seat",
+    // The two handover links (`docs/HANDOVER_IMPL.md` §1). Verified and
+    // advancing the accepted head exactly like the seat links before them,
+    // and — also like the seat links — outside this legacy operator/viewer
+    // display projection: who *holds* the session is the claim fold's
+    // answer (`codingSessionMissionAuthority.ts`), not a roster role. Adding
+    // them here is not cosmetic: this analysis fails closed on an unknown
+    // type, so without them one accepted takeover would freeze the roster's
+    // head and every later grant would look unaccepted.
+    "takeover",
+    "transfer",
+  ],
 );
 const LEGACY_TRANSITION_FIELDS = [
   "genesisRef",
@@ -43,6 +61,11 @@ const LEGACY_TRANSITION_FIELDS = [
   "granteePubkey",
 ] as const;
 const SEAT_TRANSITION_FIELDS = [...LEGACY_TRANSITION_FIELDS, "role"] as const;
+/** A claim link names the body it will run on, never a role. */
+const CLAIM_TRANSITION_FIELDS = [
+  ...LEGACY_TRANSITION_FIELDS,
+  "bodyPubkey",
+] as const;
 const LEGACY_RECEIPT_FIELDS = [
   "type",
   "genesisRef",
@@ -52,6 +75,8 @@ const LEGACY_RECEIPT_FIELDS = [
   "granteePubkey",
 ] as const;
 const SEAT_RECEIPT_FIELDS = [...LEGACY_RECEIPT_FIELDS, "role"] as const;
+/** The relay carries `bodyPubkey` on a claim receipt when it has one. */
+const CLAIM_RECEIPT_FIELDS = [...LEGACY_RECEIPT_FIELDS, "bodyPubkey"] as const;
 
 /** Strictly decoded transition retained for the roster's pending projection. */
 export type ParsedCodingSessionAuthorityTransition = {
@@ -63,6 +88,8 @@ export type ParsedCodingSessionAuthorityTransition = {
   type: CodingSessionAuthorityTransitionType;
   granteePubkey: string;
   role: string | null;
+  /** The execution body a `takeover`/`transfer` claims; null otherwise. */
+  bodyPubkey: string | null;
 };
 
 type ParsedReceipt = {
@@ -73,6 +100,7 @@ type ParsedReceipt = {
   transitionType: CodingSessionAuthorityTransitionType;
   granteePubkey: string;
   role: string | null;
+  bodyPubkey: string | null;
 };
 
 /** One fully verified, relay-accepted authority-chain link. */
@@ -84,6 +112,7 @@ export type AcceptedCodingSessionAuthorityLink = {
   type: CodingSessionAuthorityTransitionType;
   granteePubkey: string;
   role: string | null;
+  bodyPubkey: string | null;
 };
 
 /** Whether the supplied history proves one unambiguous contiguous chain. */
@@ -119,6 +148,12 @@ function isSeatTransitionType(
   value: CodingSessionAuthorityTransitionType,
 ): value is "grant-seat" | "revoke-seat" {
   return value === "grant-seat" || value === "revoke-seat";
+}
+
+function isClaimTransitionType(
+  value: CodingSessionAuthorityTransitionType,
+): value is "takeover" | "transfer" {
+  return value === "takeover" || value === "transfer";
 }
 
 function isU32Sequence(value: unknown): value is number {
@@ -174,11 +209,19 @@ function parseTransition(
   );
   if (!payload || !isAcceptedTransitionType(payload.type)) return null;
   const seatTransition = isSeatTransitionType(payload.type);
+  const claimTransition = isClaimTransitionType(payload.type);
   if (
     !hasExactFields(payload, [
-      seatTransition ? SEAT_TRANSITION_FIELDS : LEGACY_TRANSITION_FIELDS,
+      seatTransition
+        ? SEAT_TRANSITION_FIELDS
+        : claimTransition
+          ? CLAIM_TRANSITION_FIELDS
+          : LEGACY_TRANSITION_FIELDS,
     ]) ||
-    payload.genesisRef !== genesisRef
+    payload.genesisRef !== genesisRef ||
+    (claimTransition &&
+      (typeof payload.bodyPubkey !== "string" ||
+        !HEX64_REGEX.test(payload.bodyPubkey)))
   ) {
     return null;
   }
@@ -205,6 +248,7 @@ function parseTransition(
     type: payload.type,
     granteePubkey: payload.granteePubkey,
     role: seatTransition ? (payload.role as string) : null,
+    bodyPubkey: claimTransition ? (payload.bodyPubkey as string) : null,
   };
 }
 
@@ -229,10 +273,22 @@ function parseReceipt(
   if (!payload || !isAcceptedTransitionType(payload.transitionType))
     return null;
   const seatTransition = isSeatTransitionType(payload.transitionType);
+  const claimTransition = isClaimTransitionType(payload.transitionType);
   if (
-    !hasExactFields(payload, [
-      seatTransition ? SEAT_RECEIPT_FIELDS : LEGACY_RECEIPT_FIELDS,
-    ]) ||
+    !hasExactFields(
+      payload,
+      seatTransition
+        ? [SEAT_RECEIPT_FIELDS]
+        : claimTransition
+          ? // Present-or-absent: the relay writes `bodyPubkey` "when
+            // present", and either form binds the transition it names.
+            [LEGACY_RECEIPT_FIELDS, CLAIM_RECEIPT_FIELDS]
+          : [LEGACY_RECEIPT_FIELDS],
+    ) ||
+    (claimTransition &&
+      Object.hasOwn(payload, "bodyPubkey") &&
+      (typeof payload.bodyPubkey !== "string" ||
+        !HEX64_REGEX.test(payload.bodyPubkey))) ||
     payload.type !== CODING_SESSION_AUTHORITY_RECEIPT_TYPE ||
     payload.genesisRef !== genesisRef ||
     typeof payload.acceptedEventId !== "string" ||
@@ -255,6 +311,10 @@ function parseReceipt(
       transitionType: payload.transitionType,
       granteePubkey: payload.granteePubkey,
       role: seatTransition ? (payload.role as string) : null,
+      bodyPubkey:
+        claimTransition && typeof payload.bodyPubkey === "string"
+          ? payload.bodyPubkey
+          : null,
     },
   };
 }
@@ -290,7 +350,11 @@ function receiptBindsTransition(
     receipt.seq === transition.seq &&
     receipt.transitionType === transition.type &&
     receipt.granteePubkey === transition.granteePubkey &&
-    receipt.role === transition.role
+    receipt.role === transition.role &&
+    // An absent `bodyPubkey` leaves the signed transition as the only
+    // statement of the body; a *different* one is not evidence of anything.
+    (receipt.bodyPubkey === null ||
+      receipt.bodyPubkey === transition.bodyPubkey)
   );
 }
 
@@ -306,6 +370,7 @@ function authorityLink(
     type: transition.type,
     granteePubkey: transition.granteePubkey,
     role: transition.role,
+    bodyPubkey: transition.bodyPubkey,
   };
 }
 

@@ -16,6 +16,7 @@ import {
   umbrellaHasCollapsedHistory,
 } from "@/features/coding-sessions/lib/codingSessionWorkspaceModel";
 import { useCodingSessionReachabilityResolver } from "@/features/coding-sessions/hooks/useCodingSessionProviderReachability";
+import type { CodingSessionReachabilityResolver } from "@/features/coding-sessions/hooks/useCodingSessionProviderReachability";
 import { resolveCodingSessionUmbrellaComposerAuthority } from "@/features/coding-sessions/lib/codingSessionUmbrellaComposerModel";
 import { useCodingSessionOperatorProfiles } from "@/features/coding-sessions/hooks/useCodingSessionOperatorProfiles";
 import { useCodingSessionRoster } from "@/features/coding-sessions/lib/codingSessionRoster";
@@ -50,6 +51,7 @@ import { CodingSessionComposer } from "./CodingSessionComposer";
 import { CodingSessionPeoplePopover } from "./CodingSessionPeoplePopover";
 import { CodingSessionHeader } from "./CodingSessionHeader";
 import { CodingSessionFounderLine } from "./CodingSessionFounderLine";
+import { CodingSessionHandoverHost } from "./CodingSessionHandoverHost";
 import { cn } from "@/shared/lib/cn";
 
 import { useCodingSessionColumnGutter } from "../lib/codingSessionWidthPreference";
@@ -111,6 +113,8 @@ export function CodingSessionWorkspace({
     // the same sessions. The local allowlist keeps gating what runs here.
     authorityMode: "open",
   });
+  const resolveHandoverReachability =
+    useCodingSessionReachabilityResolver(channelId);
   const goalSnapshot = useCodingSessionGoals([channelId]);
   const nameSnapshot = useCodingSessionNames([channelId]);
   const founderPubkeysByGenesisRef = React.useMemo(() => {
@@ -276,6 +280,15 @@ export function CodingSessionWorkspace({
 
   return (
     <>
+      {/* Above both branches: a claim is umbrella-wide (§1). */}
+      <CodingSessionHandoverHost
+        channelId={channelId}
+        focusedExecution={resolution.focusedExecution}
+        projectRef={joinProject?.address ?? null}
+        resolveReachability={resolveHandoverReachability}
+        title={sessionName?.content ?? umbrella.title}
+        umbrella={umbrella}
+      />
       {/* The umbrella surface is a render branch, not a mode: an umbrella with
           no collapsed history falls through to exactly today's single-session
           tree. Routing on collapsed history rather than execution count is
@@ -284,6 +297,7 @@ export function CodingSessionWorkspace({
       {umbrellaHasCollapsedHistory(umbrella) ? (
         <UmbrellaCodingSessionWorkspace
           catalogSettled={!catalog.isLoading}
+          resolveReachability={resolveHandoverReachability}
           channelId={channelId}
           channelName={channel?.name ?? null}
           communityScope={communityScope}
@@ -314,6 +328,7 @@ export function CodingSessionWorkspace({
       ) : (
         <ReadyCodingSessionWorkspace
           channelId={channelId}
+          resolveReachability={resolveHandoverReachability}
           channelName={channel?.name ?? null}
           generationId={generationId}
           isMember={isMember}
@@ -376,6 +391,7 @@ export function CodingSessionWorkspace({
 function ReadyCodingSessionWorkspace({
   acceptedOperators,
   channelId,
+  resolveReachability: sharedResolveReachability,
   channelName,
   generationId,
   founderPubkey,
@@ -398,6 +414,7 @@ function ReadyCodingSessionWorkspace({
 }: {
   acceptedOperators: ReadonlySet<string> | null;
   channelId: string;
+  resolveReachability?: CodingSessionReachabilityResolver;
   channelName: string | null;
   generationId: string;
   founderPubkey: string | null;
@@ -521,7 +538,11 @@ function ReadyCodingSessionWorkspace({
       messages,
       scrollContainerRef: scrollRef,
     });
-  const resolveReachability = useCodingSessionReachabilityResolver(channelId);
+  // Borrowed from the workspace: one coordination subscription per session.
+  const ownReachability = useCodingSessionReachabilityResolver(
+    sharedResolveReachability ? null : channelId,
+  );
+  const resolveReachability = sharedResolveReachability ?? ownReachability;
   const reachability = resolveReachability(session.commandTarget);
   const status = deriveCodingSessionWorkspaceStatus(
     session.transcript,

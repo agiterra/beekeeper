@@ -20,7 +20,9 @@ export type CodingSessionAuthorityTransitionType =
   | "grant-viewer"
   | "revoke"
   | "grant-seat"
-  | "revoke-seat";
+  | "revoke-seat"
+  | "takeover"
+  | "transfer";
 
 type AuthorityTransition = {
   genesisRef: string;
@@ -29,6 +31,7 @@ type AuthorityTransition = {
   type: CodingSessionAuthorityTransitionType;
   granteePubkey: string;
   role?: string;
+  bodyPubkey?: string;
 };
 
 type AuthorityReceipt = {
@@ -39,7 +42,53 @@ type AuthorityReceipt = {
   transitionType: CodingSessionAuthorityTransitionType;
   granteePubkey: string;
   role?: string;
+  bodyPubkey?: string;
 };
+
+/**
+ * One accepted handover claim — the TypeScript twin of `CurrentClaim`
+ * (`crates/buzz-core/src/coding_session_authority_claim.rs`), field for field.
+ *
+ * Deliberately carries no timestamp: the Rust twin does not, because a
+ * consumer that folded the chain from receipts alone knows the claim without
+ * knowing when it landed. The time is reported beside the state, where `null`
+ * can mean "unknown" without pretending to be "just now".
+ */
+export type CodingSessionClaim = {
+  /** The participant who now owns this session's work. */
+  claimant: string;
+  /** The provider authority pubkey of the body they will work on. */
+  bodyPubkey: string;
+  acceptedEventId: string;
+  seq: number;
+};
+
+/**
+ * Claim state: three values, and consumers must keep them apart.
+ *
+ * `none` is "no handover ever happened, existing rules apply". `voided` is
+ * **not** the same thing: a handover happened and its claimant lost standing,
+ * so the fence stays up for every body until somebody with standing takes the
+ * session over again. Collapsing `voided` into `none` would silently re-open a
+ * session that a revoke deliberately froze, and a regrant of the same pubkey
+ * never restores the old claim (`docs/HANDOVER_IMPL.md` §1).
+ */
+export type CodingSessionClaimState =
+  | { state: "no-claim" }
+  | ({ state: "active" } & CodingSessionClaim)
+  | {
+      state: "voided";
+      /** The claim that was voided — still the name a reader shows. */
+      last: CodingSessionClaim;
+      /** The accepted revoke or demotion that voided it. */
+      voidedBy: string;
+      seq: number;
+    };
+
+/** The claim state of a chain no handover link has ever touched. */
+export const CODING_SESSION_NO_CLAIM: CodingSessionClaimState = Object.freeze({
+  state: "no-claim",
+});
 
 export type CodingSessionMissionAuthorityProjection = {
   channelRef: string;
@@ -82,6 +131,33 @@ export type CodingSessionMissionAuthorityProjection = {
     acceptedAt: number;
     transitionType: CodingSessionAuthorityTransitionType;
   }>;
+  /**
+   * Who owns this session's work, from the §1 rule over the same chain.
+   *
+   * Umbrella-wide by construction: the chain is rooted at the genesis, so one
+   * accepted claim hands over the whole session — every execution and every
+   * assignment under it — and no surface may describe it as moving a slice.
+   */
+  claim: CodingSessionClaimState;
+  /**
+   * Every accepted claim link, in accepted order.
+   *
+   * A continuation names the claim it acted under, and that claim may since
+   * have been superseded or voided — "continued by B until …" is history, not
+   * a live claim, and a reader that only held the current state would have to
+   * call every past continuation unauthorized.
+   */
+  claimHistory: CodingSessionClaim[];
+  /**
+   * When the claim in force was accepted, in unix seconds, or `null`.
+   *
+   * Beside the state rather than inside it, exactly as Rust carries
+   * `claim_since` beside `ClaimState`: "unknown" and "just now" must never
+   * render alike.
+   */
+  claimSince: number | null;
+  /** When the claim was voided, in unix seconds, or `null`. */
+  claimVoidedAt: number | null;
 };
 
 function fail<T>(error: string): StrictDecodeResult<T> {
@@ -129,25 +205,49 @@ function isTransitionType(
     value === "grant-viewer" ||
     value === "revoke" ||
     value === "grant-seat" ||
-    value === "revoke-seat"
+    value === "revoke-seat" ||
+    value === "takeover" ||
+    value === "transfer"
   );
 }
+
+/** The two links that move the claim. Both carry `bodyPubkey`, never `role`. */
+function isClaimTransitionType(value: unknown): boolean {
+  return value === "takeover" || value === "transfer";
+}
+
+const BASE_TRANSITION_FIELDS = [
+  "genesisRef",
+  "prevAccepted",
+  "seq",
+  "type",
+  "granteePubkey",
+] as const;
 
 function decodeTransitionContent(
   source: string,
 ): StrictDecodeResult<AuthorityTransition> {
   const value = parseJson(source, 512);
-  const isSeat =
-    typeof value === "object" &&
-    value !== null &&
-    ((value as Record<string, unknown>).type === "grant-seat" ||
-      (value as Record<string, unknown>).type === "revoke-seat");
+  const type =
+    typeof value === "object" && value !== null
+      ? (value as Record<string, unknown>).type
+      : null;
+  const isSeat = type === "grant-seat" || type === "revoke-seat";
+  const isClaim = isClaimTransitionType(type);
   if (
     !hasExactFields(value, [
       isSeat
-        ? ["genesisRef", "prevAccepted", "seq", "type", "granteePubkey", "role"]
-        : ["genesisRef", "prevAccepted", "seq", "type", "granteePubkey"],
+        ? [...BASE_TRANSITION_FIELDS, "role"]
+        : isClaim
+          ? [...BASE_TRANSITION_FIELDS, "bodyPubkey"]
+          : [...BASE_TRANSITION_FIELDS],
     ]) ||
+    // Required 64-hex for a claim, and absent for everything else: a grant
+    // that named a body would be claiming an execution the relay never
+    // serialized a claim for.
+    (isClaim &&
+      (typeof value.bodyPubkey !== "string" ||
+        !HEX64.test(value.bodyPubkey))) ||
     typeof value.genesisRef !== "string" ||
     !HEX64.test(value.genesisRef) ||
     !(
@@ -176,27 +276,32 @@ function decodeReceiptContent(
       : null;
   const isSeat =
     transitionType === "grant-seat" || transitionType === "revoke-seat";
+  const isClaim = isClaimTransitionType(transitionType);
+  const baseReceiptFields = [
+    "type",
+    "genesisRef",
+    "acceptedEventId",
+    "seq",
+    "transitionType",
+    "granteePubkey",
+  ];
   if (
-    !hasExactFields(value, [
+    !hasExactFields(
+      value,
       isSeat
-        ? [
-            "type",
-            "genesisRef",
-            "acceptedEventId",
-            "seq",
-            "transitionType",
-            "granteePubkey",
-            "role",
-          ]
-        : [
-            "type",
-            "genesisRef",
-            "acceptedEventId",
-            "seq",
-            "transitionType",
-            "granteePubkey",
-          ],
-    ]) ||
+        ? [[...baseReceiptFields, "role"]]
+        : isClaim
+          ? // Present-or-absent, deliberately: the relay carries `bodyPubkey`
+            // "when present", and a receipt written before it did is still a
+            // receipt for an accepted link whose own signed transition names
+            // the body. Either form binds; a mismatch below does not.
+            [[...baseReceiptFields], [...baseReceiptFields, "bodyPubkey"]]
+          : [[...baseReceiptFields]],
+    ) ||
+    (isClaim &&
+      Object.hasOwn(value, "bodyPubkey") &&
+      (typeof value.bodyPubkey !== "string" ||
+        !HEX64.test(value.bodyPubkey))) ||
     value.type !== RECEIPT_TYPE ||
     typeof value.genesisRef !== "string" ||
     !HEX64.test(value.genesisRef) ||
@@ -243,6 +348,46 @@ function decodeScopedTransition(input: {
   return {
     ok: true,
     value: { signer: input.event.pubkey, payload: decoded.value },
+  };
+}
+
+/**
+ * The §1 claim rule, one accepted link at a time.
+ *
+ * Written as a fold over `ClaimState` rather than as "the newest takeover"
+ * because the difference between *no claim* and *a voided claim* is the whole
+ * safety property: a revoke or a demotion of the claimant freezes the session
+ * for everyone until somebody with standing claims it again, and a regrant of
+ * the very same pubkey is explicitly not that act.
+ */
+function foldClaimLink(
+  state: CodingSessionClaimState,
+  link: {
+    eventId: string;
+    payload: AuthorityTransition;
+  },
+): CodingSessionClaimState {
+  const { payload } = link;
+  if (isClaimTransitionType(payload.type) && payload.bodyPubkey) {
+    return {
+      state: "active",
+      claimant: payload.granteePubkey,
+      bodyPubkey: payload.bodyPubkey,
+      acceptedEventId: link.eventId,
+      seq: payload.seq,
+    };
+  }
+  if (state.state !== "active") return state;
+  const voids =
+    (payload.type === "revoke" || payload.type === "grant-viewer") &&
+    payload.granteePubkey === state.claimant;
+  if (!voids) return state;
+  const { state: _state, ...last } = state;
+  return {
+    state: "voided",
+    last,
+    voidedBy: link.eventId,
+    seq: payload.seq,
   };
 }
 
@@ -323,7 +468,12 @@ export function projectCodingSessionMissionAuthority(input: {
       receipt.value.seq !== payload.seq ||
       receipt.value.transitionType !== payload.type ||
       receipt.value.granteePubkey !== payload.granteePubkey ||
-      receipt.value.role !== payload.role
+      receipt.value.role !== payload.role ||
+      // A receipt that names a *different* body than the transition it claims
+      // to have accepted is not evidence of anything; an absent one leaves the
+      // signed transition as the only statement, which is where it came from.
+      (receipt.value.bodyPubkey !== undefined &&
+        receipt.value.bodyPubkey !== payload.bodyPubkey)
     ) {
       return fail(
         "authority receipt facts do not match its accepted transition",
@@ -355,6 +505,10 @@ export function projectCodingSessionMissionAuthority(input: {
     { actorPubkey: string; role: string; grantEventRef: string }
   >();
   let headEventId: string | null = null;
+  let claimState: CodingSessionClaimState = CODING_SESSION_NO_CLAIM;
+  const claimHistory: CodingSessionClaim[] = [];
+  let claimSince: number | null = null;
+  let claimVoidedAt: number | null = null;
   const acceptedEventIds: string[] = [];
   const policyGrants: CodingSessionMissionAuthorityProjection["policyGrants"] =
     [];
@@ -370,12 +524,28 @@ export function projectCodingSessionMissionAuthority(input: {
     const signerIsLead = signerSeat?.role === "lead";
     const seatTransition =
       link.payload.type === "grant-seat" || link.payload.type === "revoke-seat";
+    const claimTransition = isClaimTransitionType(link.payload.type);
+    const currentClaimant =
+      claimState.state === "active" ? claimState.claimant : null;
     if (
       (seatTransition &&
         !signerIsFounder &&
         !signerIsOperator &&
         !signerIsLead) ||
-      (!seatTransition && !signerIsFounder)
+      // §1: a takeover is a self-claim by the founder or a live operator; a
+      // transfer is signed by the current claimant or the founder and names a
+      // grantee who already holds standing. Anything else is not this chain's
+      // link, however well the relay serialized it.
+      (link.payload.type === "takeover" &&
+        (!(signerIsFounder || signerIsOperator) ||
+          link.payload.granteePubkey !== link.signer)) ||
+      (link.payload.type === "transfer" &&
+        (!(signerIsFounder || link.signer === currentClaimant) ||
+          !(
+            link.payload.granteePubkey === input.founderPubkey ||
+            grants.get(link.payload.granteePubkey)?.maySteer === true
+          ))) ||
+      (!seatTransition && !claimTransition && !signerIsFounder)
     ) {
       return fail(
         `authority transition ${link.eventId} has an unauthorized signer`,
@@ -424,6 +594,22 @@ export function projectCodingSessionMissionAuthority(input: {
         return fail("revoke-seat role does not match");
       seats.delete(link.payload.granteePubkey);
     }
+    const previousClaim = claimState;
+    claimState = foldClaimLink(claimState, link);
+    if (
+      claimState.state === "active" &&
+      claimState.acceptedEventId === link.eventId
+    ) {
+      const { state: _state, ...claim } = claimState;
+      claimHistory.push(claim);
+      claimSince = link.acceptedAt;
+      claimVoidedAt = null;
+    } else if (
+      claimState.state === "voided" &&
+      previousClaim.state === "active"
+    ) {
+      claimVoidedAt = link.acceptedAt;
+    }
     acceptedEventIds.push(link.eventId);
     policyGrants.push({
       transitionEventId: link.eventId,
@@ -444,6 +630,10 @@ export function projectCodingSessionMissionAuthority(input: {
       headSeq: acceptedEventIds.length,
       acceptedEventIds,
       policyGrants,
+      claim: claimState,
+      claimHistory,
+      claimSince,
+      claimVoidedAt,
       activeGrants: [...grants.values()].sort((a, b) =>
         a.actorPubkey.localeCompare(b.actorPubkey),
       ),

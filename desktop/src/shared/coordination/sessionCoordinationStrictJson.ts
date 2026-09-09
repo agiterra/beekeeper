@@ -344,7 +344,10 @@ export function hasStrictLeaseValues(
  * four (this list drifted to five amendments / thirty-two shapes when
  * `beeStamp` shipped without a matching bit here, rejecting every 44223 that
  * carried one — finding 31's own class, guarded against here by adding
- * `packRef`'s bit in the same lane that adds the key to the decoder).
+ * `packRef`'s bit in the same lane that adds the key to the decoder). The
+ * eighth is `handover` (§3.1): a fenced provider advertises its execution as
+ * `disconnected` **and** says who fenced it, so the desktop reads the fence
+ * from the coordination fold rather than from a second query — 256 shapes.
  * Enumerating fewer silently drops every event carrying an amendment this
  * list forgot, which is a whole-surface outage rather than a strictness
  * nuance: the reader sees no sessions at all.
@@ -372,6 +375,7 @@ function metadataFieldForms(): string[][] {
     ["routing"],
     ["beeStamp"],
     ["packRef"],
+    ["handover"],
   ];
   const forms: string[][] = [];
   for (let mask = 0; mask < 1 << amendments.length; mask += 1) {
@@ -471,6 +475,41 @@ const PACK_REF_APP_VERSION = /^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$/;
  * desktop's own `readPackRef` (`codingSessionPackRef.ts`) exactly, so the two
  * decoders agree.
  */
+/**
+ * A `handover` object: exactly the four keys `SessionMetadataHandover`
+ * (`crates/buzz-core/src/coding_session_payload.rs`, `deny_unknown_fields`)
+ * carries, each a lowercase 64-hex id.
+ *
+ * Same omit-when-absent contract as `beeStamp` and `packRef`, and for the
+ * same reason: `validate_session_metadata` refuses an explicit `null`
+ * outright ("coding-session metadata handover must not be null"), so a null
+ * here is a shape no real host emits — accepting it would let the desktop
+ * render a session buzz-core considers malformed.
+ *
+ * A partial object is refused rather than read loosely: a fence naming a
+ * claimant but no body is not a fence this reader can act on.
+ */
+function isMetadataHandover(value: unknown): boolean {
+  return (
+    isPlainObject(value) &&
+    hasExactFields(value, [
+      ["state", "claimant", "bodyPubkey", "acceptedEventId"],
+    ]) &&
+    // Closed, and the field that keeps a **voided** claim from reading as a
+    // live one: there is no "none" token, because absence of the whole key is
+    // how a provider says no claim stands.
+    (value.state === "active" || value.state === "voided") &&
+    typeof value.claimant === "string" &&
+    HEX64_PUBKEY.test(value.claimant) &&
+    typeof value.bodyPubkey === "string" &&
+    HEX64_PUBKEY.test(value.bodyPubkey) &&
+    typeof value.acceptedEventId === "string" &&
+    HEX64_PUBKEY.test(value.acceptedEventId)
+  );
+}
+
+const HEX64_PUBKEY = /^[0-9a-f]{64}$/;
+
 function isPackRef(value: unknown): boolean {
   if (
     !isPlainObject(value) ||
@@ -561,6 +600,16 @@ export function hasStrictMetadataJson(
   if (
     Object.hasOwn(content, "packRef") &&
     (content.packRef === null || !isPackRef(content.packRef))
+  ) {
+    return false;
+  }
+  // §3.1's fence disclosure. A present-but-malformed object — including an
+  // explicit `null`, which Rust refuses by name — is refused rather than
+  // ignored: reading a half-written fence as "not fenced" is the exact lie
+  // this decoder exists to prevent.
+  if (
+    Object.hasOwn(content, "handover") &&
+    !isMetadataHandover(content.handover)
   ) {
     return false;
   }

@@ -66,7 +66,10 @@ import {
   CodingSessionSurfaceHost,
   useCodingSessionSurfaceHostState,
 } from "./CodingSessionSurfaceHost";
-import { useCodingSessionReachabilityResolver } from "@/features/coding-sessions/hooks/useCodingSessionProviderReachability";
+import {
+  useCodingSessionReachabilityResolver,
+  type CodingSessionReachabilityResolver,
+} from "@/features/coding-sessions/hooks/useCodingSessionProviderReachability";
 import type { CodingSessionUmbrellaComposerPrefill } from "./CodingSessionUmbrellaComposer";
 import { CodingSessionRouteRail } from "./CodingSessionRouteRail";
 import { CodingSessionRouteScrubber } from "./CodingSessionRouteScrubber";
@@ -97,6 +100,7 @@ export { CodingSessionUmbrellaTimelineView } from "./CodingSessionUmbrellaTimeli
 export function UmbrellaCodingSessionWorkspace({
   acceptedOperators = null,
   catalogSettled,
+  resolveReachability: sharedResolveReachability,
   channelId,
   channelName,
   communityScope,
@@ -122,6 +126,8 @@ export function UmbrellaCodingSessionWorkspace({
   acceptedOperators?: ReadonlySet<string> | null;
   /** True only after signed provider history and its live fence have settled. */
   catalogSettled: boolean;
+  /** The workspace's own resolver, threaded to avoid a second live REQ. */
+  resolveReachability?: CodingSessionReachabilityResolver;
   channelId: string;
   channelName: string | null;
   /** Stable normalized relay/community identity for local lens persistence. */
@@ -171,7 +177,12 @@ export function UmbrellaCodingSessionWorkspace({
   });
   // One coordination read for the whole umbrella; every execution composer
   // asks it whether anything is answering for that generation (§2 item 41).
-  const resolveReachability = useCodingSessionReachabilityResolver(channelId);
+  // Borrowed from the workspace above when it has one, so an open session
+  // holds a single coordination subscription rather than one per surface.
+  const ownReachability = useCodingSessionReachabilityResolver(
+    sharedResolveReachability ? null : channelId,
+  );
+  const resolveReachability = sharedResolveReachability ?? ownReachability;
   const [workspaceBodyRef, bodyWidthPx] = useElementWidth<HTMLDivElement>();
   // B4: the stream's bottom reserve in Mission is the dock's own height, so
   // the unreachable notice and the task dock push the reserve instead of

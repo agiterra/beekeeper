@@ -85,6 +85,12 @@ type SessionMetadataFacts = {
   dirty: boolean | null;
   relayReachable: boolean | null;
   verifiedAt: number | null;
+  handover: {
+    state: "active" | "voided";
+    claimant: string;
+    bodyPubkey: string;
+    acceptedEventId: string;
+  } | null;
 };
 
 type CodingSessionTarget = {
@@ -247,6 +253,16 @@ function readSessionMetadata(
     dirty: nullableBoolean(content.dirty),
     relayReachable: nullableBoolean(content.relayReachable),
     verifiedAt: nullableInteger(content.verifiedAt),
+    // Already shape-checked by `hasStrictMetadataJson` above; absent and null
+    // both read as "this provider disclosed no fence".
+    handover: isPlainObject(content.handover)
+      ? {
+          state: content.handover.state as "active" | "voided",
+          claimant: content.handover.claimant as string,
+          bodyPubkey: content.handover.bodyPubkey as string,
+          acceptedEventId: content.handover.acceptedEventId as string,
+        }
+      : null,
   };
 }
 
@@ -794,6 +810,9 @@ export function foldSessionCoordination(
       lifecycleCommandEventId: acceptedGeneration.command.event.id,
       lifecycleReceiptEventId: acceptedGeneration.receipt.event.id,
       sourceEventIds,
+      ...(observed?.facts.handover
+        ? { handover: observed.facts.handover }
+        : {}),
     };
     const sessionKey =
       acceptedGeneration.sessionRef ??
