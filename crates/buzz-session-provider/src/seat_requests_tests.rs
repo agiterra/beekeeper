@@ -45,6 +45,7 @@ fn record(session_id: &str, command_id: &str) -> SessionRecord {
         bootstrap_transport: None,
         open_turn: None,
         closed: false,
+        created_by: None,
         handover: ClaimState::NoClaim,
         retired: None,
     }

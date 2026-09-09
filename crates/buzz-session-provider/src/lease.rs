@@ -126,6 +126,7 @@ mod tests {
             bootstrap_transport: None,
             open_turn: None,
             closed: false,
+            created_by: None,
             handover: Default::default(),
             retired: None,
             pack_ref: None,

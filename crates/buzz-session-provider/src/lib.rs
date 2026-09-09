@@ -3007,6 +3007,7 @@ impl Provider {
             bootstrap_transport: startup.bootstrap_transport,
             open_turn: None,
             closed: false,
+            created_by: Some(plan.created_by.clone()),
             // Seeded from the umbrella, not left at `NoClaim`. A create that
             // reaches here under a claimed umbrella has already satisfied the
             // fence — it is the claimant, on the claimed body — but the record
@@ -3188,9 +3189,19 @@ impl Provider {
             // What the second read actually learned. A takeover or a void
             // accepted between the create's own fence check and this moment
             // lands here, and the prompt does not go out.
+            //
+            // Judged with the create's **signer**, not `initial_operator` and
+            // not the founder. For a genesis-bearing create the founder is the
+            // genesis's signer, so a claimant reconstructing somebody else's
+            // session has a founder who is not them — and attributing their
+            // own seeded first turn to that founder made this branch refuse
+            // the very continuation the handover exists to allow, on the body
+            // they had just claimed. A non-claimant signer on the claimed
+            // body, and any signer on a body the claim does not name, are
+            // still refused.
             if authority_refusal.is_none() {
                 if let Some(refusal) = self.state.session(&target.session_id).and_then(|record| {
-                    commands::handover_fence(record, &initial_operator, &self.pubkey_hex)
+                    commands::handover_fence(record, &plan.created_by, &self.pubkey_hex)
                 }) {
                     authority_refusal = Some(format!("{}: {}", refusal.code, refusal.message));
                 }
@@ -5151,9 +5162,14 @@ impl Provider {
 
             // (1) the prompt the runtime already has.
             if let Some(open_turn) = record.open_turn.clone() {
+                // The turn's own operator, then the create's signer for a
+                // record whose open turn is its `initialTurn`, and only then
+                // this provider — each step is a better answer to "whose work
+                // is this" than the one after it.
                 let operator = open_turn
                     .operator_pubkey
                     .clone()
+                    .or_else(|| record.created_by.clone())
                     .unwrap_or_else(|| self.pubkey_hex.clone());
                 if let Some(refusal) =
                     commands::handover_fence(&record, &operator, &self.pubkey_hex)
@@ -6798,7 +6814,17 @@ impl Provider {
                 let operator_pubkey = self
                     .in_flight
                     .get(&command_id)
-                    .map(|turn| turn.operator_pubkey.clone());
+                    .map(|turn| turn.operator_pubkey.clone())
+                    .or_else(|| {
+                        // A create's `initialTurn` never passes through
+                        // `on_turn`, so it has no in-flight entry — but the
+                        // record knows who asked for the execution, and that
+                        // is exactly who sent this turn.
+                        self.state
+                            .session(&session_id)
+                            .filter(|record| record.command_id == command_id)
+                            .and_then(|record| record.created_by.clone())
+                    });
                 self.state.update_session(&session_id, |record| {
                     record.open_turn = Some(OpenTurn {
                         turn_id: turn_id.clone(),
@@ -9528,6 +9554,7 @@ mod tests {
             bootstrap_transport: None,
             open_turn: None,
             closed: false,
+            created_by: None,
             handover: ClaimState::NoClaim,
             retired: None,
             pack_ref: None,
@@ -14047,6 +14074,7 @@ mod tests {
                         operator_pubkey: None,
                     }),
                     closed: false,
+                    created_by: None,
                     handover: ClaimState::NoClaim,
                     retired: None,
                     pack_ref: None,

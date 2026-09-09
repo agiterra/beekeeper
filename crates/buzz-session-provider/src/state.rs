@@ -210,6 +210,21 @@ pub struct SessionRecord {
     /// every record written before this field existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pack_ref: Option<crate::actor_seats::PackRef>,
+    /// The verified signer of the create that opened this execution.
+    ///
+    /// Not the same fact as [`Self::founder_pubkey`]: for a genesis-bearing
+    /// create the founder is the genesis's signer, and the person who asked
+    /// for *this* execution may be a granted operator or the session's
+    /// claimant. Persisted because the create's own `initialTurn` is dispatched
+    /// straight to the actor's mailbox and never passes through the turn path
+    /// that would otherwise record who sent it — so without this the handover
+    /// fence has to guess, and guessing "the founder" refuses a claimant's own
+    /// continuation on the body they claimed.
+    ///
+    /// `None` for records written before the field existed; the fence then
+    /// falls back to asking whether this body may act at all.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_by: Option<String>,
     /// Founder pubkey resolved from genesis, or the locally witnessed create
     /// signer for legacy sessions. `None` is retained for pre-field records.
     #[serde(default)]
@@ -1266,6 +1281,7 @@ mod tests {
             bootstrap_transport: None,
             open_turn: None,
             closed: false,
+            created_by: None,
             handover: ClaimState::NoClaim,
             retired: None,
             pack_ref: None,

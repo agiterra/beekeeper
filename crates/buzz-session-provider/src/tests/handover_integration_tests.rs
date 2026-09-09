@@ -2427,3 +2427,253 @@ fn pruning_spares_live_hints_and_unsettled_markers() {
         "only a settled marker is pruned"
     );
 }
+
+// =========================================================================
+// Who the create's own first turn belongs to
+// =========================================================================
+
+/// A genesis-bearing create carrying an `initialTurn`, signed by `operator`.
+fn join_create_with_turn(
+    provider: &Provider,
+    channel_id: Uuid,
+    command_id: &str,
+    session_ref: &str,
+    genesis_ref: &str,
+    operator: &Keys,
+) -> Event {
+    let source =
+        create_event_with_genesis_ref(provider, channel_id, command_id, session_ref, genesis_ref);
+    let mut content: serde_json::Value =
+        serde_json::from_str(&source.content).expect("create JSON");
+    content["action"]["initialTurn"] = "pick up where A left off".into();
+    signed_lifecycle_event_by(channel_id, content.to_string(), operator)
+}
+
+/// The composition's 3/3 default path, as a unit test.
+///
+/// B reconstructs A's session on B's own machine: B is the claimant, P_B is
+/// the claimed body, and B signs the create. The takeover lands **between**
+/// the create's own pre-startup chain read and the second read that runs after
+/// the record is persisted — so the first read sees an unclaimed umbrella and
+/// the second sees B's claim.
+///
+/// This refused the claimant's own continuation, because the second read
+/// judged the seeded first turn with the *founder* (the genesis's signer, A)
+/// rather than the create's signer (B). The fence was doing precisely the
+/// opposite of its job: stopping the machine the claim names, on behalf of the
+/// person the claim replaced.
+#[tokio::test]
+async fn the_claimants_own_reconstruct_runs_its_first_turn_on_the_claimed_body() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let cwd = dir.path().join("checkout");
+    std::fs::create_dir_all(&cwd).expect("mkdir");
+    let channel_id = Uuid::new_v4();
+    let projects = write_projects(dir.path(), channel_id, &cwd);
+    let relay_keys = Keys::generate();
+    let claimant = Keys::generate();
+    let claimant_hex = claimant.public_key().to_hex();
+    let provider_keys = Keys::generate();
+    let body = provider_keys.public_key().to_hex();
+    let session_ref = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+
+    let log = dir.path().join("methods.log");
+    let state_dir = dir.path().join("state");
+    let agent = fake_agent(
+        state_dir_parent(&state_dir),
+        "stalling-logged-agent",
+        &stalling_logged_agent(&log.to_string_lossy()),
+    );
+    let mut provider = Provider::new(config_of(
+        provider_keys.clone(),
+        &state_dir,
+        Some(&projects),
+        agent,
+    ))
+    .expect("provider");
+    provider.set_relay_self(relay_keys.public_key().to_hex());
+
+    // The genesis is A's; the claimant is B.
+    let genesis = genesis_event(channel_id, session_ref);
+    let genesis_ref = genesis.id.to_hex();
+    let grant = grant_for(channel_id, &genesis_ref, None, 1, &claimant_hex);
+    let takeover = takeover_event(
+        channel_id,
+        &genesis_ref,
+        Some(grant.id.to_hex()),
+        2,
+        &claimant,
+        &body,
+    );
+    // The first read sees the grant and no takeover.
+    let (mut relay, control, server) = spawn_recording_test_relay(
+        &provider_keys,
+        vec![
+            genesis,
+            grant.clone(),
+            claim_receipt(&relay_keys, channel_id, &grant),
+        ],
+    )
+    .await;
+    provider.set_rest_client(relay.rest_client());
+
+    // The takeover is accepted while the adapter is starting, so the second
+    // read — the one after the record is persisted — is the first to see it.
+    {
+        let mut events = control.events.lock().expect("events");
+        events.push(takeover.clone());
+        events.push(claim_receipt(&relay_keys, channel_id, &takeover));
+    }
+
+    let create = join_create_with_turn(
+        &provider,
+        channel_id,
+        "reconstruct-by-claimant",
+        session_ref,
+        &genesis_ref,
+        &claimant,
+    );
+    provider
+        .handle_relay_event(&mut relay, channel_id, &create)
+        .await
+        .expect("the create is decided");
+
+    let sink = CollectingSink::new();
+    provider.flush(&sink).await.expect("flush");
+    let receipt = sink
+        .contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT)
+        .into_iter()
+        .find(|receipt| receipt["commandId"] == "reconstruct-by-claimant")
+        .expect("answered");
+    assert_eq!(
+        receipt["status"], "created",
+        "the claimant's own reconstruct is the feature: {receipt}"
+    );
+    // The prompt reaches the runtime on the actor's own task, a pass after the
+    // create returns, so it is waited for rather than assumed.
+    assert!(
+        wait_for_method(&log, "session/prompt").await,
+        "its seeded first turn ran: {:?}",
+        methods(&log)
+    );
+    let prompts = methods(&log)
+        .iter()
+        .filter(|method| *method == "session/prompt")
+        .count();
+    assert_eq!(prompts, 1, "exactly once: {:?}", methods(&log));
+
+    let record = provider.state().sessions().next().expect("session").clone();
+    assert!(
+        matches!(&record.handover, ClaimState::Active(claim)
+            if claim.claimant == claimant_hex && claim.body_pubkey == body),
+        "the record carries the claim the second read learned: {:?}",
+        record.handover
+    );
+    assert_eq!(
+        record.created_by.as_deref(),
+        Some(claimant_hex.as_str()),
+        "and it records who asked for it, which is what the fence reads"
+    );
+
+    relay.shutdown().await;
+    server.abort();
+}
+
+/// The mirror, on the same code path: A's create with a first turn, on A's own
+/// machine, while B holds the claim on another body. Nothing runs, and the
+/// receipt names the fence.
+#[tokio::test]
+async fn the_old_bodys_create_with_a_first_turn_is_still_fenced() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let cwd = dir.path().join("checkout");
+    std::fs::create_dir_all(&cwd).expect("mkdir");
+    let channel_id = Uuid::new_v4();
+    let projects = write_projects(dir.path(), channel_id, &cwd);
+    let relay_keys = Keys::generate();
+    let claimant = Keys::generate();
+    let claimant_hex = claimant.public_key().to_hex();
+    let provider_keys = Keys::generate();
+    let session_ref = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+    let other_body = "dd".repeat(32);
+
+    let log = dir.path().join("methods.log");
+    let state_dir = dir.path().join("state");
+    let agent = fake_agent(
+        state_dir_parent(&state_dir),
+        "stalling-logged-agent",
+        &stalling_logged_agent(&log.to_string_lossy()),
+    );
+    let mut provider = Provider::new(config_of(
+        provider_keys.clone(),
+        &state_dir,
+        Some(&projects),
+        agent,
+    ))
+    .expect("provider");
+    provider.set_relay_self(relay_keys.public_key().to_hex());
+
+    let genesis = genesis_event(channel_id, session_ref);
+    let genesis_ref = genesis.id.to_hex();
+    let grant = grant_for(channel_id, &genesis_ref, None, 1, &claimant_hex);
+    let takeover = takeover_event(
+        channel_id,
+        &genesis_ref,
+        Some(grant.id.to_hex()),
+        2,
+        &claimant,
+        &other_body,
+    );
+    let (mut relay, control, server) = spawn_recording_test_relay(
+        &provider_keys,
+        vec![
+            genesis,
+            grant.clone(),
+            claim_receipt(&relay_keys, channel_id, &grant),
+        ],
+    )
+    .await;
+    provider.set_rest_client(relay.rest_client());
+    {
+        let mut events = control.events.lock().expect("events");
+        events.push(takeover.clone());
+        events.push(claim_receipt(&relay_keys, channel_id, &takeover));
+    }
+
+    // Signed by the founder — the machine that lost the session, starting again.
+    let create = join_create_with_turn(
+        &provider,
+        channel_id,
+        "restart-by-old-body",
+        session_ref,
+        &genesis_ref,
+        test_operator_keys(),
+    );
+    provider
+        .handle_relay_event(&mut relay, channel_id, &create)
+        .await
+        .expect("the create is decided");
+
+    let sink = CollectingSink::new();
+    provider.flush(&sink).await.expect("flush");
+    let receipt = sink
+        .contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT)
+        .into_iter()
+        .find(|receipt| receipt["commandId"] == "restart-by-old-body")
+        .expect("answered");
+    assert!(
+        receipt["error"]["code"] == HANDOVER_FENCED
+            || receipt["error"]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains(HANDOVER_FENCED)),
+        "the old body's create is answered by the fence: {receipt}"
+    );
+    assert!(
+        !methods(&log)
+            .iter()
+            .any(|method| method == "session/prompt"),
+        "and no first prompt went out: {:?}",
+        methods(&log)
+    );
+
+    relay.shutdown().await;
+    server.abort();
+}

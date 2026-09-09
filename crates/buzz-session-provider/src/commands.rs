@@ -179,6 +179,16 @@ pub enum LifecycleDecision {
 /// A validated, resolved create request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreatePlan {
+    /// The verified signer of the 44221 that asked for this execution.
+    ///
+    /// Distinct from [`Self::founder_pubkey`], and the distinction is the
+    /// whole of what the handover fence needs from a create: for a
+    /// genesis-bearing create the founder is the *genesis*'s signer, so a
+    /// claimant reconstructing somebody else's session has a founder who is
+    /// not them. Attributing their own seeded first turn to that founder made
+    /// the fence refuse the claimant's own continuation on the body they
+    /// claimed.
+    pub created_by: String,
     /// The umbrella's claim as this provider verified it from the accepted
     /// chain, ahead of any adapter start.
     ///
@@ -759,6 +769,7 @@ pub fn decide_lifecycle(
     };
 
     LifecycleDecision::Create(Box::new(CreatePlan {
+        created_by: context.operator_pubkey.to_owned(),
         // Nothing is known about the umbrella's claim at decision time: this
         // decision runs before any relay read. `on_lifecycle` resolves the
         // genesis and then the chain, and replaces this.
@@ -2247,6 +2258,7 @@ mod tests {
             bootstrap_transport: None,
             open_turn: None,
             closed: false,
+            created_by: None,
             handover: ClaimState::NoClaim,
             retired: None,
             pack_ref: None,
