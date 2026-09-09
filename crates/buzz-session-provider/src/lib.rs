@@ -5047,20 +5047,17 @@ impl Provider {
         Ok(())
     }
 
-    /// The sentence a turn interrupted by a handover carries.
+    /// The sentence for a handover that finds dequeue evidence.
     ///
-    /// It states the limit deliberately, because the honest guarantee and the
-    /// comfortable one differ here. The provider requests the cancel the
-    /// moment it has applied the claim and refuses every later admission from
-    /// that instant — that part is a promise. What it cannot promise is that
-    /// the runtime stops mid-tool-call: an adapter may finish the file write
-    /// or the shell command it is already inside before it honours a cancel.
-    /// Claiming zero overlap would be claiming a distributed guarantee nobody
-    /// on this machine can make, so the text says what actually happened.
+    /// The actor and provider advance independently: work may already be
+    /// complete while its reports wait in the provider's inbox. Request the
+    /// cancellation, but do not claim either that nothing ran or that a
+    /// running tool call stopped immediately.
     const HANDOVER_INTERRUPT_REASON: &'static str =
-        "HANDOVER_FENCED: this session was handed over while this turn was running. The \
-         provider cancelled it at once and refuses every later command on this execution; the \
-         runtime may still finish a tool call it had already started.";
+        "HANDOVER_FENCED: this turn had already left the queue when the handover was \
+         processed. Cancellation was requested, but the runtime may already have completed \
+         work and may still finish a tool call it had already started. Further commands from \
+         the displaced operator are refused.";
 
     /// The sentence a turn refused *before it was ever dequeued* carries.
     ///
@@ -5177,7 +5174,9 @@ impl Provider {
                 let reason = match fenced_at {
                     session::FencedAt::Queued => Self::HANDOVER_UNSTARTED_REASON,
                     session::FencedAt::AlreadyDequeued => {
-                        // It is running, or about to be. Cancel it, and say so.
+                        // It may be running, about to run, or already complete
+                        // while actor reports wait. Request cancellation without
+                        // asserting that the turn never ran.
                         self.interrupt_open_turn(&session_id, &command_id);
                         Self::HANDOVER_INTERRUPT_REASON
                     }
@@ -6917,6 +6916,9 @@ impl Provider {
                     self.state.record_turn_spend(&session_ref)?;
                 }
                 self.in_flight.remove(&command_id);
+                if let Some(handle) = self.sessions.handle(&session_id) {
+                    handle.acknowledge_turn_started(&command_id);
+                }
                 // The stage that lets a consumer stop guessing: it names the
                 // command that asked and the turn that answers it, so a
                 // pending row settles by id rather than by matching text.

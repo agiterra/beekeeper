@@ -660,9 +660,9 @@ pub enum FencedAt {
     /// The turn was still queued. The actor has not looked at it and now never
     /// will: nothing reached the runtime, and there is no partial work.
     Queued,
-    /// The actor had already taken it out of the queue. A prompt has gone to
-    /// the runtime, or is about to, so this is an interruption rather than a
-    /// turn that never ran.
+    /// The actor had already taken it out of the queue. A prompt may be
+    /// about to run, running, or already completed before the provider read
+    /// its reports. It must never be described as a turn that never ran.
     AlreadyDequeued,
 }
 
@@ -682,8 +682,10 @@ pub enum FencedAt {
 pub struct FenceState {
     /// Command ids refused after delivery, to be dropped at dequeue.
     fenced: HashSet<String>,
-    /// Command ids the actor has taken out of the queue and not yet finished.
-    /// At most the one turn running, plus anything an abrupt actor exit left.
+    /// Command ids the actor has taken out of the queue whose start the
+    /// provider has not yet acknowledged. Completion cannot erase this fact:
+    /// the provider may still have both TurnStarted and TurnFinished waiting
+    /// in its inbox while it processes a takeover.
     dequeued: HashSet<String>,
 }
 
@@ -724,8 +726,9 @@ impl SessionHandle {
     /// [`FencedAt::Queued`] is a promise: the actor has not dequeued this
     /// command and, because the flag is now set under the same lock it checks,
     /// it never will prompt for it. [`FencedAt::AlreadyDequeued`] is the
-    /// honest other answer — the turn is running or about to, and the caller
-    /// should cancel it and say so rather than claim nothing happened.
+    /// honest other answer — the turn may be running, about to run, or
+    /// already complete. The caller requests cancellation without claiming
+    /// nothing happened.
     ///
     /// A poisoned lock answers `AlreadyDequeued`, which is the conservative
     /// direction: it claims less.
@@ -738,6 +741,16 @@ impl SessionHandle {
         }
         state.fenced.insert(command_id.to_owned());
         FencedAt::Queued
+    }
+
+    /// Release dequeue evidence once the provider has recorded TurnStarted
+    /// and removed this command from its not-yet-started admissions. Only the
+    /// provider can close that bookkeeping window; actor completion is too
+    /// early when reports are still waiting in its inbox.
+    pub(crate) fn acknowledge_turn_started(&self, command_id: &str) {
+        if let Ok(mut state) = self.fenced.lock() {
+            state.dequeued.remove(command_id);
+        }
     }
 
     /// Signal durable retirement on a control path that cannot be blocked by
@@ -1977,7 +1990,6 @@ impl SessionActor {
                         );
                         continue;
                     }
-                    let dequeued_id = command_id.clone();
                     let outcome = self
                         .run_turn(
                             &mut rx,
@@ -1991,9 +2003,6 @@ impl SessionActor {
                             guarded_ci,
                         )
                         .await;
-                    if let Ok(mut state) = self.fenced.lock() {
-                        state.dequeued.remove(&dequeued_id);
-                    }
                     if let Some(exit_reason) = outcome {
                         reason = exit_reason;
                         break 'actor;

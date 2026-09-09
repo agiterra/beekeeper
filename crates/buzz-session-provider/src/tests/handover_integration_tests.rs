@@ -1812,6 +1812,166 @@ async fn a_tick_that_folds_a_claim_stops_the_work_the_receipt_could_not() {
     server.abort();
 }
 
+/// A fast actor can finish while the provider is busy reading a takeover.
+/// Its dequeue evidence must survive until provider bookkeeping catches up.
+#[tokio::test]
+async fn a_completed_turn_awaiting_provider_ack_is_never_reported_as_unstarted() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let cwd = dir.path().join("checkout");
+    std::fs::create_dir_all(&cwd).expect("mkdir");
+    let channel_id = Uuid::new_v4();
+    let projects = write_projects(dir.path(), channel_id, &cwd);
+    let relay_keys = Keys::generate();
+    let claimant = Keys::generate();
+    let claimant_hex = claimant.public_key().to_hex();
+    let provider_keys = Keys::generate();
+    let session_ref = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+    let other_body = "dd".repeat(32);
+
+    let log = dir.path().join("methods.log");
+    let state_dir = dir.path().join("state");
+    let agent = fake_agent(
+        state_dir_parent(&state_dir),
+        "finishing-logged-agent",
+        &stalling_logged_agent(&log.to_string_lossy()).replace(
+            "LAST_PROMPT=\"$id\" ;;",
+            r#"printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\n' "$id" ;;"#,
+        ),
+    );
+    let mut provider = Provider::new(config_of(
+        provider_keys.clone(),
+        &state_dir,
+        Some(&projects),
+        agent,
+    ))
+    .expect("provider");
+    provider.set_relay_self(relay_keys.public_key().to_hex());
+
+    let genesis = genesis_event(channel_id, session_ref);
+    let genesis_ref = genesis.id.to_hex();
+    let grant = grant_for(channel_id, &genesis_ref, None, 1, &claimant_hex);
+    let takeover = takeover_event(
+        channel_id,
+        &genesis_ref,
+        Some(grant.id.to_hex()),
+        2,
+        &claimant,
+        &other_body,
+    );
+    let (mut relay, _control, server) = spawn_recording_test_relay(
+        &provider_keys,
+        vec![genesis, grant.clone(), takeover.clone()],
+    )
+    .await;
+    provider.set_rest_client(relay.rest_client());
+
+    let create = create_event_with_genesis_ref(
+        &provider,
+        channel_id,
+        "create-governed",
+        session_ref,
+        &genesis_ref,
+    );
+    provider
+        .handle_relay_event(&mut relay, channel_id, &create)
+        .await
+        .expect("create");
+    let record = provider.state().sessions().next().expect("session").clone();
+    let target = record.target(&provider.config.instance_id);
+    let prompts_before = methods(&log)
+        .iter()
+        .filter(|method| *method == "session/prompt")
+        .count();
+
+    // Admitted into the mailbox — and deliberately **not** pumped, so
+    // `TurnStarted` has not been recorded and `open_turn` is still empty.
+    let turn = command_event_by(
+        channel_id,
+        "turn-admitted-not-started",
+        &target,
+        serde_json::json!({ "type": "thread.turn.start", "text": "about to run" }),
+        test_operator_keys(),
+    );
+    provider
+        .handle_relay_event(&mut relay, channel_id, &turn)
+        .await
+        .expect("admit the turn");
+    assert!(
+        provider
+            .state()
+            .session(&target.session_id)
+            .expect("record")
+            .open_turn
+            .is_none(),
+        "the window under test: admitted, not yet started"
+    );
+
+    // Drain the actor channel only into this test: the provider has not
+    // acknowledged TurnStarted, even though the adapter has completed the work.
+    // On this current-thread runtime the actor returns to its idle wait before
+    // this receiver resumes, so the former actor-side cleanup has happened.
+    let mut reports = Vec::new();
+    loop {
+        let event = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            provider.next_session_event(),
+        )
+        .await
+        .expect("actor completes promptly")
+        .expect("actor event");
+        let finished = matches!(&event, SessionEvent::TurnFinished { .. });
+        reports.push(event);
+        if finished {
+            break;
+        }
+    }
+    assert_eq!(
+        methods(&log)
+            .iter()
+            .filter(|method| *method == "session/prompt")
+            .count(),
+        prompts_before + 1,
+        "the prompt actually ran before takeover"
+    );
+    assert!(provider.in_flight.contains_key("turn-admitted-not-started"));
+
+    for transition in [&grant, &takeover] {
+        let receipt = claim_receipt(&relay_keys, channel_id, transition);
+        provider
+            .handle_relay_event(&mut relay, channel_id, &receipt)
+            .await
+            .expect("apply accepted link");
+    }
+    let sink = CollectingSink::new();
+    provider.flush(&sink).await.expect("flush");
+    let receipt = sink
+        .contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT)
+        .into_iter()
+        .find(|receipt| {
+            receipt["commandId"] == "turn-admitted-not-started"
+                && receipt["status"] == "turn_refused"
+        })
+        .expect("the takeover disposition");
+    let message = receipt["error"]["message"].as_str().expect("reason");
+    assert!(
+        !message.contains("never ran"),
+        "completed work must not be called unstarted: {message}"
+    );
+    assert!(
+        message.contains("may already have completed"),
+        "the disposition must admit completed work: {message}"
+    );
+
+    // Delayed actor reports remain processable after the takeover disposition.
+    for event in reports {
+        provider
+            .handle_session_event(event)
+            .expect("acknowledge actor report");
+    }
+    relay.shutdown().await;
+    server.abort();
+}
+
 /// A claim landing between mailbox delivery and `TurnStarted`.
 ///
 /// `on_turn` records a turn in flight the moment the actor's mailbox takes it;
