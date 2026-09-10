@@ -74,8 +74,14 @@ async function openMoreActions(
   messageId: string,
 ) {
   const row = page.locator(`[data-message-id="${messageId}"]`);
-  await row.hover();
-  await page.getByTestId(`more-actions-${messageId}`).click();
+  // Context hydration can reposition the selected row after its first hover.
+  // Re-hover the real row if it moved; never force a click through another row.
+  await expect(async () => {
+    await row.hover();
+    await page
+      .getByTestId(`more-actions-${messageId}`)
+      .click({ timeout: 1_000 });
+  }).toPass({ timeout: 5_000 });
   await expect(page.locator('[role="menuitem"]').first()).toBeVisible();
 }
 
@@ -281,6 +287,19 @@ test("editing an immediate attachment reply preserves its media tags", async ({
   await expect(detail.getByTestId("message-composer")).toContainText(
     ATTACHMENT_FILENAME,
   );
+
+  await expect
+    .poll(
+      () =>
+        page.evaluate(() =>
+          window.__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
+            channelName: "general",
+            kind: 40003,
+          }),
+        ),
+      { timeout: 20_000 },
+    )
+    .toBe(true);
 
   await input.fill("Attachment reply after editing.");
   await page.keyboard.press("Enter");

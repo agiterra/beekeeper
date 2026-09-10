@@ -87,3 +87,24 @@ test("explicit read-state readiness uses its identity-scoped global consumer", (
   assert.equal(ready(reads, "general", 44226, true), false);
   assert.equal(ready([{ kinds: [39000] }], "general", 30078, true), false);
 });
+
+test("huddle readiness waits for the lifecycle consumer, not the broad activity feed", () => {
+  assert.equal(
+    ready(
+      [{ kinds: [9, 48100, 48103], "#h": ["general"] }],
+      "general",
+      48100,
+      true,
+    ),
+    false,
+  );
+  assert.equal(
+    ready(
+      [{ kinds: [48100, 48101, 48102, 48103], "#h": ["general"] }],
+      "general",
+      48100,
+      true,
+    ),
+    true,
+  );
+});

@@ -296,6 +296,19 @@ test.describe("inbox stable-conversation regressions", () => {
     await expect(detail).toContainText("Nested anchor");
     expect(await getItemParam(page)).toBe(anchor.id);
 
+    await expect
+      .poll(
+        () =>
+          page.evaluate(() =>
+            window.__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
+              channelName: "general",
+              kind: 9,
+            }),
+          ),
+        { timeout: 20_000 },
+      )
+      .toBe(true);
+
     // Add filler replies to make the detail pane scrollable.
     await page.evaluate(
       ({ senderPubkey, rootId }) => {
@@ -1249,6 +1262,19 @@ test.describe("inbox stable-conversation regressions", () => {
     expect(msgCenterOffsetBeforeReactions).not.toBeNull();
     expect(await getScrollIntoViewCount(page)).toBe(1);
 
+    await expect
+      .poll(
+        () =>
+          page.evaluate(() =>
+            window.__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
+              channelName: "general",
+              kind: 7,
+            }),
+          ),
+        { timeout: 20_000 },
+      )
+      .toBe(true);
+
     // ── Emit late reactions targeting messages ABOVE fetchNewest ──────
     // These simulate the post-settle reaction hydration from
     // useInboxThreadContext's fetchAuxEventsByReference call.  kind:7 events
@@ -1471,6 +1497,19 @@ test.describe("inbox stable-conversation regressions", () => {
       () =>
         new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
     );
+
+    await expect
+      .poll(
+        () =>
+          page.evaluate(() =>
+            window.__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
+              channelName: "general",
+              kind: 7,
+            }),
+          ),
+        { timeout: 20_000 },
+      )
+      .toBe(true);
 
     // ── Emit late reactions targeting messages ABOVE fetchNewest ──────
     // These simulate the post-settle reaction hydration from

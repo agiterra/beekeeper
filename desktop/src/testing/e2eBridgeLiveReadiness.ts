@@ -19,6 +19,15 @@ export function mockLiveReadinessMatches(
     // explicit request for that kind may use its unscoped consumer.
     if (kind === 30078 && !filter["#h"]?.length) return true;
     if (!filter["#h"]?.includes(channelId)) return false;
+    // Huddle lifecycle readiness names its lifecycle consumer, not the
+    // broad sidebar feed which also receives these kinds for activity.
+    if (
+      kind !== undefined &&
+      kind >= 48100 &&
+      kind <= 48103 &&
+      filter.kinds.some((value) => value < 48100 || value > 48103)
+    )
+      return false;
     // A scoped subset cannot promise delivery for arbitrary test messages.
     if (
       (kind === undefined || kind === 9 || kind === 40002) &&

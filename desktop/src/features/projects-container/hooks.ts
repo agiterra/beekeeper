@@ -676,5 +676,10 @@ export function useProjectSidebarData(channels: Channel[], enabled: boolean) {
         : channels.filter((channel) => channel.channelType === "stream"),
     [enabled, channelBuckets.globalChannels, channels],
   );
-  return { ...containers, ...channelBuckets, globalStreamChannels };
+  return {
+    ...containers,
+    ...channelBuckets,
+    globalStreamChannels,
+    isLoading: containers.isLoading || (enabled && allChannelsQuery.isLoading),
+  };
 }

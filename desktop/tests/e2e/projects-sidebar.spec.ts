@@ -507,3 +507,53 @@ test("dragging a project reorders the sidebar and persists the order", async ({
     )
     .toEqual([`${OWNER}:zulu`, `${OWNER}:alpha`]);
 });
+
+test("startup waits for project placement and paints the saved order immediately", async ({
+  page,
+}) => {
+  await seedOrderingProjects(page);
+  await page.addInitScript(
+    ({ owner }) => {
+      const key = `buzz-project-order.v1:${owner}:${encodeURIComponent("ws://localhost:3000")}`;
+      localStorage.setItem(
+        key,
+        JSON.stringify({
+          version: 1,
+          order: [`${owner}:zulu`, `${owner}:alpha`],
+        }),
+      );
+      const frames: string[][] = [];
+      Object.assign(window, { __sidebarStartupFrames: frames });
+      new MutationObserver(() => {
+        const groups = [
+          ...document.querySelectorAll('[data-testid^="project-group-"]'),
+        ]
+          .map((node) =>
+            (node.getAttribute("data-testid") ?? "").replace(
+              "project-group-",
+              "",
+            ),
+          )
+          .filter((name) => !name.startsWith("toggle-"));
+        if (groups.length) frames.push(groups);
+      }).observe(document, { subtree: true, childList: true });
+    },
+    { owner: OWNER },
+  );
+  await installMockBridge(page, { projectSnapshotReadDelayMs: 1500 });
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await expect(page.getByTestId("sidebar-loading")).toBeVisible();
+  await expect(page.getByTestId("project-group-general")).toHaveCount(0);
+  await expect(page.getByTestId("project-group-zulu")).toBeVisible();
+  await expect
+    .poll(() => projectOrder(page))
+    .toEqual(["general", "zulu", "alpha", "buzz"]);
+  const frames = await page.evaluate(
+    () =>
+      (window as Window & { __sidebarStartupFrames: string[][] })
+        .__sidebarStartupFrames,
+  );
+  expect(frames.length).toBeGreaterThan(0);
+  for (const frame of frames)
+    expect(frame).toEqual(["general", "zulu", "alpha", "buzz"]);
+});

@@ -1295,20 +1295,19 @@ test("fast middle-page scroll settles with continuous mounted coverage", async (
       typeof window.__BUZZ_E2E_PREPEND_MOCK_HISTORY__ === "function",
   );
 
+  // More than the cold-load window, so scrolling back must fetch a real page.
   await page.evaluate(() => {
-    for (let index = 0; index < 180; index += 1) {
-      window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
-        channelName: "general",
-        content: `settle row ${index}\nline two ${index}\nline three ${index}`,
-        createdAt: 1_700_000_000 + index,
-      });
-    }
+    window.__BUZZ_E2E_PREPEND_MOCK_HISTORY__?.({
+      channelName: "general",
+      count: 600,
+      lineCount: 3,
+    });
   });
 
   await page.getByTestId("channel-general").click();
   await expect(page.getByTestId("chat-title")).toHaveText("general");
   const timeline = page.getByTestId("message-timeline");
-  await expect(timeline).toContainText("settle row 179");
+  await expect(timeline.locator("[data-message-id]").first()).toBeVisible();
   await page.waitForFunction(() => {
     const element = document.querySelector<HTMLDivElement>(
       '[data-testid="message-timeline"]',
@@ -1320,14 +1319,10 @@ test("fast middle-page scroll settles with continuous mounted coverage", async (
   // ordinary list updates and measurements must happen with it cleared.
   const scrollHeightBeforePrepend = (await getTimelineMetrics(page))
     .scrollHeight;
-  await page.evaluate(() => {
-    for (let index = 0; index < 100; index += 1) {
-      window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
-        channelName: "general",
-        content: `prepended settle row ${index}\nolder line two ${index}\nolder line three ${index}`,
-        createdAt: 1_699_999_000 + index,
-      });
-    }
+  await timeline.evaluate((element) => {
+    element.dispatchEvent(new WheelEvent("wheel", { deltaY: -1 }));
+    element.scrollTop = 0;
+    element.dispatchEvent(new Event("scroll", { bubbles: true }));
   });
   await expect
     .poll(() =>

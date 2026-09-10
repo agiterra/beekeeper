@@ -170,7 +170,7 @@ async function moveRepoToProject({
 
   let backRefApplied = false;
   if (repo.owner.toLowerCase() === self) {
-    const events = await relayClient.fetchEvents({
+    const events = await relayClient.fetchEventsCoalesced({
       kinds: [KIND_REPO_ANNOUNCEMENT],
       authors: [repo.owner],
       "#d": [repo.dtag],

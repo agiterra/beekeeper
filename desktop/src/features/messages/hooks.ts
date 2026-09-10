@@ -30,6 +30,7 @@ import {
 } from "@/features/messages/lib/messageMerge";
 
 export { mergeMessages, mergeTimelineCacheMessages };
+import { projectAcceptedMessage } from "./lib/acceptedMessageCache";
 import { splitOutgoingTags } from "@/features/messages/lib/imetaMediaMarkdown";
 import { messageMentionPubkeys } from "@/features/messages/lib/messageMentionPubkeys";
 import { isModeratableChannelType } from "@/features/messages/lib/moderatableChannel";
@@ -717,22 +718,12 @@ export function useSendMessageMutation(
         return;
       }
 
-      const windowKey = channelWindowKey(context.channelId);
-      const current =
-        queryClient.getQueryData<ChannelWindowStore>(windowKey) ??
-        emptyChannelWindowStore();
-      const withoutPending: ChannelWindowStore = {
-        ...current,
-        liveOverlay: current.liveOverlay.filter(
-          (event) => event.id !== context.optimisticId,
-        ),
-      };
-      const next = mergeLiveChannelWindowEvent(withoutPending, {
-        ...message,
-        localKey: context.optimisticId,
-      });
-      queryClient.setQueryData(windowKey, next);
-      projectChannelWindowMessages(queryClient, context.channelId);
+      projectAcceptedMessage(
+        queryClient,
+        context.channelId,
+        context.optimisticId,
+        message,
+      );
     },
   });
 }

@@ -465,6 +465,18 @@ test("markdown tables overflow wide content and fill the message when narrow", a
     () => typeof window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__ === "function",
   );
 
+  await expect
+    .poll(
+      () =>
+        page.evaluate(() =>
+          window.__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
+            channelName: "general",
+          }),
+        ),
+      { timeout: 20_000 },
+    )
+    .toBe(true);
+
   const longCell = "WIDE TABLE COLUMN VALUE ".repeat(8);
   await page.evaluate(
     ({ wide, narrow }) => {
@@ -2558,6 +2570,14 @@ test("opens a single-level thread panel with inline expansion", async ({
     throw new Error("Expected first reply row to have a data-message-id.");
   }
 
+  await page.waitForFunction(
+    () =>
+      window.__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
+        channelName: "general",
+      }),
+    undefined,
+    { timeout: 20_000 },
+  );
   await page.evaluate(
     ({ content, parentEventId, pubkey }) => {
       window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
@@ -2819,6 +2839,17 @@ test("thread refetch preserves a live reply and reaction received in flight", as
   await page.goto("/");
   await page.getByTestId("channel-general").click();
   await expect(page.getByTestId("chat-title")).toHaveText("general");
+  await expect
+    .poll(
+      () =>
+        page.evaluate(() =>
+          window.__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
+            channelName: "general",
+          }),
+        ),
+      { timeout: 20_000 },
+    )
+    .toBe(true);
 
   const rootMessage = page
     .getByTestId("message-timeline")

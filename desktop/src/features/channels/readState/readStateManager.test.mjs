@@ -909,3 +909,45 @@ test("rememberPublishedId_evictsOldestBeyondCap", () => {
 
   mgr.destroy();
 });
+
+test("read baseline is ready while live admission waits, and late admission is disposed", async () => {
+  globalThis.window.localStorage = makeLocalStorage();
+  const { restore } = withFakeTimers();
+  let resolveLive;
+  let unsubscribed = 0;
+  let liveFilter;
+  const manager = new ReadStateManager("7".repeat(64), {
+    ...makeFakeRelay(),
+    subscribeLive: (filter) => {
+      liveFilter = filter;
+      return new Promise((resolve) => {
+        resolveLive = resolve;
+      });
+    },
+  });
+  try {
+    const ready = await Promise.race([
+      manager.initialize().then(() => true),
+      new Promise((resolve) => setImmediate(() => resolve(false))),
+    ]);
+    assert.equal(
+      ready,
+      true,
+      "a completed baseline must not wait for a live send slot",
+    );
+    assert.deepEqual(liveFilter.authors, ["7".repeat(64)]);
+    assert.deepEqual(liveFilter.kinds, [30078]);
+    assert.ok(liveFilter.limit > 0, "live admission retains the replay window");
+    manager.destroy();
+    resolveLive(() => {
+      unsubscribed += 1;
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.equal(unsubscribed, 1);
+  } finally {
+    manager.destroy();
+    resolveLive?.(() => {});
+    restore();
+  }
+});

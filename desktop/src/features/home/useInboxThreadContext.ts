@@ -152,7 +152,7 @@ export function useInboxThreadContext(
         const descendantEventsPromise =
           selectedChannelId && threadRootId
             ? relayClient
-                .fetchEvents({
+                .fetchEventsCoalesced({
                   "#e": [threadRootId],
                   "#h": [selectedChannelId],
                   kinds: [...HOME_MENTION_EVENT_KINDS],

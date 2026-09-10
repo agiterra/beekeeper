@@ -142,7 +142,7 @@ async function decryptReminder(event: RelayEvent): Promise<Reminder | null> {
 }
 
 export async function fetchReminders(pubkey: string): Promise<Reminder[]> {
-  const events = await relayClient.fetchEvents({
+  const events = await relayClient.fetchEventsCoalesced({
     kinds: [KIND_EVENT_REMINDER],
     authors: [pubkey],
     limit: 200,

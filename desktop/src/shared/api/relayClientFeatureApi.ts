@@ -75,7 +75,7 @@ export class RelayClient extends RelaySessionCore {
     return fetchChunkedHistory(
       referencedEventIds,
       (eventIds) => buildFilter(channelId, eventIds),
-      (filter) => this.fetchHistory(filter),
+      (filter) => this.fetchEventsCoalesced(filter),
     );
   }
 
@@ -86,7 +86,7 @@ export class RelayClient extends RelaySessionCore {
     return fetchChunkedHistory(
       auxEventIds,
       (eventIds) => buildChannelAuxDeletionFilter(channelId, eventIds),
-      (filter) => this.fetchHistory(filter),
+      (filter) => this.fetchEventsCoalesced(filter),
     );
   }
 

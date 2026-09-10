@@ -212,8 +212,20 @@ test.describe("list virtualization", () => {
     await page.goto("/#/channels/feedf00d-0000-4000-8000-000000000007");
     const timeline = page.getByTestId("message-timeline");
     await expect(timeline.locator("[data-message-id]").first()).toBeVisible();
-    // Initial bottom positioning can momentarily cross the start threshold. Let
-    // any resulting page transaction settle before driving explicit crossings.
+    // This exercises steady-state pagination, after the mandatory post-live
+    // snapshot replaces the initial cursor chain. A fixed one-second sleep
+    // lets that resync discard the test's pages halfway through the wheel loop.
+    await page.waitForFunction(
+      () =>
+        window.__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
+          channelName: "deep-history",
+        }),
+      undefined,
+      { timeout: 20_000 },
+    );
+    await expect(
+      page.getByTestId("message-timeline-fetching-older"),
+    ).toHaveCount(0);
     await page.waitForTimeout(1_000);
 
     const sampleVisibleAnchor = (expectedId?: string) =>

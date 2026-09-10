@@ -265,7 +265,8 @@ function compactMetadata(
 /** Resolve builder-focused metadata only from the active relay. */
 export async function fetchBuzzEntityMetadata(
   href: string,
-  fetchEvents: EntityEventFetcher = (filter) => relayClient.fetchEvents(filter),
+  fetchEvents: EntityEventFetcher = (filter) =>
+    relayClient.fetchEventsCoalesced(filter),
 ): Promise<LinkPreviewMetadata | null> {
   const parsed = parseEntityLink(href);
   if (!parsed.ok) return null;

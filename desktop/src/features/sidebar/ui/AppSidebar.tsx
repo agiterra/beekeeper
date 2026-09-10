@@ -338,9 +338,7 @@ export function AppSidebar({
       if (channel.id === selectedChannelId) onSelectHome();
     });
 
-  // Projects experiment: when enabled, every channel belongs to a project —
-  // claimed ones render in their project's group, unclaimed ones under
-  // General — and the global Channels/custom-sections block is hidden.
+  // Projects group claimed channels by project and unclaimed channels under General.
   const projectsEnabled = useFeatureEnabled("projects");
   const projectSidebar = useProjectSidebarData(channels, projectsEnabled);
   const streamChannels = projectSidebar.globalStreamChannels;
@@ -442,12 +440,14 @@ export function AppSidebar({
     onSelectChannel,
   );
   const hotkeyArmedProps = useHotkeyArmedProps();
+  const sidebarIsLoading =
+    isLoading || (projectsEnabled && projectSidebar.isLoading);
   const sidebarLoadingShape = useSidebarLoadingShape({
     activeCommunityId: activeCommunity?.id,
     currentPubkey,
     directMessages,
     dmChannelLabels,
-    isLoading,
+    isLoading: sidebarIsLoading,
     streamChannels,
   });
   const resolvedDisplayName =
@@ -573,11 +573,11 @@ export function AppSidebar({
                 showWorkflows={!projectsEnabled}
               />
 
-              {isLoading ? (
+              {sidebarIsLoading ? (
                 <SidebarLoadingContent shape={sidebarLoadingShape} />
               ) : null}
 
-              {!isLoading ? (
+              {!sidebarIsLoading ? (
                 <>
                   {starredChannels.length > 0 ? (
                     <ChannelGroupSection

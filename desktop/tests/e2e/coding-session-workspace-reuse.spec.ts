@@ -507,6 +507,18 @@ test.describe("new session in this workspace", () => {
       "team_readiness",
       "query_relay_filters",
     ]);
+    // Ambient subscription maintenance may flush during the click window.
+    // Inspect the wire frame: the generic send command alone is not a read.
+    for (const entry of window.filter(
+      (entry) => entry.command === "plugin:websocket|send",
+    )) {
+      const args = entry.args as { message: { type: string; data: string } };
+      expect(args.message.type).toBe("Text");
+      const frame = JSON.parse(args.message.data);
+      expect(Array.isArray(frame)).toBe(true);
+      expect(["REQ", "COUNT", "CLOSE"]).toContain(frame[0]);
+    }
+    allowed.add("plugin:websocket|send");
     const observed = commandNames(window);
     // Printed, not merely asserted: the report this spec exists to produce
     // has to name the exact set a run observed, and a passing allowlist

@@ -314,8 +314,9 @@ export class ReadStateManager {
 
     await this.fetchAndMerge();
     if (this.destroyed) return;
-    await this.startLiveSubscription();
-    if (this.destroyed) return;
+    // Publish the fetched baseline before live admission so new arrivals stay unread.
+    // Live replay remains bounded; late admission is disposed after destruction.
+    void this.startLiveSubscription();
     const initContexts = this.currentContexts();
     if (initContexts === null) {
       // Channel keys exceed single-slot budget — schedule a multi-slot publish.

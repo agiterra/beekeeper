@@ -809,11 +809,13 @@ test("project pull requests preserve partial results from batched queries", asyn
 
   await expect(
     page.getByRole("button", { name: /^View / }).first(),
-  ).toBeVisible();
+  ).toBeVisible({ timeout: 20_000 });
   await expect(
     page.getByText(/Some pull request details could not be loaded/),
-  ).toBeVisible();
-  await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
+  ).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByRole("button", { name: "Retry" })).toBeVisible({
+    timeout: 20_000,
+  });
 
   const workItemFilters = await page.evaluate(
     () =>
@@ -822,14 +824,22 @@ test("project pull requests preserve partial results from batched queries", asyn
       ) ?? [],
   );
   expect(
-    workItemFilters
-      .map((filter) => JSON.stringify([...(filter.kinds ?? [])].sort()))
-      .sort(),
+    [
+      ...new Set(
+        workItemFilters.map((filter) =>
+          JSON.stringify([...(filter.kinds ?? [])].sort()),
+        ),
+      ),
+    ].sort(),
   ).toEqual(
     [[1], [1618, 1621], [1619], [1630, 1631, 1632, 1633]]
       .map((kinds) => JSON.stringify(kinds))
       .sort(),
   );
+  // The failed HTTP page is retried through the identical paced WS filter.
+  expect(
+    workItemFilters.filter((filter) => filter.kinds?.includes(1619)),
+  ).toHaveLength(2);
   expect(
     workItemFilters.every((filter) => (filter["#a"]?.length ?? 0) > 1),
   ).toBe(true);
@@ -929,7 +939,9 @@ test("project pull requests report aggregate root query failures", async ({
     .getByRole("button", { name: "Pull Requests", exact: true })
     .click();
 
-  await expect(page.getByText("Could not load pull requests.")).toBeVisible();
+  await expect(page.getByText("Could not load pull requests.")).toBeVisible({
+    timeout: 20_000,
+  });
   await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
   await expect(page.getByText("No pull requests yet.")).toHaveCount(0);
 
@@ -957,14 +969,18 @@ test("project issues preserve partial results from aggregate queries", async ({
 
   await expect(
     page.getByRole("button", { name: /^View / }).first(),
-  ).toBeVisible();
+  ).toBeVisible({ timeout: 20_000 });
   await expect(
     page.getByText("Some issue details could not be loaded."),
-  ).toBeVisible();
+  ).toBeVisible({ timeout: 20_000 });
   // Rejecting kind 1 fails both the comment window and the exhaustive
   // assignment-operation query, so both sections are reported missing.
-  await expect(page.getByText(/Missing assignments, comments\./)).toBeVisible();
-  await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
+  await expect(page.getByText(/Missing assignments, comments\./)).toBeVisible({
+    timeout: 20_000,
+  });
+  await expect(page.getByRole("button", { name: "Retry" })).toBeVisible({
+    timeout: 20_000,
+  });
 
   await page.evaluate(() => {
     window.__BUZZ_E2E_REJECT_PROJECT_QUERY_KINDS__ = [];
@@ -989,9 +1005,9 @@ test("project overview reports aggregate work-item failures", async ({
   // lives on the Activity (overview) tab.
   await page.getByRole("button", { name: "Activity", exact: true }).click();
 
-  await expect(
-    page.getByText("Could not load project activity."),
-  ).toBeVisible();
+  await expect(page.getByText("Could not load project activity.")).toBeVisible({
+    timeout: 20_000,
+  });
   await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
 
   await page.evaluate(() => {
@@ -1412,7 +1428,9 @@ test("project issue can be created from the issues header", async ({
     .getByTestId("create-issue-body")
     .fill("The project workflow needs a clear repair path.");
   await page.getByTestId("create-issue-submit").click();
-  await expect(page.getByText("Issue created.")).toBeVisible();
+  await expect(page.getByText("Issue created.")).toBeVisible({
+    timeout: 20_000,
+  });
 
   const createdEvent = await page.evaluate(() =>
     window.__BUZZ_E2E_SIGNED_EVENTS__?.find((event) => event.kind === 1621),

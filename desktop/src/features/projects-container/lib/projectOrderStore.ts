@@ -207,6 +207,18 @@ export function useProjectOrder(): {
     getSnapshot,
   );
 
+  // Use this identity's saved order on the first paint, before activation's effect.
+  const initialStore = React.useMemo(
+    () =>
+      pubkey && relayUrl && projectsEnabled
+        ? readProjectOrderStore(pubkey, relayUrl)
+        : DEFAULT_STORE,
+    [pubkey, relayUrl, projectsEnabled],
+  );
+  const displayedStore =
+    pubkey && relayUrl && activeScopeKey === scopeKeyFor(pubkey, relayUrl)
+      ? current
+      : initialStore;
   const reorderProjects = React.useCallback((orderedIds: string[]) => {
     const active = scope;
     if (!active) return;
@@ -216,7 +228,7 @@ export function useProjectOrder(): {
     manager?.publishOrder(next);
   }, []);
 
-  return { order: current.order, reorderProjects };
+  return { order: displayedStore.order, reorderProjects };
 }
 
 export const __projectOrderStoreTest = {

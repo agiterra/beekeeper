@@ -380,6 +380,7 @@ test("thread autocomplete keeps multiple long names readable in a narrow panel",
   await page.getByTestId("channel-general").click();
   await expect(page.getByTestId("chat-title")).toHaveText("general");
   await page.setViewportSize({ width: 760, height: 640 });
+  await waitForMockLiveSubscription(page, "general");
 
   await emitMockMessage(page, "general", "Reply to open the thread", {
     parentEventId: "mock-general-welcome",
@@ -476,7 +477,7 @@ test("defers agent mentions until DM members finish loading", async ({
   page,
 }) => {
   await installMockBridge(page, {
-    channelMembersReadDelayMs: 5_000,
+    deferChannelMembersReads: true,
     managedAgents: [
       {
         pubkey: TEST_IDENTITIES.alice.pubkey,
@@ -522,7 +523,7 @@ test("defers agent mentions until DM members finish loading", async ({
   );
   await expect(input).toContainText("before members resolve");
 
-  await page.waitForTimeout(5_100);
+  await page.evaluate(() => window.__BUZZ_E2E_RELEASE_CHANNEL_MEMBERS__?.());
   await threadPanel.getByTestId("send-message").click();
 
   await expect(page.getByText(DM_THREAD_AGENT_MENTION_ERROR_TEXT)).toHaveCount(
@@ -1216,6 +1217,7 @@ test("relay-only allowlisted agents emit a p tag when sent", async ({
   const quinnRow = autocomplete(page).locator("button", { hasText: "quinn" });
   await expect(quinnRow).toBeVisible();
   await quinnRow.click();
+  await expect(input).toHaveText("@quinn ");
   await page.keyboard.type("hello");
   await expect(input).toHaveText("@quinn hello");
   await page.getByTestId("send-message").click();
@@ -1293,6 +1295,7 @@ test("selected relay agents revoked before send emit no p tag", async ({
   const quinnRow = autocomplete(page).locator("button", { hasText: "quinn" });
   await expect(quinnRow).toBeVisible();
   await quinnRow.click();
+  await expect(input).toHaveText("@quinn ");
   await page.keyboard.type("hello");
 
   await page.evaluate(async () => {
@@ -1358,6 +1361,7 @@ test("selected relay agents revoked after the invite prompt cause no side effect
   const quinnRow = autocomplete(page).locator("button", { hasText: "quinn" });
   await expect(quinnRow).toBeVisible();
   await quinnRow.click();
+  await expect(input).toHaveText("@quinn ");
   await page.keyboard.type("hello");
   await page.getByTestId("send-message").click();
   const inviteButton = page.getByRole("button", {
@@ -1415,6 +1419,7 @@ test("selected relay agents revoked during send emit no p tag", async ({
   const quinnRow = autocomplete(page).locator("button", { hasText: "quinn" });
   await expect(quinnRow).toBeVisible();
   await quinnRow.click();
+  await expect(input).toHaveText("@quinn ");
   await page.keyboard.type("hello");
 
   await page.evaluate(() => {

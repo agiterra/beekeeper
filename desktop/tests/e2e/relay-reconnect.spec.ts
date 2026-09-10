@@ -87,6 +87,22 @@ async function getMockWebsocketConnectAttempts(
   });
 }
 
+async function waitForActiveChannelConsumer(
+  page: import("@playwright/test").Page,
+) {
+  await expect
+    .poll(
+      () =>
+        page.evaluate(() =>
+          window.__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
+            channelName: "general",
+          }),
+        ),
+      { timeout: 20_000 },
+    )
+    .toBe(true);
+}
+
 async function emitMockMessages(
   page: import("@playwright/test").Page,
   messages: Array<{ content: string; createdAt: number }>,
@@ -559,6 +575,7 @@ test("transient AUTH rejection reconnects and restores live traffic", async ({
   await page.goto("/");
   await page.getByTestId("channel-general").click();
   await expect(page.getByTestId("chat-title")).toHaveText("general");
+  await waitForActiveChannelConsumer(page);
 
   await queueAuthResponses(page, [
     { success: false, message: "auth-required: verification failed" },
@@ -576,6 +593,7 @@ test("transient AUTH rejection reconnects and restores live traffic", async ({
     )
     .toBe("connected");
 
+  await waitForActiveChannelConsumer(page);
   const recovered = `live after transient AUTH rejection ${Date.now()}`;
   await emitMockMessages(page, [
     { content: recovered, createdAt: Math.floor(Date.now() / 1_000) },
@@ -594,9 +612,11 @@ test("auth-required CLOSED restores the active live subscription", async ({
   await page.goto("/");
   await page.getByTestId("channel-general").click();
   await expect(page.getByTestId("chat-title")).toHaveText("general");
+  await waitForActiveChannelConsumer(page);
 
   await closeLiveSubscriptions(page, "auth-required: not authenticated");
 
+  await waitForActiveChannelConsumer(page);
   const recovered = `live after auth-required CLOSED ${Date.now()}`;
   await expect
     .poll(
@@ -622,6 +642,7 @@ test("reconnect backfills more missed channel messages than the live subscriptio
   await page.goto("/");
   await page.getByTestId("channel-general").click();
   await expect(page.getByTestId("chat-title")).toHaveText("general");
+  await waitForActiveChannelConsumer(page);
 
   const baseCreatedAt = Math.floor(Date.now() / 1_000) - 300;
   const seenBeforeDisconnect = "reconnect e2e seen before disconnect";

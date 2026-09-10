@@ -828,6 +828,9 @@ test.describe("thread unread indicator", () => {
     await expect(threadSummary).toBeVisible();
     await threadSummary.click();
     await expect(page.getByTestId("message-thread-panel")).toBeVisible();
+    await expect(page.getByTestId("message-thread-replies")).toContainText(
+      "First reply to welcome",
+    );
     await page.getByTestId("auxiliary-panel-close").click();
     await expect(page.getByTestId("message-thread-panel")).not.toBeVisible();
 
@@ -854,6 +857,9 @@ test.describe("thread unread indicator", () => {
     // recompute alone. Before the BUG-2 fix it would persist at 3 here.
     await page.getByTestId("message-thread-summary").first().click();
     await expect(page.getByTestId("message-thread-panel")).toBeVisible();
+    await expect(page.getByTestId("message-thread-replies")).toContainText(
+      "Unread reply 3",
+    );
     await page.getByTestId("auxiliary-panel-close").click();
     await expect(page.getByTestId("message-thread-panel")).not.toBeVisible();
 

@@ -469,6 +469,8 @@ type E2eConfig = {
     /** Sequenced add-member failures. A string fails that call; null succeeds. */
     addChannelMembersErrors?: (string | null)[];
     channelMembersReadDelayMs?: number;
+    deferChannelMembersReads?: boolean;
+    projectSnapshotReadDelayMs?: number;
     createManagedAgentDelayMs?: number;
     channelTemplates?: ChannelTemplate[];
     channelsReadError?: string;
@@ -1680,6 +1682,7 @@ declare global {
     __BUZZ_E2E_DEFER_NEXT_CHANNELS_READ__?: () => void;
     /** Disarm the latch and release the held channel read, if any. */
     __BUZZ_E2E_RELEASE_CHANNELS_READ__?: () => number;
+    __BUZZ_E2E_RELEASE_CHANNEL_MEMBERS__?: () => number;
     /** Number of channel reads currently held by the seam. */
     __BUZZ_E2E_CHANNELS_READ_PENDING__?: number;
     /** Release all link-preview metadata commands held by the mock bridge. */
@@ -1808,6 +1811,7 @@ let heldManagedAgentStartReleases: Array<() => void> = [];
 let cancelledMediaUploadIds = new Set<string>();
 let deferNextChannelsRead = false;
 let deferredChannelsReadResolve: (() => void) | null = null;
+let deferredMemberReads: Array<() => void> = [];
 
 const mockDisplayNames = new Map<string, string>([
   [MOCK_IDENTITY_PUBKEY, DEFAULT_MOCK_IDENTITY.display_name],
@@ -7163,6 +7167,9 @@ async function handleGetChannelMembers(
   args: { channelId: string },
   config: E2eConfig | undefined,
 ): Promise<RawChannelMembersResponse> {
+  if (config?.mock?.deferChannelMembersReads) {
+    await new Promise<void>((resolve) => deferredMemberReads.push(resolve));
+  }
   const delayMs = config?.mock?.channelMembersReadDelayMs ?? 0;
   if (delayMs > 0) {
     await new Promise((resolve) => window.setTimeout(resolve, delayMs));
@@ -10631,7 +10638,11 @@ function sendToMockSocket(
         subId,
         createMockRelayMembershipEvent(),
       ]);
-      const eoseDelayMs = getConfig()?.mock?.relayMembershipEoseDelayMs ?? 0;
+      // This option delays the WebSocket EOSE, not an HTTP query response.
+      // The HTTP adapter reuses this responder with its synthetic socket -1.
+      const eoseDelayMs = querySocket
+        ? 0
+        : (getConfig()?.mock?.relayMembershipEoseDelayMs ?? 0);
       if (eoseDelayMs > 0) {
         window.setTimeout(
           () => sendWsText(socket.handler, ["EOSE", subId]),
@@ -11359,6 +11370,14 @@ export function maybeInstallE2eTauriMocks() {
   deferredGetEventQueue = [];
   deferNextChannelsRead = false;
   deferredChannelsReadResolve = null;
+  deferredMemberReads = [];
+  window.__BUZZ_E2E_RELEASE_CHANNEL_MEMBERS__ = () => {
+    const mock = getConfig()?.mock;
+    if (mock) mock.deferChannelMembersReads = false;
+    const held = deferredMemberReads.splice(0);
+    for (const resolve of held) resolve();
+    return held.length;
+  };
   window.__BUZZ_E2E_CHANNELS_READ_PENDING__ = 0;
   window.__BUZZ_E2E_DEFER_NEXT_CHANNELS_READ__ = () => {
     if (deferredChannelsReadResolve) {
@@ -11602,6 +11621,17 @@ export function maybeInstallE2eTauriMocks() {
         const { filters } = payload as { filters: MockFilter[] };
         if (activeConfig?.mode === "relay")
           return relayQuery(activeConfig, filters);
+        if (
+          filters.some((filter) => filter.kinds?.includes(30621)) &&
+          activeConfig?.mock?.projectSnapshotReadDelayMs
+        ) {
+          await new Promise((resolve) =>
+            window.setTimeout(
+              resolve,
+              activeConfig?.mock?.projectSnapshotReadDelayMs,
+            ),
+          );
+        }
         return queryMockRelayFilters(filters, (filter, subId, send) =>
           sendToMockSocket(
             {

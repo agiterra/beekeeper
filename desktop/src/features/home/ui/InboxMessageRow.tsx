@@ -61,7 +61,6 @@ export function InboxMessageRow({
   channelId = null,
   deleteAuthority = "self",
   isContinuation = false,
-  isFirst = false,
   isFocusHighlightVisible,
   message,
   onDelete,
@@ -145,7 +144,7 @@ export function InboxMessageRow({
       ) : null}
       <article
         className={cn(
-          "group/message relative z-10 mx-1 flex gap-2.5 rounded-2xl px-2 py-1 transition-colors hover:bg-muted/50 focus-within:bg-muted/50",
+          "group/message relative z-10 hover:z-20 focus-within:z-20 mx-1 flex gap-2.5 rounded-2xl px-2 py-1 transition-colors hover:bg-muted/50 focus-within:bg-muted/50",
           isContinuation ? "items-center" : "items-start",
         )}
         data-message-id={message.id}
@@ -156,12 +155,7 @@ export function InboxMessageRow({
         }
       >
         {canReply || canToggleReactions || onDelete || onEdit ? (
-          <div
-            className={cn(
-              "absolute right-2 top-1 z-10",
-              !isFirst && "sm:top-0 sm:-translate-y-1/2",
-            )}
-          >
+          <div className="pointer-events-none absolute right-2 top-1 z-10">
             <MessageActionBar
               channelId={channelId}
               deleteAuthority={deleteAuthority}

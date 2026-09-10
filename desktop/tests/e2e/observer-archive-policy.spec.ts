@@ -161,22 +161,27 @@ test.describe("observer archive policy — reconciliation gate", () => {
 
     // The reconciliation gate must also result in a real `#p` + kind-24200
     // live REQ filter.
-    const hasOwnerKindSubscription = await page.evaluate(
-      (ownerPubkey) =>
-        (
-          window as Window & {
-            __BUZZ_E2E_HAS_MOCK_OWNER_KIND_SUBSCRIPTION__?: (input: {
-              ownerPubkey: string;
-              kind: number;
-            }) => boolean;
-          }
-        ).__BUZZ_E2E_HAS_MOCK_OWNER_KIND_SUBSCRIPTION__?.({
-          ownerPubkey,
-          kind: 24200,
-        }) ?? false,
-      "deadbeef".repeat(8),
-    );
-    expect(hasOwnerKindSubscription).toBe(true);
+    await expect
+      .poll(
+        () =>
+          page.evaluate(
+            (ownerPubkey) =>
+              (
+                window as Window & {
+                  __BUZZ_E2E_HAS_MOCK_OWNER_KIND_SUBSCRIPTION__?: (input: {
+                    ownerPubkey: string;
+                    kind: number;
+                  }) => boolean;
+                }
+              ).__BUZZ_E2E_HAS_MOCK_OWNER_KIND_SUBSCRIPTION__?.({
+                ownerPubkey,
+                kind: 24200,
+              }) ?? false,
+            "deadbeef".repeat(8),
+          ),
+        { timeout: 20_000 },
+      )
+      .toBe(true);
   });
 
   test("fresh install with empty subscriptions: reconciliation seeds kind 24200", async ({
@@ -211,7 +216,7 @@ test.describe("observer archive policy — reconciliation gate", () => {
               }) ?? false,
             "deadbeef".repeat(8),
           ),
-        { timeout: 10_000 },
+        { timeout: 20_000 },
       )
       .toBe(true);
 

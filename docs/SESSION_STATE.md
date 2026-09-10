@@ -5,6 +5,53 @@ authority (§4), a protocol for a specific experiment, or history. This file
 is updated on every build and whenever live use produces a finding; if it
 disagrees with an older document about *current state*, this one wins.
 
+## September 9 startup/sidebar and final release repairs
+
+Brian narrowed the visible rearrangement to app startup and the sidebar. The
+sidebar now waits for project/channel placement before showing real groups,
+and reads this identity/community's saved project order before its first paint.
+The delayed-project browser case records every rendered group order, not just
+the settled screen; it passes with a 1500 ms held project snapshot. This does
+not promise that later remote preference changes will never reorder a sidebar.
+
+Other repairs from the release browser run:
+- Read-state initialization exposes its fetched baseline without waiting for
+  live admission, so newly arriving messages are not mistaken for initial reads.
+  Live replay, merge rules and destruction cleanup are unchanged.
+- Bounded auxiliary/deletion, Inbox thread-context, link-preview, reminder and
+  exact repository reads use the existing authenticated coalesced snapshot path.
+  Filters, limits and WebSocket failure fallback remain intact.
+- Accepted thread sends project into the thread cache immediately; sending no
+  longer waits for the live echo to show a successful reply. The channel's
+  optimistic row is removed and accepted IDs remain deduplicated.
+- Inbox action bars stay inside their own hovered row; invisible wrappers no
+  longer intercept neighboring rows. Hover/focus raises only the active row.
+- Browser tests await the actual channel/reaction consumer, explicit member-read
+  release, settled read content, and protocol fallback completion. The contextual
+  launch allowlist inspects WebSocket REQ/COUNT/CLOSE and still rejects EVENT.
+
+Evidence is in `../review-2026-09-08-release-candidate/`. The immutable full
+browser pass recorded 1258 passes, 53 failures and one skip
+(`main-landing-full-smoke.log`); it is not represented as a green full run.
+Follow-up suites exercised the repaired areas: 114/114 channel/workspace checks
+(`main-landing-followup.log`), and broader Inbox/mentions/message/project,
+reminder/reconnect, sidebar/scroll/thread runs, with their failed cases retained
+in the logs before targeted repairs. `main-landing-pass11.log` has 244 passes and
+eight failures; the last eight cases plus startup produced eight passes and
+one Inbox hover failure in `main-landing-final-regressions.log`. The corrected
+Inbox suite then passed 7/7 (`main-landing-inbox-final.log`), closing that last
+failure. The follow-up units pass 43/43 in
+`main-landing-followup-units.log`; the file-size gate is
+`main-landing-size-final.log`. The final committed-tree CI/integration and remote
+publication must still be verified before declaring main shipped.
+
+Known boundary exposed by the scroll test: mandatory post-live/reconnect history
+refresh replaces the server cursor chain, including previously paged history.
+Steady-state pagination is tested after that initial refresh; preserving a
+reader's older position across resync remains separate follow-up work, not a
+claim of this sidebar fix. Windows and installed native WebView acceptance are
+not rerun here. No app installation or production deployment is claimed.
+
 ## September 9 main-landing validation in progress
 
 Brian requested landing the combined topic on main before further feature work.
