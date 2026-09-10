@@ -90,3 +90,55 @@ test("each state has its colour, its name, and an honest hover", () => {
   assert.equal(starting.colorClass, "bg-blue-500");
   assert.match(starting.title, /waiting for the session provider/);
 });
+
+test("a founded row is Not started: hollow, neutral, and outranked by any closure or a pending Start", () => {
+  const foundedStatus = { kind: "founded", label: "Not started" };
+  assert.equal(
+    projectSessionIndicatorState(
+      entry({ founded: true, status: foundedStatus }),
+    ),
+    "founded",
+  );
+  // The status kind alone is enough — the flag and the status agree.
+  assert.equal(
+    projectSessionIndicatorState(entry({ status: foundedStatus })),
+    "founded",
+  );
+  const founded = projectSessionIndicator(
+    entry({ founded: true, status: foundedStatus }),
+  );
+  assert.equal(founded.label, "Not started");
+  assert.equal(
+    founded.colorClass,
+    "bg-transparent ring-1 ring-inset ring-sidebar-foreground/45",
+  );
+  assert.equal(
+    founded.title,
+    "Not started — founded, but no provider has been asked to run it yet",
+  );
+
+  // Precedence: archived → closed → starting → founded.
+  assert.equal(
+    projectSessionIndicatorState(
+      entry({ founded: true, status: foundedStatus, isClosed: true }),
+    ),
+    "closed",
+  );
+  assert.equal(
+    projectSessionIndicatorState(
+      entry({
+        founded: true,
+        status: foundedStatus,
+        isClosed: true,
+        isArchived: true,
+      }),
+    ),
+    "archived",
+  );
+  assert.equal(
+    projectSessionIndicatorState(
+      entry({ founded: true, status: foundedStatus, pending: true }),
+    ),
+    "starting",
+  );
+});

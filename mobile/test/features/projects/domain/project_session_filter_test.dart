@@ -63,6 +63,28 @@ void main() {
     expect(result.hiddenUnattributed, 1);
   });
 
+  test('a founded session survives the default range and My sessions '
+      'through its genesis founder and founding-fact time', () {
+    final now = DateTime(2026, 9, 9, 10);
+    // What the fold hands the filter for a genesis-only umbrella: the genesis
+    // signer as founder, the newest founding fact as its time.
+    final founded = _entry(at: now.millisecondsSinceEpoch ~/ 1000 - 60);
+    final result = _run([founded], ProjectSessionFilter.defaults, now: now);
+    expect(result.shown, [founded]);
+    expect(result.hiddenByState, 0);
+    expect(result.hiddenUnattributed, 0);
+    // A founded umbrella dated 0 — the pre-fold reading — would be hidden by
+    // every bounded range, which is why the fold dates it from its facts.
+    expect(
+      _run(
+        [_entry(at: 0)],
+        const ProjectSessionFilter(range: ProjectSessionDateRange.month),
+        now: now,
+      ).hiddenByState,
+      1,
+    );
+  });
+
   test('closed sessions hide only when the box is off, and are counted', () {
     final entries = [_entry(), _entry(closed: true)];
     expect(_run(entries, ProjectSessionFilter.defaults).shown.length, 2);

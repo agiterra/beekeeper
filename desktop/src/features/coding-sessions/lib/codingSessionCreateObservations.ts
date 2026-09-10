@@ -59,6 +59,7 @@ import {
   classifyTrustedCodingSessionIngressEvent,
   isCodingSessionTurnReceipt,
 } from "./codingSessionTrustedIngress";
+import type { CodingSessionGenesisObservation } from "./codingSessionTypes";
 import type { CodingSessionUmbrellaCreateObservation } from "./codingSessionUmbrellaModel";
 import {
   boundedNonempty,
@@ -319,6 +320,8 @@ export type CodingSessionGenesisClassification =
       channelId: string;
       sessionRef: string;
       founderPubkey: string;
+      /** Signed `created_at`, in seconds — when the umbrella was founded. */
+      createdAt: number;
     }
   | { kind: "irrelevant" }
   | { kind: "malformed" }
@@ -384,6 +387,7 @@ export function classifyCodingSessionGenesisEvent(
     channelId: tags[0],
     sessionRef: payload.sessionRef,
     founderPubkey,
+    createdAt: event.created_at,
   };
 }
 
@@ -423,7 +427,13 @@ export class CodingSessionCreateObservationStore {
     string,
     Map<string, StoredReceiptTarget>
   >();
-  /** Keyed only by the explicit event id a receipt-joined create names. */
+  /**
+   * Every accepted genesis, keyed by event id. A receipt-joined create reaches
+   * its genesis only through the explicit id it names (`snapshot`); the
+   * founded projection reads the same map by `(channelId, sessionRef)`
+   * (`foundedSnapshot`), because a genesis nothing has claimed yet is the
+   * only fact a founded-but-unstarted umbrella has.
+   */
   private readonly geneses = new Map<string, StoredGenesis>();
   private readonly dispositions = new Map<string, string>();
   private malformedCount = 0;
@@ -580,12 +590,68 @@ export class CodingSessionCreateObservationStore {
     return observations;
   }
 
-  /** Diagnostics only; refused creates never reach a projection. */
-  counts(): { malformedCount: number; invalidSignatureCount: number } {
+  /**
+   * Every accepted, undisputed genesis in the visible channels, oldest first.
+   *
+   * Grouped by `(channelId, sessionRef)`: one genesis is a founding fact, two
+   * are a dispute the relay's one-genesis-per-ref rule was meant to prevent
+   * (it is a documented race), and a disputed ref binds nothing here rather
+   * than crowning whichever signer got in first. Whether an execution exists
+   * under the genesis is not this store's question — the founded projection
+   * subtracts the receipt-joined creates (`codingSessionFoundedModel.ts`).
+   */
+  foundedSnapshot(
+    channelIds: readonly string[],
+  ): CodingSessionGenesisObservation[] {
+    const allowedChannels = new Set(channelIds);
+    const observations: CodingSessionGenesisObservation[] = [];
+    for (const [, group] of this.genesesByUmbrella()) {
+      if (group.length !== 1) continue;
+      const genesis = group[0];
+      if (!allowedChannels.has(genesis.channelId)) continue;
+      observations.push({
+        channelId: genesis.channelId,
+        sessionRef: genesis.sessionRef,
+        genesisRef: genesis.eventId,
+        founderPubkey: genesis.founderPubkey,
+        foundedAt: genesis.createdAt,
+      });
+    }
+    observations.sort(
+      (left, right) =>
+        left.foundedAt - right.foundedAt ||
+        left.genesisRef.localeCompare(right.genesisRef),
+    );
+    return observations;
+  }
+
+  /** Diagnostics only; refused creates and disputed geneses never reach a projection. */
+  counts(): {
+    malformedCount: number;
+    invalidSignatureCount: number;
+    /** `(channelId, sessionRef)` pairs with more than one accepted genesis. */
+    disputedGenesisCount: number;
+  } {
+    let disputedGenesisCount = 0;
+    for (const [, group] of this.genesesByUmbrella()) {
+      if (group.length > 1) disputedGenesisCount += 1;
+    }
     return {
       malformedCount: this.malformedCount,
       invalidSignatureCount: this.invalidSignatureCount,
+      disputedGenesisCount,
     };
+  }
+
+  private genesesByUmbrella(): Map<string, StoredGenesis[]> {
+    const groups = new Map<string, StoredGenesis[]>();
+    for (const genesis of this.geneses.values()) {
+      const key = umbrellaKey(genesis.channelId, genesis.sessionRef);
+      const group = groups.get(key);
+      if (group) group.push(genesis);
+      else groups.set(key, [genesis]);
+    }
+    return groups;
   }
 
   /**
@@ -621,6 +687,14 @@ function compareCreateOrder(left: StoredCreate, right: StoredCreate): number {
   return (
     left.createdAt - right.createdAt ||
     left.eventId.localeCompare(right.eventId)
+  );
+}
+
+function umbrellaKey(channelId: string, sessionRef: string): string {
+  return encodeStructuredKey(
+    "coding-session-genesis-observation/v1",
+    channelId,
+    sessionRef,
   );
 }
 

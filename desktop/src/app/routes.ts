@@ -16,6 +16,12 @@ export const routes = rootRoute("root.tsx", [
   ]),
   route("/coding-sessions/$channelId", [
     route("/$generationId", "coding-sessions.$channelId.$generationId.tsx"),
+    // A founded-but-unstarted umbrella has no generation to address, so it
+    // gets its own segment rather than a sentinel generation id.
+    route(
+      "/founded/$sessionRef",
+      "coding-sessions.$channelId.founded.$sessionRef.tsx",
+    ),
   ]),
   route("/settings", "settings.tsx"),
   route("/workflows", "workflows.tsx"),

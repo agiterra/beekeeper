@@ -31,6 +31,17 @@ const codingSessionNoLiveExecutionLabel =
     'No live execution to send to — every generation is stopped, failed or '
     'disconnected.';
 
+/// The header line for a session that was founded and never started.
+///
+/// Starting one is a desktop act — the runtime it runs on is that computer's,
+/// and Solo or Team, the name, the prompt and where it runs are set up on the
+/// desktop's founded page — so the phone says where the next step is rather
+/// than offering a composer with nothing behind it. This line stands where
+/// the execution lines would be; the "every generation is stopped" composer
+/// fallback is never shown for one.
+const codingSessionFoundedHeaderLabel =
+    'Not started — founded on the desktop; set it up and start it there.';
+
 /// What a pending turn row says for each phase (D4: settled by receipt, never
 /// by text).
 String codingSessionPendingPhaseLabel(CodingSessionPendingTurnView view) =>
@@ -84,6 +95,9 @@ String codingSessionStatusLabel(CodingSessionFoldedStatus status) =>
       CodingSessionFoldedStatusKind.reported => codingSessionStatusWords(
         status.status,
       ),
+      // Founded, no execution yet: not idle (nothing ran) and not unknown
+      // (the genesis was read). "Not started" is exactly what was read.
+      CodingSessionFoldedStatusKind.founded => 'Not started',
       CodingSessionFoldedStatusKind.unknown => 'Unknown',
     };
 

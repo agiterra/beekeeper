@@ -9,7 +9,10 @@ import {
 
 /**
  * The two things the launch form still needs from the deleted *Team* tab: what
- * the goal field owes the person, and the signed sequence as it walks.
+ * the goal field owes the person, and the signed sequence as it walks — today
+ * the founding steps (channel, genesis, goal, name), and the step shape is the
+ * crew launch's so the founded screen's Start can render its own with the
+ * same row.
  *
  * `NewCodingSessionCrewTab.tsx` is gone. It held twelve exports, ten of which
  * lost their only production caller when the tab did, and its own test suite
@@ -28,8 +31,8 @@ import {
  * over-cap goal used to launch a whole team and quietly publish no kind:44227
  * (item 103 finding 5; batch 2 review A2 F1). At the cap the counter *becomes*
  * the refusal, in the launch block's own words, so the two cannot drift. After
- * a launch, a goal that did not go out says so here rather than showing up as
- * an empty goal pill in the session, which reads as "nobody set one".
+ * a founding, a goal that did not go out says so here rather than showing up
+ * as an empty goal pill in the session, which reads as "nobody set one".
  */
 export function CodingSessionLaunchGoalNotes({
   bytes,
@@ -69,7 +72,7 @@ export function CodingSessionLaunchGoalNotes({
           data-testid="new-coding-session-crew-goal-unpublished"
           role="alert"
         >
-          {`The team launched, but its goal was not published: ${
+          {`The session was founded, but its goal was not published: ${
             goalOutcome.reason ?? "the goal publish did not go out"
           }. Set it from the session's goal pill.`}
         </p>

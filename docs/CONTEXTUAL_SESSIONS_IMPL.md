@@ -48,7 +48,9 @@ Three things are missing:
 
 ## 1. The seam root implements (three reserved files, small)
 
-Type declared in `NewCodingSessionDialog.tsx` (mine, not reserved) and imported:
+Type declared in `NewCodingSessionDialog.tsx` (mine, not reserved) and imported
+(*2026-09-10: the dialog is gone; the type now lives in
+`lib/codingSessionWorkspaceReuse.ts` as `NewCodingSessionWorkspaceReuse`*):
 
 ```ts
 export type NewCodingSessionWorkspaceReuse = {
@@ -180,6 +182,16 @@ in `parseNewCodingSessionRequest` — a field absent from that parser is dropped
 on reload, so its test pins the round trip. `NewCodingSessionDialogHost.tsx`
 threads `workspaceReuse` into `NewCodingSessionDialog`, which declares the type,
 passes it to the form, and varies the title ("New session in this workspace").
+*2026-09-10:* the dialog and its host are gone. The request is a founding
+request (`requestCodingSessionFoundingInWorkspace` in
+`newCodingSessionDialogStore.ts`, no `sessionStorage` mirror — a request that
+survived a reload would found a second genesis) performed by
+`CodingSessionFoundingHost`; the type lives in
+`lib/codingSessionWorkspaceReuse.ts`; the workspace facts travel in the founded
+draft v2 (`lib/codingSessionFoundedDraft.ts`: `workspaceSourcePath`,
+`workspaceSourceBranch`, `workspaceSourceBranchSource`, `repoRef`); and the
+summary renders inside the founded page's Where field
+(`ui/founded/CodingSessionFoundedWorkspaceReuse.tsx`).
 
 ## 5. Lanes and file ownership (nobody commits)
 
@@ -193,7 +205,7 @@ passes it to the form, and varies the title ("New session in this workspace").
   `hooks/useCodingSessionWorkspaceReuse.ts` (+ test),
   `newCodingSessionDialogStore.ts` (+ its test),
   `NewCodingSessionDialogHost.tsx`, `NewCodingSessionDialog.tsx` (type +
-  pass-through + title), `shared/api/tauriCodingSessionWorkdirs.ts` only if the
+  pass-through + title; both deleted 2026-09-10 — see §4's pointer), `shared/api/tauriCodingSessionWorkdirs.ts` only if the
   declared state must widen.
 - **Lane V — integration evidence.** `desktop/tests/e2e/coding-session-workspace-reuse.spec.ts`
   + its helper, `playwright.config.ts` registration, and the mock-bridge

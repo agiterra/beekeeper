@@ -53,7 +53,7 @@ import { usePersonaSync } from "@/features/agents/lib/usePersonaSync";
 import { useAgentObserverIngestion } from "@/features/agents/useAgentObserverIngestion";
 import { AgentManagementDialogs } from "@/features/agents/ui/AgentManagementDialogs";
 import { CodingSessionHireHost } from "@/features/coding-sessions/ui/CodingSessionHireHost";
-import { NewCodingSessionDialogHost } from "@/features/coding-sessions/ui/NewCodingSessionDialogHost";
+import { CodingSessionFoundingHost } from "@/features/coding-sessions/ui/CodingSessionFoundingHost";
 import { RequestedAgentCreateDialogs } from "@/features/agents/ui/RequestedAgentCreateDialogs";
 import {
   usePresenceSession,
@@ -945,7 +945,7 @@ export function AppShell() {
                 )}
                 <RequestedAgentCreateDialogs />
                 <AgentManagementDialogs />
-                <NewCodingSessionDialogHost />
+                <CodingSessionFoundingHost />
                 {/* Renders nothing; answers `session.hire` for as long as the
                     app is open. Here rather than on a session screen because a
                     hire arrives whether or not anybody is looking at one — and

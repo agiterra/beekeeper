@@ -1,16 +1,16 @@
 /**
- * The one launch form's model: who leads, whether it is governed, and what
- * still stands between the person and pressing the button.
+ * The one launch form's model: Solo or Team, who leads, and what still stands
+ * between the person and pressing Start.
  *
  * The dialog used to be two tabs — *One session* and *Team* — which is two
- * answers to "what am I starting?" and, in practice, two half-forms. The Team
- * tab had no provider control at all, so the lead ran on whatever the other
- * tab was showing; the One-session tab's model leaked into unpinned seats
- * (item 103, finding 12); role names were free text; and the lead's name was
- * truncated to the point where two Keystones read identically. The ruling of
- * 2026-09-01 collapsed both into one form — goal · who leads · governed ·
- * bench · budget/posture · working directory · access — and this module holds
- * the parts of that form that are decisions rather than pixels.
+ * answers to "what am I starting?" and, in practice, two half-forms. The
+ * ruling of 2026-09-01 collapsed both into one form, and 2026-09-08 moved the
+ * team half onto the founded session's own screen behind an "Agent team" box.
+ * Since 2026-09-10 there is no dialog at all: a click founds the session and
+ * the founded page is the whole form, with a **Solo | Team** switch at the top
+ * (Andy: "both normal and team sessions should be configured this way").
+ * `governed` is that switch — Team means an agent leads — and this module
+ * holds the parts of the form that are decisions rather than pixels.
  *
  * Two rules the shapes here exist to enforce:
  *
@@ -26,12 +26,14 @@
 import {
   KIND_CODING_SESSION_AUTHORITY_TRANSITION,
   KIND_CODING_SESSION_COMMAND,
-  KIND_CODING_SESSION_GENESIS,
   KIND_CODING_SESSION_GOAL,
   KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+  KIND_CODING_SESSION_NAME,
   KIND_CODING_SESSION_POLICY,
 } from "@/shared/constants/kinds";
 import { truncatePubkey } from "@/shared/lib/pubkey";
+import { CODING_SESSION_GOAL_UNRESOLVED } from "./codingSessionGoal";
+import type { CodingSessionSetupMode } from "./codingSessionSetupMode";
 
 /** Who holds the founding seat of this session. */
 export type CodingSessionLaunchLead =
@@ -52,7 +54,13 @@ export type CodingSessionLaunchLead =
       model: string | null;
       /** Whether this computer holds the identity's role pack. */
       hasRolePack?: boolean;
-    };
+    }
+  /**
+   * Team, with no agent picked yet. A variant rather than `null` so every
+   * site that narrows on `lead.kind === "agent"` keeps compiling and correct;
+   * readiness turns it into the `lead` blocker.
+   */
+  | { kind: "unset" };
 
 /**
  * The lead's identity line: the whole name, then the canonical short pubkey.
@@ -67,29 +75,8 @@ export function codingSessionLeadIdentityLine(
   lead: CodingSessionLaunchLead,
 ): string {
   if (lead.kind === "you") return lead.label;
+  if (lead.kind === "unset") return "No lead picked yet";
   return `${lead.label} · ${truncatePubkey(lead.actor)}`;
-}
-
-/**
- * Whether this launch is governed — decided by who leads, never separately.
- *
- * An agent lead is always governed: a seat holds authority only through a
- * genesis and an accepted authority chain, so an ungoverned agent lead would
- * be an agent with no standing to report, to hire, or to be granted anything
- * — a session that looks founded and can do nothing.
- *
- * Leading it yourself is always ungoverned, and that is the honest half: a
- * governed session exists so that *somebody who is not you* can hold a seat in
- * it. Founding a roster with one member, yourself, and an authority chain
- * nobody else appears in would publish three extra records that answer no
- * question anybody asked. The switch is therefore shown and derived rather
- * than shown and free — a control that claims to decide something it does not
- * is the class of defect this form was rebuilt to remove.
- */
-export function codingSessionLaunchIsGoverned(
-  lead: CodingSessionLaunchLead,
-): boolean {
-  return lead.kind === "agent";
 }
 
 /**
@@ -141,20 +128,19 @@ export function resolveCodingSessionLeadModel(input: {
   return { model: picked, overridden: picked !== identityModel };
 }
 
-/** Why the governed switch reads the way it does. Never absent. */
-export function codingSessionGovernedLockReason(
-  lead: CodingSessionLaunchLead,
-): string {
-  return lead.kind === "agent"
-    ? "An agent lead is always governed: its seat, its grants and every report it files are answered against this session's genesis."
-    : "You are leading, so there is nothing to govern yet. Pick an agent to lead and the launch founds a genesis and an authority chain.";
-}
-
 /** Something the person can act on right now. Rendered inline, never hidden. */
 export type CodingSessionLaunchBlocker = {
   id: string;
   /** One sentence naming what is missing. */
   sentence: string;
+  /**
+   * When the sentence is shown. Absent means inline, before any press, and
+   * the button is disabled by it. `attempt` means the button stays pressable
+   * and the sentence appears only once somebody presses it — the blank
+   * initial prompt (Andy, 2026-09-10): a fresh page reads as a form, not
+   * as a refusal. `canLaunch` is false either way; nothing is signed.
+   */
+  surface?: "attempt";
 };
 
 /**
@@ -177,7 +163,45 @@ export type CodingSessionLaunchReadiness = {
 };
 
 /**
- * Everything standing between this form and a signed genesis.
+ * The blockers by where they show: `inline` ones sit under the button and
+ * disable it; `onAttempt` ones wait for a press. `canPress` is "no inline
+ * blocker" — the button's own enabled state — and is deliberately not
+ * `canLaunch`, which stays false while any blocker stands.
+ */
+export function codingSessionLaunchBlockersBySurface(
+  readiness: Pick<CodingSessionLaunchReadiness, "blockers">,
+): {
+  inline: CodingSessionLaunchBlocker[];
+  onAttempt: CodingSessionLaunchBlocker[];
+  canPress: boolean;
+} {
+  const inline = readiness.blockers.filter(
+    (blocker) => blocker.surface !== "attempt",
+  );
+  const onAttempt = readiness.blockers.filter(
+    (blocker) => blocker.surface === "attempt",
+  );
+  return { inline, onAttempt, canPress: inline.length === 0 };
+}
+
+/** The goal reader's own condition, as the founded page derives it. */
+export type CodingSessionLaunchGoalReader =
+  | "unresolved"
+  | "errored"
+  | "resolved";
+
+/** The names reader's condition — `useCodingSessionNames().resolved`. */
+export type CodingSessionLaunchNameReader = "unresolved" | "resolved";
+
+/** The sentence under a Team Start with no agent picked. */
+export const CODING_SESSION_LAUNCH_LEAD_BLOCKER =
+  "Pick an agent to lead this session, or switch to Solo.";
+/** The on-press sentence for a worktree left unnamed with the toggle on. */
+export const CODING_SESSION_LAUNCH_WORKTREE_NAME_BLOCKER =
+  "Give the worktree a name — letters and numbers — or turn the worktree off.";
+
+/**
+ * Everything standing between this form and a signed create.
  *
  * Pure, so the button's disabled state and the sentence under it are the same
  * expression — a disabled control with nothing under it is the front door
@@ -185,14 +209,30 @@ export type CodingSessionLaunchReadiness = {
  * happens after the first fix.
  */
 export function codingSessionLaunchReadiness(input: {
-  /** Null when there is no channel and nothing here can publish one. */
-  channelId: string | null;
-  canCreateChannel: boolean;
+  /** Solo: you lead, one runtime. Team: an agent leads; governed. */
+  mode: CodingSessionSetupMode;
+  /** The initial prompt as the field holds it — draft or wire. */
   goal: string;
   /** The overflow the shared goal helper reports, or null when it fits. */
   goalOverflow: { bytes: number; cap: number } | null;
+  /**
+   * Whether the wire goal has been read. A Start must not republish or
+   * shadow a goal it cannot see, so anything but `resolved` blocks.
+   */
+  goalReader: CodingSessionLaunchGoalReader;
+  /**
+   * Whether the wire name has been read. Read only when `nameDirty`: a Start
+   * flushes a dirty name first, and it must not publish over — or silently
+   * drop — a name it has not seen.
+   */
+  nameReader: CodingSessionLaunchNameReader;
+  /** The worktree toggle and its name: a blank name with the toggle on is
+   * refused on press, under the field, rather than by a failed cut. */
+  useWorktree?: boolean;
+  worktreeName?: string;
+  /** The Name field differs from the wire, so Start would publish a 44229. */
+  nameDirty: boolean;
   lead: CodingSessionLaunchLead;
-  governed: boolean;
   /** Null when no installed, authenticated runtime is selected. */
   providerInstanceRef: string | null;
   providerAuthorityPubkey: string | null;
@@ -225,6 +265,7 @@ export function codingSessionLaunchReadiness(input: {
    */
   busySentence: string | null;
 }): CodingSessionLaunchReadiness {
+  const governed = input.mode === "team";
   const blockers: CodingSessionLaunchBlocker[] = [];
   const unknowns: CodingSessionLaunchUnknown[] = [];
 
@@ -234,23 +275,50 @@ export function codingSessionLaunchReadiness(input: {
     blockers.push({ id: "busy", sentence: input.busySentence });
   }
 
-  if (input.channelId === null && !input.canCreateChannel) {
-    blockers.push({
-      id: "channel",
-      sentence:
-        "This session has nowhere to launch into, and nothing here can create a channel for it.",
-    });
-  }
+  // Surfaced on press, not inline: see `CodingSessionLaunchBlocker.surface`.
   if (input.goal.trim().length === 0) {
     blockers.push({
       id: "goal",
-      sentence: "Write the goal — the lead's first turn carries it.",
+      sentence: "Please specify the initial prompt to start the session.",
+      surface: "attempt",
     });
   }
   if (input.goalOverflow) {
     blockers.push({
       id: "goal-cap",
       sentence: `This goal is ${input.goalOverflow.bytes.toLocaleString()} UTF-8 bytes; the signed record holds ${input.goalOverflow.cap.toLocaleString()}.`,
+    });
+  }
+  if (input.goalReader !== "resolved") {
+    blockers.push({
+      id: "goal-unresolved",
+      sentence:
+        input.goalReader === "unresolved"
+          ? `${CODING_SESSION_GOAL_UNRESOLVED} Start waits until the relay has answered, so it cannot publish over an initial prompt it has not seen.`
+          : "The session's goal could not be read from the relay, so Start cannot tell what is already published and will not send or replace it.",
+    });
+  }
+  if (input.nameDirty && input.nameReader !== "resolved") {
+    blockers.push({
+      id: "name-unresolved",
+      sentence:
+        "Name not read yet. Start waits until the relay has answered, so it cannot publish over a name it has not seen.",
+    });
+  }
+  // Surfaced on press, like the blank prompt: a Team page with nobody
+  // picked yet is a page being filled in, not a refusal (Andy, 2026-09-10).
+  if (governed && input.lead.kind !== "agent") {
+    blockers.push({
+      id: "lead",
+      sentence: CODING_SESSION_LAUNCH_LEAD_BLOCKER,
+      surface: "attempt",
+    });
+  }
+  if (input.useWorktree && (input.worktreeName ?? "").trim().length === 0) {
+    blockers.push({
+      id: "worktree-name",
+      sentence: CODING_SESSION_LAUNCH_WORKTREE_NAME_BLOCKER,
+      surface: "attempt",
     });
   }
   if (
@@ -310,7 +378,9 @@ export function codingSessionLaunchReadiness(input: {
         "This computer holds no role pack behind the lead, so it runs on its persona prompt alone.",
     });
   }
-  if (input.lead.kind === "agent" && input.leadModel === null) {
+  // Team, an agent lead, no model: a blocker, never for `unset` (the `lead`
+  // blocker already names what to do) and never in Solo.
+  if (governed && input.lead.kind === "agent" && input.leadModel === null) {
     blockers.push({
       id: "model",
       // A blocker, not an unknown. The alternative — publishing the picker's
@@ -334,11 +404,13 @@ export function codingSessionLaunchReadiness(input: {
         "The policy below is published as a signed record. Turn budgets and verifier/required-gate settings have scoped consumers; the other fields are read and shown as guidance.",
     });
   }
-  if (!input.governed) {
+  if (!governed) {
+    // Corrected 2026-09-10: a founded session has a genesis; what an
+    // ungoverned session lacks is the authority chain.
     unknowns.push({
       id: "ungoverned",
       sentence:
-        "Ungoverned: no genesis and no authority chain, so this session has no roster, no grants and no signed reports.",
+        "Ungoverned: no authority chain, so this session has no roster, no grants and no signed reports.",
     });
   }
 
@@ -348,8 +420,12 @@ export function codingSessionLaunchReadiness(input: {
 /** One line of "here is what pressing this publishes". */
 export type CodingSessionLaunchPlanLine = {
   id: string;
-  /** The kind integer, so the sentence and the wire cannot drift. */
-  kind: number;
+  /**
+   * The kind integer, so the sentence and the wire cannot drift — or null for
+   * a line that publishes nothing, because a kind on that line would claim a
+   * record that never goes out. Every line today names a kind.
+   */
+  kind: number | null;
   sentence: string;
 };
 
@@ -363,33 +439,41 @@ export type CodingSessionLaunchPlanLine = {
  * cannot quietly stop being true.
  */
 export function codingSessionLaunchPlan(input: {
-  governed: boolean;
+  mode: CodingSessionSetupMode;
   lead: CodingSessionLaunchLead;
-  goal: string;
+  /** The Name field differs from the wire, so Start publishes a 44229 first. */
+  nameDirty: boolean;
+  /** The prompt differs from the wire goal, so Start publishes a 44227. */
+  promptDirty: boolean;
   policySet: boolean;
   benchCount: number;
 }): CodingSessionLaunchPlanLine[] {
-  if (!input.governed) {
-    return [
-      {
-        id: "create",
-        kind: KIND_CODING_SESSION_LIFECYCLE_COMMAND,
-        sentence: "One session, founded by you, with your first message.",
-      },
-    ];
+  const lines: CodingSessionLaunchPlanLine[] = [];
+  // The two text fields flush before either branch, only when dirty — a line
+  // for an unchanged field would name a record Start does not publish.
+  if (input.nameDirty) {
+    lines.push({
+      id: "name",
+      kind: KIND_CODING_SESSION_NAME,
+      sentence: "Publish the name.",
+    });
   }
-  const lines: CodingSessionLaunchPlanLine[] = [
-    {
-      id: "genesis",
-      kind: KIND_CODING_SESSION_GENESIS,
-      sentence: "Found the session (genesis).",
-    },
-    {
+  if (input.promptDirty) {
+    lines.push({
       id: "goal",
       kind: KIND_CODING_SESSION_GOAL,
-      sentence: "Publish the goal as the session's own.",
-    },
-  ];
+      sentence: "Publish the initial prompt as the session's goal.",
+    });
+  }
+  if (input.mode === "solo") {
+    lines.push({
+      id: "create",
+      kind: KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+      sentence:
+        "One execution under this session, led by you, with the initial prompt as its first message.",
+    });
+    return lines;
+  }
   if (input.policySet) {
     lines.push({
       id: "policy",
@@ -404,7 +488,7 @@ export function codingSessionLaunchPlan(input: {
     sentence:
       input.lead.kind === "agent"
         ? `Seat ${input.lead.label} as ${input.lead.role} — the only seat this launch creates.`
-        : "Seat you as the lead — the only seat this launch creates.",
+        : "Seat the agent picked above as the lead — the only seat this launch creates.",
   });
   lines.push({
     id: "grants",
@@ -416,8 +500,8 @@ export function codingSessionLaunchPlan(input: {
     kind: KIND_CODING_SESSION_COMMAND,
     sentence:
       input.benchCount > 0
-        ? `Send the goal and the ${input.benchCount === 1 ? "one identity" : `${input.benchCount} identities`} the lead may hire.`
-        : "Send the goal. Nobody is benched, so the lead hires nobody.",
+        ? `Send the initial prompt and the ${input.benchCount === 1 ? "one identity" : `${input.benchCount} identities`} the lead may hire.`
+        : "Send the initial prompt. Nobody is benched, so the lead hires nobody.",
   });
   return lines;
 }

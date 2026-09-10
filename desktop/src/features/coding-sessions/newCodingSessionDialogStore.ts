@@ -1,105 +1,100 @@
 import * as React from "react";
 
-import type { NewCodingSessionWorkspaceReuse } from "./ui/NewCodingSessionDialog";
+import type { NewCodingSessionWorkspaceReuse } from "./lib/codingSessionWorkspaceReuse";
 
 /**
- * Who has the "new coding session" dialog open, and for what.
+ * The pending "found a coding session" request, and who asked for it.
  *
- * Creating a session used to be a route. As a dialog it needs somewhere for
- * that intent to live, and a module store is the same shape the agent-card
- * and mint surfaces already use.
+ * "New coding session" no longer opens a dialog: the click founds the topic
+ * (one 44226) and lands on the founded session's page, where everything else
+ * is set up. Every entry point — a channel menu, a project sidebar, the
+ * "New session in this workspace" action, a deep link — writes its intent
+ * here, and one headless host (`ui/CodingSessionFoundingHost.tsx`) performs
+ * it. A module store because the intent has to outlive the menu that raised
+ * it and reach a host mounted once, in the app shell.
  *
- * The request is mirrored into `sessionStorage` on purpose. The route it
- * replaced pinned its channel into the URL so that reloading mid-create
- * re-attached to the durable transaction still in flight; a dialog has no URL
- * to pin, so the request itself is what survives the reload. It is
- * session-scoped, not local: a create abandoned days ago should not reopen a
- * dialog on the next launch.
+ * **One genesis per click is this store's invariant, not a component's.** A
+ * request carries a `phase`: `"requested"` until the host has begun, then
+ * `"founding"` until the host clears it. While a request exists, in either
+ * phase, every `request*()` call is a no-op — a double click, two entry
+ * points firing, or a React StrictMode re-run of the host's effect cannot
+ * queue a second founding. The host flips the phase synchronously, before
+ * its first `await`, through `markCodingSessionFoundingStarted()`.
+ *
+ * Nothing here is persisted. The dialog this replaced mirrored its request
+ * into `sessionStorage` so a reload mid-create re-attached to it; a founding
+ * request that survived a reload would found a *second* genesis for the same
+ * click, so the request lives in memory and dies with the page.
+ *
+ * (The file keeps its old name: renaming it would touch every importer for
+ * no behavioural gain.)
  */
 
-/** What the dialog is being opened for. */
+/** What a founding request names: where the session lands, and what it reuses. */
 export type NewCodingSessionRequest =
   | {
       kind: "channel";
-      /** Pre-selected channel, or null to let the picker choose a default. */
+      /**
+       * The destination channel, or null when the caller had none to give. A
+       * null here cannot be founded — the host says so and clears it.
+       */
       channelId: string | null;
     }
   | { kind: "project"; projectId: string }
   /**
-   * Reuse one session's existing checkout for a *new* conversation.
+   * Reuse one session's existing checkout for a *new* session.
    *
    * The workspace travels with the request because nothing downstream can
-   * re-derive it: the launcher's prefill order puts a channel's remembered
-   * folder above any fallback, so a request that carried only the session ref
-   * would silently open on the channel's directory instead of the one the
-   * person chose. `channelId`/`projectId` are where the new session lands,
-   * which is a separate question from where it runs.
+   * re-derive it: the founded page's prefill order puts a channel's
+   * remembered folder above any fallback, so a request that carried only the
+   * session ref would silently land on the channel's directory instead of the
+   * one the person chose. `channelId`/`projectId` are where the new session
+   * lands, which is a separate question from where it runs.
    *
-   * What may be persisted here is decided by one question: can this still be
-   * true after a reload? The request is written to `sessionStorage` and
-   * re-read on the next launch, so anything with a clock in it becomes a lie
-   * in storage.
-   *
-   * - `path` and `branch` are what the worktree was cut as. They stay.
-   * - `branchSource` may be persisted **only when it is `"recorded"`** — the
-   *   branch a worktree was created on is a creation-time fact and does not
-   *   go stale. `"live"` is never stored: "on disk now" restored from
-   *   storage would be a claim about the present made from a record, so the
-   *   draft reads the head itself, on open.
+   * - `path` and `branch` are what the worktree was cut as.
+   * - `branchSource` is carried **only when it is `"recorded"`** — the branch
+   *   a worktree was created on is a creation-time fact. `"live"` is never
+   *   carried: "on disk now" is a claim about the present, and the founded
+   *   page reads the head itself, on open.
    * - `alsoHere` — the other sessions recorded at this directory — must not
-   *   be added. It is not the `branchSource` case: it is a count taken at one
-   *   moment, and a stale "3 other sessions are here" is worse than not
-   *   saying it. That line belongs where it is resolved fresh, on the menu
-   *   that opens this draft.
+   *   be added. It is a count taken at one moment, and it belongs where it is
+   *   resolved fresh, on the menu that raised this request.
    */
   | {
       kind: "workspace";
       channelId: string | null;
       projectId: string | null;
       sessionRef: string;
-      /** Source execution repository; absent in older drafts means unknown. */
+      /** Source execution repository; absent means unknown. */
       sourceRepoRef?: string | null;
       workspace: NewCodingSessionWorkspaceReuse;
     };
 
-const STORAGE_KEY = "buzz.new-coding-session-dialog.v1";
+/**
+ * `"requested"` until the host begins founding; `"founding"` from the host's
+ * first synchronous step until it clears the request.
+ */
+export type CodingSessionFoundingPhase = "requested" | "founding";
 
-let request: NewCodingSessionRequest | null = null;
+/** A request as the store holds it: what was asked, and how far it has got. */
+export type CodingSessionFoundingRequest = NewCodingSessionRequest & {
+  phase: CodingSessionFoundingPhase;
+};
+
+let request: CodingSessionFoundingRequest | null = null;
 const listeners = new Set<() => void>();
 
 function emit() {
   for (const listener of listeners) listener();
 }
 
-function storage(): Pick<Storage, "getItem" | "setItem" | "removeItem"> | null {
-  try {
-    return window.sessionStorage;
-  } catch {
-    // Storage can be denied outright (private mode, hardened webview). The
-    // dialog still works; only reload-survival is lost.
-    return null;
-  }
-}
-
-function persist(next: NewCodingSessionRequest | null) {
-  const store = storage();
-  if (!store) return;
-  try {
-    if (next === null) store.removeItem(STORAGE_KEY);
-    else store.setItem(STORAGE_KEY, JSON.stringify(next));
-  } catch {
-    // A full or read-only store is not worth failing an open over.
-  }
-}
-
 /**
  * The workspace arm, decoded whole or not at all.
  *
- * A stored request is what survives a reload, and a field this parser forgets
- * is a field that silently disappears — a half-read workspace request would
- * reopen the launcher with no directory and the worktree toggle back on,
- * which is an ordinary launch wearing this one's title. Anything malformed is
- * refused so the dialog stays closed rather than opening on a guess.
+ * A field this parser forgets is a field that silently disappears — a
+ * half-read workspace request would found a session with no directory and
+ * the worktree toggle back on, which is an ordinary launch wearing this one's
+ * title. Anything malformed is refused so nothing is founded on a guess.
  */
 function parseWorkspaceRequest(parsed: object): NewCodingSessionRequest | null {
   if (!("sessionRef" in parsed)) return null;
@@ -124,9 +119,9 @@ function parseWorkspaceRequest(parsed: object): NewCodingSessionRequest | null {
     return null;
   }
   // Absent is the ordinary case (nothing claimed). `"recorded"` is the only
-  // value that may be stored, so anything else — `"live"` above all — is a
+  // value that may be carried, so anything else — `"live"` above all — is a
   // request written by something that did not go through the opener, and is
-  // refused rather than shown.
+  // refused rather than founded on.
   const branchSource =
     "branchSource" in workspace ? workspace.branchSource : null;
   if (branchSource !== "recorded" && branchSource !== null) return null;
@@ -144,7 +139,13 @@ function parseWorkspaceRequest(parsed: object): NewCodingSessionRequest | null {
   };
 }
 
-/** Decode a stored request, rejecting anything that is not one. */
+/**
+ * Decode a serialized request, rejecting anything that is not one.
+ *
+ * The store itself no longer stores anything, so nothing in the app calls
+ * this at runtime; it is the executable definition of what a request must
+ * look like, and the tests hold every arm's shape against it.
+ */
 export function parseNewCodingSessionRequest(
   raw: string | null,
 ): NewCodingSessionRequest | null {
@@ -177,41 +178,45 @@ export function parseNewCodingSessionRequest(
   }
 }
 
-let restored = false;
-
-/** Open the dialog for a channel — or for no particular channel. */
-export function openNewCodingSessionDialog(channelId?: string | null): void {
-  restored = true;
-  request = { kind: "channel", channelId: channelId ?? null };
-  persist(request);
-  emit();
-}
-
-/** Open the dialog for a project, which decides the channel for itself. */
-export function openNewProjectCodingSessionDialog(projectId: string): void {
-  restored = true;
-  request = { kind: "project", projectId };
-  persist(request);
+/** Admit a new request only when none is pending, in either phase. */
+function admit(next: NewCodingSessionRequest): void {
+  if (request !== null) return;
+  request = { ...next, phase: "requested" };
   emit();
 }
 
 /**
- * Open the dialog on one session's existing checkout.
+ * Ask for a session to be founded in a channel.
  *
- * Opening is the whole effect: nothing is signed, no session starts, resumes
- * or stops, no branch moves, and no directory is created. The caller has
- * already verified the path on this computer — this store carries it, it does
- * not check it.
+ * Ignored while another request is pending or being founded: one click, one
+ * genesis. A null channel is accepted so the caller's intent is recorded, but
+ * the host cannot found it and says so.
  */
-export function openNewCodingSessionDialogInWorkspace(input: {
+export function requestCodingSessionFounding(channelId?: string | null): void {
+  admit({ kind: "channel", channelId: channelId ?? null });
+}
+
+/** Ask for a session to be founded in a project, which decides the channel for itself. */
+export function requestProjectCodingSessionFounding(projectId: string): void {
+  admit({ kind: "project", projectId });
+}
+
+/**
+ * Ask for a session to be founded on one session's existing checkout.
+ *
+ * Writing the request is the whole effect: nothing is signed here, no
+ * session starts, resumes or stops, no branch moves, and no directory is
+ * created. The caller has already verified the path on this computer — this
+ * store carries it, it does not check it.
+ */
+export function requestCodingSessionFoundingInWorkspace(input: {
   channelId?: string | null;
   projectId?: string | null;
   sessionRef: string;
   sourceRepoRef?: string | null;
   workspace: NewCodingSessionWorkspaceReuse;
 }): void {
-  restored = true;
-  request = {
+  admit({
     kind: "workspace",
     channelId: input.channelId ?? null,
     projectId: input.projectId ?? null,
@@ -220,50 +225,49 @@ export function openNewCodingSessionDialogInWorkspace(input: {
     workspace: {
       path: input.workspace.path,
       branch: input.workspace.branch,
-      // A live head is dropped here rather than stored: the draft re-reads it
-      // on open, and a stored one would outlive the moment it was true.
+      // A live head is dropped here rather than carried: the founded page
+      // re-reads it on open, and a carried one would outlive the moment it
+      // was true.
       branchSource:
         input.workspace.branchSource === "recorded" ? "recorded" : null,
     },
-  };
-  persist(request);
-  emit();
+  });
 }
 
-export function closeNewCodingSessionDialog(): void {
-  restored = true;
+/**
+ * The host's first, synchronous step: claim the pending request.
+ *
+ * Returns true exactly once per request — when it moved from `"requested"`
+ * to `"founding"`. A second call (StrictMode's repeated effect, a remount of
+ * the lazy project founder) finds the phase already flipped and gets false,
+ * and must then do nothing. Must be called before the host's first `await`.
+ */
+export function markCodingSessionFoundingStarted(): boolean {
+  if (request === null || request.phase === "founding") return false;
+  request = { ...request, phase: "founding" };
+  emit();
+  return true;
+}
+
+/** Drop the request — the founding is over, whichever way it ended. */
+export function clearCodingSessionFoundingRequest(): void {
   if (request === null) return;
   request = null;
-  persist(null);
   emit();
 }
 
 /**
- * Drop the open request when the community changes.
+ * Drop the request when the community changes.
  *
  * Wired into `resetCommunityState()`: a channel id belongs to one relay, and
- * a dialog left open across a switch would be pointed at a channel that no
- * longer exists.
+ * a request left across a switch would found a session in a channel that no
+ * longer exists here.
  */
-export function resetNewCodingSessionDialog(): void {
-  restored = true;
-  request = null;
-  persist(null);
-  emit();
+export function resetCodingSessionFoundingRequest(): void {
+  clearCodingSessionFoundingRequest();
 }
 
-function snapshot(): NewCodingSessionRequest | null {
-  if (!restored) {
-    restored = true;
-    const store = storage();
-    let raw: string | null = null;
-    try {
-      raw = store?.getItem(STORAGE_KEY) ?? null;
-    } catch {
-      raw = null;
-    }
-    request = parseNewCodingSessionRequest(raw);
-  }
+function snapshot(): CodingSessionFoundingRequest | null {
   return request;
 }
 
@@ -272,7 +276,7 @@ function subscribe(listener: () => void): () => void {
   return () => listeners.delete(listener);
 }
 
-/** The open request, or null when the dialog is closed. */
-export function useNewCodingSessionRequest(): NewCodingSessionRequest | null {
+/** The pending request, with its phase, or null when nothing is being founded. */
+export function useCodingSessionFoundingRequest(): CodingSessionFoundingRequest | null {
   return React.useSyncExternalStore(subscribe, snapshot, () => null);
 }

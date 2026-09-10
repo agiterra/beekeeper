@@ -109,7 +109,7 @@ test("a launch whose goal never went out says so at the field", () => {
   );
   assert.match(
     html,
-    /The team launched, but its goal was not published: rate-limited/,
+    /The session was founded, but its goal was not published: rate-limited/,
   );
   assert.match(html, /Set it from the session&#x27;s goal pill\./);
 });

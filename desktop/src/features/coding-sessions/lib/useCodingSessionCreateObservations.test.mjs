@@ -393,3 +393,178 @@ test("a live fence during the pending cold read is not coalesced away", async ()
   );
   mounted.unmount();
 });
+
+test("a live 44226 alone yields one founded umbrella; a later create and receipt hide it", async () => {
+  const { act, renderHook } = await import("@testing-library/react");
+  const React = (await import("react")).default;
+  const { QueryClient, QueryClientProvider } = await import(
+    "@tanstack/react-query"
+  );
+  const { KIND_CODING_SESSION_LIFECYCLE_RECEIPT } = await import(
+    "@/shared/constants/kinds.ts"
+  );
+  const { buildCodingSessionGenesisEvent } = await import(
+    "./codingSessionGenesis.ts"
+  );
+  const { buildCodingSessionCreateEvent } = await import(
+    "./codingSessionLifecycleCommand.ts"
+  );
+  const {
+    CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
+    CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION,
+    lifecycleReceiptSemanticKey,
+  } = await import("./codingSessionTrustedIngress.ts");
+  const { resolveFoundedCodingSessions } = await import(
+    "./codingSessionFoundedModel.ts"
+  );
+  const { useCodingSessionCreateObservations } = await import(
+    "./useCodingSessionCreateObservations.ts"
+  );
+
+  const genesisBuilt = buildCodingSessionGenesisEvent({
+    channelId: CHANNEL_ID,
+    sessionRef: SESSION_REF,
+  });
+  const genesisEvent = finalizeEvent(
+    {
+      kind: genesisBuilt.kind,
+      created_at: 1_799_999_990,
+      tags: genesisBuilt.tags,
+      content: genesisBuilt.content,
+    },
+    OPERATOR_SECRET,
+  );
+  const built = buildCodingSessionCreateEvent({
+    channelId: CHANNEL_ID,
+    commandId: COMMAND_ID,
+    projectRef: null,
+    repoRef: null,
+    sessionRef: SESSION_REF,
+    genesisRef: genesisEvent.id,
+    providerInstanceRef: "claude-primary",
+    providerAuthorityPubkey: PROVIDER_PUBKEY,
+    model: null,
+    title: "Founded first, started later",
+    initialTurn: null,
+  });
+  const createEvent = finalizeEvent(
+    {
+      kind: built.kind,
+      created_at: 1_800_000_000,
+      tags: built.tags,
+      content: built.content,
+    },
+    OPERATOR_SECRET,
+  );
+  const receiptEvent = finalizeEvent(
+    {
+      kind: KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
+      created_at: 1_800_000_005,
+      tags: [
+        ["h", CHANNEL_ID],
+        ["cslr-v", CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION],
+        ["csl-command", COMMAND_ID],
+        ["csl-key", lifecycleReceiptSemanticKey(COMMAND_ID)],
+      ],
+      content: JSON.stringify({
+        schema: CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
+        commandId: COMMAND_ID,
+        status: "created",
+        session: TARGET,
+        error: null,
+      }),
+    },
+    PROVIDER_SECRET,
+  );
+
+  ipcHandlers.set("get_global_agent_config", async () => ({
+    env_vars: {},
+    provider: null,
+    model: null,
+    preferred_runtime: null,
+    "allowed-bridge-pubkeys": [],
+  }));
+
+  let liveOnEvent = null;
+  const client = {
+    fetchEvents: async () => {
+      throw new Error("history must go through the bundled read");
+    },
+    // Empty history: everything arrives live, the way a session founded a
+    // moment ago on this desktop does.
+    fetchEventsBatch: async () => [],
+    subscribeLive: async (_filter, onEvent) => {
+      liveOnEvent = onEvent;
+      return () => {};
+    },
+    subscribeToReconnects: () => () => {},
+  };
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+  });
+  const wrapper = ({ children }) =>
+    React.createElement(QueryClientProvider, { client: queryClient }, children);
+  const settle = async () => {
+    for (let round = 0; round < 8; round += 1) {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    }
+  };
+  const foundedNow = () =>
+    resolveFoundedCodingSessions({
+      channelId: CHANNEL_ID,
+      geneses: result.current.geneses,
+      entries: [],
+      creates: result.current.observations,
+    });
+
+  const { result, unmount } = renderHook(
+    () => useCodingSessionCreateObservations([CHANNEL_ID], client),
+    { wrapper },
+  );
+  await settle();
+  assert.equal(result.current.isLoading, false);
+  assert.deepEqual(result.current.geneses, []);
+  assert.notEqual(liveOnEvent, null);
+
+  await act(async () => {
+    liveOnEvent(genesisEvent);
+  });
+  await settle();
+  assert.deepEqual(result.current.observations, []);
+  assert.deepEqual(result.current.geneses, [
+    {
+      channelId: CHANNEL_ID,
+      sessionRef: SESSION_REF,
+      genesisRef: genesisEvent.id,
+      founderPubkey: OPERATOR_PUBKEY,
+      foundedAt: 1_799_999_990,
+    },
+  ]);
+  assert.equal(foundedNow().length, 1, "founded: a genesis and nothing else");
+
+  // Start: the create alone binds nothing (no observation yet), so the
+  // umbrella still reads founded to the projection — the pending overlay,
+  // not this store, covers the gap between Start and the receipt.
+  await act(async () => {
+    liveOnEvent(createEvent);
+  });
+  await settle();
+  assert.deepEqual(result.current.observations, []);
+  assert.equal(foundedNow().length, 1);
+
+  // The provider's receipt joins the create; the genesis is claimed.
+  await act(async () => {
+    liveOnEvent(receiptEvent);
+  });
+  await settle();
+  assert.equal(result.current.observations.length, 1);
+  assert.equal(result.current.observations[0].genesisRef, genesisEvent.id);
+  assert.equal(result.current.geneses.length, 1, "the founding fact stays");
+  assert.deepEqual(foundedNow(), [], "but nothing is founded-and-unstarted");
+
+  unmount();
+  queryClient.clear();
+  ipcHandlers.clear();
+});

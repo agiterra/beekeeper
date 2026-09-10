@@ -28,6 +28,7 @@ import { NAV_HOTKEY_MAX_POSITIONS } from "@/features/hotkeys/lib/navHotkeyBindin
 import { ScopeActionBadge } from "@/features/hotkeys/ui/HotkeyBadge";
 import { getRememberedRoute } from "../lib/projectRouteMemoryStore";
 import { compareProjectCodingSessionEntries } from "../lib/projectCodingSessionShelf";
+import { resolveProjectCodingSessionOpenTarget } from "../lib/projectFoundedCodingSessionShelf";
 import { channelsQueryKey, useChannelsQuery } from "@/features/channels/hooks";
 import type { Channel } from "@/shared/api/types";
 import type { Repository as CodeRepo } from "@/features/projects/hooks";
@@ -103,8 +104,13 @@ export function ProjectSidebarSections({
   currentPubkey?: string;
   relayUrl?: string;
 }) {
-  const { goCodingSession, goNewProjectCodingSession, goProject, goProjects } =
-    useAppNavigation();
+  const {
+    goCodingSession,
+    goFoundedCodingSession,
+    goNewProjectCodingSession,
+    goProject,
+    goProjects,
+  } = useAppNavigation();
   const collapse = useProjectCollapse(currentPubkey, relayUrl);
   const sessionFilters = useProjectSessionFilters(currentPubkey, relayUrl);
   // This component only mounts while the Projects experiment is enabled, so
@@ -136,10 +142,15 @@ export function ProjectSidebarSections({
   const codingSessionRouteParams = useParams({
     strict: false,
     select: (p) => {
-      const params = p as { channelId?: string; generationId?: string };
+      const params = p as {
+        channelId?: string;
+        generationId?: string;
+        sessionRef?: string;
+      };
       return {
         channelId: params.channelId,
         generationId: params.generationId,
+        sessionRef: params.sessionRef,
       };
     },
   });
@@ -426,9 +437,16 @@ export function ProjectSidebarSections({
             sessionRef: entry.sessionRef,
           });
         }}
-        onOpenCodingSession={({ channelId, generationId }) =>
-          void goCodingSession(channelId, generationId)
-        }
+        onOpenCodingSession={(coordinates) => {
+          // A founded row sits in the generation slot under the founded row
+          // id; it opens the founded route, never a generation that is not.
+          const target = resolveProjectCodingSessionOpenTarget(coordinates);
+          if (target.kind === "founded") {
+            void goFoundedCodingSession(target.channelId, target.sessionRef);
+          } else {
+            void goCodingSession(target.channelId, target.generationId);
+          }
+        }}
         hotkeyPosition={hotkeyPositionByProjectId.get(project.id) ?? null}
         isProjectHomeActive={
           projectRouteId !== null &&

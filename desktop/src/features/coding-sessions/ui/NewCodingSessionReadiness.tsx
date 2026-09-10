@@ -6,26 +6,31 @@ import type {
 } from "../lib/codingSessionLaunchForm";
 
 /**
- * What is stopping this launch, and what nobody could check.
+ * What is stopping this launch, and — where a surface wants them — what
+ * nobody could check and what pressing the button will publish.
  *
- * Two lists with different jobs, and the split is the whole design. A
- * **blocker** is inline, always visible, and phrased as something to do: it is
- * the reason the button is off, and a disabled control with nothing under it
- * is the front door refusing in silence (item 79). An **unknown** is behind a
- * disclosure: it does not stop anything, but it is never dropped, because
- * "this computer could not check" and "it is fine" are different facts and
- * only the first one is ever an excuse.
+ * A **blocker** is inline, always visible, and phrased as something to do:
+ * it is the reason the button is off, and a disabled control with nothing
+ * under it is the front door refusing in silence (item 79). Callers hand in
+ * only the blockers that belong under the button; one surfaced on press
+ * (the blank initial prompt) is rendered by the field it belongs to.
  *
- * The launch plan remains available behind its own disclosure: it names the
- * events pressing the button will publish, with kind integers, without making
- * the primary goal-and-start path read like a wire trace.
+ * The **unknowns** disclosure and the **plan** are optional. The founded
+ * page's setup card — the one launch form since 2026-09-10, the create
+ * dialog being gone — shows both, because its Start signs a name, a prompt,
+ * a policy, a seat, grants and a turn, and names what it will not check. The
+ * "no Details" decision (Andy, 2026-09-10: "they don't add any value to the
+ * dialog") was about the dialog.
  */
 export function NewCodingSessionReadiness({
-  plan,
+  plan = [],
   readiness,
+  unknownsDisclosed = true,
 }: {
-  plan: readonly CodingSessionLaunchPlanLine[];
+  plan?: readonly CodingSessionLaunchPlanLine[];
   readiness: CodingSessionLaunchReadiness;
+  /** False hides the "Details" disclosure of unknowns entirely. */
+  unknownsDisclosed?: boolean;
 }) {
   return (
     <div
@@ -44,7 +49,7 @@ export function NewCodingSessionReadiness({
         </p>
       ))}
 
-      {readiness.unknowns.length === 0 ? null : (
+      {!unknownsDisclosed || readiness.unknowns.length === 0 ? null : (
         <details data-testid="new-coding-session-readiness-details">
           <summary className="cursor-pointer text-2xs text-muted-foreground">
             Details —{" "}
@@ -78,7 +83,7 @@ export function NewCodingSessionReadiness({
             {plan.map((line) => (
               <li
                 className="text-2xs text-muted-foreground"
-                data-kind={line.kind}
+                data-kind={line.kind ?? undefined}
                 data-testid={`new-coding-session-plan-${line.id}`}
                 key={line.id}
               >

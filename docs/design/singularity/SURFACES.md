@@ -1888,6 +1888,42 @@ seat) and is gone. Seating an identity into an existing session is still the
 join dialog's job (`AddCodingSessionProviderDialog`), which is where the seat
 field with its role box now lives alone.
 
+**Amended 2026-09-08 — the "who leads" question moved out of the dialog.**
+"Leading it yourself is always ungoverned" was already half false when it was
+written: the one-session path publishes a genesis before every create
+(`useNewCodingSessionCreate.ts`, `prepareNewCodingSessionCreate`). It is now
+explicitly false for team sessions, which are **founded first** — goal, name,
+genesis — before anyone knows who leads (Andy, 2026-09-08). The dialog asks one
+team question, an "Agent team" checkbox; unchecked it is today's standard
+session, checked it publishes the founding facts and nothing else, and the
+lead, the runtime, the bench and the policy are composed on the founded
+session's Team card, whose Start seats the lead (or you) under the existing
+genesis. A founded session that nobody has started is a first-class state —
+"Not started" — on the desktop shelf, in the channel menu and on the phone,
+never "Idle" and never "Status unknown". The governed switch of §21.3 is
+therefore gone from the dialog; on the Team card it still derives from the lead.
+
+**Amended 2026-09-10 — the dialog is gone; the page asks Solo or Team.**
+The "Agent team" checkbox lasted two days. Andy, after using it: "both normal
+and team sessions should be configured this way, since we're duplicating most
+of the dialog contents in the page anyway … add a 'Solo' / 'Team' selector at
+the very top." So **every** "New coding session" click now founds the topic —
+one 44226 and nothing else — and lands on the founded page, which is the whole
+form: a Solo | Team switch first, then the name (a 44229 when the field is
+left), the initial prompt (a 44227 when left), and in Team the lead (agents
+only — Team *means* an agent leads; Solo is the you-lead case), the bench and
+the policy; then the runtime, where it runs, readiness and Start. "Founding a
+roster of one" is therefore no longer a hypothetical this section argued
+against: it is what every click does, and the roster's first member is chosen
+afterwards, on the page, with the genesis already on the wire. Consequences
+this section owes the reader: an abandoned click is a founded session — an
+"Untitled session · Not started" row on every device until the page's
+**Discard** (a 44230 `closed`) files it under Settled; there is no auto-delete.
+The page opens in whichever mode this computer used last (first ever: Solo).
+The `ungoverned` unknown's old sentence, "no genesis and no authority chain",
+was false on a founded session and now reads "no authority chain, so this
+session has no roster, no grants and no signed reports".
+
 ### 21.4 Blockers and unknowns are different facts
 
 A **blocker** is inline, always visible, phrased as something to do, and it is

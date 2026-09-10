@@ -446,3 +446,72 @@ test("budgets never pool across umbrellas, nor onto an unclaimed session", () =>
   assert.deepEqual(budgetOf(second.sessionId), { used: 17, limit: 20 });
   assert.equal(budgetOf(third.sessionId), null);
 });
+
+// ---------------------------------------------------------------------------
+// Founding facts ride the channel snapshot beside the entries.
+// ---------------------------------------------------------------------------
+
+const GENESIS = {
+  channelId: CHANNEL_ID,
+  sessionRef: "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+  genesisRef: "c".repeat(64),
+  founderPubkey: "f".repeat(64),
+  foundedAt: 1_800_000_000,
+};
+
+function trustedIngress(overrides = {}) {
+  return {
+    metadata: [],
+    transcripts: [],
+    isLoading: false,
+    errorMessage: null,
+    authorityErrorMessage: null,
+    rejectedAuthorCount: 0,
+    invalidSignatureCount: 0,
+    turnStartedAtFor: () => null,
+    ...overrides,
+  };
+}
+
+test("the channel snapshot carries geneses and the founding read's own loading flag", async () => {
+  const { composeCodingSessionCatalogSnapshot } = await import(
+    "./useCodingSessionCatalog.ts"
+  );
+  const snapshot = composeCodingSessionCatalogSnapshot(
+    CHANNEL_ID,
+    trustedIngress({ isLoading: false }),
+    { observations: [], geneses: [GENESIS], isLoading: true },
+  );
+  assert.deepEqual(snapshot.geneses, [GENESIS]);
+  assert.deepEqual(snapshot.creates, []);
+  // Kept apart on purpose: the catalog does not wait on the observation
+  // read, but a founded session must read as loading, not missing.
+  assert.equal(snapshot.isLoading, false);
+  assert.equal(snapshot.foundingIsLoading, true);
+  assert.equal(snapshot.channelId, CHANNEL_ID);
+});
+
+test("a refused pop-out blanks geneses and creates along with the entries", async () => {
+  const {
+    composeCodingSessionCatalogSnapshot,
+    refuseCodingSessionPopoutSnapshot,
+  } = await import("./useCodingSessionCatalog.ts");
+  const snapshot = composeCodingSessionCatalogSnapshot(
+    CHANNEL_ID,
+    trustedIngress({ metadata: [metadataEntry()], isLoading: true }),
+    {
+      observations: [{ channelId: CHANNEL_ID, sessionRef: "x" }],
+      geneses: [GENESIS],
+      isLoading: true,
+    },
+  );
+  assert.equal(snapshot.entries.length, 1);
+  const refused = refuseCodingSessionPopoutSnapshot(snapshot, "Reopen it.");
+  assert.deepEqual(refused.entries, []);
+  assert.deepEqual(refused.creates, []);
+  assert.deepEqual(refused.geneses, []);
+  assert.equal(refused.isLoading, false);
+  assert.equal(refused.foundingIsLoading, false);
+  assert.equal(refused.authorityErrorMessage, "Reopen it.");
+  assert.equal(refused.channelId, CHANNEL_ID);
+});

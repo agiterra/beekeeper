@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
-import { installMockBridge } from "../helpers/bridge";
+import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
+import { seedActiveIdentity } from "../helpers/onboarding";
 
 /**
  * The guided runtime-login flow on the New Coding Session screen: a
@@ -38,6 +39,10 @@ function claudeRuntime(authState: "ready" | "needs_auth") {
 test("a signed-out runtime offers Connect and flips ready after the login", async ({
   page,
 }) => {
+  // A real signing key: the click founds a genesis the page reads back
+  // through the signature-verifying catalog; the bridge's placeholder `sig`
+  // would leave the page reporting the session missing.
+  await seedActiveIdentity(page, TEST_IDENTITIES.tyler);
   await installMockBridge(page, {
     globalAgentConfig: {
       env_vars: {},
@@ -75,12 +80,55 @@ test("a signed-out runtime offers Connect and flips ready after the login", asyn
     },
     connectAcpRuntimeResult: { launched: true },
   });
+  // The founded page reads this computer's remembered working directories;
+  // the shared bridge does not answer that command, so answer it empty here.
+  await page.addInitScript(() => {
+    type Invoke = (
+      cmd: string,
+      args?: Record<string, unknown>,
+      options?: unknown,
+    ) => Promise<unknown>;
+    let internals: Record<string, unknown> | undefined;
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      get: () => internals,
+      set: (value: Record<string, unknown>) => {
+        internals = value;
+        let real: Invoke | undefined;
+        const wrapped: Invoke = async (cmd, args, options) => {
+          if (cmd === "get_coding_session_workdir_state") {
+            return {
+              version: 1,
+              byProject: {},
+              byChannel: {},
+              mru: [],
+              pending: {},
+            };
+          }
+          if (!real) throw new Error("mock invoke is not installed yet");
+          return real(cmd, args, options);
+        };
+        Object.defineProperty(value, "invoke", {
+          configurable: true,
+          get: () => (real ? wrapped : undefined),
+          set: (fn: Invoke) => {
+            real = fn;
+          },
+        });
+      },
+    });
+  });
   // The e2e static server cannot serve SPA subroutes directly — enter the
-  // create screen the way a person does, through a channel's sessions menu.
+  // page the way a person does, through a channel's sessions menu. The click
+  // founds the session and lands on its page (no dialog since 2026-09-10);
+  // the runtime picker is on the page's setup card.
   await page.goto("/");
   await page.getByTestId("channel-engineering").click();
   await page.getByTestId("channel-coding-sessions-trigger").click();
   await page.getByTestId("channel-coding-sessions-new").click();
+  await expect(
+    page.getByTestId("coding-session-founded-workspace-founded"),
+  ).toBeVisible({ timeout: 20_000 });
 
   // Provider and model are one control now, so a signed-out runtime shows as
   // disabled rows inside the picker rather than a disabled `<option>`.

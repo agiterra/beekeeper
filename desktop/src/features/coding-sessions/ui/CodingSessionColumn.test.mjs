@@ -253,13 +253,6 @@ test("no session surface keeps a private copy of the Full gutter", () => {
   }
 });
 
-test("the new-session form keeps its own narrower measure", () => {
-  // A form wants a shorter measure than a transcript; t3code's analogue is
-  // narrower still. Deliberately not routed through the column.
-  const text = source("NewCodingSessionDialog.tsx");
-  assert.match(text, /max-w-2xl/);
-});
-
 test("Mission's column is the space between the rails, not a centred box", () => {
   // B2, measured at 1920: the stream box was 1026 px and the column 768, so
   // 258 px of the window went to two symmetric margins — and closing the

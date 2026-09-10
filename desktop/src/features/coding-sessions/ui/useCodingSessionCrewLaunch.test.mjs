@@ -344,3 +344,120 @@ test("finding 84: a launch with no project stages with no source, as before", as
   assert.equal(leadStep.detail, null);
   host.teardown();
 });
+
+/**
+ * Starting a founded umbrella: the genesis dep — where the founding path
+ * ensures the provider's membership and publishes the goal — is never
+ * called, so membership has to be ensured before the seat's create on its
+ * own, and the goal outcome must describe the 44227 that is already on the
+ * wire rather than one this launch never published.
+ */
+test("starting a founded umbrella publishes only the lead's create, joins the provider first, and claims no goal of its own", async () => {
+  const EXISTING = {
+    sessionRef: "22222222-2222-4222-8222-222222222222",
+    genesisRef: "f".repeat(64),
+  };
+  const membership = [];
+  const { act, renderHook } = await import("@testing-library/react");
+  const { useCodingSessionCrewLaunch } = await import(
+    "./useCodingSessionCrewLaunch.ts"
+  );
+  const { launchCodingSessionCrew } = await import(
+    "../lib/codingSessionCrewLaunch.ts"
+  );
+  const published = [];
+  const signer = async (input) =>
+    finalizeEvent({ created_at: 1_700_000_000, ...input }, OPERATOR_SECRET);
+  const publisher = {
+    publishEvent: async (event) => {
+      published.push(event);
+      return event;
+    },
+  };
+  const deps = {
+    runLaunch: launchCodingSessionCrew,
+    createWorktree: async () => {
+      throw new Error("no worktree was asked for");
+    },
+    newSessionRef: () => {
+      throw new Error("a founded umbrella already has a session ref");
+    },
+    newSeatCommandId: () => "csl-seat-1",
+    newTurnCommandId: () => "csc-turn-1",
+    ensureProviderMembership: async (input) => {
+      // Recorded with how many events had gone out by then: the join must
+      // precede the create, or the provider never sees it.
+      membership.push({ ...input, publishedSoFar: published.length });
+    },
+    publishGenesis: async () => {
+      throw new Error("a founded umbrella must not be founded twice");
+    },
+    publishGoal: async () => {
+      throw new Error(
+        "the goal is already on the wire; nothing here publishes one",
+      );
+    },
+    buildPolicyEvent: async () => {
+      throw new Error("no policy was set");
+    },
+    stageCreateHint: async () => {},
+    recordWorkdirUse: async () => {},
+    seatDeps: {
+      ensureMembership: async () => {},
+      stageSeat: async () => ({ packStaged: true, packRef: null }),
+      clearSeat: async () => {},
+      fetchPackSource: async () => null,
+    },
+    signer,
+    publisher,
+    recordPendingLifecycle: () => {},
+    awaitSeatReceipt: async ({ commandId }) => ({
+      driver: "claude-agent-acp",
+      instanceId: "claude-primary",
+      sessionId: `sess-${commandId}`,
+      generation: 1,
+    }),
+    ensureCreateOperatorGrants: async () => ({ ok: true }),
+    ensureSeatGrant: async () => ({ ok: true }),
+    publishCommand: async () => ({}),
+  };
+  const mounted = renderHook(() =>
+    useCodingSessionCrewLaunch({ workdir: null, title: null, deps }),
+  );
+  let result = null;
+  await act(async () => {
+    result = await mounted.result.current.launch(
+      { ...LAUNCH_INPUT, seats: [LEAD], existingUmbrella: EXISTING },
+      RUNTIME_TARGET,
+    );
+  });
+
+  assert.equal(result.ok, true, result.failureReason ?? "");
+  assert.deepEqual(
+    published.map((event) => event.kind),
+    [44221],
+    "no genesis, no goal — one create, under the umbrella that exists",
+  );
+  const create = published[0];
+  // The refs ride in the signed content, exactly as the join path signs
+  // them, so the provider mints the execution inside this umbrella.
+  assert.ok(
+    create.content.includes(EXISTING.sessionRef),
+    `the create carries the umbrella's session ref: ${create.content}`,
+  );
+  assert.ok(
+    create.content.includes(EXISTING.genesisRef),
+    `the create carries the umbrella's genesis ref: ${create.content}`,
+  );
+  assert.deepEqual(membership, [
+    {
+      channelId: CHANNEL_ID,
+      providerPubkey: PROVIDER_PUBKEY,
+      publishedSoFar: 0,
+    },
+  ]);
+  assert.deepEqual(result.goal, { published: true, reason: null });
+  assert.equal(result.sessionRef, EXISTING.sessionRef);
+  assert.equal(result.genesisRef, EXISTING.genesisRef);
+  mounted.unmount();
+});

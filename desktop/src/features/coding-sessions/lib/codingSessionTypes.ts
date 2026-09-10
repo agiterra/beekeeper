@@ -185,9 +185,41 @@ export type CodingSessionUmbrellaRecord = {
   foreignAttachmentCount: number;
 };
 
+/**
+ * One accepted, undisputed 44226 genesis observed in a channel — the founding
+ * fact of an umbrella, whether or not any execution exists under it yet.
+ *
+ * The founder is the genesis signer; nothing inside the signed content
+ * restates it. A `(channelId, sessionRef)` with two competing geneses is
+ * disputed and never appears here (the relay's one-genesis-per-ref rule is a
+ * documented race, `ingest.rs` § genesis).
+ */
+export type CodingSessionGenesisObservation = {
+  channelId: string;
+  sessionRef: string;
+  /** The genesis event id — the umbrella's authority anchor. */
+  genesisRef: string;
+  founderPubkey: string;
+  /** Event `created_at`, in seconds. */
+  foundedAt: number;
+};
+
 export type CodingSessionCatalogSnapshot = {
   channelId: string | null;
   entries: CodingSessionCatalogRecord[];
+  /**
+   * Accepted geneses observed in this channel, when the consumer collected
+   * them. A genesis that no receipt-joined create names is a founded umbrella
+   * with nothing running — see `codingSessionFoundedModel.ts`.
+   */
+  geneses?: readonly CodingSessionGenesisObservation[];
+  /**
+   * True while the create/genesis observation read is still in flight.
+   * Separate from `isLoading` on purpose: the catalog deliberately does not
+   * wait on observations, but a founded session that has not been read yet
+   * must render as loading rather than missing.
+   */
+  foundingIsLoading?: boolean;
   /**
    * Receipt-joined 44221 create observations for this channel, when the
    * consumer collected them. Optional: a caller that has none (a test fixture,
@@ -217,6 +249,10 @@ export type GlobalCodingSessionCatalogSnapshot = {
   entries: GlobalCodingSessionCatalogRecord[];
   /** Human-signed creates used only to resolve each umbrella's founder. */
   creates?: readonly CodingSessionUmbrellaCreateObservation[];
+  /** Accepted geneses across every source channel; see the channel snapshot. */
+  geneses?: readonly CodingSessionGenesisObservation[];
+  /** True while the create/genesis observation read is still in flight. */
+  foundingIsLoading?: boolean;
   isLoading: boolean;
   errorMessage: string | null;
   authorityErrorMessage: string | null;
@@ -235,6 +271,13 @@ export type GlobalCodingSessionCatalogSnapshot = {
 
 export type CodingSessionWorkspaceStatus =
   | { kind: "working"; label: "Working" }
+  /**
+   * Founded, never started: a genesis (with a goal and a name) and no
+   * execution. Umbrella-level and produced only by the founded projection;
+   * `deriveCodingSessionWorkspaceStatus` never returns it, because it has no
+   * provider report to derive it from.
+   */
+  | { kind: "founded"; label: "Not started" }
   /**
    * Blocked on a person, per the provider's signed `waiting_for_input`.
    *

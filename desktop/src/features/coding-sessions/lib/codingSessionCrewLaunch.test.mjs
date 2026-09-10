@@ -886,3 +886,103 @@ test("finding 84: a seat staged from the project's repository says so on its ste
     "staged from 30617:3d3b7169…:agiterra-packs@dd935f43",
   );
 });
+
+/**
+ * A founded umbrella — genesis, goal and name on the wire, nothing running —
+ * is started, not founded again. The launch takes the refs it already has,
+ * publishes no channel and no genesis, and seats the lead under them.
+ */
+const EXISTING = {
+  sessionRef: "22222222-2222-4222-8222-222222222222",
+  genesisRef: "genesis-founded",
+};
+
+test("an existing umbrella is started under its own refs: no channel, no genesis, and neither dep is called", async () => {
+  const deps = recordingDeps({
+    ensureChannel: async () => {
+      throw new Error("a founded umbrella already has a channel");
+    },
+    newSessionRef: () => {
+      throw new Error("a founded umbrella already has a session ref");
+    },
+    publishGenesis: async () => {
+      throw new Error("a founded umbrella must not be founded twice");
+    },
+    publishSeatCreate: async ({ seat, index, sessionRef, genesisRef }) => {
+      deps.log.push(`publish:${seat.role}:${sessionRef}:${genesisRef}`);
+      return { commandId: `cmd-${index}` };
+    },
+  });
+
+  const result = await launchCodingSessionCrew(
+    { ...INPUT, seats: [LEAD], existingUmbrella: EXISTING },
+    deps,
+  );
+
+  assert.equal(result.ok, true, result.failureReason ?? "");
+  assert.equal(result.sessionRef, EXISTING.sessionRef);
+  assert.equal(result.genesisRef, EXISTING.genesisRef);
+  assert.equal(result.channelId, "chan-1");
+  assert.deepEqual(deps.log, [
+    `publish:lead:${EXISTING.sessionRef}:${EXISTING.genesisRef}`,
+    "receipt:lead",
+    "grant:aaaa",
+    "seat:aaaa:lead",
+    "turn",
+  ]);
+  const ids = result.steps.map((entry) => entry.id);
+  assert.equal(ids.includes(CODING_SESSION_CREW_LAUNCH_CHANNEL_STEP), false);
+  assert.equal(ids.includes(CODING_SESSION_CREW_LAUNCH_GENESIS_STEP), false);
+  assert.deepEqual(
+    planCodingSessionCrewLaunch({
+      ...INPUT,
+      seats: [LEAD],
+      existingUmbrella: EXISTING,
+    }).map((entry) => entry.id),
+    ids,
+    "the plan shown up front is the sequence the launch walked",
+  );
+});
+
+test("an existing umbrella still gets its policy, between nothing and the lead's seat", async () => {
+  const deps = recordingDeps({
+    publishGenesis: async () => {
+      throw new Error("a founded umbrella must not be founded twice");
+    },
+    publishPolicy: async ({ sessionRef, genesisRef }) => {
+      deps.log.push(`policy:${sessionRef}:${genesisRef}`);
+      return { eventId: "policy-1" };
+    },
+  });
+  const result = await launchCodingSessionCrew(
+    { ...INPUT, seats: [LEAD], policySet: true, existingUmbrella: EXISTING },
+    deps,
+  );
+  assert.equal(result.ok, true, result.failureReason ?? "");
+  assert.equal(result.policyEventId, "policy-1");
+  assert.equal(
+    deps.log[0],
+    `policy:${EXISTING.sessionRef}:${EXISTING.genesisRef}`,
+  );
+  assert.equal(deps.log[1], "publish:lead");
+});
+
+test("an existing umbrella with no channel to seat into is refused before anything is signed", async () => {
+  const deps = recordingDeps({
+    ensureChannel: async () => {
+      throw new Error("a second channel must never be minted");
+    },
+  });
+  const result = await launchCodingSessionCrew(
+    { ...INPUT, channelId: null, seats: [LEAD], existingUmbrella: EXISTING },
+    deps,
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.failedStep, CODING_SESSION_CREW_LAUNCH_FAMILY_STEP);
+  assert.match(result.failureReason, /already founded in a channel/);
+  assert.deepEqual(deps.log, [], "nothing may be signed");
+  // The refusal still names the umbrella it was asked to start.
+  assert.equal(result.sessionRef, EXISTING.sessionRef);
+  assert.equal(result.genesisRef, EXISTING.genesisRef);
+  assert.equal(result.channelId, null);
+});

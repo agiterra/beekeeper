@@ -11,8 +11,8 @@ import {
   WORKSPACE_REUSE_CHOOSE_FOLDER_SENTENCE,
 } from "@/features/coding-sessions/lib/codingSessionWorkspaceReuseCopy";
 import {
-  openNewCodingSessionDialog,
-  openNewCodingSessionDialogInWorkspace,
+  requestCodingSessionFounding,
+  requestCodingSessionFoundingInWorkspace,
 } from "@/features/coding-sessions/newCodingSessionDialogStore";
 
 /**
@@ -20,23 +20,23 @@ import {
  *
  * The sidebar row's context menu and the open session's header overflow ask
  * for the same thing, and one of them would eventually answer differently if
- * each wired its own read. So the resolution, the choice of which draft to
- * open, and the sentence shown when there is nothing to reuse all live here,
+ * each wired its own read. So the resolution, the choice of which request to
+ * write, and the sentence shown when there is nothing to reuse all live here,
  * over Lane W's single `useCodingSessionWorkspaceReuse`.
  *
  * What a click does, exhaustively: it reads (a worktree list, a directory
- * validation, a provider comparison — all reads), and it opens a draft. It
- * signs nothing, starts, resumes or stops nothing, changes no branch and no
- * grant, and creates no directory. The launcher the draft opens is the one
- * "New session" has always opened; a reuse draft simply arrives with the
- * folder already filled in and worktree creation off.
+ * validation, a provider comparison — all reads), and it writes a founding
+ * request. The host in the app shell then founds the session — one genesis —
+ * and opens its page, where the folder arrives already filled in and worktree
+ * creation off. This action itself signs nothing, starts, resumes or stops
+ * nothing, changes no branch and no grant, and creates no directory.
  *
  * When the workspace cannot be honoured here — no recorded directory, a
  * directory that is gone, an execution on a provider this computer does not
- * hold, or a read that failed outright — the ordinary launcher opens with
- * **nothing seeded** and the reason is said out loud. It never substitutes a
- * different directory, and it never implies this computer could reach another
- * machine's checkout.
+ * hold, or a read that failed outright — the ordinary request is written
+ * with **nothing seeded** and the reason is said out loud. It never
+ * substitutes a different directory, and it never implies this computer could
+ * reach another machine's checkout.
  */
 export function useNewSessionInWorkspaceAction(input: {
   channelId: string | null;
@@ -60,7 +60,7 @@ export function useNewSessionInWorkspaceAction(input: {
   detail: string;
   /** Call when the menu opens. Reads on open, never on render or hover. */
   resolveNow: () => void;
-  /** The click. Opens a draft; nothing else. */
+  /** The click. Writes a founding request; nothing else. */
   start: () => void;
 } {
   const { channelId, executionProviderPubkey = null, sessionRef } = input;
@@ -73,7 +73,9 @@ export function useNewSessionInWorkspaceAction(input: {
     executionProviderPubkey,
   });
   const hasSession = sessionRef !== null && sessionRef.length > 0;
-  // A second click while the first read is in flight would open two drafts.
+  // A second click while the first read is in flight would write a second
+  // request once the first cleared — the store refuses one while a request
+  // stands, but not after it has been founded and cleared.
   const busy = React.useRef(false);
   const { resolve } = reuse;
 
@@ -90,7 +92,7 @@ export function useNewSessionInWorkspaceAction(input: {
     busy.current = true;
     const open = (workspace: WorkspaceReuseResolution | null) => {
       if (workspace !== null && workspace.path !== null && hasSession) {
-        openNewCodingSessionDialogInWorkspace({
+        requestCodingSessionFoundingInWorkspace({
           channelId,
           projectId,
           sourceRepoRef,
@@ -99,19 +101,19 @@ export function useNewSessionInWorkspaceAction(input: {
             path: workspace.path,
             branch: workspace.branch,
             // Only the creation-time fact travels. A live head read now would
-            // be restored from `sessionStorage` after a reload and shown as
-            // current long after it stopped being — so the draft re-reads
-            // that itself, and anything other than `recorded` is dropped
-            // here rather than relabelled.
+            // be carried into the founded draft and shown as current long
+            // after it stopped being — so the page re-reads that itself, and
+            // anything other than `recorded` is dropped here rather than
+            // relabelled.
             branchSource:
               workspace.branchSource === "recorded" ? "recorded" : null,
           },
         });
         return;
       }
-      // Nothing seeded. The ordinary launcher, exactly as "New session"
-      // opens it, with the folder picker the person can drive themselves.
-      openNewCodingSessionDialog(channelId);
+      // Nothing seeded. The ordinary founding, exactly as "New session"
+      // requests it; the page's folder picker is the person's to drive.
+      requestCodingSessionFounding(channelId);
     };
     const finish = () => {
       busy.current = false;
@@ -128,15 +130,15 @@ export function useNewSessionInWorkspaceAction(input: {
           return;
         }
         open(null);
-        // Said in the same breath as the draft opening, rather than left to
-        // be inferred from an empty field.
+        // Said in the same breath as the founding, rather than left to be
+        // inferred from an empty field.
         toast.info(resolution.sentence, {
           description: WORKSPACE_REUSE_CHOOSE_FOLDER_SENTENCE,
         });
       })
       .catch(() => {
         // A read that threw is not an available workspace, and it is not
-        // evidence of an absence either — so the draft opens unseeded and
+        // evidence of an absence either — so the request goes unseeded and
         // says only what happened.
         open(null);
         toast.info(

@@ -5,7 +5,7 @@ import { useChannelsQuery } from "@/features/channels/hooks";
 import { useGlobalCodingSessionCatalog } from "@/features/coding-sessions/useCodingSessionCatalog";
 import { useCodingSessionNames } from "@/features/coding-sessions/useCodingSessionNames";
 import { useCodingSessionClosures } from "@/features/coding-sessions/useCodingSessionClosures";
-import { groupCodingSessionCatalog } from "@/features/coding-sessions/lib/codingSessionUmbrellaModel";
+import { founderPubkeysByGenesisRef } from "@/features/coding-sessions/lib/codingSessionFoundedModel";
 import { useCommunities } from "@/features/communities/useCommunities";
 import { allWorkflowsQueryKey } from "@/features/workflows/hooks";
 import { isSessionTransportChannel } from "@/shared/api/channelTypes";
@@ -38,6 +38,11 @@ import {
   type ProjectCodingSessionShelfEntry,
   type ProjectCodingSessionShelfState,
 } from "./lib/projectCodingSessionShelf";
+import {
+  mergeFoundedCodingSessionShelfEntries,
+  resolveFoundedProjectCodingSessionEntries,
+  resolveGlobalFoundedCodingSessions,
+} from "./lib/projectFoundedCodingSessionShelf";
 import {
   GENERAL_PROJECT_DTAG,
   LOCAL_GENERAL_ID,
@@ -433,26 +438,32 @@ export function useProjectCodingSessionBuckets(
     ),
   });
   const nameSnapshot = useCodingSessionNames(stableChannelIds);
-  const founderPubkeysByGenesisRef = React.useMemo(() => {
+  // Founders by genesis, per channel (the umbrella join is channel-scoped),
+  // including geneses nothing has started: the closure fold drops any 44230
+  // whose genesis it cannot resolve, and a founded session must be closable.
+  const founderByGenesisRef = React.useMemo(() => {
     const founders = new Map<string, string>();
     for (const channelId of stableChannelIds) {
-      const entries = catalog.entries
-        .filter((entry) => entry.channelId === channelId)
-        .map((entry) => entry.session);
-      const creates = catalog.creates?.filter(
-        (create) => create.channelId === channelId,
-      );
-      for (const umbrella of groupCodingSessionCatalog(entries, creates)) {
-        if (umbrella.genesisRef && umbrella.founderPubkey) {
-          founders.set(umbrella.genesisRef, umbrella.founderPubkey);
-        }
+      const perChannel = founderPubkeysByGenesisRef({
+        entries: catalog.entries
+          .filter((entry) => entry.channelId === channelId)
+          .map((entry) => entry.session),
+        creates: catalog.creates?.filter(
+          (create) => create.channelId === channelId,
+        ),
+        geneses: catalog.geneses?.filter(
+          (genesis) => genesis.channelId === channelId,
+        ),
+      });
+      for (const [genesisRef, founder] of perChannel) {
+        founders.set(genesisRef, founder);
       }
     }
     return founders;
-  }, [catalog.creates, catalog.entries, stableChannelIds]);
+  }, [catalog.creates, catalog.entries, catalog.geneses, stableChannelIds]);
   const closureSnapshot = useCodingSessionClosures(
     stableChannelIds,
-    founderPubkeysByGenesisRef,
+    founderByGenesisRef,
   );
 
   const placementIndex = React.useMemo(() => {
@@ -487,6 +498,7 @@ export function useProjectCodingSessionBuckets(
       nameSnapshot.names,
       closureSnapshot.closures,
     );
+    const now = Date.now();
     const applied = applyPendingCodingSessionLifecycle(
       shelf.entries,
       pendingLifecycle,
@@ -497,12 +509,25 @@ export function useProjectCodingSessionBuckets(
           placementIndex,
         ),
       channelLabels,
-      Date.now(),
+      now,
       catalog.lifecycleFor,
     );
-    const entries = (applied.entries as ProjectCodingSessionShelfEntry[]).sort(
-      compareProjectCodingSessionEntries,
-    );
+    // Founded umbrellas (a genesis, nothing running) join after the pending
+    // overlay, never before it: the overlay acknowledges a pending create by
+    // its sessionRef echo, and a founded row carries that very ref.
+    const foundedEntries = resolveFoundedProjectCodingSessionEntries({
+      founded: resolveGlobalFoundedCodingSessions(catalog),
+      index: placementIndex,
+      channelLabels,
+      names: nameSnapshot.names,
+      closures: closureSnapshot.closures,
+    });
+    const entries = mergeFoundedCodingSessionShelfEntries(
+      applied.entries as ProjectCodingSessionShelfEntry[],
+      foundedEntries,
+      pendingLifecycle,
+      now,
+    ).sort(compareProjectCodingSessionEntries);
     return {
       buckets: {
         ...bucketProjectCodingSessions(entries),

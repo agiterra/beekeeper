@@ -103,14 +103,17 @@ class CodingSessionPendingCreatePhase {
 /// Only a receipt signed by the provider the create addressed counts, and
 /// only one that names the create's own `commandId` — never a match on
 /// title or timing. The umbrella check is the belt to that brace: a provider
-/// whose receipt this device missed still shows the session it made.
+/// whose receipt this device missed still shows the session it made. Only an
+/// umbrella with an execution counts: this device publishes the genesis
+/// before the create, and the founded umbrella that genesis folds into is
+/// the create still unanswered, not the session it asked for.
 CodingSessionPendingCreatePhase settleCodingSessionPendingCreate(
   CodingSessionPendingCreate pending, {
   required Iterable<CodingSessionReceipt> receipts,
   required Iterable<CodingSessionUmbrella> sessions,
 }) {
   for (final session in sessions) {
-    if (session.sessionRef == pending.sessionRef) {
+    if (!session.isFounded && session.sessionRef == pending.sessionRef) {
       return const CodingSessionPendingCreatePhase(
         CodingSessionPendingCreateKind.created,
       );

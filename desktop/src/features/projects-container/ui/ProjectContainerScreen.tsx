@@ -56,6 +56,7 @@ import { projectAgentRows } from "../lib/projectChildren";
 import { useProjectRosterQuery } from "../lib/projectMembers";
 import { useProjectCapabilities } from "../lib/projectPermissions";
 import { compareProjectCodingSessionEntries } from "../lib/projectCodingSessionShelf";
+import { resolveProjectCodingSessionOpenTarget } from "../lib/projectFoundedCodingSessionShelf";
 import { useRelayOrigin } from "@/shared/lib/useRelayOrigin";
 import { withoutProjectSessionTransportChannels } from "../lib/projectSessionsChannel";
 import { useUpdateProjectContainerMutation } from "../projectOrganizeMutations";
@@ -95,6 +96,7 @@ export function ProjectContainerScreen({
     goAgents,
     goChannel,
     goCodingSession,
+    goFoundedCodingSession,
     goNewProjectCodingSession,
     goProjectRepo,
     goProjects,
@@ -433,13 +435,25 @@ export function ProjectContainerScreen({
                     <li key={`${entry.channelId}:${entry.generationId}`}>
                       <Button
                         className="h-8 w-full justify-start gap-2 px-2"
+                        data-session-status={entry.status.kind}
                         data-testid="project-screen-coding-session-row"
-                        onClick={() =>
-                          void goCodingSession(
-                            entry.channelId,
-                            entry.generationId,
-                          )
-                        }
+                        onClick={() => {
+                          // A founded row opens the founded route; its id in
+                          // the generation slot is never a generation.
+                          const target =
+                            resolveProjectCodingSessionOpenTarget(entry);
+                          if (target.kind === "founded") {
+                            void goFoundedCodingSession(
+                              target.channelId,
+                              target.sessionRef,
+                            );
+                          } else {
+                            void goCodingSession(
+                              target.channelId,
+                              target.generationId,
+                            );
+                          }
+                        }}
                         variant="ghost"
                       >
                         <Terminal className="size-4 shrink-0 text-muted-foreground" />

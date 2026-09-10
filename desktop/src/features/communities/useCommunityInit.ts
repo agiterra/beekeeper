@@ -28,7 +28,7 @@ import {
   setDetachedToastScope,
 } from "@/features/messages/lib/detachedToastScope";
 import { resetCodingSessionLaneVisibility } from "@/features/messages/lib/codingSessionLaneVisibility";
-import { resetNewCodingSessionDialog } from "@/features/coding-sessions/newCodingSessionDialogStore";
+import { resetCodingSessionFoundingRequest } from "@/features/coding-sessions/newCodingSessionDialogStore";
 import { resetRenderScopedReactionHydration } from "@/features/messages/lib/renderScopedReactions";
 import { resetBackgroundMediaUploads } from "@/features/messages/lib/backgroundMediaUploadStore";
 import { resetLinkPreviewPreparations } from "@/features/messages/lib/linkPreviewPreparationStore";
@@ -136,7 +136,7 @@ async function resetCommunityState({
   // The create dialog holds a channel id — or a project id — belonging to the
   // relay it was opened against. Left open across a switch it would point at
   // a channel the new community has never heard of.
-  resetNewCodingSessionDialog();
+  resetCodingSessionFoundingRequest();
   // The relay's NIP-11 `self` pubkey is cached under a global React Query key
   // (call sites read it with an exact-key getQueryData, so the key cannot be
   // relay-scoped). The QueryClient outlives the community remount, so without

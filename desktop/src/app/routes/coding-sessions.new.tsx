@@ -1,7 +1,9 @@
 import * as React from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { toast } from "sonner";
 
-import { openNewCodingSessionDialog } from "@/features/coding-sessions/newCodingSessionDialogStore";
+import { requestCodingSessionFounding } from "@/features/coding-sessions/newCodingSessionDialogStore";
+import { CODING_SESSION_FOUNDING_NO_DESTINATION_SENTENCE } from "@/features/coding-sessions/ui/CodingSessionFoundingHost";
 
 type NewCodingSessionRouteSearch = {
   channelId?: string;
@@ -21,15 +23,19 @@ export const Route = createFileRoute("/coding-sessions/new")({
 });
 
 /**
- * Creating a session is a dialog now, not a page — but this URL is in
- * people's history and in deep links, so it keeps working: it opens the
- * dialog and hands the window back to whatever was underneath.
+ * Creating a session is founded on the click now, not a page — but this URL
+ * is in people's history and in deep links, so it keeps working: with a
+ * channel it writes the founding request (the host in the app shell founds
+ * the session and opens its page) and hands the window back to whatever was
+ * underneath. Without a channel there is nowhere to found anything and no
+ * honest way to guess one, so it goes home and says so.
  */
 function NewCodingSessionRouteComponent() {
   const { channelId } = Route.useSearch();
   const navigate = useNavigate();
   React.useEffect(() => {
-    openNewCodingSessionDialog(channelId ?? null);
+    if (channelId) requestCodingSessionFounding(channelId);
+    else toast.info(CODING_SESSION_FOUNDING_NO_DESTINATION_SENTENCE);
     void navigate({ to: "/", replace: true });
   }, [channelId, navigate]);
   return null;

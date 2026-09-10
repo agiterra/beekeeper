@@ -4,13 +4,14 @@ import { after, before, beforeEach, test } from "node:test";
 import { JSDOM } from "jsdom";
 
 /**
- * What the draft says about its folder, against a host that answers.
+ * What the founded page says about its reused folder, against a host that
+ * answers.
  *
- * The request that opens a reuse draft carries a branch recorded when the
- * worktree was cut, and it is written to `sessionStorage` — so nothing in it
- * may be rendered as a fact about now. The head is therefore read from that
- * exact directory once, when the draft opens, and only that read earns "on
- * disk now". These mount the real component against a stubbed host and check
+ * The founded draft carries a branch recorded when the worktree was cut, and
+ * it was written to `localStorage` at the click — so nothing in it may be
+ * rendered as a fact about now. The head is therefore read from that exact
+ * directory once, when the page opens, and only that read earns "on disk
+ * now". These mount the real component against a stubbed host and check
  * what a person would actually see.
  */
 
@@ -60,14 +61,14 @@ const onDisk = () =>
 async function mountDraft(workspaceReuse) {
   const React = (await import("react")).default;
   const { act, render } = await import("@testing-library/react");
-  const { NewCodingSessionWorkspaceDisclosure } = await import(
-    "./NewCodingSessionDialog.tsx"
+  const { CodingSessionFoundedWorkspaceReuse } = await import(
+    "./CodingSessionFoundedWorkspaceReuse.tsx"
   );
 
   let mounted = null;
   await act(async () => {
     mounted = render(
-      React.createElement(NewCodingSessionWorkspaceDisclosure, {
+      React.createElement(CodingSessionFoundedWorkspaceReuse, {
         workspaceReuse,
       }),
     );
@@ -80,7 +81,7 @@ async function mountDraft(workspaceReuse) {
     rerender: async () => {
       await act(async () => {
         mounted.rerender(
-          React.createElement(NewCodingSessionWorkspaceDisclosure, {
+          React.createElement(CodingSessionFoundedWorkspaceReuse, {
             workspaceReuse,
           }),
         );
@@ -279,25 +280,20 @@ test("a request that recorded no provenance still says so, not 'recorded'", asyn
   draft.unmount();
 });
 
-test("the dialog enables workspace disclosure and keeps the fallback flag consistent", async () => {
+test("the page renders the disclosure only once the seam has landed", async () => {
   const React = (await import("react")).default;
   const { renderToStaticMarkup } = await import("react-dom/server");
-  const {
-    WORKSPACE_REUSE_SEAM_LANDED,
-    newCodingSessionDialogTitle,
-    newCodingSessionWorkspaceDisclosure,
-  } = await import("./NewCodingSessionDialog.tsx");
+  const { codingSessionFoundedWorkspaceReuse } = await import(
+    "./CodingSessionFoundedWorkspaceReuse.tsx"
+  );
+  const { WORKSPACE_REUSE_SEAM_LANDED } = await import(
+    "@/features/coding-sessions/lib/codingSessionWorkspaceReuse"
+  );
 
-  // While the form still starts empty with "Use a worktree" ticked, a block
-  // naming one folder over a field about to use another is a draft that lies
-  // about what Start will do.
   assert.equal(WORKSPACE_REUSE_SEAM_LANDED, true);
   assert.equal(
-    newCodingSessionWorkspaceDisclosure(
-      {
-        path: PATH,
-        branch: RECORDED_BRANCH,
-      },
+    codingSessionFoundedWorkspaceReuse(
+      { path: PATH, branch: RECORDED_BRANCH },
       false,
     ),
     null,
@@ -307,11 +303,8 @@ test("the dialog enables workspace disclosure and keeps the fallback flag consis
     React.createElement(
       "div",
       null,
-      newCodingSessionWorkspaceDisclosure(
-        {
-          path: PATH,
-          branch: RECORDED_BRANCH,
-        },
+      codingSessionFoundedWorkspaceReuse(
+        { path: PATH, branch: RECORDED_BRANCH },
         false,
       ),
     ),
@@ -319,14 +312,11 @@ test("the dialog enables workspace disclosure and keeps the fallback flag consis
   assert.doesNotMatch(off, /coding-session-workspace-reuse/);
   assert.doesNotMatch(off, /New conversation/);
 
-  // Forced on, the same call site renders the disclosure — so the component
-  // stays covered while the flag is off, and flipping the constant is the
-  // only change needed once root's three edits land.
   const on = renderToStaticMarkup(
     React.createElement(
       "div",
       null,
-      newCodingSessionWorkspaceDisclosure(
+      codingSessionFoundedWorkspaceReuse(
         { path: PATH, branch: RECORDED_BRANCH },
         WORKSPACE_REUSE_SEAM_LANDED,
       ),
@@ -336,62 +326,9 @@ test("the dialog enables workspace disclosure and keeps the fallback flag consis
   assert.match(on, new RegExp(PATH.replace(/\//g, "\\/")));
   assert.match(on, /New conversation; uses these files\./);
 
-  // The heading is the same claim in fewer words, so it moves with the
-  // disclosure and not with the prop.
-  const reuse = { path: PATH, branch: RECORDED_BRANCH };
+  // And a draft with no reused workspace renders nothing, flag or no flag.
   assert.equal(
-    newCodingSessionDialogTitle({
-      projectContext: null,
-      workspaceReuse: reuse,
-      seamLanded: false,
-    }),
-    "New coding session",
+    codingSessionFoundedWorkspaceReuse(null, WORKSPACE_REUSE_SEAM_LANDED),
+    null,
   );
-  assert.equal(
-    newCodingSessionDialogTitle({
-      projectContext: { projectName: "Buzz Glue" },
-      workspaceReuse: reuse,
-      seamLanded: false,
-    }),
-    "New coding session in Buzz Glue",
-  );
-  assert.equal(
-    newCodingSessionDialogTitle({
-      projectContext: null,
-      workspaceReuse: reuse,
-      seamLanded: true,
-    }),
-    "New session in this workspace",
-  );
-  // A project draft with a seeded workspace is still a workspace draft.
-  assert.equal(
-    newCodingSessionDialogTitle({
-      projectContext: { projectName: "Buzz Glue" },
-      workspaceReuse: reuse,
-      seamLanded: true,
-    }),
-    "New session in this workspace",
-  );
-  // …and an ordinary draft never takes that title, flag or no flag.
-  assert.equal(
-    newCodingSessionDialogTitle({
-      projectContext: null,
-      workspaceReuse: null,
-      seamLanded: true,
-    }),
-    "New coding session",
-  );
-});
-
-test("the seam constant lives where a browser spec can import it", async () => {
-  // Importing a UI module into a Playwright spec drags a CSS import through
-  // node's transform and kills the run, so the flag lives in the CSS-free lib
-  // and is re-exported for the app's own callers.
-  const lib = await import(
-    "@/features/coding-sessions/lib/codingSessionWorkspaceReuse"
-  );
-  const ui = await import("./NewCodingSessionDialog.tsx");
-
-  assert.equal(typeof lib.WORKSPACE_REUSE_SEAM_LANDED, "boolean");
-  assert.equal(ui.WORKSPACE_REUSE_SEAM_LANDED, lib.WORKSPACE_REUSE_SEAM_LANDED);
 });

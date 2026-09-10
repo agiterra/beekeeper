@@ -54,12 +54,15 @@ class _SessionActionsMenu extends ConsumerWidget {
               style: TextStyle(fontSize: 12),
             ),
           ),
-        PopupMenuItem(
-          key: const ValueKey('coding-session-action-stop'),
-          value: _SessionAction.stop,
-          enabled: stoppable.isNotEmpty,
-          child: const Text('Stop execution'),
-        ),
+        // A founded session has no execution to stop, so the item is absent
+        // rather than disabled: a greyed "Stop" would imply one exists.
+        if (!session.isFounded)
+          PopupMenuItem(
+            key: const ValueKey('coding-session-action-stop'),
+            value: _SessionAction.stop,
+            enabled: stoppable.isNotEmpty,
+            child: const Text('Stop execution'),
+          ),
       ],
     );
   }

@@ -18,6 +18,9 @@ void main() {
     kind: CodingSessionFoldedStatusKind.waiting,
     status: CodingSessionStatus.waitingForInput,
   );
+  const founded = CodingSessionFoldedStatus(
+    kind: CodingSessionFoldedStatusKind.founded,
+  );
 
   group('codingSessionDotState', () {
     test('green only for working; everything else unclosed is idle', () {
@@ -41,6 +44,44 @@ void main() {
         CodingSessionDotState.closed,
       );
     });
+
+    test('founded is its own state, and a closure still outranks it', () {
+      expect(
+        codingSessionDotState(status: founded, closed: false),
+        CodingSessionDotState.founded,
+      );
+      expect(
+        codingSessionDotState(status: founded, closed: true),
+        CodingSessionDotState.closed,
+      );
+      expect(
+        codingSessionDotLabel(CodingSessionDotState.founded),
+        'Not started',
+      );
+      expect(
+        codingSessionDotTitle(CodingSessionDotState.founded),
+        'Not started — founded, no provider has been asked to run it',
+      );
+    });
+  });
+
+  testWidgets('a founded session is a hollow ring named Not started', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      WidgetHelpers.testable(
+        child: const CodingSessionStatusDot(status: founded, closed: false),
+      ),
+    );
+    expect(find.bySemanticsLabel('Not started'), findsOneWidget);
+    expect(find.bySemanticsLabel('Idle'), findsNothing);
+    final dot = tester.widget<Container>(
+      find.byKey(const ValueKey('coding-session-status-dot')),
+    );
+    final decoration = dot.decoration! as BoxDecoration;
+    expect(decoration.color, Colors.transparent);
+    expect(decoration.border, isNotNull);
+    expect(decoration.shape, BoxShape.circle);
   });
 
   testWidgets('the dot names its state for assistive tech', (tester) async {

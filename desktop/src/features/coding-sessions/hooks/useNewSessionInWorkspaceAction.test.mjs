@@ -8,12 +8,11 @@ import { createRoot } from "react-dom/client";
 
 import { workspaceReuseRepoRef } from "../lib/codingSessionWorkspaceReuse.ts";
 import { selectLaunchRepoRef } from "../lib/codingSessionLaunchRepoRef.ts";
-import { resolveNewCodingSessionDialogRoute } from "../ui/NewCodingSessionDialogHost.tsx";
+import { resolveCodingSessionFoundingRoute } from "../ui/CodingSessionFoundingHost.tsx";
 import { useNewSessionInWorkspaceAction } from "./useNewSessionInWorkspaceAction.ts";
 import {
-  closeNewCodingSessionDialog,
-  parseNewCodingSessionRequest,
-  useNewCodingSessionRequest,
+  clearCodingSessionFoundingRequest,
+  useCodingSessionFoundingRequest,
 } from "../newCodingSessionDialogStore.ts";
 
 /**
@@ -21,11 +20,11 @@ import {
  * it: the execution runs on this computer's provider, on somebody else's, or
  * on a provider nobody here can name.
  *
- * These are behaviour assertions against the store the launcher reads — what
- * draft opened, seeded with what — not an inspection of the wiring. The one
- * thing that must never happen is a draft seeded with a directory this
- * computer could not verify, or a foreign execution's answer dressed as a
- * local one.
+ * These are behaviour assertions against the store the founding host reads —
+ * what request was written, seeded with what — not an inspection of the
+ * wiring. The one thing that must never happen is a request seeded with a
+ * directory this computer could not verify, or a foreign execution's answer
+ * dressed as a local one.
  */
 
 const dom = new JSDOM(
@@ -48,7 +47,7 @@ before(() => {
 });
 
 afterEach(() => {
-  closeNewCodingSessionDialog();
+  clearCodingSessionFoundingRequest();
 });
 
 after(() => {
@@ -125,7 +124,7 @@ async function mount(props) {
   const seen = { action: null, request: null };
   function Probe() {
     seen.action = useNewSessionInWorkspaceAction(props);
-    seen.request = useNewCodingSessionRequest();
+    seen.request = useCodingSessionFoundingRequest();
     return React.createElement("div", null, seen.action.detail);
   }
   const host = dom.window.document.getElementById("root");
@@ -170,11 +169,11 @@ test("nothing is read until the menu asks", async () => {
   await view.resolveNow();
   assert.ok(host.calls.includes("listSeatWorktrees"));
   assert.equal(view.detail(), "repo-wt-a · wt-a-live");
-  assert.equal(view.request(), null, "a menu opening opens no dialog");
+  assert.equal(view.request(), null, "a menu opening founds nothing");
   await view.unmount();
 });
 
-test("local execution: the draft opens seeded on that exact directory", async () => {
+test("local execution: the request is seeded on that exact directory", async () => {
   const host = deps();
   const view = await mount({
     channelId: CHANNEL,
@@ -186,18 +185,19 @@ test("local execution: the draft opens seeded on that exact directory", async ()
   await view.start();
   assert.deepEqual(view.request(), {
     kind: "workspace",
+    phase: "requested",
     channelId: CHANNEL,
     projectId: PROJECT,
     sessionRef: SESSION,
     sourceRepoRef: null,
     // The head read off disk right now. It travels as the branch, but never
-    // as a *provenance* the draft could still be showing after a reload.
+    // as a *provenance* the founded page could still be showing later.
     workspace: { path: PATH, branch: "wt-a-live", branchSource: null },
   });
   await view.unmount();
 });
 
-test("only a recorded branch carries its provenance into the draft", async () => {
+test("only a recorded branch carries its provenance into the request", async () => {
   // Cut-at-creation is a fact that cannot go stale, so it is labelled.
   const recorded = deps({
     listBranches: async () => ({ headBranch: null }),
@@ -216,9 +216,12 @@ test("only a recorded branch carries its provenance into the draft", async () =>
     branchSource: "recorded",
   });
   await view.unmount();
+  // The store refuses a second request while one stands (one click, one
+  // genesis); the host would have cleared it after founding, so do that here.
+  clearCodingSessionFoundingRequest();
 
   // A live head is a reading of one moment. It is never relabelled
-  // "recorded", and never persisted as "live" either — the draft re-reads it.
+  // "recorded", and never carried as "live" either — the page re-reads it.
   const live = await mount({
     channelId: CHANNEL,
     deps: deps().deps,
@@ -229,6 +232,7 @@ test("only a recorded branch carries its provenance into the draft", async () =>
   assert.equal(live.request().workspace.branchSource, null);
   assert.notEqual(live.request().workspace.branchSource, "live");
   await live.unmount();
+  clearCodingSessionFoundingRequest();
 
   // Nothing resolved, nothing seeded, and so no provenance at all.
   const unresolved = await mount({
@@ -240,6 +244,7 @@ test("only a recorded branch carries its provenance into the draft", async () =>
   await unresolved.start();
   assert.deepEqual(unresolved.request(), {
     kind: "channel",
+    phase: "requested",
     channelId: CHANNEL,
   });
   assert.equal("workspace" in unresolved.request(), false);
@@ -258,9 +263,13 @@ test("foreign execution: unseeded, and it says whose body it is not", async () =
     sessionRef: SESSION,
   });
   await view.start();
-  // The ordinary launcher, with nothing carried over — never this computer's
+  // The ordinary founding, with nothing carried over — never this computer's
   // copy of a path standing in for another machine's checkout.
-  assert.deepEqual(view.request(), { kind: "channel", channelId: CHANNEL });
+  assert.deepEqual(view.request(), {
+    kind: "channel",
+    phase: "requested",
+    channelId: CHANNEL,
+  });
   assert.equal(
     view.detail(),
     "This session's execution runs on a provider this computer does not hold.",
@@ -271,7 +280,7 @@ test("foreign execution: unseeded, and it says whose body it is not", async () =
 test("unknown location keeps the verified local folder, and says it is unknown", async () => {
   // Fail-closed applies to the *claim*, not to the offer: an unnamed
   // execution provider is not evidence the work runs elsewhere, and the
-  // directory here was still validated on this computer. So the draft is
+  // directory here was still validated on this computer. So the request is
   // seeded and the uncertainty is stated rather than hidden.
   const host = deps();
   const view = await mount({
@@ -296,7 +305,11 @@ test("unknown location with nothing recorded stays unseeded", async () => {
     sessionRef: SESSION,
   });
   await view.start();
-  assert.deepEqual(view.request(), { kind: "channel", channelId: CHANNEL });
+  assert.deepEqual(view.request(), {
+    kind: "channel",
+    phase: "requested",
+    channelId: CHANNEL,
+  });
   assert.match(
     view.detail(),
     /This computer recorded no directory for this session\./,
@@ -316,7 +329,11 @@ test("a missing directory is never seeded, whatever the record says", async () =
     sessionRef: SESSION,
   });
   await view.start();
-  assert.deepEqual(view.request(), { kind: "channel", channelId: CHANNEL });
+  assert.deepEqual(view.request(), {
+    kind: "channel",
+    phase: "requested",
+    channelId: CHANNEL,
+  });
   assert.equal(view.detail(), "No such directory on this computer.");
   await view.unmount();
 });
@@ -341,7 +358,11 @@ test("a failed read says so instead of claiming an absence", async () => {
     "This computer could not read its record of this session's directories.",
   );
   await view.start();
-  assert.deepEqual(view.request(), { kind: "channel", channelId: CHANNEL });
+  assert.deepEqual(view.request(), {
+    kind: "channel",
+    phase: "requested",
+    channelId: CHANNEL,
+  });
   await view.unmount();
 });
 
@@ -355,11 +376,15 @@ test("a row with no session ref opens the ordinary draft and reads nothing", asy
   await view.resolveNow();
   await view.start();
   assert.deepEqual(host.calls, []);
-  assert.deepEqual(view.request(), { kind: "channel", channelId: CHANNEL });
+  assert.deepEqual(view.request(), {
+    kind: "channel",
+    phase: "requested",
+    channelId: CHANNEL,
+  });
   await view.unmount();
 });
 
-test("a contextual draft in a multi-repository project keeps repository B through reload", async () => {
+test("a contextual request in a multi-repository project keeps repository B", async () => {
   const sourceRepoRef = `30617:${"b".repeat(64)}:repo-b`;
   const otherRepoRef = `30617:${"a".repeat(64)}:repo-a`;
   const firstProjectRepo = selectLaunchRepoRef({
@@ -391,17 +416,27 @@ test("a contextual draft in a multi-repository project keeps repository B throug
   });
   try {
     await view.start();
-    const restored = parseNewCodingSessionRequest(
+    // Nothing is persisted any more (a request that survived a reload would
+    // found a second genesis); the request in memory is what the host founds.
+    assert.equal(
       dom.window.sessionStorage.getItem("buzz.new-coding-session-dialog.v1"),
+      null,
     );
-    const route = resolveNewCodingSessionDialogRoute(restored);
-    assert.equal(route.projectId, PROJECT);
-    assert.equal(route.workspaceReuse.path, "/src/repo-b-wt-lane");
-    assert.equal(route.sourceRepoRef, sourceRepoRef);
+    const request = view.request();
+    assert.equal(request.kind, "workspace");
+    assert.equal(request.projectId, PROJECT);
+    assert.equal(request.workspace.path, "/src/repo-b-wt-lane");
+    assert.equal(request.sourceRepoRef, sourceRepoRef);
+    // With a channel the host founds right there, and the target carries
+    // the source session's repository — never the project's first.
+    const route = resolveCodingSessionFoundingRoute(request);
+    assert.equal(route.kind, "channel");
+    assert.equal(route.target.repoRef, sourceRepoRef);
+    assert.equal(route.target.workspace.path, "/src/repo-b-wt-lane");
     assert.equal(
       workspaceReuseRepoRef({
-        contextual: route.workspaceReuse !== null,
-        sourceRepoRef: route.sourceRepoRef,
+        contextual: true,
+        sourceRepoRef: request.sourceRepoRef,
         projectRepoRef: firstProjectRepo,
       }),
       sourceRepoRef,
@@ -429,7 +464,7 @@ test("a contextual draft in a multi-repository project keeps repository B throug
   }
 });
 
-test("multiple seat directories open an unseeded draft instead of borrowing one", async () => {
+test("multiple seat directories write an unseeded request instead of borrowing one", async () => {
   const host = deps({
     listSeatWorktrees: async () => [
       row(),
@@ -447,7 +482,11 @@ test("multiple seat directories open an unseeded draft instead of borrowing one"
     await view.resolveNow();
     assert.match(view.detail(), /multiple recorded workspaces/);
     await view.start();
-    assert.deepEqual(view.request(), { kind: "channel", channelId: CHANNEL });
+    assert.deepEqual(view.request(), {
+      kind: "channel",
+      phase: "requested",
+      channelId: CHANNEL,
+    });
     assert.ok(!host.calls.includes("validateWorkdir"));
   } finally {
     await view.unmount();

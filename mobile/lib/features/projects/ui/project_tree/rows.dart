@@ -43,7 +43,9 @@ class _ProjectChildTile extends StatelessWidget {
 
 /// A coding session row: the session icon, its name, the channel it lives
 /// in and who started it, and its folded status. A settled (closed) session
-/// keeps the row but dims it — closure is intent, not activity.
+/// keeps the row but dims it — closure is intent, not activity. A founded
+/// session nobody has started says "founded by", not "started by": the
+/// genesis is the only fact behind it.
 class _SessionTile extends StatelessWidget {
   final ProjectSessionRow row;
 
@@ -64,11 +66,12 @@ class _SessionTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = context.colors;
     final settled = row.isClosed;
+    final verb = row.session.isFounded ? 'founded' : 'started';
     final startedBy = founderLabel == null
         ? 'initiator unknown'
         : isMine
-        ? 'started by you'
-        : 'started by $founderLabel';
+        ? '$verb by you'
+        : '$verb by $founderLabel';
     final detail = [row.channelName, startedBy].join(' · ');
     return Opacity(
       opacity: settled ? 0.6 : 1,

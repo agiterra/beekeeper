@@ -124,21 +124,41 @@ test("the access row states full access instead of offering a choice", () => {
   assert.equal(optionValues(markup, "coding-session-access-notice"), null);
 });
 
-// Live twice — DogFood2 21:38 and BanksyTest 06:07 — a seat was created with
-// model `default` and nothing on screen said the record would not name the
-// weights that ran. The sentence exists (item 89a); this is it on screen.
-test("the disclosure is rendered when the create will carry `default`", () => {
+// The "Runs the runtime's default model — the record will not name it."
+// line left the dialog on 2026-09-10 (Andy). The wire is unchanged; the
+// sentence is simply no longer printed under the picker.
+test("a create that will carry `default` prints no sentence under the picker", () => {
   const html = renderToStaticMarkup(
     React.createElement(NewCodingSessionModelDisclosure, {
       model: "default",
       catalog: { defaultModel: "default", allowedModels: ["default", "opus"] },
     }),
   );
-  assert.match(html, /data-testid="new-coding-session-model-disclosure"/);
-  assert.match(
-    html,
-    /Runs the runtime&#x27;s default model — the record will not name it\./,
-  );
+  assert.equal(html, "");
+});
+
+test("a runtime that is not installed gets no hint row — its option already says so", () => {
+  // The sign-in case keeps its hint and Connect row; it needs a query client
+  // and is exercised on the founded page (CodingSessionFoundedSetupCard).
+  const goose = {
+    ...target(["default"]),
+    selectionKey: "local:goose-primary",
+    availability: {
+      state: "missing",
+      label: "Goose",
+      hint: "Goose is not installed on this computer.",
+    },
+    provider: {
+      ...target(["default"]).provider,
+      runtime: "goose",
+      providerInstanceRef: "goose-primary",
+    },
+  };
+  const html = render({ targets: [target(CODEX), goose] });
+  assert.doesNotMatch(html, /is not installed on this computer/);
+  // The option's own "not installed" note lives inside the picker's popover,
+  // which static markup does not open; `CodingSessionModelPicker`'s tests
+  // cover it.
 });
 
 test("a create that names a model says nothing extra", () => {

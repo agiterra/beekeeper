@@ -42,7 +42,7 @@ export function useNewCodingSessionTitleSuggestion({
     [setTitle],
   );
 
-  const { enabled, error, isGenerating, requestNow } =
+  const { enabled, error, isGenerating, requestNow, settings } =
     useCodingSessionNameSuggestion({
       firstMessage,
       onSuggestion: handleSuggestion,
@@ -51,6 +51,8 @@ export function useNewCodingSessionTitleSuggestion({
   return {
     requestNow,
     setTitleByHand,
+    /** The configured namer, or null until the settings read resolves. */
+    settings,
     status: codingSessionNameSuggestStatus({ enabled, error, isGenerating }),
   };
 }

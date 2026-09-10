@@ -489,7 +489,9 @@ Design (LOCKED):
  1. Seat field takes `readonly CodingSessionSeatAgent[]` (new file
     lib/codingSessionSeatAgent.ts, shape in the contract section) instead of `ManagedAgent[]`.
     `NewCodingSessionDialog` keeps passing its `useManagedAgentsQuery` array — it satisfies the
-    structural type today and gains the two optional fields when lane A lands.
+    structural type today and gains the two optional fields when lane A lands. *(2026-09-10:
+    that dialog is deleted; the founded page's setup card is the caller now — see "A crew
+    editor" below.)*
  2. Role default: a pure helper `defaultCodingSessionSeatRole({ agent, roleTouched, role })` in
     lib/codingSessionActorSeat.ts. Selecting an agent while the role box is untouched sets the role
     to `agent.homeRole ?? ""`. Typing in the role box marks it touched; clearing the agent clears
@@ -517,7 +519,8 @@ Design (LOCKED):
     the pending screen passes it from the transaction. An unseated session passes `null` and looks
     exactly as it does today.
  8. The join path: `AddCodingSessionProviderForm` owns seat state the same way
-    `NewCodingSessionDialog` does (`seatActor`, `seatRole`, `resolveCodingSessionActorSeat`), passes
+    `NewCodingSessionDialog` did (`seatActor`, `seatRole`, `resolveCodingSessionActorSeat`; the
+    dialog is gone since 2026-09-10, the join form's own seat state stays), passes
     `seat`/`seatLabel` through `buildAddCodingSessionProviderSubmit` into `submit`, and blocks
     submit while `seatResolution.error !== null`. Membership, custody staging, the publish order,
     and the grant-operator follow-up are the founding path's, unchanged — do not fork them.
@@ -703,7 +706,12 @@ Report format: docs/CREW_SESSIONS_PLAN.md §1.2.
 
 - **A crew editor.** The installer writes one roster; changing it means editing the team's crew
   block, which no UI does. Dogfooding this week needs a crew that launches, not one that is
-  configurable.
+  configurable. *2026-09-08:* the founded session's Team card now composes the lead, the
+  bench and the policy **before Start** (`desktop/src/features/coding-sessions/ui/founded/`);
+  revising the bench or the policy after Start is still open. *2026-09-10:* that card is now
+  the whole front door — every "New coding session" founds the topic on the click and lands
+  on the setup card (`CodingSessionFoundedSetupCard.tsx`, same folder), where Solo or Team,
+  the name, the prompt, the lead, the bench and the policy are picked; the create dialog is gone.
 - **Two builder seats.** The installer mints one agent per pack, so the default roster has one
   builder. A second is a cloned agent plus a crew edit — see above.
 - **Publishing `home_role`.** It stays host-local on the record; the wire already carries the

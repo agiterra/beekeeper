@@ -237,6 +237,14 @@ goal → the lead proposes a roster (identities, models, why) → the operator
 approves, or a policy auto-approves within budget → the host seats them.
 `bee sessions hire` is the lead's verb; the preset team launch stays as a
 shortcut. This replaces the folder-picker installer as the primary path.
+**Amended 2026-09-08 (Andy):** the front door founds the topic first — goal,
+name, genesis — and the lead is picked *in* the founded session, beside the
+runtime, the bench and the policy; the dialog's "Agent team" box is the only
+team question it asks. Nothing runs until Start is pressed there.
+**Amended 2026-09-10 (Andy):** there is no dialog. The front door founds the
+topic on the click — one genesis — and Solo or Team, the name, the prompt, the
+lead, the bench and the policy are all picked in the founded session's setup
+card. Team means an agent leads; Solo is you.
 
 **D15. A "team" preset is a playbook, not a team.** "High-velocity SWAT",
 "Surgical" — an overlay on the lead's pack that adds and subtracts

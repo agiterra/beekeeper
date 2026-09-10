@@ -320,6 +320,17 @@ export type CodingSessionCrewLaunchInput = {
    * session nobody wrote a policy for.
    */
   policySet?: boolean;
+  /**
+   * Start an umbrella that is already founded — a genesis with a goal and a
+   * name, and nothing running — instead of founding one.
+   *
+   * Set, the launch publishes no channel and no genesis: it seats the lead
+   * under these refs, publishes the policy, grants, and sends the first turn.
+   * `channelId` is then required — the umbrella already lives in a channel,
+   * so a launch given none to seat the lead in is refused at the step that
+   * costs nothing, never handed a second channel.
+   */
+  existingUmbrella?: { sessionRef: string; genesisRef: string } | null;
 };
 
 /** Step ids, so a caller can talk about a failure without matching prose. */
@@ -363,8 +374,9 @@ export function planCodingSessionCrewLaunch(
         ]
       : []),
     // Only when there is nothing to launch into yet: a channel that already
-    // exists is not a step anybody walks.
-    ...(input.channelId === null
+    // exists is not a step anybody walks — and a founded umbrella already has
+    // one, so a launch given none is refused rather than handed a second.
+    ...(input.channelId === null && !input.existingUmbrella
       ? [
           step(
             CODING_SESSION_CREW_LAUNCH_CHANNEL_STEP,
@@ -372,7 +384,11 @@ export function planCodingSessionCrewLaunch(
           ),
         ]
       : []),
-    step(CODING_SESSION_CREW_LAUNCH_GENESIS_STEP, "Found the session"),
+    // A founded umbrella is not founded twice: its genesis is a record that
+    // exists, and a step for it would describe publishing one that is not.
+    ...(input.existingUmbrella
+      ? []
+      : [step(CODING_SESSION_CREW_LAUNCH_GENESIS_STEP, "Found the session")]),
     // Only when one was written. A step that always appears and usually does
     // nothing teaches a reader to stop reading the list.
     ...(input.policySet
@@ -617,6 +633,19 @@ export async function launchCodingSessionCrew(
 
   // Before anything is signed. A refusal here must cost nothing.
   mark(CODING_SESSION_CREW_LAUNCH_FAMILY_STEP, "running");
+  const existing = input.existingUmbrella ?? null;
+  if (existing && channelId === null) {
+    // The umbrella was founded in a channel; a launch that cannot name it
+    // would either mint a second channel or seat the lead nowhere. Refused
+    // here, where nothing has been signed, and the result still names the
+    // umbrella it was asked to start.
+    return fail(
+      CODING_SESSION_CREW_LAUNCH_FAMILY_STEP,
+      "This session is already founded in a channel, and the launch was given none to seat the lead in.",
+      existing.sessionRef,
+      existing.genesisRef,
+    );
+  }
   const primary = input.seats.find(
     (seat) => seat.personaId === input.primaryPersonaId,
   );
@@ -740,22 +769,33 @@ export async function launchCodingSessionCrew(
   }
   const launchChannelId = channelId;
 
-  mark(CODING_SESSION_CREW_LAUNCH_GENESIS_STEP, "running");
-  const sessionRef = deps.newSessionRef();
+  // The umbrella's refs: minted and founded here, or — for a session founded
+  // before this launch — the ones it already has. `newSessionRef` and
+  // `publishGenesis` are never called for an existing umbrella: a second
+  // genesis under the same ref is the disputed case the founded projection
+  // refuses to show.
+  let sessionRef: string;
   let genesisRef: string;
-  try {
-    genesisRef = (
-      await deps.publishGenesis({ channelId: launchChannelId, sessionRef })
-    ).eventId;
-  } catch (error) {
-    return fail(
-      CODING_SESSION_CREW_LAUNCH_GENESIS_STEP,
-      describe(error, "The session could not be founded."),
-      sessionRef,
-      null,
-    );
+  if (existing) {
+    sessionRef = existing.sessionRef;
+    genesisRef = existing.genesisRef;
+  } else {
+    mark(CODING_SESSION_CREW_LAUNCH_GENESIS_STEP, "running");
+    sessionRef = deps.newSessionRef();
+    try {
+      genesisRef = (
+        await deps.publishGenesis({ channelId: launchChannelId, sessionRef })
+      ).eventId;
+    } catch (error) {
+      return fail(
+        CODING_SESSION_CREW_LAUNCH_GENESIS_STEP,
+        describe(error, "The session could not be founded."),
+        sessionRef,
+        null,
+      );
+    }
+    mark(CODING_SESSION_CREW_LAUNCH_GENESIS_STEP, "done");
   }
-  mark(CODING_SESSION_CREW_LAUNCH_GENESIS_STEP, "done");
 
   if (input.policySet) {
     mark(CODING_SESSION_CREW_LAUNCH_POLICY_STEP, "running");

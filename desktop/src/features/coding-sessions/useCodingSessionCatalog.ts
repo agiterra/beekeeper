@@ -19,7 +19,10 @@ import type {
   CodingSessionCatalogSnapshot,
   GlobalCodingSessionCatalogSnapshot,
 } from "./lib/codingSessionTypes";
-import { useCodingSessionCreateObservations } from "./lib/useCodingSessionCreateObservations";
+import {
+  type CodingSessionCreateObservationSnapshot,
+  useCodingSessionCreateObservations,
+} from "./lib/useCodingSessionCreateObservations";
 import { useTrustedCodingSessionIngress } from "./lib/useTrustedCodingSessionIngress";
 
 /**
@@ -36,6 +39,12 @@ import { useTrustedCodingSessionIngress } from "./lib/useTrustedCodingSessionIng
  * happened in it, and the catalog's `isLoading` deliberately does not wait on
  * them — a session renders as soon as its facts arrive, with authority
  * unresolved (and therefore ungated) until the observations land.
+ *
+ * The same read carries `geneses`: every accepted 44226 in the channel. A
+ * genesis no receipt-joined create names is a founded umbrella with nothing
+ * running, which the catalog cannot express as an entry — so the founding
+ * facts ride beside the entries with their own `foundingIsLoading`, and a
+ * cold start reads "loading" rather than "missing" for a session that exists.
  */
 export function useCodingSessionCatalog(
   channelId: string | null,
@@ -78,22 +87,13 @@ export function useCodingSessionCatalog(
   const createObservations =
     useCodingSessionCreateObservations(ingressChannelIds);
   const snapshot = React.useMemo(
-    () => ({
-      channelId,
-      entries: mergeTrustedCodingSessionIngress(
+    () =>
+      composeCodingSessionCatalogSnapshot(
         channelId,
-        trustedIngress.metadata,
-        trustedIngress.transcripts,
+        trustedIngress,
+        createObservations,
       ),
-      creates: createObservations.observations,
-      isLoading: trustedIngress.isLoading,
-      errorMessage: trustedIngress.errorMessage,
-      authorityErrorMessage: trustedIngress.authorityErrorMessage,
-      rejectedAuthorCount: trustedIngress.rejectedAuthorCount,
-      invalidSignatureCount: trustedIngress.invalidSignatureCount,
-      turnStartedAtFor: trustedIngress.turnStartedAtFor,
-    }),
-    [channelId, createObservations.observations, trustedIngress],
+    [channelId, createObservations, trustedIngress],
   );
 
   useRememberedCodingSessionPopoutBootstraps(
@@ -107,14 +107,10 @@ export function useCodingSessionCatalog(
   // is looking at the same accepted generation the parent window offered, so
   // it refuses rather than resolving something that merely shares an id.
   if (requirePopoutBootstrap && !popoutBootstrap) {
-    return {
-      ...snapshot,
-      entries: [],
-      creates: [],
-      isLoading: false,
-      authorityErrorMessage:
-        "This pop-out did not receive an exact signed session snapshot. Reopen the generation from the main window.",
-    };
+    return refuseCodingSessionPopoutSnapshot(
+      snapshot,
+      "This pop-out did not receive an exact signed session snapshot. Reopen the generation from the main window.",
+    );
   }
   // A snapshot minted under a different configured authority is stale trust,
   // not weaker trust; it is refused outright rather than merged.
@@ -123,16 +119,79 @@ export function useCodingSessionCatalog(
     trustedIngress.authorityIdentity !== null &&
     popoutBootstrap.authorityIdentity !== trustedIngress.authorityIdentity
   ) {
-    return {
-      ...snapshot,
-      entries: [],
-      creates: [],
-      isLoading: false,
-      authorityErrorMessage:
-        "This pop-out snapshot no longer matches the configured coding-session authority. Reopen the generation from the main window.",
-    };
+    return refuseCodingSessionPopoutSnapshot(
+      snapshot,
+      "This pop-out snapshot no longer matches the configured coding-session authority. Reopen the generation from the main window.",
+    );
   }
   return snapshot;
+}
+
+/** The trusted-ingress slice the channel snapshot is composed from. */
+type TrustedIngressSlice = Pick<
+  ReturnType<typeof useTrustedCodingSessionIngress>,
+  | "metadata"
+  | "transcripts"
+  | "isLoading"
+  | "errorMessage"
+  | "authorityErrorMessage"
+  | "rejectedAuthorCount"
+  | "invalidSignatureCount"
+  | "turnStartedAtFor"
+>;
+
+/**
+ * Compose the channel snapshot from its two reads. Pure, so the field
+ * contract — creates and geneses ride beside the entries, and the founding
+ * read's own loading flag stays separate from the catalog's — is testable
+ * without mounting either subscription.
+ */
+export function composeCodingSessionCatalogSnapshot(
+  channelId: string | null,
+  trustedIngress: TrustedIngressSlice,
+  createObservations: Pick<
+    CodingSessionCreateObservationSnapshot,
+    "observations" | "geneses" | "isLoading"
+  >,
+): CodingSessionCatalogSnapshot {
+  return {
+    channelId,
+    entries: mergeTrustedCodingSessionIngress(
+      channelId,
+      trustedIngress.metadata,
+      trustedIngress.transcripts,
+    ),
+    creates: createObservations.observations,
+    geneses: createObservations.geneses,
+    foundingIsLoading: createObservations.isLoading,
+    isLoading: trustedIngress.isLoading,
+    errorMessage: trustedIngress.errorMessage,
+    authorityErrorMessage: trustedIngress.authorityErrorMessage,
+    rejectedAuthorCount: trustedIngress.rejectedAuthorCount,
+    invalidSignatureCount: trustedIngress.invalidSignatureCount,
+    turnStartedAtFor: trustedIngress.turnStartedAtFor,
+  };
+}
+
+/**
+ * A pop-out that cannot vouch for its snapshot shows nothing from it: no
+ * entries, no creates, and no geneses — a founded row is as much a claim
+ * about the channel as a started one. Loading is over; the refusal is the
+ * answer.
+ */
+export function refuseCodingSessionPopoutSnapshot(
+  snapshot: CodingSessionCatalogSnapshot,
+  authorityErrorMessage: string,
+): CodingSessionCatalogSnapshot {
+  return {
+    ...snapshot,
+    entries: [],
+    creates: [],
+    geneses: [],
+    isLoading: false,
+    foundingIsLoading: false,
+    authorityErrorMessage,
+  };
 }
 
 /**
@@ -229,12 +288,14 @@ export function useGlobalCodingSessionCatalog(
         ).map((session) => ({ channelId, session })),
       ),
       creates: createObservations.observations,
+      geneses: createObservations.geneses,
+      foundingIsLoading: createObservations.isLoading,
       isLoading: trustedIngress.isLoading,
       errorMessage: trustedIngress.errorMessage,
       authorityErrorMessage: trustedIngress.authorityErrorMessage,
       lifecycleFor: trustedIngress.lifecycleFor,
     }),
-    [channelIds, createObservations.observations, trustedIngress],
+    [channelIds, createObservations, trustedIngress],
   );
 }
 

@@ -37,6 +37,7 @@ import {
   seedEvents,
   seededSessionEvents,
   SESSION_REF,
+  SESSION_TITLE,
   signedEvents,
   workdirUseCalls,
   WORKSPACE_REUSE_SEAM_LANDED,
@@ -48,10 +49,13 @@ import {
  * "New session in this workspace", driven rather than described.
  *
  * The action's whole promise is a pair of negatives: clicking the menu item
- * changes nothing, and submitting the draft it opens remembers nothing. Both
- * are invisible in the UI — a wiring test would pass over either failing —
- * so this spec asserts them where they can be seen: at the command seam the
- * app actually calls, and in the *next* draft the person opens.
+ * publishes one genesis and nothing else (since 2026-09-10 every "New coding
+ * session" founds the topic on the click and lands on the founded page, where
+ * the session is set up and started), and starting the session it founds
+ * remembers nothing. Both are invisible in the UI — a wiring test would pass
+ * over either failing — so this spec asserts them where they can be seen: at
+ * the command seam the app actually calls, in the events it signs, and in the
+ * *next* page the person opens.
  *
  * Three things are proved by consequence rather than by spy count:
  *
@@ -179,32 +183,49 @@ async function boot(
   return seeded;
 }
 
+/**
+ * The seeded session's sidebar row, by its title. Every founding this spec
+ * performs adds an "Untitled session" row above it, so `.first()` would pick
+ * a founded session with no recorded workspace and the action would degrade
+ * to a plain channel founding — which is a different scenario, not this one.
+ */
+function seededSessionRow(page: Page) {
+  return page
+    .getByTestId("project-coding-session-row")
+    .filter({ hasText: SESSION_TITLE })
+    .first();
+}
+
 /** Right-click the sidebar session row and choose the workspace item. */
 async function openWorkspaceMenu(page: Page) {
-  await page
-    .getByTestId("project-coding-session-row")
-    .first()
-    .click({ button: "right" });
+  await seededSessionRow(page).click({ button: "right" });
   const item = page.getByRole("menuitem", { name: MENU_LABEL });
   await expect(item).toBeVisible({ timeout: 10_000 });
   return item;
 }
 
+/** The founded page's card, with its Where field on screen. */
+async function expectFoundedPage(page: Page) {
+  await expect(
+    page.getByTestId("coding-session-founded-workspace-founded"),
+  ).toBeVisible({ timeout: 20_000 });
+  await expect(page).toHaveURL(
+    /#\/coding-sessions\/[0-9a-f-]{36}\/founded\/[0-9a-f-]{36}/,
+  );
+  await expect(page.getByTestId("coding-session-founded-where")).toBeVisible();
+  // The goal reader is held behind the client's send budget
+  // (`relaySendBudget.ts`, 25 sends per 5 s) and can settle ~10 s in; until
+  // it does a prompt left publishes nothing, by design.
+  await expect(
+    page.getByTestId("new-coding-session-blocker-goal-unresolved"),
+  ).toHaveCount(0, { timeout: 30_000 });
+}
+
+/** Click the workspace item: founds the session and lands on its page. */
 async function openWorkspaceDraft(page: Page) {
   const item = await openWorkspaceMenu(page);
   await item.click();
-  await expect(page.getByTestId("new-coding-session-form")).toBeVisible({
-    timeout: 20_000,
-  });
-}
-
-/** Open "Setup and advanced options" if it is not already open. */
-async function openSetup(page: Page) {
-  const disclosure = page.getByTestId("new-coding-session-configuration");
-  if ((await disclosure.getAttribute("open")) === null) {
-    await disclosure.locator(":scope > summary").click();
-  }
-  await expect(disclosure).toHaveAttribute("open", /.*/);
+  await expectFoundedPage(page);
 }
 
 /** Ordinary "New coding session" from the project's own create menu. */
@@ -213,58 +234,71 @@ async function openOrdinaryProjectDraft(page: Page) {
     .getByTestId(`project-create-${PROJECT_DTAG}`)
     .click({ force: true });
   await page.getByTestId(`project-new-coding-session-${PROJECT_DTAG}`).click();
-  await expect(page.getByTestId("new-coding-session-form")).toBeVisible({
-    timeout: 20_000,
-  });
+  await expectFoundedPage(page);
 }
 
 /**
- * What an open draft must say about the workspace, on either side of the seam.
+ * What a founded page must say about the workspace, on either side of the
+ * seam.
  *
  * Lane W gates the disclosure behind `WORKSPACE_REUSE_SEAM_LANDED` so that,
- * until root lands the form seam, the draft is an ordinary unseeded launcher
+ * until root lands the form seam, the page is an ordinary unseeded setup
  * rather than one claiming a folder its own directory field contradicts. Both
  * states are asserted here — neither is skipped, because "unseeded and silent"
- * is a truthful thing to ship and a lying draft is not.
+ * is a truthful thing to ship and a lying page is not.
  */
 async function expectWorkspaceDraftState(page: Page) {
-  // The heading is part of the claim, not decoration: a draft headed "New
-  // session in this workspace" over an ordinary repository folder is the same
-  // contradiction the disclosure gate exists to remove, only quieter. So the
-  // title is pinned on both sides of the flag and cannot drift back.
-  const title = page
-    .getByTestId("new-coding-session-dialog")
-    .getByRole("heading");
+  const where = page.getByTestId("coding-session-founded-where");
   if (WORKSPACE_REUSE_SEAM_LANDED) {
-    await expect(title).toHaveText(MENU_LABEL);
+    // The summary renders inside the Where field: the folder, then the
+    // directory field already on it.
     await expect(
-      page.getByTestId("coding-session-workspace-reuse-path"),
+      where.getByTestId("coding-session-workspace-reuse-path"),
     ).toHaveText(REUSE_PATH);
+    await expect(page.getByTestId("coding-session-workdir-input")).toHaveValue(
+      REUSE_PATH,
+    );
     return;
   }
-  // The ordinary heading, whichever destination the entry point supplied:
-  // "New coding session", or "… in <project>" when the request carried a
-  // project. What it may never be is the workspace label, which is the claim
-  // an unseeded draft cannot honour.
-  await expect(
-    title,
-    "an unseeded draft must not be headed as a workspace draft",
-  ).not.toHaveText(MENU_LABEL);
-  await expect(title).toContainText("New coding session");
   await expect(
     page.getByTestId("coding-session-workspace-reuse"),
-    "with the seam unlanded the draft must claim no workspace at all",
+    "with the seam unlanded the page must claim no workspace at all",
   ).toHaveCount(0);
-  await openSetup(page);
   await expect(
     page.getByTestId("coding-session-workdir-input"),
   ).not.toHaveValue(REUSE_PATH);
 }
 
+/**
+ * Type the initial prompt, leave the field (which publishes it), and Start.
+ */
 async function submitDraft(page: Page, goal: string) {
-  await page.getByTestId("new-coding-session-goal").fill(goal);
-  await expect(page.getByTestId("new-coding-session-submit")).toBeEnabled();
-  await page.getByTestId("new-coding-session-submit").click();
+  const prompt = page.getByTestId("coding-session-founded-prompt");
+  await prompt.fill(goal);
+  await prompt.blur();
+  await expect
+    .poll(
+      async () =>
+        (await signedEvents(page)).filter((event) => event.kind === 44227)
+          .length,
+      { timeout: 15_000 },
+    )
+    .toBe(1);
+  await expect(page.getByTestId("coding-session-founded-start")).toBeEnabled();
+  await page.getByTestId("coding-session-founded-start").click();
+}
+
+/**
+ * The signed 44226 geneses, decoded to their session ref — carried in the
+ * `csg-session` tag (`lib/codingSessionGenesis.ts`), not in a `d` tag.
+ */
+function geneses(events: Array<{ kind: number; tags: string[][] }>) {
+  return events
+    .filter((event) => event.kind === 44226)
+    .map(
+      (event) =>
+        event.tags.find((tag) => tag[0] === "csg-session")?.[1] ?? null,
+    );
 }
 
 /** Settle the actual create through signed provider facts, as the UI expects. */
@@ -339,11 +373,11 @@ async function settleCreatedDraft(
 }
 
 test.describe("new session in this workspace", () => {
-  // Tall enough that the draft's disclosure and the setup fields are both on
-  // screen; a clipped dialog reads as a missing control.
+  // Tall enough that the page's Where field and the setup fields are both on
+  // screen; a clipped card reads as a missing control.
   test.use({ viewport: { width: 1280, height: 1600 } });
 
-  test("01+02 — the draft reuses the directory, and remembers nothing", async ({
+  test("01+02 — the page reuses the directory, and remembers nothing", async ({
     page,
   }) => {
     test.skip(
@@ -358,7 +392,7 @@ test.describe("new session in this workspace", () => {
 
     await openWorkspaceDraft(page);
 
-    // The draft says which folder, which branch, and which kind of fact that
+    // The page says which folder, which branch, and which kind of fact that
     // branch is — then the two sentences that say what this action is.
     await expect(
       page.getByTestId("coding-session-workspace-reuse-path"),
@@ -389,13 +423,12 @@ test.describe("new session in this workspace", () => {
       page.getByTestId("coding-session-workspace-reuse"),
     ).not.toContainText(/isolated|forked|inherited|continue|taken over/i);
 
-    // The launcher itself: the directory is already the one that was chosen,
-    // and no worktree will be cut.
-    await openSetup(page);
+    // The Where field itself: the directory is already the one that was
+    // chosen, and no worktree will be cut.
     await expect
       .soft(
         page.getByTestId("coding-session-workdir-input"),
-        "the launcher must open on the reused directory (root's workspaceReuse seam)",
+        "the page must open on the reused directory (root's workspaceReuse seam)",
       )
       .toHaveValue(REUSE_PATH);
     await expect
@@ -440,15 +473,17 @@ test.describe("new session in this workspace", () => {
     expect(workdirUseCalls(commands)).not.toContain(REUSE_PATH);
     expect(hints[0].projectRef).toBeNull();
 
-    // Provider acceptance and metadata settle the durable create; dismissing
-    // a still-pending draft must not erase it merely to make this test pass.
+    // Provider acceptance and metadata settle the durable create; the founded
+    // page hands off to the generation route once, on its own.
     await settleCreatedDraft(page, create);
-    await expect(page.getByTestId("new-coding-session-dialog")).toHaveCount(0, {
+    await expect(
+      page.getByTestId("coding-session-founded-workspace-founded"),
+    ).toHaveCount(0, { timeout: 25_000 });
+    await expect(page.getByTestId("coding-session-workspace")).toBeVisible({
       timeout: 25_000,
     });
     // …and the consequence, which is what a person would actually notice.
     await openOrdinaryProjectDraft(page);
-    await openSetup(page);
     await expect(
       page.getByTestId("coding-session-workdir-input"),
     ).not.toHaveValue(REUSE_PATH);
@@ -457,7 +492,7 @@ test.describe("new session in this workspace", () => {
     ).toHaveCount(0);
   });
 
-  test("03 — opening the menu and clicking the item mutates nothing", async ({
+  test("03 — opening the menu mutates nothing; the click founds one genesis and nothing else", async ({
     page,
   }) => {
     await boot(page, { stub: availableStub() });
@@ -469,17 +504,28 @@ test.describe("new session in this workspace", () => {
     // list renders nothing rather than "no other sessions", which is a claim
     // the read cannot support. (The line itself is scenario 13.)
     await expect(item).not.toContainText("other session");
+    // Opening the menu signs nothing: the reads happen, the genesis does not.
+    expect(await signedEvents(page)).toHaveLength(signedBefore);
     await item.click();
-    await expect(page.getByTestId("new-coding-session-form")).toBeVisible({
-      timeout: 20_000,
-    });
+    await expectFoundedPage(page);
 
     const window = (await recordedCommands(page)).slice(commandsBefore);
     // An allowlist, not a denylist: every command the app issued between the
-    // right-click and the open draft has to be named here, and each name has
-    // to be a read. A mutation nobody predicted fails this; a denylist would
-    // have let it through.
+    // right-click and the open page has to be named here, and each name has
+    // to be a read — except the one signature the click is for. A mutation
+    // nobody predicted fails this; a denylist would have let it through.
     const allowed = new Set([
+      // The click's one write: the genesis is signed here, and its publish is
+      // the one EVENT frame admitted below.
+      "sign_event",
+      // The click navigates to a new route; these are `AppShell`'s route
+      // effects (huddle state, Tauri event listeners, pending deep links),
+      // all reads or listener bookkeeping — not session mutations.
+      "get_huddle_state",
+      "plugin:event|listen",
+      "plugin:event|unlisten",
+      "take_pending_entity_deep_link",
+      "take_pending_navigation_deep_link",
       // The resolution's own budget (contract §2).
       "list_coding_session_seat_worktrees",
       "validate_coding_session_workdir",
@@ -509,6 +555,9 @@ test.describe("new session in this workspace", () => {
     ]);
     // Ambient subscription maintenance may flush during the click window.
     // Inspect the wire frame: the generic send command alone is not a read.
+    // The one EVENT admitted is the genesis; a second EVENT of any kind, or
+    // an EVENT of any other kind, is the mutation this test exists to catch.
+    let genesisFrames = 0;
     for (const entry of window.filter(
       (entry) => entry.command === "plugin:websocket|send",
     )) {
@@ -516,8 +565,14 @@ test.describe("new session in this workspace", () => {
       expect(args.message.type).toBe("Text");
       const frame = JSON.parse(args.message.data);
       expect(Array.isArray(frame)).toBe(true);
+      if (frame[0] === "EVENT") {
+        expect(frame[1]?.kind, "the only EVENT a click may send").toBe(44226);
+        genesisFrames += 1;
+        continue;
+      }
       expect(["REQ", "COUNT", "CLOSE"]).toContain(frame[0]);
     }
+    expect(genesisFrames).toBeLessThanOrEqual(1);
     allowed.add("plugin:websocket|send");
     const observed = commandNames(window);
     // Printed, not merely asserted: the report this spec exists to produce
@@ -530,12 +585,17 @@ test.describe("new session in this workspace", () => {
       `commands observed in the click window: ${commandNames(window).join(", ")}`,
     ).toEqual([]);
 
-    // Nothing was signed: no create, no turn, no closure, no authority change.
-    expect(await signedEvents(page)).toHaveLength(signedBefore);
-    expect(createActions(await signedEvents(page))).toHaveLength(0);
+    // Exactly one thing was signed — the genesis — and it does not name the
+    // source session: no create, no turn, no closure, no authority change.
+    const signed = await signedEvents(page);
+    expect(signed).toHaveLength(signedBefore + 1);
+    expect(signed[signedBefore].kind).toBe(44226);
+    expect(geneses(signed)).toHaveLength(1);
+    expect(geneses(signed)[0]).not.toBe(SESSION_REF);
+    expect(createActions(signed)).toHaveLength(0);
   });
 
-  test("04 — a directory that is gone opens an unseeded draft and says so", async ({
+  test("04 — a directory that is gone opens an unseeded page and says so", async ({
     page,
   }) => {
     await boot(page, {
@@ -558,7 +618,6 @@ test.describe("new session in this workspace", () => {
       page.getByText("No such directory on this computer.").first(),
     ).toBeVisible({ timeout: 10_000 });
 
-    await openSetup(page);
     // Nothing seeded — and the ordinary way to choose a folder is right there.
     await expect(
       page.getByTestId("coding-session-workdir-input"),
@@ -589,14 +648,13 @@ test.describe("new session in this workspace", () => {
         .first(),
     ).toBeVisible({ timeout: 10_000 });
 
-    await openSetup(page);
     // No path, anywhere: a Mac path is not another machine's checkout.
     await expect(
       page.getByTestId("coding-session-workdir-input"),
     ).not.toHaveValue(REUSE_PATH);
-    await expect(page.getByTestId("new-coding-session-form")).not.toContainText(
-      REUSE_PATH,
-    );
+    await expect(
+      page.getByTestId("coding-session-founded-setup-card"),
+    ).not.toContainText(REUSE_PATH);
   });
 
   test("06 — an unrecorded session borrows nothing", async ({ page }) => {
@@ -616,7 +674,6 @@ test.describe("new session in this workspace", () => {
         .first(),
     ).toBeVisible({ timeout: 10_000 });
 
-    await openSetup(page);
     // The channel's remembered folder is not this session's workspace, and
     // must not be dressed as one.
     await expect(
@@ -647,24 +704,18 @@ test.describe("new session in this workspace", () => {
     });
 
     await openWorkspaceDraft(page);
-    await openSetup(page);
     await expect(page.getByTestId("coding-session-workdir-input")).toHaveValue(
       REUSE_PATH,
     );
-    const heading = page
-      .getByTestId("new-coding-session-dialog")
-      .getByRole("heading");
-    const summary = page.getByTestId("coding-session-workspace-reuse");
-    const worktreeToggle = page.getByTestId("coding-session-worktree-toggle");
-    await worktreeToggle.check();
-    await expect(summary).toHaveCount(0);
-    await expect(heading).toContainText("New coding session");
-    await worktreeToggle.uncheck();
-    await expect(summary).toBeVisible();
-    await expect(heading).toHaveText(MENU_LABEL);
+    await expect(
+      page.getByTestId("coding-session-workspace-reuse-path"),
+    ).toHaveText(REUSE_PATH);
+    // The directory field stays the founder's to change; the folder typed
+    // here, not the one the page opened on, is the folder the create uses.
     await page.getByTestId("coding-session-workdir-input").fill(typed);
-    await expect(summary).toHaveCount(0);
-    await expect(heading).toContainText("New coding session");
+    await expect(page.getByTestId("coding-session-workdir-input")).toHaveValue(
+      typed,
+    );
     await submitDraft(page, "Run this one somewhere else.");
 
     await expect
@@ -677,7 +728,7 @@ test.describe("new session in this workspace", () => {
     expect(hints[0].path).toBe(typed);
   });
 
-  test("08 — cancelling and re-opening accumulates nothing", async ({
+  test("08 — leaving and re-opening founds a second session, and accumulates nothing else", async ({
     page,
   }) => {
     test.skip(
@@ -688,49 +739,66 @@ test.describe("new session in this workspace", () => {
     const signedBefore = (await signedEvents(page)).length;
 
     await openWorkspaceDraft(page);
-    await page.keyboard.press("Escape");
-    await expect(page.getByTestId("new-coding-session-form")).toHaveCount(0);
+    const firstUrl = page.url();
+    // Back returns to where the click was: the click pushed, it did not
+    // replace. The founded session stays founded — a click is a genesis and
+    // there is no undo short of Discard, which is its own scenario.
+    await page.goBack({ waitUntil: "domcontentloaded" });
+    await expect(
+      page.getByTestId("coding-session-founded-workspace-founded"),
+    ).toHaveCount(0);
 
     await openWorkspaceDraft(page);
-    // One dialog, same seeded state, and nothing published by the round trip.
-    await expect(page.getByTestId("new-coding-session-form")).toHaveCount(1);
+    // A second page for a second session, same seeded state, and nothing
+    // published by the round trip beyond the two geneses.
+    expect(page.url()).not.toBe(firstUrl);
     await expect(
       page.getByTestId("coding-session-workspace-reuse"),
     ).toHaveCount(1);
     await expect(
       page.getByTestId("coding-session-workspace-reuse-path"),
     ).toHaveText(REUSE_PATH);
-    await openSetup(page);
     await expect(page.getByTestId("coding-session-workdir-input")).toHaveValue(
       REUSE_PATH,
     );
-    expect(await signedEvents(page)).toHaveLength(signedBefore);
-    expect(createActions(await signedEvents(page))).toHaveLength(0);
+    const signed = await signedEvents(page);
+    expect(signed).toHaveLength(signedBefore + 2);
+    expect(geneses(signed)).toHaveLength(2);
+    expect(new Set(geneses(signed)).size).toBe(2);
+    expect(createActions(signed)).toHaveLength(0);
   });
 
-  test("09 — a reload restores the same workspace, and nothing leaks after it", async ({
+  test("09 — a reload founds nothing, and nothing leaks after it", async ({
     page,
   }) => {
     await boot(page, { stub: availableStub() });
 
     await openWorkspaceDraft(page);
-    // The request is what survives a reload; a field the parser forgot would
-    // reopen this draft as an ordinary launch wearing this one's title.
+    // The founding request does not survive a reload — a request that did
+    // would found a second genesis for the same click. The route survives
+    // (hash history), so the page reopens on the same session; the mock
+    // relay is in-memory, so what it shows after the reload is not this
+    // test's claim. What is: no click, no genesis.
     await page.reload({ waitUntil: "domcontentloaded" });
-    await expect(page.getByTestId("new-coding-session-form")).toBeVisible({
+    await expect(page).toHaveURL(
+      /#\/coding-sessions\/[0-9a-f-]{36}\/founded\/[0-9a-f-]{36}/,
+    );
+    await expect(page.getByTestId("coding-session-header")).toBeVisible({
       timeout: 20_000,
     });
-    // The reopened draft is in whichever state this build ships; either way
-    // it must not be a *different* one, and it must not resurrect later.
-    await expectWorkspaceDraftState(page);
+    await expect
+      .poll(async () => (await recordedCommands(page)).length, {
+        timeout: 10_000,
+      })
+      .toBeGreaterThan(0);
+    expect(geneses(await signedEvents(page))).toHaveLength(0);
+    expect(createActions(await signedEvents(page))).toHaveLength(0);
 
-    await page.keyboard.press("Escape");
-    await expect(page.getByTestId("new-coding-session-form")).toHaveCount(0);
-
-    // A later ordinary draft is a clean draft: the workspace does not
-    // resurrect out of the persisted request or out of anything it touched.
+    // A later ordinary page is a clean page: the workspace does not
+    // resurrect out of anything the earlier request touched.
+    await page.getByTestId(`channel-${CHANNEL_NAME}`).click();
     await openOrdinaryProjectDraft(page);
-    await openSetup(page);
+    expect(geneses(await signedEvents(page))).toHaveLength(1);
     await expect(
       page.getByTestId("coding-session-workspace-reuse"),
     ).toHaveCount(0);
@@ -767,9 +835,7 @@ test.describe("new session in this workspace", () => {
     // One label in one constant: the two entry points cannot drift.
     await expect(item).toContainText(MENU_LABEL);
     await item.click();
-    await expect(page.getByTestId("new-coding-session-form")).toBeVisible({
-      timeout: 20_000,
-    });
+    await expectFoundedPage(page);
     await expectWorkspaceDraftState(page);
   });
 
@@ -778,21 +844,19 @@ test.describe("new session in this workspace", () => {
   }) => {
     await boot(page, { stub: availableStub() });
     await openWorkspaceDraft(page);
-    const dialog = page.getByRole("dialog");
+    const card = page.getByTestId("coding-session-founded-setup-card");
     // The shot is named for the state it actually shows. A picture of the
-    // ordinary launcher filed as "reuse draft" would be this pack telling the
+    // ordinary page filed as "reuse draft" would be this pack telling the
     // reviewer the feature works — `expectWorkspaceDraftState` asserts which
     // of the two states this build is in, and the name follows it.
     await expectWorkspaceDraftState(page);
     const draftShot = WORKSPACE_REUSE_SEAM_LANDED
       ? "01-reuse-draft"
       : "01-unseeded-draft";
-    await captureLocator(page, dialog, SHOTS, draftShot);
+    await captureLocator(page, card, SHOTS, draftShot);
 
     await page.setViewportSize({ width: 640, height: 900 });
-    await captureLocator(page, dialog, SHOTS, `${draftShot}-narrow`);
-    await page.keyboard.press("Escape");
-    await expect(page.getByTestId("new-coding-session-form")).toHaveCount(0);
+    await captureLocator(page, card, SHOTS, `${draftShot}-narrow`);
     await page.setViewportSize({ width: 1280, height: 1600 });
 
     // Keyboard focus on the menu item, at 250% of the root font size — the
@@ -800,10 +864,7 @@ test.describe("new session in this workspace", () => {
     await page.evaluate(() => {
       document.documentElement.style.fontSize = "40px";
     });
-    await page
-      .getByTestId("project-coding-session-row")
-      .first()
-      .click({ button: "right" });
+    await seededSessionRow(page).click({ button: "right" });
     const item = page.getByRole("menuitem", { name: MENU_LABEL });
     await expect(item).toBeVisible({ timeout: 10_000 });
     await item.focus();
@@ -848,10 +909,7 @@ test.describe("new session in this workspace", () => {
         },
       }),
     });
-    await page
-      .getByTestId("project-coding-session-row")
-      .first()
-      .click({ button: "right" });
+    await seededSessionRow(page).click({ button: "right" });
     const item = page.getByRole("menuitem", { name: MENU_LABEL });
     await expect(item).toBeVisible({ timeout: 10_000 });
     await captureLocator(

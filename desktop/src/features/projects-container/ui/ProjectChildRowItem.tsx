@@ -111,7 +111,13 @@ export function ProjectChildRowItem({
     case "coding-session": {
       if (!onOpenCodingSession) return null;
       const { entry } = row;
-      const details = [entry.sourceChannelLabel, entry.runtimeLabel]
+      // A founded row is a genesis nothing has started: no runtime to name,
+      // so the second line says the one true thing about it instead.
+      const founded = entry.founded === true;
+      const details = [
+        entry.sourceChannelLabel,
+        founded ? "Not started" : entry.runtimeLabel,
+      ]
         .filter(Boolean)
         .join(" · ");
       // Settled is intent, not activity: only the shared closure fact gets the
@@ -180,7 +186,9 @@ export function ProjectChildRowItem({
           aria-label={
             pending
               ? `${entry.label}, starting`
-              : `Open ${entry.label}${details ? `, ${details}` : ""}`
+              : founded
+                ? `Open ${entry.label}, not started`
+                : `Open ${entry.label}${details ? `, ${details}` : ""}`
           }
           isActive={isActiveSession}
           className={cn(
@@ -194,6 +202,10 @@ export function ProjectChildRowItem({
               ? "project-coding-session-row-pending"
               : "project-coding-session-row"
           }
+          // A founded row opens too: its generationId is the founded row id,
+          // and the handler above tells the two routes apart
+          // (`resolveProjectCodingSessionOpenTarget`) — the same path the
+          // group's hotkey activation takes.
           onClick={
             pending
               ? undefined
@@ -228,7 +240,9 @@ export function ProjectChildRowItem({
               pending
                 ? undefined
                 : founderName
-                  ? `Started by ${founderName}`
+                  ? founded
+                    ? `Founded by ${founderName}`
+                    : `Started by ${founderName}`
                   : "Initiator unknown"
             }
           >

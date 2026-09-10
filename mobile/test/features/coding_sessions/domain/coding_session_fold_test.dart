@@ -122,6 +122,7 @@ void main() {
     test('no domain source file carries a raw NUL byte', () {
       for (final path in const [
         'lib/features/coding_sessions/domain/coding_session_fold.dart',
+        'lib/features/coding_sessions/domain/coding_session_pending_turn.dart',
         'lib/features/coding_sessions/domain/coding_session_transcript.dart',
         'lib/features/coding_sessions/domain/coding_session_transcript_item.dart',
       ]) {
@@ -488,7 +489,15 @@ void main() {
         closures: [decodeCodingSessionClosure(closureEvent()).value!],
         genesesByEventId: genesisA(sessionRef: sessionRefB),
       );
-      expect(sessions.single.closed, isFalse);
+      // The stray genesis founds a session of its own — B, never started —
+      // and the close, keyed to A, closes neither.
+      expect(sessions, hasLength(2));
+      final a = sessions.singleWhere((s) => s.sessionRef == sessionRefA);
+      final b = sessions.singleWhere((s) => s.sessionRef == sessionRefB);
+      expect(a.closed, isFalse);
+      expect(a.isFounded, isFalse);
+      expect(b.closed, isFalse);
+      expect(b.isFounded, isTrue);
     });
 
     test('a newer reopen from any member reopens the session', () {

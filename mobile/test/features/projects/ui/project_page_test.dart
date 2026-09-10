@@ -32,6 +32,26 @@ CodingSessionUmbrella _mine({
   status: CodingSessionFoldedStatus(kind: kind),
 );
 
+/// A session the viewer founded on the desktop and nobody has started.
+CodingSessionUmbrella _founded({String key = 'umbrella-founded'}) =>
+    testUmbrella(
+      key: key,
+      sessionRef: key,
+      name: key,
+      executions: const [],
+      founder: const CodingSessionFounder(
+        pubkey: testViewer,
+        resolution: CodingSessionFounderResolution.genesis,
+        genesisRef: 'g',
+      ),
+      status: const CodingSessionFoldedStatus(
+        kind: CodingSessionFoldedStatusKind.founded,
+      ),
+      // Newer than every started session, so activity order alone would put
+      // it first; the status order must put it after working.
+      lastActivityAt: 5000,
+    );
+
 CodingSessionUmbrella _theirs() => testUmbrella(
   key: 'umbrella-theirs',
   sessionRef: null,
@@ -237,6 +257,65 @@ void main() {
     expect(find.text('done'), findsNothing);
     expect(
       find.byKey(const ValueKey('project-hidden-by-state-$testProjectAddress')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('a founded session sits under its project after the working '
+      'one, says who founded it, and wears the hollow ring', (tester) async {
+    await _pump(
+      tester,
+      observer: _observer([
+        _founded(),
+        _mine(key: 'working'),
+        _mine(key: 'idle', kind: CodingSessionFoldedStatusKind.reported),
+      ]),
+    );
+    expect(_rowKeys(tester).toList(), [
+      'project-row-channel:c-general',
+      'project-row-session:c-transport:working',
+      'project-row-session:c-transport:umbrella-founded',
+      'project-row-session:c-transport:idle',
+    ]);
+    expect(find.text('umbrella-founded'), findsOneWidget);
+    expect(find.textContaining('· founded by you'), findsOneWidget);
+    expect(find.textContaining('started by you'), findsNWidgets(2));
+    // The tile merges its semantics, so the dots are told apart by title.
+    expect(
+      find.byTooltip(
+        'Not started — founded, no provider has been asked to run it',
+      ),
+      findsOneWidget,
+    );
+    expect(find.byTooltip('Idle'), findsOneWidget);
+    expect(
+      find.byTooltip(
+        'Running — last reported by the provider, not a live lease',
+      ),
+      findsOneWidget,
+    );
+    final ring = tester.widget<Container>(
+      find.descendant(
+        of: find.byKey(
+          const ValueKey('project-row-session:c-transport:umbrella-founded'),
+        ),
+        matching: find.byKey(const ValueKey('coding-session-status-dot')),
+      ),
+    );
+    final decoration = ring.decoration! as BoxDecoration;
+    expect(decoration.color, Colors.transparent);
+    expect(decoration.border, isNotNull);
+
+    // Tapping the founded row opens its page, which says what to do next.
+    await tester.tap(
+      find.byKey(
+        const ValueKey('project-row-session:c-transport:umbrella-founded'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byType(CodingSessionPage), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('coding-session-founded')),
       findsOneWidget,
     );
   });

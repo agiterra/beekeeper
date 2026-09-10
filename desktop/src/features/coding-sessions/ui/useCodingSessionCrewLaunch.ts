@@ -233,10 +233,21 @@ export function useCodingSessionCrewLaunch(input: {
       setIsLaunching(true);
       // The goal is published inside `publishGenesis`, so this is written
       // before the launch and read after it.
-      let goal: CodingSessionCrewLaunchGoalOutcome = {
-        published: false,
-        reason: "the launch stopped before the genesis was published",
-      };
+      //
+      // An umbrella that already exists is the one case answered up front:
+      // this launch publishes no genesis and no goal, and claims neither.
+      // Its goal went out when the session was founded, and the caller —
+      // the founded screen's Start — proceeds only after reading that 44227
+      // back from the relay (a goal it cannot read blocks Start). So
+      // `published: true` here reports a record that is on the wire, never
+      // one this launch fabricated.
+      let goal: CodingSessionCrewLaunchGoalOutcome =
+        launchInput.existingUmbrella
+          ? { published: true, reason: null }
+          : {
+              published: false,
+              reason: "the launch stopped before the genesis was published",
+            };
       try {
         const { providerAuthorityPubkey, providerInstanceRef } =
           codingSessionCrewLaunchRuntimeBinding(runtimeTarget);
@@ -337,6 +348,17 @@ export function useCodingSessionCrewLaunch(input: {
             workdir,
           }) => {
             const commandId = deps.newSeatCommandId();
+            if (launchInput.existingUmbrella) {
+              // Membership rides the genesis dep on the founding path, and
+              // that dep is never called for an umbrella that already
+              // exists. Strict membership on 442xx still holds: a provider
+              // that joins after the create is published never sees it, so
+              // it joins here, before the seat is staged or signed.
+              await deps.ensureProviderMembership({
+                channelId,
+                providerPubkey: providerAuthorityPubkey,
+              });
+            }
             // What the staging call found on this computer, kept so the step
             // list can say a seat carries no role skills instead of implying
             // it does.

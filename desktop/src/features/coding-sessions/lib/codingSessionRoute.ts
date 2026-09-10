@@ -1,7 +1,40 @@
 export const CODING_SESSION_ROUTE =
   "/coding-sessions/$channelId/$generationId" as const;
 
+/**
+ * The route of a founded umbrella that has no execution yet — a genesis with
+ * a goal and a name, waiting for somebody to pick who leads and start it.
+ * Keyed by `sessionRef` because that is the only identity such a session has;
+ * a sentinel generation id would feed the generation route a lie.
+ */
+export const CODING_SESSION_FOUNDED_ROUTE =
+  "/coding-sessions/$channelId/founded/$sessionRef" as const;
+
 export type CodingSessionSurface = "main" | "popout";
+
+export function buildFoundedCodingSessionPath(
+  channelId: string,
+  sessionRef: string,
+): string {
+  return `/coding-sessions/${encodeURIComponent(channelId)}/founded/${encodeURIComponent(
+    sessionRef,
+  )}`;
+}
+
+/**
+ * The shelf row id of a founded umbrella, in the slot a generation id fills
+ * for started sessions. Mirrors the pending row's `pending:<commandId>`; it
+ * can never collide with a real generation key, which carries the
+ * `coding-session-transcript-generation/v1` structured-key prefix.
+ */
+export function foundedCodingSessionRowId(sessionRef: string): string {
+  return `founded:${sessionRef}`;
+}
+
+/** The sessionRef behind a founded row id, or null for any other id. */
+export function parseFoundedCodingSessionRowId(rowId: string): string | null {
+  return rowId.startsWith("founded:") ? rowId.slice("founded:".length) : null;
+}
 
 export function buildCodingSessionPath(
   channelId: string,

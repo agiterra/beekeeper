@@ -249,5 +249,7 @@ function statusDotClass(status: CodingSessionWorkspaceStatus): string {
   }
   // A seat blocked on a person is not attention-red and not resting-grey.
   if (status.kind === "waiting") return "bg-amber-500";
+  // Founded and never started is neither attention nor rest: hollow neutral.
+  if (status.kind === "founded") return "bg-muted-foreground/45";
   return status.attention ? "bg-destructive" : "bg-amber-500";
 }

@@ -160,7 +160,11 @@ class CodingSessionPage extends HookConsumerWidget {
               ),
             ),
           ),
-          if (session != null)
+          // A founded session has no execution to address, so there is no
+          // composer at all — not the "every generation is stopped" line,
+          // which would claim generations that never existed. The header
+          // says where to start it.
+          if (session != null && !session.isFounded)
             _SessionComposer(
               session: session,
               binding: binding,
@@ -262,7 +266,9 @@ class _CodingSessionBody extends StatelessWidget {
             showLabel: blocks.length > 1 || resolved.executions.length > 1,
           ),
       ...pendingRows,
-      if (!codingSessionMaySteer(standing))
+      // The disclosure explains a missing composer; a founded session has
+      // none for everybody, which the header already says.
+      if (!codingSessionMaySteer(standing) && !resolved.isFounded)
         _SteerDisclosure(standing: standing),
     ];
 

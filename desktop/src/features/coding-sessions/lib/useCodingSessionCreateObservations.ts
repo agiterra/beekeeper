@@ -20,12 +20,19 @@ import {
   subscribeToObservedCodingSessionEvents,
 } from "./codingSessionObservedEvents";
 import type { RelayEvent } from "@/shared/api/types";
+import type { CodingSessionGenesisObservation } from "./codingSessionTypes";
 
 const CREATE_OBSERVATION_HISTORY_LIMIT = 1000;
 
 export type CodingSessionCreateObservationSnapshot = {
   /** Receipt-joined create observations, earliest first. */
   observations: CodingSessionUmbrellaCreateObservation[];
+  /**
+   * Accepted, undisputed 44226 geneses, oldest first — every umbrella that
+   * has been founded, whether or not anything runs under it. The founded
+   * projection subtracts `observations` from this list.
+   */
+  geneses: CodingSessionGenesisObservation[];
   /** True while the first history load for this scope is outstanding. */
   isLoading: boolean;
   errorMessage: string | null;
@@ -34,6 +41,7 @@ export type CodingSessionCreateObservationSnapshot = {
 };
 
 const EMPTY_OBSERVATIONS: CodingSessionUmbrellaCreateObservation[] = [];
+const EMPTY_GENESES: CodingSessionGenesisObservation[] = [];
 
 function emptySnapshot(
   scopeIdentity: string,
@@ -41,6 +49,7 @@ function emptySnapshot(
 ): CodingSessionCreateObservationSnapshot {
   return {
     observations: EMPTY_OBSERVATIONS,
+    geneses: EMPTY_GENESES,
     isLoading,
     errorMessage: null,
     scopeIdentity,
@@ -145,6 +154,7 @@ export function useCodingSessionCreateObservations(
       if (cancelled) return;
       setSnapshot({
         observations: store.snapshot(stableChannelIds),
+        geneses: store.foundedSnapshot(stableChannelIds),
         isLoading: historyLoading,
         errorMessage:
           historyError && liveError

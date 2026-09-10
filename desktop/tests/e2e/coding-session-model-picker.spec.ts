@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
-import { installMockBridge } from "../helpers/bridge";
+import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
+import { seedActiveIdentity } from "../helpers/onboarding";
 
 /**
  * The picker's keyboard, proven rather than drawn.
@@ -38,7 +39,60 @@ function runtime(input: {
   };
 }
 
+/**
+ * The founded page reads what this computer remembers about working
+ * directories; the shared bridge does not answer that command, so it is
+ * answered here with an empty store, as a machine that has never opened a
+ * coding session would answer it.
+ */
+function workdirStateInitScript() {
+  type Invoke = (
+    cmd: string,
+    args?: Record<string, unknown>,
+    options?: unknown,
+  ) => Promise<unknown>;
+  let internals: Record<string, unknown> | undefined;
+  Object.defineProperty(window, "__TAURI_INTERNALS__", {
+    configurable: true,
+    get: () => internals,
+    set: (value: Record<string, unknown>) => {
+      internals = value;
+      let real: Invoke | undefined;
+      const wrapped: Invoke = async (cmd, args, options) => {
+        if (cmd === "get_coding_session_workdir_state") {
+          return {
+            version: 1,
+            byProject: {},
+            byChannel: {},
+            mru: [],
+            pending: {},
+          };
+        }
+        if (!real) throw new Error("mock invoke is not installed yet");
+        return real(cmd, args, options);
+      };
+      Object.defineProperty(value, "invoke", {
+        configurable: true,
+        get: () => (real ? wrapped : undefined),
+        set: (fn: Invoke) => {
+          real = fn;
+        },
+      });
+    },
+  });
+}
+
+/**
+ * "New coding session" founds the topic on the click and lands on the founded
+ * page, where the runtime and model picker lives (no dialog since
+ * 2026-09-10).
+ */
 async function openCreateScreen(page: import("@playwright/test").Page) {
+  // A real signing key: the click founds a genesis, and the founded page
+  // reads it back through the catalog, which verifies signatures. Without an
+  // identity the bridge signs with a placeholder `sig` and the page reports
+  // the session missing.
+  await seedActiveIdentity(page, TEST_IDENTITIES.tyler);
   await installMockBridge(page, {
     globalAgentConfig: {
       env_vars: {},
@@ -73,14 +127,14 @@ async function openCreateScreen(page: import("@playwright/test").Page) {
       }),
     ],
   });
+  await page.addInitScript(workdirStateInitScript);
   await page.goto("/");
   await page.getByTestId("channel-engineering").click();
   await page.getByTestId("channel-coding-sessions-trigger").click();
   await page.getByTestId("channel-coding-sessions-new").click();
-  await page
-    .getByTestId("new-coding-session-configuration")
-    .locator("summary")
-    .click();
+  await expect(
+    page.getByTestId("coding-session-founded-workspace-founded"),
+  ).toBeVisible({ timeout: 20_000 });
   await expect(page.getByTestId("coding-session-model-picker")).toBeVisible();
 }
 

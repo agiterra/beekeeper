@@ -47,7 +47,7 @@ export default defineConfig({
         "**/coding-session-model-picker.spec.ts",
         "**/coding-session-capacity.spec.ts",
         "**/coding-session-goal.spec.ts",
-        "**/coding-session-launch-form.spec.ts",
+        "**/coding-session-founded-setup.spec.ts",
         "**/coding-session-transcript-narrative-screenshots.spec.ts",
         "**/coding-session-elision-screenshots.spec.ts",
         "**/coding-session-seat-bee.spec.ts",

@@ -89,3 +89,34 @@ test("an unknown or unlinked channel resolves to nothing rather than guessing", 
     null,
   );
 });
+
+test("a founded route selects the founded shelf row by its row id", async () => {
+  const { foundedCodingSessionRowId } = await import(
+    "@/features/coding-sessions/lib/codingSessionRoute.ts"
+  );
+  const REF = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+  assert.equal(
+    activeCodingSessionKey(`/coding-sessions/${CHANNEL}/founded/${REF}`, {
+      channelId: CHANNEL,
+      sessionRef: REF,
+    }),
+    codingSessionRowKey(CHANNEL, foundedCodingSessionRowId(REF)),
+  );
+  // Never the generation key for the same ref: the founded row and a
+  // started row of one umbrella are different rows.
+  assert.notEqual(
+    activeCodingSessionKey(`/coding-sessions/${CHANNEL}/founded/${REF}`, {
+      channelId: CHANNEL,
+      sessionRef: REF,
+    }),
+    codingSessionRowKey(CHANNEL, REF),
+  );
+  // Off a session route, a sessionRef param selects nothing.
+  assert.equal(
+    activeCodingSessionKey(`/channels/${CHANNEL}`, {
+      channelId: CHANNEL,
+      sessionRef: REF,
+    }),
+    null,
+  );
+});

@@ -1,7 +1,7 @@
 import * as React from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 
-import { openNewProjectCodingSessionDialog } from "@/features/coding-sessions/newCodingSessionDialogStore";
+import { requestProjectCodingSessionFounding } from "@/features/coding-sessions/newCodingSessionDialogStore";
 import { usePreviewFeatureWarning } from "@/shared/features";
 
 export const Route = createFileRoute("/projects/$projectId/sessions/new")({
@@ -9,16 +9,17 @@ export const Route = createFileRoute("/projects/$projectId/sessions/new")({
 });
 
 /**
- * The project create flow is a dialog now. This URL survives as an opener so
- * links into it keep working; the window falls back to the project itself,
- * which is what the dialog sits over.
+ * A project session is founded on the click now. This URL survives as an
+ * opener so links into it keep working: it writes the project founding
+ * request (the host in the app shell resolves the channel, founds the session
+ * and opens its page) and falls back to the project itself meanwhile.
  */
 function ProjectNewCodingSessionRouteComponent() {
   usePreviewFeatureWarning("projects");
   const { projectId } = Route.useParams();
   const navigate = useNavigate();
   React.useEffect(() => {
-    openNewProjectCodingSessionDialog(projectId);
+    requestProjectCodingSessionFounding(projectId);
     void navigate({
       to: "/projects/$projectId",
       params: { projectId },

@@ -59,6 +59,12 @@ export type ProjectCodingSessionShelfEntry = {
   /** True only on optimistic rows synthesized for a published-but-not-yet-
    * acknowledged create (see codingSessionPendingLifecycle). */
   pending?: boolean;
+  /**
+   * True only on rows projected from a genesis nothing has started: a
+   * founded umbrella with no execution (see projectFoundedCodingSessionShelf).
+   * Such a row's `generationId` is the founded row id, never a generation.
+   */
+  founded?: true;
 };
 
 export type ProjectCodingSessionShelfState =
@@ -401,12 +407,15 @@ function umbrellaStatusPriority(status: CodingSessionWorkspaceStatus): number {
     // a reader can act on.
     case "waiting":
       return 1;
-    case "idle":
+    // Founded and never started: awaiting its Start, above quiet history.
+    case "founded":
       return 2;
-    case "ended":
+    case "idle":
       return 3;
-    case "unknown":
+    case "ended":
       return 4;
+    case "unknown":
+      return 5;
   }
 }
 
@@ -568,12 +577,14 @@ function statusPriority(status: CodingSessionWorkspaceStatus): number {
       return 0;
     case "waiting":
       return 1;
-    case "unknown":
+    case "founded":
       return 2;
-    case "idle":
+    case "unknown":
       return 3;
-    case "ended":
+    case "idle":
       return 4;
+    case "ended":
+      return 5;
   }
 }
 

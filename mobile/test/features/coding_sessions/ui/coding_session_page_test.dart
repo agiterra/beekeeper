@@ -527,6 +527,115 @@ void main() {
     expect(binding.refreshCount, 1);
   });
 
+  testWidgets('a founded session says where to start it, offers no composer '
+      'and no Stop, and still lets its founder rename it', (tester) async {
+    // A wire-shaped ref: the rename is signed against it, and the command
+    // builder refuses anything that is not a UUID.
+    const sessionRef = '6f1c9a52-0f2f-4f7e-8a5b-2c1d0e9f8a7b';
+    final founded = testUmbrella(
+      key: sessionRef,
+      sessionRef: sessionRef,
+      name: 'Keystone lead',
+      goal: 'Ship the founded row',
+      executions: const [],
+      founder: const CodingSessionFounder(
+        pubkey: testSignerPubkey,
+        resolution: CodingSessionFounderResolution.genesis,
+        genesisRef:
+            'aa0011223344556677889900aabbccddeeff00112233445566778899aabbccdd',
+      ),
+      status: const CodingSessionFoldedStatus(
+        kind: CodingSessionFoldedStatusKind.founded,
+      ),
+    );
+    final binding = FakeObserverBinding(
+      testSnapshot(sessions: [founded]),
+      signerPubkey: testSignerPubkey,
+    );
+    await _pump(tester, binding, sessionKey: sessionRef);
+
+    // The app bar and the header both carry the name.
+    expect(find.text('Keystone lead'), findsNWidgets(2));
+    expect(find.text('Not started'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('coding-session-founded')),
+      findsOneWidget,
+    );
+    expect(find.text(codingSessionFoundedHeaderLabel), findsOneWidget);
+    expect(find.text('Ship the founded row'), findsOneWidget);
+    // Nothing was asked of a provider, so nothing is said about reaching one.
+    expect(
+      find.byKey(const ValueKey('coding-session-reachability')),
+      findsNothing,
+    );
+    expect(find.textContaining('unknown'), findsNothing);
+    expect(find.textContaining('Idle'), findsNothing);
+    // No composer of either kind: not the editor, and not the line that
+    // claims every generation is stopped.
+    expect(find.byKey(const ValueKey('coding-session-composer')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('coding-session-composer-unavailable')),
+      findsNothing,
+    );
+    expect(find.text(codingSessionNoLiveExecutionLabel), findsNothing);
+    expect(
+      find.byKey(const ValueKey('coding-session-steer-disclosure')),
+      findsNothing,
+    );
+
+    // The founder's menu: Rename, Set goal and Close, and no Stop.
+    await tester.tap(find.byKey(const ValueKey('coding-session-actions')));
+    await tester.pumpAndSettle();
+    expect(find.text('Rename'), findsOneWidget);
+    expect(find.text('Set goal'), findsOneWidget);
+    expect(find.text('Close'), findsOneWidget);
+    expect(find.text('Stop execution'), findsNothing);
+    expect(
+      find.byKey(const ValueKey('coding-session-action-stop')),
+      findsNothing,
+    );
+    await tester.tap(find.text('Rename'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('coding-session-sheet-field')),
+      'Renamed before it ran',
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('coding-session-sheet-save')));
+    await tester.pumpAndSettle();
+    expect(binding.relay.published.last.kind, EventKind.codingSessionName);
+    expect(binding.relay.published.last.content, 'Renamed before it ran');
+  });
+
+  testWidgets('a founded session shows a non-founder no composer and no '
+      'menu, and no steer disclosure either', (tester) async {
+    final founded = testUmbrella(
+      executions: const [],
+      status: const CodingSessionFoldedStatus(
+        kind: CodingSessionFoldedStatusKind.founded,
+      ),
+    );
+    final binding = FakeObserverBinding(
+      testSnapshot(sessions: [founded]),
+      signerPubkey: testOperatorPubkey,
+    );
+    await _pump(tester, binding);
+    expect(
+      find.byKey(const ValueKey('coding-session-founded')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('coding-session-actions')), findsNothing);
+    expect(find.byKey(const ValueKey('coding-session-composer')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('coding-session-composer-unavailable')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('coding-session-steer-disclosure')),
+      findsNothing,
+    );
+  });
+
   testWidgets('resolves a session by its execution key', (tester) async {
     final binding = FakeObserverBinding(testSnapshot());
     final executionKey = testTarget().executionKey;

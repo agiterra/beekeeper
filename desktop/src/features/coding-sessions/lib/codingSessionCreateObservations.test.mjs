@@ -774,3 +774,102 @@ test("ingestion signals only new relevant evidence, preserving duplicate and unr
   );
   assert.equal(ingest([invalid]), false);
 });
+
+// ---------------------------------------------------------------------------
+// Founded umbrellas: a genesis nothing has started is still a founding fact.
+// ---------------------------------------------------------------------------
+
+test("a genesis with no create is a founded umbrella, and the classification carries its createdAt", () => {
+  const genesis = genesisEvent({ createdAt: 1_799_999_000 });
+  const classified = classifyCodingSessionGenesisEvent(
+    genesis,
+    new Set([CHANNEL_ID]),
+  );
+  assert.equal(classified.kind, "genesis");
+  assert.equal(classified.createdAt, 1_799_999_000);
+
+  const store = ingest([genesis]);
+  assert.deepEqual(store.snapshot([CHANNEL_ID]), []);
+  assert.deepEqual(store.foundedSnapshot([CHANNEL_ID]), [
+    {
+      channelId: CHANNEL_ID,
+      sessionRef: SESSION_REF,
+      genesisRef: genesis.id,
+      founderPubkey: FOUNDER_PUBKEY,
+      foundedAt: 1_799_999_000,
+    },
+  ]);
+  assert.equal(store.counts().disputedGenesisCount, 0);
+});
+
+test("a genesis stays in the founded snapshot once its create is joined — subtracting is the projection's job", () => {
+  const genesis = genesisEvent();
+  const store = ingest([
+    genesis,
+    createEvent({ genesisRef: genesis.id }),
+    receiptEvent(),
+  ]);
+  assert.equal(store.snapshot([CHANNEL_ID]).length, 1);
+  assert.equal(store.foundedSnapshot([CHANNEL_ID]).length, 1);
+});
+
+test("two geneses for one ref are disputed: neither is founded, and the count says so", () => {
+  const first = genesisEvent({ createdAt: 1_799_999_000 });
+  const second = genesisEvent({
+    secret: TEAMMATE_SECRET,
+    createdAt: 1_799_999_001,
+  });
+  const store = ingest([first, second]);
+  assert.deepEqual(store.foundedSnapshot([CHANNEL_ID]), []);
+  assert.equal(store.counts().disputedGenesisCount, 1);
+
+  // A different ref in the same channel is untouched by the dispute.
+  const otherRef = "6c8f2d3b-01e5-4c1f-b2a4-8d3e9f7a5b21";
+  const other = genesisEvent({ sessionRef: otherRef });
+  const mixed = ingest([first, second, other]);
+  assert.deepEqual(
+    mixed.foundedSnapshot([CHANNEL_ID]).map((entry) => entry.sessionRef),
+    [otherRef],
+  );
+  assert.equal(mixed.counts().disputedGenesisCount, 1);
+});
+
+test("founded snapshots are ordered oldest first and scoped to the channels asked for", () => {
+  const older = genesisEvent({
+    sessionRef: "6c8f2d3b-01e5-4c1f-b2a4-8d3e9f7a5b21",
+    createdAt: 1_799_999_000,
+  });
+  const newer = genesisEvent({ createdAt: 1_799_999_500 });
+  const elsewhere = genesisEvent({
+    channelId: "channel-2",
+    sessionRef: "7d9a3e4c-12f6-4d2a-c3b5-9e4f0a8b6c32",
+  });
+  const store = new CodingSessionCreateObservationStore();
+  store.ingestRelayEvents(
+    [newer, elsewhere, older],
+    [CHANNEL_ID, "channel-2"],
+    AUTHORITY,
+  );
+  assert.deepEqual(
+    store.foundedSnapshot([CHANNEL_ID]).map((entry) => entry.genesisRef),
+    [older.id, newer.id],
+  );
+  assert.deepEqual(
+    store.foundedSnapshot(["channel-2"]).map((entry) => entry.channelId),
+    ["channel-2"],
+  );
+  assert.deepEqual(store.foundedSnapshot(["channel-3"]), []);
+  // A genesis in a channel the store was never asked to read is irrelevant,
+  // not founded: it was never accepted.
+  const scoped = ingest([elsewhere]);
+  assert.deepEqual(scoped.foundedSnapshot(["channel-2"]), []);
+});
+
+test("an unsigned or tampered genesis founds nothing", () => {
+  const genesis = genesisEvent();
+  const tampered = { ...genesis, content: genesis.content.replace("v", "V") };
+  const unsigned = { ...genesis, sig: "0".repeat(128) };
+  const store = ingest([tampered, unsigned]);
+  assert.deepEqual(store.foundedSnapshot([CHANNEL_ID]), []);
+  assert.equal(store.counts().invalidSignatureCount >= 1, true);
+});

@@ -1,12 +1,6 @@
-import { ShieldCheck } from "lucide-react";
-
-import { cn } from "@/shared/lib/cn";
-import { Switch } from "@/shared/ui/switch";
 import {
-  codingSessionGovernedLockReason,
-  codingSessionLaunchIsGoverned,
-  codingSessionLeadIdentityLine,
   type CodingSessionLaunchLead,
+  codingSessionLeadIdentityLine,
 } from "../lib/codingSessionLaunchForm";
 
 /** A managed agent this computer could seat as the lead. */
@@ -24,13 +18,12 @@ export type NewCodingSessionLeadCandidate = {
 };
 
 /**
- * Who leads this session — you, or one seated agent.
+ * Who leads this Team session — one seated agent.
  *
- * The whole reason this control exists is that the answer decides everything
- * below it: an agent lead means a governed session, a genesis, an authority
- * chain and a bench; leading it yourself means one execution and none of
- * that. The old dialog asked the same question as two tabs, which let the two
- * halves drift until the Team tab had no provider control at all.
+ * Team means an agent leads (Andy, 2026-09-10); leading it yourself is the
+ * Solo switch above this field, so "You" is not an option here. Nothing
+ * picked is a placeholder, and readiness turns it into the `lead` blocker
+ * rather than letting a session start with nobody in the seat.
  *
  * The identity line carries the whole name **and** the canonical short pubkey,
  * because two managed agents can be called Keystone and this is the screen
@@ -47,8 +40,6 @@ export function NewCodingSessionLeadField({
   lead: CodingSessionLaunchLead;
   onLeadChange: (actor: string | null) => void;
 }) {
-  const governed = codingSessionLaunchIsGoverned(lead);
-  const lockReason = codingSessionGovernedLockReason(lead);
   const seatable = candidates.filter((candidate) => candidate.role !== null);
   return (
     <div className="flex flex-col gap-2" data-testid="new-coding-session-lead">
@@ -68,7 +59,7 @@ export function NewCodingSessionLeadField({
         }
         value={lead.kind === "agent" ? lead.actor : ""}
       >
-        <option value="">You</option>
+        <option value="">Pick an agent…</option>
         {seatable.map((candidate) => (
           <option key={candidate.pubkey} value={candidate.pubkey}>
             {candidate.name} · {candidate.role}
@@ -90,54 +81,24 @@ export function NewCodingSessionLeadField({
       {seatable.length === 0 ? (
         <p className="text-2xs text-muted-foreground">
           No identity on this computer carries a role, so there is nobody to
-          lead but you. Install role packs from the project's{" "}
-          <code>personas/roles</code> to change that.
+          lead a team. Install role packs from the project's{" "}
+          <code>personas/roles</code>, or switch to Solo.
         </p>
       ) : null}
-
-      <div
-        className={cn(
-          "flex items-start gap-3 rounded-lg border border-border/60 bg-muted/30 px-3 py-2.5",
-        )}
-        data-testid="new-coding-session-governed"
-      >
-        <ShieldCheck
-          className={cn(
-            "mt-0.5 size-4 shrink-0",
-            governed ? "text-foreground" : "text-muted-foreground",
-          )}
-        />
-        <div className="flex min-w-0 flex-col gap-1">
-          <span className="text-sm font-medium">
-            {governed ? "Governed" : "Not governed"}
-          </span>
-          {/* Derived, never free: the switch shows the state and says who
-              decided it, rather than pretending to be a decision of its own. */}
-          <span
-            className="text-2xs text-muted-foreground"
-            data-testid="new-coding-session-governed-reason"
-          >
-            {lockReason}
-          </span>
-        </div>
-        <Switch
-          aria-label="Governed session"
-          checked={governed}
-          className="ml-auto mt-0.5"
-          data-testid="new-coding-session-governed-switch"
-          disabled
-        />
-      </div>
     </div>
   );
 }
 
-/** Turn the picked pubkey into the lead the rest of the form reads. */
+/**
+ * Turn the picked pubkey into the lead the rest of the form reads.
+ *
+ * No fallback to "you": that is the Solo mode's answer, made by the setup
+ * hook. Nothing picked — or a stale actor no longer among the candidates —
+ * is `unset`, which readiness names rather than seating anybody by default.
+ */
 export function resolveNewCodingSessionLead(input: {
   actor: string | null;
   candidates: readonly NewCodingSessionLeadCandidate[];
-  /** How the founder is named on their own screen. */
-  youLabel: string;
 }): CodingSessionLaunchLead {
   const candidate =
     input.actor === null
@@ -146,7 +107,7 @@ export function resolveNewCodingSessionLead(input: {
           (entry) => entry.pubkey === input.actor && entry.role !== null,
         ) ?? null);
   if (!candidate || candidate.role === null) {
-    return { kind: "you", label: input.youLabel };
+    return { kind: "unset" };
   }
   return {
     kind: "agent",

@@ -9,8 +9,8 @@ import {
 import { cacheSearchHitEvent } from "@/app/navigation/searchHitEventCache";
 import { resolveSearchHitDestination } from "@/app/navigation/resolveSearchHitDestination";
 import {
-  openNewCodingSessionDialog,
-  openNewProjectCodingSessionDialog,
+  requestCodingSessionFounding,
+  requestProjectCodingSessionFounding,
 } from "@/features/coding-sessions/newCodingSessionDialogStore";
 import type { SearchHit } from "@/shared/api/types";
 
@@ -287,27 +287,42 @@ export function useAppNavigation() {
     [commitNavigation],
   );
 
+  const goFoundedCodingSession = React.useCallback(
+    (channelId: string, sessionRef: string, behavior?: NavigationBehavior) =>
+      commitNavigation(
+        {
+          to: "/coding-sessions/$channelId/founded/$sessionRef",
+          params: { channelId, sessionRef },
+          search: {},
+        },
+        behavior,
+      ),
+    [commitNavigation],
+  );
+
   /**
-   * Creating a session opens a dialog rather than navigating.
+   * Creating a session founds it, rather than navigating to a form.
    *
-   * It stays on this hook anyway: every caller already reaches for
-   * `useAppNavigation` to start one, and routing the intent through the same
-   * funnel is what keeps a single dialog from being opened two ways. The
-   * `behavior` argument is accepted and ignored — a modal has no history
-   * entry to replace and no new window to open into.
+   * The click writes a founding request; the host in the app shell publishes
+   * the genesis and navigates to the founded session's page itself. It stays
+   * on this hook anyway: every caller already reaches for `useAppNavigation`
+   * to start one, and routing the intent through the same funnel is what
+   * keeps one click from founding two ways. The `behavior` argument is
+   * accepted and ignored — the host's own navigation is a push, so Back
+   * returns to where the click was.
    */
   const goNewCodingSession = React.useCallback(
     async (channelId?: string, _behavior?: NavigationBehavior) => {
-      openNewCodingSessionDialog(channelId ?? null);
+      requestCodingSessionFounding(channelId ?? null);
     },
     [],
   );
 
-  /** The project-scoped create flow: the project is decided by the caller, and
+  /** The project-scoped founding: the project is decided by the caller, and
    * the session's channel is derived from it rather than chosen. */
   const goNewProjectCodingSession = React.useCallback(
     async (projectId: string, _behavior?: NavigationBehavior) => {
-      openNewProjectCodingSessionDialog(projectId);
+      requestProjectCodingSessionFounding(projectId);
     },
     [],
   );
@@ -422,6 +437,7 @@ export function useAppNavigation() {
     goAgents,
     goChannel,
     goCodingSession,
+    goFoundedCodingSession,
     goForumPost,
     goHome,
     goInbox,

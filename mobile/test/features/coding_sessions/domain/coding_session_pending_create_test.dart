@@ -104,6 +104,25 @@ void main() {
         expect(phase.kind, CodingSessionPendingCreateKind.created);
       },
     );
+
+    test('the founded umbrella this device\'s own genesis folds into does '
+        'not settle the create it is still waiting on', () {
+      final phase = settleCodingSessionPendingCreate(
+        _pending(),
+        receipts: const [],
+        sessions: [
+          testUmbrella(
+            key: 'umbrella-new',
+            sessionRef: 'umbrella-new',
+            executions: const [],
+            status: const CodingSessionFoldedStatus(
+              kind: CodingSessionFoldedStatusKind.founded,
+            ),
+          ),
+        ],
+      );
+      expect(phase.kind, CodingSessionPendingCreateKind.awaitingProvider);
+    });
   });
 
   test('the store key is the channel and the command', () {

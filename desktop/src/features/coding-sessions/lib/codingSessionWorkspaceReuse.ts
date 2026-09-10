@@ -19,6 +19,28 @@ import type { SeatWorktreeRow } from "@/shared/api/tauriCodingSessionWorktrees";
  * with a directory this session never ran in.
  */
 
+/**
+ * One session's existing checkout, offered to a *new* session.
+ *
+ * Resolved and verified before the founding request is written: only an
+ * "available" resolution produces one of these, so nothing downstream has to
+ * ask whether the directory is really there. It is a local launch hint and
+ * nothing more — the path names one machine's disk and never enters a
+ * published event field.
+ */
+export type NewCodingSessionWorkspaceReuse = {
+  /** Absolute path on this machine, already verified by the caller. */
+  path: string;
+  /** Recorded branch, display only. Never published. */
+  branch: string | null;
+  /**
+   * Only ever `"recorded"`: the branch the worktree was cut on, which is a
+   * creation-time fact and cannot go stale. A live head is never carried
+   * here — the founded page reads that itself, on open.
+   */
+  branchSource?: "recorded" | null;
+};
+
 export type WorkspaceReuseAvailability =
   /** A recorded directory on this computer, present now. */
   | "available"

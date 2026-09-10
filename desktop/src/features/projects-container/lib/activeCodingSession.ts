@@ -7,7 +7,12 @@
  * state since they existed (`isActiveChannel` for channels,
  * `activeShellSessionId` for terminals); coding sessions never did, so
  * opening one left the sidebar showing nothing selected at all.
+ *
+ * A founded umbrella has no generation; its route carries a `sessionRef`
+ * instead, and its shelf row sits in the generation slot under the founded
+ * row id — so the same key compares.
  */
+import { foundedCodingSessionRowId } from "@/features/coding-sessions/lib/codingSessionRoute";
 
 /** The key a session row compares itself against. */
 export function codingSessionRowKey(
@@ -27,10 +32,17 @@ export function codingSessionRowKey(
  */
 export function activeCodingSessionKey(
   pathname: string,
-  params: { channelId?: string; generationId?: string },
+  params: { channelId?: string; generationId?: string; sessionRef?: string },
 ): string | null {
   if (!pathname.startsWith("/coding-sessions/")) return null;
-  if (!params.channelId || !params.generationId) return null;
+  if (!params.channelId) return null;
+  if (params.sessionRef) {
+    return codingSessionRowKey(
+      params.channelId,
+      foundedCodingSessionRowId(params.sessionRef),
+    );
+  }
+  if (!params.generationId) return null;
   return codingSessionRowKey(params.channelId, params.generationId);
 }
 

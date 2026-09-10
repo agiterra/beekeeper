@@ -138,6 +138,10 @@ enum CodingSessionFoldedStatusKind {
   /// own reported status stands.
   reported,
 
+  /// Founded (a genesis, and perhaps a name and goal) but never started: no
+  /// provider has been asked to run it, so there is no execution to fold.
+  founded,
+
   /// Nothing readable to fold.
   unknown,
 }
@@ -248,6 +252,11 @@ class CodingSessionUmbrella {
     required this.status,
     required this.lastActivityAt,
   });
+
+  /// True for a session that was founded but never started: a genesis with
+  /// no execution behind it. Starting one is a desktop act (seats need host
+  /// custody), so the phone reads it, and steers nothing.
+  bool get isFounded => executions.isEmpty;
 
   /// What to call this session on screen.
   ///
@@ -470,6 +479,40 @@ List<CodingSessionUmbrella> groupCodingSessionUmbrellas({
     sessionRefByKey[key] = claim;
   }
 
+  CodingSessionName? nameFor(String? sessionRef, String channelId) =>
+      sessionRef == null
+      ? null
+      : _newestByRef(
+          names.where(
+            (record) =>
+                record.sessionRef == sessionRef &&
+                record.ref.channelId == channelId,
+          ),
+          (record) => record.ref,
+        );
+  CodingSessionGoal? goalFor(String? sessionRef, String channelId) =>
+      sessionRef == null
+      ? null
+      : _newestByRef(
+          goals.where(
+            (record) =>
+                record.sessionRef == sessionRef &&
+                record.ref.channelId == channelId,
+          ),
+          (record) => record.ref,
+        );
+  CodingSessionClosure? closureFor(String? sessionRef, String channelId) =>
+      sessionRef == null
+      ? null
+      : _newestAuthorizedClosure(
+          closures.where(
+            (record) =>
+                record.sessionRef == sessionRef &&
+                record.ref.channelId == channelId,
+          ),
+          genesesByEventId,
+        );
+
   final umbrellas = <CodingSessionUmbrella>[];
   for (final entry in grouped.entries) {
     final members = entry.value;
@@ -485,36 +528,9 @@ List<CodingSessionUmbrella> groupCodingSessionUmbrellas({
       creates: ownCreates,
       genesesByEventId: genesesByEventId,
     );
-    final name = sessionRef == null
-        ? null
-        : _newestByRef(
-            names.where(
-              (record) =>
-                  record.sessionRef == sessionRef &&
-                  record.ref.channelId == channelId,
-            ),
-            (record) => record.ref,
-          );
-    final goal = sessionRef == null
-        ? null
-        : _newestByRef(
-            goals.where(
-              (record) =>
-                  record.sessionRef == sessionRef &&
-                  record.ref.channelId == channelId,
-            ),
-            (record) => record.ref,
-          );
-    final closure = sessionRef == null
-        ? null
-        : _newestAuthorizedClosure(
-            closures.where(
-              (record) =>
-                  record.sessionRef == sessionRef &&
-                  record.ref.channelId == channelId,
-            ),
-            genesesByEventId,
-          );
+    final name = nameFor(sessionRef, channelId);
+    final goal = goalFor(sessionRef, channelId);
+    final closure = closureFor(sessionRef, channelId);
     var lastActivityAt = 0;
     for (final execution in members) {
       if (execution.lastActivityAt > lastActivityAt) {
@@ -532,6 +548,55 @@ List<CodingSessionUmbrella> groupCodingSessionUmbrellas({
         goal: goal?.content,
         closed: closure?.closed ?? false,
         status: foldCodingSessionUmbrellaStatus(members),
+        lastActivityAt: lastActivityAt,
+      ),
+    );
+  }
+
+  // Founded, not started: a genesis whose ref no execution claims. The
+  // desktop publishes the founding facts (44226, 44227, 44229) with no create
+  // until someone starts the session there, so a bare genesis *is* a session
+  // — its founder is its signer, and its status is "not started", never
+  // "unknown". Two geneses for one ref is a dispute this fold refuses to
+  // settle, exactly as the desktop does. Grouped by `(channelId, sessionRef)`.
+  final claimedRefs = sessionRefByKey.values.nonNulls.toSet();
+  final genesesByRef = <String, List<CodingSessionGenesis>>{};
+  for (final genesis in genesesByEventId.values) {
+    genesesByRef
+        .putIfAbsent(
+          '${genesis.ref.channelId}\u0000${genesis.sessionRef}',
+          () => [],
+        )
+        .add(genesis);
+  }
+  for (final candidates in genesesByRef.values) {
+    if (candidates.length != 1) continue;
+    final genesis = candidates.single;
+    final sessionRef = genesis.sessionRef;
+    if (claimedRefs.contains(sessionRef)) continue;
+    final channelId = genesis.ref.channelId;
+    final name = nameFor(sessionRef, channelId);
+    final goal = goalFor(sessionRef, channelId);
+    final closure = closureFor(sessionRef, channelId);
+    var lastActivityAt = genesis.ref.createdAt;
+    for (final ref in [name?.ref, goal?.ref, closure?.ref].nonNulls) {
+      if (ref.createdAt > lastActivityAt) lastActivityAt = ref.createdAt;
+    }
+    umbrellas.add(
+      CodingSessionUmbrella(
+        channelId: channelId,
+        key: sessionRef,
+        sessionRef: sessionRef,
+        executions: const [],
+        founder: CodingSessionFounder(
+          pubkey: genesis.founderPubkey,
+          resolution: CodingSessionFounderResolution.genesis,
+          genesisRef: genesis.ref.eventId,
+        ),
+        name: name?.content,
+        goal: goal?.content,
+        closed: closure?.closed ?? false,
+        status: foldCodingSessionUmbrellaStatus(const []),
         lastActivityAt: lastActivityAt,
       ),
     );
@@ -614,10 +679,18 @@ CodingSessionFounder resolveCodingSessionFounder({
 /// Ended could never be reached. When nothing in [executions] is marked
 /// current — a partial read — every member votes rather than the session
 /// reporting nothing at all.
+///
+/// No executions at all is not "unknown": it is a session that was founded
+/// and never started, and it says so.
 CodingSessionFoldedStatus foldCodingSessionUmbrellaStatus(
   Iterable<CodingSessionExecution> executions,
 ) {
   final all = executions.toList();
+  if (all.isEmpty) {
+    return const CodingSessionFoldedStatus(
+      kind: CodingSessionFoldedStatusKind.founded,
+    );
+  }
   final current = [
     for (final execution in all)
       if (execution.isCurrentGeneration) execution,

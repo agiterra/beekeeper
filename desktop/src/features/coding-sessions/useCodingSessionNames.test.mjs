@@ -137,3 +137,53 @@ test("a newly-added channel backfills names only after its live fence is ready",
 
   unmount();
 });
+
+test("resolved is false until the history read settles, and true on success or on error", async () => {
+  const { act, renderHook } = await import("@testing-library/react");
+  const { useCodingSessionNames } = await import("./useCodingSessionNames.ts");
+  const initial = await nameEvent("Settled name", 1_800_000_020);
+  let markLiveReady = () => {};
+  const okClient = {
+    fetchEvents: async () => [initial],
+    subscribeLive: () =>
+      new Promise((resolve) => {
+        markLiveReady = () => resolve(() => {});
+      }),
+    subscribeToReconnects: () => () => {},
+  };
+  const ok = renderHook(() => useCodingSessionNames([CHANNEL_ID], okClient));
+  // First render: nothing has been read, so nothing may be published over it.
+  assert.equal(ok.result.current.resolved, false);
+  await act(async () => {});
+  assert.equal(ok.result.current.resolved, false);
+  await act(async () => markLiveReady());
+  assert.equal(ok.result.current.resolved, true);
+  assert.equal(ok.result.current.errorMessage, null);
+  ok.unmount();
+
+  // A refusal is an answer: the read is over either way.
+  const failingClient = {
+    fetchEvents: async () => {
+      throw new Error("forbidden: not a member of this channel");
+    },
+    subscribeLive: async () => () => {},
+    subscribeToReconnects: () => () => {},
+  };
+  const failed = renderHook(() =>
+    useCodingSessionNames([CHANNEL_ID], failingClient),
+  );
+  assert.equal(failed.result.current.resolved, false);
+  await act(async () => {});
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  assert.equal(failed.result.current.resolved, true);
+  assert.match(failed.result.current.errorMessage ?? "", /forbidden/);
+  failed.unmount();
+
+  // Nothing to read is the one scope that starts settled.
+  const empty = renderHook(() => useCodingSessionNames([], okClient));
+  await act(async () => {});
+  assert.equal(empty.result.current.resolved, true);
+  empty.unmount();
+});

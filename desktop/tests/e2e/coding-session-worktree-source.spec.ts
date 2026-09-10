@@ -22,12 +22,74 @@ import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
  * every "new" session made from it. The picker must therefore sit on the
  * trunk by default — not the checkout's HEAD — while still offering every
  * existing branch.
+ *
+ * Driven on the founded page since 2026-09-10: "New coding session" founds
+ * the topic on the click and the Where field — worktree and working
+ * directory — is edited there, before Start.
  */
 
 const PROVIDER_SECRET = generateSecretKey();
 const PROVIDER_PUBKEY = getPublicKey(PROVIDER_SECRET);
+const CHANNEL_ID = "1c7e1c02-87bb-5e88-b2da-5a7a9432d0c9";
 
-async function openCreateDialog(page: import("@playwright/test").Page) {
+/**
+ * The host's working-directory store, answered in front of the bridge.
+ *
+ * Every read answers an empty store and every write is a no-op that still
+ * returns one, so nothing this spec does is remembered; the staged create
+ * hints are recorded on `window.__RECOVERY_HINTS__` so the repair test can
+ * read what the execution seam was told, under which `commandId`.
+ */
+function workdirStoreInitScript() {
+  type Invoke = (
+    cmd: string,
+    args?: Record<string, unknown>,
+    options?: unknown,
+  ) => Promise<unknown>;
+  const hints: unknown[] = [];
+  (window as unknown as { __RECOVERY_HINTS__: unknown[] }).__RECOVERY_HINTS__ =
+    hints;
+  const emptyState = () => ({
+    version: 1,
+    byProject: {},
+    byChannel: {},
+    mru: [],
+    pending: {},
+  });
+  let internals: Record<string, unknown> | undefined;
+  Object.defineProperty(window, "__TAURI_INTERNALS__", {
+    configurable: true,
+    get: () => internals,
+    set: (value: Record<string, unknown>) => {
+      internals = value;
+      let real: Invoke | undefined;
+      const wrapped: Invoke = async (cmd, args, options) => {
+        if (cmd === "stage_coding_session_create_hint") hints.push(args);
+        if (
+          [
+            "stage_coding_session_create_hint",
+            "clear_coding_session_create_hint",
+            "record_coding_session_workdir_use",
+            "get_coding_session_workdir_state",
+          ].includes(cmd)
+        ) {
+          return emptyState();
+        }
+        if (!real) throw new Error("mock invoke is not installed yet");
+        return real(cmd, args, options);
+      };
+      Object.defineProperty(value, "invoke", {
+        configurable: true,
+        get: () => (real ? wrapped : undefined),
+        set: (fn: Invoke) => {
+          real = fn;
+        },
+      });
+    },
+  });
+}
+
+async function foundSession(page: import("@playwright/test").Page) {
   await seedActiveIdentity(page, TEST_IDENTITIES.tyler);
   await installMockBridge(page, {
     globalAgentConfig: {
@@ -71,17 +133,27 @@ async function openCreateDialog(page: import("@playwright/test").Page) {
       headBranch: "old-topic",
     },
   });
+  await page.addInitScript(workdirStoreInitScript);
   await page.goto("/");
   await page.getByTestId("channel-engineering").click();
   await page.getByTestId("channel-coding-sessions-trigger").click();
   await page.getByTestId("channel-coding-sessions-new").click();
-  await expect(page.getByTestId("new-coding-session-form")).toBeVisible();
+  await expect(
+    page.getByTestId("coding-session-founded-workspace-founded"),
+  ).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByTestId("coding-session-founded-where")).toBeVisible();
+  // The goal reader is held behind the client's send budget on a fresh
+  // launch (`relaySendBudget.ts`, 25 sends per 5 s) and settles ~10 s in;
+  // a prompt left before then publishes nothing, by design.
+  await expect(
+    page.getByTestId("new-coding-session-blocker-goal-unresolved"),
+  ).toHaveCount(0, { timeout: 30_000 });
 }
 
 test("the source picker defaults to the trunk, not the parked checkout", async ({
   page,
 }) => {
-  await openCreateDialog(page);
+  await foundSession(page);
 
   // No workdir yet: there is no repository to list, so no picker.
   await expect(page.getByTestId("coding-session-worktree-source")).toHaveCount(
@@ -107,70 +179,44 @@ test("the source picker defaults to the trunk, not the parked checkout", async (
   await expect(picker).toHaveValue("feature-x");
 });
 
-test("a refused directory is repaired with its goal retained and a fresh signed request", async ({
+test("a refused directory is repaired with its prompt retained and a fresh signed request", async ({
   page,
 }) => {
-  await openCreateDialog(page);
-  await page.evaluate(() => {
-    const host = window as unknown as {
-      __TAURI_INTERNALS__: {
-        invoke: (command: string, args?: unknown) => Promise<unknown>;
-      };
-      __RECOVERY_HINTS__: Array<unknown>;
-    };
-    host.__RECOVERY_HINTS__ = [];
-    const original = host.__TAURI_INTERNALS__.invoke.bind(
-      host.__TAURI_INTERNALS__,
-    );
-    host.__TAURI_INTERNALS__.invoke = async (command, args) => {
-      if (command === "stage_coding_session_create_hint")
-        host.__RECOVERY_HINTS__.push(args);
-      if (
-        [
-          "stage_coding_session_create_hint",
-          "clear_coding_session_create_hint",
-          "record_coding_session_workdir_use",
-          "get_coding_session_workdir_state",
-        ].includes(command)
-      ) {
-        return {
-          version: 1,
-          byProject: {},
-          byChannel: {},
-          mru: [],
-          pending: {},
-        };
-      }
-      return original(command, args);
-    };
-  });
+  test.setTimeout(90_000);
+  await foundSession(page);
   const goal =
     "Inspect the Windows checkout and report its structure. Do not modify files.";
-  await page.getByTestId("new-coding-session-goal").fill(goal);
+  // The prompt publishes when the field is left; from then on it is on the
+  // wire under the founder's key, which is why a repaired Start still has it.
+  const prompt = page.getByTestId("coding-session-founded-prompt");
+  await prompt.fill(goal);
+  await prompt.blur();
+  await expect
+    .poll(
+      async () =>
+        (
+          await page.evaluate(() => window.__BUZZ_E2E_SIGNED_EVENTS__ ?? [])
+        ).filter((event) => event.kind === 44227).length,
+    )
+    .toBe(1);
   await page.getByTestId("coding-session-worktree-toggle").click();
   await page
     .getByTestId("coding-session-workdir-input")
     .fill("C:\\missing\\beekeeper");
-  await page.getByTestId("new-coding-session-submit").click();
+  await page.getByTestId("coding-session-founded-start").click();
 
   const creates = () =>
-    page.evaluate(async () => {
+    page.evaluate(async (channelId) => {
       const query = window.__BUZZ_E2E_INVOKE_MOCK_COMMAND__;
       if (!query) throw new Error("mock query missing");
       const answer = await query("query_relay_filters", {
-        filters: [
-          {
-            kinds: [44221],
-            "#h": ["1c7e1c02-87bb-5e88-b2da-5a7a9432d0c9"],
-            limit: 100,
-          },
-        ],
+        filters: [{ kinds: [44221], "#h": [channelId], limit: 100 }],
       });
       const events = Array.isArray(answer)
         ? answer
         : (answer as { events: unknown[] }).events;
       return events as Array<{ id: string; content: string; tags: string[][] }>;
-    });
+    }, CHANNEL_ID);
   await expect.poll(async () => (await creates()).length).toBe(1);
   const first = (await creates())[0];
   const original = JSON.parse(first.content);
@@ -216,23 +262,33 @@ test("a refused directory is repaired with its goal retained and a fresh signed 
     }, receipt);
   };
   await answer(original.commandId, true);
-  await expect(page.getByTestId("pending-coding-session-retry")).toBeDisabled();
-  await expect(
-    page.getByTestId("pending-coding-session-fix-workdir"),
-  ).toBeEnabled({ timeout: 15_000 });
-  await page.getByTestId("pending-coding-session-fix-workdir").click();
-  await expect(page.getByTestId("new-coding-session-goal")).toHaveValue(goal);
-  await expect(page.getByTestId("new-coding-session-status")).toHaveCount(0);
+  // A failed create holds the page's busy blocker; the one way out is named
+  // as what it is, and a working-directory failure leaves the directory
+  // field editable so the repair can be typed before the attempt is dropped.
+  const discardAttempt = page.getByTestId(
+    "coding-session-founded-discard-attempt",
+  );
+  await expect(discardAttempt).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("coding-session-workdir-input")).toBeEnabled();
+  await page
+    .getByTestId("coding-session-workdir-input")
+    .fill("C:\\work\\beekeeper");
+  await discardAttempt.click();
+  await expect(page.getByTestId("coding-session-founded-start")).toBeEnabled();
+  // The prompt is retained: it is the 44227 on the wire, not the attempt's.
+  await expect(page.getByTestId("coding-session-founded-prompt")).toHaveValue(
+    goal,
+  );
   await expect(page.getByTestId("new-coding-session-blocker-goal")).toHaveCount(
     0,
   );
   await expect(page.getByTestId("new-coding-session-blocker-busy")).toHaveCount(
     0,
   );
-  await page
-    .getByTestId("coding-session-workdir-input")
-    .fill("C:\\work\\beekeeper");
-  await page.getByTestId("new-coding-session-submit").click();
+  await expect(page.getByTestId("coding-session-workdir-input")).toHaveValue(
+    "C:\\work\\beekeeper",
+  );
+  await page.getByTestId("coding-session-founded-start").click();
   await expect.poll(async () => (await creates()).length).toBe(2);
   const second = (await creates()).find((event) => event.id !== first.id);
   if (!second) throw new Error("replacement create missing");
@@ -244,6 +300,8 @@ test("a refused directory is repaired with its goal retained and a fresh signed 
   expect(repaired.action.providerInstanceRef).toBe(
     original.action.providerInstanceRef,
   );
+  expect(repaired.action.sessionRef).toBe(original.action.sessionRef);
+  expect(repaired.action.genesisRef).toBe(original.action.genesisRef);
   const hints = await page.evaluate(
     () =>
       (
@@ -266,28 +324,27 @@ test("a refused directory is repaired with its goal retained and a fresh signed 
       rememberPath: "C:\\work\\beekeeper",
     },
   ]);
+  // The prompt was published once, by the field — never by either Start.
+  expect(
+    (await page.evaluate(() => window.__BUZZ_E2E_SIGNED_EVENTS__ ?? [])).filter(
+      (event) => event.kind === 44227,
+    ),
+  ).toHaveLength(1);
   await answer(repaired.commandId, false);
-  await expect(page.getByTestId("pending-coding-session-retry")).toBeDisabled();
-  await expect(
-    page.getByTestId("pending-coding-session-fix-workdir"),
-  ).toHaveCount(0);
-  const receipts = await page.evaluate(async (kind) => {
-    const answer = await window.__BUZZ_E2E_INVOKE_MOCK_COMMAND__?.(
-      "query_relay_filters",
-      {
-        filters: [
-          {
-            kinds: [kind],
-            "#h": ["1c7e1c02-87bb-5e88-b2da-5a7a9432d0c9"],
-            limit: 100,
-          },
-        ],
-      },
-    );
-    return Array.isArray(answer)
-      ? answer
-      : (answer as { events: Array<{ content: string }> }).events;
-  }, KIND_CODING_SESSION_LIFECYCLE_RECEIPT);
+  const receipts = await page.evaluate(
+    async ({ kind, channelId }) => {
+      const answer = await window.__BUZZ_E2E_INVOKE_MOCK_COMMAND__?.(
+        "query_relay_filters",
+        {
+          filters: [{ kinds: [kind], "#h": [channelId], limit: 100 }],
+        },
+      );
+      return Array.isArray(answer)
+        ? answer
+        : (answer as { events: Array<{ content: string }> }).events;
+    },
+    { kind: KIND_CODING_SESSION_LIFECYCLE_RECEIPT, channelId: CHANNEL_ID },
+  );
   expect(
     receipts.filter(
       (event: { content: string }) =>

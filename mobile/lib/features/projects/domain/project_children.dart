@@ -48,13 +48,17 @@ class ProjectSessionRow extends ProjectChildRow {
 
   bool get isClosed => session.closed;
 
-  /// working → waiting → unknown → reported (idle) → ended.
+  /// working → waiting → founded → unknown → reported (idle) → ended.
+  ///
+  /// Founded sits between waiting and idle, as on the desktop: it is a
+  /// session someone is about to act on, not one that has gone quiet.
   int get statusPriority => switch (session.status.kind) {
     CodingSessionFoldedStatusKind.working => 0,
     CodingSessionFoldedStatusKind.waiting => 1,
-    CodingSessionFoldedStatusKind.unknown => 2,
-    CodingSessionFoldedStatusKind.reported => 3,
-    CodingSessionFoldedStatusKind.ended => 4,
+    CodingSessionFoldedStatusKind.founded => 2,
+    CodingSessionFoldedStatusKind.unknown => 3,
+    CodingSessionFoldedStatusKind.reported => 4,
+    CodingSessionFoldedStatusKind.ended => 5,
   };
 }
 
@@ -93,7 +97,8 @@ class ProjectTerminalRow extends ProjectChildRow {
 }
 
 /// Sessions keep activity order (open before closed, then working →
-/// unknown → idle, then newest first); everything else alphabetizes within
+/// waiting → founded → unknown → idle → ended, then newest first);
+/// everything else alphabetizes within
 /// its rank. Alphabetizing sessions would sort by a label that is mostly the
 /// same word plus a generation number, burying the one running now.
 int compareProjectChildren(ProjectChildRow a, ProjectChildRow b) {

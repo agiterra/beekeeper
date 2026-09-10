@@ -11084,6 +11084,519 @@ per-connection budgets; (3) a shared filter-matcher fixture under `crates/buzz-c
 that the two client matchers and the relay's `filter.rs` all read; (4) NIP-AA §135
 owner-aggregated quotas remain unimplemented.
 
+### Built 2026-09-10 — team sessions are founded first and composed in the session (`feat/team-founded`)
+
+**Why.** Andy, 2026-09-08: "simplify the way agent teams are created in the
+Create Coding Session dialog … allow the new session to be created from a UI
+perspective (underlying connections to models need not be made) and complete the
+creation process inside the 'created' session screen … iteration on the session
+owner and members once that process is complete." Follow-up decisions the same
+day: the dialog keeps goal, destination, name, worktree and working directory and
+gains one **"Agent team"** checkbox after the workdir; unchecked is today's
+standard session, unchanged on the wire; checked publishes only the founding
+facts and the team is composed in the founded session; the Team card lives in the
+founded state only (bench/policy revision after Start is a follow-up); the phone
+shows founded sessions read-only. "Session owner" in Andy's words is the dialog's
+*who leads*; the founder (genesis signer) is the person and cannot transfer
+(`docs/nips/NIP-CSAT.md:60-63`). *Superseded the same day, later: the dialog
+and its "Agent team" box are gone — every click founds, and Solo / Team is
+asked on the page. See the next entry.*
+
+**Why the wire already fit.** Every desktop create was already preceded by a
+genesis and a name (`useNewCodingSessionCreate.ts`, `prepareNewCodingSessionCreate`);
+the team launch was genesis → goal → policy → one lead create → grants → first
+turn (`codingSessionCrewLaunch.ts`); the roster chain accepts `grant-seat` /
+`grant-operator` at any seq after genesis and the provider honours a grant
+mid-session (`crates/buzz-db/src/event.rs` authority-transition insert,
+`crates/buzz-session-provider/src/lib.rs` `on_authority_receipt`). **The only gap
+was client-side: a genesis with no execution was not a row anywhere** — the
+umbrella fold reads provider-reported generations only
+(`codingSessionUmbrellaModel.ts` `buildUmbrellaRecord`), the channel chrome
+dropped zero-generation umbrellas, and the phone listed from 44223 alone.
+
+**What shipped.** Four lanes, strict file ownership, one finalizer.
+
+- *Dialog* (`desktop/src/features/coding-sessions/ui/NewCodingSessionLaunchForm.tsx`,
+  975 → 698 lines). Layout: goal · channel · worktree · workdir ·
+  `NewCodingSessionTeamToggle` · runtime setup (hidden in team mode) · steps ·
+  readiness · **Start** / **Create**. The lead, bench, policy, roles and
+  override-reason fields left the dialog with their state. `lib/codingSessionLaunchForm.ts`
+  gained `CodingSessionLaunchMode = "session" | "team" | "start"`: team mode
+  blocks only on busy/channel/goal/goal-cap and a missing workdir ("Pick where
+  the lead will run — the session's Start needs it"), never on provider, model,
+  bench or readiness; its plan lines are genesis, goal, name-when-typed and a
+  "Nothing runs yet" line whose `kind` is `null` (a line that names a record
+  that never goes out was the first honesty bug caught in review — `kind` is
+  now `number | null` and `NewCodingSessionReadiness.tsx` omits `data-kind` for
+  it). `lib/codingSessionTopicFounding.ts` (`foundCodingSessionTopic`, pure,
+  every relay call injected): `channel?` → `genesis` → `goal` → `name?`; a goal
+  or name that fails *after* the genesis reports `ok: true` with `published:
+  false` and the publisher's words, a genesis failure is `ok: false`. The submit
+  hook's team branch (`useNewCodingSessionLaunchSubmit.ts`) never calls
+  `submit`; it records the checkout in the MRU, writes a host-local **founded
+  draft** keyed by `sessionRef` (`lib/codingSessionFoundedDraft.ts`: workdir,
+  useWorktree, worktreeName, worktreeSource — localStorage, same fallbacks as
+  the goal draft) and navigates with `goFoundedCodingSession`. The worktree is
+  cut at Start, not at Create. `main`'s contextual-workspace start
+  (`workspaceReuse`, `repairWorkdir`, `rememberWorkspace`, source-nulled
+  `repoRef`) landed in the same window and is threaded through both branches.
+  *Later the same day this whole lane was deleted: `NewCodingSessionLaunchForm.tsx`,
+  `NewCodingSessionDialog.tsx`, `NewCodingSessionTeamToggle.tsx` and
+  `useNewCodingSessionLaunchSubmit.ts` are gone; the next entry says where
+  each field went.*
+- *Founded session screen* (`ui/founded/`, new: `CodingSessionFoundedWorkspace.tsx`
+  366, `CodingSessionFoundedTeamCard.tsx` 333, `useCodingSessionFoundedTeam.ts` 475,
+  `useCodingSessionTeamStart.ts` 260, `codingSessionFoundedTeamReadiness.ts` 154,
+  `CodingSessionFoundedWhereField.tsx` 92). Route
+  `/coding-sessions/$channelId/founded/$sessionRef` (nested in `app/routes.ts` —
+  a flat multi-segment route is silently dropped by the generator; the file
+  route is `app/routes/coding-sessions.$channelId.founded.$sessionRef.tsx`),
+  `useAppNavigation().goFoundedCodingSession`. The workspace resolves
+  `resolveFoundedCodingSessionRoute` → loading / missing / starting / founded /
+  started, hands off to the generation route exactly once when a generation
+  appears, renders the header with `{kind: "founded", label: "Not started"}`,
+  the 44229 name, the 44227 goal (each reader state its own sentence), and
+  "Founded by you · nothing is running yet" or "Founded by <name> — only they
+  can start it" (non-founders get no Start and no greyed form of this
+  computer's defaults). The Team card is the dialog's old setup verbatim —
+  lead, provider/model + override reason, bench + challenger, policy, roles
+  readiness, where-it-runs prefilled from the founded draft — plus steps,
+  `mode: "start"` readiness, the status line, `ProviderLoginNeeded`, and Start.
+  Start (`useCodingSessionTeamStart.ts`, `submittingRef` guard): agent lead →
+  re-read the runtime, `launchCodingSessionCrew` with **`existingUmbrella:
+  {sessionRef, genesisRef}`** (`lib/codingSessionCrewLaunch.ts` 965: the plan
+  omits the channel and genesis steps, a null channel is refused at
+  family-check, `newSessionRef`/`publishGenesis` are never called, policy →
+  seat → grants → first turn proceed; `ui/useCodingSessionCrewLaunch.ts` ensures
+  provider channel membership before the seat create and reports the goal
+  outcome as the 44227 the screen read back, never as one this launch
+  published); "You" lead → cut the worktree, then the existing `submit` with
+  `sessionRef`+`genesisRef`, `title: null` (no second 44229), the on-wire goal
+  as `initialTurn`. For a you-led start the plan lines are the helper's own two
+  (one create under the umbrella; bench/policy *not* published) rather than the
+  shared `start` plan, which would list grants that path never signs. An
+  unreadable goal blocks Start with its own sentence. The project's *name* is
+  not resolved on this screen (it would import `projects-container` from
+  `coding-sessions`); the card names the channel's `projectRef` only.
+- *Founded projection* (desktop). `CodingSessionGenesisObservation` and
+  `geneses?` / `foundingIsLoading?` on both catalog snapshots
+  (`lib/codingSessionTypes.ts`); the create-observation store already kept every
+  accepted genesis and now exposes `foundedSnapshot` — grouped by
+  `(channel, sessionRef)`, **two geneses for one ref are disputed and found
+  nothing** (the relay's one-genesis-per-ref is a documented race), counted as
+  `disputedGenesisCount` (`lib/codingSessionCreateObservations.ts`).
+  `lib/codingSessionFoundedModel.ts`: `resolveFoundedCodingSessions` (founded
+  iff no receipt-joined create *and* no catalog entry claims the ref),
+  `resolveFoundedCodingSessionRoute`, `founderPubkeysByGenesisRef` (the closure
+  fold drops a 44230 whose genesis it cannot attribute — founded geneses are
+  now in the map, so a never-started session can be closed;
+  `CodingSessionWorkspace.tsx` 999 → 996 by using the helper). Rows: status
+  kind `{kind: "founded", label: "Not started"}` (umbrella-level, never derived
+  from a provider report), `founded?: true` on the shelf entry,
+  `projects-container/lib/projectFoundedCodingSessionShelf.ts` (label from the
+  founder-keyed 44229 name else "Untitled session", placement by channel,
+  `executionCount 0`, closure keyed `(channel, ref, genesisRef)`, and
+  `mergeFoundedCodingSessionShelfEntries`, which **drops a founded row while a
+  live pending create with the same channel+ref exists** — founded rows never
+  enter `applyPendingCodingSessionLifecycle`, which acknowledges by `sessionRef`
+  echo and would have eaten its own "Starting" row); wiring order in
+  `projects-container/hooks.ts` is shelf → pending overlay → merge founded →
+  sort. Indicator: hollow neutral dot, "Not started", precedence archived →
+  closed → starting → founded → running/idle. Open handlers parse the
+  `founded:<ref>` row id (click and hotkey alike) rather than a new row prop,
+  because `ProjectSidebarGroup.tsx`'s hotkey path fires the generation handler
+  too. `ChannelCodingSessionsMenu.tsx` lists founded rows under "Not started";
+  the trigger count is entries + founded. Sort: working → waiting → **founded**
+  → idle.
+- *Mobile* (`mobile/lib/features/coding_sessions/domain/coding_session_fold.dart`
+  942): a `(channel, sessionRef)` with exactly one genesis and no execution
+  folds to a `CodingSessionUmbrella` with `executions: []`, founder = genesis
+  signer, name/goal by ref, `lastActivityAt` = the newest founding fact,
+  `CodingSessionFoldedStatusKind.founded`; two geneses → none. Dot: hollow ring,
+  "Not started"; row subtitle "<channel> · founded by <name>"; the page shows one
+  line ("Not started — founded on the desktop; pick who leads and start it
+  there."), no composer of either kind, no Stop; Rename / Set goal / Close stay
+  for the founder. **Finding fixed on the way:** the phone publishes its own
+  44226 *before* its 44221 (`coding_session_commands.dart`), so with the new
+  fold its genesis immediately folded into a founded umbrella and
+  `settleCodingSessionPendingCreate` (`coding_session_pending_create.dart`)
+  matched it by `sessionRef` and reported the create **created** before any
+  provider receipt — a refusal would then have hidden behind a "Not started"
+  row. The match now requires `!session.isFounded`; test added.
+
+**Docs amended, not contradicted.** `docs/design/singularity/SURFACES.md` §21.3
+("leading it yourself is always ungoverned … founding a roster of one …
+answering no question") was already half stale — the one-session path publishes
+a genesis — and is now amended: team sessions are founded before anyone knows
+who leads, and "Not started" is a first-class state. `docs/CREW_SESSIONS_PLAN.md`
+D14 and `docs/CREW_FRONT_DOOR.md` "a crew editor" carry one-paragraph pointers.
+
+**Gate.** `tsc --noEmit` clean; biome clean on every touched file; px-text
+guard clean; `just file-size-check` green (largest touched source
+`CodingSessionWorkspace.tsx` 996, shrinking; `codingSessionCrewLaunch.test.mjs`
+988 — tests are outside the gate but it is the next file to split); desktop
+`pnpm test` 9213/9213; mobile `flutter analyze` clean, `flutter test`
+2008/2008 (baseline 1840).
+
+**Environment fact that cost an hour (2026-09-08).** A running `just dev`'s vite
+router plugin **caches the virtual route config at startup** and rewrites
+`routeTree.gen.ts` within a second of any change under `src/app/routes/`, from
+its stale config — so a new route added while the dev server runs is silently
+erased from the generated tree and `tsc` fails on the new route file with
+"not assignable to keyof FileRoutesByPath". Restart the dev server after adding
+a route, or generate with the plugin's bundled generator once no dev server is
+running (`getConfig` + `new Generator({config, root})` from
+`@tanstack/router-generator`, resolved through `@tanstack/router-plugin`).
+Same day, all four build lanes were killed mid-work by a usage-credit outage;
+resumed 2026-09-10 after rebasing the partial tree onto a `main` that had moved
+63 commits (only five files overlapped; two conflicts, both in the dialog lane,
+resolved by hand).
+
+**Not yet done, in order:** (1) the plan's live run on the dev relay with the
+phone and desktop on one key (`~/.claude/plans/graceful-hatching-valiant.md`
+§ Verification: dialog unchecked → today's create; checked with no provider →
+44226/44227/44229 only and the founded screen/row/phone row; Start with an agent
+lead → optional 44245 → 44221 → 44224 → 44228 ×2 → 44220 and the route hand-off;
+Start with you leading → one 44221 with the goal, no second 44229; close a
+founded session); (2) bench/policy revision after Start (Andy's call:
+follow-up); (3) the founded screen naming the project rather than its
+`projectRef`; (4) six pre-existing files with raw NUL bytes that hide from
+`grep` (`project-pulse/ui/PulseMissionRow.test.mjs`,
+`messages/useCodingSessionLaneVisibility.ts`,
+`coding-sessions/hooks/useCodingSessionObservations.ts`,
+`coding-sessions/hooks/useCodingSessionLeadWakeEvidence.ts`,
+`coding-sessions/lib/codingSessionUmbrellaTimeline.ts`,
+`coding-sessions/lib/codingSessionTeamDeliveryStatus.ts`) — a one-line
+`\u0000` fix each, plus the hygiene test's allowlist.
+
+### Built 2026-09-10 — every session is founded on the click and set up on the page (Solo / Team)
+
+**Why.** Andy, 2026-09-10, after using the team-founded build above: "I really
+like how the Team session creation is directly on the coding session page. …
+both normal and team sessions should be configured this way, since we're
+duplicating most of the dialog contents in the page anyway. … add a 'Solo' /
+'Team' selector at the very top to toggle on or off the team options."
+Follow-up decisions the same day: **no dialog at all** — clicking "New coding
+session" founds the topic instantly and opens the page, where every field is
+edited; **Team means an agent leads** — "Who leads" offers agents only, Solo
+is the you-lead case; **the page opens in the mode this computer used last**
+(first ever: Solo). Plan: `~/.claude/plans/graceful-hatching-valiant.md`.
+
+**What a click does now.** One 44226, nothing else. Every entry point keeps
+its label and testid (`channel-coding-sessions-new` in the channel popover,
+`project-new-coding-session-<dtag>` and `project-section-create-coding-session`
+in the sidebar, `project-coding-session-new-session-in-workspace` in the
+session header) and writes a *founding request* to the renamed store
+(`desktop/src/features/coding-sessions/newCodingSessionDialogStore.ts`:
+`requestCodingSessionFounding`, `requestProjectCodingSessionFounding`,
+`requestCodingSessionFoundingInWorkspace`, `useCodingSessionFoundingRequest`).
+A headless `CodingSessionFoundingHost` (`ui/CodingSessionFoundingHost.tsx`,
+mounted in `app/AppShell.tsx` where the dialog host was) performs it through
+`useCodingSessionFoundNow`: resolve the destination (a channel as given, or a
+project's sessions channel — the hidden transport channel is minted exactly as
+the project dialog minted it, now in `projects-container/ui/ProjectCodingSessionFounder.tsx`),
+`foundCodingSessionTopic` with an empty goal (`lib/codingSessionTopicFounding.ts`:
+the `goal` step runs only when `goal.trim()` is non-empty, as `name` already
+did, so a blank goal is `{published: false, reason: null}` and not a failure),
+write the founded draft v2, `toast.dismiss`, clear the request, push
+`/coding-sessions/$channelId/founded/$sessionRef` (push, not replace: Back
+returns to where the click was). Failure: dismiss, clear, `toast.error(reason)`.
+**One genesis per click is a store invariant, not a component one**: the
+request carries `phase: "requested" | "founding"`, every `request*()` is a
+no-op while a request exists in either phase, the host calls
+`markCodingSessionFoundingStarted()` synchronously before its first `await`,
+its effect cleanup never cancels the in-flight promise (`main.tsx:80` mounts
+StrictMode), and `useCodingSessionTopicFounding.found` has a re-entrancy ref
+of its own. **The `sessionStorage` mirror of the request is removed** — a
+request that survived a reload would found a second genesis; e2e 09 in
+`coding-session-workspace-reuse.spec.ts` pins that a reload founds nothing.
+
+**The founded page is the whole form** (`ui/founded/CodingSessionFoundedSetupCard.tsx`,
+renamed from the Team card; `useCodingSessionFoundedSetup.ts`,
+`useCodingSessionFoundedStart.ts`, `codingSessionFoundedReadiness.ts` renamed
+alongside; new `CodingSessionFoundedModeSwitch.tsx`, `useCodingSessionFoundedText.ts`,
+`lib/codingSessionSetupMode.ts`). One card, in this order: **Solo | Team**
+(`coding-session-founded-mode`, `-solo` / `-team`, `role="radiogroup"`, seeded
+from `readCodingSessionSetupMode()`, written on change, key
+`buzz.coding-session-setup-mode.v1`) · Name (`coding-session-founded-name`) ·
+Initial prompt (`coding-session-founded-prompt`) · [Team] Who leads
+(`new-coding-session-lead-select`, agents only, "Pick an agent…" placeholder;
+the "You" option and the Governed panel are gone from `NewCodingSessionLeadField.tsx`)
+· runtime/model (+ [Team] override reason) · [Team] bench · [Team] policy ·
+[Team, project] roles · Where (`coding-session-founded-where`: workdir +
+worktree, with the reused-workspace summary from
+`ui/founded/CodingSessionFoundedWorkspaceReuse.tsx` when the draft carries a
+`workspaceSourcePath`) · steps · readiness (blockers inline, unknowns + plan
+behind Details — the dialog's "no Details" decision was about the dialog) ·
+status · **Discard** (`coding-session-founded-discard`) · **Start**
+(`coding-session-founded-start`). Non-founders see the name, the goal and one
+read-only sentence (`coding-session-founded-team-readonly`: "Not set up yet.
+Solo or team, the runtime and where it runs are picked by {founder} when they
+start it; nothing about that is on the relay before then.").
+
+**The four fields the dialog lost, and where they went.** *Goal* → the page's
+Initial prompt, a 44227 published when the field is left (draft in
+`useNewCodingSessionDraft("founded:" + sessionRef)`, `lib/newCodingSessionDraft.ts:145-177`,
+512 KB cap and persistence line reused; ⌘↑/⌘↓ recall unchanged). *Name* → the
+page's Name, a 44229 on blur or Enter. *Channel / destination* → resolved at
+the click (the request names the channel or the project; there is no picker
+because the topic is already founded somewhere). *Worktree + workdir* → the
+Where field, prefilled from the founded draft v2. *The "Agent team" box* →
+the Solo | Team switch.
+
+**Commit rules for the two text fields** (the honesty core; Lane B's
+`useCodingSessionFoundedText.test.mjs` pins each): a field never publishes
+while its reader is unsettled (`useCodingSessionGoals(...).resolved`,
+`useCodingSessionGoals.ts:69,78`; `useCodingSessionNames` gained the same
+`resolved` flag); a field publishes only when `trimmed.length > 0 && trimmed
+!== wire` — a blur with unchanged text publishes nothing, a blank prompt is the
+on-press `goal` blocker ("Please specify the initial prompt to start the
+session.", never a call into `buildCodingSessionGoalEvent`, which throws on
+empty at `lib/codingSessionGoal.ts:85-86`), a name the builder refuses
+(`lib/codingSessionName.ts:65-75`) is a field error (`coding-session-founded-name-error`),
+not a relay refusal; the title suggestion (`useNewCodingSessionTitleSuggestion.ts:36`)
+is suppressed until names have settled once and whenever a wire name exists,
+so a suggestion can never overwrite a name set from the phone; `flush()`
+publishes name then goal, only the dirty ones, and stops at the first refusal.
+
+**Wire per mode.** Solo Start: `flush()` → the one 44221 it always was
+(`sessionRef`+`genesisRef`, `initialTurn` = the prompt, `title: null` — the
+44229 already on the wire is the title; no second name, no second goal) →
+44224 → the generation route. Team Start: `flush()` → optional 44245 → 44221
+(the lead's, and only the lead's) → 44228 ×2 → 44220, against the existing
+umbrella (`launchCodingSessionCrew` with `existingUmbrella`, unchanged). Both
+branches take `rememberWorkspace` and `repoRef` from the draft — `repoRef` is
+the draft's when the workdir is still the reused path or there is no reused
+path, else `null` (the dialog's rule from the deleted submit hook, now honest
+on this screen); the old hard-coded `true` / `null` in the team start are gone.
+Discard: `useCodingSessionClosureDialog().requestClosure({action: "closed", …})`
+(`hooks/useCodingSessionClosureDialog.tsx`, confirm at the existing
+`coding-session-closure-confirm`) — a 44230 `closed` that reaches the page
+through its closures read (`useCodingSessionClosures`, keyed by
+`codingSessionClosureKey(channelId, sessionRef, genesisRef)`, layered on top of
+`resolveFoundedCodingSessionRoute` with precedence started > closed >
+starting/founded) and renders `coding-session-founded-workspace-closed`
+("Closed before it started", header status `ended` with label "Closed", no
+Start); the row files under Settled on both devices
+(`projects-container/lib/projectFoundedCodingSessionShelf.ts:139`,
+`ProjectSidebarGroup.tsx:251-252`, unchanged).
+
+**Founded draft v2** (`lib/codingSessionFoundedDraft.ts`, key
+`buzz.coding-session-founded-draft.v2:<sessionRef>`, schema
+`buzz-coding-session-founded-draft/v2`): `{name, workdir, useWorktree,
+worktreeName, worktreeSource, rememberWorkspace, repoRef, workspaceSourcePath,
+workspaceSourceBranch, workspaceSourceBranchSource: "recorded" | null}`. The
+reader tries v2 then the v1 key (exact four-key parse) and fills the new fields
+with `null / true / null / null / null / null`, so this week's founded sessions
+keep their prefill; `clear` removes both keys. The prompt text is not in this
+draft (it is the goal draft above). `repoRef` is resolved at the click
+(`workspaceReuseRepoRef`, `lib/codingSessionWorkspaceReuse.ts`, or the
+project's local checkout match) and never guessed; the type
+`NewCodingSessionWorkspaceReuse` moved from the deleted dialog to
+`lib/codingSessionWorkspaceReuse.ts`.
+
+**Disclosures, stated rather than buried.** (1) A click is a genesis: an
+abandoned click leaves an "Untitled session · Not started" row on every device
+until Discard files it; there is no auto-delete and no TTL. (2) The
+`/coding-sessions/new` deep link without `channelId` cannot found anything
+without guessing a channel; it goes home with
+`toast.info("Pick a channel or a project to start a coding session in.")`.
+(3) The `ungoverned` unknown's sentence "no genesis and no authority chain" was
+false on a founded session and now reads "Ungoverned: no authority chain, so
+this session has no roster, no grants and no signed reports." (4) Name and
+prompt reach the relay a blur earlier than before — that is the point of
+founding first; the phone sees what the desktop sees. (5) A durable create
+transaction left by the *old* dialog (scope = channel or project route) has no
+screen to resume it now; the founded page resumes only its own
+`founded:<ref>` scope. None are expected on the dev relay. (6) The founder
+line reads "Founded by you · nothing is running yet." — no "pick who leads".
+
+**Readiness** (`lib/codingSessionLaunchForm.ts`): one form now —
+`CodingSessionLaunchMode`, `codingSessionLaunchFormShape`,
+`codingSessionTeamWorkdirMissing`, the `team-composition` unknown and
+`codingSessionGovernedLockReason` are deleted; `CodingSessionLaunchLead` gained
+`{kind: "unset"}` (Team with no agent picked — a variant, not `null`, so the
+fifteen `lead.kind === "agent"` narrowings keep compiling); blockers `busy`,
+`goal` (on press), `goal-cap`, `goal-unresolved` (a Start must not republish or
+shadow a goal it cannot see), `lead` (Team, no agent: "Pick an agent to lead
+this session, or switch to Solo."), `provider`, `provider-refusal`,
+`override-reason`, `project-readiness`, `bench:*`, `model` (Team, agent lead,
+null model — never for `unset`). Plan lines in order: `name` (44229, when
+dirty) · `goal` (44227, when dirty) · Solo `create` ("One execution under this
+session, led by you, with the initial prompt as its first message.") · Team
+`policy`? · `create` · `grants` · `turn`. Busy sentences gained "Publishing the
+name…" / "Publishing the initial prompt…".
+
+**Tests.** Desktop e2e (`desktop/tests/e2e/`, smoke project): new
+`coding-session-founded-setup.spec.ts` — 01 the click signs exactly one 44226
+(`h` = the channel, `d` = the route's ref) and the page opens in Solo with the
+runtime and Where and no lead/bench/policy; 02 a blank prompt + Start shows
+the on-press sentence and signs nothing; 03 name blur → 44229, prompt blur →
+44227 (in that order; an unchanged blur publishes nothing), Solo Start → one
+44221 with `initialTurn` = the prompt, `title` null, no actor/role, and no
+second 44229/44227/44245/44228/44220; 04 Team shows lead/bench/policy, no
+"You" option, Start off with the `lead` sentence until an agent is picked,
+then posture set → 44245 before the lead's one 44221, and the mode is
+remembered across a reload (the next founded page opens in Team); 05 720 px
+keeps the model blocker, the role-pack unknown and the plan; 06 Discard →
+confirm → one 44230 `closed` for the ref, the closed state, no Start.
+`coding-session-launch-form.spec.ts` deleted (all five tests drove dialog
+controls). `crew-front-door.spec.ts` 03 and 06 rewritten against the card
+(Team lead + "the only seat this launch creates" + worktree on by default; a
+Solo start's create carries no seat). `coding-session-model-picker.spec.ts`,
+`coding-session-connect.spec.ts`, `coding-session-worktree-source.spec.ts`
+open the founded page instead of the dialog (the last one's repair test now
+goes through "Discard the failed attempt", since a failed create holds the
+page's busy blocker, and pins that the prompt was published once — by the
+field, never by a Start). `coding-session-workspace-reuse.spec.ts`: the reuse
+summary is asserted inside the page's Where field; 03 now admits exactly one
+EVENT frame in the click window and it must be a 44226; 08 is "leaving and
+re-opening founds a second session and nothing else"; 09 is "a reload founds
+nothing". `l25-provider-project-ref.spec.ts` drives the join dialog only and
+needed no change. Unit tests per lane: store phases and no `sessionStorage`,
+host under StrictMode founds once, `codingSessionTopicFounding` blank goal,
+draft v2/v1, `codingSessionLaunchForm` solo/team table, `codingSessionSetupMode`,
+`useCodingSessionFoundedText` honesty cases, `useCodingSessionFoundedStart`
+flush-before-worktree and `repoRef` nulling, card/workspace jsdom (Solo hides
+the team fields, Discard only in `founded`, `closed` renders closed,
+non-founder copy), `codingSessionFoundedReadiness`, `useCodingSessionNames`
+`resolved`. Mobile: `codingSessionFoundedHeaderLabel` now reads "Not started —
+founded on the desktop; set it up and start it there." and its doc comment no
+longer gives seat custody as the reason (`mobile/lib/features/coding_sessions/ui/coding_session_labels.dart`);
+`dart format` 0 changed, `flutter analyze` clean,
+`coding_session_page_test.dart` + `project_page_test.dart` 34/34 (they pin the
+constant, not the string). The phone's own `new_session_sheet.dart` is untouched.
+
+**Docs amended.** `docs/design/singularity/SURFACES.md` §21.3 second
+amendment (the dialog is gone; "founding a roster of one" is what every click
+does); `docs/CREW_SESSIONS_PLAN.md` D14 and `docs/CREW_FRONT_DOOR.md` "a crew
+editor" one-paragraph pointers; `docs/CONTEXTUAL_SESSIONS_IMPL.md` §1/§4/§5
+point the reuse type at `lib/codingSessionWorkspaceReuse.ts`;
+`NewCodingSessionReadiness.tsx` doc comment no longer describes a dialog.
+
+**Gate (2026-09-10, finalizer).** `pnpm typecheck` clean; `biome check` clean
+on every changed file (the two warnings are the pre-existing unused-`input`
+init-script pattern the deleted spec had); `pnpm test` 9221/9221;
+`pnpm check:px-text` clean; `just file-size-check` green (nothing over 1000;
+the largest new file is `CodingSessionFoundedSetupCard.tsx` at ~540);
+`flutter analyze` clean, `flutter test` 2008/2008; the seven smoke specs
+(`coding-session-founded-setup`, `crew-front-door`,
+`coding-session-workspace-reuse`, `coding-session-worktree-source`,
+`coding-session-model-picker`, `coding-session-connect`,
+`l25-provider-project-ref`) 34/34 (5.7 min).
+
+**Adversarial review (same day), what it found and what changed.** (1) The
+project founder could found on the cold-start commit before the checkout
+read settled, signing a null `repoRef` and a workdir-less draft
+(`ProjectCodingSessionFounder.tsx`, `settledFor` identity rule, own test).
+(2) A typed name over an unsettled names reader was silently dropped by
+Start — now the `name-unresolved` blocker (`codingSessionLaunchForm.ts`).
+(3) The echo window after a commit: the field blanked (name) or reverted to
+the *old* wire goal (prompt) until the relay echoed, and the namer could
+refill it; `lastPublished` stands in for the wire until the wire moves
+(`useCodingSessionFoundedText.ts`). (4) "It belongs to no project" was
+asserted while the channel was still loading, and Start would have signed
+`projectRef: null` — a `channelReader` busy sentence holds it. (5) Non-founder
+copy in `starting` contradicted the header. (6) Solo said "the lead's
+worktree". (7) A draft written here with no workdir said "founded elsewhere"
+(`draftSource`). (8) From the e2e diagnosis: pressing Start straight after
+typing the prompt lost the click — the blur's publish disabled Start under
+the cursor, and a second click would have published a second 44227 — so a
+field's own publish is no longer a blocker (it is said under the field,
+`coding-session-founded-text-status`) and in-flight commits are deduped so a
+flush rides the blur's publish (`useCodingSessionFoundedText.ts`, test "a
+Start pressed during the blur's publish rides that publish").
+
+**Live-run record.** TODO(finalizer): fill after the plan's § Verification
+run on the dev relay (`just dev` + `just mobile-dev`, one identity). Record
+device, community and workflow: (1) channel popover → one 44226 in the relay
+log, page opens in Solo, shelf and phone show "Untitled session · Not
+started"; (2) name Tab → 44229 renames header/shelf/phone, prompt blur →
+44227 on the phone; (3) Solo Start → 44221 (`sessionRef`/`genesisRef`,
+`initialTurn`, `title` null) → 44224 → generation route, phone row live;
+(4) project with no sessions channel → 39000 then 44226, Where prefilled with
+the checkout; (5) "New session in this workspace" → 44226, Where shows the
+reused path and summary, worktree off, Start → 44221 with the source
+`repoRef`, MRU untouched; (6) Team + agent lead + policy → 44245 → 44221 →
+44224 → 44228 ×2 → 44220, reload → fresh page opens in Team; (7) Discard →
+44230 `closed`, Settled on both devices, URL shows the closed state; (8)
+`/coding-sessions/new` with no channel → home + toast.
+
+**Added the same evening — a session started without a name is named
+after Start (Andy: "after the first turn, automatically set the name of the
+session based on the summary like we did in the dialog using the user's
+specified summarization model").** The founded page still runs the dialog's
+title suggester while the prompt is written, but a Start pressed before the
+model answered left "Untitled session" for good. Now `useCodingSessionFoundedStart`
+(`nameAfterStart`), when the Name field was blank, calls
+`lib/codingSessionAutoName.ts` `autoNameCodingSession` once the create (Solo)
+or the launch (Team) is accepted: it reads the naming settings this computer
+holds (`coding_session_naming_settings`, the model the person set in
+Settings), asks `generate_coding_session_name` with the initial prompt, reads
+the channel's 44229s **at publish time** and publishes the answer as the
+44229 only if no name landed meanwhile — a name typed from the phone in the
+seconds the model took wins. No namer configured, a message under 12
+characters, an empty answer or a refusal are stated outcomes, never an
+invented title; a refusal is a `toast.error` naming the reason and pointing
+at the header's pencil, success needs no notice because the header renames
+itself when the record lands. Fire-and-forget on purpose: the page has handed
+off to the generation route by then. The Name field says what a blank means
+(`coding-session-founded-name-auto`): "Left blank, it is named from the
+initial prompt after Start (<model>)." or, with naming off, that it stays
+"Untitled session"; when there is no host to ask it claims nothing. A typed
+name is never second-guessed. Tests: `codingSessionAutoName.test.mjs` (6),
+`useCodingSessionFoundedStart.test.mjs` (+4: after the create, after the
+launch, never over a typed name, never after a refused create), the card
+(+3). Wire: nothing new — one more 44229, founder-signed, newest wins.
+
+**Polish, same evening (Andy): the Initial prompt sits above "Name
+(optional)", and in Solo the readiness shows blockers only** — the "Details
+— n things this computer could not check" disclosure and "Launch details"
+are Team-only (`CodingSessionFoundedSetupCard.tsx`, `unknownsDisclosed={team}`,
+`plan={team ? … : []}`); a Solo Start signs one create and its blockers are
+the whole story, while a Team Start signs a policy, a seat, grants and a
+turn and names what it will not check. Card tests pin the order and both
+modes.
+
+**Polish, later the same evening (Andy): the founder's own view has no
+"Founded by you · nothing is running yet." line** (the header says "not
+started", the card says the rest; everybody else keeps "Founded by X — only
+they can start it"); **the Team page says nothing about a missing lead until
+Start is pressed** (`lead` is an on-press blocker like the blank prompt,
+rendered under the lead field, `new-coding-session-blocker-lead`); **"Launch
+details" in Team appears only after a refused press**; and **an unnamed
+worktree with the toggle on is refused on press under its field**
+(`worktree-name`, `CODING_SESSION_LAUNCH_WORKTREE_NAME_BLOCKER`) instead of by
+a failed cut ("Could not create the worktree: Give the worktree a name…").
+With the Name optional the worktree field's default is now `session-<ref8>`
+(Team: `session-<ref8>-lead`) when the Name is blank — unique, visible,
+editable — so the common Solo path never hits that refusal. The `attempted`
+flag lives in `useCodingSessionFoundedSetup` and resets when the mode, the
+lead, the worktree toggle or its name changes. Tests: launch-form lib (+1),
+Start hook (+2), card (+3), workspace (both founder cases).
+
+**Not yet done, carried forward:** (1) bench/policy revision after Start
+(Andy's call: follow-up); (2) the page naming the project rather than its
+`projectRef`; (3) the six files with raw NUL bytes listed in the previous
+entry; (4) the old dialog's durable create transactions have no resume screen
+(disclosure 5 above); (5) the live-run record above; (6) **on a fresh launch
+the founded page's readers settle late** — measured in the mock at ~10 s
+after the click: the goal and name history reads go through one WebSocket
+REQ each and `relaySendBudget.ts` (25 sends per 5 s locally) releases them
+in later windows after boot has spent the first; until then Start is held by
+`goal-unresolved` and a committed field publishes nothing and says so only
+under the field. Candidates: route those two reads through
+`fetchEventsCoalesced` (`POST /query`, its own bucket), or a "Waiting for the
+relay…" line at the field. Measured, not yet changed. (7) **each of those
+history reads is issued twice** on the founded route — the page mounts one
+reader per kind, so the second comes from another mounted surface (the
+project shelf reads names and goals for its channels); worth one look with
+the frame log (`scratchpad/lane-c-product-findings.md` of this session has
+the timestamps). (8) The two Playwright specs outside the file-size gate's
+roots are long (`coding-session-founded-setup.spec.ts` 764,
+`crew-front-door.spec.ts` 1182, the latter over 1000 before this work); the
+gate scans `src/*` only.
+
 ## 2a. Direction settled 2026-08-18
 
 Three independent answers to "what should a new execution get on its first

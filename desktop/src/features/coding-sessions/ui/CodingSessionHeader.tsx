@@ -419,12 +419,17 @@ export function CodingSessionHeader({
                 ? "bg-emerald-500"
                 : status.kind === "idle" || status.kind === "ended"
                   ? "bg-muted-foreground/50"
-                  : // A lifecycle-signed "Disconnected" or "Needs attention"
-                    // reads like the execution rail's own attention state, not
-                    // like an unread status.
-                    status.kind === "unknown" && status.attention
-                    ? "bg-destructive"
-                    : "bg-amber-500",
+                  : // Founded, never started: hollow, like every other
+                    // founded surface — a filled colour would claim a state
+                    // nobody has published.
+                    status.kind === "founded"
+                    ? "bg-transparent ring-1 ring-inset ring-muted-foreground/50"
+                    : // A lifecycle-signed "Disconnected" or "Needs attention"
+                      // reads like the execution rail's own attention state, not
+                      // like an unread status.
+                      status.kind === "unknown" && status.attention
+                      ? "bg-destructive"
+                      : "bg-amber-500",
             )}
           />
           {compact ? (

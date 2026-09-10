@@ -48,6 +48,7 @@ class CodingSessionStatusChip extends StatelessWidget {
         return (app.warning, app.warning.withValues(alpha: 0.16));
       case CodingSessionFoldedStatusKind.ended:
         return (colors.onSurfaceVariant, colors.surfaceContainerHighest);
+      case CodingSessionFoldedStatusKind.founded:
       case CodingSessionFoldedStatusKind.unknown:
         return (colors.onSurfaceVariant, colors.surfaceContainerHighest);
       case CodingSessionFoldedStatusKind.reported:

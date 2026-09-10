@@ -35,7 +35,7 @@ import { codingSessionNameKey } from "@/features/coding-sessions/lib/codingSessi
 import { useCodingSessionNames } from "@/features/coding-sessions/useCodingSessionNames";
 import { codingSessionClosureKey } from "@/features/coding-sessions/lib/codingSessionClosure";
 import { useCodingSessionClosures } from "@/features/coding-sessions/useCodingSessionClosures";
-import { groupCodingSessionCatalog } from "@/features/coding-sessions/lib/codingSessionUmbrellaModel";
+import { founderPubkeysByGenesisRef } from "@/features/coding-sessions/lib/codingSessionFoundedModel";
 import { useChannelsQuery } from "@/features/channels/hooks";
 import { useIdentityQuery } from "@/shared/api/hooks";
 import { useCodingSessionProject } from "@/features/projects-container/hooks";
@@ -117,21 +117,18 @@ export function CodingSessionWorkspace({
     useCodingSessionReachabilityResolver(channelId);
   const goalSnapshot = useCodingSessionGoals([channelId]);
   const nameSnapshot = useCodingSessionNames([channelId]);
-  const founderPubkeysByGenesisRef = React.useMemo(() => {
-    const founders = new Map<string, string>();
-    for (const umbrella of groupCodingSessionCatalog(
-      catalog.entries,
-      catalog.creates,
-    )) {
-      if (umbrella.genesisRef && umbrella.founderPubkey) {
-        founders.set(umbrella.genesisRef, umbrella.founderPubkey);
-      }
-    }
-    return founders;
-  }, [catalog.creates, catalog.entries]);
+  const founderByGenesisRef = React.useMemo(
+    () =>
+      founderPubkeysByGenesisRef({
+        entries: catalog.entries,
+        creates: catalog.creates,
+        geneses: catalog.geneses,
+      }),
+    [catalog.creates, catalog.entries, catalog.geneses],
+  );
   const closureSnapshot = useCodingSessionClosures(
     [channelId],
-    founderPubkeysByGenesisRef,
+    founderByGenesisRef,
   );
   const closureDialog = useCodingSessionClosureDialog();
   // Transports included: a project session's workspace lives in a hidden

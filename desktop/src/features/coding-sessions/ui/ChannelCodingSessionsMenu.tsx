@@ -4,7 +4,11 @@ import { toast } from "sonner";
 
 import { useAppNavigation } from "@/app/navigation/useAppNavigation";
 import type { ChannelCodingSessionIngressEntry } from "@/features/coding-sessions/lib/channelCodingSessionIngress";
-import { resolveChannelCodingSessionIngress } from "@/features/coding-sessions/lib/channelCodingSessionIngress";
+import {
+  resolveChannelCodingSessionIngress,
+  resolveChannelFoundedCodingSessions,
+} from "@/features/coding-sessions/lib/channelCodingSessionIngress";
+import type { CodingSessionFoundedUmbrella } from "@/features/coding-sessions/lib/codingSessionFoundedModel";
 import { groupCodingSessionCatalog } from "@/features/coding-sessions/lib/codingSessionUmbrellaModel";
 import { openCodingSessionPopout } from "@/features/coding-sessions/lib/codingSessionWindow";
 import { useCodingSessionCatalog } from "@/features/coding-sessions/useCodingSessionCatalog";
@@ -44,7 +48,19 @@ export function ChannelCodingSessionsMenu({
       }),
     [catalog, channelId],
   );
-  const { goCodingSession, goNewCodingSession } = useAppNavigation();
+  // Founded and never started: a genesis (goal, name) with no execution.
+  // Not among `entries` — there is no generation to open — but a session in
+  // this channel all the same, listed behind the same gate.
+  const founded = React.useMemo(
+    () =>
+      resolveChannelFoundedCodingSessions({
+        activeChannelId: channelId,
+        catalog,
+      }),
+    [catalog, channelId],
+  );
+  const { goCodingSession, goFoundedCodingSession, goNewCodingSession } =
+    useAppNavigation();
   const [open, setOpen] = React.useState(false);
   const authorityByGeneration = React.useMemo(() => {
     const result = new Map<
@@ -78,6 +94,14 @@ export function ChannelCodingSessionsMenu({
     },
     [channelId, goCodingSession],
   );
+  const handleOpenFounded = React.useCallback(
+    (sessionRef: string) => {
+      if (!channelId) return;
+      setOpen(false);
+      void goFoundedCodingSession(channelId, sessionRef);
+    },
+    [channelId, goFoundedCodingSession],
+  );
   const handleCreate = React.useCallback(() => {
     if (!channelId) return;
     setOpen(false);
@@ -110,7 +134,7 @@ export function ChannelCodingSessionsMenu({
     <Popover onOpenChange={setOpen} open={open}>
       <PopoverTrigger asChild>
         <ChannelCodingSessionsTrigger
-          count={entries.length}
+          count={entries.length + founded.length}
           variant={variant}
         />
       </PopoverTrigger>
@@ -125,18 +149,30 @@ export function ChannelCodingSessionsMenu({
           <p className="text-xs text-muted-foreground">
             {entries.length > 0
               ? "Open a signed session at its latest generation."
-              : "No signed sessions in this channel yet."}
+              : founded.length > 0
+                ? "Founded here; nothing is running yet."
+                : "No signed sessions in this channel yet."}
           </p>
         </div>
-        <ChannelCodingSessionList
-          authorityByGeneration={authorityByGeneration}
+        {entries.length > 0 || founded.length === 0 ? (
+          <ChannelCodingSessionList
+            authorityByGeneration={authorityByGeneration}
+            channelId={channelId}
+            currentUserPubkey={identity.data?.pubkey ?? null}
+            entries={entries}
+            goals={goalSnapshot.goals}
+            names={nameSnapshot.names}
+            onOpen={handleOpen}
+            onPopout={handlePopout}
+          />
+        ) : null}
+        <ChannelFoundedCodingSessionList
           channelId={channelId}
           currentUserPubkey={identity.data?.pubkey ?? null}
-          entries={entries}
+          founded={founded}
           goals={goalSnapshot.goals}
           names={nameSnapshot.names}
-          onOpen={handleOpen}
-          onPopout={handlePopout}
+          onOpen={handleOpenFounded}
         />
         <Button
           className="mt-1 w-full justify-start"
@@ -343,6 +379,106 @@ export function ChannelCodingSessionList({
                 variant="ghost"
               >
                 <ExternalLink />
+              </Button>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * Founded-but-unstarted umbrellas, listed after the started ones.
+ *
+ * Each row is a genesis with a goal and a name and nothing running: the dot
+ * is hollow because no provider has reported, the state says "Not started",
+ * and Open goes to the founded route where whoever leads is picked. No
+ * pop-out: the pop-out bootstrap carries a generation, and there is none.
+ */
+export function ChannelFoundedCodingSessionList({
+  channelId = "",
+  currentUserPubkey = null,
+  founded,
+  goals = new Map(),
+  names = new Map(),
+  onOpen,
+}: {
+  channelId?: string;
+  currentUserPubkey?: string | null;
+  founded: readonly CodingSessionFoundedUmbrella[];
+  goals?: ReadonlyMap<
+    string,
+    import("@/features/coding-sessions/lib/codingSessionGoal").CodingSessionGoal
+  >;
+  names?: ReadonlyMap<
+    string,
+    import("@/features/coding-sessions/lib/codingSessionName").CodingSessionName
+  >;
+  onOpen: (sessionRef: string) => void;
+}) {
+  if (founded.length === 0) return null;
+  return (
+    <div
+      className="mt-1 flex max-h-60 flex-col gap-1 overflow-y-auto"
+      data-testid="channel-founded-coding-sessions"
+    >
+      {founded.map((umbrella) => {
+        const displayName =
+          names
+            .get(
+              codingSessionNameKey(
+                channelId,
+                umbrella.sessionRef,
+                umbrella.founderPubkey,
+              ),
+            )
+            ?.content.trim() || "Untitled session";
+        const goal =
+          goals.get(
+            codingSessionGoalKey(
+              channelId,
+              umbrella.sessionRef,
+              umbrella.founderPubkey,
+            ),
+          ) ?? null;
+        return (
+          <div
+            className="rounded-lg border border-border/60 bg-background/60 p-2.5"
+            data-session-ref={umbrella.sessionRef}
+            data-testid="channel-founded-coding-session-entry"
+            key={umbrella.genesisRef}
+          >
+            <div className="flex min-w-0 items-center gap-2">
+              <span
+                aria-hidden
+                className="h-2 w-2 shrink-0 rounded-full bg-transparent ring-1 ring-inset ring-muted-foreground/60"
+              />
+              <span className="min-w-0 flex-1 truncate text-sm font-medium">
+                {displayName}
+              </span>
+              <span className="shrink-0 text-xs text-muted-foreground">
+                Not started
+              </span>
+            </div>
+            <CodingSessionGoalPill
+              channelId={channelId}
+              currentUserPubkey={currentUserPubkey}
+              founderPubkey={umbrella.founderPubkey}
+              goal={goal}
+              sessionRef={umbrella.sessionRef}
+              variant="catalog"
+            />
+            <div className="mt-2 flex items-center justify-end gap-1.5">
+              <Button
+                aria-label={`Open ${displayName}, not started`}
+                data-testid="channel-founded-coding-session-open"
+                onClick={() => onOpen(umbrella.sessionRef)}
+                size="sm"
+                type="button"
+                variant="secondary"
+              >
+                Open
               </Button>
             </div>
           </div>

@@ -11,12 +11,16 @@ class _SessionHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final now = DateTime.now();
     final reachability = snapshot.reachabilityFor(session.key);
-    final reachabilityLine = codingSessionReachabilityLabel(
-      reachability: reachability,
-      status: session.status,
-      statusAt: _statusAt,
-      now: now,
-    );
+    // A founded session has asked no provider anything, so there is no
+    // reachability to report; the founded line below says that in full.
+    final reachabilityLine = session.isFounded
+        ? null
+        : codingSessionReachabilityLabel(
+            reachability: reachability,
+            status: session.status,
+            statusAt: _statusAt,
+            now: now,
+          );
     return Container(
       key: const ValueKey('coding-session-header'),
       margin: const EdgeInsets.only(bottom: Grid.twelve),
@@ -66,6 +70,12 @@ class _SessionHeader extends StatelessWidget {
               text: goal,
             ),
           const SizedBox(height: Grid.xxs),
+          if (session.isFounded)
+            const _HeaderLine(
+              key: ValueKey('coding-session-founded'),
+              icon: LucideIcons.circleDashed,
+              text: codingSessionFoundedHeaderLabel,
+            ),
           for (final execution in session.executions)
             _ExecutionLine(
               key: ValueKey('coding-session-execution-${execution.targetKey}'),

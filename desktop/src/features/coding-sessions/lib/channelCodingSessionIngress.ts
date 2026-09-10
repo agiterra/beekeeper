@@ -1,6 +1,11 @@
+import {
+  type CodingSessionFoundedUmbrella,
+  resolveFoundedCodingSessions,
+} from "./codingSessionFoundedModel";
 import type {
   CodingSessionCatalogRecord,
   CodingSessionCatalogSnapshot,
+  CodingSessionUmbrellaRecord,
   CodingSessionWorkspaceStatus,
 } from "./codingSessionTypes";
 import { groupCodingSessionCatalog } from "./codingSessionUmbrellaModel";
@@ -17,8 +22,8 @@ export type ChannelCodingSessionIngressEntry = {
 };
 
 /** Every generation an umbrella owns, newest activity first. */
-function umbrellaGenerations(
-  umbrella: ReturnType<typeof groupCodingSessionCatalog>[number],
+export function umbrellaGenerations(
+  umbrella: CodingSessionUmbrellaRecord,
 ): CodingSessionCatalogRecord[] {
   return umbrella.executions
     .flatMap((execution) => [
@@ -26,6 +31,28 @@ function umbrellaGenerations(
       execution.activeGeneration,
     ])
     .sort((left, right) => right.lastEventAt.localeCompare(left.lastEventAt));
+}
+
+/**
+ * The gate every row offered from a channel's own chrome passes.
+ *
+ * The snapshot-channel check prevents a render during channel transitions from
+ * exposing the previous channel's sessions. Authority failures are fail-closed;
+ * malformed, rejected-author, and invalid-signature events never enter the
+ * catalog in the first place.
+ */
+function channelIngressIsOpen(input: {
+  activeChannelId: string | null;
+  catalog: CodingSessionCatalogSnapshot;
+}): input is {
+  activeChannelId: string;
+  catalog: CodingSessionCatalogSnapshot;
+} {
+  return Boolean(
+    input.activeChannelId &&
+      input.catalog.channelId === input.activeChannelId &&
+      !input.catalog.authorityErrorMessage,
+  );
 }
 
 /**
@@ -39,22 +66,15 @@ function umbrellaGenerations(
  * choice for the same reason (§2 item 36: "the footer counts distinct
  * `executionKey` identities rather than resumed generations").
  *
- * The snapshot-channel check prevents a render during channel transitions from
- * exposing the previous channel's generations. Authority failures are
- * fail-closed; malformed, rejected-author, and invalid-signature events never
- * enter `catalog.entries` in the first place.
+ * A founded umbrella with no execution is not among these rows — nothing can
+ * be opened at a generation it does not have. `resolveChannelFoundedCodingSessions`
+ * lists those separately, behind the same gate.
  */
 export function resolveChannelCodingSessionIngress(input: {
   activeChannelId: string | null;
   catalog: CodingSessionCatalogSnapshot;
 }): ChannelCodingSessionIngressEntry[] {
-  if (
-    !input.activeChannelId ||
-    input.catalog.channelId !== input.activeChannelId ||
-    input.catalog.authorityErrorMessage
-  ) {
-    return [];
-  }
+  if (!channelIngressIsOpen(input)) return [];
 
   const rows: ChannelCodingSessionIngressEntry[] = [];
   for (const umbrella of groupCodingSessionCatalog(
@@ -77,4 +97,22 @@ export function resolveChannelCodingSessionIngress(input: {
     });
   }
   return rows;
+}
+
+/**
+ * The founded-but-unstarted umbrellas a channel's chrome may list, newest
+ * founding first. Same gate as the openable rows; a snapshot that collected
+ * no geneses yields none, never a guess.
+ */
+export function resolveChannelFoundedCodingSessions(input: {
+  activeChannelId: string | null;
+  catalog: CodingSessionCatalogSnapshot;
+}): CodingSessionFoundedUmbrella[] {
+  if (!channelIngressIsOpen(input)) return [];
+  return resolveFoundedCodingSessions({
+    channelId: input.activeChannelId,
+    geneses: input.catalog.geneses ?? [],
+    entries: input.catalog.entries,
+    creates: input.catalog.creates ?? [],
+  });
 }

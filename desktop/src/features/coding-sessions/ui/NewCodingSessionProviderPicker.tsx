@@ -28,10 +28,7 @@ import { CodingSessionAccessNotice } from "./CodingSessionAccessNotice";
 import { CodingSessionModelPicker } from "./CodingSessionModelPicker";
 import { CodingSessionRuntimeConnect } from "./CodingSessionRuntimeConnect";
 import { CodingSessionTraitsPicker } from "./CodingSessionTraitsPicker";
-import {
-  codingSessionCreateModelDisclosure,
-  type CodingSessionCreateModelCatalog,
-} from "./useNewCodingSessionCreate";
+import type { CodingSessionCreateModelCatalog } from "./useNewCodingSessionCreate";
 
 /**
  * Which provider runs the session, on which model, with how much thinking.
@@ -108,12 +105,17 @@ export function NewCodingSessionProviderPicker({
       })),
     [noteForTarget, targets],
   );
-  // One remediation row per unavailable runtime — a rail glyph and a disabled
-  // row say *that* something is wrong; only this says what to do about it.
+  // One remediation row per runtime that needs a sign-in — a rail glyph and
+  // a disabled row say *that* something is wrong; only this says what to do
+  // about it, and carries the Connect button. A runtime that is simply not
+  // installed gets no row: its option already reads "not installed", and a
+  // sentence repeating that offered nothing to do (Andy, 2026-09-10).
   const unavailableRuntimes = [
     ...new Map(
       targets.flatMap((target) =>
-        !isNewCodingSessionTargetReady(target) && target.availability?.hint
+        !isNewCodingSessionTargetReady(target) &&
+        target.availability?.state !== "missing" &&
+        target.availability?.hint
           ? [
               [
                 target.provider.runtime,
@@ -243,50 +245,37 @@ export function NewCodingSessionProviderPicker({
 }
 
 /**
- * What the create is about to record about the model, when that is not a model.
+ * What this surface still owes the person about the model, under the picker.
  *
- * Rendered directly under the picker on every surface that founds a session.
- * Twice on 2026-08-28 a seat was created carrying the id `default` — a label,
- * not a model — and no screen said so, so the record of which weights ran the
- * session simply does not exist. Nothing here changes what is written; it
- * stops the screen from implying something else was.
+ * Until 2026-09-10 this also printed "Runs the runtime's default model — the
+ * record will not name it." whenever the create would carry `default`
+ * (item 88(b)). Andy removed that line from the dialog; the wire is unchanged
+ * — `resolveCodingSessionCreateModel` still writes `default` only when that is
+ * all the runtime knows — and `codingSessionCreateModelDisclosure` remains for
+ * any surface that wants the sentence. What stays here is the seat note: a
+ * seated identity whose record names a model the runtime cannot run.
  */
 export function NewCodingSessionModelDisclosure({
-  catalog,
-  model,
   note = null,
 }: {
-  /** The runtime's published list, when it has been read. */
+  /** Kept for callers; no longer read. */
   catalog?: CodingSessionCreateModelCatalog | null;
-  /** The id the create would carry right now. */
-  model: string | null;
+  /** Kept for callers; no longer read. */
+  model?: string | null;
   /**
    * One more thing this surface owes the person about the model — today, a
    * seated identity whose record names one the runtime cannot run.
    */
   note?: string | null;
 }) {
-  const disclosure = codingSessionCreateModelDisclosure({ catalog, model });
-  if (disclosure === null && note === null) return null;
+  if (note === null) return null;
   return (
-    <>
-      {disclosure === null ? null : (
-        <p
-          className="text-2xs text-muted-foreground"
-          data-testid="new-coding-session-model-disclosure"
-        >
-          {disclosure}
-        </p>
-      )}
-      {note === null ? null : (
-        <p
-          className="text-2xs text-muted-foreground"
-          data-testid="new-coding-session-seat-model-note"
-        >
-          {note}
-        </p>
-      )}
-    </>
+    <p
+      className="text-2xs text-muted-foreground"
+      data-testid="new-coding-session-seat-model-note"
+    >
+      {note}
+    </p>
   );
 }
 

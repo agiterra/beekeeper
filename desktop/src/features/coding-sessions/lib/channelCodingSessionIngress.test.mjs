@@ -212,3 +212,76 @@ test("two unrelated sessions stay two rows", () => {
 
   assert.equal(entries.length, 2);
 });
+
+// ---------------------------------------------------------------------------
+// Founded umbrellas: listed behind the same gate, never counted as openable.
+// ---------------------------------------------------------------------------
+
+const FOUNDED_GENESIS = {
+  channelId: "channel-a",
+  sessionRef: "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+  genesisRef: "c".repeat(64),
+  founderPubkey: "f".repeat(64),
+  foundedAt: 1_800_000_000,
+};
+
+test("a founded umbrella is listed by the founded resolver and absent from the openable rows", async () => {
+  const { resolveChannelFoundedCodingSessions } = await import(
+    "./channelCodingSessionIngress.ts"
+  );
+  const snapshot = catalog({ geneses: [FOUNDED_GENESIS], creates: [] });
+  const founded = resolveChannelFoundedCodingSessions({
+    activeChannelId: "channel-a",
+    catalog: snapshot,
+  });
+  assert.deepEqual(founded, [FOUNDED_GENESIS]);
+  const openable = resolveChannelCodingSessionIngress({
+    activeChannelId: "channel-a",
+    catalog: snapshot,
+  });
+  assert.equal(openable.length, 2, "the two provider generations only");
+  assert.equal(
+    openable.some(
+      ({ session }) => session.sessionRef === FOUNDED_GENESIS.sessionRef,
+    ),
+    false,
+  );
+});
+
+test("founded rows pass the same gate: channel transition, null channel, and authority error yield none", async () => {
+  const { resolveChannelFoundedCodingSessions } = await import(
+    "./channelCodingSessionIngress.ts"
+  );
+  assert.deepEqual(
+    resolveChannelFoundedCodingSessions({
+      activeChannelId: "channel-b",
+      catalog: catalog({ geneses: [FOUNDED_GENESIS] }),
+    }),
+    [],
+  );
+  assert.deepEqual(
+    resolveChannelFoundedCodingSessions({
+      activeChannelId: null,
+      catalog: catalog({ geneses: [FOUNDED_GENESIS] }),
+    }),
+    [],
+  );
+  assert.deepEqual(
+    resolveChannelFoundedCodingSessions({
+      activeChannelId: "channel-a",
+      catalog: catalog({
+        geneses: [FOUNDED_GENESIS],
+        authorityErrorMessage: "refused",
+      }),
+    }),
+    [],
+  );
+  // A snapshot that collected no geneses lists none — not a guess.
+  assert.deepEqual(
+    resolveChannelFoundedCodingSessions({
+      activeChannelId: "channel-a",
+      catalog: catalog(),
+    }),
+    [],
+  );
+});
