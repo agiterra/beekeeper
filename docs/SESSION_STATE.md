@@ -5,6 +5,42 @@ authority (§4), a protocol for a specific experiment, or history. This file
 is updated on every build and whenever live use produces a finding; if it
 disagrees with an older document about *current state*, this one wins.
 
+## September 9 main published — combined release and startup/sidebar fix
+
+The combined product changes landed linearly on main at
+`0fc2beaf9d1b170c46bfa85e92a65bc8e55dfd66`. The normal pre-push destination,
+branch-skew and full-floor checks passed (236 seconds; no bypass). Both the
+canonical relay and GitHub mirror were read back with `git ls-remote` and
+reported that exact main SHA. This checkout is now on main at the same tree;
+the running app is the separate installed bundle, not a source dev server.
+
+Exact-commit gates passed: `just ci` (desktop 9131/9131, mobile 1993/1993,
+workspace/native/web checks and builds) and `just test` (authority-chain,
+push-admission 68/68, CI completion, database and workspace integration).
+Final browser regression rerun: 9/9, zero Playwright retries, covering the
+startup order, partial project reads, issue creation, accepted nested replies,
+Inbox ownership actions, unread clearing and repeated history pagination.
+The earlier broad browser pass and its failures remain disclosed below; this
+is not a claim that a fresh full browser suite ran green.
+
+Evidence under `../review-2026-09-08-release-candidate/`:
+`main-landing-0fc2beaf9-ci.log`, `main-landing-0fc2beaf9-integration.log`,
+`main-landing-0fc2beaf9-browser.log`, `main-landing-0fc2beaf9-push.log`.
+This entry is a documentation-only follow-up to that tested product commit.
+No new installed app, live Windows acceptance or production deployment is
+claimed. The startup/sidebar fixes are available for the next native rebuild.
+
+Brian's reflection, recorded as direction to consider rather than a request
+to implement now: reconstructable project-scoped sessions can provide durable
+project memory and coordination across multiple people and their agents on
+multiple providers. Connecting decisions, work, evidence and outstanding tasks
+across sessions needs permission-scoped retrieval, provenance, supersession and
+clear ownership. Live cross-account control of the Windows-hosted session is
+proven; migration to another provider has separate automated evidence and must
+not be conflated with that live test. Future UX should make who can act, where
+execution lives, and what Continue will do explicit. The existing delegated
+agent-directory visibility follow-up can resume separately on main.
+
 ## September 9 startup/sidebar and final release repairs
 
 Brian narrowed the visible rearrangement to app startup and the sidebar. The
