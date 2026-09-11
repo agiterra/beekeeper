@@ -623,6 +623,7 @@ export function AppSidebar({
                       reposByProject={projectSidebar.reposByProject}
                       channelsByProject={projectSidebar.channelsByProject}
                       forumsByProject={projectSidebar.forumsByProject}
+                      transportsByProject={projectSidebar.transportsByProject}
                       unclaimedForums={projectSidebar.unclaimedForums}
                       globalChannels={projectSidebar.globalChannels}
                       currentPubkey={currentPubkey}

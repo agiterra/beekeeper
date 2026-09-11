@@ -211,11 +211,21 @@ export function useProjectContainerQuery(projectId: string) {
   return { ...containers, project };
 }
 
+const EMPTY_CHANNEL_BUCKETS: ReadonlyMap<string, Channel[]> = new Map();
+
 export type ProjectChannelBuckets = {
   /** Stream channels per project id. */
   channelsByProject: Map<string, Channel[]>;
   /** Forum channels per project id. */
   forumsByProject: Map<string, Channel[]>;
+  /**
+   * Session transport channels per project id — hidden from the sidebar,
+   * but a project's sessions live in one, and a founded session (a genesis
+   * with no metadata yet, so no signed `projectRef`) can place only by its
+   * channel. Without this bucket every "Not started" row filed under
+   * General (Andy, 2026-09-11).
+   */
+  transportsByProject: Map<string, Channel[]>;
   /** Stream channels not claimed by any project (the global section). */
   globalChannels: Channel[];
   /** Forum channels not claimed by any project. */
@@ -233,6 +243,7 @@ export function partitionChannels(
 ): ProjectChannelBuckets {
   const streams = channels.filter((c) => c.channelType === "stream");
   const forums = channels.filter((c) => c.channelType === "forum");
+  const transports = channels.filter((c) => c.channelType === "transport");
   const streamBuckets = partitionByProject(
     projects,
     streams,
@@ -247,9 +258,17 @@ export function partitionChannels(
     (project) => project.channelIds,
     (channel) => channel.projectRef,
   );
+  const transportBuckets = partitionByProject(
+    projects,
+    transports,
+    (channel) => channel.id,
+    (project) => project.channelIds,
+    (channel) => channel.projectRef,
+  );
   return {
     channelsByProject: streamBuckets.byProject,
     forumsByProject: forumBuckets.byProject,
+    transportsByProject: transportBuckets.byProject,
     globalChannels: streamBuckets.unclaimed,
     unclaimedForums: forumBuckets.unclaimed,
   };
@@ -404,6 +423,8 @@ export function useProjectCodingSessionBuckets(
   channels: Channel[] | undefined,
   channelsByProject: ReadonlyMap<string, Channel[]>,
   forumsByProject: ReadonlyMap<string, Channel[]>,
+  /** The projects' session transports; a founded row places only by these. */
+  transportsByProject: ReadonlyMap<string, Channel[]> = EMPTY_CHANNEL_BUCKETS,
 ): {
   byProject: ReadonlyMap<string, ProjectCodingSessionShelfEntry[]>;
   unclaimed: ProjectCodingSessionShelfEntry[];
@@ -478,8 +499,13 @@ export function useProjectCodingSessionBuckets(
     for (const [ownerId, owned] of forumsByProject) {
       for (const forum of owned) projectIdByChannel.set(forum.id, ownerId);
     }
+    for (const [ownerId, owned] of transportsByProject) {
+      for (const transport of owned) {
+        projectIdByChannel.set(transport.id, ownerId);
+      }
+    }
     return { projectIdByRef, projectIdByChannel };
-  }, [projects, channelsByProject, forumsByProject]);
+  }, [projects, channelsByProject, forumsByProject, transportsByProject]);
 
   const channelLabels = React.useMemo(
     () =>
@@ -602,6 +628,11 @@ export function useCodingSessionProject(
     }
     for (const [ownerId, owned] of buckets.forumsByProject) {
       for (const forum of owned) projectIdByChannel.set(forum.id, ownerId);
+    }
+    for (const [ownerId, owned] of buckets.transportsByProject) {
+      for (const transport of owned) {
+        projectIdByChannel.set(transport.id, ownerId);
+      }
     }
     const { projectId } = resolveProjectCodingSessionPlacement(
       projectRef,

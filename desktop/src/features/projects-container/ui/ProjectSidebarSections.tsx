@@ -87,6 +87,7 @@ export function ProjectSidebarSections({
   reposByProject,
   channelsByProject,
   forumsByProject,
+  transportsByProject,
   unclaimedForums,
   globalChannels,
   currentPubkey,
@@ -97,6 +98,8 @@ export function ProjectSidebarSections({
   reposByProject: ReadonlyMap<string, CodeRepo[]>;
   channelsByProject: ReadonlyMap<string, Channel[]>;
   forumsByProject: ReadonlyMap<string, Channel[]>;
+  /** Session transports per project: what places a "Not started" row. */
+  transportsByProject: ReadonlyMap<string, Channel[]>;
   unclaimedForums: Channel[];
   /** Streams no project claims yet. Channels must belong to a project, so
    * these display under General until they're claimed or moved. */
@@ -201,6 +204,7 @@ export function ProjectSidebarSections({
     channelsQuery.data,
     channelsByProject,
     forumsByProject,
+    transportsByProject,
   );
 
   const queryClient = useQueryClient();

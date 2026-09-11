@@ -11269,6 +11269,21 @@ follow-up); (3) the founded screen naming the project rather than its
 `coding-sessions/lib/codingSessionTeamDeliveryStatus.ts`) — a one-line
 `\u0000` fix each, plus the hygiene test's allowlist.
 
+### Fixed 2026-09-11 — a founded session files under its project, not under General
+
+**Andy, live on the dev app, 2026-09-11:** every new session appeared under
+General "before you configure it" although its row said "SSD sessions". A
+founded row places by channel only (a genesis carries no signed
+`projectRef`), and the placement index (`useProjectCodingSessionBuckets`,
+`projects-container/hooks.ts`) was built from `partitionChannels`, which
+bucketed **stream and forum** channels only — a project's sessions channel
+is a hidden **transport**, so no founded row could ever resolve a project
+and all of them fell to General. Started rows never showed it: their 44223
+metadata names the project. `partitionChannels` now returns
+`transportsByProject` (same forward-ref / back-ref rule as the other two),
+both index builders read it, and the sidebar, the project screen and the
+founder pass it through. Test: `projectChannelBuckets.test.mjs`.
+
 ### Fixed 2026-09-11 — Discard deletes a never-started session, and deleted sessions leave every store at once (`fix/discard-deletes`)
 
 **Andy, 2026-09-11:** *"if you dismiss a Coding Session before you fully

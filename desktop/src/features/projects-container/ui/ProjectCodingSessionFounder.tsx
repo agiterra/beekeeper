@@ -210,6 +210,7 @@ export function ProjectCodingSessionFounder({
     channelsQuery.data,
     channelBuckets.channelsByProject,
     channelBuckets.forumsByProject,
+    channelBuckets.transportsByProject,
   );
 
   // Every channel the project claims, transports included: the sidebar

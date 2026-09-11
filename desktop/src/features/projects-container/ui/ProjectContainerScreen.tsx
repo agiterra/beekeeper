@@ -143,6 +143,7 @@ export function ProjectContainerScreen({
     channelsQuery.data,
     channelBuckets.channelsByProject,
     channelBuckets.forumsByProject,
+    channelBuckets.transportsByProject,
   );
 
   const personasById = React.useMemo(
