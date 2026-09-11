@@ -6,7 +6,7 @@ import { cn } from "@/shared/lib/cn";
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
 import { Textarea } from "@/shared/ui/textarea";
-import { useCodingSessionClosureDialog } from "../../hooks/useCodingSessionClosureDialog";
+import { useDeleteCodingSessionDialog } from "../../hooks/useDeleteCodingSessionDialog";
 import { MAX_CODING_SESSION_GOAL_BYTES } from "../../lib/codingSessionGoal";
 import { codingSessionLaunchBlockersBySurface } from "../../lib/codingSessionLaunchForm";
 import { MAX_CODING_SESSION_NAME_BYTES } from "../../lib/codingSessionName";
@@ -506,20 +506,27 @@ export function CodingSessionFoundedSetupHost({
     setup,
     goCodingSession,
   });
-  const closure = useCodingSessionClosureDialog();
-  // Discard is a 44230 `closed` through the existing confirm dialog. Nothing
-  // navigates: the accepted closure reaches the page through its closures
-  // read and the page flips to the closed state.
+  const { goChannel } = useAppNavigation();
+  // Discard deletes. A founded session that never ran has no transcript and
+  // nothing worth a closed record: closing it filed an "Untitled session"
+  // under Settled for good (Andy, 2026-09-11). The delete is the existing
+  // whole-session kind:5 (genesis, prompt, name) through the existing
+  // confirm dialog, in its never-started voice; once the relay accepts it
+  // the page leaves for the channel, and every store forgets the session.
+  const deletion = useDeleteCodingSessionDialog(() => {
+    void goChannel(channelId);
+  });
   const onDiscard =
     starting || setup.interactionLocked
       ? null
       : () =>
-          closure.requestClosure({
-            action: "closed",
+          deletion.requestDelete({
             channelId,
             genesisRef,
             sessionRef,
             label: setup.text.name.trim() || "Untitled session",
+            stops: [],
+            neverStarted: true,
           });
   return (
     <>
@@ -530,7 +537,7 @@ export function CodingSessionFoundedSetupHost({
         projectRef={projectRef}
         setup={setup}
       />
-      {closure.dialog}
+      {deletion.dialog}
     </>
   );
 }

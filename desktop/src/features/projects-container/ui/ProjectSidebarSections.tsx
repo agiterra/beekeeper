@@ -425,6 +425,7 @@ export function ProjectSidebarSections({
             label: entry.label,
             sessionRef: entry.sessionRef,
             stops: entry.stopTargets.map((stop) => ({ ...stop })),
+            neverStarted: entry.founded === true,
           });
         }}
         onRequestReopenCodingSession={(entry) => {

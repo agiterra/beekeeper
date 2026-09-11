@@ -1,4 +1,5 @@
 import * as React from "react";
+import { publishForgottenCodingSession } from "../lib/codingSessionForgotten";
 import { toast } from "sonner";
 
 import {
@@ -35,6 +36,12 @@ export type DeletableCodingSession = {
   stops: EndCodingSessionRequest["stops"];
   /** True when nothing is answering for those executions. */
   providerUnanswered?: boolean;
+  /**
+   * A founded session that never ran: no execution, no transcript. The copy
+   * says what there is to lose (a prompt and a name) and the action reads
+   * Discard, because that is the word the founded page uses for it.
+   */
+  neverStarted?: boolean;
 };
 
 /**
@@ -115,10 +122,18 @@ export function useDeleteCodingSessionDialog(onDeleted?: () => void): {
         sessionRef: target.sessionRef,
         genesisRef: target.genesisRef,
       });
+      // Every mounted store drops it now, not at the next reload.
+      publishForgottenCodingSession({
+        channelId: target.channelId,
+        sessionRef: target.sessionRef,
+        genesisRef: target.genesisRef,
+      });
       toast.success(
-        deleted === 1
-          ? "Session deleted."
-          : `Session deleted (${deleted} events).`,
+        target.neverStarted
+          ? "Session discarded."
+          : deleted === 1
+            ? "Session deleted."
+            : `Session deleted (${deleted} events).`,
         {
           description: stopsQueued
             ? "No provider was listening, so the stop is queued and will run when that app returns."
@@ -147,12 +162,18 @@ export function useDeleteCodingSessionDialog(onDeleted?: () => void): {
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>
-            {target ? `Delete "${target.label}"?` : "Delete this session?"}
+            {target
+              ? target.neverStarted
+                ? `Discard "${target.label}"?`
+                : `Delete "${target.label}"?`
+              : "Delete this session?"}
           </AlertDialogTitle>
           <AlertDialogDescription>
-            {target && target.stops.length > 0
-              ? "Any execution still running is stopped first, then the session and its transcript are removed for everyone. "
-              : "The session and its transcript are removed for everyone. "}
+            {target?.neverStarted
+              ? "Nothing has run. The session, its prompt and its name are removed for everyone. "
+              : target && target.stops.length > 0
+                ? "Any execution still running is stopped first, then the session and its transcript are removed for everyone. "
+                : "The session and its transcript are removed for everyone. "}
             Its reference stays claimed permanently, so a new session can never
             reuse it. This cannot be undone.
           </AlertDialogDescription>
@@ -176,7 +197,13 @@ export function useDeleteCodingSessionDialog(onDeleted?: () => void): {
               void confirm();
             }}
           >
-            {pending ? "Deleting…" : "Delete session"}
+            {pending
+              ? target?.neverStarted
+                ? "Discarding…"
+                : "Deleting…"
+              : target?.neverStarted
+                ? "Discard session"
+                : "Delete session"}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

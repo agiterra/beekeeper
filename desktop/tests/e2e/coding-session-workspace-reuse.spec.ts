@@ -526,6 +526,9 @@ test.describe("new session in this workspace", () => {
       "plugin:event|unlisten",
       "take_pending_entity_deep_link",
       "take_pending_navigation_deep_link",
+      // The founded page's stores read the relay's own key once, to trust
+      // its deletion receipts (2026-09-11) — a read, not a mutation.
+      "get_relay_self",
       // The resolution's own budget (contract §2).
       "list_coding_session_seat_worktrees",
       "validate_coding_session_workdir",

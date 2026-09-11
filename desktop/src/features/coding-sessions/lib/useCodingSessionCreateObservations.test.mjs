@@ -568,3 +568,149 @@ test("a live 44226 alone yields one founded umbrella; a later create and receipt
   queryClient.clear();
   ipcHandlers.clear();
 });
+
+test("a session deleted by this app, or announced deleted by the relay, leaves the live store at once", async () => {
+  const { act, renderHook } = await import("@testing-library/react");
+  const React = (await import("react")).default;
+  const { QueryClient, QueryClientProvider } = await import(
+    "@tanstack/react-query"
+  );
+  const { KIND_SYSTEM_MESSAGE } = await import("@/shared/constants/kinds.ts");
+  const { buildCodingSessionGenesisEvent } = await import(
+    "./codingSessionGenesis.ts"
+  );
+  const {
+    CODING_SESSION_DELETION_RECEIPT_TYPE,
+    publishForgottenCodingSession,
+  } = await import("./codingSessionForgotten.ts");
+  const { useCodingSessionCreateObservations } = await import(
+    "./useCodingSessionCreateObservations.ts"
+  );
+  const RELAY_SECRET = generateSecretKey();
+  const RELAY_PUBKEY = getPublicKey(RELAY_SECRET);
+  const genesisFor = (sessionRef, createdAt) => {
+    const built = buildCodingSessionGenesisEvent({
+      channelId: CHANNEL_ID,
+      sessionRef,
+    });
+    return finalizeEvent(
+      {
+        kind: built.kind,
+        created_at: createdAt,
+        tags: built.tags,
+        content: built.content,
+      },
+      OPERATOR_SECRET,
+    );
+  };
+  const first = genesisFor(SESSION_REF, 1_799_999_990);
+  const OTHER_REF = "6c8f2d3b-01e5-4c1f-b2a4-8d3e9f7a5b21";
+  const second = genesisFor(OTHER_REF, 1_799_999_991);
+
+  const liveByKinds = new Map();
+  const client = {
+    fetchEvents: async () => {
+      throw new Error("history must go through the bundled read");
+    },
+    fetchEventsBatch: async () => [],
+    subscribeLive: async (filter, onEvent) => {
+      liveByKinds.set(filter.kinds.join(","), { filter, onEvent });
+      return () => {};
+    },
+    subscribeToReconnects: () => () => {},
+  };
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+  });
+  const wrapper = ({ children }) =>
+    React.createElement(QueryClientProvider, { client: queryClient }, children);
+  const settle = async () => {
+    for (let round = 0; round < 8; round += 1) {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    }
+  };
+  const { result, unmount } = renderHook(
+    () =>
+      useCodingSessionCreateObservations(
+        [CHANNEL_ID],
+        client,
+        async () => RELAY_PUBKEY,
+      ),
+    { wrapper },
+  );
+  await settle();
+  const creates = liveByKinds.get([44221, 44224, 44226].join(","));
+  const receipts = liveByKinds.get(String(KIND_SYSTEM_MESSAGE));
+  assert.notEqual(creates, undefined);
+  assert.notEqual(
+    receipts,
+    undefined,
+    "the relay's receipts are watched once its key is known",
+  );
+  assert.deepEqual(receipts.filter.authors, [RELAY_PUBKEY]);
+
+  await act(async () => {
+    creates.onEvent(first);
+    creates.onEvent(second);
+  });
+  await settle();
+  assert.equal(result.current.geneses.length, 2);
+
+  // This app's own delete: the dialog publishes the fact on acceptance.
+  await act(async () => {
+    publishForgottenCodingSession({
+      channelId: CHANNEL_ID,
+      sessionRef: SESSION_REF,
+      genesisRef: first.id,
+    });
+  });
+  await settle();
+  assert.deepEqual(
+    result.current.geneses.map((g) => g.sessionRef),
+    [OTHER_REF],
+  );
+
+  // Somebody else's delete: the relay says so under its own key.
+  const receipt = finalizeEvent(
+    {
+      kind: KIND_SYSTEM_MESSAGE,
+      created_at: 1_800_000_000,
+      tags: [["h", CHANNEL_ID]],
+      content: JSON.stringify({
+        type: CODING_SESSION_DELETION_RECEIPT_TYPE,
+        genesisRef: second.id,
+        sessionRef: OTHER_REF,
+        deletionEventId: "cd".repeat(32),
+        channelId: CHANNEL_ID,
+      }),
+    },
+    RELAY_SECRET,
+  );
+  await act(async () => {
+    receipts.onEvent(receipt);
+  });
+  await settle();
+  assert.deepEqual(result.current.geneses, []);
+
+  // A receipt a member forged hides nothing.
+  const forged = finalizeEvent(
+    { ...receipt, id: undefined, sig: undefined },
+    OPERATOR_SECRET,
+  );
+  await act(async () => {
+    creates.onEvent(second);
+  });
+  await settle();
+  assert.equal(
+    result.current.geneses.length,
+    0,
+    "a forgotten genesis is not re-admitted by an echo",
+  );
+  await act(async () => {
+    receipts.onEvent(forged);
+  });
+  await settle();
+  unmount();
+});

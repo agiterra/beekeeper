@@ -1,6 +1,12 @@
 import * as React from "react";
 
+import { getRelaySelf } from "@/features/moderation/lib/relaySelf";
 import { relayClient as defaultRelayClient } from "@/shared/api/relayClient";
+import { KIND_SYSTEM_MESSAGE } from "@/shared/constants/kinds";
+import {
+  parseCodingSessionDeletionReceipt,
+  subscribeToForgottenCodingSessions,
+} from "./codingSessionForgotten";
 import { armCodingSessionDiscoveryOnConnect } from "./codingSessionDiscoveryArming";
 import { createCodingSessionDiscoveryController } from "./codingSessionDiscoveryRetry";
 import {
@@ -102,6 +108,12 @@ async function fetchCreateHistory(
 export function useCodingSessionCreateObservations(
   channelIds: readonly string[],
   client: CodingSessionCreateObservationClient = defaultRelayClient,
+  /**
+   * The relay's own signing key, for its deletion receipts. Rejecting or
+   * null means no receipt is trusted — the store still forgets sessions this
+   * app deletes itself, through the forget bus.
+   */
+  relaySelf: () => Promise<string | null> = getRelaySelf,
 ): CodingSessionCreateObservationSnapshot {
   const stableChannelIdentity = [...new Set(channelIds)].sort().join("\u0000");
   const stableChannelIds = React.useMemo(
@@ -124,6 +136,10 @@ export function useCodingSessionCreateObservations(
   const [snapshot, setSnapshot] = React.useState(() =>
     emptySnapshot(scopeIdentity),
   );
+  // Read through a ref so a caller's inline function cannot re-run the
+  // subscription effect on every render.
+  const relaySelfRef = React.useRef(relaySelf);
+  relaySelfRef.current = relaySelf;
   const storeRef = React.useRef<{
     identity: string;
     store: CodingSessionCreateObservationStore;
@@ -175,6 +191,46 @@ export function useCodingSessionCreateObservations(
         publish();
       }
     };
+    // A session deleted — by this app, or by anybody once the relay's
+    // receipt arrives — leaves the store at once rather than at the next
+    // reload (`codingSessionForgotten.ts`).
+    const unsubscribeForgotten = subscribeToForgottenCodingSessions(
+      (forgotten) => {
+        if (cancelled) return;
+        if (store.forgetCodingSession(forgotten)) publish();
+      },
+    );
+    let unsubscribeReceipts: (() => void) | null = null;
+    void relaySelfRef
+      .current()
+      .then((relayPubkey) => {
+        if (cancelled || relayPubkey === null) return;
+        return client
+          .subscribeLive(
+            {
+              kinds: [KIND_SYSTEM_MESSAGE],
+              "#h": [...stableChannelIds],
+              authors: [relayPubkey],
+              limit: 0,
+            },
+            (event) => {
+              const forgotten = parseCodingSessionDeletionReceipt(
+                event,
+                relayPubkey,
+              );
+              if (forgotten === null || cancelled) return;
+              if (store.forgetCodingSession(forgotten)) publish();
+            },
+          )
+          .then((unsubscribe) => {
+            if (cancelled) unsubscribe();
+            else unsubscribeReceipts = unsubscribe;
+          });
+      })
+      .catch(() => {
+        // No relay identity to trust (browser preview, mock host): this
+        // app's own deletes still reach the store through the bus.
+      });
     const unsubscribeObserved = subscribeToObservedCodingSessionEvents(
       receiveObservedEvents,
     );
@@ -285,6 +341,8 @@ export function useCodingSessionCreateObservations(
       unsubscribeLive?.();
       disarm();
       unsubscribeObserved();
+      unsubscribeForgotten();
+      unsubscribeReceipts?.();
     };
   }, [client, scopeIdentity, stableChannelIds]);
 

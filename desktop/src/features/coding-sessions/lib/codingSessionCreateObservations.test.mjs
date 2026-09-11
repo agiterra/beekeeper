@@ -873,3 +873,48 @@ test("an unsigned or tampered genesis founds nothing", () => {
   assert.deepEqual(store.foundedSnapshot([CHANNEL_ID]), []);
   assert.equal(store.counts().invalidSignatureCount >= 1, true);
 });
+
+test("a forgotten session leaves the founded snapshot, and a stale echo of its genesis is not re-admitted", () => {
+  const genesis = genesisEvent();
+  const store = ingest([genesis]);
+  assert.equal(store.foundedSnapshot([CHANNEL_ID]).length, 1);
+  assert.equal(
+    store.forgetCodingSession({
+      channelId: CHANNEL_ID,
+      sessionRef: SESSION_REF,
+      genesisRef: genesis.id,
+    }),
+    true,
+  );
+  assert.deepEqual(store.foundedSnapshot([CHANNEL_ID]), []);
+  // The relay's soft-delete is final; a late copy of the same bytes (a
+  // post-fence catch-up that raced the delete) changes nothing.
+  assert.equal(
+    store.ingestRelayEvents([genesis], [CHANNEL_ID], AUTHORITY),
+    false,
+  );
+  assert.deepEqual(store.foundedSnapshot([CHANNEL_ID]), []);
+  // Forgetting what was never held is a no-op, said so.
+  assert.equal(
+    store.forgetCodingSession({
+      channelId: CHANNEL_ID,
+      sessionRef: "33333333-3333-4333-8333-333333333333",
+      genesisRef: null,
+    }),
+    false,
+  );
+});
+
+test("forgetting by ref alone (no genesis id known) still drops the session's genesis", () => {
+  const genesis = genesisEvent();
+  const store = ingest([genesis]);
+  assert.equal(
+    store.forgetCodingSession({
+      channelId: CHANNEL_ID,
+      sessionRef: SESSION_REF,
+      genesisRef: null,
+    }),
+    true,
+  );
+  assert.deepEqual(store.foundedSnapshot([CHANNEL_ID]), []);
+});

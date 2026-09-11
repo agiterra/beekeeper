@@ -11269,6 +11269,51 @@ follow-up); (3) the founded screen naming the project rather than its
 `coding-sessions/lib/codingSessionTeamDeliveryStatus.ts`) — a one-line
 `\u0000` fix each, plus the hygiene test's allowlist.
 
+### Fixed 2026-09-11 — Discard deletes a never-started session, and deleted sessions leave every store at once (`fix/discard-deletes`)
+
+**Andy, 2026-09-11:** *"if you dismiss a Coding Session before you fully
+create it, it gets added as a closed Session under General. Really we should
+force delete a non-started session. There is nothing of value worth keeping
+in this case."* Discard on the founded page published a 44230 `closed`, and a
+closed founded row files under Settled — so every abandoned click left an
+"Untitled session" there for good.
+
+**What changed.** (1) Discard on the founded page is now the existing
+whole-session delete (`useDeleteCodingSessionDialog`, one NIP-09 kind:5 over
+the genesis, the prompt and the name, `lib/deleteCodingSession.ts`), through
+the existing confirm dialog in a never-started voice (`neverStarted`:
+"Discard "X"? Nothing has run. The session, its prompt and its name are
+removed for everyone. Its reference stays claimed permanently…", action
+"Discard session"); on acceptance the page leaves for the channel. The relay
+already accepts a delete that names only a genesis
+(`a_session_that_was_never_closed_deletes_with_its_genesis_alone`,
+`side_effects_project_owner_delete_tests.rs`); the goal and name go with it.
+The sidebar's founded row loses Close and Archive (nothing worth a closed
+record) and keeps Delete, in the same voice. (2) **Deleted sessions leave
+the running app immediately.** No desktop store had ever honoured a deletion
+live — the observation store only adds, and its `dispositions` made a deleted
+genesis permanent until a reload (the 2026-09-05 ledger note said as much for
+the provider). Two signals now reach every mounted store through
+`lib/codingSessionForgotten.ts`: this app's own delete publishes the fact on
+acceptance, and the relay's deletion receipt (kind 40099,
+`coding_session_deletion_accepted`, relay-signed) is watched per channel,
+signer-checked against the relay's NIP-11 `self` (`getRelaySelf`) — a
+member's forged receipt hides nothing. `CodingSessionCreateObservationStore.forgetCodingSession`
+drops the geneses and creates of the ref and keeps their dispositions, so a
+late echo of the deleted bytes is not re-admitted. Tests:
+`codingSessionForgotten.test.mjs` (4), the store (+2), the hook (+1: own
+delete, relay receipt, forged receipt, echo), e2e founded-setup 06 rewritten
+(one kind:5 naming genesis and prompt, no 44230, the page leaves, no row
+"Untitled session" anywhere); the mock relay learned the kind:5-with-`e`-tags
+arm it refused before with "Missing channel tag." (`e2eBridge.ts`).
+
+**Open, recorded:** the phone still drops a deleted session only on its next
+refresh of the channel (`coding_session_event_store.dart` resets on a fresh
+read; no live kind:5 or 40099 handling) — same as before, one hop behind the
+desktop now. Goals/names/closures readers keep their maps (harmless: a
+forgotten ref resolves `missing`). The 2026-09-05 provider note (`Provider::recover`
+republishes before reconciling deletions) is unchanged by this.
+
 ### Built 2026-09-10 — every session is founded on the click and set up on the page (Solo / Team)
 
 **Why.** Andy, 2026-09-10, after using the team-founded build above: "I really

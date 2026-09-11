@@ -736,45 +736,69 @@ test.describe("the founded page is the form", () => {
     });
   });
 
-  test("06 — Discard closes the founded session with a 44230 and the page says so", async ({
+  test("06 — Discard deletes the founded session: one kind:5 over its records, no row anywhere", async ({
     page,
   }) => {
     await openApp(page);
     const sessionRef = await foundSession(page);
-
-    await page.getByTestId("coding-session-founded-discard").click();
-    // The existing close confirmation, with its own copy.
-    await page.getByTestId("coding-session-closure-confirm").click();
-
+    // A prompt too, so the delete has more than the genesis to name.
+    await commitField(
+      page,
+      "coding-session-founded-prompt",
+      "A session founded by mistake, discarded before it ran.",
+    );
     await expect
-      .poll(async () => ofKind(await signedEvents(page), 44230).length, {
+      .poll(async () => ofKind(await signedEvents(page), 44227).length, {
         timeout: 15_000,
       })
       .toBe(1);
-    const closure = JSON.parse(
-      ofKind(await signedEvents(page), 44230)[0].content,
-    );
-    expect(closure.action).toBe("closed");
-    expect(closure.sessionRef).toBe(sessionRef);
-    expect(closure.genesisRef).toMatch(/^[0-9a-f]{64}$/);
 
-    // The accepted closure reaches the page through its closures read, and
-    // the closed state offers no Start.
+    await page.getByTestId("coding-session-founded-discard").click();
+    // The delete confirmation, in its never-started voice: nothing has run,
+    // and the action reads Discard.
+    await expect(page.getByRole("alertdialog")).toContainText(
+      "Nothing has run.",
+    );
+    await expect(page.getByTestId("delete-coding-session-confirm")).toHaveText(
+      "Discard session",
+    );
+    await page.getByTestId("delete-coding-session-confirm").click();
+
+    // One NIP-09 deletion naming the genesis and the prompt — a whole-session
+    // delete, not a closure: no 44230 is ever signed.
+    await expect
+      .poll(async () => ofKind(await signedEvents(page), 5).length, {
+        timeout: 15_000,
+      })
+      .toBe(1);
+    const deletion = ofKind(await signedEvents(page), 5)[0];
+    // The mock's signed-event log carries no ids, so the targets are pinned
+    // by count and shape: the genesis and the prompt, nothing else, and no
+    // address or channel tag — the whole-session shape the relay admits.
+    const named = deletion.tags
+      .filter((tag) => tag[0] === "e")
+      .map((tag) => tag[1]);
+    expect(named).toHaveLength(2);
+    for (const id of named) expect(id).toMatch(/^[0-9a-f]{64}$/);
+    expect(deletion.tags.every((tag) => tag[0] === "e")).toBe(true);
+    expect(deletion.content).toBe(`Delete session ${sessionRef}`);
+    const kinds = await signedKinds(page);
+    expect(kinds).not.toContain(44230);
+    expect(kinds).not.toContain(44221);
+
+    // The page leaves for the channel, and the session is a row nowhere:
+    // not "Not started", not Settled.
+    await expect(
+      page.getByTestId("coding-session-founded-workspace-founded"),
+    ).toHaveCount(0, { timeout: 15_000 });
     await expect(
       page.getByTestId("coding-session-founded-workspace-closed"),
-    ).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByTestId("coding-session-founded-start")).toHaveCount(
-      0,
-    );
-    await expect(
-      page.getByTestId("coding-session-founded-discard"),
     ).toHaveCount(0);
-    // Nothing else was signed on the way out.
-    const kinds = await signedKinds(page);
-    expect(kinds).not.toContain(44221);
-    expect(kinds).not.toContain(44227);
-    expect(kinds).not.toContain(44229);
+    await expect(page.getByText("Untitled session")).toHaveCount(0);
     await waitForAnimations(page);
-    await page.screenshot({ path: `${SHOTS}/06-closed.png`, fullPage: true });
+    await page.screenshot({
+      path: `${SHOTS}/06-discarded.png`,
+      fullPage: true,
+    });
   });
 });

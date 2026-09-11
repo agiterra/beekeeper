@@ -11051,6 +11051,45 @@ function sendToMockSocket(
       return;
     }
 
+    // A whole-session deletion (NIP-09 kind:5 with only `e` tags, no `h`):
+    // the relay derives its channel from the first target and soft-deletes
+    // every named row, so later reads omit them. Modelled the same way —
+    // the named events leave the channel's store, the deletion is recorded
+    // there — because without this arm a founded session's Discard is
+    // refused with "Missing channel tag.", which reads like a product bug.
+    if (
+      event.kind === KIND_DELETION &&
+      event.tags.length > 0 &&
+      event.tags.every((tag) => tag[0] === "e")
+    ) {
+      const targetIds = new Set(event.tags.map((tag) => tag[1] ?? ""));
+      let homeChannelId: string | null = null;
+      for (const channel of mockChannels) {
+        const store = getMockMessageStore(channel.id);
+        if (store.some((stored) => targetIds.has(stored.id))) {
+          homeChannelId = channel.id;
+          break;
+        }
+      }
+      if (homeChannelId === null) {
+        sendWsText(socket.handler, [
+          "OK",
+          event.id,
+          false,
+          "invalid: deletion names no stored event",
+        ]);
+        return;
+      }
+      const store = getMockMessageStore(homeChannelId);
+      for (let index = store.length - 1; index >= 0; index -= 1) {
+        if (targetIds.has(store[index].id)) store.splice(index, 1);
+      }
+      recordMockMessage(homeChannelId, event);
+      emitMockLiveEvent(homeChannelId, event);
+      sendWsText(socket.handler, ["OK", event.id, true, ""]);
+      return;
+    }
+
     const channelId = getChannelIdFromTags(event.tags);
     if (!channelId) {
       sendWsText(socket.handler, [

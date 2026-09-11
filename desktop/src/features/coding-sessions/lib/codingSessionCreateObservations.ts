@@ -625,6 +625,43 @@ export class CodingSessionCreateObservationStore {
     return observations;
   }
 
+  /**
+   * Drop a session the relay has deleted: its geneses and any creates that
+   * name its ref. The genesis's disposition stays, so a stale echo of the
+   * deleted record is skipped rather than re-admitted. Returns whether
+   * anything was held.
+   */
+  forgetCodingSession(input: {
+    channelId: string;
+    sessionRef: string;
+    genesisRef: string | null;
+  }): boolean {
+    let changed = false;
+    for (const [eventId, genesis] of this.geneses) {
+      const named =
+        (input.genesisRef !== null && eventId === input.genesisRef) ||
+        (genesis.channelId === input.channelId &&
+          genesis.sessionRef === input.sessionRef);
+      if (!named) continue;
+      this.geneses.delete(eventId);
+      changed = true;
+    }
+    for (const [key, bucket] of this.creates) {
+      for (const [eventId, create] of bucket) {
+        if (
+          create.channelId !== input.channelId ||
+          create.sessionRef !== input.sessionRef
+        ) {
+          continue;
+        }
+        bucket.delete(eventId);
+        changed = true;
+      }
+      if (bucket.size === 0) this.creates.delete(key);
+    }
+    return changed;
+  }
+
   /** Diagnostics only; refused creates and disputed geneses never reach a projection. */
   counts(): {
     malformedCount: number;

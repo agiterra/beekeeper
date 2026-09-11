@@ -130,8 +130,11 @@ export function ProjectChildRowItem({
         currentPubkey &&
           entry.founderPubkey?.toLowerCase() === currentPubkey.toLowerCase(),
       );
+      // A founded session that never ran has nothing worth a closed record;
+      // its one way out is Delete (2026-09-11).
       const canClose = Boolean(
         !settled &&
+          !founded &&
           hasClosureCoordinates &&
           isFounder &&
           onRequestCloseCodingSession,
@@ -140,6 +143,7 @@ export function ProjectChildRowItem({
       // offered wherever the session is not yet archived — open or closed.
       const canArchive = Boolean(
         !entry.isArchived &&
+          !founded &&
           hasClosureCoordinates &&
           isFounder &&
           onRequestArchiveCodingSession,
