@@ -13,19 +13,19 @@ implicit.
 Before you write the first brief of a new batch, read exactly two things:
 
 ```
-sed -n '/^## 3\. Next/,/^## 3a\./p' docs/SESSION_STATE.md   # the ordered track
+cat docs/CURRENT_STATE.md   # the current-state map, whole; gated to 300 lines
 ```
 
-and any next-batch file the founder names. Nothing else of `SESSION_STATE.md` —
-it is 5,500 lines and growing, and reading it whole spends a quarter of your
-context before you have ruled on anything.
+and any next-batch file the founder names. Nothing of `SESSION_STATE.md` but
+the items the map or the founder cites — it is past 12,000 lines, and reading
+it whole spends most of your context before you have ruled on anything.
 
 Do this **even when the founder just told you the batch in this session**. A
 rule said mid-session is gone the moment your context compacts; a file that a
 step of this skill reads is not. That asymmetry is the whole reason the track
 lives in a file: what survives is what something re-reads, not what someone
-said. If §3 and a remembered instruction disagree, the founder's live word wins
-on *what to do* — but read §3 anyway, because it carries the order and the
+said. If the map and a remembered instruction disagree, the founder's live word wins
+on *what to do* — but read the map anyway, because it carries the order and the
 items the batch depends on.
 
 ## The template
@@ -42,7 +42,7 @@ Worktree: the host makes yours (this is a hire)
       | you already have one at <path> (this brief is a send) — reuse it.
 Owns (exclusive): <paths>. Must not touch anything else; if it needs to, STOP and report.
 Problem, with evidence: <2–3 file:line entry points, or reproduced output>.
-Ledger: §3 Next, plus items <numbers> — read those and nothing else of SESSION_STATE.md.
+Ledger: CURRENT_STATE.md whole, plus SESSION_STATE.md items <numbers> — read those and nothing else of the ledger.
 Design (LOCKED): <decisions, numbered>. Deviations need a written reason in the report.
 Contract changes: <exact wire/type deltas, with the doc that must change>.
 Seat: <class> · <fast|standard|deep> (risk I×U×I = <n>) · routed by the host
@@ -141,7 +141,7 @@ brief and let the lane find it.
 
 ## Name the ledger items; never send a lane at the whole file
 
-Cite the numbered items the lane actually needs and let it read §3 Next plus
+Cite the numbered items the lane actually needs and let it read the map plus
 those:
 
 ```

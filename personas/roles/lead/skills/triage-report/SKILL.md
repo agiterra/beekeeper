@@ -154,7 +154,7 @@ is indistinguishable from a lead that has stopped working — on 2026-08-29 an
 approved waited, and it read as a stall (ledger draft 91(h)). Send first, then
 Pulse, then end the turn.
 
-Cite the `docs/SESSION_STATE.md` item number the disposition settles. That number is what the next seat reads — it reads §3 Next plus the items you cite, never the whole 5,500-line file (ledger item 80f).
+Cite the `docs/SESSION_STATE.md` item number the disposition settles. That number is what the next seat reads — it reads `docs/CURRENT_STATE.md` plus the items you cite, never the whole 12,000-line ledger (ledger item 80f).
 
 ## A ruling is a verb, not a sentence in a turn
 

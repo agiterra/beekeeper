@@ -97,3 +97,8 @@ pre-push:
       # those plus their `cargo metadata`-derived dependents, the JS surface's
       # fast checks when that surface moved, and the file-size ratchet.
       run: ./scripts/pre-push-floor.sh
+    current-state:
+      # Hard ceiling on docs/CURRENT_STATE.md, lines and bytes. Milliseconds,
+      # and unconditional: a guard that only runs when lefthook sees the file
+      # in the push is not a guard.
+      run: node scripts/check-current-state-size.mjs

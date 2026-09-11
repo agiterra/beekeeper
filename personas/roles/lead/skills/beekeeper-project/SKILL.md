@@ -11,20 +11,21 @@ find them. Anything below that also lives in `AGENTS.md` (loaded into your
 context already) is a pointer, not a restatement; read the named section there
 rather than a second copy here.
 
-## The ledger — read §3, and only the items your brief cites
+## The map first, then only the ledger items your brief cites
 
-`docs/SESSION_STATE.md` is the living record: §1 what is live, §2 the open
-findings (numbered, each with the code or transcript that proves it), §3 `Next`
-(the ordered track), §3a environment facts that already cost hours.
+`docs/CURRENT_STATE.md` is the current-state map: what is deployed, active
+work and owners, decisions in force, blockers, the ordered next steps, and
+where the evidence lives. Read it whole — it is gated to 300 lines and 24,000
+bytes — and re-read it after your context compacts.
 
-**Read §3 Next, and only the numbered §2 items your brief cites. Never the whole
-file.** It grows every ceremony — 5,500 lines and counting: a seat that reads it
-start to finish spends about a quarter of its context window before it has done
-anything, and a codex seat already spends ~25% at boot (ledger item 80f). §3 is not at the top — jump to it:
+`docs/SESSION_STATE.md` is the evidence ledger: numbered findings, each with
+the code or transcript that proves it, numbers frozen because code cites them.
+**Read only the items your brief cites. Never the whole file.** It is past
+12,000 lines: a seat that reads it start to finish spends most of its context
+window before it has done anything, and a codex seat already spends ~25% at
+boot (ledger item 80f). Jump to an item:
 
 ```
-grep -n '^## ' docs/SESSION_STATE.md                       # section line numbers
-sed -n '/^## 3\. Next/,/^## 3a\./p' docs/SESSION_STATE.md  # the track, ~240 lines
 grep -n '^79\. ' docs/SESSION_STATE.md                     # where item 79 starts
 sed -n '<start>,<start+100>p' docs/SESSION_STATE.md        # read that window only
 ```
@@ -32,10 +33,11 @@ sed -n '<start>,<start+100>p' docs/SESSION_STATE.md        # read that window on
 (Do not range an item to the next number — the last item has no successor and
 the range runs to EOF, which is the whole file again.)
 
-Where this skill and the ledger disagree about *current state*, the ledger wins
-— but ask it about one thing, not everything. Findings go **into** the ledger,
-never into a new handoff document. A team's in-flight dispositions go on the
-wire as Pulse entries (kind 44240); the repo document is for what landed.
+Where this skill and the map disagree about *current state*, the map wins.
+Findings go **into** the ledger as numbered items, never into a new handoff
+document; session reports go under `docs/history/`. A team's in-flight
+dispositions go on the wire as Pulse entries (kind 44240); the repo document is
+for what landed.
 
 Brief your own lanes the same way: cite ledger items by number so a lane reads
 those items and nothing else.

@@ -183,7 +183,7 @@ build-release:
     cargo build --workspace --release
 
 # Run repo lint, formatting, and repository policy checks
-check: fmt-check clippy desktop-check desktop-tauri-fmt-check desktop-tauri-clippy web-check web-test mobile-check file-size-check ignore-reasons-check autodeploy-test sidecar-parity-check
+check: fmt-check clippy desktop-check desktop-tauri-fmt-check desktop-tauri-clippy web-check web-test mobile-check file-size-check current-state-check ignore-reasons-check autodeploy-test sidecar-parity-check
 
 # Test the relay deployers (deploy/autodeploy). They stub incus, flock and
 # sleep on PATH, so they need no host, no containers and no Woodpecker — and
@@ -202,6 +202,14 @@ file-size-check:
     node desktop/scripts/check-file-sizes.mjs
     node web/scripts/check-file-sizes.mjs
     node mobile/scripts/check-file-sizes.mjs
+
+# Hard ceiling on docs/CURRENT_STATE.md, the current-state map every agent
+# reads first and whole: 300 lines and 24,000 UTF-8 bytes. A wall, not a
+# ratchet — the ledger it replaced as the first read grew from 152 lines to
+# 12,000+ against two written promises that it would shrink.
+current-state-check:
+    node --test scripts/check-current-state-size.test.mjs
+    node scripts/check-current-state-size.mjs
 
 # Ratchet on bare `#[ignore]` attributes. An ignored test is invisible; with a
 # reason string the gap is legible and greppable, which is how `test-genesis`

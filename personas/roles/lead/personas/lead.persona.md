@@ -20,7 +20,7 @@ You are the lead seat of a team. Five verbs, nothing else:
 4. **Merge** — tier-0/1 you land yourself on a clean report and green observed gate rows; tier-2 waits for a refuter's terminal verdict first. The relay's push gate admits the landing or refuses it with a sentence; no person does (see `skills/beekeeper-project` § Gates the host can see).
 5. **Update the ledger** — every disposition (landed, blocked, deferred) goes onto the wire with its evidence, before you move on.
 
-You read `docs/SESSION_STATE.md` the way you make your lanes read it: §3 `Next`, plus the numbered items your own brief cites — never the whole file. See `skills/beekeeper-project`.
+You read `docs/CURRENT_STATE.md` whole — it is gated to 300 lines — and then `docs/SESSION_STATE.md` the way you make your lanes read it: only the numbered items your own brief cites, never the whole file. See `skills/beekeeper-project`.
 
 ## Which `bee` you run
 

@@ -1,9 +1,360 @@
-# Sessions — living state
+# Sessions — the evidence ledger
 
-**The one document to read first.** Everything else is either a binding
+**Read [CURRENT_STATE.md](CURRENT_STATE.md) first, not this file.** Since
+2026-09-11 this is the append-only evidence register: the numbered findings
+(§2), each with the code or transcript that proves it, numbers frozen because
+code and tests cite them; the environment facts (§3a); and the dated session
+sections above §1, written before the map existed and left in place. It is far
+too large to read whole. Find an item with
+`grep -n '^<n>\. ' docs/SESSION_STATE.md` and read that window. A claim here
+that turned out wrong is struck where it stands with a pointer to what
+supersedes it, never deleted. The rules are the top block of `AGENTS.md`.
+
+~~**The one document to read first.** Everything else is either a binding
 authority (§4), a protocol for a specific experiment, or history. This file
 is updated on every build and whenever live use produces a finding; if it
-disagrees with an older document about *current state*, this one wins.
+disagrees with an older document about *current state*, this one wins.~~
+*(Superseded 2026-09-11 by `CURRENT_STATE.md`; struck, not removed.)*
+
+## September 11 — latest main rebuilt; native steering plan for Claude
+
+**Status:** planning only. Brian requested pulling Andy's changes, rebuilding
+local Beekeeper, and a plan following T3's responsive mid-turn input pattern.
+No steering implementation or automatic context hook was added. The September
+10 context experiment below remains paused. This section is the handoff brief;
+implementation should begin only when delegated, after checking the then-current
+HEAD and these cited seams.
+
+### Source and local build checkpoint
+
+Local `main` fast-forwarded from `00da38813` to
+`77b792de90d1c0f23f950de026297175ee2219d0`. Both the relay's main ref and
+GitHub main reported that same commit on September 11. Existing local context
+notes were preserved and reapplied cleanly; a stash backup was retained.
+
+Andrew Bent's commit, **“feat: a coding session is founded on the click and
+set up on its page”**, replaces the creation dialog with setup on the session
+page. A new-session click publishes the existing genesis event and opens that
+page; Solo/Team setup, goal/name persistence, start and discard operate on the
+same founded session. Unstarted sessions appear as **Not started**, including
+mobile. It changes 128 files but does not change `buzz-session-provider` or
+`buzz-acp`: the native steering gap below remains. Older investigation pointers
+to the deleted launcher/dialog must be re-evaluated against this revision.
+
+An isolated debug bundle was built from that exact commit with
+`scripts/app-from.sh <sha> --no-install`, including all eight sidecars, desktop
+TypeScript/Vite build, Tauri executable, bundled role resources, and ad-hoc
+signature verification. Build exited 0 at 2026-09-11T11:30:46Z. Log:
+`/Users/brian/Projects/beekeeper/review-2026-09-11-local-rebuild/build.log`.
+Installed at `/Users/brian/Applications/Beekeeper Dev.app`; installed `bee
+--version` reports `77b792de`. Deep/strict signature verification passed.
+Previous bundle preserved as
+`/Users/brian/Applications/Beekeeper Dev.app.before-77b792de-20260911-073253`.
+This is build evidence, not a rerun of Andy's full test gate or proof of native
+steering. Startup verification via native accessibility inspection passed: the rebuilt
+app opened the signed-in Brian/hive dashboard, populated projects and agents,
+and displayed the new Not started session entries. No Keychain prompt blocked
+that check. No live session was created or prompted for this verification.
+
+### Desired behavior and the T3 pattern
+
+While an execution works, an authorized human or agent can send another
+instruction without stopping it. Where the running adapter supports native
+injection, submit promptly through its live input path. Keep Stop separate.
+Where it does not, visibly queue for the next boundary. Preserve each signed
+command's sender, authority, target generation and delivery evidence. Runtime
+acceptance does not prove the model has read, understood or followed a message.
+
+Read-only comparison used `/Users/brian/Projects/t3code/t3code`:
+
+- Claude: `apps/server/src/provider/Layers/ClaudeAdapter.ts:4205` creates the
+  async prompt stream; `:4903`, `:4955`, `:5018` reuse the real active turn and
+  offer follow-up input into it. `ClaudeAdapter.test.ts:1403` tests this with a
+  mocked runtime. No T3 tests were rerun for this plan.
+- Codex: `apps/server/src/provider/Layers/CodexSessionRuntime.ts:2375` sends
+  `turn/start` even while working and `:2391` preserves the existing active ID
+  for interruption. This is not evidence that T3 calls `turn/steer`, nor proof
+  that every Codex follow-up is injected into the same turn.
+- T3 separates responsive input submission from runtime-specific behavior.
+  Copy that separation. Its direct Claude SDK and Codex app-server paths do
+  not establish what Beekeeper's installed ACP adapters support.
+
+This advances `VISION_COLLABORATION.md`: current grants control consumption,
+work continues across participants, and delivery uncertainty remains visible.
+Automatic project context, model-provider replacement, new launch UI, and
+changes to who may interrupt are outside this slice.
+
+### Existing Beekeeper seams and hazards
+
+`crates/buzz-session-provider/src/session.rs:58` hard-disables native delivery.
+`lib.rs:4739` is the injection stub; the ordinary delivery path at `:4511`
+continues to `handle.deliver` at `:4535`. Turning the stub into a send without
+making dispatch exclusive could deliver the same command twice. The actor
+queues incoming turns during a prompt (`session.rs:2178`), while that prompt
+holds the mutable ACP client. Its public delivery method deliberately uses
+`try_send` (`:699`) so a busy execution cannot block relay handling.
+
+The ACP prompt read loop already accepts steer requests concurrently
+(`crates/buzz-acp/src/acp.rs:2425`). It uses the current run ID where required
+and advertised extension support. But its private pool types cannot be used by
+the session provider. More importantly, `pool.rs:489` exposes one Success for
+both `injected` and `startedNewTurn` (`acp.rs:2667`, `:2681`). Prompt completion
+can emit `PromptCompletedNeutral` after writing a steer (`:2718`, `:2724`),
+which is not proof that the input was never delivered. Unknown or empty ACKs
+must not become successful injection or automatic replay.
+
+The existing `SessionEvent::TurnStarted` handler replaces `open_turn`
+(`lib.rs:6865`), charges turn spend (`:6916`), clears pending state and emits
+a receipt. Reusing it for same-turn input would change ownership and later
+team-wake causality. `TranscriptTranslator::begin_turn` also resets state
+(`transcript.rs:215`). Injection needs its own event/fold.
+
+Desktop already chooses steer while working when `canSteer` is true
+(`desktop/src/features/coding-sessions/ui/CodingSessionComposer.tsx:477`).
+Reuse that path, enabling per-execution capability only after the provider can
+honor it. Preserve `docs/nips/NIP-CSC.md:124`: unsupported steer degrades to
+boundary with a receipt; never silently cancel, restart or merge prompts.
+Do not copy the legacy ACP harness's cancel-and-merge fallback policy.
+
+### Implementation sequence and settled decisions
+
+1. **Prove adapter support and settle the shared contract first.** Inspect the
+   installed Claude/Codex ACP versions and advertised capabilities, then use a
+   deterministic held-open prompt fixture to record actual request/response
+   behavior. Export a narrow public steering transport API, preferably a module
+   separate from the legacy pool. Preserve actual outcome and available native
+   session/run IDs. Do not infer support from a provider name or probe arbitrary
+   extension methods with live user content. If an adapter lacks support, keep
+   boundary behavior; a direct SDK/app-server driver is a separately scoped
+   follow-up, not an implicit prerequisite for this slice.
+2. **Persist ownership of the attempt before dispatch.** Extend existing durable
+   command/state/outbox machinery with exact command, operation, generation,
+   attempt identity and dispatch disposition. Write a conservative dispatch
+   intent before runtime I/O. After restart, unresolved intent is uncertain
+   until native or durable evidence resolves it, even if a crash might have
+   happened before the write. No unsupported exactly-once promise. A receipt
+   publication retry must not repeat a runtime write.
+3. **Wire actor delivery without blocking the provider.** Install the channel
+   before the prompt borrows the client. Use bounded admission, ordered pending
+   input and asynchronous result events. Exactly one path owns each command:
+   native attempt, boundary mailbox or terminal disposition. Preserve the
+   original command text/signature and return promptly to relay processing.
+   Correlate late ACKs to the attempt and generation, never the newest pending
+   command. End-of-turn selection races must not lose or duplicate input.
+4. **Fold truthful outcomes without restarting the turn.** Add a distinct
+   acknowledged-steer event. Injected input appends attributed transcript input
+   with `steered:true`, settles that command's delivery and keeps the original
+   active turn, streaming translator, spend and terminal causality intact.
+   Same-turn injection does not count as an additional started turn; actual
+   token/cost usage still accumulates. Apply relevant admission/rate limits.
+   An adapter-started new turn is a real new execution turn with its own
+   lifecycle/accounting, never a fake steer on the old one. Do not enable that
+   adapter path until its new-turn updates and completion can be observed.
+5. **Apply authority at consumption and expose capability last.** Carry existing
+   generation, operation dedupe, grant and takeover fences to the final dispatch
+   boundary (`session.rs:655`, `:682`, `:736`). Distinguish queued/prevented from
+   already dispatched. Revocation/fencing cannot retroactively claim the runtime
+   never saw delivered input. Preserve the current separate authorization rules
+   for interrupt-class input and `thread.turn.interrupt` (NIP-CSC:111). Replace
+   the hard-disable only when execution capability and the implementation agree.
+   Extend existing receipt decoding/UI only where new dispositions need it.
+
+| Observed transport outcome | Provider action and visible result |
+| --- | --- |
+| No native support, or positively not written | Disclose degradation; enqueue the original command once at the boundary. |
+| Explicit rejection proving no delivery | Disclose rejection/degradation as appropriate to the adapter contract; boundary fallback only when non-delivery is established. |
+| `Injected` with correlated ACK | Report native delivery into the active turn; preserve active-turn attribution and state. |
+| `StartedNewTurn` | Track the actual new native turn and report boundary/new-turn delivery; never resend the same input. |
+| Partial write, ACK timeout/loss, EOF after write, unknown ACK | Persist delivery unknown; reconcile when evidence exists; do not automatically replay or label it queued. |
+| Authority invalid or generation fenced before dispatch | Durable refusal with zero runtime writes. |
+
+A bare `{}` cannot prove either successful injection or safe replay. Timeout
+means lack of confirmation, not rejection. Keep ACK deadlines bounded without
+blocking later relay reads. Any wire-visible disposition change must update core
+schemas/builders and older-client fallback in the same integration; prefer the
+existing event surface over a new endpoint.
+
+### Team ownership for a Claude handoff
+
+The finalizer first locks outcome names, attempt/event interfaces and acceptance
+fixtures. Then lanes may work in parallel with exclusive file ownership:
+
+| Lane | Owned scope | Required output |
+| --- | --- | --- |
+| Transport | `crates/buzz-acp/**` | Public outcome-preserving transport, pending-write/ACK distinction, deterministic adapter tests; retain legacy caller compatibility. |
+| Provider | `crates/buzz-session-provider/**` | Actor routing, durable attempts, authority fences, transcript/receipt folds and crash/race tests. Keep these coupled invariants in one lane. |
+| Client/contract | Agreed receipt schemas/builders in core/SDK and desktop/CLI consumers | Backward-compatible dispositions, capability behavior, browser proof. No unrelated launcher edits. |
+| Finalizer/reviewer | Integration, protocol/ledger docs and agreed composition fixtures | Independent adversarial review, full gate, native validation, single signed commit sequence. |
+
+Lanes do not commit. The finalizer commits with signoff, rebases the short-lived
+branch onto current local `main`, and reports exact tested commits and limits.
+Do not let separate lanes edit overlapping receipt definitions or provider
+state. Parallel implementation starts after interfaces are locked; standalone
+adapter inventory and fixture design can proceed first.
+
+### Acceptance and stop conditions
+
+- Held-open adapter prompt accepts two ordered inputs once, with no cancellation,
+  no transcript/tool-state reset, correct signers and command receipts, and no
+  duplicate turn spending or team wakes. Assert wire contents and resulting
+  state, not only string presence in source.
+- Test capability on/off, saturation, explicit failure, injected/new-turn ACKs,
+  empty/unknown ACKs, method-not-found, partial writes, EOF and lost ACKs.
+- Deterministically end the prompt before dispatch, after write/before ACK, and
+  before a late ACK while a new turn begins. Include shutdown/cancel while ACK
+  pending. Assert no command or generation is settled by another's response.
+- Crash before/after durable intent, runtime write, outcome persistence and
+  receipt publication. Observe one delivery or honest unresolved state; never
+  silently replay uncertain input.
+- Revoke grants, take over, replay operations and send stale-generation or
+  unauthorized input. Assert zero writes when prevented, truthful disposition
+  when already dispatched, and unchanged original-turn causality.
+- Run targeted ACP/provider/core/desktop tests during development; finalizer
+  runs `just ci` and applicable integration gates (`just test` if relay/db/auth
+  change). Run `just smoke` for desktop changes before landing: Playwright is
+  not part of `just ci` (`TESTING.md:26`). Use the E2E bridge build.
+- Finally exercise the installed app separately with actual Claude and Codex
+  adapters: send a unique marker during a controlled long-running task, record
+  native ACK plus signed receipt/transcript and the later response. Report
+  runtime acceptance separately from model-visible use. A mocked ACP fixture
+  cannot establish native support. Unsupported providers keep boundary mode.
+- Handoff completion requires the outcome table, tests, exact native adapter
+  versions and residual limits in this ledger. Do not announce “native steering
+  shipped” on a constant flip, green mock tests or a queued message alone.
+
+## September 10 — automatic project context: findings saved, work paused
+
+Brian asked to document this exploration and return to it later. No automatic
+context-delivery feature, hook, retrieval service, or fourth experimental
+session has been implemented or run. This entry preserves the direction and
+the evidence; it is not an instruction to resume implementation automatically.
+
+### Objective and agreed direction
+
+Brian wants the project's accumulated experience to reach humans and agents
+across people, machines, and providers without repeated human onboarding or an
+agent having to discover a special retrieval tool. Git supplies recorded code
+changes; accessible relay history supplies requests, investigations, decisions,
+reports, and outcomes. Project Pulse already organizes some posted updates,
+session activity, declared assignments, and coordination evidence. It does not
+automatically connect every conversation/tool call to every Git change.
+
+Attach useful context to ordinary activity: searches, file reads, Git log/diff
+inspection, and tests. Include probable relationships as attributed leads with
+the matching reason, rather than hide useful information until an exact link
+exists. Retrieved history is evidence, not a new instruction or authority grant.
+Preserve contradictory findings and subsequent corrections. Do not treat copies
+of an injected briefing as independent corroboration of its original sources.
+
+The key retrieval question is: what relevant evidence is new to this execution,
+has changed, or may have been lost? Track packets supplied per execution, with
+source IDs/revisions, delivery surface, and delivery uncertainty. A saved package
+is not proof of delivery; delivery is not understanding or retained memory.
+Deduplicate unchanged packets, deliver corrections, and restore bounded context
+after reconstruction or compaction when needed. Native compaction may not expose
+what survived, so retention must remain unknown where it cannot be established.
+Do not equate network deltas, cached input, and the model's retained context.
+
+### Three-session worktree investigation: what actually happened
+
+All three reports named inspected revision `00da38813`. This was a lightweight
+manual briefing trial, not a controlled benchmark or automatic retrieval test.
+Much prior development occurred in T3; do not assume it all exists in Beekeeper.
+
+1. Brian ran an investigation in Beekeeper titled **Worktree default pathing**.
+   Astra read its report directly from the installed app's accessibility tree.
+   The visible route identified channel `aa946c4e-acdc-43cb-9209-b0ef221d8d65`,
+   provider `1958c6c448e05eed32599f6a25e2293ba84c9d4095c7c6958397bd95176b9644`,
+   instance `1958c6c448e05eed`, session `3f723d03-0fac-4821-bd27-358cbfbdb975`,
+   generation 1. The report distinguished ordinary worktree creation (already
+   remembering the supplied checkout) from a user supplying an existing worktree
+   or a handover path seeding an execution folder. It proposed retaining Git's
+   returned repository root when remembering a worktree-creating launch. The
+   original Windows cause remained unverified. The app showed Completed/Idle;
+   Brian's "ended" did not establish a closed session lifecycle.
+2. Brian supplied the intended behavior to a fresh second session. That agent
+   explicitly reported no prior context and no proposed fix to recall. It
+   investigated again and reported additional saved-default, base-branch, and
+   dialog-state concerns. This is the unaugmented baseline, not a failed native
+   resume. Its report was pasted into this T3 conversation by Brian.
+3. A fresh third session received the same requirement plus Astra's manually
+   written briefing from the earlier reports and file pointers. Brian pasted
+   its result (displayed duration 4m 36s). The agent said the briefing saved
+   discovery across the feature directory, but it challenged omissions and
+   corrected three pointers from `lib/` to `ui/`. It reported first-write-wins
+   project seeding, the mapping's role in provider cross-device folder lookup,
+   and differences in the crew path. The first report displayed 7m 25s, but
+   tasks and inputs differed; those durations do not establish measured savings.
+
+The second/third session IDs and signed event IDs have not been retrieved.
+The shell had no BUZZ relay authentication environment configured during the
+first report lookup; UI reading succeeded, direct authenticated relay retrieval
+was not tested. No code was changed or native Windows reproduction performed
+as part of these investigations. Reported code findings are leads with cited
+source paths in the original reports, not independently established fixes.
+
+The requirement used in sessions two and three:
+
+> Ordinary new coding sessions should use the project's canonical repository
+> and default to a fresh worktree from its configured base branch. Remembering
+> an execution folder must not change the project default. Explicit "New
+> session in this workspace" should reuse that workspace without changing
+> future defaults.
+
+Important corrections to preserve when making the next briefing: a write-side
+fix alone does not repair existing saved defaults; the original `repoRoot`
+proposal specifically helps when the supplied checkout is itself a worktree,
+so calling it simply "already correct" drops its condition. Silently falling
+back to main/master/HEAD when the configured branch is unavailable may violate
+the requirement. Dialog request-state leakage was hypothesized but not driven
+live. Do not promote the reports' proposals into an approved implementation.
+
+### Feasibility findings and smallest next experiment
+
+A fresh, source-reading Rook recommended delivering changes in relevant evidence
+beside ordinary work, using simple exact identifiers plus explainable inferred
+matches before considering a global graph. Its native-steering recommendation
+was subsequently narrowed by root's direct source inspection:
+
+- `crates/buzz-dev-mcp/src/lib.rs:45,57` owns shell/read-file responses; these
+  are real augmentation seams. Native Claude/Codex tool notifications are
+  observations, not proof that Beekeeper can rewrite their model-facing output.
+- `crates/buzz-session-provider/src/session.rs:58-82` explicitly sets
+  `NATIVE_STEER_DELIVERABLE` false. Underlying ACP support does not make native
+  mid-turn injection available through this session provider. Do not plan the
+  trial on steering without implementing and proving the missing connection.
+- The same file's turn assembly around `:2130` supplies initial briefing text.
+  That supports an opening briefing, not necessarily delivery at a tool boundary.
+- Claude documents `PostToolUse` / `hookSpecificOutput.additionalContext` as a
+  way to attach context alongside tool results:
+  https://code.claude.com/docs/en/hooks . This is a candidate transport, not proof
+  that our installed Claude ACP adapter/version loads and executes those hooks.
+
+Proposed next step when Brian resumes: first prove a harmless context marker
+can reach a fresh Claude session through a hook in the actual installed
+Beekeeper workflow. Scope configuration to the experiment. If unsupported,
+identify the adapter work instead of substituting another opening prompt and
+claiming tool-triggered delivery succeeded.
+
+Then use one fixed, source-attributed packet from the three investigations,
+with corrected paths and preserved qualifications. Trigger it on the first
+relevant ordinary search/read (e.g. workdir_store or NewCodingSessionWorkdirField),
+as separate context without altering stdout or file bytes. Start around 500
+tokens, add no model call or broad retrieval service, and use a bounded hook
+timeout that allows ordinary work to continue on failure. Log packet revision,
+execution identity, triggering tool ID, and actual delivery status; prevent
+parallel calls from duplicating the same packet. Repeated unchanged searches
+should add nothing; a revised finding should produce a small update.
+
+Give the fourth fresh session only the requirement and investigation task.
+Verify that relevant context arrives before its recommendation, that it treats
+prior findings as evidence rather than commands, and whether it avoids repeated
+investigation. Measure calls/tokens/latency where available rather than infer
+savings from elapsed time or self-report. Keep inaccessible material out of
+packets, including hidden titles/counts, and record the exact supplied text.
+Permission-scoped live relay/Git retrieval and compaction recovery follow only
+after this delivery experiment works. No new worktree-path fix is authorized
+by this saved research entry.
 
 ## September 9 main published — combined release and startup/sidebar fix
 
@@ -2447,6 +2798,11 @@ partial because several session channels were inaccessible._
 ---
 
 ## 1. What is live
+
+**Superseded 2026-09-11.** The table below is the 2026-08-23 observation and
+was never updated after it; it stays as history. What is live now is
+`CURRENT_STATE.md` § "What is live", with the command and the date each row
+was checked.
 
 | | |
 | --- | --- |
@@ -12449,6 +12805,13 @@ provenance. Brian's working agreements moved from
 `archive/SESSION_HANDOFF_SOL.md` §10 into `AGENTS.md`.
 
 ## 5. The rule that keeps this from becoming the nineteenth document
+
+**Amended 2026-09-11.** Findings still land here, in §2, as numbered items.
+The current-state map is `CURRENT_STATE.md`; session reports go under
+`docs/history/`; the rule text is the top block of `AGENTS.md`. The sentence
+below that this file "is not an append-only log" never held (+3,140 / −216
+lines over its last sixty commits) and is withdrawn: this file preserves
+historical content and item numbers, and corrects by striking in place.
 
 A finding from live use lands **here**, in §2, the day it is found — not in a
 new document. New documents are for authorities and experiment protocols

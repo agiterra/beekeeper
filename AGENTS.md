@@ -1,12 +1,33 @@
 # AGENTS.md — AI Agent Contributor Guide
 
-> **Read [docs/SESSION_STATE.md](docs/SESSION_STATE.md) first.** It is the
-> living ledger: what is deployed right now, what is open (each item with the
-> code or transcript that proves it), what to do next, and the environment
-> facts that have already cost this project hours. It is updated at every
-> ceremony and whenever live use produces a finding; where it disagrees with
-> an older document about *current state*, it wins. Findings go **into** it,
-> never into a new handoff document.
+> **Read [docs/CURRENT_STATE.md](docs/CURRENT_STATE.md) first, all of it; it is
+> gated to 300 lines and 24,000 bytes.** It is the current-state map: what is
+> deployed (with the command that proves it and the date it was last checked),
+> what is being worked on and by whom, the decisions in force, the blockers,
+> and the ordered next steps. Anything needing more than a paragraph links out:
+> to the plan that governs it, to a numbered item in the ledger, or to a dated
+> report under `docs/history/`. Read what your task links to, not everything it
+> could link to. After your context is compacted, re-read the map and the plan
+> it names before continuing.
+>
+> **Findings go into [docs/SESSION_STATE.md](docs/SESSION_STATE.md), the
+> ledger**, as a numbered item with the code or transcript that proves it, the
+> day they are found. Item numbers are frozen: code and tests cite them. The
+> ledger preserves its historical content; a claim it got wrong is struck where
+> it stands with a pointer to what supersedes it, never deleted. It is far too
+> large to read: find an item with `grep -n '^<n>\. ' docs/SESSION_STATE.md`
+> and read that window. Session reports and lane transcripts are not findings:
+> they go under `docs/history/` as dated files that a ledger item or the map
+> links to, never only on a Desktop or in a review directory this machine
+> alone can see.
+>
+> **The map is updated, never appended.** Whoever lands a change that alters
+> active work, decisions, blockers, or what is deployed updates the map in that
+> commit. Where the map disagrees with an older document about *current
+> state*, the map wins. Where the map and the ledger disagree, check the code
+> or the relay, record the result in the map with the check date, and strike
+> the losing claim where it stands; if the evidence cannot settle it, mark the
+> state unknown and keep both links.
 
 > **This repo is Beekeeper, agiterra's fork of
 > [block/buzz](https://github.com/block/buzz).** It is a single-branch repo:
