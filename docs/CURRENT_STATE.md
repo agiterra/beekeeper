@@ -35,7 +35,7 @@ on 2026-09-09, with `just ci` and `just test` green on that exact commit
 | Collaborative workspace plan, ordered steps 0–6 | Astra finalizes and lands `main`; Fable takes delegated slices; Andy lands his own topic branches | steps 0–4 have integrated candidates per the ledger's September 7–9 sections; no landing of steps 5 or 6 is recorded anywhere found, so treat them as open | [`COLLABORATIVE_WORKSPACE_PLAN.md`](COLLABORATIVE_WORKSPACE_PLAN.md) |
 | Founded-session fixes: Discard deletes, project filing | Andy | landed on `main` 2026-09-11 | ledger § "Fixed 2026-09-11 —" (two items) |
 | Delegated agent-directory visibility follow-up | unassigned | "can resume separately on main" (Astra, 2026-09-09) | ledger § "September 9 main published" |
-| This map, the ledger split and its size gate | Fable | landed 2026-09-11; pack restaging still owed | `AGENTS.md` top block; `scripts/check-current-state-size.mjs` |
+| This map, the ledger split and its size gate | Fable | landed 2026-09-11 (`f80781969`); lead pack landed on `agiterra-packs` (`5f4ae76fa`) | `AGENTS.md` top block; `scripts/check-current-state-size.mjs` |
 
 ## Decisions in force
 
@@ -84,9 +84,14 @@ Rules, each with where it is written down.
 
 ## Next, in order
 
-1. Land this map and its gate. Then restage the lead pack revision so running
-   seats read the new pointer; the landing alone does not do that, and the
-   restaging evidence is owed separately.
+1. Done 2026-09-11: the lead pack revision landed on the packs repository
+   (`agiterra-packs` `main` at `5f4ae76fa`, the tree seats stage from; this
+   repo's `personas/roles` is only its source). The project's pack source
+   pins `refs/heads/main`, which the host fetches on every staging
+   (`desktop/src-tauri/src/managed_agents/packs_cache.rs`, `sync_packs_checkout`),
+   so a seat hired from now on reads the new pointer. Seats already running
+   keep the revision they staged; none were restarted. Check with
+   `bee packs status --project <coordinate> --role lead`.
 2. Rebuild the installed Mac bundle from `main` when Andy's two fixes need
    live use: `scripts/app-from.sh <sha>`. Brian's call.
 3. When Brian delegates native steering: step 1 of the ledger plan, prove
