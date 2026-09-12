@@ -23,7 +23,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use tokio::sync::{mpsc, watch};
+use futures_util::stream::{FuturesUnordered, StreamExt};
+use tokio::sync::{mpsc, oneshot, watch};
 use uuid::Uuid;
 
 use tokio::sync::broadcast;
@@ -33,6 +34,10 @@ use buzz_acp::acp::{
     TurnWireSummary,
 };
 use buzz_acp::observer::{context_for, ObserverEvent, ObserverHandle};
+use buzz_acp::steer::{
+    IdleGuard, LateSteerAck, NotDeliveredReason, SteerInput, SteerResolution, UnknownReason,
+    STEER_ACK_DRAIN,
+};
 use buzz_acp::TurnUsage;
 use buzz_core::coding_session_command::{
     coding_session_target_key, CodingSessionDelivery, CodingSessionTarget, TurnAttachment,
@@ -58,28 +63,31 @@ pub const CANCEL_GRACE: Duration = Duration::from_secs(30);
 /// Whether this provider can deliver a *native* mid-turn steer to a runtime
 /// that advertised one.
 ///
-/// `false`, and the reason is a visibility fact, not a design choice: the
-/// non-cancelling steer transport lives entirely inside `buzz-acp`'s read loop
-/// and is driven by `buzz_acp::pool::SteerRequest` / `SteerAck`, which sit in
-/// `mod pool` — a **private** module (`crates/buzz-acp/src/lib.rs:13`). Those
-/// types cannot be named from this crate, so `AcpClient::install_steer_rx`
-/// cannot be called from here at all. Making them nameable is a one-line
-/// re-export in a crate this change does not own.
+/// `true` since the transport in `buzz_acp::steer` became public: the actor
+/// hands a [`SteerInput`] to the running prompt's read loop and reads back a
+/// [`SteerResolution`] that names what the wire established.
 ///
-/// Until then a `steer`-class turn is answered honestly: a `turn_degraded`
-/// receipt that says the injection did not happen, followed by ordinary
-/// boundary delivery, so the turn still runs and nobody is told it was
-/// injected mid-thought. The published `threadSteer` capability is gated on
-/// this too — a control an operator can press must be a control that works.
+/// This constant is the **third** of three gates, never the whole gate. The
+/// real test — `Provider::native_steer_deliverable` — also requires that the
+/// process behind *this* generation advertised `_meta.steering.supported` at
+/// `initialize`, and that the pinned adapter is declared
+/// (`RuntimeDescriptor::steer_idle_guard`) to honour the `promptRequired`
+/// idle guard. Without the guard an adapter that finds no running turn starts
+/// a detached turn nobody observes, so such an execution is boundary-delivered
+/// and told so with `turn_degraded` / `STEER_UNSUPPORTED`. A steer whose
+/// injection is attempted and does not land is likewise never silent: every
+/// outcome maps to a receipt (`docs/NATIVE_STEERING_IMPL.md` §2).
+pub const NATIVE_STEER_DELIVERABLE: bool = true;
+
+/// How many native steer inputs may wait for the running prompt's read loop
+/// at once.
 ///
-/// **Flipping this constant is not how a steer gets delivered.** The receipt
-/// is keyed off whether `Provider::inject_native_steer` actually injected
-/// anything, never off this value, so a flip alone cannot turn the downgrade
-/// silent; and that function carries a `const` assertion on this constant, so
-/// a flip without the injection behind it fails the build instead. Wire the
-/// transport (and the `turn_started` receipt an injected steer publishes in
-/// place of `turn_queued`), then flip this.
-pub const NATIVE_STEER_DELIVERABLE: bool = false;
+/// The read loop takes inputs one at a time and writes the next only after
+/// the previous acknowledgement arrived, so this is the depth of the queue in
+/// front of it. A steer that finds it full is answered
+/// [`SteerDispatch::Saturated`] and boundary-delivered by the provider — said
+/// out loud, never silently merged.
+pub const STEER_ADMISSION_DEPTH: usize = 4;
 
 /// Continuity bootstrap for adapters that accept a system prompt on
 /// `session/new` — the required transport when one exists.
@@ -460,6 +468,28 @@ pub enum SessionCommand {
         /// a founder-sent turn, which is delivered exactly as it always was.
         framing: Option<TurnFraming>,
     },
+    /// Inject text into the turn already running, without ending it.
+    ///
+    /// Delivered only when the provider has durably staged an attempt for it.
+    /// The actor never mints a turn for a steer: an injected one is recorded
+    /// as a `user_prompt{steered:true}` on the **current** turn, and every
+    /// other outcome is reported as [`SessionEvent::SteerResolved`] for the
+    /// provider to answer.
+    Steer {
+        /// The command that requested it.
+        command_id: String,
+        /// The provider-minted attempt id, echoed on every outcome so a
+        /// late answer settles this attempt and never the newest one.
+        attempt_id: String,
+        /// The signed original text. What the adapter receives is the framed
+        /// rendering; what the transcript records is this.
+        text: String,
+        /// The verified signer, for the `user_prompt` attribution.
+        operator_pubkey: Option<String>,
+        /// Addressing metadata; `delivery` stays `Steer` for a native
+        /// attempt because that is the delivery the recipient is getting.
+        framing: Option<TurnFraming>,
+    },
     /// A CI continuation that requires durable provider admission at its
     /// execution boundary before any transcript or adapter prompt is emitted.
     GuardedCiTurn {
@@ -512,6 +542,23 @@ pub enum ExitReason {
     Requested,
     /// The agent process went away.
     AgentGone(String),
+}
+
+/// What became of one native steer attempt, as the actor can say it.
+///
+/// Wraps the transport's [`SteerResolution`] with the two outcomes only the
+/// actor can observe: the admission queue in front of the read loop was full,
+/// or there was no prompt in flight to steer at all. Both are provider-side
+/// facts, so they live in this crate's enum rather than in `buzz_acp`'s.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SteerDispatch {
+    /// The transport answered.
+    Transport(SteerResolution),
+    /// [`STEER_ADMISSION_DEPTH`] inputs were already waiting; nothing was
+    /// written, and the input is still the provider's to deliver.
+    Saturated,
+    /// No prompt was running when the actor dequeued it; nothing was written.
+    Idle,
 }
 
 /// Something the provider loop must fold into state and publish.
@@ -574,6 +621,34 @@ pub enum SessionEvent {
         turn_id: String,
         /// The items.
         items: Vec<serde_json::Value>,
+    },
+    /// A native steer attempt reached its answer.
+    ///
+    /// Sent from the actor's own task after any `TranscriptItems` the answer
+    /// implies (an injected steer's `user_prompt{steered:true}`), so the
+    /// provider folds the record before the receipt.
+    SteerResolved {
+        /// Which session.
+        session_id: String,
+        /// The turn that was running when the attempt was dispatched, or
+        /// `None` for an attempt that found no prompt in flight.
+        turn_id: Option<String>,
+        /// The command the attempt answers.
+        command_id: String,
+        /// The attempt this answer settles — and only this one.
+        attempt_id: String,
+        /// What became of it.
+        resolution: SteerDispatch,
+    },
+    /// A late acknowledgement for an attempt already reported
+    /// [`SteerResolution::Unknown`].
+    SteerReconciled {
+        /// Which session.
+        session_id: String,
+        /// The attempt the late answer belongs to.
+        attempt_id: String,
+        /// What the late answer established.
+        resolution: SteerResolution,
     },
     /// A turn was refused because the session's queue was full.
     TurnDropped {
@@ -804,7 +879,7 @@ impl SessionManager {
     ) -> Result<StartedSession, CreateFailure> {
         let observer = ObserverHandle::in_process();
         let started = tokio::time::timeout(STARTUP_TIMEOUT, start_agent(&request, &observer)).await;
-        let (client, startup) = match started {
+        let (mut client, startup) = match started {
             Ok(Ok(started)) => started,
             Ok(Err(failure)) => return Err(failure),
             Err(_) => {
@@ -823,6 +898,11 @@ impl SessionManager {
         let (tx, rx) = mpsc::channel(SESSION_MAILBOX_DEPTH);
         let (shutdown, shutdown_rx) = watch::channel(false);
         let fenced: Arc<Mutex<FenceState>> = Arc::default();
+        // Installed once for the life of the process, before any prompt: a
+        // steer acknowledged after its prompt ended is still this actor's to
+        // report, and the read loop that sees it may be a later turn's.
+        let (late_tx, late_rx) = mpsc::unbounded_channel();
+        client.set_late_steer_sink(late_tx);
         let actor = SessionActor {
             client,
             acp_session_id: startup.acp_session_id.clone(),
@@ -837,6 +917,9 @@ impl SessionManager {
             agent_version: startup.agent_version.clone(),
             media: request.media.clone(),
             fenced: Arc::clone(&fenced),
+            late_steers: late_rx,
+            late_sink_closed: false,
+            steer_commands: HashMap::new(),
         };
         tokio::spawn(actor.run(rx, shutdown_rx));
         Ok(StartedSession {
@@ -1883,6 +1966,166 @@ struct SessionActor {
     media: Option<crate::attachments::MediaFetcher>,
     /// Late-refusal bookkeeping shared with the provider; see [`FenceState`].
     fenced: Arc<Mutex<FenceState>>,
+    /// Acknowledgements the transport correlated after their attempt had
+    /// already been reported unknown. Installed once, at construction, with
+    /// [`AcpClient::set_late_steer_sink`].
+    late_steers: mpsc::UnboundedReceiver<LateSteerAck>,
+    /// Whether the late sink's sender is gone, so the receiver is not polled
+    /// again (a closed unbounded receiver answers `None` immediately).
+    late_sink_closed: bool,
+    /// `attempt_id → command_id` for every attempt this actor has written and
+    /// not yet resolved with a positive answer. Entries for attempts resolved
+    /// unknown stay until a late acknowledgement settles them; everything
+    /// else is removed when its outcome is reported.
+    steer_commands: HashMap<String, String>,
+}
+
+/// What the actor keeps about one dispatched steer while its answer is
+/// pending, so the answer can be attributed without the transport's help.
+struct SteerTicket {
+    command_id: String,
+    text: String,
+    operator_pubkey: Option<String>,
+    sender_role: Option<String>,
+}
+
+/// One pending steer's answer, or its absence: `Err` means the transport
+/// dropped the oneshot without answering, which is only ever the input never
+/// leaving its channel.
+type SteerSettlement = (String, Result<SteerResolution, oneshot::error::RecvError>);
+
+/// The set of steer answers the running prompt still owes.
+type PendingSteers =
+    FuturesUnordered<std::pin::Pin<Box<dyn std::future::Future<Output = SteerSettlement> + Send>>>;
+
+/// Re-ask admission at dequeue, exactly as a turn does.
+///
+/// Under the one lock the provider fences with: a command the provider
+/// refused before this moment is dropped (`true`), and nothing reaches the
+/// runtime; otherwise the dequeue is recorded so a refusal from now on is told
+/// it is interrupting rather than preventing. A free function rather than a
+/// method because the callers hold `&mut self.client` in a prompt future.
+fn dequeue_or_drop(fenced: &Arc<Mutex<FenceState>>, command_id: &str) -> bool {
+    match fenced.lock() {
+        Ok(mut state) => {
+            if state.fenced.remove(command_id) {
+                true
+            } else {
+                state.dequeued.insert(command_id.to_owned());
+                false
+            }
+        }
+        Err(_) => false,
+    }
+}
+
+/// Release a command's dequeue evidence once it is known that nothing of it
+/// is in the runtime.
+///
+/// A steer whose answer left the words undelivered is no longer "may be
+/// running": the provider's boundary fallback for it is a fresh mailbox
+/// delivery, causally after this release, and its own dequeue re-records the
+/// fact truthfully. Without the release a later fence would read the steer's
+/// stale evidence, answer `AlreadyDequeued` for a turn still sitting in the
+/// queue, and cancel a bystander.
+fn release_dequeue(fenced: &Arc<Mutex<FenceState>>, command_id: &str) {
+    if let Ok(mut state) = fenced.lock() {
+        state.dequeued.remove(command_id);
+    }
+}
+
+/// Report one settled steer: the transcript item an injection implies, then
+/// the resolution, in that order, on the actor's own task.
+async fn settle_steer(
+    events: &mpsc::Sender<SessionEvent>,
+    session_id: &str,
+    fenced: &Arc<Mutex<FenceState>>,
+    steer_commands: &mut HashMap<String, String>,
+    tickets: &mut HashMap<String, SteerTicket>,
+    turn_id: &str,
+    (attempt_id, outcome): SteerSettlement,
+) {
+    let Some(ticket) = tickets.remove(&attempt_id) else {
+        tracing::warn!(
+            target: "csp::session",
+            %session_id,
+            %attempt_id,
+            "a steer settled that this actor holds no ticket for; ignoring"
+        );
+        return;
+    };
+    let resolution = match outcome {
+        Ok(resolution) => resolution,
+        // The input never left its channel: the read loop exited (or the
+        // channel was cleared) with it still queued. Nothing was written.
+        Err(_) => SteerResolution::NotDelivered {
+            reason: NotDeliveredReason::PromptEndedBeforeWrite,
+        },
+    };
+    if matches!(resolution, SteerResolution::Injected { .. }) {
+        // The signed original text, under the turn it joined. The translator
+        // is not consulted: this is not a new turn and does not reset the
+        // stream the running turn's items are being cut from.
+        emit_items(
+            events,
+            session_id,
+            turn_id,
+            vec![crate::payload::user_prompt_item(
+                &ticket.text,
+                true,
+                ticket.operator_pubkey.as_deref(),
+                Some(&ticket.command_id),
+                ticket.sender_role.as_deref(),
+                0,
+            )],
+        )
+        .await;
+    }
+    // An unknown attempt keeps its table entry: a late acknowledgement may
+    // still settle it. Every other answer is final for this actor.
+    if !matches!(resolution, SteerResolution::Unknown { .. }) {
+        steer_commands.remove(&attempt_id);
+    }
+    // Nothing of this command is in the runtime: its dequeue evidence is
+    // released before the provider hears the answer.
+    if matches!(resolution, SteerResolution::NotDelivered { .. }) {
+        release_dequeue(fenced, &ticket.command_id);
+    }
+    let _ = events
+        .send(SessionEvent::SteerResolved {
+            session_id: session_id.to_owned(),
+            turn_id: Some(turn_id.to_owned()),
+            command_id: ticket.command_id,
+            attempt_id,
+            resolution: SteerDispatch::Transport(resolution),
+        })
+        .await;
+}
+
+/// Forward a late acknowledgement for an attempt this actor still holds as
+/// unresolved; anything else is a stray and is logged, never reported.
+async fn forward_late_ack(
+    events: &mpsc::Sender<SessionEvent>,
+    session_id: &str,
+    steer_commands: &mut HashMap<String, String>,
+    ack: LateSteerAck,
+) {
+    if steer_commands.remove(&ack.attempt_id).is_none() {
+        tracing::warn!(
+            target: "csp::session",
+            %session_id,
+            attempt_id = %ack.attempt_id,
+            "late steer acknowledgement for an attempt this actor does not hold unresolved; ignoring"
+        );
+        return;
+    }
+    let _ = events
+        .send(SessionEvent::SteerReconciled {
+            session_id: session_id.to_owned(),
+            attempt_id: ack.attempt_id,
+            resolution: ack.resolution,
+        })
+        .await;
 }
 
 /// Unwrap the CI-only admission marker while retaining it through actor queues.
@@ -1923,16 +2166,32 @@ impl SessionActor {
                 None => {
                     let idle = tokio::time::sleep(self.idle_shutdown);
                     tokio::pin!(idle);
-                    tokio::select! {
-                        biased;
-                        changed = shutdown.changed() => {
-                            let _ = changed;
-                            break 'actor;
-                        }
-                        command = rx.recv() => command,
-                        _ = &mut idle => {
-                        reason = ExitReason::Idle;
-                        break 'actor;
+                    loop {
+                        tokio::select! {
+                            biased;
+                            changed = shutdown.changed() => {
+                                let _ = changed;
+                                break 'actor;
+                            }
+                            command = rx.recv() => break command,
+                            late = self.late_steers.recv(), if !self.late_sink_closed => {
+                                match late {
+                                    Some(ack) => {
+                                        forward_late_ack(
+                                            &self.events,
+                                            &self.session_id,
+                                            &mut self.steer_commands,
+                                            ack,
+                                        )
+                                        .await;
+                                    }
+                                    None => self.late_sink_closed = true,
+                                }
+                            }
+                            _ = &mut idle => {
+                                reason = ExitReason::Idle;
+                                break 'actor;
+                            }
                         }
                     }
                 }
@@ -1948,6 +2207,45 @@ impl SessionActor {
                         %command_id,
                         "interrupt with no turn in flight — nothing to cancel"
                     );
+                }
+                Some(SessionCommand::Steer {
+                    command_id,
+                    attempt_id,
+                    ..
+                }) => {
+                    // Same admission re-ask as a turn: a steer the provider
+                    // fenced while it sat here is dropped, and nothing more is
+                    // owed to it.
+                    if dequeue_or_drop(&self.fenced, &command_id) {
+                        tracing::warn!(
+                            target: "csp::session",
+                            session_id = %self.session_id,
+                            %command_id,
+                            "dropping a queued steer the provider refused before it was dequeued"
+                        );
+                        continue;
+                    }
+                    // No prompt is running, so there is nothing to inject
+                    // into and nothing is written: the dequeue evidence is
+                    // released and the provider delivers the words at the
+                    // next boundary, saying so.
+                    release_dequeue(&self.fenced, &command_id);
+                    tracing::info!(
+                        target: "csp::session",
+                        session_id = %self.session_id,
+                        %command_id,
+                        "steer arrived with no turn in flight; reporting it undelivered"
+                    );
+                    let _ = self
+                        .events
+                        .send(SessionEvent::SteerResolved {
+                            session_id: self.session_id.clone(),
+                            turn_id: None,
+                            command_id,
+                            attempt_id,
+                            resolution: SteerDispatch::Idle,
+                        })
+                        .await;
                 }
                 Some(SessionCommand::Turn {
                     command_id,
@@ -2140,6 +2438,16 @@ impl SessionActor {
         } else {
             crate::attachments::interleave_prompt_blocks(&agent_text, image_blocks)
         };
+        // The steer admission queue, installed before the prompt borrows the
+        // client: the read loop takes inputs from it one at a time and the
+        // actor's select arm below feeds it. `install_steer_input` panics if
+        // a receiver is still installed, and the drain before `TurnFinished`
+        // is what guarantees it never is.
+        let (steer_tx, steer_rx) = mpsc::channel::<SteerInput>(STEER_ADMISSION_DEPTH);
+        let mut steer_tx = Some(steer_tx);
+        self.client.install_steer_input(steer_rx);
+        let mut pending: PendingSteers = FuturesUnordered::new();
+        let mut tickets: HashMap<String, SteerTicket> = HashMap::new();
         // The prompt future holds `&mut self.client` for the whole turn; it is
         // boxed so the interrupt path can drop it and get the client back.
         let mut prompt = Box::pin(self.client.session_prompt_content_with_idle_timeout(
@@ -2164,6 +2472,34 @@ impl SessionActor {
                     );
                     emit_items(&self.events, &self.session_id, &turn_id, items).await;
                 }
+                settled = pending.next(), if !pending.is_empty() => {
+                    if let Some(settlement) = settled {
+                        settle_steer(
+                            &self.events,
+                            &self.session_id,
+                            &self.fenced,
+                            &mut self.steer_commands,
+                            &mut tickets,
+                            &turn_id,
+                            settlement,
+                        )
+                        .await;
+                    }
+                }
+                late = self.late_steers.recv(), if !self.late_sink_closed => {
+                    match late {
+                        Some(ack) => {
+                            forward_late_ack(
+                                &self.events,
+                                &self.session_id,
+                                &mut self.steer_commands,
+                                ack,
+                            )
+                            .await;
+                        }
+                        None => self.late_sink_closed = true,
+                    }
+                }
                 command = rx.recv() => {
                     let (command, guarded_ci) = unwrap_ci_turn(command);
                     match command {
@@ -2171,6 +2507,85 @@ impl SessionActor {
                     None | Some(SessionCommand::Shutdown) => break PromptInterruption::Shutdown,
                     Some(SessionCommand::Interrupt { .. }) => {
                         break PromptInterruption::Interrupted
+                    }
+                    Some(SessionCommand::Steer {
+                        command_id,
+                        attempt_id,
+                        text,
+                        operator_pubkey,
+                        framing,
+                    }) => {
+                        if dequeue_or_drop(&self.fenced, &command_id) {
+                            tracing::warn!(
+                                target: "csp::session",
+                                session_id = %self.session_id,
+                                %command_id,
+                                "dropping a queued steer the provider refused before it was dequeued"
+                            );
+                            continue;
+                        }
+                        // The adapter is handed the framed rendering — who
+                        // sent it and how to answer, with `Delivery: steer`
+                        // because that is the delivery it is getting. The
+                        // ticket keeps the signed original for the record.
+                        let rendered = match framing.as_ref() {
+                            Some(framing) => framing.render(&text),
+                            None => text.clone(),
+                        };
+                        let sender_role = framing.and_then(|framing| framing.sender_role);
+                        let (outcome_tx, outcome_rx) = oneshot::channel();
+                        let input = SteerInput {
+                            attempt_id: attempt_id.clone(),
+                            prompt_blocks: vec![rendered],
+                            idle_guard: IdleGuard::PromptRequired,
+                            outcome_tx,
+                        };
+                        let admitted = match steer_tx.as_ref() {
+                            Some(tx) => tx.try_send(input),
+                            None => Err(mpsc::error::TrySendError::Closed(input)),
+                        };
+                        let saturated = match admitted {
+                            Ok(()) => {
+                                self.steer_commands
+                                    .insert(attempt_id.clone(), command_id.clone());
+                                tickets.insert(
+                                    attempt_id.clone(),
+                                    SteerTicket {
+                                        command_id,
+                                        text,
+                                        operator_pubkey,
+                                        sender_role,
+                                    },
+                                );
+                                let ticket_id = attempt_id;
+                                pending.push(Box::pin(async move {
+                                    (ticket_id, outcome_rx.await)
+                                }));
+                                continue;
+                            }
+                            Err(mpsc::error::TrySendError::Full(_)) => true,
+                            Err(mpsc::error::TrySendError::Closed(_)) => false,
+                        };
+                        // Nothing was written either way, so the dequeue
+                        // evidence is released; the provider answers which of
+                        // the two happened.
+                        release_dequeue(&self.fenced, &command_id);
+                        let _ = self
+                            .events
+                            .send(SessionEvent::SteerResolved {
+                                session_id: self.session_id.clone(),
+                                turn_id: Some(turn_id.clone()),
+                                command_id,
+                                attempt_id,
+                                resolution: if saturated {
+                                    SteerDispatch::Saturated
+                                } else {
+                                    SteerDispatch::Transport(SteerResolution::NotDelivered {
+                                        reason: NotDeliveredReason::PromptEndedBeforeWrite,
+                                    })
+                                },
+                            })
+                            .await;
                     }
                     Some(SessionCommand::Turn {
                         command_id,
@@ -2266,6 +2681,66 @@ impl SessionActor {
                 }
             }
         };
+
+        // Every steer this turn admitted is answered before the turn is
+        // closed. The sender is dropped first so no new input can be admitted;
+        // the receiver is cleared next so an input the read loop never took
+        // is dropped here — its oneshot then answers `PromptEndedBeforeWrite`
+        // — and only then are the pending answers awaited. A prompt that
+        // completed normally has already resolved everything it wrote (the
+        // transport drains up to `STEER_ACK_DRAIN` itself); the bounded wait
+        // is for a prompt that was dropped mid-flight and a transport that
+        // kept an unanswered sender alive, and what it says on expiry is the
+        // one thing that is true: the prompt ended and no acknowledgement
+        // came.
+        drop(steer_tx.take());
+        self.client.clear_steer_input();
+        while !pending.is_empty() {
+            match tokio::time::timeout(STEER_ACK_DRAIN, pending.next()).await {
+                Ok(Some(settlement)) => {
+                    settle_steer(
+                        &self.events,
+                        &self.session_id,
+                        &self.fenced,
+                        &mut self.steer_commands,
+                        &mut tickets,
+                        &turn_id,
+                        settlement,
+                    )
+                    .await;
+                }
+                Ok(None) => break,
+                Err(_) => {
+                    let unanswered: Vec<String> = tickets.keys().cloned().collect();
+                    tracing::warn!(
+                        target: "csp::session",
+                        session_id = %self.session_id,
+                        attempts = ?unanswered,
+                        "steer acknowledgements still pending after the prompt ended; reporting them unknown"
+                    );
+                    drop(std::mem::take(&mut pending));
+                    for attempt_id in unanswered {
+                        settle_steer(
+                            &self.events,
+                            &self.session_id,
+                            &self.fenced,
+                            &mut self.steer_commands,
+                            &mut tickets,
+                            &turn_id,
+                            (
+                                attempt_id,
+                                Ok(SteerResolution::Unknown {
+                                    reason: UnknownReason::PromptEndedBeforeAck,
+                                    wire_request_id: None,
+                                }),
+                            ),
+                        )
+                        .await;
+                    }
+                    break;
+                }
+            }
+        }
 
         // Flush before the terminal item so the turn's prose and its final usage
         // snapshot are on the record ahead of the `result` the provider appends.
@@ -2685,6 +3160,149 @@ while IFS= read -r line; do
   esac
 done
 "#;
+
+    /// The script body behind [`held_open_steer_agent`] and its variants.
+    ///
+    /// Advertises steering at `initialize`; on the **first** `session/prompt`
+    /// emits a chunk and keeps reading; every later prompt (a boundary
+    /// fallback, an ordinary follow-up) is answered `end_turn` at once. Each
+    /// `_session/steering` line must carry the `promptRequired` idle guard —
+    /// one that does not is answered with a JSON-RPC error, which surfaces in
+    /// the receipts as `STEER_REJECTED` rather than passing silently — and is
+    /// then answered by `__STEER_ANSWER__`, a shell snippet with `$id` (the
+    /// steer's request id), `$PROMPT_ID` and `$STEERS` (1-based count) in
+    /// scope. Once `$STEERS` reaches `__STEERS_TO_END__` the held prompt is
+    /// answered `end_turn`. `session/cancel` is answered against the held
+    /// prompt.
+    const STEER_AGENT_TEMPLATE: &str = r#"
+PROMPT_ID=""
+PROMPTS=0
+STEERS=0
+FIRST_STEER=""
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":2,"_meta":{"steering":{"supported":true}}}}\n' "$id" ;;
+    *'"method":"session/new"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"acp-session-1"}}\n' "$id" ;;
+    *'"method":"session/prompt"'*)
+      PROMPT_ID="$id"
+      PROMPTS=$((PROMPTS+1))
+      printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"acp-session-1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"working"}}}}\n'
+      if [ "$PROMPTS" -gt 1 ]; then
+        printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\n' "$id"
+      fi ;;
+    *'"method":"_session/steering"'*)
+      case "$line" in
+        *'"idleBehavior":"promptRequired"'*) ;;
+        *)
+          printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32602,"message":"steer arrived without the promptRequired idle guard"}}\n' "$id"
+          continue ;;
+      esac
+      STEERS=$((STEERS+1))
+      __STEER_ANSWER__
+      if [ "$STEERS" -ge __STEERS_TO_END__ ]; then
+        printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\n' "$PROMPT_ID"
+      fi ;;
+    *'"method":"session/cancel"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"cancelled"}}\n' "$PROMPT_ID" ;;
+  esac
+done
+"#;
+
+    /// The snippet that answers a steer `injected` and streams `steered:<n>`.
+    const STEER_ANSWER_INJECTED: &str = r#"printf '{"jsonrpc":"2.0","id":%s,"result":{"outcome":"injected"}}\n' "$id"
+      printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"acp-session-1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"steered:%s"}}}}\n' "$STEERS""#;
+
+    /// A steering agent that answers each steer with `answer` (a shell
+    /// snippet, see [`STEER_AGENT_TEMPLATE`]) and ends its held prompt after
+    /// `steers_to_end` steers.
+    pub(crate) fn steer_agent(answer: &str, steers_to_end: u32) -> String {
+        STEER_AGENT_TEMPLATE
+            .replace("__STEER_ANSWER__", answer)
+            .replace("__STEERS_TO_END__", &steers_to_end.to_string())
+    }
+
+    /// The composition fixture of `docs/NATIVE_STEERING_IMPL.md` §4: holds
+    /// its first prompt open, answers each `_session/steering` `injected`
+    /// followed by a `steered:<n>` chunk, and ends the prompt after two.
+    pub(crate) fn held_open_steer_agent() -> String {
+        steer_agent(STEER_ANSWER_INJECTED, 2)
+    }
+
+    /// Answers every steer `injected`, but only after `delay` seconds — long
+    /// enough for a burst of steers to pile up in front of the read loop.
+    pub(crate) fn slow_injecting_steer_agent(delay: &str, steers_to_end: u32) -> String {
+        steer_agent(
+            &format!("sleep {delay}\n      {STEER_ANSWER_INJECTED}"),
+            steers_to_end,
+        )
+    }
+
+    /// Answers the steer with a JSON-RPC success carrying `result`, verbatim.
+    pub(crate) fn steer_agent_answering(result: &str) -> String {
+        steer_agent(
+            &format!(r#"printf '{{"jsonrpc":"2.0","id":%s,"result":{result}}}\n' "$id""#),
+            1,
+        )
+    }
+
+    /// Answers the steer with a JSON-RPC error of `code`.
+    pub(crate) fn steer_agent_erroring(code: i64) -> String {
+        steer_agent(
+            &format!(
+                r#"printf '{{"jsonrpc":"2.0","id":%s,"error":{{"code":{code},"message":"refused by the fake adapter"}}}}\n' "$id""#
+            ),
+            1,
+        )
+    }
+
+    /// Never answers the steer; ends the held prompt right after reading it,
+    /// so the transport's post-prompt drain expires (ACK lost by timeout).
+    pub(crate) fn steer_agent_never_acking() -> String {
+        steer_agent(":", 1)
+    }
+
+    /// Never answers a steer and never ends its held prompt on its own; only
+    /// `session/cancel` closes it. For the interrupt-while-pending case.
+    pub(crate) fn steer_agent_holding_forever() -> String {
+        steer_agent(":", 1_000_000)
+    }
+
+    /// Answers the steer `injected` only after `delay` seconds, from a
+    /// background subshell, and ends the held prompt at once — so the
+    /// transport's post-prompt drain expires first and the answer arrives
+    /// late, for whichever read loop runs next.
+    pub(crate) fn steer_agent_acking_late(delay: &str) -> String {
+        steer_agent(
+            &format!(
+                r#"( sleep {delay}; printf '{{"jsonrpc":"2.0","id":%s,"result":{{"outcome":"injected"}}}}
+' "$id" ) &"#
+            ),
+            1,
+        )
+    }
+
+    /// Exits the moment it has read the steer: EOF after the write.
+    pub(crate) fn steer_agent_exiting_on_steer() -> String {
+        steer_agent("exit 0", 1_000_000)
+    }
+
+    /// Answers the first steer under its own id, and the second steer under
+    /// the **first** steer's id — a mis-correlated acknowledgement that must
+    /// settle nothing. Ends the held prompt after the second.
+    pub(crate) fn steer_agent_miscorrelating() -> String {
+        steer_agent(
+            r#"if [ "$STEERS" -eq 1 ]; then
+        FIRST_STEER="$id"
+        printf '{"jsonrpc":"2.0","id":%s,"result":{"outcome":"injected"}}\n' "$id"
+      else
+        printf '{"jsonrpc":"2.0","id":%s,"result":{"outcome":"injected"}}\n' "$FIRST_STEER"
+      fi"#,
+            2,
+        )
+    }
 
     /// Advertises and accepts ACP `session/resume` for a saved cursor.
     pub(crate) const RESUMABLE_AGENT: &str = r#"

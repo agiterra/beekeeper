@@ -43,6 +43,7 @@ use crate::queue::{
 };
 use crate::relay::{ChannelInfo, RestClient};
 use crate::scope::SessionScope;
+use crate::steer::{NotDeliveredReason, SteerResolution, UnknownReason};
 
 /// Window within which agent activity before a hard-cap death qualifies
 /// the turn as "recently active" (eligible for requeue instead of dead-letter).
@@ -501,6 +502,57 @@ pub enum SteerAck {
     /// dispatch. Do not fire the fallback `Steer` signal — there is no
     /// in-flight turn to signal, and normal dispatch handles delivery.
     PromptCompletedNeutral,
+}
+
+impl SteerAck {
+    /// Map what the transport established onto the legacy ack the pool's
+    /// main loop keys on (`docs/NATIVE_STEERING_IMPL.md` §3.1 item 8).
+    ///
+    /// The read loop decodes every steer answer into one
+    /// [`SteerResolution`] and this is the only place it becomes a
+    /// `SteerAck`, so the two surfaces cannot drift. Legacy semantics are
+    /// preserved variant for variant: a write failure stays
+    /// [`SteerError::Transport`] (release + cancel+merge fallback), because
+    /// that is what the main loop has always done with it.
+    pub(crate) fn from_resolution(resolution: SteerResolution, session_id: &str) -> Self {
+        match resolution {
+            SteerResolution::Injected { .. } | SteerResolution::StartedNewTurn { .. } => {
+                Self::Success {
+                    session_id: session_id.to_owned(),
+                }
+            }
+            SteerResolution::NotDelivered { reason } => match reason {
+                NotDeliveredReason::Unsupported => Self::Err(SteerError::ExpectedRunIdMissing),
+                NotDeliveredReason::MethodNotFound { message } => {
+                    Self::Err(SteerError::AgentError {
+                        code: -32601,
+                        message,
+                    })
+                }
+                NotDeliveredReason::Rejected { code, message } => {
+                    Self::Err(SteerError::AgentError { code, message })
+                }
+                // The legacy harness never sends an idle guard, so this is
+                // an outcome it does not recognize: released and re-sent
+                // through cancel+merge, exactly like any other unrecognized
+                // success.
+                NotDeliveredReason::PromptRequired => Self::Err(SteerError::OutcomeRejected {
+                    outcome: "promptRequired".to_owned(),
+                }),
+                NotDeliveredReason::PromptEndedBeforeWrite => Self::PromptCompletedNeutral,
+            },
+            SteerResolution::Unknown { reason, .. } => match reason {
+                UnknownReason::UnrecognizedAck { outcome }
+                | UnknownReason::AdapterReportedFailure { outcome } => {
+                    Self::Err(SteerError::OutcomeRejected { outcome })
+                }
+                UnknownReason::WriteFailed { message } => Self::Err(SteerError::Transport(message)),
+                UnknownReason::PromptEndedBeforeAck
+                | UnknownReason::AckTimeout
+                | UnknownReason::RuntimeExited => Self::PromptCompletedNeutral,
+            },
+        }
+    }
 }
 
 /// Whether a turn was cut by the idle clock or the hard wall-clock cap.
@@ -8954,5 +9006,68 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             "one fetch_channel_info sequence (initial attempt + single retry)"
         );
         server.abort();
+    }
+
+    // ── Legacy steer adapter (docs/NATIVE_STEERING_IMPL.md §3.1 item 8) ──
+
+    /// Every transport resolution maps onto exactly the legacy ack the main
+    /// loop has always keyed on; this table is the adapter's contract.
+    #[test]
+    fn steer_ack_from_resolution_preserves_legacy_semantics() {
+        use crate::steer::{SteerWire, UnknownReason as U};
+        let ack = |r: SteerResolution| SteerAck::from_resolution(r, "sess");
+        assert!(matches!(
+            ack(SteerResolution::Injected { wire: SteerWire::AcpExtension, native_run_id: None }),
+            SteerAck::Success { ref session_id } if session_id == "sess"
+        ));
+        assert!(matches!(
+            ack(SteerResolution::StartedNewTurn {
+                wire: SteerWire::Goose
+            }),
+            SteerAck::Success { .. }
+        ));
+        let nd = |reason| SteerResolution::NotDelivered { reason };
+        assert!(matches!(
+            ack(nd(NotDeliveredReason::Unsupported)),
+            SteerAck::Err(SteerError::ExpectedRunIdMissing)
+        ));
+        assert!(matches!(
+            ack(nd(NotDeliveredReason::MethodNotFound { message: "m".into() })),
+            SteerAck::Err(SteerError::AgentError { code: -32601, ref message }) if message == "m"
+        ));
+        assert!(matches!(
+            ack(nd(NotDeliveredReason::Rejected { code: 9, message: "r".into() })),
+            SteerAck::Err(SteerError::AgentError { code: 9, ref message }) if message == "r"
+        ));
+        assert!(matches!(
+            ack(nd(NotDeliveredReason::PromptRequired)),
+            SteerAck::Err(SteerError::OutcomeRejected { ref outcome }) if outcome == "promptRequired"
+        ));
+        assert!(matches!(
+            ack(nd(NotDeliveredReason::PromptEndedBeforeWrite)),
+            SteerAck::PromptCompletedNeutral
+        ));
+        let unknown = |reason| SteerResolution::Unknown {
+            reason,
+            wire_request_id: Some(3),
+        };
+        assert!(matches!(
+            ack(unknown(U::UnrecognizedAck { outcome: "<absent>".into() })),
+            SteerAck::Err(SteerError::OutcomeRejected { ref outcome }) if outcome == "<absent>"
+        ));
+        assert!(matches!(
+            ack(unknown(U::AdapterReportedFailure { outcome: "failed".into() })),
+            SteerAck::Err(SteerError::OutcomeRejected { ref outcome }) if outcome == "failed"
+        ));
+        assert!(matches!(
+            ack(unknown(U::WriteFailed { message: "EPIPE".into() })),
+            SteerAck::Err(SteerError::Transport(ref message)) if message == "EPIPE"
+        ));
+        for reason in [U::PromptEndedBeforeAck, U::AckTimeout, U::RuntimeExited] {
+            assert!(matches!(
+                ack(unknown(reason)),
+                SteerAck::PromptCompletedNeutral
+            ));
+        }
     }
 }

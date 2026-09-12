@@ -37,9 +37,10 @@ Provider-neutral rendering after creation uses the signed
 >    proves recent provider reachability for one exact generation. It does not
 >    replace durable metadata and is never written to Postgres.
 > 7. **A turn gets its own receipts.** `turn_queued`, `turn_started`,
->    `turn_degraded`, `turn_dropped`, `turn_refused`, and
->    `interrupt_delivered` — keyed by `commandId` and `status`
->    together, never confirming or ending a generation on their own. Their
+>    `turn_injected`, `turn_degraded`, `turn_delivery_unknown`,
+>    `turn_dropped`, `turn_refused`, and `interrupt_delivered` — keyed by
+>    `commandId` and `status` together, never confirming or ending a
+>    generation on their own. Their
 >    `commandId` normally names a `kind:44220` turn command, but for the
 >    initial turn embedded in a `kind:44221` `session.create` it names that
 >    **create**. See "Fork amendment: turn-stage receipts" below.
@@ -753,23 +754,50 @@ transcript remain independently verifiable facts.
 
 A [NIP-CSC](NIP-CSC.md) turn gets its own receipts, distinct from the six
 lifecycle statuses above, so an operator or a sibling agent can watch a turn
-land without polling the transcript. Six statuses:
+land without polling the transcript. Eight statuses:
 
 - `turn_queued` — the command was accepted into the session's mailbox and has
   not started yet.
-- `turn_started` — the provider began running the turn. **This is the only
-  turn status with a sixth key**, `turnId`: the provider's own identifier for
-  the started turn.
+- `turn_started` — the provider began running the turn. **One of the two
+  turn statuses with a sixth key**, `turnId`: the provider's own identifier
+  for the started turn.
+- `turn_injected` — the command asked for `deliver: "steer"` and the runtime
+  positively acknowledged the input as joined into the turn already running.
+  **The other six-key status:** its `turnId` is the *running* turn the input
+  joined, not a new one. No `turn_started` follows, the original turn keeps
+  its ownership, streaming state and accounting, and the
+  `user_prompt{steered: true}` [NIP-CST](NIP-CST.md) item that precedes this
+  receipt is what settles the sender's pending row. Terminal for the command.
 - `turn_degraded` — the command asked for `deliver: "steer"` and this
-  execution's runtime advertised no native steering, so it will be delivered
-  at the next turn boundary instead (`STEER_UNSUPPORTED`). The turn is not
-  refused, not merged into the running turn, and not lost: a `turn_queued`
-  follows. See the downgrade rule in [NIP-CSC](NIP-CSC.md).
+  execution could not inject it — the runtime advertised no native steering
+  or declared no idle guard (`STEER_UNSUPPORTED`), the running turn had
+  already ended (`STEER_TURN_ENDED`), the runtime answered with an explicit
+  error (`STEER_REJECTED`), or the input carried attachments
+  (`STEER_ATTACHMENTS_UNSUPPORTED`) — so it will be delivered at the next turn
+  boundary instead. The turn is not refused, not merged into the running
+  turn, and not lost: a `turn_queued` follows. See the downgrade rule in
+  [NIP-CSC](NIP-CSC.md).
+- `turn_delivery_unknown` — a native steer was written to the runtime and
+  nothing establishes whether it arrived (`STEER_WRITE_FAILED`,
+  `STEER_ACK_LOST`, `STEER_ACK_TIMEOUT`, `STEER_ACK_UNRECOGNIZED`,
+  `STEER_UNRESOLVED_AT_RESTART`), or the runtime reports it started a separate
+  turn with the input that this provider does not observe
+  (`STEER_UNOBSERVED_NEW_TURN`). **Terminal**: the command is recorded as
+  refused so a relay redelivery is silent, and the provider never replays the
+  input — a replay of words the runtime may already hold is the double
+  delivery the delivery classes exist to prevent. It is neither a drop nor a
+  refusal: a consumer MUST NOT read it as "the words never ran" (and restore
+  them as if refused) nor as delivered. The sender decides whether to send
+  again. A later receipt under the same `commandId` may reconcile it —
+  `turn_injected` when a late acknowledgement proves the input landed,
+  `turn_dropped` / `STEER_NOT_DELIVERED` when it proves it did not.
 - `turn_dropped` — the provider will never run this command and nobody was
   refused: the mailbox was full (`QUEUE_FULL`), the mailbox had no room for
   both halves of an interrupt-class delivery so the running turn was left
-  untouched (`QUEUE_FULL_TURN_KEPT`), or the session has no live execution to
-  deliver into (`NO_LIVE_EXECUTION`). All are **terminal**: the
+  untouched (`QUEUE_FULL_TURN_KEPT`), the session has no live execution to
+  deliver into (`NO_LIVE_EXECUTION`), or a native steer found the execution's
+  steer admission full so nothing was written (`STEER_SATURATED`). All are
+  **terminal**: the
   command is never consumed (it did not run) and it is recorded as refused, so
   the answer is given once and no redelivery repeats it. A dropped turn is not
   re-delivered by resuming the session — `session.resume` mints a new
@@ -790,10 +818,10 @@ land without polling the transcript. Six statuses:
   then start). That gap is recorded here rather than papered over; closing it
   is authority work, not delivery work.
 
-Every turn status except `turn_started` keeps the exact five-key v1 object
-(`schema`, `commandId`, `status`, `session`, `error`) — no `turnId` key at
-all, present or `null`. `turn_started` has exactly six keys: the five plus
-`turnId`.
+Every turn status except `turn_started` and `turn_injected` keeps the exact
+five-key v1 object (`schema`, `commandId`, `status`, `session`, `error`) — no
+`turnId` key at all, present or `null`. `turn_started` and `turn_injected`
+have exactly six keys: the five plus `turnId`.
 
 `commandId` names the signed command that caused the turn, and that command is
 one of **two** kinds. Normally it is a `kind:44220` `thread.turn.start` or
@@ -814,16 +842,16 @@ them distinct on the wire.
 receipt's session is never `null`, because by the time a turn receipt is
 published the exact generation is known.
 
-`error` is `null` for `turn_queued`, `turn_started`, and
+`error` is `null` for `turn_queued`, `turn_started`, `turn_injected`, and
 `interrupt_delivered`, and a `{ "code", "message" }` object for
-`turn_degraded`, `turn_dropped`, and `turn_refused`.
+`turn_degraded`, `turn_delivery_unknown`, `turn_dropped`, and `turn_refused`.
 
 **The code set is open, and the bound is exactly 64 UTF-8 bytes.** A validator
 accepts any nonblank code of **at most 64 UTF-8 bytes**
 (`MAX_RECEIPT_ERROR_CODE_BYTES`, `crates/buzz-core/src/coding_session_payload.rs:103`,
 checked at `coding_session_payload.rs:520-524`) containing no control
-characters, and MUST NOT pin `turn_dropped`, `turn_degraded`, or `turn_refused`
-to a closed list — a provider that grows a new reason must not be decoded as
+characters, and MUST NOT pin `turn_dropped`, `turn_degraded`,
+`turn_delivery_unknown`, or `turn_refused` to a closed list — a provider that grows a new reason must not be decoded as
 malformed by a client that predates it. 64 is normative here so the decoders
 converge, because today no reader enforces it. The desktop reader bounds the
 same field at 256 (`MAX_ERROR_CODE_BYTES`,
@@ -843,10 +871,21 @@ The codes in use today are documented, not enforced:
 
 | status | code | means |
 | --- | --- | --- |
-| `turn_degraded` | `STEER_UNSUPPORTED` | this execution's runtime offers no native steering; delivered at the boundary |
+| `turn_degraded` | `STEER_UNSUPPORTED` | this execution's runtime offers no native steering, or declares no idle guard; delivered at the boundary |
+| `turn_degraded` | `STEER_TURN_ENDED` | the steer reached the provider after the running turn had ended (or before one existed), including the adapter's own `promptRequired` answer under the idle guard; nothing was injected; delivered at the boundary |
+| `turn_degraded` | `STEER_REJECTED` | the runtime answered the steer request with an explicit JSON-RPC error that proves nothing was injected; delivered at the boundary |
+| `turn_degraded` | `STEER_ATTACHMENTS_UNSUPPORTED` | the steer carried image attachments, which the native injection path does not take; delivered at the boundary with its images |
+| `turn_delivery_unknown` | `STEER_WRITE_FAILED` | the steer request's write to the runtime failed part way; bytes may have reached it; never replayed |
+| `turn_delivery_unknown` | `STEER_ACK_LOST` | the request was written and the prompt ended, or the runtime exited, before its acknowledgement arrived; never replayed |
+| `turn_delivery_unknown` | `STEER_ACK_TIMEOUT` | the request was written and the bounded post-prompt wait for its acknowledgement expired; never replayed |
+| `turn_delivery_unknown` | `STEER_ACK_UNRECOGNIZED` | the runtime acknowledged with a result naming no recognized outcome (a bare `{}`, or its own `failed`); never replayed |
+| `turn_delivery_unknown` | `STEER_UNRESOLVED_AT_RESTART` | the provider restarted holding a native-steer intent no acknowledgement ever resolved; never replayed |
+| `turn_delivery_unknown` | `STEER_UNOBSERVED_NEW_TURN` | the runtime reports it started a separate turn with this input, one this provider does not observe; delivered, never resent, output may be absent from the transcript |
+| `turn_dropped` | `STEER_NOT_DELIVERED` | a late acknowledgement proved an input reported `turn_delivery_unknown` never reached the turn; terminal, the sender sends it again |
 | `turn_dropped` | `QUEUE_FULL` | the in-actor turn queue is at `SESSION_QUEUE_DEPTH` |
 | `turn_dropped` | `QUEUE_FULL_TURN_KEPT` | a `deliver: "interrupt"` turn needed two mailbox slots (the cancel, then the turn replacing what was cancelled) and there was room for fewer; nothing was cancelled |
 | `turn_dropped` | `NO_LIVE_EXECUTION` | the session is persisted but nothing is running to deliver into |
+| `turn_dropped` | `STEER_SATURATED` | the execution's native-steer admission is full, so this input was not delivered; send it again once it drains |
 | `turn_refused` | `UNAUTHORIZED_OPERATOR` | the signer may not steer this session — including a non-founder asking for `deliver: "interrupt"` on a `thread.turn.start` |
 | `turn_refused` | `UNKNOWN_TARGET` | this provider owns the session id but not that target |
 | `turn_refused` | `STALE_GENERATION` | the addressed generation has been superseded |
@@ -876,13 +915,34 @@ question for a later slice; no key is added for it here.
 - `turn_queued` — when a `TurnDecision::Start` is accepted into the session's
   mailbox.
 - `turn_degraded` — when a `deliver: "steer"` command has been accepted into
-  the mailbox of an execution that cannot take a mid-turn steer, immediately
+  the mailbox of an execution that cannot take a mid-turn steer, or whose
+  native attempt provably did not inject (`NotDelivered`; saturation is not
+  one of these — see `turn_dropped` / `STEER_SATURATED`), immediately
   before that command's `turn_queued`. Never before the delivery is known to
   have succeeded: a degrade in front of a delivery that then fails publishes
   two receipts contradicting each other about one command. Its `message` MUST
   be a function of the command, not of what a particular process learned at
   `initialize` — a redelivery answered by a different process must not publish
   a second payload under the same `(commandId, turn_degraded)` semantic key.
+- `turn_injected` — when the runtime acknowledges a native steer as
+  `injected`, after the `user_prompt{steered: true}` transcript item has been
+  emitted under the running turn's `turnId`. **This is the point the command
+  is consumed** (and its operation, when keyed); no turn spend is recorded and
+  team-wake causality is untouched, because no turn began. Receipts are keyed
+  to the *attempt* and its target generation, never to the newest pending
+  command. The same order holds for a **reconciled** attempt: when a late
+  acknowledgement resolves a `turn_delivery_unknown` as injected, the provider
+  publishes the `user_prompt{steered: true}` echo on the *original* turn (the
+  turn the input joined) first, then the `turn_injected` under the same
+  `commandId`. A consumer holding the unknown reads the later `turn_injected`
+  as outranking it, and the echo settles the pending row exactly as it would
+  have without the detour.
+- `turn_delivery_unknown` — when a native attempt resolves `Unknown` (write
+  failure, acknowledgement lost, timed out, or unrecognized), when the runtime
+  reports `startedNewTurn`, or at restart for every native-steer intent that
+  no acknowledgement resolved. The command is recorded as **refused** at the
+  same time, so a redelivery is silent; it is never consumed (it did not
+  provably run) and never replayed.
 - `turn_dropped` — when the mailbox itself is full (`QueueFull`), when the
   in-actor turn queue overflows (`SESSION_QUEUE_DEPTH`), when an
   interrupt-class turn cannot have both of its sends
@@ -955,8 +1015,18 @@ pending row to say the provider has queued it, and exempts that row from the
 client's unanswered-row expiry — a turn queued behind an hour of work is still
 coming, and the row ages visibly instead of vanishing. `turn_degraded`
 relabels the row to say the steer was downgraded to a boundary delivery and
-leaves the words sent. `turn_dropped` and `turn_refused` remove the row,
-restore the draft, and surface `error.code`/`error.message`.
+leaves the words sent. `turn_injected` relabels the row "Injected into the
+running turn"; it still settles on the `user_prompt{steered: true}` echo whose
+`commandId` matches, exactly as a started turn does, and that echo renders a
+visible "steered" marker beside its sender. `turn_delivery_unknown` relabels
+the row "Delivery unknown — <message>", exempts it from expiry, keeps the
+words on screen rather than restoring them to the editor (they may already be
+in the running turn), and offers dismissal; the person decides whether to
+send again. Receipt precedence when several name one command is
+`turn_injected` ≥ `turn_started` > `turn_degraded` > `turn_queued`, and
+`turn_delivery_unknown` is a terminal outcome distinct from dropped and
+refused. `turn_dropped` and `turn_refused` remove the row, restore the draft,
+and surface `error.code`/`error.message`.
 
 The ACP session id used as a resume cursor is sensitive host-local state. It
 MUST NOT appear in commands, receipts, metadata, transcripts, adapter

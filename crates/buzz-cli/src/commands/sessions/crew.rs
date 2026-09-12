@@ -805,7 +805,8 @@ pub struct TurnStage {
     pub error_code: Option<String>,
     /// `error.message`, when the stage carried one.
     pub error_message: Option<String>,
-    /// The provider's `turnId`, present exactly for `turn_started`.
+    /// The provider's `turnId`, present exactly for `turn_started` (the turn
+    /// that began) and `turn_injected` (the running turn the input joined).
     pub turn_id: Option<String>,
     /// Receipt `created_at`, Unix seconds.
     pub at: i64,
@@ -822,8 +823,15 @@ fn stage_rank(status: ReceiptStatus) -> u8 {
         ReceiptStatus::TurnQueued => 1,
         ReceiptStatus::TurnDegraded => 2,
         ReceiptStatus::TurnStarted => 3,
-        ReceiptStatus::TurnDropped | ReceiptStatus::TurnRefused => 4,
-        ReceiptStatus::InterruptDelivered => 5,
+        // A native steer's terminal answer: the input joined the running
+        // turn. Outranks `turn_started` because a `turn_injected` that
+        // follows a late `turn_started` of a reconciled attempt is the newer
+        // fact about the same command.
+        ReceiptStatus::TurnInjected => 4,
+        ReceiptStatus::TurnDropped
+        | ReceiptStatus::TurnRefused
+        | ReceiptStatus::TurnDeliveryUnknown => 5,
+        ReceiptStatus::InterruptDelivered => 6,
         _ => 0,
     }
 }
@@ -955,6 +963,22 @@ pub fn fold_delivery(
                 None => format!("{asked} accepted; the turn is running"),
             },
         ),
+        // The native path: the runtime acknowledged the input as joined into
+        // the turn already running. No new turn, no second `turn_started`.
+        ReceiptStatus::TurnInjected => (
+            Some(true),
+            match stage.turn_id.as_deref() {
+                Some(turn_id) => {
+                    format!("{asked} injected into the running turn {turn_id}")
+                }
+                None => format!("{asked} injected into the running turn"),
+            },
+        ),
+        // Written to the runtime, never acknowledged: the provider will not
+        // replay it, and it will not claim either outcome. The sender decides
+        // whether to send again — which is why `delivered` is `null` here and
+        // not `false`.
+        ReceiptStatus::TurnDeliveryUnknown => (None, format!("delivery unknown: {error}")),
         ReceiptStatus::InterruptDelivered => (
             Some(true),
             format!("{asked} delivered; the running turn was cancelled"),

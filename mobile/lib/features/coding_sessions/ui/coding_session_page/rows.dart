@@ -31,6 +31,9 @@ class _MessageRow extends StatelessWidget {
     final meta = <String>[
       if (item.operatorPubkey case final operator?)
         'operator ${shortPubkey(operator)}',
+      // A mid-turn correction the running turn took, said beside the sender
+      // rather than only in the row's title.
+      if (item.steered) 'steered',
       if (item.commandId case final command?) 'command ${shortPubkey(command)}',
     ];
     return _RowShell(

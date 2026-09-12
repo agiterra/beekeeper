@@ -211,8 +211,9 @@ CodingSessionDecoded<CodingSessionMetadata> decodeCodingSessionMetadata(
 /// Decode a 44224 lifecycle or turn receipt.
 ///
 /// Exactly five keys — `{schema, commandId, status, session, error}` — or six
-/// with `turnId` when and only when the status is `turn_started`. An
-/// unexpected key is a rejection, never a partial accept.
+/// with `turnId` when and only when the status is `turn_started` or
+/// `turn_injected`. An unexpected key is a rejection, never a partial accept.
+/// An unrecognised status string fails closed, as it always has.
 CodingSessionDecoded<CodingSessionReceipt> decodeCodingSessionReceipt(
   NostrEvent event, {
   CodingSessionSignatureVerifier? verifier,
@@ -254,9 +255,7 @@ CodingSessionDecoded<CodingSessionReceipt> decodeCodingSessionReceipt(
     );
   }
   const envelope = ['schema', 'commandId', 'status', 'session', 'error'];
-  final expected = status == CodingSessionReceiptStatus.turnStarted
-      ? [...envelope, 'turnId']
-      : envelope;
+  final expected = status.carriesTurnId ? [...envelope, 'turnId'] : envelope;
   if (!hasExactKeys(payload, expected) ||
       payload['schema'] != codingSessionReceiptSchema ||
       !boundedNonempty(payload['commandId'], _maxIdentifierBytes)) {
@@ -311,7 +310,7 @@ CodingSessionDecoded<CodingSessionReceipt> decodeCodingSessionReceipt(
     }
   }
   String? turnId;
-  if (status == CodingSessionReceiptStatus.turnStarted) {
+  if (status.carriesTurnId) {
     if (!boundedNonempty(payload['turnId'], _maxIdentifierBytes)) {
       return const CodingSessionDecoded.failed(
         CodingSessionDecodeReason.malformedPayload,
@@ -612,7 +611,8 @@ _ReceiptErrorExpectation? _receiptErrorExpectation(
   CodingSessionReceiptStatus.stopped ||
   CodingSessionReceiptStatus.continuationRegistered ||
   CodingSessionReceiptStatus.turnQueued ||
-  CodingSessionReceiptStatus.turnStarted => const _ReceiptErrorExpectation(
+  CodingSessionReceiptStatus.turnStarted ||
+  CodingSessionReceiptStatus.turnInjected => const _ReceiptErrorExpectation(
     mustHaveError: false,
   ),
   CodingSessionReceiptStatus.createdWithFailedInitialTurn =>
@@ -627,9 +627,10 @@ _ReceiptErrorExpectation? _receiptErrorExpectation(
     ),
   CodingSessionReceiptStatus.failed ||
   CodingSessionReceiptStatus.turnDropped ||
-  CodingSessionReceiptStatus.turnRefused => const _ReceiptErrorExpectation(
-    mustHaveError: true,
-  ),
+  CodingSessionReceiptStatus.turnRefused ||
+  // Delivery unknown always says why: the code is the whole answer.
+  CodingSessionReceiptStatus.turnDeliveryUnknown =>
+    const _ReceiptErrorExpectation(mustHaveError: true),
   CodingSessionReceiptStatus.turnDegraded ||
   CodingSessionReceiptStatus.interruptDelivered => null,
 };

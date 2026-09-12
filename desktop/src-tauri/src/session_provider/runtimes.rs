@@ -10,7 +10,7 @@
 use std::path::PathBuf;
 
 use buzz_core_pkg::coding_session_payload::Capabilities;
-use buzz_core_pkg::coding_session_runtime::{CliEnvVar, RuntimeDescriptor};
+use buzz_core_pkg::coding_session_runtime::{CliEnvVar, RuntimeDescriptor, SteerIdleGuard};
 
 use crate::managed_agents::{
     known_acp_runtime_exact, probe_auth_status, resolve_command, AuthStatus,
@@ -35,6 +35,14 @@ struct HostRuntime {
     /// Only claude: falling back to the bare command preserves today's
     /// PATH-lookup behavior for the zero-config default.
     always_offered: bool,
+    /// The idle guard the pinned adapter honours on `_session/steering`.
+    ///
+    /// A declared fact about the installed package — no adapter advertises
+    /// it — recorded here because this host is what installs and pins the
+    /// adapter. The sidecar offers native mid-turn injection only for a
+    /// runtime that declares [`SteerIdleGuard::PromptRequired`]; `None` keeps
+    /// every steer at the boundary.
+    steer_idle_guard: Option<SteerIdleGuard>,
 }
 
 /// The v1 table. Order here is the descriptor order handed to the sidecar;
@@ -48,6 +56,13 @@ const HOST_RUNTIMES: &[HostRuntime] = &[
         agent_args: &[],
         discover_models: true,
         always_offered: true,
+        // claude-agent-acp 0.70.0, dist/acp-agent.js:1146-1150 honours
+        // `_meta.steering.idleBehavior: promptRequired` — with no running
+        // turn it answers `{outcome:"promptRequired"}` and leaves the content
+        // with the caller; while a turn runs it pushes the input into the
+        // same SDK stream and answers `injected` (:1160-1184). Verified
+        // 2026-09-11 against the installed package.
+        steer_idle_guard: Some(SteerIdleGuard::PromptRequired),
     },
     HostRuntime {
         runtime_id: "codex",
@@ -63,6 +78,12 @@ const HOST_RUNTIMES: &[HostRuntime] = &[
         // the "default label hiding the real model" bug (§2 item 39).
         discover_models: true,
         always_offered: false,
+        // codex-acp 1.6.2 has no idle guard (dist/index.js:31387-31400 starts
+        // a detached turn when no turn is steerable, and answers
+        // `startedNewTurn` only once that turn is running). A steer racing a
+        // turn end would start a native turn nobody observes, so codex stays
+        // boundary-only until it honours an idle guard.
+        steer_idle_guard: None,
     },
     HostRuntime {
         runtime_id: "goose",
@@ -75,6 +96,8 @@ const HOST_RUNTIMES: &[HostRuntime] = &[
         // would spend its timeout to learn nothing. Flip it when goose answers.
         discover_models: false,
         always_offered: false,
+        // Not installed here; nothing verified, so nothing declared.
+        steer_idle_guard: None,
     },
 ];
 
@@ -223,6 +246,7 @@ pub(crate) fn build_runtime_descriptors() -> Vec<RuntimeDescriptor> {
                     value: path.to_string_lossy().into_owned(),
                 });
             Some(RuntimeDescriptor {
+                steer_idle_guard: runtime.steer_idle_guard,
                 instance_ref: runtime.instance_ref.to_string(),
                 driver: runtime.driver.to_string(),
                 runtime: runtime.runtime_id.to_string(),

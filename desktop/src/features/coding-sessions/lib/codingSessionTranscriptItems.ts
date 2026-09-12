@@ -250,6 +250,9 @@ function buildUserPromptMessage(
     // what lets an optimistic row retire against the right echo instead of
     // guessing from the words.
     commandId: readCodingSessionPromptCommandId(item.commandId),
+    // Only ever set, never `false`: a prompt that opened its turn carries no
+    // key, so older projections stay byte-identical.
+    ...(item.steered === true ? { steered: true } : {}),
   };
 }
 

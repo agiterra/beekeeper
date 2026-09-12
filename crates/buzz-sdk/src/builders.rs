@@ -6571,6 +6571,8 @@ mod tests {
             ReceiptStatus::TurnDropped,
             ReceiptStatus::TurnRefused,
             ReceiptStatus::TurnDegraded,
+            ReceiptStatus::TurnInjected,
+            ReceiptStatus::TurnDeliveryUnknown,
             ReceiptStatus::InterruptDelivered,
         ];
         let mut stage_keys: Vec<String> = stages

@@ -241,6 +241,7 @@ mod tests {
 
     fn claude_descriptor(default_model: &str, allowed: &[&str]) -> RuntimeDescriptor {
         RuntimeDescriptor {
+            steer_idle_guard: None,
             instance_ref: "claude-primary".into(),
             driver: "claude-agent-acp".into(),
             runtime: "claude".into(),
@@ -333,6 +334,7 @@ mod tests {
     #[test]
     fn two_runtimes_advertise_sorted_providers_and_shared_projects() {
         let codex = RuntimeDescriptor {
+            steer_idle_guard: None,
             instance_ref: "codex-primary".into(),
             driver: "codex-acp".into(),
             runtime: "codex".into(),

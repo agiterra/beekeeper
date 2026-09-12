@@ -1279,6 +1279,7 @@ dependencies = [
  "buzz-sdk",
  "buzz-ws-client",
  "chrono",
+ "futures-util",
  "hex",
  "image",
  "nostr 0.44.7",

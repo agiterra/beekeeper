@@ -36,10 +36,18 @@ export type CodingSessionTeamWakeDeliveryKind =
   | "failed"
   | "unknown";
 
-/** A verified failure receipt on one command for this operation. */
+/**
+ * A verified terminal receipt on one command for this operation that is not
+ * a run the provider can vouch for.
+ *
+ * `"unknown"` is a native steer whose delivery could not be established
+ * (`turn_delivery_unknown`). A team wake is always a boundary turn, so this
+ * arm is not expected here — but the index reports it truthfully rather than
+ * folding it into `"dropped"`, which would tell a re-arm the words never ran.
+ */
 export type CodingSessionTeamWakeDeliveryFailure = {
   commandId: string;
-  outcome: "dropped" | "refused";
+  outcome: "dropped" | "refused" | "unknown";
   code: string;
   message: string;
 };

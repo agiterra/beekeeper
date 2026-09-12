@@ -66,6 +66,16 @@ const REFUSALS_FILE: &str = "refusals.jsonl";
 /// two producers mint different ids for one operation on purpose, so the
 /// command ledger cannot answer it.
 const OPERATIONS_FILE: &str = "operations.jsonl";
+/// Append-only ledger of native mid-turn steer attempts, one JSON record per
+/// line; the last record for an `attemptId` is that attempt's current state.
+///
+/// Separate from the command and refusal ledgers because it answers a
+/// question neither can: "was this input *written* to a runtime, and what
+/// became of it?" A command is consumed when its turn starts and refused when
+/// it is answered terminally; a steer attempt sits between those — durably
+/// intended before the mailbox takes it, so a crash in the window can never
+/// replay a write that may already have gone out.
+const STEER_ATTEMPTS_FILE: &str = "steer_attempts.jsonl";
 /// Single-instance lock file. See [`acquire_state_dir_lock`].
 pub const LOCK_FILE: &str = "provider.lock";
 
@@ -568,6 +578,101 @@ struct OperationRecord {
     at: u64,
 }
 
+/// Where one native steer attempt stands.
+///
+/// Serialized in `snake_case`, matching the disposition names in
+/// `docs/NATIVE_STEERING_IMPL.md` §2. [`Self::Intent`] is the only open state;
+/// everything else is terminal for the attempt (a `reconciled_*` disposition
+/// is a terminal answer to an attempt that was already terminal as
+/// [`Self::Unknown`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SteerDisposition {
+    /// Durably intended; the runtime may or may not have received it.
+    Intent,
+    /// The runtime acknowledged the input joined the running turn.
+    Injected,
+    /// The runtime acknowledged it started a new, unobserved turn.
+    StartedNewTurn,
+    /// Nothing reached the runtime; the command fell back to a boundary turn.
+    NotDelivered,
+    /// Written (or possibly written) with no answer; never replayed.
+    Unknown,
+    /// Refused before any runtime write (authority, generation, fence).
+    Prevented,
+    /// A late acknowledgement settled an [`Self::Unknown`] attempt as injected.
+    ReconciledInjected,
+    /// A late acknowledgement settled an [`Self::Unknown`] attempt as not
+    /// delivered.
+    ReconciledNotDelivered,
+    /// A late acknowledgement settled an [`Self::Unknown`] attempt as a new
+    /// unobserved turn.
+    ReconciledNewTurn,
+}
+
+impl SteerDisposition {
+    /// The wire/ledger name of this disposition.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Intent => "intent",
+            Self::Injected => "injected",
+            Self::StartedNewTurn => "started_new_turn",
+            Self::NotDelivered => "not_delivered",
+            Self::Unknown => "unknown",
+            Self::Prevented => "prevented",
+            Self::ReconciledInjected => "reconciled_injected",
+            Self::ReconciledNotDelivered => "reconciled_not_delivered",
+            Self::ReconciledNewTurn => "reconciled_new_turn",
+        }
+    }
+
+    /// Whether the attempt is still awaiting its resolution.
+    pub const fn is_open(self) -> bool {
+        matches!(self, Self::Intent)
+    }
+}
+
+/// One line of [`STEER_ATTEMPTS_FILE`]: everything needed to answer, fall
+/// back, or refuse one native steer attempt without the process that started
+/// it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SteerAttemptRecord {
+    /// `{commandId}#{n}`, `n` = 1 + prior attempts for the command.
+    pub attempt_id: String,
+    /// The 44220 the attempt answers.
+    pub command_id: String,
+    /// The execution the input was addressed to.
+    pub session_id: String,
+    /// The exact generation the command addressed.
+    pub generation: u64,
+    /// Channel the command arrived on, so receipts go back to the right room.
+    pub channel_id: Uuid,
+    /// The full target, so a receipt keyed to this attempt names it exactly.
+    pub target: CodingSessionTarget,
+    /// The command event's `created_at`, which pins the channel watermark
+    /// while the attempt is open.
+    pub created_at: u64,
+    /// The team-wake operation the command takes custody of, when any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operation_key: Option<String>,
+    /// The verified signer of the command.
+    pub operator_pubkey: String,
+    /// The seat role the signer holds, when the turn was framed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sender_role: Option<String>,
+    /// The signed original text, kept so a not-delivered attempt can be
+    /// rebuilt as a boundary turn from disk.
+    pub text: String,
+    /// Where the attempt stands.
+    pub disposition: SteerDisposition,
+    /// Unix seconds this record was written.
+    pub at: u64,
+    /// The turn the input joined (or was written into), once known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<String>,
+}
+
 /// One atomic terminal decision and the exact signed answer it promises.
 /// Retained until both the outbox and the refusal ledger contain the decision.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -586,6 +691,8 @@ pub struct StateStore {
     refusals: HashSet<String>,
     /// Team-wake operation key → the `commandId` that owns it.
     operations: HashMap<String, String>,
+    /// Native steer attempts by `attemptId`, last record wins.
+    steer_attempts: BTreeMap<String, SteerAttemptRecord>,
     /// Injected one-shot ledger-append failures. Test-only.
     #[cfg(test)]
     fault_plan: FaultPlan,
@@ -607,6 +714,9 @@ pub(crate) struct FaultPlan {
     pub fail_next_command_append: bool,
     /// Fail the next [`StateStore::consume_operation`].
     pub fail_next_operation_append: bool,
+    /// Fail the next steer-attempt append ([`StateStore::stage_steer_intent`]
+    /// or [`StateStore::resolve_steer_attempt`]).
+    pub fail_next_steer_append: bool,
 }
 
 impl StateStore {
@@ -618,7 +728,13 @@ impl StateStore {
     pub fn open(dir: &Path, command_retention_secs: u64) -> io::Result<Self> {
         fs::create_dir_all(dir)?;
         restrict_directory(dir)?;
-        for file in [STATE_FILE, COMMANDS_FILE, REFUSALS_FILE, OPERATIONS_FILE] {
+        for file in [
+            STATE_FILE,
+            COMMANDS_FILE,
+            REFUSALS_FILE,
+            OPERATIONS_FILE,
+            STEER_ATTEMPTS_FILE,
+        ] {
             restrict_file_if_present(&dir.join(file))?;
         }
         let snapshot = load_snapshot(&dir.join(STATE_FILE))?;
@@ -628,6 +744,7 @@ impl StateStore {
             commands: HashSet::new(),
             refusals: HashSet::new(),
             operations: HashMap::new(),
+            steer_attempts: BTreeMap::new(),
             #[cfg(test)]
             fault_plan: FaultPlan::default(),
         };
@@ -799,6 +916,153 @@ impl StateStore {
             command_id,
             at,
         )
+    }
+
+    /// The attempt id the next native steer attempt for `command_id` gets:
+    /// `{command_id}#{n}`, `n` = 1 + attempts already recorded for it.
+    ///
+    /// Deterministic on purpose — no clock, no randomness — so a retry after a
+    /// failed write mints the same id it would have minted the first time.
+    pub fn next_steer_attempt_id(&self, command_id: &str) -> String {
+        let prior = self
+            .steer_attempts
+            .values()
+            .filter(|attempt| attempt.command_id == command_id)
+            .count();
+        format!("{command_id}#{}", prior + 1)
+    }
+
+    /// Durably record that a native steer is about to be handed to a runtime.
+    ///
+    /// Written **before** the mailbox takes the input, and that order is the
+    /// whole point: a crash anywhere after this line finds an open intent at
+    /// restart and answers it as unknown rather than replaying a write that
+    /// may already have reached the model. `record.disposition` must be
+    /// [`SteerDisposition::Intent`] and the attempt id must be new.
+    pub fn stage_steer_intent(&mut self, record: SteerAttemptRecord) -> io::Result<()> {
+        if !record.disposition.is_open() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "a steer attempt is staged as an intent, never as a resolution",
+            ));
+        }
+        if self.steer_attempts.contains_key(&record.attempt_id) {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                format!("steer attempt {} already exists", record.attempt_id),
+            ));
+        }
+        self.append_steer_record(record)
+    }
+
+    /// Durably move an attempt to a terminal disposition.
+    ///
+    /// `turn_id`, when given, replaces the recorded one; `None` keeps whatever
+    /// the attempt already carried. Refuses to move an attempt back to
+    /// [`SteerDisposition::Intent`] or to resolve an attempt it has never seen.
+    pub fn resolve_steer_attempt(
+        &mut self,
+        attempt_id: &str,
+        disposition: SteerDisposition,
+        turn_id: Option<&str>,
+    ) -> io::Result<()> {
+        if disposition.is_open() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "an attempt is resolved to a terminal disposition, never back to intent",
+            ));
+        }
+        let Some(current) = self.steer_attempts.get(attempt_id) else {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("steer attempt {attempt_id} is not recorded"),
+            ));
+        };
+        let mut next = current.clone();
+        next.disposition = disposition;
+        next.at = now_secs();
+        if let Some(turn_id) = turn_id {
+            next.turn_id = Some(turn_id.to_owned());
+        }
+        self.append_steer_record(next)
+    }
+
+    /// One attempt by id, as last recorded.
+    pub fn steer_attempt(&self, attempt_id: &str) -> Option<&SteerAttemptRecord> {
+        self.steer_attempts.get(attempt_id)
+    }
+
+    /// Every attempt still at [`SteerDisposition::Intent`], oldest first.
+    pub fn open_steer_attempts(&self) -> Vec<SteerAttemptRecord> {
+        self.steer_attempts_where(|attempt| attempt.disposition.is_open())
+    }
+
+    /// Every attempt resolved [`SteerDisposition::Unknown`] and not yet
+    /// reconciled, oldest first.
+    pub fn unknown_steer_attempts(&self) -> Vec<SteerAttemptRecord> {
+        self.steer_attempts_where(|attempt| attempt.disposition == SteerDisposition::Unknown)
+    }
+
+    /// The newest attempt recorded for `command_id`, if any.
+    pub fn steer_attempt_for_command(&self, command_id: &str) -> Option<&SteerAttemptRecord> {
+        self.steer_attempts
+            .values()
+            .filter(|attempt| attempt.command_id == command_id)
+            .max_by_key(|attempt| steer_attempt_ordinal(&attempt.attempt_id))
+    }
+
+    /// Every attempt recorded for `command_id`, in attempt order.
+    pub fn steer_attempts_for_command(&self, command_id: &str) -> Vec<&SteerAttemptRecord> {
+        let mut attempts: Vec<&SteerAttemptRecord> = self
+            .steer_attempts
+            .values()
+            .filter(|attempt| attempt.command_id == command_id)
+            .collect();
+        attempts.sort_by_key(|attempt| steer_attempt_ordinal(&attempt.attempt_id));
+        attempts
+    }
+
+    fn steer_attempts_where(
+        &self,
+        keep: impl Fn(&SteerAttemptRecord) -> bool,
+    ) -> Vec<SteerAttemptRecord> {
+        let mut attempts: Vec<SteerAttemptRecord> = self
+            .steer_attempts
+            .values()
+            .filter(|attempt| keep(attempt))
+            .cloned()
+            .collect();
+        attempts.sort_by(|left, right| {
+            left.at
+                .cmp(&right.at)
+                .then_with(|| left.attempt_id.cmp(&right.attempt_id))
+        });
+        attempts
+    }
+
+    /// Append one attempt record; the in-memory map only keeps what the disk
+    /// took, so a failed write leaves the previous state in force.
+    fn append_steer_record(&mut self, record: SteerAttemptRecord) -> io::Result<()> {
+        #[cfg(test)]
+        if std::mem::take(&mut self.fault_plan.fail_next_steer_append) {
+            return Err(io::Error::other("injected steer-attempt append failure"));
+        }
+        let attempt_id = record.attempt_id.clone();
+        let previous = self
+            .steer_attempts
+            .insert(attempt_id.clone(), record.clone());
+        let result = append_json_line(&self.dir.join(STEER_ATTEMPTS_FILE), &record);
+        if result.is_err() {
+            match previous {
+                Some(previous) => {
+                    self.steer_attempts.insert(attempt_id, previous);
+                }
+                None => {
+                    self.steer_attempts.remove(&attempt_id);
+                }
+            }
+        }
+        result
     }
 
     fn append_ledger_record(
@@ -1024,7 +1288,61 @@ impl StateStore {
             &dir.join(OPERATIONS_FILE),
             &mut self.operations,
             retention_secs,
+        )?;
+        Self::load_steer_attempts(
+            &dir.join(STEER_ATTEMPTS_FILE),
+            &mut self.steer_attempts,
+            retention_secs,
         )
+    }
+
+    /// Load [`STEER_ATTEMPTS_FILE`]: last record per attempt wins.
+    ///
+    /// Resolved attempts older than the freshness horizon are dropped — their
+    /// command is ignored on its own merits by then — and the file is
+    /// compacted to one line per surviving attempt when anything was dropped.
+    /// An open intent is **never** dropped by age: it is owed a restart answer
+    /// regardless of how long ago it was staged.
+    fn load_steer_attempts(
+        path: &Path,
+        seen: &mut BTreeMap<String, SteerAttemptRecord>,
+        retention_secs: u64,
+    ) -> io::Result<()> {
+        let file = match File::open(path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error),
+        };
+        let cutoff = now_secs().saturating_sub(retention_secs);
+        let mut lines = 0usize;
+        let mut unreadable = false;
+        for line in BufReader::new(file).lines() {
+            let line = line?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            lines += 1;
+            match serde_json::from_str::<SteerAttemptRecord>(&line) {
+                Ok(record) => {
+                    seen.insert(record.attempt_id.clone(), record);
+                }
+                Err(error) => {
+                    tracing::warn!(target: "csp::state", "dropping unreadable steer attempt line: {error}");
+                    unreadable = true;
+                }
+            }
+        }
+        let before = seen.len();
+        seen.retain(|_, attempt| attempt.disposition.is_open() || attempt.at >= cutoff);
+        if unreadable || seen.len() != before || seen.len() != lines {
+            let mut body = String::new();
+            for record in seen.values() {
+                body.push_str(&serde_json::to_string(record)?);
+                body.push('\n');
+            }
+            atomic_write(path, body.as_bytes())?;
+        }
+        Ok(())
     }
 
     /// Load [`OPERATIONS_FILE`], dropping records past the freshness horizon
@@ -1158,6 +1476,30 @@ fn load_snapshot(path: &Path) -> io::Result<Snapshot> {
             format!("state.json is unreadable: {error}"),
         )),
     }
+}
+
+/// The `n` in an attempt id `{commandId}#{n}`; zero for an id without one.
+fn steer_attempt_ordinal(attempt_id: &str) -> u64 {
+    attempt_id
+        .rsplit_once('#')
+        .and_then(|(_, ordinal)| ordinal.parse().ok())
+        .unwrap_or(0)
+}
+
+/// Append one JSON record as a single line, fsynced, to an owner-only file.
+///
+/// The whole line goes down in one `write` on an O_APPEND handle, as every
+/// other ledger here does, so a line can never be torn in half.
+fn append_json_line<T: Serialize>(path: &Path, record: &T) -> io::Result<()> {
+    let mut options = OpenOptions::new();
+    options.create(true).append(true);
+    restrict_new_file(&mut options);
+    let mut file = options.open(path)?;
+    restrict_file(path)?;
+    let mut line = serde_json::to_string(record)?;
+    line.push('\n');
+    file.write_all(line.as_bytes())?;
+    file.sync_all()
 }
 
 /// Replace a file's contents atomically: write a sibling temp file, fsync it,
@@ -1320,6 +1662,196 @@ mod tests {
                 .session("s1")
                 .and_then(|session| session.resume_cursor.as_deref()),
             Some("host-private-acp-session")
+        );
+    }
+
+    fn steer_attempt(command_id: &str, attempt_id: &str) -> SteerAttemptRecord {
+        SteerAttemptRecord {
+            attempt_id: attempt_id.to_owned(),
+            command_id: command_id.to_owned(),
+            session_id: "s1".to_owned(),
+            generation: 1,
+            channel_id: Uuid::nil(),
+            target: CodingSessionTarget {
+                instance_id: "instance-1".to_owned(),
+                driver: "claude-agent-acp".to_owned(),
+                session_id: "s1".to_owned(),
+                generation: 1,
+            },
+            created_at: 1_000,
+            operation_key: None,
+            operator_pubkey: "ab".repeat(32),
+            sender_role: None,
+            text: "steer me".to_owned(),
+            disposition: SteerDisposition::Intent,
+            at: now_secs(),
+            turn_id: None,
+        }
+    }
+
+    /// Attempt ids are `{commandId}#{n}` with `n` counting prior attempts —
+    /// no clock, no randomness — and the ledger survives a restart with the
+    /// last record per attempt in force.
+    #[test]
+    fn steer_attempts_round_trip_with_last_record_winning() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        {
+            let mut store = StateStore::open(dir.path(), 3600).expect("open");
+            assert_eq!(store.next_steer_attempt_id("cmd"), "cmd#1");
+            store
+                .stage_steer_intent(steer_attempt("cmd", "cmd#1"))
+                .expect("stage");
+            assert_eq!(store.next_steer_attempt_id("cmd"), "cmd#2");
+            assert_eq!(store.next_steer_attempt_id("other"), "other#1");
+            assert!(
+                store
+                    .stage_steer_intent(steer_attempt("cmd", "cmd#1"))
+                    .is_err(),
+                "an attempt id is staged once"
+            );
+            assert!(
+                store
+                    .stage_steer_intent(SteerAttemptRecord {
+                        disposition: SteerDisposition::Injected,
+                        ..steer_attempt("cmd", "cmd#9")
+                    })
+                    .is_err(),
+                "only an intent can be staged"
+            );
+            assert_eq!(store.open_steer_attempts().len(), 1);
+            store
+                .resolve_steer_attempt("cmd#1", SteerDisposition::NotDelivered, None)
+                .expect("resolve");
+            store
+                .stage_steer_intent(steer_attempt("cmd", "cmd#2"))
+                .expect("stage second");
+            store
+                .resolve_steer_attempt("cmd#2", SteerDisposition::Unknown, Some("turn-9"))
+                .expect("resolve second");
+            assert!(
+                store
+                    .resolve_steer_attempt("cmd#2", SteerDisposition::Intent, None)
+                    .is_err(),
+                "never back to intent"
+            );
+            assert!(
+                store
+                    .resolve_steer_attempt("nope#1", SteerDisposition::Prevented, None)
+                    .is_err(),
+                "never an attempt that was not staged"
+            );
+        }
+        let store = StateStore::open(dir.path(), 3600).expect("reopen");
+        assert_eq!(store.next_steer_attempt_id("cmd"), "cmd#3");
+        assert_eq!(
+            store.steer_attempt("cmd#1").map(|a| a.disposition),
+            Some(SteerDisposition::NotDelivered)
+        );
+        let second = store.steer_attempt("cmd#2").expect("second");
+        assert_eq!(second.disposition, SteerDisposition::Unknown);
+        assert_eq!(second.turn_id.as_deref(), Some("turn-9"));
+        assert!(store.open_steer_attempts().is_empty());
+        assert_eq!(store.unknown_steer_attempts().len(), 1);
+        assert_eq!(
+            store
+                .steer_attempt_for_command("cmd")
+                .map(|a| a.attempt_id.as_str()),
+            Some("cmd#2"),
+            "the newest attempt answers for the command"
+        );
+        assert_eq!(
+            store
+                .steer_attempts_for_command("cmd")
+                .iter()
+                .map(|a| a.attempt_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["cmd#1", "cmd#2"]
+        );
+    }
+
+    /// A resolved attempt past the freshness horizon is pruned; an open
+    /// intent never is, however old — it is owed a restart answer.
+    #[test]
+    fn steer_attempt_retention_keeps_every_open_intent() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        {
+            let mut store = StateStore::open(dir.path(), 3600).expect("open");
+            let stale = now_secs().saturating_sub(10_000);
+            store
+                .stage_steer_intent(SteerAttemptRecord {
+                    at: stale,
+                    ..steer_attempt("old-open", "old-open#1")
+                })
+                .expect("stage");
+            store
+                .stage_steer_intent(SteerAttemptRecord {
+                    at: stale,
+                    ..steer_attempt("old-done", "old-done#1")
+                })
+                .expect("stage");
+            // `resolve_steer_attempt` stamps `now`, so the stale resolved
+            // record is written by hand.
+            let mut resolved = steer_attempt("old-done", "old-done#1");
+            resolved.disposition = SteerDisposition::Injected;
+            resolved.at = stale;
+            append_json_line(&dir.path().join(STEER_ATTEMPTS_FILE), &resolved).expect("append");
+        }
+        let store = StateStore::open(dir.path(), 3600).expect("reopen");
+        assert!(store.steer_attempt("old-open#1").is_some());
+        assert!(store.steer_attempt("old-done#1").is_none());
+        assert_eq!(store.open_steer_attempts().len(), 1);
+    }
+
+    /// A failed append leaves the in-memory ledger exactly as it was, so a
+    /// retry mints the same attempt id and nothing claims a write that did
+    /// not happen.
+    #[test]
+    fn a_failed_steer_append_is_rolled_back() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut store = StateStore::open(dir.path(), 3600).expect("open");
+        store.fault_plan().fail_next_steer_append = true;
+        assert!(store
+            .stage_steer_intent(steer_attempt("cmd", "cmd#1"))
+            .is_err());
+        assert!(store.steer_attempt("cmd#1").is_none());
+        assert_eq!(store.next_steer_attempt_id("cmd"), "cmd#1");
+        store
+            .stage_steer_intent(steer_attempt("cmd", "cmd#1"))
+            .expect("retry");
+        store.fault_plan().fail_next_steer_append = true;
+        assert!(store
+            .resolve_steer_attempt("cmd#1", SteerDisposition::Injected, Some("t"))
+            .is_err());
+        assert_eq!(
+            store.steer_attempt("cmd#1").map(|a| a.disposition),
+            Some(SteerDisposition::Intent),
+            "the previous record stays in force"
+        );
+        assert!(
+            !dir.path().join(STEER_ATTEMPTS_FILE).exists() || {
+                let body = fs::read_to_string(dir.path().join(STEER_ATTEMPTS_FILE)).expect("read");
+                body.lines().count() == 1
+            }
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_steer_attempt_ledger_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut store = StateStore::open(dir.path(), 3600).expect("open");
+        store
+            .stage_steer_intent(steer_attempt("cmd", "cmd#1"))
+            .expect("stage");
+        assert_eq!(
+            fs::metadata(dir.path().join(STEER_ATTEMPTS_FILE))
+                .expect("stat")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
         );
     }
 

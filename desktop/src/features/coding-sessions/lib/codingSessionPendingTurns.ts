@@ -17,9 +17,11 @@
  * `resetPendingCodingSessionTurns`), and an unanswered record expires after
  * {@link PENDING_CODING_SESSION_TURN_TTL_MS} so a provider that never answers
  * cannot leave a row claiming a turn is still in flight an hour later. A
- * record the provider has signed for (`turn_queued`, `turn_degraded`) is
- * exempt from that expiry and ages visibly instead — the relay is the mailbox,
- * so a turn waiting behind an hour of work is still coming.
+ * record the provider has signed for (`turn_queued`, `turn_degraded`,
+ * `turn_injected`, `turn_delivery_unknown`) is exempt from that expiry and
+ * ages visibly instead — the relay is the mailbox, so a turn waiting behind
+ * an hour of work is still coming, and a delivery the provider could not
+ * establish is the person's to settle, not a clock's.
  */
 import * as React from "react";
 
@@ -66,19 +68,42 @@ export type PendingCodingSessionTurn = {
    * was asked for, so the row says so rather than reading as an ordinary queue.
    */
   degradedByProvider?: boolean;
+  /**
+   * Set once the provider's own signed `turn_injected` receipt names this
+   * command: the runtime acknowledged the input as joined into the turn that
+   * was already running. Not a new turn — the row still settles on the
+   * `user_prompt{steered: true}` echo whose `commandId` matches, exactly as a
+   * started turn does — but it says so, because "queued" or silence would
+   * both misreport what happened to the person's correction.
+   */
+  injectedByProvider?: boolean;
+  /**
+   * Set once the provider's own signed `turn_delivery_unknown` receipt names
+   * this command, with the code and words it carried. Terminal: the provider
+   * will not replay the input, and this client will not either — the words
+   * may already be inside the running turn. The row stays, says so, and
+   * offers dismissal; it never retires itself and never restores the draft
+   * as if the turn had been refused. A later `turn_injected` for the same
+   * command (a reconciled attempt) outranks it.
+   */
+  deliveryUnknown?: { code: string; message: string };
 };
 
 /**
- * True once the provider has signed for this turn — queued, or degraded to the
- * boundary. Both mean the same thing for the row's lifetime: the turn is in
- * the provider's mailbox and the client is no longer the only thing claiming
- * it exists.
+ * True once the provider has signed for this turn — queued, degraded to the
+ * boundary, injected into the running turn, or answered delivery-unknown.
+ * All mean the same thing for the row's lifetime: the provider has spoken
+ * for it, and the client is no longer the only thing claiming it exists, so
+ * the unanswered-row clock does not apply.
  */
 export function pendingCodingSessionTurnHeldByProvider(
   pending: PendingCodingSessionTurn,
 ): boolean {
   return (
-    pending.queuedByProvider === true || pending.degradedByProvider === true
+    pending.queuedByProvider === true ||
+    pending.degradedByProvider === true ||
+    pending.injectedByProvider === true ||
+    pending.deliveryUnknown !== undefined
   );
 }
 
@@ -235,6 +260,69 @@ export function markPendingCodingSessionTurnDegraded(
 }
 
 /**
+ * Record the provider's signed `turn_injected` for a turn this client sent.
+ *
+ * The native steer landed. The row is not retired here — the provider's
+ * `user_prompt{steered: true}` echo is what retires it, by `commandId`, like
+ * every other row — but it stops reading as queued or waiting.
+ */
+export function markPendingCodingSessionTurnInjected(
+  channelId: string,
+  commandId: string,
+): void {
+  const key = pendingCodingSessionTurnKey({ channelId, commandId });
+  let changed = false;
+  const next = pendingTurns.map((entry) => {
+    if (
+      pendingCodingSessionTurnKey(entry) !== key ||
+      entry.injectedByProvider === true
+    ) {
+      return entry;
+    }
+    changed = true;
+    return { ...entry, published: true, injectedByProvider: true };
+  });
+  if (!changed) return;
+  pendingTurns = next;
+  notify();
+}
+
+/**
+ * Record the provider's signed `turn_delivery_unknown` for a turn this client
+ * sent.
+ *
+ * Idempotent on the first answer: a replayed receipt is the same fact. The
+ * row keeps the words, is exempt from expiry, and leaves the list only when
+ * the person dismisses it ({@link forgetPendingCodingSessionTurn}) or — for
+ * the input that did land after all — when the steered echo names it.
+ */
+export function markPendingCodingSessionTurnDeliveryUnknown(
+  channelId: string,
+  commandId: string,
+  outcome: { code: string; message: string },
+): void {
+  const key = pendingCodingSessionTurnKey({ channelId, commandId });
+  let changed = false;
+  const next = pendingTurns.map((entry) => {
+    if (
+      pendingCodingSessionTurnKey(entry) !== key ||
+      entry.deliveryUnknown !== undefined
+    ) {
+      return entry;
+    }
+    changed = true;
+    return {
+      ...entry,
+      published: true,
+      deliveryUnknown: { code: outcome.code, message: outcome.message },
+    };
+  });
+  if (!changed) return;
+  pendingTurns = next;
+  notify();
+}
+
+/**
  * Every row for one execution that the provider has signed for and this client
  * is still showing.
  *
@@ -379,6 +467,8 @@ export type PendingCodingSessionTurnEcho = {
 /** What a pending row should say about itself right now. */
 export type PendingCodingSessionTurnState =
   | "sending"
+  | "unknown"
+  | "injected"
   | "degraded"
   | "queued"
   | "waiting"
@@ -393,9 +483,16 @@ export function pendingCodingSessionTurnState(
   // A signed receipt outranks the stall clock, because it answers the exact
   // question the stall label exists to raise: something did pick this turn up.
   // It is waiting behind other work, and saying so beats both silence and
-  // "not picked up yet". Degraded outranks queued: a provider that could not
-  // steer publishes both, and the half the person did not ask for is the half
+  // "not picked up yet". Injected outranks everything, including a
+  // delivery-unknown answer that preceded it: a late acknowledgement can
+  // reconcile an unknown attempt as injected, and that later, definite fact
+  // is the one the row reads (the steered echo then retires it as usual).
+  // Delivery-unknown outranks the rest as the provider's terminal word on
+  // its own. Degraded outranks queued: a provider that could not steer
+  // publishes both, and the half the person did not ask for is the half
   // worth reading.
+  if (pending.injectedByProvider === true) return "injected";
+  if (pending.deliveryUnknown !== undefined) return "unknown";
   if (pending.degradedByProvider === true) return "degraded";
   if (pending.queuedByProvider === true) return "queued";
   return now - pending.recordedAt > PENDING_CODING_SESSION_TURN_STALL_MS

@@ -8,12 +8,18 @@
 //! 4. [`AcpClient::session_prompt_with_idle_timeout`] — send prompt with idle/hard deadline, return stop reason
 //! 5. [`AcpClient::session_cancel`] / [`AcpClient::cancel_with_cleanup`] — cancel in-flight turn
 
+use std::collections::HashMap;
+
 use futures_util::StreamExt;
 use tokio::io::AsyncWriteExt;
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout};
 use tokio_util::codec::{FramedRead, LinesCodec, LinesCodecError};
 
 use crate::observer::{ObserverContext, ObserverHandle};
+use crate::steer::{
+    IdleGuard, LateSteerAck, NotDeliveredReason, SteerInput, SteerResolution, SteerWire,
+    UnknownReason, STEER_ACK_DRAIN,
+};
 use crate::usage::{
     PromptResponseUsage, StandardAdapterKind, StandardUsageTracker, TurnUsage, UsageTracker,
 };
@@ -704,14 +710,23 @@ pub struct AcpClient {
     /// Whether the agent advertised `sessionCapabilities.resume` during
     /// initialization.
     session_resume_supported: bool,
-    /// Per-turn channel for receiving goose-native non-cancelling steer
-    /// requests from the main loop. Installed by
-    /// [`install_steer_rx`](Self::install_steer_rx) at dispatch and
-    /// consumed (via `take()`) by `session_prompt_with_idle_timeout` so it
-    /// is dropped at scope exit alongside the turn it served. `None`
-    /// outside of a goose-native turn — the read loop's steer arm is
-    /// disabled in that case.
-    steer_rx: Option<tokio::sync::mpsc::Receiver<crate::pool::SteerRequest>>,
+    /// Per-turn source of mid-turn steer inputs for the read loop's steer
+    /// arm. Installed by [`install_steer_input`](Self::install_steer_input)
+    /// (public transport) or [`install_steer_rx`](Self::install_steer_rx)
+    /// (legacy pool harness) before the prompt, and consumed (via `take()`)
+    /// by `session_prompt_with_idle_timeout` so it is dropped at scope exit
+    /// alongside the turn it served. `None` outside a turn — the steer arm
+    /// is disabled in that case.
+    steer_rx: Option<SteerSource>,
+    /// Where a steer acknowledgement goes when it arrives after its attempt
+    /// was already resolved [`SteerResolution::Unknown`]. Unset → logged and
+    /// dropped.
+    late_steer_sink: Option<tokio::sync::mpsc::UnboundedSender<LateSteerAck>>,
+    /// Written steer requests whose acknowledgement never arrived, keyed by
+    /// JSON-RPC id so every read loop can still correlate a late answer.
+    /// Shared with the in-flight [`PendingSteer`] so a cancelled prompt
+    /// future registers its attempt on drop.
+    unresolved_steers: UnresolvedSteers,
     /// Usage tracker for goose/buzz-agent's cumulative notification format.
     goose_usage: UsageTracker,
     /// Per-turn prompt-response usage and Claude's optional cumulative cost.
@@ -923,15 +938,284 @@ const STEER_OUTCOME_INJECTED: &str = "injected";
 /// this must not renew the hard deadline.
 const STEER_OUTCOME_STARTED_NEW_TURN: &str = "startedNewTurn";
 
-/// Which wire method carried an in-flight steer request, recorded so the
-/// response arm decodes the shape that method actually returns.
+/// `outcome` value meaning the adapter found no running turn and, because the
+/// request asked for it (`_meta.steering.idleBehavior: "promptRequired"`),
+/// started nothing.
+const STEER_OUTCOME_PROMPT_REQUIRED: &str = "promptRequired";
+
+/// `outcome` value the adapter uses for its own catch-all failure.
+const STEER_OUTCOME_FAILED: &str = "failed";
+
+/// JSON-RPC `method_not_found`.
+const JSON_RPC_METHOD_NOT_FOUND: i64 = -32601;
+
+/// Where the read loop's steer arm takes its inputs from for one turn.
+///
+/// Both sources feed the same arm; the only difference is how an outcome is
+/// answered (see [`SteerOutcomeSink`]). Wrapping at `recv` time rather than
+/// through a forwarding task keeps the legacy channel's capacity and drop
+/// semantics exactly as they were.
+enum SteerSource {
+    /// The public transport (`buzz_acp::steer`).
+    Native(tokio::sync::mpsc::Receiver<SteerInput>),
+    /// The legacy channel harness's private request type, adapted per
+    /// `docs/NATIVE_STEERING_IMPL.md` §3.1 item 8.
+    Legacy(tokio::sync::mpsc::Receiver<crate::pool::SteerRequest>),
+}
+
+impl SteerSource {
+    /// Take the next input, in order. `None` once the sender side is gone.
+    /// Cancel-safe: neither receiver loses a message when this future is
+    /// dropped mid-poll.
+    async fn recv(&mut self) -> Option<TakenSteer> {
+        match self {
+            Self::Native(rx) => rx.recv().await.map(|input| TakenSteer {
+                attempt_id: Some(input.attempt_id),
+                prompt_blocks: input.prompt_blocks,
+                idle_guard: input.idle_guard,
+                sink: SteerOutcomeSink::Native(input.outcome_tx),
+            }),
+            Self::Legacy(rx) => rx.recv().await.map(|request| TakenSteer {
+                attempt_id: None,
+                prompt_blocks: request.prompt_blocks,
+                idle_guard: IdleGuard::AdapterDefault,
+                sink: SteerOutcomeSink::Legacy(request.ack_tx),
+            }),
+        }
+    }
+}
+
+/// One input the steer arm has taken from its source and not yet written.
+struct TakenSteer {
+    /// Caller-minted attempt id; `None` for the legacy harness, whose
+    /// requests have no identity beyond their oneshot.
+    attempt_id: Option<String>,
+    prompt_blocks: Vec<String>,
+    idle_guard: IdleGuard,
+    sink: SteerOutcomeSink,
+}
+
+/// How one input's outcome is answered.
+enum SteerOutcomeSink {
+    /// Answered with the public [`SteerResolution`].
+    Native(tokio::sync::oneshot::Sender<SteerResolution>),
+    /// Answered with the legacy pool's `SteerAck`, mapped from the same
+    /// resolution so the two surfaces cannot disagree about what happened.
+    Legacy(tokio::sync::oneshot::Sender<crate::pool::SteerAck>),
+}
+
+impl SteerOutcomeSink {
+    fn is_native(&self) -> bool {
+        matches!(self, Self::Native(_))
+    }
+
+    /// Answer exactly once. A closed receiver is the caller's business.
+    fn resolve(self, resolution: SteerResolution, session_id: &str) {
+        match self {
+            Self::Native(tx) => {
+                let _ = tx.send(resolution);
+            }
+            Self::Legacy(tx) => {
+                let _ = tx.send(crate::pool::SteerAck::from_resolution(
+                    resolution, session_id,
+                ));
+            }
+        }
+    }
+}
+
+/// A written steer request that has not been answered, remembered so a late
+/// answer can still be decoded and correlated to its attempt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct UnresolvedSteer {
+    /// The attempt the request belonged to.
+    attempt_id: String,
+    /// The method that carried it, so the late answer is decoded the way
+    /// that method answers.
+    wire: SteerWire,
+    /// The run id the request named, for a late goose answer.
+    native_run_id: Option<String>,
+}
+
+/// Written-but-unanswered steer requests keyed by JSON-RPC id.
+///
+/// Shared between the client and the in-flight [`PendingSteer`] so that a
+/// prompt future dropped mid-flight (cancel, shutdown) can still record its
+/// attempt from `Drop`, where `&mut AcpClient` is not reachable.
+#[derive(Debug, Default, Clone)]
+struct UnresolvedSteers(std::sync::Arc<std::sync::Mutex<HashMap<u64, UnresolvedSteer>>>);
+
+impl UnresolvedSteers {
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<u64, UnresolvedSteer>> {
+        // A poisoned map is still the right map: a panic elsewhere must not
+        // turn every later late ACK into a stray.
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn insert(&self, request_id: u64, entry: UnresolvedSteer) {
+        self.lock().insert(request_id, entry);
+    }
+
+    fn remove(&self, request_id: u64) -> Option<UnresolvedSteer> {
+        self.lock().remove(&request_id)
+    }
+
+    /// Attempt ids in wire-request order.
+    fn attempt_ids(&self) -> Vec<String> {
+        let map = self.lock();
+        let mut entries: Vec<(&u64, &UnresolvedSteer)> = map.iter().collect();
+        entries.sort_by_key(|(id, _)| **id);
+        entries
+            .into_iter()
+            .map(|(_, entry)| entry.attempt_id.clone())
+            .collect()
+    }
+}
+
+/// The one steer request the read loop has written and is awaiting.
+///
+/// Holds the sink until an answer, a bounded drain, or the loop's own end
+/// settles it. If the whole prompt future is dropped first (cancel,
+/// shutdown), `Drop` answers [`UnknownReason::PromptEndedBeforeAck`] and
+/// registers the request as unresolved, so the caller is never left with a
+/// silently closed channel for bytes that did go out.
+struct PendingSteer {
+    request_id: u64,
+    wire: SteerWire,
+    native_run_id: Option<String>,
+    attempt_id: Option<String>,
+    session_id: String,
+    sink: Option<SteerOutcomeSink>,
+    unresolved: UnresolvedSteers,
+}
+
+impl PendingSteer {
+    fn is_native(&self) -> bool {
+        self.sink.as_ref().is_some_and(SteerOutcomeSink::is_native)
+    }
+
+    /// Answer with a decoded acknowledgement.
+    fn resolve(&mut self, resolution: SteerResolution) {
+        if let Some(sink) = self.sink.take() {
+            sink.resolve(resolution, &self.session_id);
+        }
+    }
+
+    /// Answer [`SteerResolution::Unknown`] and remember the request so a late
+    /// acknowledgement can still be correlated. Only native attempts have an
+    /// identity to correlate; a legacy request is answered and forgotten.
+    fn abandon(&mut self, reason: UnknownReason) {
+        if let (Some(attempt_id), true) = (self.attempt_id.clone(), self.is_native()) {
+            self.unresolved.insert(
+                self.request_id,
+                UnresolvedSteer {
+                    attempt_id,
+                    wire: self.wire,
+                    native_run_id: self.native_run_id.clone(),
+                },
+            );
+        }
+        self.resolve(SteerResolution::Unknown {
+            reason,
+            wire_request_id: Some(self.request_id),
+        });
+    }
+}
+
+impl Drop for PendingSteer {
+    fn drop(&mut self) {
+        if self.sink.is_some() {
+            tracing::warn!(
+                request_id = self.request_id,
+                attempt_id = ?self.attempt_id,
+                "prompt loop dropped with a steer request awaiting its acknowledgement"
+            );
+            self.abandon(UnknownReason::PromptEndedBeforeAck);
+        }
+    }
+}
+
+/// Decode a JSON-RPC response to a steer request into what it establishes.
+///
+/// `docs/NATIVE_STEERING_IMPL.md` §3.1 item 3. The goose wire answers with no
+/// `outcome` — any success is a delivery into the run the request named.
+/// The ACP extension's outcome must be positively recognized: codex-acp
+/// answers unknown extension methods with a bare `{}` success, and reading
+/// that as delivery would drop the input.
+fn decode_steer_ack(
+    msg: &serde_json::Value,
+    wire: SteerWire,
+    native_run_id: Option<String>,
+    request_id: u64,
+) -> SteerResolution {
+    if let Some(error) = msg.get("error") {
+        let code = error.get("code").and_then(|c| c.as_i64()).unwrap_or(-1);
+        let message = error
+            .get("message")
+            .and_then(|m| m.as_str())
+            .map(str::to_owned)
+            .unwrap_or_else(|| error.to_string());
+        let reason = if code == JSON_RPC_METHOD_NOT_FOUND {
+            NotDeliveredReason::MethodNotFound { message }
+        } else {
+            NotDeliveredReason::Rejected { code, message }
+        };
+        return SteerResolution::NotDelivered { reason };
+    }
+    match wire {
+        SteerWire::Goose => SteerResolution::Injected {
+            wire,
+            native_run_id,
+        },
+        SteerWire::AcpExtension => {
+            let outcome = msg.pointer("/result/outcome");
+            match outcome.and_then(|v| v.as_str()) {
+                Some(STEER_OUTCOME_INJECTED) => SteerResolution::Injected {
+                    wire,
+                    native_run_id: None,
+                },
+                Some(STEER_OUTCOME_STARTED_NEW_TURN) => SteerResolution::StartedNewTurn { wire },
+                Some(STEER_OUTCOME_PROMPT_REQUIRED) => SteerResolution::NotDelivered {
+                    reason: NotDeliveredReason::PromptRequired,
+                },
+                Some(STEER_OUTCOME_FAILED) => SteerResolution::Unknown {
+                    reason: UnknownReason::AdapterReportedFailure {
+                        outcome: STEER_OUTCOME_FAILED.to_owned(),
+                    },
+                    wire_request_id: Some(request_id),
+                },
+                _ => {
+                    // Report the raw string when there is one, so logs read
+                    // `weird` not `"weird"`; fall back to the JSON for a
+                    // non-string value.
+                    let reported = match outcome {
+                        None => "<absent>".to_owned(),
+                        Some(serde_json::Value::String(s)) => s.clone(),
+                        Some(other) => other.to_string(),
+                    };
+                    SteerResolution::Unknown {
+                        reason: UnknownReason::UnrecognizedAck { outcome: reported },
+                        wire_request_id: Some(request_id),
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// How the prompt read loop is leaving while a steer is still unanswered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SteerTransport {
-    /// [`GOOSE_STEER_METHOD`] — any success result is a delivered steer.
-    Goose,
-    /// [`ACP_STEER_METHOD`] — success carries an `outcome` that must be
-    /// positively recognized before the steer counts as delivered.
-    AcpExtension,
+enum PromptExit {
+    /// The prompt's own response or error arrived; the reader is healthy.
+    Answered,
+    /// A turn deadline fired; the reader is healthy.
+    Deadline,
+    /// The runtime's stdout closed.
+    Eof,
+    /// The reader itself failed; nothing more can be read.
+    ReadError,
 }
 
 fn build_client_capabilities() -> serde_json::Value {
@@ -1213,6 +1497,8 @@ impl AcpClient {
             session_load_supported: false,
             session_resume_supported: false,
             steer_rx: None,
+            late_steer_sink: None,
+            unresolved_steers: UnresolvedSteers::default(),
             goose_usage: UsageTracker::default(),
             standard_usage: StandardUsageTracker::default(),
             standard_adapter,
@@ -1939,7 +2225,7 @@ impl AcpClient {
             "install_steer_rx: previous turn's receiver was not consumed — \
              stacking receivers would misroute steer requests across turns"
         );
-        self.steer_rx = Some(rx);
+        self.steer_rx = Some(SteerSource::Legacy(rx));
     }
 
     /// Clear any installed steer receiver without consuming it.
@@ -1949,7 +2235,101 @@ impl AcpClient {
     /// dispatch even when the turn ended before the read loop ran `take()`.
     /// Idempotent — safe to call when `steer_rx` is already `None`.
     pub fn clear_steer_rx(&mut self) {
+        self.clear_steer_input();
+    }
+
+    /// Install the per-turn source of [`SteerInput`]s for the next prompt.
+    ///
+    /// The read loop of `session_prompt_*` takes inputs from `rx` one at a
+    /// time, in order, writes each into the running turn and answers its
+    /// `outcome_tx` with what the wire established
+    /// (`docs/NATIVE_STEERING_IMPL.md` §3.1). Inputs still in the channel when
+    /// the prompt ends are dropped unanswered — the caller reads the closed
+    /// oneshot as [`NotDeliveredReason::PromptEndedBeforeWrite`].
+    ///
+    /// Panics if a source is already installed (from either this or
+    /// [`install_steer_rx`](Self::install_steer_rx)): there is exactly one
+    /// turn per client at a time, and stacking sources would misroute inputs
+    /// across turns. Call [`clear_steer_input`](Self::clear_steer_input) on
+    /// every path that ends a turn before the read loop consumed the source.
+    pub fn install_steer_input(&mut self, rx: tokio::sync::mpsc::Receiver<SteerInput>) {
+        assert!(
+            self.steer_rx.is_none(),
+            "install_steer_input: previous turn's steer source was not consumed — \
+             stacking sources would misroute steer inputs across turns"
+        );
+        self.steer_rx = Some(SteerSource::Native(rx));
+    }
+
+    /// Drop any installed steer source without consuming it. Idempotent.
+    ///
+    /// Inputs still queued in the dropped channel are never answered; their
+    /// closed oneshots are the callers'
+    /// [`NotDeliveredReason::PromptEndedBeforeWrite`] signal.
+    pub fn clear_steer_input(&mut self) {
         self.steer_rx = None;
+    }
+
+    /// Route acknowledgements that arrive after their attempt was resolved
+    /// [`SteerResolution::Unknown`] to `tx` as [`LateSteerAck`]s.
+    ///
+    /// Without a sink such an answer is decoded, logged and dropped; the
+    /// attempt is removed from [`unresolved_steer_attempts`] either way.
+    ///
+    /// [`unresolved_steer_attempts`]: Self::unresolved_steer_attempts
+    pub fn set_late_steer_sink(&mut self, tx: tokio::sync::mpsc::UnboundedSender<LateSteerAck>) {
+        self.late_steer_sink = Some(tx);
+    }
+
+    /// Attempt ids of steer requests that were written and never answered,
+    /// oldest first. Each leaves the list when its late acknowledgement is
+    /// read by any of this client's read loops.
+    pub fn unresolved_steer_attempts(&self) -> Vec<String> {
+        self.unresolved_steers.attempt_ids()
+    }
+
+    /// If `msg` is the late answer to an unresolved steer request, decode it,
+    /// hand it to the late sink and forget the request. Returns whether the
+    /// message was consumed.
+    ///
+    /// Every read loop calls this before treating an unexpected response id
+    /// as stray (`docs/NATIVE_STEERING_IMPL.md` §3.1 item 6).
+    fn route_late_steer_ack(&mut self, msg: &serde_json::Value) -> bool {
+        if msg.get("method").is_some() {
+            return false;
+        }
+        let Some(request_id) = msg.get("id").and_then(|id| id.as_u64()) else {
+            return false;
+        };
+        let Some(entry) = self.unresolved_steers.remove(request_id) else {
+            return false;
+        };
+        let resolution = decode_steer_ack(msg, entry.wire, entry.native_run_id, request_id);
+        match &self.late_steer_sink {
+            Some(sink) => {
+                if sink
+                    .send(LateSteerAck {
+                        attempt_id: entry.attempt_id.clone(),
+                        resolution: resolution.clone(),
+                    })
+                    .is_err()
+                {
+                    tracing::warn!(
+                        request_id,
+                        attempt_id = %entry.attempt_id,
+                        ?resolution,
+                        "late steer acknowledgement dropped: the late sink is closed"
+                    );
+                }
+            }
+            None => tracing::warn!(
+                request_id,
+                attempt_id = %entry.attempt_id,
+                ?resolution,
+                "late steer acknowledgement dropped: no late sink installed"
+            ),
+        }
+        true
     }
 
     /// Returns `true` if no steer receiver is currently installed.
@@ -2035,6 +2415,22 @@ impl AcpClient {
         session_id: &str,
         hard_deadline: tokio::time::Instant,
     ) -> Result<StopReason, AcpError> {
+        // The turn is being cancelled: nothing admitted for it may reach the
+        // wire after `session/cancel`. The drain below reuses the prompt read
+        // loop, which would otherwise take a still-installed steer source and
+        // write its inputs into a turn that is ending. Normally the prompt
+        // loop already consumed the source; the case this closes is a prompt
+        // future dropped before its loop ran `take()`. Dropping the source
+        // closes every queued input's oneshot, which the caller reads as
+        // `NotDelivered{PromptEndedBeforeWrite}` — and, for the legacy pool,
+        // as the neutral release it already applies to a closed ack.
+        if self.steer_rx.take().is_some() {
+            tracing::info!(
+                target: "acp::cancel",
+                "dropped the turn's steer source before cancel: queued inputs stay unwritten"
+            );
+        }
+
         // Validate precondition before any side effects — fail fast if there's
         // no in-flight prompt (prevents writing permission responses or cancel
         // notifications to the agent when no prompt is active).
@@ -2269,6 +2665,12 @@ impl AcpClient {
                     }
                     return Ok(msg["result"].clone());
                 }
+                // A response to some other id may be the late answer to a
+                // steer request whose prompt already ended; correlate it
+                // before it is skipped as stray.
+                if self.route_late_steer_ack(&msg) {
+                    continue;
+                }
             }
 
             // Dispatch by method name (notifications and agent-initiated requests).
@@ -2344,24 +2746,18 @@ impl AcpClient {
         hard_deadline: tokio::time::Instant,
         max_duration: std::time::Duration,
     ) -> Result<serde_json::Value, AcpError> {
-        // Take the per-turn steer receiver into a local so it can be
-        // borrowed independently of `self.reader` inside `select!`.
-        // Dropped at scope exit (return paths drain `pending_steer` first
-        // so the ack_tx oneshot is never leaked silently).
+        // Take the per-turn steer source into a local so it can be borrowed
+        // independently of `self.reader` inside `select!`. Dropped at scope
+        // exit: inputs still queued in it are never answered, which the
+        // caller reads as `PromptEndedBeforeWrite` (§3.1 item 7).
         let mut steer_rx = self.steer_rx.take();
 
-        // Tracks the in-flight steer write: `(request_id, transport, ack_tx)`.
-        // While `Some`, the steer arm is gated off so we don't stack writes,
-        // and a response matching `id` is routed to the ack_tx instead
-        // of being treated as the prompt result. `transport` records which
-        // method was written so the response arm decodes the result shape
-        // that method actually returns. Drained on every return path with
-        // `PromptCompletedNeutral` so callers are never left hanging.
-        let mut pending_steer: Option<(
-            u64,
-            SteerTransport,
-            tokio::sync::oneshot::Sender<crate::pool::SteerAck>,
-        )> = None;
+        // The one written steer request awaiting its answer. While `Some`,
+        // the steer arm is gated off so we don't stack writes, and a response
+        // matching its id is routed to its sink instead of being treated as
+        // the prompt result. Settled on every return path by
+        // `leave_prompt_loop`, so a caller is never left hanging.
+        let mut pending_steer: Option<PendingSteer> = None;
 
         // Cloned out of `self` before the loop: the select arms borrow
         // `self.reader` mutably, so the clock cannot be read through `self`
@@ -2401,20 +2797,21 @@ impl AcpClient {
             // exists). Check the classified deadline here so a steady-
             // stream agent is still bounded.
             if clock.now() >= next_deadline {
-                if let Some((_, _, ack_tx)) = pending_steer.take() {
-                    // Prompt is timing out — release the withheld event via
-                    // PromptCompletedNeutral (no fallback signal: there is
-                    // no in-flight turn to signal once we return, and
-                    // normal dispatch handles redelivery).
-                    let _ = ack_tx.send(crate::pool::SteerAck::PromptCompletedNeutral);
-                }
-                return Err(expiry.into_error(
+                let error = expiry.into_error(
                     idle_timeout,
                     &stall_watch,
                     last_activity_at,
                     &wire,
                     clock.now(),
-                ));
+                );
+                return self
+                    .leave_prompt_loop(
+                        Err(error),
+                        pending_steer.take(),
+                        PromptExit::Deadline,
+                        &clock,
+                    )
+                    .await;
             }
 
             // LinesCodec::new_with_max_length enforces MAX_LINE_SIZE at the
@@ -2425,96 +2822,17 @@ impl AcpClient {
                 // Steer arm: gated off whenever a steer write is already in
                 // flight so we don't stack two writes against the same
                 // process. The `async { steer_rx.as_mut()?.recv().await }`
-                // wrapper produces `None` when no receiver is installed,
-                // which mismatches the `Some(req)` pattern and disables the
+                // wrapper produces `None` when no source is installed,
+                // which mismatches the `Some(taken)` pattern and disables the
                 // branch for that iteration (no busy loop). Cancel-safe:
                 // `mpsc::Receiver::recv` does not lose messages on drop.
-                Some(req) = async {
+                Some(taken) = async {
                     match steer_rx.as_mut() {
                         Some(rx) => rx.recv().await,
                         None => None,
                     }
                 }, if pending_steer.is_none() => {
-                    // Selected: choose the steer transport and build its
-                    // params at write time using the lexical `session_id`
-                    // and the freshest `active_run_id`.
-                    //
-                    // `active_run_id` is updated by `session/update`
-                    // notifications inside this very loop; reading it here
-                    // (rather than snapshotting at dispatch) guarantees the
-                    // value matches what goose's run-id check will compare
-                    // against.
-                    //
-                    // Transport precedence:
-                    //   Some(run_id)              → GOOSE_STEER_METHOD. goose
-                    //     wins whenever a run id exists: `expectedRunId` is
-                    //     strictly more precise about *which* run is steered.
-                    //   None + steering_supported → ACP_STEER_METHOD, the
-                    //     cross-adapter extension (claude-agent-acp,
-                    //     codex-acp), which takes no run id.
-                    //   None + !steering_supported → write nothing and ack
-                    //     `ExpectedRunIdMissing`; the main loop maps this to
-                    //     the universal cancel+merge `Steer` fallback.
-                    //
-                    // The capability flag is the ONLY gate on writing
-                    // ACP_STEER_METHOD. Probing an unknown method is unsafe:
-                    // codex-acp answers unrecognized extension methods with
-                    // `{}` — a JSON-RPC success — which would be read as a
-                    // delivered steer and silently drop the user's message.
-                    let prompt_block_refs: Vec<&str> =
-                        req.prompt_blocks.iter().map(String::as_str).collect();
-                    let selected = match (&self.active_run_id, self.steering_supported) {
-                        (Some(run_id), _) => Some((
-                            SteerTransport::Goose,
-                            GOOSE_STEER_METHOD,
-                            build_goose_steer_params(session_id, run_id, &prompt_block_refs),
-                        )),
-                        (None, true) => Some((
-                            SteerTransport::AcpExtension,
-                            ACP_STEER_METHOD,
-                            build_acp_steer_params(session_id, &prompt_block_refs),
-                        )),
-                        (None, false) => None,
-                    };
-                    match selected {
-                        None => {
-                            tracing::warn!(
-                                "steer: no active_run_id and agent did not advertise \
-                                 {ACP_STEER_METHOD} — falling back to cancel+merge"
-                            );
-                            let _ = req.ack_tx.send(crate::pool::SteerAck::Err(
-                                crate::pool::SteerError::ExpectedRunIdMissing,
-                            ));
-                        }
-                        Some((transport, method, params)) => {
-                            let id = self.next_id;
-                            self.next_id += 1;
-                            let msg = serde_json::json!({
-                                "jsonrpc": "2.0",
-                                "id": id,
-                                "method": method,
-                                "params": params,
-                            });
-                            tracing::debug!(
-                                target: "acp::wire",
-                                "→ {}",
-                                serde_json::to_string(&msg).unwrap_or_default()
-                            );
-                            match self.write_ndjson(&msg).await {
-                                Ok(()) => {
-                                    pending_steer = Some((id, transport, req.ack_tx));
-                                }
-                                Err(e) => {
-                                    tracing::warn!(
-                                        "steer write failed ({method}): {e} — releasing withheld event"
-                                    );
-                                    let _ = req.ack_tx.send(crate::pool::SteerAck::Err(
-                                        crate::pool::SteerError::Transport(e.to_string()),
-                                    ));
-                                }
-                            }
-                        }
-                    }
+                    pending_steer = self.write_steer(session_id, taken).await;
                     // Loop back to the next iteration without consuming a
                     // reader line; we'll wait for either the prompt
                     // response or the steer response next.
@@ -2525,16 +2843,21 @@ impl AcpClient {
                     // would catch this anyway, but firing the deadline arm
                     // here makes the wakeup immediate (no extra reader poll
                     // round-trip when stdout is idle).
-                    if let Some((_, _, ack_tx)) = pending_steer.take() {
-                        let _ = ack_tx.send(crate::pool::SteerAck::PromptCompletedNeutral);
-                    }
-                    return Err(expiry.into_error(
+                    let error = expiry.into_error(
                         idle_timeout,
                         &stall_watch,
                         last_activity_at,
                         &wire,
                         clock.now(),
-                    ));
+                    );
+                    return self
+                        .leave_prompt_loop(
+                            Err(error),
+                            pending_steer.take(),
+                            PromptExit::Deadline,
+                            &clock,
+                        )
+                        .await;
                 }
             };
 
@@ -2548,24 +2871,36 @@ impl AcpClient {
 
             match read_result {
                 None => {
-                    if let Some((_, _, ack_tx)) = pending_steer.take() {
-                        let _ = ack_tx.send(crate::pool::SteerAck::PromptCompletedNeutral);
-                    }
-                    return Err(AcpError::AgentExited);
+                    return self
+                        .leave_prompt_loop(
+                            Err(AcpError::AgentExited),
+                            pending_steer.take(),
+                            PromptExit::Eof,
+                            &clock,
+                        )
+                        .await;
                 }
                 Some(Err(LinesCodecError::MaxLineLengthExceeded)) => {
-                    if let Some((_, _, ack_tx)) = pending_steer.take() {
-                        let _ = ack_tx.send(crate::pool::SteerAck::PromptCompletedNeutral);
-                    }
-                    return Err(AcpError::Protocol(
-                        "agent stdout line exceeded 10MB limit".into(),
-                    ));
+                    return self
+                        .leave_prompt_loop(
+                            Err(AcpError::Protocol(
+                                "agent stdout line exceeded 10MB limit".into(),
+                            )),
+                            pending_steer.take(),
+                            PromptExit::ReadError,
+                            &clock,
+                        )
+                        .await;
                 }
                 Some(Err(e)) => {
-                    if let Some((_, _, ack_tx)) = pending_steer.take() {
-                        let _ = ack_tx.send(crate::pool::SteerAck::PromptCompletedNeutral);
-                    }
-                    return Err(AcpError::Io(std::io::Error::other(e)));
+                    return self
+                        .leave_prompt_loop(
+                            Err(AcpError::Io(std::io::Error::other(e))),
+                            pending_steer.take(),
+                            PromptExit::ReadError,
+                            &clock,
+                        )
+                        .await;
                 }
                 Some(Ok(line)) => {
                     let trimmed = line.trim();
@@ -2603,127 +2938,77 @@ impl AcpClient {
                     // Steer response routing must come BEFORE the prompt
                     // response check: a steer response is a regular
                     // JSON-RPC response (id + result/error, no method),
-                    // so the matcher must disambiguate by id. Both checks
+                    // so the matcher must disambiguate by id. All checks
                     // share the `no method` guard.
                     if let Some(id) = msg.get("id") {
                         if msg.get("method").is_none() {
-                            if let Some((steer_id, _, _)) = pending_steer.as_ref() {
-                                if *id == serde_json::json!(*steer_id) {
-                                    // Take the ack_tx out and route the
-                                    // response. We do not return — keep
-                                    // reading until the prompt response
-                                    // arrives.
-                                    let (_, transport, ack_tx) =
-                                        pending_steer.take().expect("just checked");
-                                    let ack = if let Some(error) = msg.get("error") {
-                                        let code = error
-                                            .get("code")
-                                            .and_then(|c| c.as_i64())
-                                            .unwrap_or(-1);
-                                        let message = error.to_string();
-                                        crate::pool::SteerAck::Err(
-                                            crate::pool::SteerError::AgentError { code, message },
-                                        )
-                                    } else {
-                                        // Success result. Whether it counts as
-                                        // a delivered steer — and whether the
-                                        // turn Buzz awaits is still running —
-                                        // depends on the transport.
-                                        let outcome = match transport {
-                                            // goose returns no outcome field;
-                                            // a success response means the
-                                            // steer landed in the live run.
-                                            SteerTransport::Goose => Some(STEER_OUTCOME_INJECTED),
-                                            // The outcome must be positively
-                                            // recognized. An unknown or absent
-                                            // value (codex-acp answers
-                                            // unrecognized ext methods with a
-                                            // bare `{}`) is a rejection, never
-                                            // a delivery — treating it as
-                                            // success would drop the event.
-                                            SteerTransport::AcpExtension => msg
-                                                .pointer("/result/outcome")
-                                                .and_then(|v| v.as_str())
-                                                .filter(|o| {
-                                                    *o == STEER_OUTCOME_INJECTED
-                                                        || *o == STEER_OUTCOME_STARTED_NEW_TURN
-                                                }),
-                                        };
-                                        match outcome {
-                                            Some(STEER_OUTCOME_STARTED_NEW_TURN) => {
-                                                // Delivered, but into a NEW
-                                                // turn: the one this read loop
-                                                // is awaiting had already
-                                                // finished. Renewing the hard
-                                                // deadline here would extend
-                                                // the clock on a settled turn,
-                                                // so leave it alone and let the
-                                                // prompt response land on its
-                                                // original budget.
+                            if let Some(pending) = pending_steer.as_mut() {
+                                if *id == serde_json::json!(pending.request_id) {
+                                    // Route the answer to its sink. We do not
+                                    // return — keep reading until the prompt
+                                    // response arrives.
+                                    let resolution = decode_steer_ack(
+                                        &msg,
+                                        pending.wire,
+                                        pending.native_run_id.clone(),
+                                        pending.request_id,
+                                    );
+                                    match &resolution {
+                                        SteerResolution::Injected { .. } => {
+                                            // The awaited turn keeps running
+                                            // with more work in it: give it
+                                            // a fresh budget.
+                                            let renew_now = clock.now();
+                                            let new_deadline = renew_now + max_duration;
+                                            if new_deadline > hard_deadline {
+                                                hard_deadline = new_deadline;
+                                                self.current_hard_deadline = Some(new_deadline);
                                                 tracing::info!(
-                                                    "steer accepted as {STEER_OUTCOME_STARTED_NEW_TURN}: \
-                                                     awaited turn had ended — hard deadline not renewed"
+                                                    "steer injected: renewed hard deadline ({max_duration:?} from now)"
                                                 );
-                                                crate::pool::SteerAck::Success {
-                                                    session_id: session_id.to_owned(),
-                                                }
-                                            }
-                                            Some(_) => {
-                                                let renew_now = clock.now();
-                                                let new_deadline = renew_now + max_duration;
-                                                if new_deadline > hard_deadline {
-                                                    hard_deadline = new_deadline;
-                                                    self.current_hard_deadline = Some(new_deadline);
-                                                    tracing::info!(
-                                                        "steer success: renewed hard deadline ({max_duration:?} from now)"
-                                                    );
-                                                }
-                                                crate::pool::SteerAck::Success {
-                                                    session_id: session_id.to_owned(),
-                                                }
-                                            }
-                                            None => {
-                                                // Report the raw string when
-                                                // there is one, so logs read
-                                                // `failed` not `"failed"`;
-                                                // fall back to the JSON for a
-                                                // non-string value.
-                                                let reported = match msg.pointer("/result/outcome")
-                                                {
-                                                    None => "<absent>".to_string(),
-                                                    Some(serde_json::Value::String(s)) => s.clone(),
-                                                    Some(other) => other.to_string(),
-                                                };
-                                                tracing::warn!(
-                                                    "steer rejected: {ACP_STEER_METHOD} returned \
-                                                     unrecognized outcome {reported} — releasing \
-                                                     withheld event for cancel+merge"
-                                                );
-                                                crate::pool::SteerAck::Err(
-                                                    crate::pool::SteerError::OutcomeRejected {
-                                                        outcome: reported,
-                                                    },
-                                                )
                                             }
                                         }
-                                    };
-                                    let _ = ack_tx.send(ack);
+                                        SteerResolution::StartedNewTurn { .. } => {
+                                            // Delivered, but into a NEW turn:
+                                            // the one this read loop awaits
+                                            // had already finished. Renewing
+                                            // the hard deadline would extend
+                                            // the clock on a settled turn, so
+                                            // leave it alone.
+                                            tracing::info!(
+                                                "steer accepted as {STEER_OUTCOME_STARTED_NEW_TURN}: \
+                                                 awaited turn had ended — hard deadline not renewed"
+                                            );
+                                        }
+                                        other => {
+                                            tracing::warn!(
+                                                request_id = pending.request_id,
+                                                resolution = ?other,
+                                                "steer request was not delivered as injected"
+                                            );
+                                        }
+                                    }
+                                    pending.resolve(resolution);
+                                    pending_steer = None;
                                     continue;
                                 }
                             }
                             if *id == serde_json::json!(expected_id) {
-                                if let Some(error) = msg.get("error") {
-                                    if let Some((_, _, ack_tx)) = pending_steer.take() {
-                                        let _ = ack_tx
-                                            .send(crate::pool::SteerAck::PromptCompletedNeutral);
-                                    }
-                                    return Err(agent_error_from_json(error));
-                                }
-                                if let Some((_, _, ack_tx)) = pending_steer.take() {
-                                    let _ =
-                                        ack_tx.send(crate::pool::SteerAck::PromptCompletedNeutral);
-                                }
-                                return Ok(msg["result"].clone());
+                                let outcome = match msg.get("error") {
+                                    Some(error) => Err(agent_error_from_json(error)),
+                                    None => Ok(msg["result"].clone()),
+                                };
+                                return self
+                                    .leave_prompt_loop(
+                                        outcome,
+                                        pending_steer.take(),
+                                        PromptExit::Answered,
+                                        &clock,
+                                    )
+                                    .await;
+                            }
+                            if self.route_late_steer_ack(&msg) {
+                                continue;
                             }
                         }
                     }
@@ -2744,7 +3029,16 @@ impl AcpClient {
                             }
                             RAW_SDK_FRAME_METHOD => self.log_raw_sdk_frame(&msg),
                             "session/request_permission" => {
-                                self.handle_permission_request(&msg).await?;
+                                if let Err(error) = self.handle_permission_request(&msg).await {
+                                    return self
+                                        .leave_prompt_loop(
+                                            Err(error),
+                                            pending_steer.take(),
+                                            PromptExit::ReadError,
+                                            &clock,
+                                        )
+                                        .await;
+                                }
                             }
                             other => {
                                 // If the unknown message has an id, it's a request expecting a reply.
@@ -2758,11 +3052,291 @@ impl AcpClient {
                                     });
                                     // Surface write failures — a broken pipe means the
                                     // agent process is dead and continuing would hang.
-                                    self.write_ndjson(&err_resp).await?;
+                                    if let Err(error) = self.write_ndjson(&err_resp).await {
+                                        return self
+                                            .leave_prompt_loop(
+                                                Err(error),
+                                                pending_steer.take(),
+                                                PromptExit::ReadError,
+                                                &clock,
+                                            )
+                                            .await;
+                                    }
                                 }
                                 tracing::debug!(target: "acp::wire", "ignoring unknown method: {other}");
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Write one taken steer input into the running turn.
+    ///
+    /// Picks the transport at write time from the freshest `active_run_id`
+    /// and the capability advertised at `initialize`:
+    ///
+    /// - `Some(run_id)` → [`GOOSE_STEER_METHOD`]; `expectedRunId` is strictly
+    ///   more precise about *which* run is steered.
+    /// - `None` + `steering_supported` → [`ACP_STEER_METHOD`], carrying the
+    ///   input's idle guard as `_meta.steering.idleBehavior`.
+    /// - neither → nothing is written and the input is answered
+    ///   [`NotDeliveredReason::Unsupported`].
+    ///
+    /// The capability flag is the ONLY gate on writing [`ACP_STEER_METHOD`].
+    /// Probing an unknown method is unsafe: codex-acp answers unrecognized
+    /// extension methods with `{}` — a JSON-RPC success — which would read as
+    /// a delivered steer and silently drop the input.
+    ///
+    /// Returns the pending record when the request went out. A write error
+    /// answers [`UnknownReason::WriteFailed`] (a partial write cannot be
+    /// excluded) and returns `None`.
+    async fn write_steer(&mut self, session_id: &str, taken: TakenSteer) -> Option<PendingSteer> {
+        let TakenSteer {
+            attempt_id,
+            prompt_blocks,
+            idle_guard,
+            sink,
+        } = taken;
+        let prompt_block_refs: Vec<&str> = prompt_blocks.iter().map(String::as_str).collect();
+        let selected = match (&self.active_run_id, self.steering_supported) {
+            (Some(run_id), _) => Some((
+                SteerWire::Goose,
+                GOOSE_STEER_METHOD,
+                build_goose_steer_params(session_id, run_id, &prompt_block_refs),
+                Some(run_id.clone()),
+            )),
+            (None, true) => Some((
+                SteerWire::AcpExtension,
+                ACP_STEER_METHOD,
+                build_acp_steer_params(session_id, &prompt_block_refs, idle_guard),
+                None,
+            )),
+            (None, false) => None,
+        };
+        let Some((wire, method, params, native_run_id)) = selected else {
+            tracing::warn!(
+                attempt_id = ?attempt_id,
+                "steer: no active_run_id and agent did not advertise \
+                 {ACP_STEER_METHOD} — nothing written"
+            );
+            sink.resolve(
+                SteerResolution::NotDelivered {
+                    reason: NotDeliveredReason::Unsupported,
+                },
+                session_id,
+            );
+            return None;
+        };
+
+        let id = self.next_id;
+        self.next_id += 1;
+        let msg = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": method,
+            "params": params,
+        });
+        tracing::debug!(
+            target: "acp::wire",
+            "→ {}",
+            serde_json::to_string(&msg).unwrap_or_default()
+        );
+        let mut pending = PendingSteer {
+            request_id: id,
+            wire,
+            native_run_id,
+            attempt_id,
+            session_id: session_id.to_owned(),
+            sink: Some(sink),
+            unresolved: self.unresolved_steers.clone(),
+        };
+        match self.write_ndjson(&msg).await {
+            Ok(()) => Some(pending),
+            Err(e) => {
+                tracing::warn!(
+                    request_id = id,
+                    "steer write failed ({method}): {e} — delivery unknown"
+                );
+                pending.abandon(UnknownReason::WriteFailed {
+                    message: e.to_string(),
+                });
+                None
+            }
+        }
+    }
+
+    /// Leave the prompt read loop with `outcome`, settling any steer request
+    /// still awaiting its answer first. The settlement never changes
+    /// `outcome`: the prompt's own result is fixed before the drain starts.
+    async fn leave_prompt_loop(
+        &mut self,
+        outcome: Result<serde_json::Value, AcpError>,
+        pending: Option<PendingSteer>,
+        exit: PromptExit,
+        clock: &std::sync::Arc<dyn TurnClock>,
+    ) -> Result<serde_json::Value, AcpError> {
+        if let Some(mut pending) = pending {
+            self.settle_pending_steer(&mut pending, exit, clock).await;
+        }
+        outcome
+    }
+
+    /// Settle a written steer request the prompt loop is leaving behind
+    /// (`docs/NATIVE_STEERING_IMPL.md` §3.1 item 5).
+    ///
+    /// With a healthy reader, a native attempt gets a bounded drain of up to
+    /// [`STEER_ACK_DRAIN`] for its answer. A legacy request is answered
+    /// `PromptCompletedNeutral` at once, as the pool harness always was —
+    /// its main loop reads the prompt result and the ack together, and a
+    /// delayed result would change its timing. EOF and reader failures
+    /// cannot be drained and are named for what they are.
+    async fn settle_pending_steer(
+        &mut self,
+        pending: &mut PendingSteer,
+        exit: PromptExit,
+        clock: &std::sync::Arc<dyn TurnClock>,
+    ) {
+        match exit {
+            PromptExit::Eof => pending.abandon(UnknownReason::RuntimeExited),
+            PromptExit::ReadError => pending.abandon(UnknownReason::PromptEndedBeforeAck),
+            PromptExit::Answered | PromptExit::Deadline => {
+                if pending.is_native() {
+                    self.drain_steer_ack(pending, clock).await;
+                } else {
+                    pending.abandon(UnknownReason::PromptEndedBeforeAck);
+                }
+            }
+        }
+    }
+
+    /// Keep reading for up to [`STEER_ACK_DRAIN`] for `pending`'s answer.
+    ///
+    /// Notifications seen meanwhile are handled as in the prompt loop;
+    /// responses to other ids are checked against the unresolved map and
+    /// otherwise ignored. Expiry answers [`UnknownReason::AckTimeout`], EOF
+    /// [`UnknownReason::RuntimeExited`], and a broken reader
+    /// [`UnknownReason::PromptEndedBeforeAck`]; each of those also records
+    /// the request as unresolved so a later loop can still correlate it.
+    async fn drain_steer_ack(
+        &mut self,
+        pending: &mut PendingSteer,
+        clock: &std::sync::Arc<dyn TurnClock>,
+    ) {
+        let deadline = clock.now() + STEER_ACK_DRAIN;
+        tracing::info!(
+            request_id = pending.request_id,
+            attempt_id = ?pending.attempt_id,
+            "prompt ended with a steer awaiting its acknowledgement — draining up to {STEER_ACK_DRAIN:?}"
+        );
+        loop {
+            // Pre-select check, for the same reason the prompt loop has one:
+            // a continuously-ready reader must not starve the drain bound.
+            if clock.now() >= deadline {
+                pending.abandon(UnknownReason::AckTimeout);
+                return;
+            }
+            let read_result = tokio::select! {
+                biased;
+                read_result = self.reader.next() => read_result,
+                _ = clock.sleep_until(deadline) => {
+                    pending.abandon(UnknownReason::AckTimeout);
+                    return;
+                }
+            };
+            let line = match read_result {
+                None => {
+                    pending.abandon(UnknownReason::RuntimeExited);
+                    return;
+                }
+                Some(Err(_)) => {
+                    pending.abandon(UnknownReason::PromptEndedBeforeAck);
+                    return;
+                }
+                Some(Ok(line)) => line,
+            };
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            tracing::debug!(target: "acp::wire", "← {trimmed}");
+            let msg: serde_json::Value = match serde_json::from_str(trimmed) {
+                Ok(v) => v,
+                Err(e) => {
+                    self.observe(
+                        "acp_parse_error",
+                        serde_json::json!({
+                            "line": trimmed,
+                            "error": e.to_string(),
+                        }),
+                    );
+                    tracing::warn!(
+                        target: "acp::wire",
+                        "failed to parse line as JSON: {e} — skipping"
+                    );
+                    continue;
+                }
+            };
+            self.observe("acp_read", msg.clone());
+
+            if msg.get("method").is_none() {
+                if let Some(id) = msg.get("id") {
+                    if *id == serde_json::json!(pending.request_id) {
+                        let resolution = decode_steer_ack(
+                            &msg,
+                            pending.wire,
+                            pending.native_run_id.clone(),
+                            pending.request_id,
+                        );
+                        tracing::info!(
+                            request_id = pending.request_id,
+                            ?resolution,
+                            "steer acknowledged inside the post-prompt drain"
+                        );
+                        pending.resolve(resolution);
+                        return;
+                    }
+                    if !self.route_late_steer_ack(&msg) {
+                        tracing::debug!(
+                            target: "acp::wire",
+                            "ignoring stray response id {id} during steer drain"
+                        );
+                    }
+                    continue;
+                }
+            }
+
+            if let Some(method) = msg.get("method").and_then(|v| v.as_str()) {
+                match method {
+                    "session/update" => {
+                        let _ = self.handle_session_update(&msg);
+                    }
+                    "_goose/unstable/session/update" => {
+                        self.handle_goose_usage_update(&msg);
+                    }
+                    RAW_SDK_FRAME_METHOD => self.log_raw_sdk_frame(&msg),
+                    "session/request_permission" => {
+                        if let Err(e) = self.handle_permission_request(&msg).await {
+                            tracing::warn!("permission reply failed during steer drain: {e}");
+                            pending.abandon(UnknownReason::PromptEndedBeforeAck);
+                            return;
+                        }
+                    }
+                    other => {
+                        if msg.get("id").is_some() {
+                            let err_resp = serde_json::json!({
+                                "jsonrpc": "2.0",
+                                "id": msg["id"],
+                                "error": {"code": -32601, "message": format!("Method not found: {other}")}
+                            });
+                            if let Err(e) = self.write_ndjson(&err_resp).await {
+                                tracing::warn!("reply failed during steer drain: {e}");
+                                pending.abandon(UnknownReason::PromptEndedBeforeAck);
+                                return;
+                            }
+                        }
+                        tracing::debug!(target: "acp::wire", "ignoring unknown method: {other}");
                     }
                 }
             }
@@ -3159,11 +3733,28 @@ fn build_goose_steer_params(
 /// Deliberately carries **no** `expectedRunId`: the cross-adapter method
 /// steers whatever turn is currently running and neither claude-agent-acp nor
 /// codex-acp emits a run id to target.
-fn build_acp_steer_params(session_id: &str, prompt_blocks: &[&str]) -> serde_json::Value {
-    serde_json::json!({
+///
+/// With [`IdleGuard::PromptRequired`] the params also carry
+/// `"_meta": {"steering": {"idleBehavior": "promptRequired"}}`, which
+/// claude-agent-acp 0.70 honours by answering `promptRequired` instead of
+/// starting a detached turn when nothing is running
+/// (`docs/NATIVE_STEERING_IMPL.md` §1). [`IdleGuard::AdapterDefault`] sends
+/// no `_meta` at all.
+fn build_acp_steer_params(
+    session_id: &str,
+    prompt_blocks: &[&str],
+    idle_guard: IdleGuard,
+) -> serde_json::Value {
+    let mut params = serde_json::json!({
         "sessionId": session_id,
         "prompt": steer_prompt_blocks(prompt_blocks),
-    })
+    });
+    if idle_guard == IdleGuard::PromptRequired {
+        params["_meta"] = serde_json::json!({
+            "steering": { "idleBehavior": STEER_OUTCOME_PROMPT_REQUIRED }
+        });
+    }
+    params
 }
 
 /// Render steer body strings as ACP `text` content blocks. Shared by both
@@ -7120,5 +7711,1294 @@ sleep 5
             msg.contains("sandbox_workspace_write"),
             "error must mention sandbox_workspace_write"
         );
+    }
+
+    // ── Native steering transport (docs/NATIVE_STEERING_IMPL.md §3.1) ─────
+    //
+    // Every scenario below runs on a frozen `ManualTurnClock` against a
+    // scripted bash agent, so nothing here depends on wall time: the agent
+    // answers when the script says, deadlines move only when a test moves
+    // them, and the wire assertions read the exact JSON the client wrote
+    // (the observer's `acp_write` payload) rather than inferring the shape
+    // from response routing.
+
+    /// Everything one native-steer scenario needs.
+    struct SteerHarness {
+        client: AcpClient,
+        clock: std::sync::Arc<idle_clock::ManualTurnClock>,
+        reads: tokio::sync::broadcast::Receiver<crate::observer::ObserverEvent>,
+        steer_tx: tokio::sync::mpsc::Sender<SteerInput>,
+        late_rx: tokio::sync::mpsc::UnboundedReceiver<LateSteerAck>,
+    }
+
+    /// A turn budget nothing in these tests ever reaches unless a test
+    /// advances the clock past it on purpose.
+    const FAR: std::time::Duration = std::time::Duration::from_secs(3600);
+
+    /// Shell prelude for the scripted agents: `steer_id "$line"` prints the
+    /// JSON-RPC id of a request the client wrote, `prompt_done` answers the
+    /// prompt (id 999) with `end_turn`.
+    const STEER_SCRIPT_PRELUDE: &str = "steer_id() { printf '%s' \"$1\" | sed -E 's/.*\"id\":([0-9]+).*/\\1/'; }\n\
+         prompt_done() { printf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":999,\"result\":{\"stopReason\":\"end_turn\"}}'; }\n";
+
+    /// One shell line that answers the request in `$line` with `answer`
+    /// (a `"result":…` or `"error":…` fragment) under that request's id.
+    fn answer_line(answer: &str) -> String {
+        format!(
+            "printf '%s\\n' '{{\"jsonrpc\":\"2.0\",\"id\":'\"$(steer_id \"$line\")\"',{answer}}}'\n"
+        )
+    }
+
+    /// Agent that reads one steer, answers it with `answer`, then finishes
+    /// the prompt and idles.
+    fn answer_then_finish_script(answer: &str) -> String {
+        format!(
+            "{STEER_SCRIPT_PRELUDE}read -r line\n{}prompt_done\nsleep 30\n",
+            answer_line(answer)
+        )
+    }
+
+    async fn steer_harness(script: &str) -> SteerHarness {
+        let mut client = spawn_script(script).await;
+        set_steering_supported(&mut client);
+        let observer = crate::observer::ObserverHandle::in_process();
+        let reads = observer.subscribe();
+        client.set_observer(Some(observer), 0);
+        let clock = idle_clock::ManualTurnClock::frozen();
+        client.set_turn_clock(clock.clone());
+        let (steer_tx, steer_rx) = tokio::sync::mpsc::channel::<SteerInput>(2);
+        client.install_steer_input(steer_rx);
+        let (late_tx, late_rx) = tokio::sync::mpsc::unbounded_channel::<LateSteerAck>();
+        client.set_late_steer_sink(late_tx);
+        SteerHarness {
+            client,
+            clock,
+            reads,
+            steer_tx,
+            late_rx,
+        }
+    }
+
+    fn steer_input(
+        attempt_id: &str,
+        text: &str,
+        idle_guard: IdleGuard,
+    ) -> (SteerInput, tokio::sync::oneshot::Receiver<SteerResolution>) {
+        let (outcome_tx, outcome_rx) = tokio::sync::oneshot::channel();
+        (
+            SteerInput {
+                attempt_id: attempt_id.to_owned(),
+                prompt_blocks: vec![text.to_owned()],
+                idle_guard,
+                outcome_tx,
+            },
+            outcome_rx,
+        )
+    }
+
+    /// The next line the client wrote to the agent, as it went out.
+    async fn next_write(
+        reads: &mut tokio::sync::broadcast::Receiver<crate::observer::ObserverEvent>,
+    ) -> serde_json::Value {
+        loop {
+            let event = reads.recv().await.expect("observer feed closed");
+            if event.kind == "acp_write" {
+                return event.payload;
+            }
+        }
+    }
+
+    /// Block until the client has read a response carrying `id`.
+    async fn wait_for_read_of_id(
+        reads: &mut tokio::sync::broadcast::Receiver<crate::observer::ObserverEvent>,
+        id: u64,
+    ) {
+        loop {
+            let event = reads.recv().await.expect("observer feed closed");
+            if event.kind == "acp_read" && event.payload.get("id") == Some(&serde_json::json!(id)) {
+                return;
+            }
+        }
+    }
+
+    async fn run_prompt_loop(client: &mut AcpClient) -> Result<serde_json::Value, AcpError> {
+        let hard_deadline = client.turn_clock.now() + FAR;
+        client
+            .read_until_response_with_idle_timeout("sess-test", 999, FAR, hard_deadline, FAR)
+            .await
+    }
+
+    /// Queue one input, run the prompt loop to its end, and return what was
+    /// written, how the input resolved, and the prompt's own result.
+    async fn run_single_steer(
+        h: &mut SteerHarness,
+        idle_guard: IdleGuard,
+    ) -> (
+        serde_json::Value,
+        SteerResolution,
+        Result<serde_json::Value, AcpError>,
+    ) {
+        let (input, outcome_rx) = steer_input("a1", "steer body", idle_guard);
+        h.steer_tx.send(input).await.expect("queue steer input");
+        let result = run_prompt_loop(&mut h.client).await;
+        let written = next_write(&mut h.reads).await;
+        let resolution = outcome_rx.await.expect("input must be resolved");
+        (written, resolution, result)
+    }
+
+    /// A gate file a script polls for, so a test orders the agent's next line
+    /// against something the client has already done.
+    fn gate_path(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join("buzz-acp-steer-gates");
+        std::fs::create_dir_all(&dir).expect("create gate dir");
+        let path = dir.join(format!("{name}-{}", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        path
+    }
+
+    fn wait_for_gate(gate: &std::path::Path) -> String {
+        format!("while [ ! -e '{}' ]; do sleep 0.01; done\n", gate.display())
+    }
+
+    fn assert_end_turn(result: &Result<serde_json::Value, AcpError>) {
+        match result {
+            Ok(value) => assert_eq!(value["stopReason"], serde_json::json!("end_turn")),
+            Err(e) => panic!("prompt must have answered end_turn, got {e:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn native_steer_injected_ack_resolves_injected_on_the_written_id() {
+        let mut h = steer_harness(&answer_then_finish_script(
+            r#""result":{"outcome":"injected"}"#,
+        ))
+        .await;
+
+        let (written, resolution, result) =
+            run_single_steer(&mut h, IdleGuard::AdapterDefault).await;
+
+        assert_eq!(written["id"], serde_json::json!(0));
+        assert_eq!(written["method"], serde_json::json!(ACP_STEER_METHOD));
+        assert_eq!(
+            written["params"]["sessionId"],
+            serde_json::json!("sess-test")
+        );
+        assert_eq!(
+            written["params"]["prompt"],
+            serde_json::json!([{"type": "text", "text": "steer body"}])
+        );
+        assert!(
+            written["params"].get("_meta").is_none(),
+            "AdapterDefault must send no _meta; wrote {written}"
+        );
+        assert!(
+            written["params"].get("expectedRunId").is_none(),
+            "_session/steering carries no run id; wrote {written}"
+        );
+        assert_eq!(
+            resolution,
+            SteerResolution::Injected {
+                wire: SteerWire::AcpExtension,
+                native_run_id: None,
+            }
+        );
+        assert_end_turn(&result);
+        assert!(h.client.unresolved_steer_attempts().is_empty());
+        assert!(h.late_rx.try_recv().is_err(), "nothing was late");
+    }
+
+    #[tokio::test]
+    async fn native_steer_started_new_turn_ack_resolves_started_new_turn() {
+        let mut h = steer_harness(&answer_then_finish_script(
+            r#""result":{"outcome":"startedNewTurn"}"#,
+        ))
+        .await;
+
+        let (_, resolution, result) = run_single_steer(&mut h, IdleGuard::AdapterDefault).await;
+
+        assert_eq!(
+            resolution,
+            SteerResolution::StartedNewTurn {
+                wire: SteerWire::AcpExtension
+            }
+        );
+        assert_end_turn(&result);
+    }
+
+    #[tokio::test]
+    async fn native_steer_prompt_required_guard_is_on_the_wire_and_resolves_not_delivered() {
+        let mut h = steer_harness(&answer_then_finish_script(
+            r#""result":{"outcome":"promptRequired","reason":"noRunningTurn"}"#,
+        ))
+        .await;
+
+        let (written, resolution, result) =
+            run_single_steer(&mut h, IdleGuard::PromptRequired).await;
+
+        assert_eq!(
+            written["params"]["_meta"],
+            serde_json::json!({"steering": {"idleBehavior": "promptRequired"}}),
+            "PromptRequired must ride in _meta.steering.idleBehavior; wrote {written}"
+        );
+        assert_eq!(
+            resolution,
+            SteerResolution::NotDelivered {
+                reason: NotDeliveredReason::PromptRequired
+            }
+        );
+        assert_end_turn(&result);
+        assert!(h.client.unresolved_steer_attempts().is_empty());
+    }
+
+    #[tokio::test]
+    async fn native_steer_bare_success_resolves_unknown_unrecognized_ack() {
+        let mut h = steer_harness(&answer_then_finish_script(r#""result":{}"#)).await;
+
+        let (_, resolution, result) = run_single_steer(&mut h, IdleGuard::AdapterDefault).await;
+
+        assert_eq!(
+            resolution,
+            SteerResolution::Unknown {
+                reason: UnknownReason::UnrecognizedAck {
+                    outcome: "<absent>".to_owned()
+                },
+                wire_request_id: Some(0),
+            }
+        );
+        assert_end_turn(&result);
+    }
+
+    #[tokio::test]
+    async fn native_steer_failed_outcome_resolves_unknown_adapter_reported_failure() {
+        let mut h = steer_harness(&answer_then_finish_script(
+            r#""result":{"outcome":"failed"}"#,
+        ))
+        .await;
+
+        let (_, resolution, result) = run_single_steer(&mut h, IdleGuard::AdapterDefault).await;
+
+        assert_eq!(
+            resolution,
+            SteerResolution::Unknown {
+                reason: UnknownReason::AdapterReportedFailure {
+                    outcome: "failed".to_owned()
+                },
+                wire_request_id: Some(0),
+            }
+        );
+        assert_end_turn(&result);
+    }
+
+    #[tokio::test]
+    async fn native_steer_method_not_found_resolves_not_delivered_method_not_found() {
+        let mut h = steer_harness(&answer_then_finish_script(
+            r#""error":{"code":-32601,"message":"Method not found"}"#,
+        ))
+        .await;
+
+        let (_, resolution, result) = run_single_steer(&mut h, IdleGuard::AdapterDefault).await;
+
+        assert_eq!(
+            resolution,
+            SteerResolution::NotDelivered {
+                reason: NotDeliveredReason::MethodNotFound {
+                    message: "Method not found".to_owned()
+                }
+            }
+        );
+        assert_end_turn(&result);
+    }
+
+    #[tokio::test]
+    async fn native_steer_other_json_rpc_error_resolves_not_delivered_rejected() {
+        let mut h = steer_harness(&answer_then_finish_script(
+            r#""error":{"code":-32000,"message":"no steerable turn"}"#,
+        ))
+        .await;
+
+        let (_, resolution, result) = run_single_steer(&mut h, IdleGuard::AdapterDefault).await;
+
+        assert_eq!(
+            resolution,
+            SteerResolution::NotDelivered {
+                reason: NotDeliveredReason::Rejected {
+                    code: -32000,
+                    message: "no steerable turn".to_owned()
+                }
+            }
+        );
+        assert_end_turn(&result);
+    }
+
+    /// The goose wire keeps its run-id form: `expectedRunId`, no `_meta`
+    /// even when the input asks for the idle guard, and any success is
+    /// `Injected` naming that run.
+    #[tokio::test]
+    async fn native_steer_goose_wire_names_the_run_and_carries_no_idle_guard() {
+        let mut h = steer_harness(&answer_then_finish_script(r#""result":{}"#)).await;
+        let update = session_info_update_msg(Some(serde_json::json!("run-7")));
+        let _ = h.client.handle_session_update(&update);
+
+        let (written, resolution, result) =
+            run_single_steer(&mut h, IdleGuard::PromptRequired).await;
+
+        assert_eq!(written["method"], serde_json::json!(GOOSE_STEER_METHOD));
+        assert_eq!(
+            written["params"]["expectedRunId"],
+            serde_json::json!("run-7")
+        );
+        assert!(
+            written["params"].get("_meta").is_none(),
+            "goose wire is unchanged by the idle guard; wrote {written}"
+        );
+        assert_eq!(
+            resolution,
+            SteerResolution::Injected {
+                wire: SteerWire::Goose,
+                native_run_id: Some("run-7".to_owned()),
+            }
+        );
+        assert_end_turn(&result);
+    }
+
+    /// No run id and no advertised capability: nothing is written, and the
+    /// input is answered `Unsupported` — never probed.
+    #[tokio::test]
+    async fn native_steer_without_a_wire_writes_nothing_and_resolves_unsupported() {
+        let mut h = steer_harness(&format!("{STEER_SCRIPT_PRELUDE}sleep 30\n")).await;
+        h.client.steering_supported = false;
+
+        let (input, outcome_rx) = steer_input("a1", "steer body", IdleGuard::PromptRequired);
+        h.steer_tx.send(input).await.expect("queue steer input");
+        let driver = async {
+            let resolution = outcome_rx.await.expect("input must be resolved");
+            // Nothing else will end the turn: the agent is silent.
+            h.clock.advance(FAR + std::time::Duration::from_secs(1));
+            resolution
+        };
+        let (result, resolution) = tokio::join!(run_prompt_loop(&mut h.client), driver);
+
+        assert_eq!(
+            resolution,
+            SteerResolution::NotDelivered {
+                reason: NotDeliveredReason::Unsupported
+            }
+        );
+        assert!(
+            matches!(
+                result,
+                Err(AcpError::IdleTimeout { .. }) | Err(AcpError::HardTimeout { .. })
+            ),
+            "expected the deadline the test forced, got {result:?}"
+        );
+        assert!(
+            !matches!(h.reads.try_recv(), Ok(e) if e.kind == "acp_write"),
+            "no request may reach the wire without a transport"
+        );
+        assert!(h.client.unresolved_steer_attempts().is_empty());
+    }
+
+    /// The agent closes its stdin before the input is queued, so the write
+    /// fails: the outcome is `Unknown{WriteFailed}` carrying the id the
+    /// request would have gone out under, and the attempt is remembered.
+    #[tokio::test]
+    async fn native_steer_write_failure_resolves_unknown_write_failed_with_the_request_id() {
+        let script = format!(
+            "{STEER_SCRIPT_PRELUDE}exec 0<&-\n\
+             printf '%s\\n' '{{\"jsonrpc\":\"2.0\",\"method\":\"session/update\",\"params\":{{\"sessionId\":\"sess-test\",\"update\":{{\"sessionUpdate\":\"agent_message_chunk\",\"content\":{{\"type\":\"text\",\"text\":\"stdin closed\"}}}}}}}}'\n\
+             sleep 30\n"
+        );
+        let mut h = steer_harness(&script).await;
+        let (input, outcome_rx) = steer_input("a1", "steer body", IdleGuard::AdapterDefault);
+        let steer_tx = h.steer_tx.clone();
+        let reads = &mut h.reads;
+        let clock = h.clock.clone();
+        let driver = async move {
+            // Only queue the input once the agent has told us stdin is gone.
+            loop {
+                let event = reads.recv().await.expect("observer feed closed");
+                if event.kind == "acp_read" && event.payload["method"] == "session/update" {
+                    break;
+                }
+            }
+            steer_tx.send(input).await.expect("queue steer input");
+            let resolution = outcome_rx.await.expect("input must be resolved");
+            clock.advance(FAR + std::time::Duration::from_secs(1));
+            resolution
+        };
+        let (result, resolution) = tokio::join!(run_prompt_loop(&mut h.client), driver);
+
+        match resolution {
+            SteerResolution::Unknown {
+                reason: UnknownReason::WriteFailed { .. },
+                wire_request_id: Some(0),
+            } => {}
+            other => panic!("expected Unknown{{WriteFailed}} on id 0, got {other:?}"),
+        }
+        assert!(
+            matches!(
+                result,
+                Err(AcpError::IdleTimeout { .. }) | Err(AcpError::HardTimeout { .. })
+            ),
+            "expected the deadline the test forced, got {result:?}"
+        );
+        assert_eq!(h.client.unresolved_steer_attempts(), vec!["a1".to_owned()]);
+    }
+
+    /// The prompt answers first; the ACK lands inside the bounded drain and
+    /// resolves the attempt, while the prompt's own result is untouched.
+    #[tokio::test]
+    async fn native_steer_ack_inside_post_prompt_drain_resolves_injected() {
+        let gate = gate_path("ack-inside-drain");
+        let script = format!(
+            "{STEER_SCRIPT_PRELUDE}read -r line\nprompt_done\n{}{}sleep 30\n",
+            wait_for_gate(&gate),
+            answer_line(r#""result":{"outcome":"injected"}"#),
+        );
+        let mut h = steer_harness(&script).await;
+        let (input, outcome_rx) = steer_input("a1", "steer body", IdleGuard::PromptRequired);
+        h.steer_tx.send(input).await.expect("queue steer input");
+        let reads = &mut h.reads;
+        let driver = async move {
+            // Let the agent answer only after the client has read the prompt
+            // response, so the ACK can only be met by the drain.
+            wait_for_read_of_id(reads, 999).await;
+            std::fs::write(&gate, b"").expect("open gate");
+        };
+        let (result, ()) = tokio::join!(run_prompt_loop(&mut h.client), driver);
+
+        assert_end_turn(&result);
+        assert_eq!(
+            outcome_rx.await.expect("input must be resolved"),
+            SteerResolution::Injected {
+                wire: SteerWire::AcpExtension,
+                native_run_id: None,
+            }
+        );
+        assert!(h.client.unresolved_steer_attempts().is_empty());
+        assert!(
+            h.late_rx.try_recv().is_err(),
+            "resolved in time, nothing late"
+        );
+    }
+
+    /// The drain never changes what the prompt returned: a prompt that
+    /// errored stays errored even though the steer was acknowledged after it.
+    #[tokio::test]
+    async fn native_steer_drain_keeps_the_prompts_own_error() {
+        let script = format!(
+            "{STEER_SCRIPT_PRELUDE}read -r line\n\
+             printf '%s\\n' '{{\"jsonrpc\":\"2.0\",\"id\":999,\"error\":{{\"code\":-32603,\"message\":\"turn exploded\"}}}}'\n\
+             {}sleep 30\n",
+            answer_line(r#""result":{"outcome":"injected"}"#),
+        );
+        let mut h = steer_harness(&script).await;
+
+        let (_, resolution, result) = run_single_steer(&mut h, IdleGuard::AdapterDefault).await;
+
+        assert!(
+            matches!(&result, Err(AcpError::AgentError { code: -32603, message }) if message.contains("turn exploded")),
+            "prompt error must survive the drain, got {result:?}"
+        );
+        assert_eq!(
+            resolution,
+            SteerResolution::Injected {
+                wire: SteerWire::AcpExtension,
+                native_run_id: None,
+            }
+        );
+    }
+
+    /// The drain expires: the attempt resolves `Unknown{AckTimeout}` and is
+    /// remembered; when the ACK finally arrives during a later
+    /// `send_request` wait it is correlated and delivered to the late sink.
+    #[tokio::test]
+    async fn native_steer_ack_after_drain_times_out_then_arrives_as_late_ack() {
+        let gate = gate_path("ack-after-drain");
+        let script = format!(
+            "{STEER_SCRIPT_PRELUDE}read -r line\nprompt_done\n{}{}\
+             read -r line\n{}sleep 30\n",
+            wait_for_gate(&gate),
+            answer_line(r#""result":{"outcome":"injected"}"#),
+            answer_line(r#""result":{"pong":true}"#),
+        );
+        let mut h = steer_harness(&script).await;
+        let (input, outcome_rx) = steer_input("a1", "steer body", IdleGuard::PromptRequired);
+        h.steer_tx.send(input).await.expect("queue steer input");
+        let reads = &mut h.reads;
+        let clock = h.clock.clone();
+        let driver = async move {
+            wait_for_read_of_id(reads, 999).await;
+            clock.advance(STEER_ACK_DRAIN + std::time::Duration::from_millis(1));
+        };
+        let (result, ()) = tokio::join!(run_prompt_loop(&mut h.client), driver);
+
+        assert_end_turn(&result);
+        assert_eq!(
+            outcome_rx.await.expect("input must be resolved"),
+            SteerResolution::Unknown {
+                reason: UnknownReason::AckTimeout,
+                wire_request_id: Some(0),
+            }
+        );
+        assert_eq!(h.client.unresolved_steer_attempts(), vec!["a1".to_owned()]);
+
+        // Now the agent emits the late ACK, followed by the answer to the
+        // ping `send_request` writes next.
+        std::fs::write(&gate, b"").expect("open gate");
+        let pong = h
+            .client
+            .send_request("ping", serde_json::json!({}))
+            .await
+            .expect("ping must still be answered");
+        assert_eq!(pong, serde_json::json!({"pong": true}));
+
+        let late = h.late_rx.try_recv().expect("late ACK must reach the sink");
+        assert_eq!(
+            late,
+            LateSteerAck {
+                attempt_id: "a1".to_owned(),
+                resolution: SteerResolution::Injected {
+                    wire: SteerWire::AcpExtension,
+                    native_run_id: None,
+                },
+            }
+        );
+        assert!(h.client.unresolved_steer_attempts().is_empty());
+    }
+
+    /// A late ACK is also correlated by the *next prompt's* read loop.
+    #[tokio::test]
+    async fn native_steer_late_ack_is_correlated_by_the_next_prompt_loop() {
+        let gate = gate_path("late-ack-next-prompt");
+        let script = format!(
+            "{STEER_SCRIPT_PRELUDE}read -r line\nprompt_done\n{}{}prompt_done\nsleep 30\n",
+            wait_for_gate(&gate),
+            answer_line(r#""result":{"outcome":"startedNewTurn"}"#),
+        );
+        let mut h = steer_harness(&script).await;
+        let (input, outcome_rx) = steer_input("a1", "steer body", IdleGuard::AdapterDefault);
+        h.steer_tx.send(input).await.expect("queue steer input");
+        let reads = &mut h.reads;
+        let clock = h.clock.clone();
+        let driver = async move {
+            wait_for_read_of_id(reads, 999).await;
+            clock.advance(STEER_ACK_DRAIN + std::time::Duration::from_millis(1));
+        };
+        let (first, ()) = tokio::join!(run_prompt_loop(&mut h.client), driver);
+        assert_end_turn(&first);
+        assert!(matches!(
+            outcome_rx.await.expect("resolved"),
+            SteerResolution::Unknown {
+                reason: UnknownReason::AckTimeout,
+                wire_request_id: Some(0)
+            }
+        ));
+
+        // Second turn: the late ACK precedes this prompt's response.
+        let (_tx2, rx2) = tokio::sync::mpsc::channel::<SteerInput>(1);
+        h.client.install_steer_input(rx2);
+        std::fs::write(&gate, b"").expect("open gate");
+        let second = run_prompt_loop(&mut h.client).await;
+        assert_end_turn(&second);
+
+        let late = h.late_rx.try_recv().expect("late ACK must reach the sink");
+        assert_eq!(late.attempt_id, "a1");
+        assert_eq!(
+            late.resolution,
+            SteerResolution::StartedNewTurn {
+                wire: SteerWire::AcpExtension
+            }
+        );
+        assert!(h.client.unresolved_steer_attempts().is_empty());
+    }
+
+    /// stdout closes right after the request went out: `RuntimeExited`, id
+    /// attached, attempt remembered; the prompt reports `AgentExited`.
+    #[tokio::test]
+    async fn native_steer_eof_after_write_resolves_unknown_runtime_exited() {
+        let mut h = steer_harness(&format!("{STEER_SCRIPT_PRELUDE}read -r line\nexit 0\n")).await;
+
+        let (written, resolution, result) =
+            run_single_steer(&mut h, IdleGuard::AdapterDefault).await;
+
+        assert_eq!(written["id"], serde_json::json!(0));
+        assert_eq!(
+            resolution,
+            SteerResolution::Unknown {
+                reason: UnknownReason::RuntimeExited,
+                wire_request_id: Some(0),
+            }
+        );
+        assert!(
+            matches!(result, Err(AcpError::AgentExited)),
+            "expected AgentExited, got {result:?}"
+        );
+        assert_eq!(h.client.unresolved_steer_attempts(), vec!["a1".to_owned()]);
+    }
+
+    /// Two inputs go out once each, in order, one at a time, and each
+    /// carries its own idle guard.
+    #[tokio::test]
+    async fn native_steer_two_inputs_are_written_once_each_in_order() {
+        let script = format!(
+            "{STEER_SCRIPT_PRELUDE}read -r line\n{}read -r line\n{}prompt_done\nsleep 30\n",
+            answer_line(r#""result":{"outcome":"injected"}"#),
+            answer_line(r#""result":{"outcome":"injected"}"#),
+        );
+        let mut h = steer_harness(&script).await;
+        let (first, first_rx) = steer_input("a1", "first", IdleGuard::AdapterDefault);
+        let (second, second_rx) = steer_input("a2", "second", IdleGuard::PromptRequired);
+        h.steer_tx.send(first).await.expect("queue first");
+        h.steer_tx.send(second).await.expect("queue second");
+
+        let result = run_prompt_loop(&mut h.client).await;
+        assert_end_turn(&result);
+
+        let w1 = next_write(&mut h.reads).await;
+        let w2 = next_write(&mut h.reads).await;
+        assert_eq!(w1["id"], serde_json::json!(0));
+        assert_eq!(
+            w1["params"]["prompt"][0]["text"],
+            serde_json::json!("first")
+        );
+        assert!(w1["params"].get("_meta").is_none(), "wrote {w1}");
+        assert_eq!(w2["id"], serde_json::json!(1));
+        assert_eq!(
+            w2["params"]["prompt"][0]["text"],
+            serde_json::json!("second")
+        );
+        assert_eq!(
+            w2["params"]["_meta"]["steering"]["idleBehavior"],
+            serde_json::json!("promptRequired"),
+            "wrote {w2}"
+        );
+        // Exactly two requests went out.
+        assert!(
+            !matches!(h.reads.try_recv(), Ok(e) if e.kind == "acp_write"),
+            "a third write is a duplicate delivery"
+        );
+        let injected = SteerResolution::Injected {
+            wire: SteerWire::AcpExtension,
+            native_run_id: None,
+        };
+        assert_eq!(first_rx.await.expect("first resolved"), injected);
+        assert_eq!(second_rx.await.expect("second resolved"), injected);
+        assert!(h.client.unresolved_steer_attempts().is_empty());
+    }
+
+    /// A response under some other id never resolves the pending attempt:
+    /// the `failed` on id 777 is ignored and the real answer still lands.
+    #[tokio::test]
+    async fn native_steer_response_with_wrong_id_does_not_resolve_the_attempt() {
+        let script = format!(
+            "{STEER_SCRIPT_PRELUDE}read -r line\n\
+             printf '%s\\n' '{{\"jsonrpc\":\"2.0\",\"id\":777,\"result\":{{\"outcome\":\"failed\"}}}}'\n\
+             {}prompt_done\nsleep 30\n",
+            answer_line(r#""result":{"outcome":"injected"}"#),
+        );
+        let mut h = steer_harness(&script).await;
+
+        let (_, resolution, result) = run_single_steer(&mut h, IdleGuard::AdapterDefault).await;
+
+        assert_eq!(
+            resolution,
+            SteerResolution::Injected {
+                wire: SteerWire::AcpExtension,
+                native_run_id: None,
+            }
+        );
+        assert_end_turn(&result);
+        assert!(h.late_rx.try_recv().is_err(), "id 777 belongs to nobody");
+    }
+
+    /// §4's mis-correlation fixture: the agent answers the second steer
+    /// under the first steer's id. The first is already resolved, so that
+    /// answer is stray; the second must not borrow it and ends
+    /// `Unknown{AckTimeout}` under its own id.
+    #[tokio::test]
+    async fn native_steer_ack_reusing_an_earlier_id_is_refused_for_the_later_attempt() {
+        let script = format!(
+            "{STEER_SCRIPT_PRELUDE}read -r line\nfirst_id=$(steer_id \"$line\")\n\
+             printf '%s\\n' '{{\"jsonrpc\":\"2.0\",\"id\":'\"$first_id\"',\"result\":{{\"outcome\":\"injected\"}}}}'\n\
+             read -r line\n\
+             printf '%s\\n' '{{\"jsonrpc\":\"2.0\",\"id\":'\"$first_id\"',\"result\":{{\"outcome\":\"injected\"}}}}'\n\
+             prompt_done\nsleep 30\n"
+        );
+        let mut h = steer_harness(&script).await;
+        let (first, first_rx) = steer_input("a1", "first", IdleGuard::AdapterDefault);
+        let (second, second_rx) = steer_input("a2", "second", IdleGuard::AdapterDefault);
+        h.steer_tx.send(first).await.expect("queue first");
+        h.steer_tx.send(second).await.expect("queue second");
+        let reads = &mut h.reads;
+        let clock = h.clock.clone();
+        let driver = async move {
+            wait_for_read_of_id(reads, 999).await;
+            clock.advance(STEER_ACK_DRAIN + std::time::Duration::from_millis(1));
+        };
+        let (result, ()) = tokio::join!(run_prompt_loop(&mut h.client), driver);
+
+        assert_end_turn(&result);
+        assert_eq!(
+            first_rx.await.expect("first resolved"),
+            SteerResolution::Injected {
+                wire: SteerWire::AcpExtension,
+                native_run_id: None,
+            }
+        );
+        assert_eq!(
+            second_rx.await.expect("second resolved"),
+            SteerResolution::Unknown {
+                reason: UnknownReason::AckTimeout,
+                wire_request_id: Some(1),
+            }
+        );
+        assert_eq!(h.client.unresolved_steer_attempts(), vec!["a2".to_owned()]);
+        assert!(
+            h.late_rx.try_recv().is_err(),
+            "a stray answer is not a late ACK"
+        );
+    }
+
+    /// The prompt future is dropped (cancel / shutdown) with the request
+    /// written and unanswered: the caller still gets an answer —
+    /// `Unknown{PromptEndedBeforeAck}` under the written id — and the
+    /// attempt is remembered for a late ACK.
+    #[tokio::test]
+    async fn native_steer_cancel_while_ack_pending_resolves_unknown_and_remembers_the_attempt() {
+        let mut h = steer_harness(&format!("{STEER_SCRIPT_PRELUDE}read -r line\nsleep 30\n")).await;
+        let (input, outcome_rx) = steer_input("a1", "steer body", IdleGuard::PromptRequired);
+        h.steer_tx.send(input).await.expect("queue steer input");
+        let SteerHarness { client, reads, .. } = &mut h;
+        tokio::select! {
+            biased;
+            _ = async {
+                // The request is on the wire; now abandon the prompt.
+                let written = next_write(reads).await;
+                assert_eq!(written["id"], serde_json::json!(0));
+            } => {}
+            result = run_prompt_loop(client) => {
+                panic!("the prompt loop must still be running, returned {result:?}");
+            }
+        }
+
+        assert_eq!(
+            outcome_rx.await.expect("dropped loop must still answer"),
+            SteerResolution::Unknown {
+                reason: UnknownReason::PromptEndedBeforeAck,
+                wire_request_id: Some(0),
+            }
+        );
+        assert_eq!(h.client.unresolved_steer_attempts(), vec!["a1".to_owned()]);
+        assert!(
+            h.client.steer_rx_is_none(),
+            "the loop consumed the source; nothing is left to clear"
+        );
+        h.client.shutdown().await;
+    }
+
+    /// An input still in the channel when the prompt ends is never written:
+    /// its oneshot closes, which is the caller's `PromptEndedBeforeWrite`.
+    /// The input that did go out is still answered.
+    #[tokio::test]
+    async fn native_steer_input_left_in_channel_at_exit_is_dropped_unanswered() {
+        let mut h = steer_harness(&format!(
+            "{STEER_SCRIPT_PRELUDE}read -r line\nprompt_done\nsleep 30\n"
+        ))
+        .await;
+        let (first, first_rx) = steer_input("a1", "first", IdleGuard::AdapterDefault);
+        let (second, second_rx) = steer_input("a2", "second", IdleGuard::AdapterDefault);
+        h.steer_tx.send(first).await.expect("queue first");
+        h.steer_tx.send(second).await.expect("queue second");
+        let reads = &mut h.reads;
+        let clock = h.clock.clone();
+        let driver = async move {
+            // The first request is out and unanswered when the prompt ends;
+            // expire its drain so the loop can leave. The write is captured
+            // here because this driver is what drains the observer feed.
+            let w1 = next_write(reads).await;
+            wait_for_read_of_id(reads, 999).await;
+            clock.advance(STEER_ACK_DRAIN + std::time::Duration::from_millis(1));
+            w1
+        };
+        let (result, w1) = tokio::join!(run_prompt_loop(&mut h.client), driver);
+        assert_end_turn(&result);
+
+        assert_eq!(
+            first_rx
+                .await
+                .expect("first was written and must be answered"),
+            SteerResolution::Unknown {
+                reason: UnknownReason::AckTimeout,
+                wire_request_id: Some(0),
+            }
+        );
+        assert!(
+            second_rx.await.is_err(),
+            "the second input never left the channel; its oneshot must simply close"
+        );
+        assert_eq!(
+            w1["params"]["prompt"][0]["text"],
+            serde_json::json!("first")
+        );
+        assert!(
+            !matches!(h.reads.try_recv(), Ok(e) if e.kind == "acp_write"),
+            "the second input must never reach the wire"
+        );
+        assert!(h.client.steer_rx_is_none());
+    }
+
+    #[tokio::test]
+    #[should_panic(expected = "install_steer_input")]
+    async fn install_steer_input_panics_when_a_source_is_already_installed() {
+        let mut client = spawn_inert_client().await;
+        let (_tx1, rx1) = tokio::sync::mpsc::channel::<SteerInput>(1);
+        let (_tx2, rx2) = tokio::sync::mpsc::channel::<SteerInput>(1);
+        client.install_steer_input(rx1);
+        client.install_steer_input(rx2);
+    }
+
+    #[tokio::test]
+    async fn clear_steer_input_is_idempotent_and_shared_with_the_legacy_alias() {
+        let mut client = spawn_inert_client().await;
+        assert!(client.steer_rx_is_none());
+        client.clear_steer_input();
+        assert!(client.steer_rx_is_none(), "clearing nothing is a no-op");
+
+        let (_tx, rx) = tokio::sync::mpsc::channel::<SteerInput>(1);
+        client.install_steer_input(rx);
+        assert!(!client.steer_rx_is_none());
+        client.clear_steer_rx();
+        assert!(
+            client.steer_rx_is_none(),
+            "the legacy alias clears the same slot"
+        );
+
+        let (_ltx, lrx) = tokio::sync::mpsc::channel::<crate::pool::SteerRequest>(1);
+        client.install_steer_rx(lrx);
+        client.clear_steer_input();
+        client.clear_steer_input();
+        assert!(client.steer_rx_is_none());
+        assert!(client.unresolved_steer_attempts().is_empty());
+    }
+
+    #[test]
+    fn decode_steer_ack_covers_every_locked_outcome() {
+        let ok = |result: serde_json::Value| serde_json::json!({"id": 4, "result": result});
+        let acp = SteerWire::AcpExtension;
+        assert_eq!(
+            decode_steer_ack(
+                &ok(serde_json::json!({"outcome": "injected"})),
+                acp,
+                None,
+                4
+            ),
+            SteerResolution::Injected {
+                wire: acp,
+                native_run_id: None
+            }
+        );
+        assert_eq!(
+            decode_steer_ack(
+                &ok(serde_json::json!({"outcome": "startedNewTurn"})),
+                acp,
+                None,
+                4
+            ),
+            SteerResolution::StartedNewTurn { wire: acp }
+        );
+        assert_eq!(
+            decode_steer_ack(
+                &ok(serde_json::json!({"outcome": "promptRequired"})),
+                acp,
+                None,
+                4
+            ),
+            SteerResolution::NotDelivered {
+                reason: NotDeliveredReason::PromptRequired
+            }
+        );
+        assert_eq!(
+            decode_steer_ack(&ok(serde_json::json!({"outcome": "failed"})), acp, None, 4),
+            SteerResolution::Unknown {
+                reason: UnknownReason::AdapterReportedFailure {
+                    outcome: "failed".into()
+                },
+                wire_request_id: Some(4)
+            }
+        );
+        assert_eq!(
+            decode_steer_ack(&ok(serde_json::json!({"outcome": 12})), acp, None, 4),
+            SteerResolution::Unknown {
+                reason: UnknownReason::UnrecognizedAck {
+                    outcome: "12".into()
+                },
+                wire_request_id: Some(4)
+            }
+        );
+        assert_eq!(
+            decode_steer_ack(&ok(serde_json::json!({})), acp, None, 4),
+            SteerResolution::Unknown {
+                reason: UnknownReason::UnrecognizedAck {
+                    outcome: "<absent>".into()
+                },
+                wire_request_id: Some(4)
+            }
+        );
+        // Goose: any success is a delivery into the named run, outcome or not.
+        assert_eq!(
+            decode_steer_ack(
+                &ok(serde_json::json!({})),
+                SteerWire::Goose,
+                Some("r1".into()),
+                4
+            ),
+            SteerResolution::Injected {
+                wire: SteerWire::Goose,
+                native_run_id: Some("r1".into())
+            }
+        );
+        // Errors are the same on both wires.
+        let err = serde_json::json!({"id": 4, "error": {"code": -32601, "message": "nope"}});
+        assert_eq!(
+            decode_steer_ack(&err, SteerWire::Goose, None, 4),
+            SteerResolution::NotDelivered {
+                reason: NotDeliveredReason::MethodNotFound {
+                    message: "nope".into()
+                }
+            }
+        );
+        let err = serde_json::json!({"id": 4, "error": {"code": 7}});
+        assert_eq!(
+            decode_steer_ack(&err, acp, None, 4),
+            SteerResolution::NotDelivered {
+                reason: NotDeliveredReason::Rejected {
+                    code: 7,
+                    message: r#"{"code":7}"#.into()
+                }
+            }
+        );
+    }
+
+    /// A prompt future dropped before its read loop ran `take()` leaves the
+    /// steer source installed with admitted inputs in it. The cancel path
+    /// must drop that source, not hand it to the cancel drain: nothing may
+    /// be written after `session/cancel`, and every unwritten input's
+    /// oneshot simply closes (`PromptEndedBeforeWrite` for the caller).
+    #[tokio::test]
+    async fn cancel_drops_admitted_steer_inputs_instead_of_writing_them_after_session_cancel() {
+        // Agent: reads the `session/cancel` notification, answers the prompt
+        // (id 1) as cancelled, then idles.
+        let script = format!(
+            "{STEER_SCRIPT_PRELUDE}read -r line\n\
+             printf '%s\\n' '{{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{{\"stopReason\":\"cancelled\"}}}}'\n\
+             sleep 30\n"
+        );
+        let mut h = steer_harness(&script).await;
+        let (first, first_rx) = steer_input("a1", "first", IdleGuard::PromptRequired);
+        let (second, second_rx) = steer_input("a2", "second", IdleGuard::PromptRequired);
+        h.steer_tx.send(first).await.expect("queue first");
+        h.steer_tx.send(second).await.expect("queue second");
+        // The prompt went out as id 1 and its future was dropped before the
+        // read loop took the source: exactly the state the cancel path sees.
+        h.client.last_prompt_id = Some(1);
+        h.client.next_id = 2;
+        h.client.current_hard_deadline = Some(h.clock.now() + FAR);
+        assert!(
+            !h.client.steer_rx_is_none(),
+            "precondition: the source is still installed"
+        );
+
+        let stop = h
+            .client
+            .cancel_with_cleanup("sess-test", FAR)
+            .await
+            .expect("cancel drain must complete");
+        assert_eq!(stop, StopReason::Cancelled);
+
+        assert!(h.client.steer_rx_is_none(), "cancel must drop the source");
+        assert!(
+            first_rx.await.is_err(),
+            "an unwritten input's oneshot must close, never be answered"
+        );
+        assert!(second_rx.await.is_err());
+
+        // The wire saw exactly one write: the cancel notification.
+        let written = next_write(&mut h.reads).await;
+        assert_eq!(written["method"], serde_json::json!("session/cancel"));
+        while let Ok(event) = h.reads.try_recv() {
+            assert_ne!(
+                event.kind, "acp_write",
+                "nothing may be written after session/cancel; wrote {}",
+                event.payload
+            );
+        }
+        assert!(h.client.unresolved_steer_attempts().is_empty());
+    }
+
+    // ── Live adapter run (ignored; evidence, not a gate) ──────────────────
+
+    /// The node binary Beekeeper pins for its node tools, else whatever
+    /// `node` is on PATH.
+    fn beekeeper_node_binary(home: &std::path::Path) -> String {
+        let root = home.join("Library/Application Support/Beekeeper/runtimes/node");
+        let mut found = Vec::new();
+        if let Ok(versions) = std::fs::read_dir(&root) {
+            for version in versions.flatten() {
+                if let Ok(platforms) = std::fs::read_dir(version.path()) {
+                    for platform in platforms.flatten() {
+                        let node = platform.path().join("bin/node");
+                        if node.is_file() {
+                            found.push(node);
+                        }
+                    }
+                }
+            }
+        }
+        found.sort();
+        found
+            .pop()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "node".to_owned())
+    }
+
+    /// Drives the REAL installed claude-agent-acp through `AcpClient` and the
+    /// public `buzz_acp::steer` API. Prints every wire frame so the run log
+    /// is the evidence. Skips (prints why, returns) when the adapter is not
+    /// installed on this machine.
+    ///
+    /// Run: `cargo test -p buzz-acp native_steer_against_installed_claude_agent_acp -- --ignored --nocapture`
+    #[tokio::test]
+    #[ignore = "drives the installed claude-agent-acp and a real model; run with --ignored --nocapture"]
+    async fn native_steer_against_installed_claude_agent_acp() {
+        let home = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default());
+        let adapter =
+            home.join("Library/Application Support/Beekeeper/node-tools/bin/claude-agent-acp");
+        if !adapter.exists() {
+            println!("SKIP: adapter not installed at {}", adapter.display());
+            return;
+        }
+        let adapter = std::fs::canonicalize(&adapter).unwrap_or(adapter);
+        let node = beekeeper_node_binary(&home);
+        let claude = home.join(".local/bin/claude");
+        let path = format!(
+            "{}:{}",
+            home.join(".local/bin").display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
+        println!(
+            "LIVE node={node} adapter={} claude={}",
+            adapter.display(),
+            claude.display()
+        );
+
+        let extra_env = vec![
+            (
+                "CLAUDE_CODE_EXECUTABLE".to_owned(),
+                claude.display().to_string(),
+            ),
+            ("PATH".to_owned(), path),
+        ];
+        let mut client =
+            AcpClient::spawn(&node, &[adapter.display().to_string()], &extra_env, false)
+                .await
+                .expect("spawn claude-agent-acp");
+
+        // Every frame the client writes or reads goes to stdout, and the
+        // agent's streamed text is accumulated for the assertions below.
+        let observer = crate::observer::ObserverHandle::in_process();
+        let mut feed = observer.subscribe();
+        client.set_observer(Some(observer), 0);
+        let agent_text = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+        let (text_len_tx, mut text_len_rx) = tokio::sync::watch::channel(0usize);
+        let printer = {
+            let agent_text = agent_text.clone();
+            tokio::spawn(async move {
+                loop {
+                    let event = match feed.recv().await {
+                        Ok(event) => event,
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                            println!("WIRE ?? observer lagged by {n} frames");
+                            continue;
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    };
+                    match event.kind.as_str() {
+                        "acp_write" => println!("WIRE -> {}", event.payload),
+                        "acp_read" => {
+                            println!("WIRE <- {}", event.payload);
+                            let update = &event.payload["params"]["update"];
+                            if update["sessionUpdate"] == "agent_message_chunk" {
+                                if let Some(text) = update["content"]["text"].as_str() {
+                                    let len = {
+                                        let mut buf =
+                                            agent_text.lock().unwrap_or_else(|e| e.into_inner());
+                                        buf.push_str(text);
+                                        buf.len()
+                                    };
+                                    let _ = text_len_tx.send(len);
+                                }
+                            }
+                        }
+                        other => println!("OBS {other} {}", event.payload),
+                    }
+                }
+            })
+        };
+        let snapshot = |buf: &std::sync::Arc<std::sync::Mutex<String>>| -> String {
+            buf.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        };
+
+        client.initialize().await.expect("initialize");
+        assert!(
+            client.steering_supported(),
+            "claude-agent-acp must advertise _meta.steering.supported"
+        );
+        println!(
+            "LIVE initialize ok: agent={} steering_supported={}",
+            client.agent_name(),
+            client.steering_supported()
+        );
+
+        let cwd = std::env::temp_dir().join(format!("buzz-acp-live-steer-{}", std::process::id()));
+        std::fs::create_dir_all(&cwd).expect("create session cwd");
+        let session_id = client
+            .session_new(&cwd.display().to_string(), Vec::new(), None, None)
+            .await
+            .expect("session/new");
+        println!("LIVE session {session_id} cwd={}", cwd.display());
+
+        // ── Turn 1: steer into a running turn ──────────────────────────
+        let marker = uuid::Uuid::new_v4().simple().to_string();
+        let ack_word = format!("ACK-{marker}");
+        let (steer_tx, steer_rx) = tokio::sync::mpsc::channel::<SteerInput>(1);
+        client.install_steer_input(steer_rx);
+        let (late_tx, mut late_rx) = tokio::sync::mpsc::unbounded_channel::<LateSteerAck>();
+        client.set_late_steer_sink(late_tx);
+
+        let prompt = "Count slowly from 1 to 40, one number per line, one line at a time. \
+                      Use no tools. Write nothing but the numbers.";
+        let (outcome_tx, outcome_rx) = tokio::sync::oneshot::channel();
+        let driver = async {
+            // Wait until ~40 chars of the agent's answer have streamed, so
+            // the turn is demonstrably in flight when the steer is written.
+            loop {
+                if *text_len_rx.borrow() >= 40 {
+                    break;
+                }
+                text_len_rx.changed().await.expect("text feed closed");
+            }
+            let streamed = snapshot(&agent_text);
+            println!(
+                "LIVE {} chars streamed before steer: {streamed:?}",
+                streamed.len()
+            );
+            steer_tx
+                .send(SteerInput {
+                    attempt_id: "live#1".to_owned(),
+                    prompt_blocks: vec![format!(
+                        "MARKER-{marker}: stop counting and reply with exactly the single word {ack_word}"
+                    )],
+                    idle_guard: IdleGuard::PromptRequired,
+                    outcome_tx,
+                })
+                .await
+                .expect("queue steer input");
+            let resolution = outcome_rx.await.expect("live#1 must be resolved");
+            println!("LIVE live#1 resolution: {resolution:?}");
+            resolution
+        };
+        let (stop, resolution) = tokio::join!(
+            client.session_prompt_with_idle_timeout(
+                &session_id,
+                prompt,
+                std::time::Duration::from_secs(120),
+                std::time::Duration::from_secs(300),
+            ),
+            driver,
+        );
+        let stop = stop.expect("turn 1 must complete");
+        let text_after_turn_1 = snapshot(&agent_text);
+        println!("LIVE turn 1 stop={stop:?}");
+        println!("LIVE turn 1 agent text:\n{text_after_turn_1}");
+
+        assert!(
+            matches!(
+                resolution,
+                SteerResolution::Injected {
+                    wire: SteerWire::AcpExtension,
+                    ..
+                }
+            ),
+            "live#1 must be Injected over _session/steering, got {resolution:?}"
+        );
+        assert_eq!(stop, StopReason::EndTurn, "turn 1 must end with end_turn");
+        assert!(
+            text_after_turn_1.contains(&ack_word),
+            "the ACK word {ack_word} must appear in the SAME prompt's streamed text"
+        );
+        assert!(
+            client.unresolved_steer_attempts().is_empty(),
+            "nothing unresolved after an injected ACK"
+        );
+        assert!(late_rx.try_recv().is_err(), "nothing was late");
+        println!("LIVE ACK word {ack_word} found in turn 1 text: yes");
+
+        // ── Idle: the guard must keep the adapter from starting a turn ──
+        let (idle_tx, idle_rx) = tokio::sync::mpsc::channel::<SteerInput>(1);
+        client.install_steer_input(idle_rx);
+        let (idle_outcome_tx, idle_outcome_rx) = tokio::sync::oneshot::channel();
+        idle_tx
+            .send(SteerInput {
+                attempt_id: "live#2".to_owned(),
+                prompt_blocks: vec![format!("Reply with exactly the word IDLE-{marker}.")],
+                idle_guard: IdleGuard::PromptRequired,
+                outcome_tx: idle_outcome_tx,
+            })
+            .await
+            .expect("queue idle steer");
+        let text_before_idle = snapshot(&agent_text);
+        // No prompt is in flight, so drive the read loop directly with an id
+        // nobody will answer: the steer arm writes the request, the adapter
+        // answers it, and the loop ends on the 12 s idle timeout, which is
+        // the "no agent text within 10 s" window.
+        let idle = std::time::Duration::from_secs(12);
+        let hard = client.turn_clock.now() + std::time::Duration::from_secs(60);
+        let idle_result = client
+            .read_until_response_with_idle_timeout(
+                &session_id,
+                999_999,
+                idle,
+                hard,
+                std::time::Duration::from_secs(60),
+            )
+            .await;
+        let idle_resolution = idle_outcome_rx.await.expect("live#2 must be resolved");
+        let text_after_idle = snapshot(&agent_text);
+        println!("LIVE idle loop exit: {idle_result:?}");
+        println!("LIVE live#2 resolution: {idle_resolution:?}");
+
+        assert_eq!(
+            idle_resolution,
+            SteerResolution::NotDelivered {
+                reason: NotDeliveredReason::PromptRequired
+            },
+            "an idle session with the guard must answer promptRequired"
+        );
+        assert!(
+            matches!(idle_result, Err(AcpError::IdleTimeout { .. })),
+            "the idle read must end on silence, got {idle_result:?}"
+        );
+        assert_eq!(
+            text_after_idle, text_before_idle,
+            "no agent text may follow an idle steer within the 12 s window"
+        );
+        println!("LIVE no agent text after idle steer within {idle:?}: yes");
+
+        client.shutdown().await;
+        drop(client);
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), printer).await;
+        let _ = std::fs::remove_dir_all(&cwd);
+        println!("LIVE PASS marker={marker}");
     }
 }

@@ -49,6 +49,29 @@ pub struct RuntimeDescriptor {
     /// [`Capabilities::v1_for_runtime`]`(&runtime)`.
     #[serde(default)]
     pub capabilities: Option<Capabilities>,
+    /// The idle guard the installed adapter honours on `_session/steering`.
+    ///
+    /// A declared fact about the pinned adapter package, set by whoever
+    /// installs it, never inferred from the driver slug: no adapter
+    /// advertises it. Native mid-turn injection is offered only when this is
+    /// [`SteerIdleGuard::PromptRequired`] **and** the process behind the
+    /// execution advertised `_meta.steering.supported` at `initialize`. Absent
+    /// means no guard is known, so a steer can only be boundary-delivered —
+    /// an adapter without a guard would start a detached turn nobody observes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub steer_idle_guard: Option<SteerIdleGuard>,
+}
+
+/// How an adapter answers a `_session/steering` request that finds no
+/// running turn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SteerIdleGuard {
+    /// The adapter honours request `_meta.steering.idleBehavior:
+    /// "promptRequired"`: with no running turn it answers
+    /// `{outcome: "promptRequired"}` and leaves the content with the caller
+    /// (claude-agent-acp 0.70.0, `dist/acp-agent.js:1146-1150`).
+    PromptRequired,
 }
 
 /// One env-var name/value pair.
@@ -183,6 +206,50 @@ mod tests {
             parse_runtime_descriptors(&serialized).expect("reparse"),
             descriptors
         );
+    }
+
+    /// The idle guard is a declared fact about the pinned adapter, so it has
+    /// to survive the trip through `BUZZ_CSP_RUNTIMES` byte-for-byte — and
+    /// an older host that never heard of it must produce a list an older
+    /// sidecar still parses, which is why absence is *omission*, not `null`.
+    #[test]
+    fn the_steer_idle_guard_round_trips_and_is_omitted_when_absent() {
+        let mut entry = minimal("claude-primary");
+        entry["steerIdleGuard"] = serde_json::json!("promptRequired");
+        let descriptors =
+            parse_runtime_descriptors(&serde_json::json!([entry]).to_string()).expect("parse");
+        assert_eq!(
+            descriptors[0].steer_idle_guard,
+            Some(SteerIdleGuard::PromptRequired)
+        );
+        let serialized = serde_json::to_value(&descriptors[0]).expect("serialize");
+        assert_eq!(serialized["steerIdleGuard"], "promptRequired");
+        assert_eq!(
+            parse_runtime_descriptors(&serde_json::json!([serialized]).to_string())
+                .expect("reparse")[0]
+                .steer_idle_guard,
+            Some(SteerIdleGuard::PromptRequired)
+        );
+
+        // No guard declared: the key is absent from the wire, not null.
+        let bare =
+            parse_runtime_descriptors(&serde_json::json!([minimal("codex-primary")]).to_string())
+                .expect("parse");
+        assert_eq!(bare[0].steer_idle_guard, None);
+        let serialized = serde_json::to_value(&bare[0]).expect("serialize");
+        assert!(
+            !serialized
+                .as_object()
+                .expect("object")
+                .contains_key("steerIdleGuard"),
+            "{serialized}"
+        );
+
+        // An unknown guard name is a contract violation: the sidecar must not
+        // read "some guard" as "the guard it knows".
+        let mut unknown = minimal("claude-primary");
+        unknown["steerIdleGuard"] = serde_json::json!("startNewTurn");
+        assert!(parse_runtime_descriptors(&serde_json::json!([unknown]).to_string()).is_err());
     }
 
     #[test]

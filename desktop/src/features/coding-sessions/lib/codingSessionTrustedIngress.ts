@@ -179,8 +179,14 @@ export type CodingSessionCommandRefusal = {
    * provider's own queue overflowing with the turn already accepted. The two
    * deserve different words, so the composer is told which it is. Absent on
    * the pre-stage `failed` receipt shape, which said only "no".
+   *
+   * `"unknown"` is a native steer whose delivery the provider could not
+   * establish (`turn_delivery_unknown`). Terminal like the other two — it
+   * will not be replayed — but *not* a statement that the words never ran, so
+   * the composer must not restore them as if refused; the pending row says
+   * "delivery unknown" and the person decides.
    */
-  outcome?: "refused" | "dropped";
+  outcome?: "refused" | "dropped" | "unknown";
 };
 
 /**

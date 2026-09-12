@@ -376,7 +376,9 @@ async fn await_delivery(
 /// first turn receipt that answers this `commandId`. Ledger 80 (c): a `steer`
 /// the runtime cannot honour is answered `turn_degraded` and delivered at the
 /// next boundary, and printing only `accepted:true` told the sender its words
-/// had gone in mid-turn when they had not.
+/// had gone in mid-turn when they had not. A steer the runtime did inject is
+/// answered `turn_injected`; one whose delivery could not be established is
+/// answered `turn_delivery_unknown` and reported with `delivered: null`.
 ///
 /// `no_wait` skips the receipt wait entirely; the command then reports the
 /// relay's fact alone and says the delivery is unconfirmed, which is what it

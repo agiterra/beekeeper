@@ -803,3 +803,199 @@ test("a turn the provider is holding is watched again when the composer remounts
   store.resetPendingCodingSessionTurns();
   scope.teardown();
 });
+
+test("an injected steer relabels the row, leaves the editor alone, and stops watching", async () => {
+  const {
+    markPendingCodingSessionTurnPublished,
+    readPendingCodingSessionTurns,
+    recordPendingCodingSessionTurn,
+    resetPendingCodingSessionTurns,
+  } = await import("../lib/codingSessionPendingTurns.ts");
+  resetPendingCodingSessionTurns();
+  const scope = await harness();
+  const injected = await turnStageEvent({ status: "turn_injected" });
+  const { finalizeEvent: sign } = await import("nostr-tools/pure");
+  const signedInjected = sign(
+    {
+      kind: injected.kind,
+      created_at: injected.created_at,
+      tags: injected.tags,
+      content: JSON.stringify({
+        ...JSON.parse(injected.content),
+        turnId: "turn-running",
+      }),
+    },
+    PROVIDER_SECRET,
+  );
+
+  recordPendingCodingSessionTurn({
+    channelId: CHANNEL_ID,
+    targetKey: "coding-session/v1|whatever",
+    commandId: TURN_COMMAND_ID,
+    text: "look at the second failure first",
+    operatorPubkey: null,
+    recordedAt: Date.now(),
+    published: false,
+  });
+  markPendingCodingSessionTurnPublished(CHANNEL_ID, TURN_COMMAND_ID);
+
+  await scope.act(async () => {
+    scope.state.typeInto("look at the second failure first");
+  });
+  await scope.act(async () => {
+    scope.state.send(TURN_COMMAND_ID);
+  });
+  await scope.settle();
+  assert.equal(scope.state.isWatching, true);
+  await scope.act(async () => {
+    scope.liveSubscriptions[0].onEvent(signedInjected);
+  });
+  await scope.settle();
+
+  // The row says so; the steered echo — not this receipt — retires it.
+  assert.equal(readPendingCodingSessionTurns()[0].injectedByProvider, true);
+  assert.equal(readPendingCodingSessionTurns().length, 1);
+  // Delivered: no error line, no draft back, and nothing more to hear.
+  assert.equal(scope.error(), null);
+  assert.equal(scope.draft(), "");
+  assert.equal(scope.state.isWatching, false);
+
+  resetPendingCodingSessionTurns();
+  scope.teardown();
+});
+
+test("a delivery-unknown answer relabels the row, keeps the words there, and never restores the draft", async () => {
+  const {
+    markPendingCodingSessionTurnPublished,
+    readPendingCodingSessionTurns,
+    recordPendingCodingSessionTurn,
+    resetPendingCodingSessionTurns,
+  } = await import("../lib/codingSessionPendingTurns.ts");
+  resetPendingCodingSessionTurns();
+  const scope = await harness();
+  const unknown = await turnStageEvent({
+    status: "turn_delivery_unknown",
+    error: {
+      code: "STEER_ACK_LOST",
+      message: "the prompt ended before the acknowledgement arrived",
+    },
+  });
+
+  recordPendingCodingSessionTurn({
+    channelId: CHANNEL_ID,
+    targetKey: "coding-session/v1|whatever",
+    commandId: TURN_COMMAND_ID,
+    text: "look at the second failure first",
+    draft: "look at the second failure first",
+    operatorPubkey: null,
+    recordedAt: Date.now(),
+    published: false,
+  });
+  markPendingCodingSessionTurnPublished(CHANNEL_ID, TURN_COMMAND_ID);
+
+  await scope.act(async () => {
+    scope.state.typeInto("look at the second failure first");
+  });
+  await scope.act(async () => {
+    scope.state.send(TURN_COMMAND_ID);
+  });
+  await scope.settle();
+  await scope.act(async () => {
+    scope.liveSubscriptions[0].onEvent(unknown);
+  });
+  await scope.settle();
+
+  // The row carries the answer and the words, and is not retired.
+  const [row] = readPendingCodingSessionTurns();
+  assert.deepEqual(row.deliveryUnknown, {
+    code: "STEER_ACK_LOST",
+    message: "the prompt ended before the acknowledgement arrived",
+  });
+  assert.equal(row.draft, "look at the second failure first");
+  // Not a refusal: the editor stays empty — putting the words back would
+  // read as "send again", and they may already be inside the running turn —
+  // and no refusal sentence is shown over them.
+  assert.equal(scope.draft(), "");
+  assert.equal(scope.error(), null);
+  // Still watched, and past any deadline: a late acknowledgement can
+  // reconcile this answer, and that receipt has to land on something.
+  assert.equal(scope.pendingDeadlines(), 0);
+  assert.equal(scope.state.isWatching, true);
+
+  resetPendingCodingSessionTurns();
+  scope.teardown();
+});
+
+test("a late turn_injected reconciles a delivery-unknown row and ends the watch", async () => {
+  const {
+    markPendingCodingSessionTurnPublished,
+    readPendingCodingSessionTurns,
+    recordPendingCodingSessionTurn,
+    resetPendingCodingSessionTurns,
+    pendingCodingSessionTurnState,
+  } = await import("../lib/codingSessionPendingTurns.ts");
+  resetPendingCodingSessionTurns();
+  const scope = await harness();
+  const unknown = await turnStageEvent({
+    status: "turn_delivery_unknown",
+    error: { code: "STEER_ACK_LOST", message: "lost" },
+  });
+  const injected = await turnStageEvent({ status: "turn_injected" });
+  const { finalizeEvent: sign } = await import("nostr-tools/pure");
+  const signedInjected = sign(
+    {
+      kind: injected.kind,
+      created_at: injected.created_at + 1,
+      tags: injected.tags,
+      content: JSON.stringify({
+        ...JSON.parse(injected.content),
+        turnId: "turn-running",
+      }),
+    },
+    PROVIDER_SECRET,
+  );
+
+  recordPendingCodingSessionTurn({
+    channelId: CHANNEL_ID,
+    targetKey: "coding-session/v1|whatever",
+    commandId: TURN_COMMAND_ID,
+    text: "go",
+    operatorPubkey: null,
+    recordedAt: Date.now(),
+    published: false,
+  });
+  markPendingCodingSessionTurnPublished(CHANNEL_ID, TURN_COMMAND_ID);
+  await scope.act(async () => {
+    scope.state.typeInto("go");
+  });
+  await scope.act(async () => {
+    scope.state.send(TURN_COMMAND_ID);
+  });
+  await scope.settle();
+  await scope.act(async () => {
+    scope.liveSubscriptions[0].onEvent(unknown);
+  });
+  await scope.settle();
+  assert.equal(
+    pendingCodingSessionTurnState(
+      readPendingCodingSessionTurns()[0],
+      Date.now(),
+    ),
+    "unknown",
+  );
+  assert.equal(scope.state.isWatching, true);
+
+  await scope.act(async () => {
+    scope.liveSubscriptions[0].onEvent(signedInjected);
+  });
+  await scope.settle();
+  const [row] = readPendingCodingSessionTurns();
+  assert.equal(row.injectedByProvider, true);
+  assert.equal(pendingCodingSessionTurnState(row, Date.now()), "injected");
+  assert.equal(scope.error(), null);
+  assert.equal(scope.draft(), "");
+  assert.equal(scope.state.isWatching, false);
+
+  resetPendingCodingSessionTurns();
+  scope.teardown();
+});

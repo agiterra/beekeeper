@@ -660,3 +660,30 @@ test("tool output wraps rather than scrolling sideways, and unbroken tokens stil
     "settled tool output should wrap, not scroll sideways",
   );
 });
+
+test("a steered prompt shows a visible marker beside its author; an ordinary one does not", async () => {
+  const markup = await renderTranscript({
+    currentUserPubkey: LOCAL_OPERATOR,
+    generationId: "generation-1",
+    isWorking: true,
+    items: [
+      prompt(LOCAL_OPERATOR),
+      {
+        ...prompt(LOCAL_OPERATOR),
+        id: "steer",
+        text: "Also the tests",
+        steered: true,
+      },
+    ],
+  });
+  const markers = markup.match(
+    /data-testid="coding-session-user-message-steered"[^>]*>([^<]*)</g,
+  );
+  assert.equal(markers?.length, 1, markup);
+  assert.match(markers[0], />steered</);
+  // Beside the author, in the same byline, not hidden in a title attribute.
+  assert.match(
+    markup,
+    /data-testid="coding-session-user-message-author"[^>]*>You<\/span><span[^>]*data-testid="coding-session-user-message-steered"/,
+  );
+});

@@ -3063,7 +3063,11 @@ pub enum SessionsCmd {
     /// separate fact and is read from the provider's first receipt for this
     /// `commandId`: `delivered` (true/false/null), `deliveryStatus` (the
     /// receipt's own word, or `unconfirmed`), and `delivery` (one sentence).
-    /// A `--deliver steer` a runtime cannot honour reports `turn_degraded`.
+    /// A `--deliver steer` a runtime cannot honour reports `turn_degraded`;
+    /// one the runtime injected into its running turn reports
+    /// `turn_injected`; one written to the runtime and never acknowledged
+    /// reports `turn_delivery_unknown` (`delivered: null` — the provider will
+    /// not resend it, and neither will this command).
     #[command(
         after_help = "Examples:\n  echo 'rebase and re-run the gate' | bee sessions send --channel <uuid> --to builder --session-ref <uuid> --content -\n  bee sessions send --channel <uuid> --to '<cs-target>' --deliver interrupt --content 'stop'\n  bee sessions send --channel <uuid> --readdress <commandId>\n\nRecipe:\n  bee sessions send --channel <uuid> --session-ref <uuid> --to builder --content <turn-text>"
     )]

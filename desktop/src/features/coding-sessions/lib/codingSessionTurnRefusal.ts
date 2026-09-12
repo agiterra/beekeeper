@@ -22,6 +22,14 @@
  * different words for different facts and this module keeps them apart:
  * nobody was refused when a queue filled up. Degraded is neither — the turn
  * still runs — so it never reaches this module's error line at all.
+ *
+ * `turn_delivery_unknown` is the one terminal answer that is *not* a refusal
+ * in this module's sense: a native steer was written to the running turn and
+ * nothing establishes whether it arrived. The provider will not replay it,
+ * and neither may this client on its own — putting the words back in the
+ * editor as if refused is how a message gets delivered twice. The pending row
+ * keeps them, says "delivery unknown", and offers dismissal; see
+ * {@link isCodingSessionDeliveryUnknown}.
  */
 import { MAX_PENDING_CODING_SESSION_TURNS_PER_TARGET } from "./codingSessionPendingTurns";
 import type { CodingSessionCommandRefusal } from "./codingSessionTrustedIngress";
@@ -66,6 +74,23 @@ export const CODING_SESSION_TURN_REFUSED_MESSAGE =
  */
 export const CODING_SESSION_TURN_DROPPED_MESSAGE =
   "The provider dropped this turn without running it.";
+
+/**
+ * Fallback when a delivery-unknown receipt carries no readable message.
+ *
+ * Says what is known — the input was written and never acknowledged — and
+ * nothing more. It must not read as a refusal, because the words may already
+ * be inside the running turn.
+ */
+export const CODING_SESSION_TURN_DELIVERY_UNKNOWN_MESSAGE =
+  "The provider could not confirm whether this reached the running turn.";
+
+/** True for the terminal answer that is neither a refusal nor a drop. */
+export function isCodingSessionDeliveryUnknown(
+  refusal: CodingSessionCommandRefusal,
+): boolean {
+  return refusal.outcome === "unknown";
+}
 
 /** One sent turn, held only until it is refused or the wait expires. */
 export type WatchedCodingSessionTurn = {
@@ -116,12 +141,19 @@ export function formatCodingSessionTurnRefusal(
   refusal: CodingSessionCommandRefusal,
 ): string {
   const dropped = refusal.outcome === "dropped";
-  const label = dropped ? "Turn dropped" : "Turn refused";
+  const unknown = refusal.outcome === "unknown";
+  const label = unknown
+    ? "Delivery unknown"
+    : dropped
+      ? "Turn dropped"
+      : "Turn refused";
   const message =
     refusal.message.trim() ||
-    (dropped
-      ? CODING_SESSION_TURN_DROPPED_MESSAGE
-      : CODING_SESSION_TURN_REFUSED_MESSAGE);
+    (unknown
+      ? CODING_SESSION_TURN_DELIVERY_UNKNOWN_MESSAGE
+      : dropped
+        ? CODING_SESSION_TURN_DROPPED_MESSAGE
+        : CODING_SESSION_TURN_REFUSED_MESSAGE);
   const code = refusal.code.trim();
   return code ? `${label} (${code}): ${message}` : `${label}: ${message}`;
 }
@@ -194,6 +226,10 @@ export const CODING_SESSION_READDRESSABLE_REFUSAL_CODES = [
 export function isCodingSessionReaddressableRefusal(
   refusal: CodingSessionCommandRefusal,
 ): boolean {
+  // An unknown delivery is never re-addressed on this client's initiative:
+  // the words may already be in the running turn, and the re-address verb
+  // exists for words that provably never ran.
+  if (isCodingSessionDeliveryUnknown(refusal)) return false;
   const code = refusal.code.trim().toUpperCase();
   return (
     CODING_SESSION_READDRESSABLE_REFUSAL_CODES as readonly string[]

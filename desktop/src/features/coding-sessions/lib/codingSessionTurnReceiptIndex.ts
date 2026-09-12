@@ -1,7 +1,8 @@
 /**
  * The per-stage turn receipts (44224 `turn_queued` / `turn_started` /
- * `turn_degraded` / `turn_dropped` / `turn_refused` / `interrupt_delivered`),
- * kept apart from the lifecycle ones.
+ * `turn_injected` / `turn_degraded` / `turn_delivery_unknown` /
+ * `turn_dropped` / `turn_refused` / `interrupt_delivered`), kept apart from
+ * the lifecycle ones.
  *
  * Two facts force the separation, and both are correctness rather than tidiness:
  *
@@ -93,13 +94,30 @@ export type CodingSessionTurnProgress =
    * because the turn still runs.
    */
   | { stage: "degraded" }
-  | { stage: "started"; turnId: string };
+  | { stage: "started"; turnId: string }
+  /**
+   * The native steer landed: the runtime acknowledged the input as joined
+   * into the turn already running, `turnId`. Ranked at least as high as
+   * `started` because it is the later fact about the same command — and it
+   * never opens a turn of its own.
+   */
+  | { stage: "injected"; turnId: string };
 
-/** Why a turn will never run, in the provider's own code and words. */
+/**
+ * How a turn ended without a run the provider can vouch for, in the
+ * provider's own code and words.
+ *
+ * `"refused"` and `"dropped"` both mean the words never ran. `"unknown"` is
+ * deliberately neither: a native steer was written to the runtime and its
+ * delivery could not be established — the provider will not replay it, and
+ * nothing here may claim the words ran or that they did not. A surface that
+ * folded it into `"dropped"` would put the words back in the editor as if
+ * refused, which is the double delivery the classes exist to prevent.
+ */
 export type CodingSessionTurnFailure = {
   code: string;
   message: string;
-  outcome: "refused" | "dropped";
+  outcome: "refused" | "dropped" | "unknown";
 };
 
 /** In-memory index of verified turn receipts, keyed per (channel, command, stage). */
@@ -155,18 +173,29 @@ export class CodingSessionTurnReceiptIndex {
   }
 
   /**
-   * The outcome that cost this turn its run, or `null` if it still has one.
+   * The terminal outcome that ended this turn without a run the provider can
+   * vouch for, or `null` if it still has one.
    *
    * Refused outranks dropped only because a provider that somehow published
    * both said something about the sender, which is the more actionable of the
-   * two; in practice exactly one is published.
+   * two; in practice exactly one is published. Both outrank delivery-unknown:
+   * a late acknowledgement that reconciles an unknown attempt as never
+   * delivered publishes `turn_dropped` (`STEER_NOT_DELIVERED`) under the same
+   * command, and that later, definite answer is the one to show. And an
+   * unknown is *withdrawn* by a `turn_injected` under the same command — the
+   * other reconciliation — so once that receipt exists this reports `null`
+   * rather than an answer the provider has since replaced.
    */
   resolveFailure(
     channelId: string,
     commandId: string,
     providerAuthorityPubkey: string,
   ): CodingSessionTurnFailure | null {
-    for (const status of ["turn_refused", "turn_dropped"] as const) {
+    for (const [status, outcome] of [
+      ["turn_refused", "refused"],
+      ["turn_dropped", "dropped"],
+      ["turn_delivery_unknown", "unknown"],
+    ] as const) {
       const receipt = this.resolve(
         channelId,
         commandId,
@@ -174,10 +203,21 @@ export class CodingSessionTurnReceiptIndex {
         providerAuthorityPubkey,
       );
       if (!receipt || receipt.error === null) continue;
+      if (
+        outcome === "unknown" &&
+        this.resolve(
+          channelId,
+          commandId,
+          "turn_injected",
+          providerAuthorityPubkey,
+        )
+      ) {
+        continue;
+      }
       return {
         code: receipt.error.code,
         message: receipt.error.message,
-        outcome: status === "turn_dropped" ? "dropped" : "refused",
+        outcome,
       };
     }
     return null;
@@ -187,18 +227,29 @@ export class CodingSessionTurnReceiptIndex {
    * How far the turn got.
    *
    * Later facts outrank earlier ones about the same turn, because they are not
-   * competing claims: `turn_started` over `turn_degraded` over `turn_queued`.
-   * A degraded steer is published alongside the `turn_queued` that follows it
-   * — the provider says both — and the row shows the degradation, which is the
-   * half the person did not ask for. A provider that publishes none of the
-   * three reports `null`, and the surfaces reading this say nothing rather
-   * than guessing a stage.
+   * competing claims: `turn_injected` over `turn_started` over `turn_degraded`
+   * over `turn_queued`. A degraded steer is published alongside the
+   * `turn_queued` that follows it — the provider says both — and the row shows
+   * the degradation, which is the half the person did not ask for. An injected
+   * steer is the terminal success of the native path and outranks everything
+   * a boundary delivery would say. A provider that publishes none of the four
+   * reports `null`, and the surfaces reading this say nothing rather than
+   * guessing a stage.
    */
   resolveProgress(
     channelId: string,
     commandId: string,
     providerAuthorityPubkey: string,
   ): CodingSessionTurnProgress | null {
+    const injected = this.resolve(
+      channelId,
+      commandId,
+      "turn_injected",
+      providerAuthorityPubkey,
+    );
+    if (injected && injected.status === "turn_injected") {
+      return { stage: "injected", turnId: injected.turnId };
+    }
     const started = this.resolve(
       channelId,
       commandId,

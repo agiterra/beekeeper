@@ -31,7 +31,15 @@ test("an ordinary in-flight turn says nothing at all", () => {
 });
 
 test("nothing claims the model is thinking", () => {
-  for (const state of ["sending", "queued", "waiting", "stalled", "degraded"]) {
+  for (const state of [
+    "sending",
+    "queued",
+    "waiting",
+    "stalled",
+    "degraded",
+    "injected",
+    "unknown",
+  ]) {
     for (const age of [1_000, STALLED]) {
       const caption = describePendingCodingSessionTurn(state, age);
       if (caption === null) continue;
@@ -93,4 +101,42 @@ test("a degraded steer names the downgrade rather than reading as a queue", () =
     describePendingCodingSessionTurn("degraded", 90_000),
     "Delivered at the next turn boundary — this provider cannot steer; not started yet — 1m; it cannot be recalled",
   );
+});
+
+test("an injected steer says it went into the running turn, and nothing about waiting", () => {
+  for (const age of [1_000, 4 * 60_000]) {
+    assert.equal(
+      describePendingCodingSessionTurn("injected", age),
+      "Injected into the running turn",
+    );
+  }
+});
+
+test("a delivery-unknown row leads with the provider's own words and offers dismissal", () => {
+  assert.equal(
+    describePendingCodingSessionTurn("unknown", 1_000, {
+      code: "STEER_ACK_LOST",
+      message: "the prompt ended before the acknowledgement arrived",
+    }),
+    "Delivery unknown — the prompt ended before the acknowledgement arrived",
+  );
+  // A blank message falls back to the code, and no detail at all to the one
+  // honest sentence — never to "refused" or "dropped".
+  assert.equal(
+    describePendingCodingSessionTurn("unknown", 1_000, {
+      code: "STEER_ACK_TIMEOUT",
+      message: "  ",
+    }),
+    "Delivery unknown — STEER_ACK_TIMEOUT",
+  );
+  assert.match(
+    describePendingCodingSessionTurn("unknown", 4 * 60_000),
+    /^Delivery unknown — /,
+  );
+  const source = readFileSync(
+    new URL("./CodingSessionPendingTurns.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /coding-session-pending-turn-dismiss/);
+  assert.match(source, /forgetPendingCodingSessionTurn\(/);
 });

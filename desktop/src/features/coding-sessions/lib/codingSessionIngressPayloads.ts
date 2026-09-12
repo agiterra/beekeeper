@@ -105,7 +105,25 @@ export type CodingSessionLifecycleReceipt =
   | {
       schema: typeof CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA;
       commandId: string;
-      status: "turn_dropped" | "turn_refused" | "turn_degraded";
+      status: "turn_injected";
+      session: CodingSessionCommandTarget;
+      error: null;
+      /**
+       * The provider's own id for the turn already running that this
+       * `deliver: "steer"` input was injected into. Not a new turn: no
+       * second `turn_started` follows, and the `user_prompt{steered: true}`
+       * echo that precedes this receipt is what settles the sender's row.
+       */
+      turnId: string;
+    }
+  | {
+      schema: typeof CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA;
+      commandId: string;
+      status:
+        | "turn_dropped"
+        | "turn_refused"
+        | "turn_degraded"
+        | "turn_delivery_unknown";
       session: CodingSessionCommandTarget;
       error: { code: string; message: string };
     }
@@ -147,9 +165,13 @@ export type CodingSessionLifecycleReceiptStatus =
  * otherwise a `turn_refused` names why. A surface that read it as delivery
  * would report a turn nothing has accepted.
  *
- * `turn_queued`, `turn_started`, and `interrupt_delivered` carry
- * `error: null`. `turn_degraded` (`STEER_UNSUPPORTED`), `turn_dropped`
- * (`QUEUE_FULL`, `NO_LIVE_EXECUTION`) and `turn_refused`
+ * `turn_queued`, `turn_started`, `turn_injected`, and `interrupt_delivered`
+ * carry `error: null`. `turn_degraded` (`STEER_UNSUPPORTED`, `STEER_TURN_ENDED`,
+ * `STEER_REJECTED`, `STEER_ATTACHMENTS_UNSUPPORTED`),
+ * `turn_delivery_unknown` (`STEER_WRITE_FAILED`, `STEER_ACK_LOST`,
+ * `STEER_ACK_TIMEOUT`, `STEER_ACK_UNRECOGNIZED`, `STEER_UNRESOLVED_AT_RESTART`,
+ * `STEER_UNOBSERVED_NEW_TURN`), `turn_dropped` (`QUEUE_FULL`,
+ * `NO_LIVE_EXECUTION`, `STEER_SATURATED`, `STEER_NOT_DELIVERED`) and `turn_refused`
  * (`UNAUTHORIZED_OPERATOR`, `UNKNOWN_TARGET`, `STALE_GENERATION`,
  * `SESSION_CLOSED`) carry a `{code, message}`. The code is read as a bounded
  * string rather than pinned to those lists, exactly as the lifecycle `failed`
@@ -159,11 +181,24 @@ export type CodingSessionLifecycleReceiptStatus =
  * `turn_degraded` is not a failure. It says the provider could not steer the
  * running turn and will run this one at the next boundary instead — the turn
  * still happens, so the row is relabelled rather than retired.
+ *
+ * `turn_injected` is the native steer's success: the runtime acknowledged the
+ * input as joined into the turn already running, whose `turnId` it carries
+ * (the second six-key status, beside `turn_started`). No new turn begins.
+ *
+ * `turn_delivery_unknown` is terminal and is neither a drop nor a refusal: a
+ * native steer was written to the runtime and nothing establishes whether it
+ * arrived. The provider will not replay it — a replay of an input the runtime
+ * may already hold is the double delivery the classes exist to prevent — and
+ * the sender decides whether to send again. A surface must not read it as
+ * "never ran" (that would restore the words as if refused) nor as delivered.
  */
 export const CODING_SESSION_TURN_RECEIPT_STATUSES = [
   "turn_queued",
   "turn_started",
+  "turn_injected",
   "turn_degraded",
+  "turn_delivery_unknown",
   "turn_dropped",
   "turn_refused",
   "interrupt_delivered",
@@ -334,10 +369,10 @@ export function codingSessionMetadataSemanticKey(
 }
 
 /**
- * The five keys every 44224 carries. `turn_started` is the single exception:
- * it carries these plus `turnId`, and nothing else. Exact-key discipline is
- * absolute in both directions — an unexpected key is a rejection, never a
- * partial accept.
+ * The five keys every 44224 carries. `turn_started` and `turn_injected` are
+ * the two exceptions: they carry these plus `turnId`, and nothing else.
+ * Exact-key discipline is absolute in both directions — an unexpected key is
+ * a rejection, never a partial accept.
  */
 const RECEIPT_ENVELOPE_KEYS = [
   "schema",
@@ -353,7 +388,7 @@ export function parseCodingSessionLifecycleReceipt(
   const value = parseBoundedJson(content, MAX_RECEIPT_CONTENT_BYTES);
   if (!isPlainRecord(value) || typeof value.status !== "string") return null;
   const expectedKeys =
-    value.status === "turn_started"
+    value.status === "turn_started" || value.status === "turn_injected"
       ? [...RECEIPT_ENVELOPE_KEYS, "turnId"]
       : RECEIPT_ENVELOPE_KEYS;
   if (
@@ -486,7 +521,10 @@ function parseTurnReceipt(
       error: null,
     });
   }
-  if (status === "turn_started") {
+  // The two six-key statuses: the turn that began, or the running turn an
+  // input was injected into. Same bound, same rule — a blank or missing id
+  // names no turn.
+  if (status === "turn_started" || status === "turn_injected") {
     if (
       value.error !== null ||
       !boundedNonempty(value.turnId, MAX_RECEIPT_TURN_ID_BYTES)

@@ -53,6 +53,9 @@ String codingSessionPendingPhaseLabel(CodingSessionPendingTurnView view) =>
       CodingSessionPendingPhase.degraded =>
         'Delivery downgraded${view.detail == null ? '' : ' — ${view.detail}'}',
       CodingSessionPendingPhase.started => 'Started',
+      CodingSessionPendingPhase.injected => 'Injected into the running turn',
+      CodingSessionPendingPhase.deliveryUnknown =>
+        'Delivery unknown${view.detail == null ? '' : ' — ${view.detail}'}',
       CodingSessionPendingPhase.refused =>
         'Refused${view.detail == null ? '' : ' — ${view.detail}'}',
       CodingSessionPendingPhase.dropped =>

@@ -1626,11 +1626,13 @@ pub struct TurnDiagnosis {
     /// predates the stamp.
     pub command_id: Option<String>,
     /// The newest *terminal* turn stage that answered [`Self::command_id`],
-    /// as its wire name (`turn_dropped`, `turn_refused`), and the code it
-    /// carried.
+    /// as its wire name (`turn_dropped`, `turn_refused`,
+    /// `turn_delivery_unknown`), and the code it carried.
     ///
-    /// Present only for a stage that says the turn did not run and will not:
-    /// a command answered this way is *answered*, and calling it unfinished
+    /// Present only for a stage that says the turn did not run and will not,
+    /// or — `turn_delivery_unknown` — that the provider could not establish
+    /// whether a native steer reached the runtime and will not retry it: a
+    /// command answered either way is *answered*, and calling it unfinished
     /// reports an owed turn where the record holds none.
     pub answered_stage: Option<String>,
     pub answered_code: Option<String>,
@@ -1642,13 +1644,25 @@ pub struct TurnDiagnosis {
 ///
 /// `turn_dropped` and `turn_refused` are the two terminal refusals in the
 /// contract (`buzz-core`'s `ReceiptStatus`); every other stage is either
-/// progress (`turn_queued`, `turn_started`, `turn_degraded`) or belongs to a
-/// cancel (`interrupt_delivered`).
+/// progress (`turn_queued`, `turn_started`, `turn_degraded`, `turn_injected`),
+/// belongs to a cancel (`interrupt_delivered`), or — `turn_delivery_unknown`
+/// — is terminal without saying the turn never ran; see
+/// [`is_delivery_unknown`], which gets its own sentence rather than this
+/// one's "did not run and will not".
 fn is_terminal_refusal(status: ReceiptStatus) -> bool {
     matches!(
         status,
         ReceiptStatus::TurnDropped | ReceiptStatus::TurnRefused
     )
+}
+
+/// Whether a turn stage says a native steer was written to the runtime and
+/// its delivery could never be established. Terminal — the provider records
+/// the command as refused and never replays it — but *not* a statement that
+/// the words never ran, so `doctor` must not print the refusal sentence over
+/// it.
+fn is_delivery_unknown(status: ReceiptStatus) -> bool {
+    status == ReceiptStatus::TurnDeliveryUnknown
 }
 
 /// Whether a failed turn's own result proves the agent never answered it.
@@ -1895,7 +1909,7 @@ pub fn diagnose_turns(
     let mut orphans: Vec<(i64, &String, &crew::TurnStage)> = stages
         .iter()
         .filter(|(command_id, stage)| {
-            is_terminal_refusal(stage.status)
+            (is_terminal_refusal(stage.status) || is_delivery_unknown(stage.status))
                 && !diagnosed
                     .iter()
                     .any(|turn| turn.command_id.as_ref() == Some(*command_id))
@@ -1920,11 +1934,25 @@ pub fn diagnose_turns(
             answered_stage: Some(stage.status.as_str().to_owned()),
             answered_code: stage.error_code.clone(),
             findings: vec![{
-                let answer = format!(
-                    "answered {} ({}) with no turn: these words never ran and never will",
-                    stage.status.as_str(),
-                    stage.error_code.as_deref().unwrap_or("no code")
-                );
+                let answer = if is_delivery_unknown(stage.status) {
+                    // Honest about the one thing the record cannot say. The
+                    // provider will not resend it; whether the runtime saw
+                    // these words is for the sender to judge from the
+                    // transcript before sending them again.
+                    format!(
+                        "answered {} ({}): whether this steer reached the running turn could not \
+                         be established and the provider will not resend it — read the \
+                         transcript before sending these words again",
+                        stage.status.as_str(),
+                        stage.error_code.as_deref().unwrap_or("no code")
+                    )
+                } else {
+                    format!(
+                        "answered {} ({}) with no turn: these words never ran and never will",
+                        stage.status.as_str(),
+                        stage.error_code.as_deref().unwrap_or("no code")
+                    )
+                };
                 // Same rule as the turn rows above: the answer and its code are
                 // always reported, the recovery verb only when
                 // `crew::plan_readdress` would honour it — which takes the
@@ -3572,10 +3600,21 @@ mod tests {
                 "STALE_GENERATION",
                 &session,
             ),
+            // A native steer written to the runtime and never acknowledged:
+            // terminal, but not a claim that the words never ran.
+            refused_receipt_event(
+                &format!("{:064}", 13),
+                base + 62,
+                "cmd-unknown",
+                "turn_delivery_unknown",
+                "STEER_ACK_LOST",
+                &session,
+            ),
         ];
 
-        // Both refusals answer a `thread.turn.start`, which is what makes the
-        // re-address advice below honest.
+        // All three answer a `thread.turn.start`, which is what makes the
+        // re-address advice below honest — and what makes withholding it from
+        // the delivery-unknown row a decision rather than a missing command.
         let command_events = vec![
             turn_start_event(
                 &format!("{:064}", 21),
@@ -3590,6 +3629,13 @@ mod tests {
                 "cmd-never-ran",
                 &session,
                 "and again",
+            ),
+            turn_start_event(
+                &format!("{:064}", 23),
+                base + 2,
+                "cmd-unknown",
+                &session,
+                "and also this",
             ),
         ];
 
@@ -3610,8 +3656,9 @@ mod tests {
         let turns = diagnose_turns(&records, &commands, &stages);
         assert_eq!(
             turns.len(),
-            2,
-            "the refused command with no turn needs a row of its own: {turns:?}"
+            3,
+            "the refused and the delivery-unknown commands with no turn each need a row of \
+             their own: {turns:?}"
         );
 
         let started = &turns[0];
@@ -3642,6 +3689,23 @@ mod tests {
             "the row must name the verb that recovers it: {:?}",
             orphan.findings
         );
+
+        // The delivery-unknown row is answered — the provider will not replay
+        // it — but the sentence must not claim the words never ran, and must
+        // not send the reader to a verb that resends words the runtime may
+        // already hold.
+        let unknown = &turns[2];
+        assert_eq!(unknown.turn_id, None);
+        assert_eq!(unknown.command_id.as_deref(), Some("cmd-unknown"));
+        assert_eq!(
+            unknown.answered_stage.as_deref(),
+            Some("turn_delivery_unknown")
+        );
+        assert_eq!(unknown.answered_code.as_deref(), Some("STEER_ACK_LOST"));
+        let finding = unknown.findings.join("\n");
+        assert!(finding.contains("could not be established"), "{finding}");
+        assert!(!finding.contains("never ran"), "{finding}");
+        assert!(!finding.contains("--readdress"), "{finding}");
     }
 
     /// The other half of the same rule: a stage that is *not* terminal must
@@ -3663,7 +3727,12 @@ mod tests {
         )];
         let (records, _) = decode_transcripts(&transcripts);
 
-        for status in ["turn_queued", "turn_started", "turn_degraded"] {
+        for (status, turn_id) in [
+            ("turn_queued", None),
+            ("turn_started", Some("t-1")),
+            ("turn_degraded", None),
+            ("turn_injected", Some("t-1")),
+        ] {
             let receipt_events = vec![turn_receipt_event(
                 &format!("{:064}", 21),
                 &signer,
@@ -3671,7 +3740,7 @@ mod tests {
                 "cmd-1",
                 status,
                 Some(&session),
-                None,
+                turn_id,
             )];
             let (receipts, _) = decode_receipts(&receipt_events);
             let turns = diagnose_turns(&records, &[], &crew::newest_turn_stages(&receipts));
@@ -4455,7 +4524,7 @@ mod tests {
     /// Builds a well-formed turn-stage 44224 event straight from JSON, since
     /// `buzz-core`'s `LifecycleReceipt` builders (Lane 1A) do not mint these
     /// statuses yet. Mirrors the exact-key shape D4 requires: 6 keys with
-    /// `turnId` for `turn_started`, 5 keys otherwise.
+    /// `turnId` for `turn_started` and `turn_injected`, 5 keys otherwise.
     fn turn_receipt_event(
         id: &str,
         signer: &str,
@@ -4495,6 +4564,8 @@ mod tests {
         ReceiptStatus::TurnDropped,
         ReceiptStatus::TurnRefused,
         ReceiptStatus::TurnDegraded,
+        ReceiptStatus::TurnInjected,
+        ReceiptStatus::TurnDeliveryUnknown,
         ReceiptStatus::InterruptDelivered,
     ];
 
@@ -4511,7 +4582,7 @@ mod tests {
         // or the two tests below stop covering it silently.
         assert_eq!(
             EVERY_TURN_STAGE.len(),
-            6,
+            8,
             "a turn stage was added or removed in buzz-core; extend EVERY_TURN_STAGE"
         );
     }
@@ -4521,7 +4592,7 @@ mod tests {
         let session = target("s-1", 1);
         let signer = "a".repeat(64);
         for (index, status) in EVERY_TURN_STAGE.iter().enumerate() {
-            let turn_id = (*status == ReceiptStatus::TurnStarted).then_some("provider-turn-9");
+            let turn_id = status.carries_turn_id().then_some("provider-turn-9");
             let events = vec![turn_receipt_event(
                 &format!("{:064}", index + 1),
                 &signer,
@@ -4571,7 +4642,7 @@ mod tests {
         assert_eq!(baseline[0].status, "idle");
 
         for (index, status) in EVERY_TURN_STAGE.iter().enumerate() {
-            let turn_id = (*status == ReceiptStatus::TurnStarted).then_some("provider-turn-9");
+            let turn_id = status.carries_turn_id().then_some("provider-turn-9");
             let receipt_events = vec![turn_receipt_event(
                 &format!("{:064}", index + 2),
                 &signer,

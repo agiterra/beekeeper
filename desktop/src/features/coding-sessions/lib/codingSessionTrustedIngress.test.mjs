@@ -1459,6 +1459,13 @@ function turnReceipt(status, overrides = {}) {
     error: null,
   };
   if (status === "turn_started") base.turnId = "turn-abc";
+  if (status === "turn_injected") base.turnId = "turn-abc";
+  if (status === "turn_delivery_unknown") {
+    base.error = {
+      code: "STEER_ACK_LOST",
+      message: "the prompt ended before the acknowledgement arrived",
+    };
+  }
   if (status === "turn_dropped") {
     base.error = { code: "QUEUE_FULL", message: "the session queue is full" };
   }
@@ -1490,7 +1497,7 @@ function turnReceiptEvent(status, { value, ...options } = {}) {
   });
 }
 
-test("every turn stage decodes, with turnId only on turn_started", () => {
+test("every turn stage decodes, with turnId only on turn_started and turn_injected", () => {
   for (const status of CODING_SESSION_TURN_RECEIPT_STATUSES) {
     const parsed = parseCodingSessionLifecycleReceipt(
       JSON.stringify(turnReceipt(status)),
@@ -1509,13 +1516,32 @@ test("every turn stage decodes, with turnId only on turn_started", () => {
     JSON.stringify(turnReceipt("turn_queued")),
   );
   assert.equal("turnId" in queued, false);
+  const injected = parseCodingSessionLifecycleReceipt(
+    JSON.stringify(turnReceipt("turn_injected")),
+  );
+  assert.equal(injected.turnId, "turn-abc");
+  assert.equal(injected.error, null);
+  const unknown = parseCodingSessionLifecycleReceipt(
+    JSON.stringify(turnReceipt("turn_delivery_unknown")),
+  );
+  assert.equal("turnId" in unknown, false);
+  assert.equal(unknown.error.code, "STEER_ACK_LOST");
 });
 
 test("a turn receipt with an unexpected key is rejected outright", () => {
   const cases = [
-    // `turnId` belongs to exactly one status.
+    // `turnId` belongs to exactly two statuses.
     turnReceipt("turn_queued", { turnId: "turn-abc" }),
     turnReceipt("turn_refused", { turnId: "turn-abc" }),
+    turnReceipt("turn_delivery_unknown", { turnId: "turn-abc" }),
+    // ... and turn_injected cannot do without it, nor carry an error.
+    (() => {
+      const value = turnReceipt("turn_injected");
+      delete value.turnId;
+      return value;
+    })(),
+    turnReceipt("turn_injected", { error: { code: "X", message: "y" } }),
+    turnReceipt("turn_delivery_unknown", { error: null }),
     // ... and turn_started cannot do without it.
     (() => {
       const value = turnReceipt("turn_started");
@@ -1789,4 +1815,150 @@ test("ingestion signals only new relevant evidence, preserving duplicate and unr
     "new validation failures must still notify readers",
   );
   assert.equal(ingest([invalid]), false);
+});
+
+test("an injected steer is progress that outranks started, degraded and queued, and never a refusal", () => {
+  const store = new TrustedCodingSessionIngressStore();
+  store.ingestRelayEvents(
+    [
+      turnReceiptEvent("turn_queued"),
+      turnReceiptEvent("turn_degraded"),
+      turnReceiptEvent("turn_started"),
+      turnReceiptEvent("turn_injected"),
+    ],
+    [CHANNEL_ID],
+    AUTHORITY,
+  );
+  assert.deepEqual(
+    store.resolveTurnProgress(CHANNEL_ID, TURN_COMMAND_ID, PROVIDER_PUBKEY),
+    { stage: "injected", turnId: "turn-abc" },
+  );
+  // The words went in; nothing here restores a draft.
+  assert.equal(
+    store.resolveTurnRefusal(CHANNEL_ID, TURN_COMMAND_ID, PROVIDER_PUBKEY),
+    null,
+  );
+  // An injected input did not start a turn, so it is not a started-at
+  // witness for the turn it joined.
+  const injectedOnly = new TrustedCodingSessionIngressStore();
+  injectedOnly.ingestRelayEvents(
+    [turnReceiptEvent("turn_injected")],
+    [CHANNEL_ID],
+    AUTHORITY,
+  );
+  assert.deepEqual(
+    injectedOnly.resolveTurnProgress(
+      CHANNEL_ID,
+      TURN_COMMAND_ID,
+      PROVIDER_PUBKEY,
+    ),
+    { stage: "injected", turnId: "turn-abc" },
+  );
+  assert.equal(
+    injectedOnly.resolveTurnStartedAtMs(
+      CHANNEL_ID,
+      "turn-abc",
+      PROVIDER_PUBKEY,
+    ),
+    null,
+  );
+});
+
+test("a delivery-unknown answer reads back as its own terminal outcome, not as dropped", () => {
+  const store = new TrustedCodingSessionIngressStore();
+  store.ingestRelayEvents(
+    [
+      turnReceiptEvent("turn_queued"),
+      turnReceiptEvent("turn_delivery_unknown"),
+    ],
+    [CHANNEL_ID],
+    AUTHORITY,
+  );
+  assert.deepEqual(
+    store.resolveTurnRefusal(CHANNEL_ID, TURN_COMMAND_ID, PROVIDER_PUBKEY),
+    {
+      code: "STEER_ACK_LOST",
+      message: "the prompt ended before the acknowledgement arrived",
+      outcome: "unknown",
+    },
+  );
+  // Only from the pinned authority, like every other answer.
+  assert.equal(
+    store.resolveTurnRefusal(
+      CHANNEL_ID,
+      TURN_COMMAND_ID,
+      getPublicKey(OTHER_SECRET),
+    ),
+    null,
+  );
+  // A later, definite answer under the same command — the late ACK proved
+  // the input never arrived — outranks the unknown.
+  store.ingestRelayEvents(
+    [
+      turnReceiptEvent("turn_dropped", {
+        value: turnReceipt("turn_dropped", {
+          error: {
+            code: "STEER_NOT_DELIVERED",
+            message: "never reached the turn",
+          },
+        }),
+      }),
+    ],
+    [CHANNEL_ID],
+    AUTHORITY,
+  );
+  assert.deepEqual(
+    store.resolveTurnRefusal(CHANNEL_ID, TURN_COMMAND_ID, PROVIDER_PUBKEY),
+    {
+      code: "STEER_NOT_DELIVERED",
+      message: "never reached the turn",
+      outcome: "dropped",
+    },
+  );
+  // And it never touches the generation.
+  assert.deepEqual(
+    store.resolveLifecycle(CHANNEL_ID, TURN_COMMAND_ID, PROVIDER_PUBKEY),
+    { state: "pending", commandId: TURN_COMMAND_ID },
+  );
+});
+
+test("a turn_injected withdraws the delivery-unknown it reconciles", () => {
+  const store = new TrustedCodingSessionIngressStore();
+  store.ingestRelayEvents(
+    [turnReceiptEvent("turn_delivery_unknown")],
+    [CHANNEL_ID],
+    AUTHORITY,
+  );
+  assert.equal(
+    store.resolveTurnRefusal(CHANNEL_ID, TURN_COMMAND_ID, PROVIDER_PUBKEY)
+      ?.outcome,
+    "unknown",
+  );
+  store.ingestRelayEvents(
+    [turnReceiptEvent("turn_injected")],
+    [CHANNEL_ID],
+    AUTHORITY,
+  );
+  // The later, definite answer replaces the unknown: no failure is reported
+  // any more, and progress reads injected.
+  assert.equal(
+    store.resolveTurnRefusal(CHANNEL_ID, TURN_COMMAND_ID, PROVIDER_PUBKEY),
+    null,
+  );
+  assert.deepEqual(
+    store.resolveTurnProgress(CHANNEL_ID, TURN_COMMAND_ID, PROVIDER_PUBKEY),
+    { stage: "injected", turnId: "turn-abc" },
+  );
+  // A refusal or drop is never withdrawn by an injected receipt: that pair
+  // is a provider contradiction, and the actionable half still shows.
+  store.ingestRelayEvents(
+    [turnReceiptEvent("turn_refused")],
+    [CHANNEL_ID],
+    AUTHORITY,
+  );
+  assert.equal(
+    store.resolveTurnRefusal(CHANNEL_ID, TURN_COMMAND_ID, PROVIDER_PUBKEY)
+      ?.outcome,
+    "refused",
+  );
 });

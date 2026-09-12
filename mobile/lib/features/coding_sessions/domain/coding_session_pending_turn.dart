@@ -6,7 +6,8 @@ import 'coding_session_models.dart';
 /// A turn this device sent and is still waiting to see answered.
 ///
 /// A row exists from the moment the composer clears until a `turn_started`
-/// receipt names its [commandId] (CREW_SESSIONS_PLAN D4). It is keyed by the
+/// (or `turn_injected`) receipt names its [commandId] (CREW_SESSIONS_PLAN
+/// D4). It is keyed by the
 /// execution's generation-free identity plus the command id, so a resume that
 /// mints the next generation cannot orphan it, and it carries the raw
 /// [draft] so a refusal can hand the exact words back.
@@ -90,6 +91,17 @@ enum CodingSessionPendingPhase {
   /// A `turn_started` named it — the row is settled and leaves the list.
   started,
 
+  /// A `turn_injected` named it: the words went into the turn already
+  /// running. Settled exactly like [started] — nothing is owed.
+  injected,
+
+  /// A `turn_delivery_unknown` named it: a native steer was written to the
+  /// runtime and nothing establishes whether it arrived. Terminal — the
+  /// provider will not resend it — but not a failure: the words may already
+  /// be inside the running turn, so they are *not* handed back to the
+  /// composer. The row stays, says so, and the person dismisses it.
+  deliveryUnknown,
+
   /// The provider refused it (`turn_refused`); the words go back to the
   /// composer.
   refused,
@@ -120,12 +132,23 @@ class CodingSessionPendingTurnView {
   });
 
   /// True once the row has nothing left to say and should leave the list.
-  bool get settled => phase == CodingSessionPendingPhase.started;
+  bool get settled =>
+      phase == CodingSessionPendingPhase.started ||
+      phase == CodingSessionPendingPhase.injected;
 
   /// True when the provider will not run the turn as sent.
+  ///
+  /// Deliberately excludes [CodingSessionPendingPhase.deliveryUnknown]: a
+  /// failed row hands the words back to the composer, and an unknown delivery
+  /// must not, because they may already be in the running turn.
   bool get failed =>
       phase == CodingSessionPendingPhase.refused ||
       phase == CodingSessionPendingPhase.dropped;
+
+  /// True for the terminal answer that is neither settled nor failed: the
+  /// person, not a receipt, retires this row.
+  bool get deliveryUnknown =>
+      phase == CodingSessionPendingPhase.deliveryUnknown;
 }
 
 /// Receipt codes that mean "the generation you named is gone", which is the
@@ -136,8 +159,10 @@ const codingSessionReaddressCodes = {'NO_LIVE_EXECUTION', 'STALE_GENERATION'};
 ///
 /// Settlement is by `commandId` and receipt status only — never by matching
 /// text (D4). Receipts are read newest-last in signed order; a `turn_started`
-/// anywhere settles the row, a terminal refusal or drop fails it, a
-/// `turn_degraded` or `turn_queued` describes it while it is still owed.
+/// or `turn_injected` anywhere settles the row, a terminal refusal or drop
+/// fails it, a `turn_delivery_unknown` parks it for the person to dismiss
+/// (unless a later, definite receipt reconciles it), and a `turn_degraded` or
+/// `turn_queued` describes it while it is still owed.
 CodingSessionPendingTurnView settleCodingSessionPendingTurn(
   CodingSessionPendingTurn turn,
   Iterable<CodingSessionReceipt> receipts, {
@@ -156,6 +181,7 @@ CodingSessionPendingTurnView settleCodingSessionPendingTurn(
       });
 
   CodingSessionReceipt? degraded;
+  CodingSessionReceipt? unknown;
   var queued = false;
   for (final receipt in own) {
     switch (receipt.status) {
@@ -164,6 +190,16 @@ CodingSessionPendingTurnView settleCodingSessionPendingTurn(
           turn: turn,
           phase: CodingSessionPendingPhase.started,
         );
+      case CodingSessionReceiptStatus.turnInjected:
+        return CodingSessionPendingTurnView(
+          turn: turn,
+          phase: CodingSessionPendingPhase.injected,
+        );
+      case CodingSessionReceiptStatus.turnDeliveryUnknown:
+        // Not returned here: a later `turn_dropped` (`STEER_NOT_DELIVERED`)
+        // or `turn_injected` under the same command reconciles it, and those
+        // are read in signed order after this one.
+        unknown = receipt;
       case CodingSessionReceiptStatus.turnRefused:
       case CodingSessionReceiptStatus.turnDropped:
         final code = receipt.error?.code;
@@ -196,6 +232,13 @@ CodingSessionPendingTurnView settleCodingSessionPendingTurn(
       case CodingSessionReceiptStatus.stopped:
         break;
     }
+  }
+  if (unknown != null) {
+    return CodingSessionPendingTurnView(
+      turn: turn,
+      phase: CodingSessionPendingPhase.deliveryUnknown,
+      detail: _detail(unknown),
+    );
   }
   if (degraded != null) {
     return CodingSessionPendingTurnView(

@@ -3,6 +3,8 @@ import * as React from "react";
 import {
   heldPendingCodingSessionTurns,
   markPendingCodingSessionTurnDegraded,
+  markPendingCodingSessionTurnDeliveryUnknown,
+  markPendingCodingSessionTurnInjected,
   markPendingCodingSessionTurnQueued,
 } from "@/features/coding-sessions/lib/codingSessionPendingTurns";
 import type { CodingSessionCommandRefusal } from "@/features/coding-sessions/lib/codingSessionTrustedIngress";
@@ -10,6 +12,7 @@ import {
   CODING_SESSION_TURN_REFUSAL_DEADLINE_MS,
   forgetCodingSessionTurn,
   formatCodingSessionTurnRefusal,
+  isCodingSessionDeliveryUnknown,
   isCodingSessionReaddressableRefusal,
   type WatchedCodingSessionTurn,
   watchCodingSessionTurn,
@@ -276,14 +279,27 @@ function CodingSessionTurnRefusalWatcher({
     client,
     "pinned",
   );
-  const refusal = snapshot.turnRefusal;
+  // A delivery-unknown answer arrives through the same failure resolver as a
+  // refusal, because it is terminal and keyed the same way — but it is not
+  // one, and it is split off here before anything treats it as "the words
+  // never ran". See `codingSessionTurnRefusal.ts`.
+  const turnRefusal = snapshot.turnRefusal;
+  const deliveryUnknown =
+    turnRefusal && isCodingSessionDeliveryUnknown(turnRefusal)
+      ? turnRefusal
+      : null;
+  const refusal = deliveryUnknown ? null : turnRefusal;
   const stage = snapshot.turnProgress?.stage;
   const queued = stage === "queued";
   const degraded = stage === "degraded";
   const started = stage === "started";
+  const injected = stage === "injected";
   // Queued and degraded are the two stages that leave the turn in the
-  // provider's hands. While it is there, this turn's fate is still open.
-  const held = queued || degraded;
+  // provider's hands. While it is there, this turn's fate is still open. A
+  // delivery-unknown answer is held too: the provider will not act on it
+  // again by itself, but a late acknowledgement can reconcile it as injected
+  // (or as never delivered), and that receipt has to land on something.
+  const held = queued || degraded || deliveryUnknown !== null;
 
   // The same subscription answers a second question the person can see: the
   // provider signed for this turn and parked it behind work already running.
@@ -300,6 +316,25 @@ function CodingSessionTurnRefusalWatcher({
     if (!degraded) return;
     markPendingCodingSessionTurnDegraded(channelId, turn.commandId);
   }, [channelId, degraded, turn.commandId]);
+  // And a fourth: the steer went in. The row says so instead of "queued";
+  // the steered echo, keyed by this command id, is what retires it.
+  React.useEffect(() => {
+    if (!injected) return;
+    markPendingCodingSessionTurnInjected(channelId, turn.commandId);
+  }, [channelId, injected, turn.commandId]);
+  // And the answer that is neither: the provider could not establish
+  // delivery and will not retry. The row is relabelled and kept — with the
+  // words — for the person to dismiss or re-send on their own judgement. The
+  // draft is deliberately *not* restored here: the words may already be in
+  // the running turn, and putting them back in the editor reads as "send
+  // again".
+  React.useEffect(() => {
+    if (!deliveryUnknown) return;
+    markPendingCodingSessionTurnDeliveryUnknown(channelId, turn.commandId, {
+      code: deliveryUnknown.code,
+      message: deliveryUnknown.message,
+    });
+  }, [channelId, deliveryUnknown, turn.commandId]);
   // A replayed receipt (relay refetch, reconnect backfill) is the same
   // refusal; restoring the draft twice would duplicate the person's words.
   const settledRef = React.useRef(false);
@@ -310,13 +345,16 @@ function CodingSessionTurnRefusalWatcher({
     onRefused(turn, refusal);
   }, [onRefused, refusal, turn]);
 
-  // A turn that has begun is the transcript's business from here: its echo
-  // settles the optimistic row, and no further receipt is coming for it.
+  // A turn that has begun, or an input the running turn took, is the
+  // transcript's business from here: its echo settles the optimistic row,
+  // and no further receipt is coming for it. A delivery-unknown answer does
+  // *not* end the watch — see `held` above — so the row can still be
+  // reconciled; the person's dismissal retires both row and watch.
   React.useEffect(() => {
-    if (settledRef.current || !started) return;
+    if (settledRef.current || !(started || injected)) return;
     settledRef.current = true;
     onExpired(turn.commandId);
-  }, [onExpired, started, turn.commandId]);
+  }, [injected, onExpired, started, turn.commandId]);
 
   React.useEffect(() => {
     // A turn the provider signed for can legitimately sit in its mailbox for

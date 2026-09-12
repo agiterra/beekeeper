@@ -137,7 +137,9 @@ void main() {
         'continuation_registered',
         'turn_queued',
         'turn_started',
+        'turn_injected',
         'turn_degraded',
+        'turn_delivery_unknown',
         'turn_dropped',
         'turn_refused',
         'interrupt_delivered',
@@ -146,8 +148,13 @@ void main() {
           receiptEvent(
             commandId: 'cmd-1',
             status: status,
-            turnId: status == 'turn_started' ? 'turn-1' : null,
-            error: status == 'turn_dropped' || status == 'turn_refused'
+            turnId: status == 'turn_started' || status == 'turn_injected'
+                ? 'turn-1'
+                : null,
+            error:
+                status == 'turn_dropped' ||
+                    status == 'turn_refused' ||
+                    status == 'turn_delivery_unknown'
                 ? {'code': 'QUEUE_FULL', 'message': 'full'}
                 : null,
           ),
@@ -160,6 +167,71 @@ void main() {
           reason: status,
         );
       }
+    });
+
+    test('turn_injected is the second six-key status; unknown must say why', () {
+      final injected = decodeCodingSessionReceipt(
+        receiptEvent(
+          commandId: 'cmd-1',
+          status: 'turn_injected',
+          turnId: 'turn-running',
+        ),
+      );
+      expect(injected.value!.status, CodingSessionReceiptStatus.turnInjected);
+      expect(injected.value!.turnId, 'turn-running');
+      expect(injected.value!.error, isNull);
+      // Without the turn it joined, or with an error, it is malformed.
+      expect(
+        decodeCodingSessionReceipt(
+          receiptEvent(commandId: 'cmd-1', status: 'turn_injected'),
+        ).reason,
+        CodingSessionDecodeReason.malformedPayload,
+      );
+      expect(
+        decodeCodingSessionReceipt(
+          receiptEvent(
+            commandId: 'cmd-1',
+            status: 'turn_injected',
+            turnId: 'turn-running',
+            error: {'code': 'STEER_ACK_LOST', 'message': 'lost'},
+          ),
+        ).reason,
+        CodingSessionDecodeReason.malformedPayload,
+      );
+
+      final unknown = decodeCodingSessionReceipt(
+        receiptEvent(
+          commandId: 'cmd-1',
+          status: 'turn_delivery_unknown',
+          error: {'code': 'STEER_ACK_LOST', 'message': 'lost'},
+        ),
+      );
+      expect(
+        unknown.value!.status,
+        CodingSessionReceiptStatus.turnDeliveryUnknown,
+      );
+      expect(unknown.value!.error!.code, 'STEER_ACK_LOST');
+      expect(unknown.value!.turnId, isNull);
+      // No error is a claim of delivery; a turnId claims a turn it cannot name.
+      expect(
+        decodeCodingSessionReceipt(
+          receiptEvent(commandId: 'cmd-1', status: 'turn_delivery_unknown'),
+        ).reason,
+        CodingSessionDecodeReason.malformedPayload,
+      );
+      expect(
+        decodeCodingSessionReceipt(
+          receiptEvent(
+            commandId: 'cmd-1',
+            status: 'turn_delivery_unknown',
+            turnId: 'turn-running',
+            error: {'code': 'STEER_ACK_LOST', 'message': 'lost'},
+          ),
+        ).reason,
+        CodingSessionDecodeReason.malformedPayload,
+      );
+      // An unrecognised status still fails closed.
+      expect(CodingSessionReceiptStatus.fromWire('turn_teleported'), isNull);
     });
 
     test('turnId is accepted only on turn_started', () {

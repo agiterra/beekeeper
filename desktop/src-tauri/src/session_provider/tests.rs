@@ -33,7 +33,7 @@ use crate::session_provider::supervisor::{
 };
 use crate::session_provider::trust::{append_allowed_bridge_pubkey, LOCAL_PROVIDER_LABEL};
 
-const RELAY: &str = "wss://relay.example/";
+pub(super) const RELAY: &str = "wss://relay.example/";
 
 #[test]
 fn provider_mutations_honor_an_explicit_active_relay_pin() {
@@ -109,7 +109,7 @@ fn live_claude_models_fall_back_to_the_first_adapter_option() {
     assert_eq!(models.default_model, "default");
 }
 
-fn sample_record() -> CodingSessionProviderRecord {
+pub(super) fn sample_record() -> CodingSessionProviderRecord {
     CodingSessionProviderRecord {
         provider_pubkey: "a".repeat(64),
         instance_id: "a".repeat(16),
@@ -245,9 +245,10 @@ fn legacy_store_without_optional_fields_loads() {
 // ── env assembly ─────────────────────────────────────────────────────────────
 
 fn sample_runtimes() -> Vec<buzz_core_pkg::coding_session_runtime::RuntimeDescriptor> {
-    use buzz_core_pkg::coding_session_runtime::{CliEnvVar, RuntimeDescriptor};
+    use buzz_core_pkg::coding_session_runtime::{CliEnvVar, RuntimeDescriptor, SteerIdleGuard};
     vec![
         RuntimeDescriptor {
+            steer_idle_guard: Some(SteerIdleGuard::PromptRequired),
             instance_ref: "claude-primary".into(),
             driver: "claude-agent-acp".into(),
             runtime: "claude".into(),
@@ -263,6 +264,7 @@ fn sample_runtimes() -> Vec<buzz_core_pkg::coding_session_runtime::RuntimeDescri
             capabilities: None,
         },
         RuntimeDescriptor {
+            steer_idle_guard: None,
             instance_ref: "goose-primary".into(),
             driver: "goose-acp".into(),
             runtime: "goose".into(),

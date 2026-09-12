@@ -58,7 +58,16 @@ enum CodingSessionReceiptStatus {
   continuationRegistered('continuation_registered'),
   turnQueued('turn_queued'),
   turnStarted('turn_started'),
+
+  /// A `deliver: "steer"` input the runtime acknowledged as joined into the
+  /// turn already running. Carries that turn's `turnId`; no new turn begins.
+  turnInjected('turn_injected'),
   turnDegraded('turn_degraded'),
+
+  /// A native steer was written to the runtime and its delivery could not be
+  /// established. Terminal — never replayed by the provider — and neither a
+  /// drop nor a refusal: the words may already be inside the running turn.
+  turnDeliveryUnknown('turn_delivery_unknown'),
   turnDropped('turn_dropped'),
   turnRefused('turn_refused'),
   interruptDelivered('interrupt_delivered');
@@ -82,10 +91,18 @@ enum CodingSessionReceiptStatus {
       this == CodingSessionReceiptStatus.continuationRegistered ||
       this == CodingSessionReceiptStatus.turnQueued ||
       this == CodingSessionReceiptStatus.turnStarted ||
+      this == CodingSessionReceiptStatus.turnInjected ||
       this == CodingSessionReceiptStatus.turnDegraded ||
+      this == CodingSessionReceiptStatus.turnDeliveryUnknown ||
       this == CodingSessionReceiptStatus.turnDropped ||
       this == CodingSessionReceiptStatus.turnRefused ||
       this == CodingSessionReceiptStatus.interruptDelivered;
+
+  /// True for the two six-key statuses: `turn_started` names the turn that
+  /// began, `turn_injected` the running turn the input joined.
+  bool get carriesTurnId =>
+      this == CodingSessionReceiptStatus.turnStarted ||
+      this == CodingSessionReceiptStatus.turnInjected;
 
   /// True for the four statuses that bring a generation into existence.
   bool get createsGeneration =>
@@ -246,7 +263,8 @@ class CodingSessionReceipt {
 
   final CodingSessionReceiptError? error;
 
-  /// The provider's own turn id; present only for `turn_started`.
+  /// The provider's own turn id; present only for `turn_started` and
+  /// `turn_injected` ([CodingSessionReceiptStatus.carriesTurnId]).
   final String? turnId;
 
   const CodingSessionReceipt({

@@ -70,6 +70,7 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use buzz_acp::relay::{HarnessRelay, RelayEventPublisher, RestClient};
+use buzz_acp::steer::{NotDeliveredReason, SteerResolution, UnknownReason};
 use buzz_acp::{ChannelFilter, TurnUsage};
 use buzz_core::coding_session_authority_claim::{ClaimLink, ClaimState};
 use buzz_core::coding_session_authority_transition::CodingSessionAuthorityTransitionType;
@@ -87,6 +88,7 @@ use buzz_core::coding_session_observation::{
     CodingSessionObservationSource, CodingSessionObservationType,
     CODING_SESSION_OBSERVATION_SCHEMA,
 };
+use buzz_core::coding_session_runtime::SteerIdleGuard;
 use buzz_core::kind::{
     KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_CLOSURE,
     KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_LEASE,
@@ -122,9 +124,12 @@ use payload::{
 use publish::{EventSink, Outbox, Priority};
 use session::{
     CreateRequest, DeliverError, RehydrationMcpDescriptor, SessionCommand, SessionContinuity,
-    SessionEvent, SessionManager, TurnOutcome,
+    SessionEvent, SessionManager, SteerDispatch, TurnOutcome,
 };
-use state::{now_ms, now_secs, CatalogState, OpenTurn, SessionRecord, StateStore};
+use state::{
+    now_ms, now_secs, CatalogState, OpenTurn, SessionRecord, StateStore, SteerAttemptRecord,
+    SteerDisposition,
+};
 
 /// How often the catalog is re-read and idle housekeeping runs.
 ///
@@ -243,6 +248,100 @@ const DELIVERED_CANCEL_FENCE_CAPACITY: usize = 256;
 /// process learned at `initialize`.
 const STEER_DOWNGRADED: &str = "this execution cannot take a mid-turn steer; the turn was \
                                 accepted for the next turn boundary instead";
+
+/// The `turn_degraded` sentence for a steer that carried attachments.
+///
+/// A native injection carries text only, so a steer with images is delivered
+/// at the boundary instead — and told so, because an image the running turn
+/// never saw is indistinguishable from one it ignored.
+const STEER_ATTACHMENTS_DOWNGRADED: &str = "a mid-turn steer cannot carry attachments; the \
+                                            turn was accepted for the next turn boundary \
+                                            instead";
+
+/// The operator-facing sentence for each steer outcome code.
+///
+/// A function of the code alone, deliberately: a redelivery answered by a
+/// process that learned different facts must publish the same payload under
+/// the same `(commandId, status)` semantic key, or a consumer that sees one
+/// key carry two payloads drops both.
+fn steer_outcome_message(code: &str) -> &'static str {
+    match code {
+        payload::STEER_TURN_ENDED => {
+            "the turn this steer was meant for had already ended before it could be injected; \
+             the turn was accepted for the next turn boundary instead"
+        }
+        payload::STEER_SATURATED => {
+            "the execution's native-steer admission is full, so this input was not delivered; \
+             send it again once it drains"
+        }
+        payload::STEER_REJECTED => {
+            "the runtime refused the mid-turn steer request; the turn was accepted for the next \
+             turn boundary instead"
+        }
+        payload::STEER_UNSUPPORTED => STEER_DOWNGRADED,
+        payload::STEER_ATTACHMENTS_UNSUPPORTED => STEER_ATTACHMENTS_DOWNGRADED,
+        payload::STEER_WRITE_FAILED => {
+            "writing the mid-turn steer to the runtime failed part-way; whether the running turn \
+             received it is unknown and it will not be resent automatically"
+        }
+        payload::STEER_ACK_LOST => {
+            "the mid-turn steer was written to the runtime but the turn ended before the runtime \
+             acknowledged it; whether it was applied is unknown and it will not be resent \
+             automatically"
+        }
+        payload::STEER_ACK_TIMEOUT => {
+            "the mid-turn steer was written to the runtime and no acknowledgement arrived in \
+             time; whether it was applied is unknown and it will not be resent automatically"
+        }
+        payload::STEER_ACK_UNRECOGNIZED => {
+            "the runtime answered the mid-turn steer without saying whether it was applied; \
+             delivery is unknown and it will not be resent automatically"
+        }
+        payload::STEER_UNRESOLVED_AT_RESTART => {
+            "the provider restarted while this mid-turn steer was in flight; whether the \
+             running turn received it is unknown and it will not be resent automatically"
+        }
+        payload::STEER_UNOBSERVED_NEW_TURN => {
+            "the runtime started a new turn of its own for this steer instead of joining the \
+             running one; that turn's output is not observed here and the steer will not be \
+             resent"
+        }
+        payload::STEER_NOT_DELIVERED => {
+            "a late answer from the runtime established that this mid-turn steer was never \
+             applied; send it again if it is still wanted"
+        }
+        _ => "the mid-turn steer did not reach the running turn",
+    }
+}
+
+/// The `turn_degraded` code for a transport answer that positively delivered
+/// nothing (§3.4 of `docs/NATIVE_STEERING_IMPL.md`).
+fn steer_not_delivered_code(reason: &NotDeliveredReason) -> &'static str {
+    match reason {
+        NotDeliveredReason::Unsupported | NotDeliveredReason::MethodNotFound { .. } => {
+            payload::STEER_UNSUPPORTED
+        }
+        NotDeliveredReason::PromptRequired | NotDeliveredReason::PromptEndedBeforeWrite => {
+            payload::STEER_TURN_ENDED
+        }
+        NotDeliveredReason::Rejected { .. } => payload::STEER_REJECTED,
+    }
+}
+
+/// The `turn_delivery_unknown` code for a transport answer that could not
+/// establish delivery either way (§3.4 of `docs/NATIVE_STEERING_IMPL.md`).
+fn steer_unknown_code(reason: &UnknownReason) -> &'static str {
+    match reason {
+        UnknownReason::WriteFailed { .. } => payload::STEER_WRITE_FAILED,
+        UnknownReason::PromptEndedBeforeAck | UnknownReason::RuntimeExited => {
+            payload::STEER_ACK_LOST
+        }
+        UnknownReason::AckTimeout => payload::STEER_ACK_TIMEOUT,
+        UnknownReason::UnrecognizedAck { .. } | UnknownReason::AdapterReportedFailure { .. } => {
+            payload::STEER_ACK_UNRECOGNIZED
+        }
+    }
+}
 
 /// The operator-facing sentence a `turn_degraded`/`IMAGE_UNSUPPORTED` carries.
 ///
@@ -821,6 +920,29 @@ pub struct InFlightTurn {
     /// turn starts, which is what lets a mid-turn claim change stop the old
     /// operator's work without stopping the new claimant's.
     operator_pubkey: String,
+    /// The native steer attempt this entry stands for, when the command was
+    /// dispatched as a mid-turn injection rather than as a mailbox turn.
+    ///
+    /// `Some` means the durable attempt record is at `intent` and the answer
+    /// is owed by a `SteerResolved` keyed to this id. Cleared — not removed —
+    /// when a not-delivered attempt falls back to an ordinary boundary turn
+    /// under the same command.
+    steer_attempt: Option<String>,
+    /// The signed text of a native steer attempt, so its boundary fallback is
+    /// rebuilt from what the operator sent rather than from what the adapter
+    /// was shown.
+    text: Option<String>,
+    /// The framing the attempt was rendered with; its `delivery` is flipped
+    /// to `Boundary` when the words are re-delivered at the boundary.
+    framing: Option<session::TurnFraming>,
+    /// A handover fence reached this steer attempt after the actor had
+    /// already dispatched it to the runtime.
+    ///
+    /// The fence could not prevent the write, so it did not refuse — but the
+    /// operator's authority is gone. An `Injected` answer is still published
+    /// truthfully; any answer that leaves the words undelivered is refused
+    /// here rather than re-delivered at the boundary under revoked authority.
+    fenced_after_dispatch: bool,
 }
 
 /// Turn commands buffered while a channel replays history, held so they are
@@ -1070,6 +1192,7 @@ impl Provider {
         self.sweep_redaction_vault();
         self.flush_terminal_dispositions()?;
         self.recover_ci_continuations()?;
+        self.recover_steer_attempts()?;
         let orphans: Vec<(String, String)> = self
             .state
             .sessions()
@@ -4303,7 +4426,7 @@ impl Provider {
         // duplicate check read it: the fence that admitted the turn and the
         // fence the turn claims must never be two computations.
         let mut decided_operation_key: Option<String> = None;
-        let (command_id, target, deliver, dropped_attachments, mut message) = match decision {
+        let (command_id, target, deliver, attachment_counts, mut message) = match decision {
             TurnDecision::Ignore(reason) => {
                 log_ignored("turn", &reason);
                 // An ignore that names a target this provider owns is a
@@ -4419,6 +4542,7 @@ impl Provider {
                     .get(&target.session_id)
                     .copied()
                     .unwrap_or(false);
+                let requested_attachments = attachments.len();
                 let dropped_attachments = if takes_images { 0 } else { attachments.len() };
                 let attachments = if takes_images {
                     attachments
@@ -4429,7 +4553,7 @@ impl Provider {
                     command_id.clone(),
                     target,
                     deliver,
-                    dropped_attachments,
+                    (requested_attachments, dropped_attachments),
                     // `decide_turn` returns `Start` only after checking this
                     // exact signer against the session's founder/granted-
                     // operator set, so attributing the turn to them is a
@@ -4447,10 +4571,11 @@ impl Provider {
                 command_id.clone(),
                 target,
                 CodingSessionDelivery::Boundary,
-                0,
+                (0, 0),
                 SessionCommand::Interrupt { command_id },
             ),
         };
+        let (requested_attachments, dropped_attachments) = attachment_counts;
         let session_id = target.session_id.clone();
         // The operation this turn takes custody of, read from the raw prompt
         // text — the pointer both producers mint is the bare JSON, and the
@@ -4502,23 +4627,57 @@ impl Provider {
             self.interrupt_open_turn(&session_id, &command_id);
         }
 
-        // Steer-class delivery: the injection is attempted first, and its
-        // answer — did the words actually reach the running turn? — is the one
-        // fact everything below reads. A steer that was not injected is a
-        // boundary delivery, and one that is never *said* to be a boundary
-        // delivery is the silent downgrade the delivery classes exist to
-        // prevent.
-        let steer_injected = is_turn
-            && deliver == CodingSessionDelivery::Steer
-            && self.inject_native_steer(&session_id);
+        // Steer-class delivery. Three facts decide whether the words are
+        // injected into the running turn or queued to the next boundary:
+        // this execution can take a native steer at all
+        // (`native_steer_deliverable`), the steer carries no attachments (an
+        // injection is text only), and the command is not a CI continuation
+        // (which is admitted at its own boundary by construction). A native
+        // attempt publishes nothing here — its resolution does — and takes
+        // the whole command with it. Anything else is a boundary delivery,
+        // and a boundary delivery that is never *said* to be one is the
+        // silent downgrade the delivery classes exist to prevent.
+        let steer_degrade = if is_turn && deliver == CodingSessionDelivery::Steer {
+            let native = self.native_steer_deliverable(&session_id);
+            let continuation = self.ci_continuations.record(&command_id).is_some();
+            if native && requested_attachments == 0 && !continuation {
+                if let SessionCommand::Turn {
+                    command_id,
+                    text,
+                    operator_pubkey: _,
+                    framing,
+                    ..
+                } = message
+                {
+                    return self.dispatch_native_steer(
+                        channel_id,
+                        created_at,
+                        operator_pubkey,
+                        command_id,
+                        target,
+                        text,
+                        framing,
+                        operation_key,
+                    );
+                }
+                // `is_turn` proved the shape above; unreachable in practice.
+                None
+            } else if native && requested_attachments > 0 {
+                Some(payload::STEER_ATTACHMENTS_UNSUPPORTED)
+            } else {
+                Some(payload::STEER_UNSUPPORTED)
+            }
+        } else {
+            None
+        };
         // The frame is captured with the class the sender *asked* for, because
         // that is all `decide_turn` knows. It is the only place the
         // **recipient** reads the class — the `turn_degraded` receipt answers
-        // the sender — so once the injection has been attempted and refused,
-        // the frame has to name the delivery that actually happened. Telling
-        // the receiving agent "Delivery: steer" about a turn that was queued
-        // to the next boundary is the silent downgrade under a different name.
-        if deliver == CodingSessionDelivery::Steer && !steer_injected {
+        // the sender — so once the injection has been ruled out, the frame
+        // has to name the delivery that actually happens. Telling the
+        // receiving agent "Delivery: steer" about a turn that was queued to
+        // the next boundary is the silent downgrade under a different name.
+        if steer_degrade.is_some() {
             if let SessionCommand::Turn {
                 framing: Some(framing),
                 ..
@@ -4547,9 +4706,13 @@ impl Provider {
                             created_at,
                             operation_key: operation_key.clone(),
                             operator_pubkey: operator_pubkey.to_owned(),
+                            steer_attempt: None,
+                            text: None,
+                            framing: None,
+                            fenced_after_dispatch: false,
                         },
                     );
-                    // A `steer` this execution cannot receive is answered
+                    // A `steer` this execution cannot inject is answered
                     // beside the delivery, never instead of it: the receipt
                     // says the injection did not happen and the turn still
                     // runs at the next boundary. It is published here, after
@@ -4558,12 +4721,12 @@ impl Provider {
                     // each other about one command — "accepted for the next
                     // boundary" followed by "this execution has no live
                     // process".
-                    if deliver == CodingSessionDelivery::Steer && !steer_injected {
+                    if let Some(code) = steer_degrade {
                         let receipt = LifecycleReceipt::turn_degraded(
                             &command_id,
                             &target,
-                            payload::STEER_UNSUPPORTED,
-                            STEER_DOWNGRADED,
+                            code,
+                            steer_outcome_message(code),
                         );
                         self.enqueue_receipt(channel_id, &command_id, &receipt)?;
                     }
@@ -4700,54 +4863,723 @@ impl Provider {
 
     /// Whether a native mid-turn steer can be delivered to `session_id`.
     ///
-    /// Two facts, both required: this execution's runtime advertised steering
-    /// at `initialize`, and this provider can deliver one at all (see
-    /// [`session::NATIVE_STEER_DELIVERABLE`]). Which of the two failed is
-    /// logged, not published — the receipt message has to be a function of the
-    /// command alone, because a redelivery answered by a process that learned
-    /// different capabilities would otherwise publish a different payload
-    /// under the same `(commandId, turn_degraded)` semantic key, and a
-    /// consumer that sees one key carry two payloads drops both.
+    /// Three facts, all required: the process behind this generation
+    /// advertised steering at `initialize` (`self.steering`, witnessed per
+    /// execution); the pinned adapter is declared to honour the
+    /// `promptRequired` idle guard (`RuntimeDescriptor::steer_idle_guard`, a
+    /// fact about the installed package, never inferred from the driver
+    /// slug); and this provider ships the transport at all
+    /// ([`session::NATIVE_STEER_DELIVERABLE`]). Which fact failed is a matter
+    /// for the log, not the receipt — the receipt payload is a function of
+    /// the command alone, so a redelivery answered by a process that learned
+    /// different capabilities publishes the same bytes under the same
+    /// semantic key. This is also what `metadata_for` publishes as
+    /// `threadSteer`: a control an operator can press is a control that
+    /// works.
     fn native_steer_deliverable(&self, session_id: &str) -> bool {
         let advertised = self.steering.get(session_id).copied().unwrap_or(false);
-        if advertised && !session::NATIVE_STEER_DELIVERABLE {
-            tracing::info!(
-                target: "csp",
-                %session_id,
-                "runtime advertised mid-turn steering but this provider cannot deliver one yet"
-            );
-        }
-        advertised && session::NATIVE_STEER_DELIVERABLE
+        let guarded = self
+            .state
+            .session(session_id)
+            .and_then(|record| self.config.runtime(&record.provider_instance_ref))
+            .is_some_and(|descriptor| {
+                descriptor.steer_idle_guard == Some(SteerIdleGuard::PromptRequired)
+            });
+        advertised && guarded && session::NATIVE_STEER_DELIVERABLE
     }
 
-    /// Inject a `steer`-class turn into the turn already running on
-    /// `session_id`, answering whether the injection actually happened.
+    /// Hand a `steer`-class turn to the running prompt as a native attempt.
     ///
-    /// Always `false` today, and deliberately shaped so that stays true until
-    /// somebody writes the injection. The caller publishes `turn_degraded`
-    /// whenever this returns `false` — it does *not* consult
-    /// [`session::NATIVE_STEER_DELIVERABLE`] itself — because a downgrade
-    /// gated on a constant is a downgrade that disappears the day the constant
-    /// is flipped without the transport behind it, leaving a steer
-    /// boundary-delivered under a plain `turn_queued` and nobody told.
-    ///
-    /// The `const` block below is the other half of that fence: flipping the
-    /// constant fails the build here rather than shipping a lie. Whoever wires
-    /// the real injection replaces it, and owes this path the
-    /// `turn_started` receipt (current `turnId`, `user_prompt{steered:true}`)
-    /// that a genuinely injected steer publishes instead of `turn_queued`.
-    fn inject_native_steer(&mut self, session_id: &str) -> bool {
-        const {
-            assert!(
-                !session::NATIVE_STEER_DELIVERABLE,
-                "wire the native steer injection, and the turn_started receipt it publishes, \
-                 before declaring this provider able to deliver one"
-            )
+    /// The intent is written to `steer_attempts.jsonl` **before** the mailbox
+    /// takes the input, and that order is the whole design: a crash anywhere
+    /// after the write finds an open intent at restart and answers the
+    /// command as unknown rather than replaying a write that may already have
+    /// reached the model. No receipt is published here — the attempt's
+    /// resolution publishes exactly one — and no ledger is consumed: an
+    /// injected attempt consumes at resolution, a not-delivered one falls back
+    /// to an ordinary boundary turn that consumes when it starts.
+    #[allow(clippy::too_many_arguments)]
+    fn dispatch_native_steer(
+        &mut self,
+        channel_id: Uuid,
+        created_at: u64,
+        operator_pubkey: &str,
+        command_id: String,
+        target: CodingSessionTarget,
+        text: String,
+        framing: Option<session::TurnFraming>,
+        operation_key: Option<String>,
+    ) -> anyhow::Result<TurnDisposition> {
+        let session_id = target.session_id.clone();
+        if self.sessions.handle(&session_id).is_none() {
+            tracing::warn!(
+                target: "csp",
+                %command_id,
+                %session_id,
+                "no live actor for a persisted session"
+            );
+            return Ok(TurnDisposition::Answered(self.report_no_live_execution(
+                channel_id,
+                &command_id,
+                &target,
+                true,
+            )?));
+        }
+        let attempt_id = self.state.next_steer_attempt_id(&command_id);
+        let record = SteerAttemptRecord {
+            attempt_id: attempt_id.clone(),
+            command_id: command_id.clone(),
+            session_id: session_id.clone(),
+            generation: target.generation,
+            channel_id,
+            target: target.clone(),
+            created_at,
+            operation_key: operation_key.clone(),
+            operator_pubkey: operator_pubkey.to_owned(),
+            sender_role: framing
+                .as_ref()
+                .and_then(|framing| framing.sender_role.clone()),
+            text: text.clone(),
+            disposition: SteerDisposition::Intent,
+            at: now_secs(),
+            turn_id: None,
         };
-        // Consulted for its log line: an operator whose runtime offered a steer
-        // this provider could not take should be able to find out why.
-        let _deliverable = self.native_steer_deliverable(session_id);
-        false
+        // Durable intent first. A failure here hands the command back to the
+        // caller unanswered and unwritten, which the replay machinery covers.
+        self.state.stage_steer_intent(record)?;
+        tracing::info!(
+            target: "csp",
+            %command_id,
+            %session_id,
+            %attempt_id,
+            "dispatching a native mid-turn steer"
+        );
+        let delivered = match self.sessions.handle(&session_id) {
+            Some(handle) => handle.deliver(SessionCommand::Steer {
+                command_id: command_id.clone(),
+                attempt_id: attempt_id.clone(),
+                text: text.clone(),
+                operator_pubkey: Some(operator_pubkey.to_owned()),
+                framing: framing.clone(),
+            }),
+            None => Err(DeliverError::Gone),
+        };
+        match delivered {
+            Ok(()) => {
+                self.in_flight.insert(
+                    command_id,
+                    InFlightTurn {
+                        channel_id,
+                        session_id,
+                        target,
+                        created_at,
+                        operation_key,
+                        operator_pubkey: operator_pubkey.to_owned(),
+                        steer_attempt: Some(attempt_id),
+                        text: Some(text),
+                        framing,
+                        fenced_after_dispatch: false,
+                    },
+                );
+                Ok(TurnDisposition::Delivered)
+            }
+            Err(error) => {
+                // The mailbox never took it, so nothing can have been written:
+                // `prevented` is the truthful disposition, and the command is
+                // answered exactly as any undeliverable turn is.
+                self.state
+                    .resolve_steer_attempt(&attempt_id, SteerDisposition::Prevented, None)?;
+                tracing::warn!(
+                    target: "csp",
+                    %command_id,
+                    %session_id,
+                    "could not deliver steer to session: {error:?}"
+                );
+                Ok(TurnDisposition::Answered(self.report_undelivered_turn(
+                    channel_id,
+                    &command_id,
+                    &target,
+                    true,
+                    &error,
+                )?))
+            }
+        }
+    }
+
+    /// Fold one native steer attempt's answer, keyed by the attempt and the
+    /// target generation it recorded — never by whichever command is newest.
+    ///
+    /// The §2 table of `docs/NATIVE_STEERING_IMPL.md`, one arm per row. An
+    /// attempt that is not at `intent` is left alone: a second answer for one
+    /// attempt (a mis-correlated acknowledgement, a duplicate) settles
+    /// nothing.
+    fn fold_steer_resolution(
+        &mut self,
+        session_id: &str,
+        turn_id: Option<String>,
+        command_id: &str,
+        attempt_id: &str,
+        resolution: SteerDispatch,
+    ) -> anyhow::Result<()> {
+        let Some(attempt) = self.state.steer_attempt(attempt_id).cloned() else {
+            tracing::warn!(
+                target: "csp",
+                %session_id,
+                %attempt_id,
+                "steer resolution for an attempt this provider never staged; ignoring"
+            );
+            return Ok(());
+        };
+        if attempt.command_id != command_id || attempt.session_id != session_id {
+            tracing::warn!(
+                target: "csp",
+                %session_id,
+                %attempt_id,
+                %command_id,
+                "steer resolution names a different command or session than its attempt; ignoring"
+            );
+            return Ok(());
+        }
+        if !attempt.disposition.is_open() {
+            tracing::warn!(
+                target: "csp",
+                %session_id,
+                %attempt_id,
+                disposition = attempt.disposition.as_str(),
+                "steer resolution for an attempt already settled; ignoring"
+            );
+            return Ok(());
+        }
+        match resolution {
+            SteerDispatch::Transport(SteerResolution::Injected { .. }) => {
+                // The turn the input joined: what the actor named, else the
+                // turn the record has open. Without either there is no
+                // `turnId` to publish, and a `turn_injected` that cannot name
+                // its turn is not one — the attempt is answered unknown.
+                let turn_id = turn_id.or_else(|| {
+                    self.state
+                        .session(session_id)
+                        .and_then(|record| record.open_turn.as_ref())
+                        .map(|open_turn| open_turn.turn_id.clone())
+                });
+                let Some(turn_id) = turn_id else {
+                    return self.settle_steer_unknown(
+                        &attempt,
+                        payload::STEER_ACK_UNRECOGNIZED,
+                        None,
+                    );
+                };
+                if self
+                    .in_flight
+                    .get(command_id)
+                    .is_some_and(|turn| turn.fenced_after_dispatch)
+                {
+                    tracing::warn!(
+                        target: "csp::authority",
+                        %session_id,
+                        %attempt_id,
+                        "steer was injected before the handover fence reached it; published as \
+                         delivered, because it was"
+                    );
+                }
+                self.state.resolve_steer_attempt(
+                    attempt_id,
+                    SteerDisposition::Injected,
+                    Some(&turn_id),
+                )?;
+                // Consumed the way a started turn is — operation first, then
+                // command, for the reason the `TurnStarted` arm gives — but
+                // **not** charged: an injection joins the running turn and
+                // spends none of the umbrella's budget.
+                if let Some(key) = &attempt.operation_key {
+                    self.state.consume_operation(key, command_id, now_secs())?;
+                }
+                self.state.consume_command(command_id, now_secs())?;
+                self.in_flight.remove(command_id);
+                if let Some(handle) = self.sessions.handle(session_id) {
+                    handle.acknowledge_turn_started(command_id);
+                }
+                let receipt =
+                    LifecycleReceipt::turn_injected(command_id, &attempt.target, &turn_id);
+                self.enqueue_receipt(attempt.channel_id, command_id, &receipt)?;
+            }
+            SteerDispatch::Transport(SteerResolution::StartedNewTurn { .. }) => {
+                // Delivered — the runtime is running it — but into a turn
+                // this actor is not reading. Consumed so it is never resent;
+                // reported unknown because its output is unobserved.
+                self.state.resolve_steer_attempt(
+                    attempt_id,
+                    SteerDisposition::StartedNewTurn,
+                    turn_id.as_deref(),
+                )?;
+                self.state.consume_command(command_id, now_secs())?;
+                self.in_flight.remove(command_id);
+                if let Some(handle) = self.sessions.handle(session_id) {
+                    handle.acknowledge_turn_started(command_id);
+                }
+                let code = payload::STEER_UNOBSERVED_NEW_TURN;
+                let receipt = LifecycleReceipt::turn_delivery_unknown(
+                    command_id,
+                    &attempt.target,
+                    code,
+                    steer_outcome_message(code),
+                );
+                self.enqueue_receipt(attempt.channel_id, command_id, &receipt)?;
+            }
+            SteerDispatch::Transport(SteerResolution::Unknown { reason, .. }) => {
+                let code = steer_unknown_code(&reason);
+                tracing::warn!(
+                    target: "csp",
+                    %session_id,
+                    %attempt_id,
+                    code,
+                    "steer delivery unknown: {reason:?}"
+                );
+                self.settle_steer_unknown(&attempt, code, turn_id.as_deref())?;
+            }
+            SteerDispatch::Transport(SteerResolution::NotDelivered { reason }) => {
+                let code = steer_not_delivered_code(&reason);
+                tracing::info!(
+                    target: "csp",
+                    %session_id,
+                    %attempt_id,
+                    code,
+                    "steer not delivered natively, falling back to the boundary: {reason:?}"
+                );
+                self.fallback_steer_to_boundary(&attempt, code)?;
+            }
+            SteerDispatch::Saturated => {
+                // Terminal, like a full mailbox: nothing was written, and a
+                // boundary fallback would run this input *after* the ones
+                // still waiting in the admission queue — reordering one
+                // operator's words. The sender is told to send it again.
+                self.settle_steer_saturated(&attempt)?;
+            }
+            SteerDispatch::Idle => {
+                self.fallback_steer_to_boundary(&attempt, payload::STEER_TURN_ENDED)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Answer an attempt whose delivery cannot be established either way.
+    ///
+    /// Terminal for the command: it goes to the refusal ledger, atomically
+    /// with its receipt, so a relay redelivery is silent and the sender
+    /// decides whether to send again. Nothing is replayed.
+    fn settle_steer_unknown(
+        &mut self,
+        attempt: &SteerAttemptRecord,
+        code: &'static str,
+        turn_id: Option<&str>,
+    ) -> anyhow::Result<()> {
+        let command_id = attempt.command_id.as_str();
+        let receipt = LifecycleReceipt::turn_delivery_unknown(
+            command_id,
+            &attempt.target,
+            code,
+            steer_outcome_message(code),
+        );
+        // The refusal and the receipt as one fenced decision, then the
+        // attempt. A crash between the two leaves an open intent that the
+        // restart answers — and, seeing the command already refused,
+        // answers without a second receipt.
+        self.enqueue_terminal_receipt(attempt.channel_id, command_id, &receipt)?;
+        self.state.resolve_steer_attempt(
+            &attempt.attempt_id,
+            SteerDisposition::Unknown,
+            turn_id,
+        )?;
+        self.in_flight.remove(command_id);
+        if let Some(handle) = self.sessions.handle(&attempt.session_id) {
+            handle.acknowledge_turn_started(command_id);
+        }
+        Ok(())
+    }
+
+    /// Answer a steer the admission queue had no room for.
+    ///
+    /// Nothing was written. Terminal rather than a boundary fallback, and
+    /// deliberately: the inputs still waiting in the queue are older than
+    /// this one, so re-delivering it at the boundary would run it in an
+    /// order the operator never sent. Refused so a redelivery is silent; the
+    /// sender sends it again once the queue drains.
+    fn settle_steer_saturated(&mut self, attempt: &SteerAttemptRecord) -> anyhow::Result<()> {
+        let command_id = attempt.command_id.as_str();
+        self.state
+            .resolve_steer_attempt(&attempt.attempt_id, SteerDisposition::Prevented, None)?;
+        self.state.record_refusal(command_id, now_secs())?;
+        let code = payload::STEER_SATURATED;
+        let receipt = LifecycleReceipt::turn_dropped(
+            command_id,
+            &attempt.target,
+            code,
+            steer_outcome_message(code),
+        );
+        self.enqueue_receipt(attempt.channel_id, command_id, &receipt)?;
+        self.in_flight.remove(command_id);
+        if let Some(handle) = self.sessions.handle(&attempt.session_id) {
+            handle.acknowledge_turn_started(command_id);
+        }
+        Ok(())
+    }
+
+    /// Why a not-delivered steer may **not** be re-delivered at the boundary,
+    /// asked again at the moment of re-delivery.
+    ///
+    /// The attempt was admitted under the authority and generation of its
+    /// dispatch; both may have moved while the runtime held the input. A
+    /// fence that reached the attempt after dispatch, a handover, a revoked
+    /// grant, a new generation or a closed session each make the fallback a
+    /// turn nobody may run now. `None` means the fallback is still the
+    /// operator's to have.
+    fn steer_fallback_refusal(
+        &self,
+        attempt: &SteerAttemptRecord,
+    ) -> Option<(&'static str, String)> {
+        if self
+            .in_flight
+            .get(&attempt.command_id)
+            .is_some_and(|turn| turn.fenced_after_dispatch)
+        {
+            return Some((
+                payload::HANDOVER_FENCED,
+                Self::HANDOVER_UNSTARTED_REASON.to_owned(),
+            ));
+        }
+        let Some(record) = self.state.session(&attempt.session_id) else {
+            return Some((
+                payload::STALE_GENERATION,
+                "this execution no longer exists, so the steer could not be re-delivered at \
+                 the boundary; it never ran"
+                    .to_owned(),
+            ));
+        };
+        if record.generation != attempt.generation {
+            return Some((
+                payload::STALE_GENERATION,
+                "this execution's generation moved on before the steer could be re-delivered \
+                 at the boundary; it never ran and will not be retried"
+                    .to_owned(),
+            ));
+        }
+        if let Some(refusal) =
+            commands::handover_fence(record, &attempt.operator_pubkey, &self.pubkey_hex)
+        {
+            return Some((refusal.code, refusal.message));
+        }
+        if record.closed {
+            return Some((
+                payload::SESSION_CLOSED,
+                "this execution was closed before the steer could be re-delivered at the \
+                 boundary; it never ran"
+                    .to_owned(),
+            ));
+        }
+        if !commands::operator_may_steer(record, &attempt.operator_pubkey) {
+            return Some((
+                payload::UNAUTHORIZED_OPERATOR,
+                "the sender's authority to steer this execution was withdrawn before the steer \
+                 could be re-delivered at the boundary; it never ran"
+                    .to_owned(),
+            ));
+        }
+        None
+    }
+
+    /// Re-deliver a not-delivered steer as an ordinary boundary turn under
+    /// the same command, and say so.
+    ///
+    /// Authority is re-asked first ([`Self::steer_fallback_refusal`]): the
+    /// runtime held this input across a window in which a takeover, a
+    /// revocation or a new generation may have landed, and a fallback that
+    /// skipped the check would run an ex-owner's words. `turn_degraded` is
+    /// published only after the mailbox accepted the fallback, always
+    /// followed by `turn_queued`, and the in-flight entry stays — as a plain
+    /// turn now — so consume-at-start and the watermark floor are exactly
+    /// what they are for any other queued turn.
+    fn fallback_steer_to_boundary(
+        &mut self,
+        attempt: &SteerAttemptRecord,
+        code: &'static str,
+    ) -> anyhow::Result<()> {
+        let command_id = attempt.command_id.clone();
+        if let Some((refusal_code, message)) = self.steer_fallback_refusal(attempt) {
+            tracing::warn!(
+                target: "csp::authority",
+                %command_id,
+                session_id = %attempt.session_id,
+                code = refusal_code,
+                "refusing the boundary fallback of a steer: {message}"
+            );
+            // Nothing ran and nothing will: `prevented`, refused durably
+            // before the receipt, answered once.
+            self.state.resolve_steer_attempt(
+                &attempt.attempt_id,
+                SteerDisposition::Prevented,
+                None,
+            )?;
+            self.state.record_refusal(&command_id, now_secs())?;
+            self.in_flight.remove(&command_id);
+            if let Some(handle) = self.sessions.handle(&attempt.session_id) {
+                handle.acknowledge_turn_started(&command_id);
+            }
+            let receipt = LifecycleReceipt::turn_refused(
+                &command_id,
+                &attempt.target,
+                refusal_code,
+                &message,
+            );
+            self.enqueue_receipt(attempt.channel_id, &command_id, &receipt)?;
+            return Ok(());
+        }
+        self.state.resolve_steer_attempt(
+            &attempt.attempt_id,
+            SteerDisposition::NotDelivered,
+            None,
+        )?;
+        // The frame it was dispatched with, re-labelled with the delivery
+        // that actually happens; rebuilt from the record when the process
+        // lost it.
+        let framing = self
+            .in_flight
+            .get(&command_id)
+            .and_then(|turn| turn.framing.clone())
+            .or_else(|| {
+                self.turn_framing(
+                    &attempt.session_id,
+                    &attempt.operator_pubkey,
+                    CodingSessionDelivery::Boundary,
+                    attempt.channel_id,
+                    &attempt.text,
+                )
+            })
+            .map(|mut framing| {
+                framing.delivery = CodingSessionDelivery::Boundary;
+                framing
+            });
+        let turn = SessionCommand::Turn {
+            command_id: command_id.clone(),
+            text: attempt.text.clone(),
+            attachments: Vec::new(),
+            operator_pubkey: Some(attempt.operator_pubkey.clone()),
+            framing,
+        };
+        let delivered = match self.sessions.handle(&attempt.session_id) {
+            Some(handle) => handle.deliver(turn),
+            None => Err(DeliverError::Gone),
+        };
+        match delivered {
+            Ok(()) => {
+                match self.in_flight.get_mut(&command_id) {
+                    Some(turn) => {
+                        turn.steer_attempt = None;
+                        turn.text = None;
+                        turn.framing = None;
+                    }
+                    None => {
+                        self.in_flight.insert(
+                            command_id.clone(),
+                            InFlightTurn {
+                                channel_id: attempt.channel_id,
+                                session_id: attempt.session_id.clone(),
+                                target: attempt.target.clone(),
+                                created_at: attempt.created_at,
+                                operation_key: attempt.operation_key.clone(),
+                                operator_pubkey: attempt.operator_pubkey.clone(),
+                                steer_attempt: None,
+                                text: None,
+                                framing: None,
+                                fenced_after_dispatch: false,
+                            },
+                        );
+                    }
+                }
+                let degraded = LifecycleReceipt::turn_degraded(
+                    &command_id,
+                    &attempt.target,
+                    code,
+                    steer_outcome_message(code),
+                );
+                self.enqueue_receipt(attempt.channel_id, &command_id, &degraded)?;
+                let queued = LifecycleReceipt::turn_queued(&command_id, &attempt.target);
+                self.enqueue_receipt(attempt.channel_id, &command_id, &queued)?;
+                Ok(())
+            }
+            Err(error) => {
+                self.in_flight.remove(&command_id);
+                tracing::warn!(
+                    target: "csp",
+                    %command_id,
+                    session_id = %attempt.session_id,
+                    "could not deliver the boundary fallback for a steer: {error:?}"
+                );
+                self.report_undelivered_turn(
+                    attempt.channel_id,
+                    &command_id,
+                    &attempt.target,
+                    true,
+                    &error,
+                )?;
+                Ok(())
+            }
+        }
+    }
+
+    /// Fold a late acknowledgement for an attempt already answered unknown.
+    ///
+    /// Only an attempt at `unknown` is reconciled; the command's ledgers are
+    /// untouched (it is already refused) and the receipt is the §2 row for
+    /// what the late answer established.
+    fn fold_steer_reconciliation(
+        &mut self,
+        session_id: &str,
+        attempt_id: &str,
+        resolution: SteerResolution,
+    ) -> anyhow::Result<()> {
+        let Some(attempt) = self.state.steer_attempt(attempt_id).cloned() else {
+            tracing::warn!(
+                target: "csp",
+                %session_id,
+                %attempt_id,
+                "late steer acknowledgement for an attempt this provider never staged; ignoring"
+            );
+            return Ok(());
+        };
+        if attempt.disposition != SteerDisposition::Unknown || attempt.session_id != session_id {
+            tracing::warn!(
+                target: "csp",
+                %session_id,
+                %attempt_id,
+                disposition = attempt.disposition.as_str(),
+                "late steer acknowledgement for an attempt not at unknown; ignoring"
+            );
+            return Ok(());
+        }
+        let command_id = attempt.command_id.as_str();
+        match resolution {
+            SteerResolution::Injected { .. } => {
+                let Some(turn_id) = attempt.turn_id.clone() else {
+                    tracing::warn!(
+                        target: "csp",
+                        %session_id,
+                        %attempt_id,
+                        "late injected acknowledgement for an attempt with no recorded turn; \
+                         nothing truthful to publish"
+                    );
+                    return Ok(());
+                };
+                self.state.resolve_steer_attempt(
+                    attempt_id,
+                    SteerDisposition::ReconciledInjected,
+                    None,
+                )?;
+                // The echo the actor would have written had the answer been
+                // on time: the signed original, `steered: true`, on the turn
+                // it joined — before the receipt, so the row it settles has
+                // its item to settle against.
+                self.enqueue_transcript(
+                    attempt.channel_id,
+                    &attempt.target,
+                    Some(&turn_id),
+                    payload::user_prompt_item(
+                        &attempt.text,
+                        true,
+                        Some(&attempt.operator_pubkey),
+                        Some(command_id),
+                        attempt.sender_role.as_deref(),
+                        0,
+                    ),
+                    Priority::Normal,
+                )?;
+                let receipt =
+                    LifecycleReceipt::turn_injected(command_id, &attempt.target, &turn_id);
+                self.enqueue_receipt(attempt.channel_id, command_id, &receipt)?;
+            }
+            SteerResolution::NotDelivered { .. } => {
+                self.state.resolve_steer_attempt(
+                    attempt_id,
+                    SteerDisposition::ReconciledNotDelivered,
+                    None,
+                )?;
+                let code = payload::STEER_NOT_DELIVERED;
+                let receipt = LifecycleReceipt::turn_dropped(
+                    command_id,
+                    &attempt.target,
+                    code,
+                    steer_outcome_message(code),
+                );
+                self.enqueue_receipt(attempt.channel_id, command_id, &receipt)?;
+            }
+            SteerResolution::StartedNewTurn { .. } => {
+                // Ledger only. The command already carries a
+                // `turn_delivery_unknown`, and a second one under the same
+                // `(commandId, status)` semantic key would be a second payload
+                // a consumer drops both halves of. What the late answer adds —
+                // the runtime ran this input in a turn nobody observed — is
+                // recorded durably here and logged; the earlier receipt's
+                // "unknown" remains a truthful description of what this
+                // provider can see of that turn.
+                self.state.resolve_steer_attempt(
+                    attempt_id,
+                    SteerDisposition::ReconciledNewTurn,
+                    None,
+                )?;
+                tracing::warn!(
+                    target: "csp",
+                    %session_id,
+                    %attempt_id,
+                    %command_id,
+                    "late steer acknowledgement: the runtime started an unobserved turn with \
+                     this input; recorded, not resent, no second receipt"
+                );
+            }
+            SteerResolution::Unknown { reason, .. } => {
+                tracing::warn!(
+                    target: "csp",
+                    %session_id,
+                    %attempt_id,
+                    "late steer acknowledgement established nothing: {reason:?}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// Answer every steer attempt a dead process left at `intent`.
+    ///
+    /// Runs at startup, before any channel replays from its watermark: an
+    /// open intent means the input may have been written, so the command is
+    /// refused (silent on replay) and told `turn_delivery_unknown` /
+    /// `STEER_UNRESOLVED_AT_RESTART`. A command already refused — the crash
+    /// fell between the fenced answer and the attempt write — gets no second
+    /// receipt.
+    fn recover_steer_attempts(&mut self) -> anyhow::Result<()> {
+        for attempt in self.state.open_steer_attempts() {
+            tracing::warn!(
+                target: "csp::recovery",
+                session_id = %attempt.session_id,
+                command_id = %attempt.command_id,
+                attempt_id = %attempt.attempt_id,
+                "steer attempt was in flight when the provider stopped — answering it unknown"
+            );
+            if !self.state.is_command_refused(&attempt.command_id) {
+                let code = payload::STEER_UNRESOLVED_AT_RESTART;
+                let receipt = LifecycleReceipt::turn_delivery_unknown(
+                    &attempt.command_id,
+                    &attempt.target,
+                    code,
+                    steer_outcome_message(code),
+                );
+                self.enqueue_terminal_receipt(attempt.channel_id, &attempt.command_id, &receipt)?;
+            }
+            self.state.resolve_steer_attempt(
+                &attempt.attempt_id,
+                SteerDisposition::Unknown,
+                None,
+            )?;
+        }
+        Ok(())
     }
 
     /// Whether `session_id`'s mailbox can take both halves of an interrupt-class
@@ -4851,6 +5683,14 @@ impl Provider {
             .collect();
         for (command_id, turn) in lost {
             self.in_flight.remove(&command_id);
+            // A native steer still in flight here was never dequeued: the
+            // actor answers every attempt it took before it reports
+            // `TurnFinished`, and both ride the same ordered inbox as the
+            // `Exited` that brought us here. Nothing was written.
+            if let Some(attempt_id) = &turn.steer_attempt {
+                self.state
+                    .resolve_steer_attempt(attempt_id, SteerDisposition::Prevented, None)?;
+            }
             let _ =
                 self.report_no_live_execution(turn.channel_id, &command_id, &turn.target, true)?;
         }
@@ -5134,15 +5974,21 @@ impl Provider {
                 .open_turn
                 .as_ref()
                 .and_then(|open_turn| open_turn.command_id.clone());
-            let admitted: Vec<(String, String)> = self
+            let admitted: Vec<(String, String, Option<String>)> = self
                 .in_flight
                 .iter()
                 .filter(|(command_id, turn)| {
                     turn.session_id == session_id && running.as_deref() != Some(command_id.as_str())
                 })
-                .map(|(command_id, turn)| (command_id.clone(), turn.operator_pubkey.clone()))
+                .map(|(command_id, turn)| {
+                    (
+                        command_id.clone(),
+                        turn.operator_pubkey.clone(),
+                        turn.steer_attempt.clone(),
+                    )
+                })
                 .collect();
-            for (command_id, operator) in admitted {
+            for (command_id, operator, steer_attempt) in admitted {
                 let Some(refusal) = commands::handover_fence(&record, &operator, &self.pubkey_hex)
                     .filter(|refusal| refusal.code == payload::HANDOVER_FENCED)
                 else {
@@ -5171,6 +6017,43 @@ impl Provider {
                     // No actor at all: nothing can have been dequeued.
                     None => session::FencedAt::Queued,
                 };
+                // A native steer attempt is fenced by the same answer, but
+                // only one of the two answers is the provider's to act on.
+                // Still queued: nothing was written, so the attempt is
+                // `prevented` and refused below with zero runtime writes.
+                // Already dequeued: the input may be in the runtime now, and
+                // its resolution — truthful `turn_injected` or otherwise — is
+                // the only honest answer; the fence arrived too late to
+                // prevent it and must not claim it did.
+                if let Some(attempt_id) = steer_attempt {
+                    match fenced_at {
+                        session::FencedAt::Queued => {
+                            self.state.resolve_steer_attempt(
+                                &attempt_id,
+                                SteerDisposition::Prevented,
+                                None,
+                            )?;
+                        }
+                        session::FencedAt::AlreadyDequeued => {
+                            // Remembered on the entry: an `Injected` answer is
+                            // published as the truth it is, but an answer that
+                            // left the words undelivered must not become a
+                            // boundary turn under authority that is now gone.
+                            if let Some(turn) = self.in_flight.get_mut(&command_id) {
+                                turn.fenced_after_dispatch = true;
+                            }
+                            tracing::warn!(
+                                target: "csp::authority",
+                                %session_id,
+                                %command_id,
+                                %attempt_id,
+                                "handover fence arrived after this steer was dispatched to the \
+                                 runtime; an injection stands, anything undelivered is refused"
+                            );
+                            continue;
+                        }
+                    }
+                }
                 let reason = match fenced_at {
                     session::FencedAt::Queued => Self::HANDOVER_UNSTARTED_REASON,
                     session::FencedAt::AlreadyDequeued => {
@@ -5991,23 +6874,17 @@ impl Provider {
                 .get(&target.session_id)
                 .and_then(|observed| observed.branch.clone()),
             // `threadSteer` is the one capability that is a fact about *this*
-            // execution rather than about the driver: it is what the process
-            // behind this generation advertised at `initialize`, and it is
-            // gated on this provider actually being able to deliver a native
-            // steer (`session::NATIVE_STEER_DELIVERABLE`). An operator's Steer
-            // control is drawn from this field, so a `true` here has to mean a
-            // control that works, not one that always degrades.
+            // execution rather than about the driver: what the process behind
+            // this generation advertised at `initialize`, whether its pinned
+            // adapter honours the idle guard, and whether this provider ships
+            // the transport — the same three facts `on_turn` dispatches on.
+            // An operator's Steer control is drawn from this field, so a
+            // `true` here has to mean a control that works, not one that
+            // always degrades.
             capabilities: descriptor
                 .and_then(|descriptor| descriptor.capabilities)
                 .unwrap_or_else(|| Capabilities::v1_for_runtime(&runtime_slug))
-                .with_thread_steer(
-                    session::NATIVE_STEER_DELIVERABLE
-                        && self
-                            .steering
-                            .get(&target.session_id)
-                            .copied()
-                            .unwrap_or(false),
-                )
+                .with_thread_steer(self.native_steer_deliverable(&target.session_id))
                 // `promptImage` is per-execution for the same reason as
                 // `threadSteer`, and gated on this provider actually being
                 // able to deliver an image: without a media fetcher the blob
@@ -7069,6 +7946,28 @@ impl Provider {
                     return Ok(());
                 };
                 self.publish_observed_gate_row(&session_id, channel_id, observed)?;
+            }
+            SessionEvent::SteerResolved {
+                session_id,
+                turn_id,
+                command_id,
+                attempt_id,
+                resolution,
+            } => {
+                self.fold_steer_resolution(
+                    &session_id,
+                    turn_id,
+                    &command_id,
+                    &attempt_id,
+                    resolution,
+                )?;
+            }
+            SessionEvent::SteerReconciled {
+                session_id,
+                attempt_id,
+                resolution,
+            } => {
+                self.fold_steer_reconciliation(&session_id, &attempt_id, resolution)?;
             }
             SessionEvent::TurnDropped {
                 session_id,
@@ -8922,6 +9821,7 @@ mod tests {
     /// threads' forks).
     fn claude_runtime(script: String) -> RuntimeDescriptor {
         RuntimeDescriptor {
+            steer_idle_guard: None,
             agent_command: "bash".into(),
             agent_args: vec![script],
             ..claude_runtime_command(String::new())
@@ -8932,6 +9832,7 @@ mod tests {
     /// meant *not* to exist, where the spawn itself has to fail.
     fn claude_runtime_command(agent_command: String) -> RuntimeDescriptor {
         RuntimeDescriptor {
+            steer_idle_guard: None,
             instance_ref: "claude-primary".into(),
             driver: "claude-agent-acp".into(),
             runtime: "claude".into(),
@@ -13547,6 +14448,7 @@ mod tests {
         let runtimes = vec![
             claude_runtime_command(dir.path().join("missing-claude").to_string_lossy().into()),
             RuntimeDescriptor {
+                steer_idle_guard: None,
                 instance_ref: "codex-primary".into(),
                 driver: "codex-acp".into(),
                 runtime: "codex".into(),
@@ -15611,17 +16513,16 @@ done
         assert!(receipt_stages(&sink, "turn-steer").contains(&"turn_degraded".to_owned()));
     }
 
-    /// The downgrade is a fact about the *injection*, not about the
-    /// advertisement.
+    /// The downgrade is a fact about the *whole gate*, not about the
+    /// advertisement alone.
     ///
     /// An execution whose runtime advertised native steering at `initialize`
-    /// is still degraded, because nothing injected the words into the running
-    /// turn. This is the arm that would go silent if the degrade were ever
-    /// gated on the advertisement, or on
-    /// [`session::NATIVE_STEER_DELIVERABLE`], instead of on whether
-    /// [`Provider::inject_native_steer`] actually did anything: the turn would
-    /// be boundary-delivered under a bare `turn_queued` and the sender would
-    /// never learn their mid-turn correction missed the turn.
+    /// is still degraded when its descriptor declares no idle guard: without
+    /// `steerIdleGuard: promptRequired` an adapter that finds no running turn
+    /// starts a detached turn nobody observes, so nothing is injected and the
+    /// turn is boundary-delivered under a `turn_degraded` that says so. This
+    /// is the arm that would go silent if the degrade were ever gated on the
+    /// advertisement, or on [`session::NATIVE_STEER_DELIVERABLE`], alone.
     #[tokio::test]
     async fn a_steer_an_execution_advertised_is_still_degraded_when_nothing_injects_it() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -15900,13 +16801,11 @@ done
     /// execution's process, not a constant for the driver — and it is never
     /// `true` unless a steer could actually be delivered.
     ///
-    /// Scope, stated plainly: while [`session::NATIVE_STEER_DELIVERABLE`] is
-    /// `false` the published capability is `false` for every execution, so what
-    /// this test can pin is the per-execution *bookkeeping* (`steering` is
-    /// learned per session id and absent means nothing is claimed) and the
-    /// gate. It is not evidence that an advertised steer would be published
-    /// once delivery ships; the assertion above the second case is the
-    /// tripwire that makes someone come back here when it does.
+    /// This pins the per-execution *bookkeeping*: `steering` is learned per
+    /// session id, absent means nothing is claimed, and an advertisement
+    /// without a declared idle guard is not a deliverable steer. The positive
+    /// case — all three facts present — is
+    /// `metadata_thread_steer_needs_all_three_facts`.
     #[tokio::test]
     async fn metadata_thread_steer_is_this_executions_own_truth() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -15936,28 +16835,15 @@ done
                 .thread_steer
         );
 
-        // Every assertion in this test is `!thread_steer`, so a `metadata_for`
-        // that hardcoded `false` would pass it. That is not a claim this test
-        // can make while the constant below is `false`, and pretending
-        // otherwise would have it cited as coverage it does not provide. The
-        // `const` assertion is the tripwire instead: the day a native steer
-        // can be delivered, this stops compiling and whoever flipped it comes
-        // back to make the second case expect `true`.
-        const {
-            assert!(
-                !session::NATIVE_STEER_DELIVERABLE,
-                "this provider cannot deliver a native steer yet; when it can, the expectation \
-                 below becomes `true` and the capability starts tracking `steering`"
-            )
-        };
+        // Advertised, but this runtime descriptor declares no idle guard: a
+        // steer here would start a detached turn, so the control stays off.
         provider.steering.insert(target.session_id.clone(), true);
         assert!(
             !provider
                 .metadata_for(&target, SessionStatus::Idle)
                 .capabilities
                 .thread_steer,
-            "a steer this provider cannot deliver is never published as a capability an \
-             operator may press"
+            "an advertisement without a declared idle guard is not a control an operator may press"
         );
 
         // An execution with no witnessed process claims nothing.
@@ -17087,5 +17973,2440 @@ done
                 "the run loop no longer calls {call}: held turns are never delivered"
             );
         }
+    }
+
+    // ---- native mid-turn steering ------------------------------------------
+
+    use crate::session::testing::{
+        held_open_steer_agent, slow_injecting_steer_agent, steer_agent_acking_late,
+        steer_agent_answering, steer_agent_erroring, steer_agent_exiting_on_steer,
+        steer_agent_holding_forever, steer_agent_miscorrelating, steer_agent_never_acking,
+    };
+    use crate::state::SteerDisposition;
+    use buzz_core::coding_session_authority_claim::CurrentClaim;
+    use buzz_core::coding_session_runtime::SteerIdleGuard;
+
+    /// A provider wired to a scripted steering agent whose runtime descriptor
+    /// declares `guard` as the adapter's idle guard.
+    fn steering_provider(
+        state_dir: &Path,
+        projects: Option<&Path>,
+        script: &str,
+        guard: Option<SteerIdleGuard>,
+    ) -> Provider {
+        steering_provider_with_keys(Keys::generate(), state_dir, projects, script, guard)
+    }
+
+    fn steering_provider_with_keys(
+        keys: Keys,
+        state_dir: &Path,
+        projects: Option<&Path>,
+        script: &str,
+        guard: Option<SteerIdleGuard>,
+    ) -> Provider {
+        let agent = fake_agent(state_dir_parent(state_dir), "steer-agent", script);
+        let mut runtime = claude_runtime(agent);
+        runtime.steer_idle_guard = guard;
+        Provider::new(config_of_runtimes(keys, state_dir, projects, vec![runtime]))
+            .expect("provider")
+    }
+
+    fn steer_event(
+        channel_id: Uuid,
+        command_id: &str,
+        target: &CodingSessionTarget,
+        text: &str,
+    ) -> Event {
+        command_event(
+            channel_id,
+            command_id,
+            target,
+            serde_json::json!({
+                "type": "thread.turn.start",
+                "text": text,
+                "deliver": "steer",
+            }),
+        )
+    }
+
+    /// Create the session and hand back its target.
+    async fn create_steer_session(
+        provider: &mut Provider,
+        channel_id: Uuid,
+    ) -> CodingSessionTarget {
+        provider
+            .handle_command_event(channel_id, &create_event(provider, channel_id, "create-1"))
+            .await
+            .expect("create");
+        provider
+            .state()
+            .sessions()
+            .next()
+            .expect("session")
+            .target(&provider.config.instance_id)
+    }
+
+    async fn pump_until_steer_resolved(provider: &mut Provider) {
+        pump_until(provider, |event| {
+            matches!(event, SessionEvent::SteerResolved { .. })
+        })
+        .await;
+    }
+
+    /// Every disposition ever recorded for `command_id`, in attempt order.
+    fn dispositions(provider: &Provider, command_id: &str) -> Vec<SteerDisposition> {
+        provider
+            .state()
+            .steer_attempts_for_command(command_id)
+            .iter()
+            .map(|attempt| attempt.disposition)
+            .collect()
+    }
+
+    /// `(status, error.code)` per receipt for one command, in publication order.
+    fn receipt_codes(sink: &CollectingSink, command_id: &str) -> Vec<(String, String)> {
+        sink.all()
+            .iter()
+            .filter(|event| u32::from(event.kind.as_u16()) == KIND_CODING_SESSION_LIFECYCLE_RECEIPT)
+            .filter_map(|event| serde_json::from_str::<serde_json::Value>(&event.content).ok())
+            .filter(|receipt| receipt["commandId"] == command_id)
+            .map(|receipt| {
+                (
+                    receipt["status"].as_str().unwrap_or_default().to_owned(),
+                    receipt["error"]["code"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_owned(),
+                )
+            })
+            .collect()
+    }
+
+    /// The transcript `user_prompt` items with `steered: true`, in record order,
+    /// as `(turnId, commandId, operatorPubkey, content)`.
+    fn steered_prompts(sink: &CollectingSink) -> Vec<(String, String, String, String)> {
+        transcript_items_in_sequence(sink)
+            .into_iter()
+            .filter(|envelope| {
+                envelope["item"]["kind"] == "user_prompt" && envelope["item"]["steered"] == true
+            })
+            .map(|envelope| {
+                (
+                    envelope["turnId"].as_str().unwrap_or_default().to_owned(),
+                    envelope["item"]["commandId"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_owned(),
+                    envelope["item"]["operatorPubkey"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_owned(),
+                    envelope["item"]["content"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_owned(),
+                )
+            })
+            .collect()
+    }
+
+    /// Drain events until `done`, recording every event and returning them.
+    async fn pump_collecting_until(
+        provider: &mut Provider,
+        done: impl Fn(&SessionEvent) -> bool,
+    ) -> Vec<SessionEvent> {
+        let mut seen = Vec::new();
+        loop {
+            let event =
+                tokio::time::timeout(Duration::from_secs(20), provider.next_session_event())
+                    .await
+                    .expect("session event within timeout")
+                    .expect("channel open");
+            let finished = done(&event);
+            seen.push(event.clone());
+            provider.handle_session_event(event).expect("record");
+            if finished {
+                return seen;
+            }
+        }
+    }
+
+    /// The reason→code maps are the §2/§3.4 table of
+    /// `docs/NATIVE_STEERING_IMPL.md`, row for row.
+    #[test]
+    fn steer_reason_codes_follow_the_contract_table() {
+        assert_eq!(
+            steer_not_delivered_code(&NotDeliveredReason::Unsupported),
+            payload::STEER_UNSUPPORTED
+        );
+        assert_eq!(
+            steer_not_delivered_code(&NotDeliveredReason::MethodNotFound {
+                message: String::new()
+            }),
+            payload::STEER_UNSUPPORTED
+        );
+        assert_eq!(
+            steer_not_delivered_code(&NotDeliveredReason::PromptRequired),
+            payload::STEER_TURN_ENDED
+        );
+        assert_eq!(
+            steer_not_delivered_code(&NotDeliveredReason::PromptEndedBeforeWrite),
+            payload::STEER_TURN_ENDED
+        );
+        assert_eq!(
+            steer_not_delivered_code(&NotDeliveredReason::Rejected {
+                code: -32000,
+                message: String::new()
+            }),
+            payload::STEER_REJECTED
+        );
+        assert_eq!(
+            steer_unknown_code(&UnknownReason::WriteFailed {
+                message: String::new()
+            }),
+            payload::STEER_WRITE_FAILED
+        );
+        assert_eq!(
+            steer_unknown_code(&UnknownReason::PromptEndedBeforeAck),
+            payload::STEER_ACK_LOST
+        );
+        assert_eq!(
+            steer_unknown_code(&UnknownReason::RuntimeExited),
+            payload::STEER_ACK_LOST
+        );
+        assert_eq!(
+            steer_unknown_code(&UnknownReason::AckTimeout),
+            payload::STEER_ACK_TIMEOUT
+        );
+        assert_eq!(
+            steer_unknown_code(&UnknownReason::UnrecognizedAck {
+                outcome: String::new()
+            }),
+            payload::STEER_ACK_UNRECOGNIZED
+        );
+        assert_eq!(
+            steer_unknown_code(&UnknownReason::AdapterReportedFailure {
+                outcome: "failed".into()
+            }),
+            payload::STEER_ACK_UNRECOGNIZED
+        );
+        // Every message is a function of the code alone and non-empty.
+        for code in [
+            payload::STEER_TURN_ENDED,
+            payload::STEER_SATURATED,
+            payload::STEER_REJECTED,
+            payload::STEER_UNSUPPORTED,
+            payload::STEER_ATTACHMENTS_UNSUPPORTED,
+            payload::STEER_WRITE_FAILED,
+            payload::STEER_ACK_LOST,
+            payload::STEER_ACK_TIMEOUT,
+            payload::STEER_ACK_UNRECOGNIZED,
+            payload::STEER_UNRESOLVED_AT_RESTART,
+            payload::STEER_UNOBSERVED_NEW_TURN,
+            payload::STEER_NOT_DELIVERED,
+        ] {
+            assert!(!steer_outcome_message(code).is_empty(), "{code}");
+            assert_eq!(steer_outcome_message(code), steer_outcome_message(code));
+        }
+    }
+
+    /// (1) Two steers into one held-open turn: each is injected exactly once,
+    /// in order, on the original turn, and nothing about the original turn's
+    /// bookkeeping changes.
+    #[tokio::test]
+    async fn a_held_open_turn_takes_two_native_steers_in_order() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = steering_provider(
+            &dir.path().join("state"),
+            Some(&projects),
+            &held_open_steer_agent(),
+            Some(SteerIdleGuard::PromptRequired),
+        );
+        let umbrella = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+        provider
+            .handle_command_event(
+                channel_id,
+                &create_event_with_session_ref(&provider, channel_id, "create-1", umbrella),
+            )
+            .await
+            .expect("create");
+        let target = provider
+            .state()
+            .sessions()
+            .next()
+            .expect("session")
+            .target(&provider.config.instance_id);
+        assert!(
+            provider
+                .metadata_for(&target, SessionStatus::Idle)
+                .capabilities
+                .thread_steer,
+            "advertised + declared idle guard + shipped transport publishes the control"
+        );
+
+        provider
+            .handle_command_event(channel_id, &turn_event(channel_id, "turn-1", &target))
+            .await
+            .expect("turn");
+        pump_until_turn_started(&mut provider).await;
+        assert_eq!(provider.state().turns_used(umbrella), 1);
+
+        provider
+            .handle_command_event(
+                channel_id,
+                &steer_event(channel_id, "steer-1", &target, "first: look at the tests"),
+            )
+            .await
+            .expect("steer 1");
+        assert_eq!(
+            dispositions(&provider, "steer-1"),
+            vec![SteerDisposition::Intent],
+            "the intent is durable before the mailbox takes the input"
+        );
+        pump_until_steer_resolved(&mut provider).await;
+        assert_eq!(
+            dispositions(&provider, "steer-1"),
+            vec![SteerDisposition::Injected]
+        );
+
+        provider
+            .handle_command_event(
+                channel_id,
+                &steer_event(channel_id, "steer-2", &target, "second: then the docs"),
+            )
+            .await
+            .expect("steer 2");
+        let events = pump_collecting_until(&mut provider, |event| {
+            matches!(event, SessionEvent::TurnFinished { .. })
+        })
+        .await;
+        assert_eq!(
+            dispositions(&provider, "steer-2"),
+            vec![SteerDisposition::Injected]
+        );
+        assert!(
+            !events.iter().any(|event| matches!(
+                event,
+                SessionEvent::TurnStarted { command_id, .. } if command_id.starts_with("steer-")
+            )),
+            "an injection never starts a turn"
+        );
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        assert_eq!(
+            receipt_stages(&sink, "turn-1"),
+            vec!["turn_queued".to_owned(), "turn_started".to_owned()],
+            "exactly one turn_started for the original turn"
+        );
+        assert_eq!(receipt_stages(&sink, "steer-1"), vec!["turn_injected"]);
+        assert_eq!(receipt_stages(&sink, "steer-2"), vec!["turn_injected"]);
+        let started = sink
+            .contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT)
+            .into_iter()
+            .find(|receipt| receipt["status"] == "turn_started")
+            .expect("turn_started");
+        let original_turn = started["turnId"].as_str().expect("turnId").to_owned();
+        for receipt in sink
+            .contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT)
+            .into_iter()
+            .filter(|receipt| receipt["status"] == "turn_injected")
+        {
+            assert_eq!(
+                receipt["turnId"], original_turn,
+                "an injection names the turn it joined"
+            );
+            payload::decode_coding_session_lifecycle_receipt(&receipt.to_string())
+                .expect("strictly decodable turn_injected receipt");
+        }
+
+        let operator = test_operator_keys().public_key().to_hex();
+        assert_eq!(
+            steered_prompts(&sink),
+            vec![
+                (
+                    original_turn.clone(),
+                    "steer-1".to_owned(),
+                    operator.clone(),
+                    "first: look at the tests".to_owned()
+                ),
+                (
+                    original_turn.clone(),
+                    "steer-2".to_owned(),
+                    operator,
+                    "second: then the docs".to_owned()
+                ),
+            ],
+            "the signed originals, in order, on the original turn"
+        );
+        // The agent saw both injections, in order, inside the one prompt: its
+        // `steered:<n>` chunks are on the original turn's record, first
+        // before second. Chunks coalesce into one message item, so the order
+        // is read off the serialized record rather than off item boundaries.
+        let record: String = transcript_items_in_sequence(&sink)
+            .into_iter()
+            .filter(|envelope| envelope["turnId"] == original_turn)
+            .map(|envelope| envelope["item"].to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let steered_1 = record.find("steered:1");
+        let steered_2 = record.find("steered:2");
+        assert!(steered_1.is_some() && steered_2.is_some(), "{record}");
+        assert!(steered_1 < steered_2, "{record}");
+        // The terminal item is the original turn's, and the budget was
+        // charged once.
+        let terminal = transcript_items_in_sequence(&sink)
+            .into_iter()
+            .find(|envelope| envelope["item"]["kind"] == "result")
+            .expect("result item");
+        assert_eq!(terminal["turnId"], original_turn);
+        assert_eq!(
+            provider.state().turns_used(umbrella),
+            1,
+            "an injection spends no turn"
+        );
+        assert!(provider.state().is_command_consumed("steer-1"));
+        assert!(provider.state().is_command_consumed("steer-2"));
+        assert!(provider.in_flight.is_empty());
+
+        // A redelivery of an injected steer is silent.
+        provider
+            .handle_command_event(
+                channel_id,
+                &steer_event(channel_id, "steer-1", &target, "first: look at the tests"),
+            )
+            .await
+            .expect("redelivery");
+        let again = CollectingSink::new();
+        provider.flush(&again).await.expect("flush");
+        assert!(receipt_stages(&again, "steer-1").is_empty());
+        assert_eq!(dispositions(&provider, "steer-1").len(), 1);
+    }
+
+    /// (2) The runtime advertised steering, but the descriptor declares no
+    /// idle guard: not a native attempt, and said so.
+    #[tokio::test]
+    async fn a_steer_without_a_declared_idle_guard_is_degraded_to_the_boundary() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = steering_provider(
+            &dir.path().join("state"),
+            Some(&projects),
+            crate::session::testing::STEERING_AGENT,
+            None,
+        );
+        let target = create_steer_session(&mut provider, channel_id).await;
+        assert_eq!(provider.steering.get(&target.session_id), Some(&true));
+        assert!(
+            !provider
+                .metadata_for(&target, SessionStatus::Idle)
+                .capabilities
+                .thread_steer
+        );
+
+        provider
+            .handle_command_event(
+                channel_id,
+                &steer_event(
+                    channel_id,
+                    "steer-unguarded",
+                    &target,
+                    "use the other approach",
+                ),
+            )
+            .await
+            .expect("steer");
+        pump_until_turn_finished(&mut provider).await;
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        assert_eq!(
+            receipt_codes(&sink, "steer-unguarded"),
+            vec![
+                (
+                    "turn_degraded".to_owned(),
+                    payload::STEER_UNSUPPORTED.to_owned()
+                ),
+                ("turn_queued".to_owned(), String::new()),
+                ("turn_started".to_owned(), String::new()),
+            ]
+        );
+        assert!(
+            dispositions(&provider, "steer-unguarded").is_empty(),
+            "no native attempt is recorded for a boundary delivery"
+        );
+    }
+
+    /// A steer that carries attachments is never injected: the injection is
+    /// text only, so the words go to the boundary and the receipt says why.
+    #[tokio::test]
+    async fn a_steer_with_attachments_is_degraded_to_the_boundary() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = steering_provider(
+            &dir.path().join("state"),
+            Some(&projects),
+            crate::session::testing::STEERING_AGENT,
+            Some(SteerIdleGuard::PromptRequired),
+        );
+        let target = create_steer_session(&mut provider, channel_id).await;
+        assert!(
+            provider.native_steer_deliverable(&target.session_id),
+            "the gate is open; only the attachments keep this at the boundary"
+        );
+        provider
+            .handle_command_event(
+                channel_id,
+                &command_event(
+                    channel_id,
+                    "steer-image",
+                    &target,
+                    serde_json::json!({
+                        "type": "thread.turn.start",
+                        "text": "look at this",
+                        "deliver": "steer",
+                        "attachments": [{
+                            "sha256": "ab".repeat(32),
+                            "mime": "image/png",
+                            "size": 128,
+                        }],
+                    }),
+                ),
+            )
+            .await
+            .expect("steer");
+        pump_until_turn_finished(&mut provider).await;
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        let codes = receipt_codes(&sink, "steer-image");
+        assert_eq!(
+            codes.first(),
+            Some(&(
+                "turn_degraded".to_owned(),
+                payload::STEER_ATTACHMENTS_UNSUPPORTED.to_owned()
+            )),
+            "{codes:?}"
+        );
+        assert!(codes.iter().any(|(status, _)| status == "turn_queued"));
+        assert!(dispositions(&provider, "steer-image").is_empty());
+    }
+
+    /// (3) More steers than the admission depth can hold: the overflow is
+    /// dropped as `STEER_SATURATED` — terminal, refused, never re-delivered
+    /// at the boundary behind the inputs it was sent after — and the rest
+    /// inject in order.
+    #[tokio::test]
+    async fn steers_beyond_the_admission_depth_are_dropped_as_saturated() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        // One in the read loop's hands, `STEER_ADMISSION_DEPTH` waiting, and
+        // one more that finds no room. The agent answers slowly enough that
+        // the whole burst is queued before the first acknowledgement.
+        let burst = session::STEER_ADMISSION_DEPTH + 2;
+        let injected = u32::try_from(burst - 1).expect("small");
+        let mut provider = steering_provider(
+            &dir.path().join("state"),
+            Some(&projects),
+            &slow_injecting_steer_agent("0.5", injected),
+            Some(SteerIdleGuard::PromptRequired),
+        );
+        let target = create_steer_session(&mut provider, channel_id).await;
+        provider
+            .handle_command_event(channel_id, &turn_event(channel_id, "turn-1", &target))
+            .await
+            .expect("turn");
+        pump_until_turn_started(&mut provider).await;
+
+        for n in 1..=burst {
+            provider
+                .handle_command_event(
+                    channel_id,
+                    &steer_event(
+                        channel_id,
+                        &format!("steer-{n}"),
+                        &target,
+                        &format!("note {n}"),
+                    ),
+                )
+                .await
+                .expect("steer");
+        }
+        // The held turn ends after the injected ones; the saturated one is
+        // terminal and starts nothing.
+        pump_until_turn_finished(&mut provider).await;
+        pump_available(&mut provider).await;
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        let mut saturated = Vec::new();
+        let mut injected_ids = Vec::new();
+        for n in 1..=burst {
+            let id = format!("steer-{n}");
+            let codes = receipt_codes(&sink, &id);
+            if codes
+                .first()
+                .is_some_and(|(status, _)| status == "turn_injected")
+            {
+                injected_ids.push(id);
+            } else {
+                assert_eq!(
+                    codes,
+                    vec![(
+                        "turn_dropped".to_owned(),
+                        payload::STEER_SATURATED.to_owned()
+                    )],
+                    "{id}: {codes:?}"
+                );
+                assert_eq!(
+                    dispositions(&provider, &id),
+                    vec![SteerDisposition::Prevented]
+                );
+                assert!(provider.state().is_command_refused(&id), "{id}");
+                assert!(!provider.state().is_command_consumed(&id), "{id}");
+                saturated.push(id);
+            }
+        }
+        assert_eq!(saturated.len(), 1, "exactly one overflowed: {saturated:?}");
+        assert_eq!(injected_ids.len(), burst - 1);
+        assert!(provider.in_flight.is_empty());
+        // The injected ones are on the record in the order they were sent.
+        let order: Vec<String> = steered_prompts(&sink)
+            .into_iter()
+            .map(|(_, command_id, _, _)| command_id)
+            .collect();
+        assert_eq!(
+            order, injected_ids,
+            "no reordering of one operator's inputs"
+        );
+    }
+
+    /// (4) Each acknowledgement shape maps to its §2 row.
+    async fn run_single_steer(
+        script: &str,
+        command_id: &str,
+        pump_finishes: usize,
+    ) -> (Provider, CollectingSink) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = steering_provider(
+            &dir.path().join("state"),
+            Some(&projects),
+            script,
+            Some(SteerIdleGuard::PromptRequired),
+        );
+        let target = create_steer_session(&mut provider, channel_id).await;
+        provider
+            .handle_command_event(channel_id, &turn_event(channel_id, "turn-1", &target))
+            .await
+            .expect("turn");
+        pump_until_turn_started(&mut provider).await;
+        provider
+            .handle_command_event(
+                channel_id,
+                &steer_event(channel_id, command_id, &target, "steer me"),
+            )
+            .await
+            .expect("steer");
+        for _ in 0..pump_finishes {
+            pump_until_turn_finished(&mut provider).await;
+        }
+        // Keep the tempdir alive for the caller by leaking it into the
+        // provider's lifetime: the state dir is under it.
+        std::mem::forget(dir);
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        (provider, sink)
+    }
+
+    #[tokio::test]
+    async fn an_unrecognized_steer_ack_is_delivery_unknown() {
+        let (provider, sink) =
+            run_single_steer(&steer_agent_answering("{}"), "steer-empty", 1).await;
+        assert_eq!(
+            receipt_codes(&sink, "steer-empty"),
+            vec![(
+                "turn_delivery_unknown".to_owned(),
+                payload::STEER_ACK_UNRECOGNIZED.to_owned()
+            )]
+        );
+        assert_eq!(
+            dispositions(&provider, "steer-empty"),
+            vec![SteerDisposition::Unknown]
+        );
+        assert!(provider.state().is_command_refused("steer-empty"));
+        assert!(!provider.state().is_command_consumed("steer-empty"));
+        let receipt = sink
+            .contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT)
+            .into_iter()
+            .find(|receipt| receipt["commandId"] == "steer-empty")
+            .expect("receipt");
+        payload::decode_coding_session_lifecycle_receipt(&receipt.to_string())
+            .expect("strictly decodable turn_delivery_unknown receipt");
+    }
+
+    #[tokio::test]
+    async fn a_prompt_required_answer_falls_back_to_the_boundary() {
+        let (provider, sink) = run_single_steer(
+            &steer_agent_answering(r#"{"outcome":"promptRequired","reason":"noRunningTurn"}"#),
+            "steer-pr",
+            2,
+        )
+        .await;
+        assert_eq!(
+            receipt_codes(&sink, "steer-pr"),
+            vec![
+                (
+                    "turn_degraded".to_owned(),
+                    payload::STEER_TURN_ENDED.to_owned()
+                ),
+                ("turn_queued".to_owned(), String::new()),
+                ("turn_started".to_owned(), String::new()),
+            ]
+        );
+        assert_eq!(
+            dispositions(&provider, "steer-pr"),
+            vec![SteerDisposition::NotDelivered]
+        );
+        assert!(provider.state().is_command_consumed("steer-pr"));
+    }
+
+    #[tokio::test]
+    async fn a_started_new_turn_answer_is_consumed_and_reported_unobserved() {
+        let (provider, sink) = run_single_steer(
+            &steer_agent_answering(r#"{"outcome":"startedNewTurn"}"#),
+            "steer-new",
+            1,
+        )
+        .await;
+        assert_eq!(
+            receipt_codes(&sink, "steer-new"),
+            vec![(
+                "turn_delivery_unknown".to_owned(),
+                payload::STEER_UNOBSERVED_NEW_TURN.to_owned()
+            )]
+        );
+        assert_eq!(
+            dispositions(&provider, "steer-new"),
+            vec![SteerDisposition::StartedNewTurn]
+        );
+        assert!(
+            provider.state().is_command_consumed("steer-new"),
+            "delivered, so never resent"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_method_not_found_answer_is_degraded_unsupported() {
+        let (provider, sink) =
+            run_single_steer(&steer_agent_erroring(-32601), "steer-mnf", 2).await;
+        assert_eq!(
+            receipt_codes(&sink, "steer-mnf"),
+            vec![
+                (
+                    "turn_degraded".to_owned(),
+                    payload::STEER_UNSUPPORTED.to_owned()
+                ),
+                ("turn_queued".to_owned(), String::new()),
+                ("turn_started".to_owned(), String::new()),
+            ]
+        );
+        assert_eq!(
+            dispositions(&provider, "steer-mnf"),
+            vec![SteerDisposition::NotDelivered]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_rejected_steer_is_degraded_rejected() {
+        let (provider, sink) =
+            run_single_steer(&steer_agent_erroring(-32000), "steer-rej", 2).await;
+        assert_eq!(
+            receipt_codes(&sink, "steer-rej"),
+            vec![
+                (
+                    "turn_degraded".to_owned(),
+                    payload::STEER_REJECTED.to_owned()
+                ),
+                ("turn_queued".to_owned(), String::new()),
+                ("turn_started".to_owned(), String::new()),
+            ]
+        );
+        assert_eq!(
+            dispositions(&provider, "steer-rej"),
+            vec![SteerDisposition::NotDelivered]
+        );
+    }
+
+    /// The adapter reads the steer, never answers it, and ends the prompt: the
+    /// transport's bounded drain expires and delivery is unknown.
+    #[tokio::test]
+    async fn an_unanswered_steer_is_delivery_unknown_after_the_drain() {
+        let (provider, sink) =
+            run_single_steer(&steer_agent_never_acking(), "steer-silent", 1).await;
+        let codes = receipt_codes(&sink, "steer-silent");
+        assert_eq!(codes.len(), 1, "{codes:?}");
+        assert_eq!(codes[0].0, "turn_delivery_unknown");
+        assert!(
+            codes[0].1 == payload::STEER_ACK_TIMEOUT || codes[0].1 == payload::STEER_ACK_LOST,
+            "{codes:?}"
+        );
+        assert_eq!(
+            dispositions(&provider, "steer-silent"),
+            vec![SteerDisposition::Unknown]
+        );
+        assert!(provider.state().is_command_refused("steer-silent"));
+    }
+
+    /// (6) EOF right after the write: `STEER_ACK_LOST`, refused, and a
+    /// redelivery of the same 44220 publishes nothing.
+    #[tokio::test]
+    async fn an_ack_lost_steer_is_refused_so_a_redelivery_is_silent() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = steering_provider(
+            &dir.path().join("state"),
+            Some(&projects),
+            &steer_agent_exiting_on_steer(),
+            Some(SteerIdleGuard::PromptRequired),
+        );
+        let target = create_steer_session(&mut provider, channel_id).await;
+        provider
+            .handle_command_event(channel_id, &turn_event(channel_id, "turn-1", &target))
+            .await
+            .expect("turn");
+        pump_until_turn_started(&mut provider).await;
+        let steer = steer_event(channel_id, "steer-eof", &target, "steer me");
+        provider
+            .handle_command_event(channel_id, &steer)
+            .await
+            .expect("steer");
+        pump_until(&mut provider, |event| {
+            matches!(event, SessionEvent::Exited { .. })
+        })
+        .await;
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        assert_eq!(
+            receipt_codes(&sink, "steer-eof"),
+            vec![(
+                "turn_delivery_unknown".to_owned(),
+                payload::STEER_ACK_LOST.to_owned()
+            )]
+        );
+        assert_eq!(
+            dispositions(&provider, "steer-eof"),
+            vec![SteerDisposition::Unknown]
+        );
+        assert!(provider.state().is_command_refused("steer-eof"));
+
+        provider
+            .handle_command_event(channel_id, &steer)
+            .await
+            .expect("redelivery");
+        let again = CollectingSink::new();
+        provider.flush(&again).await.expect("flush");
+        assert!(
+            receipt_stages(&again, "steer-eof").is_empty(),
+            "a refused steer is answered once"
+        );
+        assert_eq!(
+            dispositions(&provider, "steer-eof").len(),
+            1,
+            "no second attempt"
+        );
+    }
+
+    /// (5) No prompt in flight when the steer is dequeued: nothing is
+    /// written, and the words run at the boundary as `STEER_TURN_ENDED`.
+    #[tokio::test]
+    async fn a_steer_with_no_turn_in_flight_runs_at_the_boundary_as_turn_ended() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        // Ends its first prompt only after a steer, so a lone steer with no
+        // turn running would hang the boundary fallback if it were ever
+        // dispatched natively. It is not: prompt #2 ends at once.
+        let mut provider = steering_provider(
+            &dir.path().join("state"),
+            Some(&projects),
+            &held_open_steer_agent(),
+            Some(SteerIdleGuard::PromptRequired),
+        );
+        let target = create_steer_session(&mut provider, channel_id).await;
+        // Let the ordinary turn run first so the agent's held prompt is used
+        // up and the steer meets an idle actor.
+        provider
+            .handle_command_event(channel_id, &turn_event(channel_id, "turn-0", &target))
+            .await
+            .expect("turn");
+        pump_until_turn_started(&mut provider).await;
+        provider
+            .handle_command_event(channel_id, &steer_event(channel_id, "warm-1", &target, "a"))
+            .await
+            .expect("warm");
+        provider
+            .handle_command_event(channel_id, &steer_event(channel_id, "warm-2", &target, "b"))
+            .await
+            .expect("warm");
+        pump_until_turn_finished(&mut provider).await;
+
+        provider
+            .handle_command_event(
+                channel_id,
+                &steer_event(channel_id, "steer-idle", &target, "nothing is running"),
+            )
+            .await
+            .expect("steer");
+        assert_eq!(
+            dispositions(&provider, "steer-idle"),
+            vec![SteerDisposition::Intent]
+        );
+        pump_until_turn_finished(&mut provider).await;
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        assert_eq!(
+            receipt_codes(&sink, "steer-idle"),
+            vec![
+                (
+                    "turn_degraded".to_owned(),
+                    payload::STEER_TURN_ENDED.to_owned()
+                ),
+                ("turn_queued".to_owned(), String::new()),
+                ("turn_started".to_owned(), String::new()),
+            ]
+        );
+        assert_eq!(
+            dispositions(&provider, "steer-idle"),
+            vec![SteerDisposition::NotDelivered]
+        );
+        assert!(provider.state().is_command_consumed("steer-idle"));
+    }
+
+    /// (7) An acknowledgement carrying another attempt's id settles nothing
+    /// for this one, and does not settle the other one twice.
+    #[tokio::test]
+    async fn a_mis_correlated_ack_settles_only_its_own_attempt() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = steering_provider(
+            &dir.path().join("state"),
+            Some(&projects),
+            &steer_agent_miscorrelating(),
+            Some(SteerIdleGuard::PromptRequired),
+        );
+        let target = create_steer_session(&mut provider, channel_id).await;
+        provider
+            .handle_command_event(channel_id, &turn_event(channel_id, "turn-1", &target))
+            .await
+            .expect("turn");
+        pump_until_turn_started(&mut provider).await;
+        provider
+            .handle_command_event(
+                channel_id,
+                &steer_event(channel_id, "steer-a", &target, "a"),
+            )
+            .await
+            .expect("steer a");
+        pump_until_steer_resolved(&mut provider).await;
+        provider
+            .handle_command_event(
+                channel_id,
+                &steer_event(channel_id, "steer-b", &target, "b"),
+            )
+            .await
+            .expect("steer b");
+        pump_until_turn_finished(&mut provider).await;
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        assert_eq!(receipt_stages(&sink, "steer-a"), vec!["turn_injected"]);
+        assert_eq!(
+            dispositions(&provider, "steer-a"),
+            vec![SteerDisposition::Injected]
+        );
+        let codes = receipt_codes(&sink, "steer-b");
+        assert_eq!(codes.len(), 1, "{codes:?}");
+        assert_eq!(codes[0].0, "turn_delivery_unknown", "{codes:?}");
+        assert_eq!(
+            dispositions(&provider, "steer-b"),
+            vec![SteerDisposition::Unknown]
+        );
+        assert_eq!(
+            steered_prompts(&sink).len(),
+            1,
+            "only the acknowledged attempt is on the record"
+        );
+    }
+
+    /// (8a) The intent append fails: no attempt exists, nothing was handed to
+    /// the runtime, and the very next delivery is the first and only one.
+    #[tokio::test]
+    async fn a_failed_intent_write_hands_nothing_to_the_runtime() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = steering_provider(
+            &dir.path().join("state"),
+            Some(&projects),
+            &steer_agent_answering(r#"{"outcome":"injected"}"#),
+            Some(SteerIdleGuard::PromptRequired),
+        );
+        let target = create_steer_session(&mut provider, channel_id).await;
+        provider
+            .handle_command_event(channel_id, &turn_event(channel_id, "turn-1", &target))
+            .await
+            .expect("turn");
+        pump_until_turn_started(&mut provider).await;
+
+        provider.state.fault_plan().fail_next_steer_append = true;
+        let steer = steer_event(channel_id, "steer-fault", &target, "steer me");
+        assert!(
+            provider
+                .handle_command_event(channel_id, &steer)
+                .await
+                .is_err(),
+            "the failed intent write is reported, not swallowed"
+        );
+        assert!(dispositions(&provider, "steer-fault").is_empty());
+        assert!(!provider.in_flight.contains_key("steer-fault"));
+        assert!(provider.state().open_steer_attempts().is_empty());
+
+        // The retry is the one and only delivery, under the same attempt id
+        // the failed write would have used.
+        provider
+            .handle_command_event(channel_id, &steer)
+            .await
+            .expect("retry");
+        assert_eq!(
+            provider
+                .state()
+                .steer_attempts_for_command("steer-fault")
+                .iter()
+                .map(|attempt| attempt.attempt_id.clone())
+                .collect::<Vec<_>>(),
+            vec!["steer-fault#1".to_owned()]
+        );
+        pump_until_turn_finished(&mut provider).await;
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        assert_eq!(receipt_stages(&sink, "steer-fault"), vec!["turn_injected"]);
+        assert_eq!(steered_prompts(&sink).len(), 1);
+    }
+
+    /// (8b) The intent is durable and the process dies before the actor
+    /// dequeues it: restart answers the command unknown, refuses it, and
+    /// never replays it.
+    #[tokio::test]
+    async fn an_intent_left_open_by_a_crash_is_answered_unknown_at_restart_and_never_replayed() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state_dir = dir.path().join("state");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let keys = Keys::generate();
+        let script = steer_agent_answering(r#"{"outcome":"injected"}"#);
+        let mut first = steering_provider_with_keys(
+            keys.clone(),
+            &state_dir,
+            Some(&projects),
+            &script,
+            Some(SteerIdleGuard::PromptRequired),
+        );
+        let target = create_steer_session(&mut first, channel_id).await;
+        // A mailbox the test owns: the steer is delivered and never dequeued,
+        // which is exactly the crash window between the intent write and the
+        // runtime write.
+        let (tx, mut rx) = mpsc::channel(4);
+        let _shutdown = first.sessions.attach_test_handle(&target.session_id, tx);
+        let steer = steer_event(channel_id, "steer-crash", &target, "steer me");
+        first
+            .handle_command_event(channel_id, &steer)
+            .await
+            .expect("steer");
+        assert_eq!(
+            dispositions(&first, "steer-crash"),
+            vec![SteerDisposition::Intent]
+        );
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(SessionCommand::Steer { ref attempt_id, .. }) if attempt_id == "steer-crash#1"
+        ));
+        let sink = CollectingSink::new();
+        first.flush(&sink).await.expect("flush");
+        assert!(
+            receipt_stages(&sink, "steer-crash").is_empty(),
+            "a native attempt publishes nothing at dispatch"
+        );
+        drop(first);
+
+        let mut restarted = steering_provider_with_keys(
+            keys,
+            &state_dir,
+            Some(&projects),
+            &script,
+            Some(SteerIdleGuard::PromptRequired),
+        );
+        assert_eq!(restarted.state().open_steer_attempts().len(), 1);
+        restarted.recover().await.expect("recover");
+        assert_eq!(
+            dispositions(&restarted, "steer-crash"),
+            vec![SteerDisposition::Unknown]
+        );
+        assert!(restarted.state().is_command_refused("steer-crash"));
+        assert!(!restarted.state().is_command_consumed("steer-crash"));
+        let sink = CollectingSink::new();
+        restarted.flush(&sink).await.expect("flush");
+        assert_eq!(
+            receipt_codes(&sink, "steer-crash"),
+            vec![(
+                "turn_delivery_unknown".to_owned(),
+                payload::STEER_UNRESOLVED_AT_RESTART.to_owned()
+            )]
+        );
+
+        // The replay from the channel floor finds it refused.
+        restarted
+            .handle_command_event(channel_id, &steer)
+            .await
+            .expect("replay");
+        let again = CollectingSink::new();
+        restarted.flush(&again).await.expect("flush");
+        assert!(receipt_stages(&again, "steer-crash").is_empty());
+        assert_eq!(
+            dispositions(&restarted, "steer-crash").len(),
+            1,
+            "never a second attempt"
+        );
+
+        // And a second restart does not answer it again.
+        drop(restarted);
+        let mut third = steering_provider(
+            &state_dir,
+            Some(&projects),
+            &script,
+            Some(SteerIdleGuard::PromptRequired),
+        );
+        third.recover().await.expect("recover");
+        let sink = CollectingSink::new();
+        third.flush(&sink).await.expect("flush");
+        assert!(receipt_stages(&sink, "steer-crash").is_empty());
+    }
+
+    /// (8c/8d) An attempt answered unknown whose receipt sits in the durable
+    /// outbox, and one whose receipt was already flushed: after a restart
+    /// each is published exactly once and neither is replayed.
+    #[tokio::test]
+    async fn an_unknown_attempt_is_answered_exactly_once_across_a_restart() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state_dir = dir.path().join("state");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let keys = Keys::generate();
+        let script = steer_agent_answering("{}");
+        let mut first = steering_provider_with_keys(
+            keys.clone(),
+            &state_dir,
+            Some(&projects),
+            &script,
+            Some(SteerIdleGuard::PromptRequired),
+        );
+        let target = create_steer_session(&mut first, channel_id).await;
+        first
+            .handle_command_event(channel_id, &turn_event(channel_id, "turn-1", &target))
+            .await
+            .expect("turn");
+        pump_until_turn_started(&mut first).await;
+        let steer = steer_event(channel_id, "steer-unflushed", &target, "steer me");
+        first
+            .handle_command_event(channel_id, &steer)
+            .await
+            .expect("steer");
+        pump_until_turn_finished(&mut first).await;
+        assert_eq!(
+            dispositions(&first, "steer-unflushed"),
+            vec![SteerDisposition::Unknown]
+        );
+        // Crash before the flush: the receipt is in the durable outbox only.
+        drop(first);
+
+        let mut restarted = steering_provider_with_keys(
+            keys.clone(),
+            &state_dir,
+            Some(&projects),
+            &script,
+            Some(SteerIdleGuard::PromptRequired),
+        );
+        restarted.recover().await.expect("recover");
+        let sink = CollectingSink::new();
+        restarted.flush(&sink).await.expect("flush");
+        assert_eq!(
+            receipt_codes(&sink, "steer-unflushed"),
+            vec![(
+                "turn_delivery_unknown".to_owned(),
+                payload::STEER_ACK_UNRECOGNIZED.to_owned()
+            )],
+            "the answer made before the crash, and no restart answer on top"
+        );
+        assert_eq!(
+            dispositions(&restarted, "steer-unflushed"),
+            vec![SteerDisposition::Unknown]
+        );
+        restarted
+            .handle_command_event(channel_id, &steer)
+            .await
+            .expect("replay");
+        let again = CollectingSink::new();
+        restarted.flush(&again).await.expect("flush");
+        assert!(receipt_stages(&again, "steer-unflushed").is_empty());
+        // Flushed now: the next restart has nothing to say about it.
+        drop(restarted);
+        let mut third = steering_provider_with_keys(
+            keys,
+            &state_dir,
+            Some(&projects),
+            &script,
+            Some(SteerIdleGuard::PromptRequired),
+        );
+        third.recover().await.expect("recover");
+        let sink = CollectingSink::new();
+        third.flush(&sink).await.expect("flush");
+        assert!(receipt_stages(&sink, "steer-unflushed").is_empty());
+        assert!(third.state().open_steer_attempts().is_empty());
+    }
+
+    /// A mailbox with no room: the intent was written, the delivery failed,
+    /// nothing reached the runtime — `prevented`, answered as any dropped
+    /// turn is.
+    #[tokio::test]
+    async fn a_steer_the_mailbox_cannot_take_is_prevented() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = steering_provider(
+            &dir.path().join("state"),
+            Some(&projects),
+            &steer_agent_answering(r#"{"outcome":"injected"}"#),
+            Some(SteerIdleGuard::PromptRequired),
+        );
+        let target = create_steer_session(&mut provider, channel_id).await;
+        let (tx, _rx) = mpsc::channel(1);
+        tx.try_send(SessionCommand::Shutdown).expect("fill");
+        let _shutdown = provider.sessions.attach_test_handle(&target.session_id, tx);
+        provider
+            .handle_command_event(
+                channel_id,
+                &steer_event(channel_id, "steer-full", &target, "steer me"),
+            )
+            .await
+            .expect("steer");
+        assert_eq!(
+            dispositions(&provider, "steer-full"),
+            vec![SteerDisposition::Prevented]
+        );
+        assert!(!provider.in_flight.contains_key("steer-full"));
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        assert_eq!(
+            receipt_codes(&sink, "steer-full"),
+            vec![("turn_dropped".to_owned(), payload::QUEUE_FULL.to_owned())]
+        );
+        assert!(provider.state().is_command_refused("steer-full"));
+    }
+
+    /// (9a) Fenced while still queued: `prevented`, `turn_refused`, and the
+    /// runtime never sees it.
+    #[tokio::test]
+    async fn a_steer_fenced_while_queued_is_prevented_with_zero_writes() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = steering_provider(
+            &dir.path().join("state"),
+            Some(&projects),
+            &steer_agent_answering(r#"{"outcome":"injected"}"#),
+            Some(SteerIdleGuard::PromptRequired),
+        );
+        let target = create_steer_session(&mut provider, channel_id).await;
+        let genesis = "cd".repeat(32);
+        provider
+            .state
+            .update_session(&target.session_id, |record| {
+                record.genesis_ref = Some(genesis.clone());
+            })
+            .expect("genesis");
+        let (tx, mut rx) = mpsc::channel(4);
+        let _shutdown = provider.sessions.attach_test_handle(&target.session_id, tx);
+        provider
+            .handle_command_event(
+                channel_id,
+                &steer_event(channel_id, "steer-queued", &target, "steer me"),
+            )
+            .await
+            .expect("steer");
+        assert_eq!(
+            dispositions(&provider, "steer-queued"),
+            vec![SteerDisposition::Intent]
+        );
+
+        // Somebody else took the session over on this body.
+        let body = provider.config.pubkey_hex();
+        provider
+            .state
+            .update_session(&target.session_id, |record| {
+                record.handover = ClaimState::Active(CurrentClaim {
+                    claimant: "ef".repeat(32),
+                    body_pubkey: body.clone(),
+                    accepted_event_id: "12".repeat(32),
+                    seq: 1,
+                });
+            })
+            .expect("claim");
+        provider.enforce_claim_for_genesis(&genesis).expect("fence");
+
+        assert_eq!(
+            dispositions(&provider, "steer-queued"),
+            vec![SteerDisposition::Prevented]
+        );
+        assert!(!provider.in_flight.contains_key("steer-queued"));
+        assert!(provider.state().is_command_refused("steer-queued"));
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        assert_eq!(
+            receipt_codes(&sink, "steer-queued"),
+            vec![(
+                "turn_refused".to_owned(),
+                payload::HANDOVER_FENCED.to_owned()
+            )]
+        );
+        // The one command in the mailbox is the steer, and nothing ever
+        // dequeued it — the runtime saw zero writes.
+        assert!(matches!(rx.try_recv(), Ok(SessionCommand::Steer { .. })));
+        assert!(rx.try_recv().is_err());
+    }
+
+    /// (9b) Fenced after the actor dequeued it: the fence does not refuse,
+    /// and the truthful `turn_injected` follows.
+    #[tokio::test]
+    async fn a_steer_fenced_after_dequeue_keeps_its_truthful_resolution() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = steering_provider(
+            &dir.path().join("state"),
+            Some(&projects),
+            &held_open_steer_agent(),
+            Some(SteerIdleGuard::PromptRequired),
+        );
+        let target = create_steer_session(&mut provider, channel_id).await;
+        let genesis = "cd".repeat(32);
+        provider
+            .state
+            .update_session(&target.session_id, |record| {
+                record.genesis_ref = Some(genesis.clone());
+            })
+            .expect("genesis");
+        provider
+            .handle_command_event(channel_id, &turn_event(channel_id, "turn-1", &target))
+            .await
+            .expect("turn");
+        pump_until_turn_started(&mut provider).await;
+        provider
+            .handle_command_event(
+                channel_id,
+                &steer_event(channel_id, "steer-late-fence", &target, "steer me"),
+            )
+            .await
+            .expect("steer");
+        // Read (without folding) until the actor reports the resolution: by
+        // then it has dequeued and written the steer.
+        let mut held = Vec::new();
+        loop {
+            let event =
+                tokio::time::timeout(Duration::from_secs(20), provider.next_session_event())
+                    .await
+                    .expect("event")
+                    .expect("open");
+            let resolved = matches!(event, SessionEvent::SteerResolved { .. });
+            held.push(event);
+            if resolved {
+                break;
+            }
+        }
+        let body = provider.config.pubkey_hex();
+        provider
+            .state
+            .update_session(&target.session_id, |record| {
+                record.handover = ClaimState::Active(CurrentClaim {
+                    claimant: "ef".repeat(32),
+                    body_pubkey: body.clone(),
+                    accepted_event_id: "12".repeat(32),
+                    seq: 1,
+                });
+            })
+            .expect("claim");
+        provider.enforce_claim_for_genesis(&genesis).expect("fence");
+        assert_eq!(
+            dispositions(&provider, "steer-late-fence"),
+            vec![SteerDisposition::Intent],
+            "a fence that arrived after dispatch leaves the attempt to its resolution"
+        );
+        for event in held {
+            provider.handle_session_event(event).expect("fold");
+        }
+        assert_eq!(
+            dispositions(&provider, "steer-late-fence"),
+            vec![SteerDisposition::Injected]
+        );
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        let stages = receipt_stages(&sink, "steer-late-fence");
+        assert!(
+            stages.contains(&"turn_injected".to_owned())
+                && !stages.contains(&"turn_refused".to_owned()),
+            "{stages:?}"
+        );
+        // Let the held prompt end so the actor retires cleanly.
+        provider
+            .handle_command_event(
+                channel_id,
+                &steer_event(channel_id, "steer-end", &target, "end"),
+            )
+            .await
+            .expect("steer");
+        pump_until_turn_finished(&mut provider).await;
+    }
+
+    /// (9c) A stale generation or an unauthorized signer is refused by
+    /// `decide_turn` before any attempt exists: no record, no runtime write.
+    #[tokio::test]
+    async fn a_stale_or_unauthorized_steer_records_no_attempt() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = steering_provider(
+            &dir.path().join("state"),
+            Some(&projects),
+            &steer_agent_answering(r#"{"outcome":"injected"}"#),
+            Some(SteerIdleGuard::PromptRequired),
+        );
+        let target = create_steer_session(&mut provider, channel_id).await;
+        let (tx, mut rx) = mpsc::channel(4);
+        let _shutdown = provider.sessions.attach_test_handle(&target.session_id, tx);
+
+        let mut stale = target.clone();
+        stale.generation += 1;
+        provider
+            .handle_command_event(
+                channel_id,
+                &steer_event(channel_id, "steer-stale", &stale, "steer me"),
+            )
+            .await
+            .expect("stale");
+        let stranger = Keys::generate();
+        provider
+            .handle_command_event(
+                channel_id,
+                &command_event_by(
+                    channel_id,
+                    "steer-stranger",
+                    &target,
+                    serde_json::json!({
+                        "type": "thread.turn.start",
+                        "text": "steer me",
+                        "deliver": "steer",
+                    }),
+                    &stranger,
+                ),
+            )
+            .await
+            .expect("stranger");
+
+        assert!(dispositions(&provider, "steer-stale").is_empty());
+        assert!(dispositions(&provider, "steer-stranger").is_empty());
+        assert!(provider.state().open_steer_attempts().is_empty());
+        assert!(rx.try_recv().is_err(), "nothing reached the mailbox");
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        assert_eq!(
+            receipt_codes(&sink, "steer-stranger"),
+            vec![(
+                "turn_refused".to_owned(),
+                payload::UNAUTHORIZED_OPERATOR.to_owned()
+            )]
+        );
+        assert!(
+            receipt_stages(&sink, "steer-stale")
+                .iter()
+                .all(|status| status == "turn_refused"),
+            "{:?}",
+            receipt_stages(&sink, "steer-stale")
+        );
+    }
+
+    /// (10) An interrupt while a steer awaits its acknowledgement: the Stop
+    /// path is unchanged and the attempt resolves honestly.
+    #[tokio::test]
+    async fn an_interrupt_while_a_steer_ack_is_pending_cancels_and_resolves_honestly() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = steering_provider(
+            &dir.path().join("state"),
+            Some(&projects),
+            &steer_agent_holding_forever(),
+            Some(SteerIdleGuard::PromptRequired),
+        );
+        let target = create_steer_session(&mut provider, channel_id).await;
+        provider
+            .handle_command_event(channel_id, &turn_event(channel_id, "turn-1", &target))
+            .await
+            .expect("turn");
+        pump_until_turn_started(&mut provider).await;
+        provider
+            .handle_command_event(
+                channel_id,
+                &steer_event(channel_id, "steer-pending", &target, "steer me"),
+            )
+            .await
+            .expect("steer");
+        // Give the actor time to take the steer and write it.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        provider
+            .handle_command_event(channel_id, &interrupt_event(channel_id, "int-1", &target))
+            .await
+            .expect("interrupt");
+        let events = pump_collecting_until(&mut provider, |event| {
+            matches!(event, SessionEvent::TurnFinished { .. })
+        })
+        .await;
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                SessionEvent::TurnFinished {
+                    outcome: TurnOutcome::Cancelled,
+                    ..
+                }
+            )),
+            "the interrupt cancelled the running turn as it always has"
+        );
+        let disposition = dispositions(&provider, "steer-pending");
+        let fell_back = disposition == vec![SteerDisposition::NotDelivered];
+        assert!(
+            fell_back || disposition == vec![SteerDisposition::Unknown],
+            "{disposition:?}"
+        );
+        if fell_back {
+            // The words were never written; they run at the next boundary.
+            pump_until_turn_finished(&mut provider).await;
+        }
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        assert_eq!(receipt_stages(&sink, "int-1"), vec!["interrupt_delivered"]);
+        let codes = receipt_codes(&sink, "steer-pending");
+        if fell_back {
+            assert_eq!(
+                codes,
+                vec![
+                    (
+                        "turn_degraded".to_owned(),
+                        payload::STEER_TURN_ENDED.to_owned()
+                    ),
+                    ("turn_queued".to_owned(), String::new()),
+                    ("turn_started".to_owned(), String::new()),
+                ]
+            );
+        } else {
+            assert_eq!(
+                codes,
+                vec![(
+                    "turn_delivery_unknown".to_owned(),
+                    payload::STEER_ACK_LOST.to_owned()
+                )]
+            );
+            assert!(provider.state().is_command_refused("steer-pending"));
+        }
+        assert!(
+            !provider.in_flight.contains_key("steer-pending"),
+            "no attempt is left owed"
+        );
+    }
+
+    /// A late acknowledgement reconciles an `unknown` attempt — and only an
+    /// `unknown` one — per the §2 table, without touching the command's
+    /// ledgers.
+    #[tokio::test]
+    async fn a_late_ack_reconciles_only_an_unknown_attempt() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = steering_provider(
+            &dir.path().join("state"),
+            Some(&projects),
+            &steer_agent_answering("{}"),
+            Some(SteerIdleGuard::PromptRequired),
+        );
+        let target = create_steer_session(&mut provider, channel_id).await;
+        let session_id = target.session_id.clone();
+        let mut stage = |command_id: &str, disposition: SteerDisposition| {
+            let attempt_id = provider.state().next_steer_attempt_id(command_id);
+            provider
+                .state
+                .stage_steer_intent(state::SteerAttemptRecord {
+                    attempt_id: attempt_id.clone(),
+                    command_id: command_id.to_owned(),
+                    session_id: session_id.clone(),
+                    generation: target.generation,
+                    channel_id,
+                    target: target.clone(),
+                    created_at: now_secs(),
+                    operation_key: None,
+                    operator_pubkey: test_operator_keys().public_key().to_hex(),
+                    sender_role: None,
+                    text: "late".to_owned(),
+                    disposition: SteerDisposition::Intent,
+                    at: now_secs(),
+                    turn_id: None,
+                })
+                .expect("stage");
+            provider
+                .state
+                .resolve_steer_attempt(&attempt_id, disposition, Some("turn-x"))
+                .expect("resolve");
+            provider
+                .state
+                .record_refusal(command_id, now_secs())
+                .expect("refuse");
+            attempt_id
+        };
+        let injected = stage("late-injected", SteerDisposition::Unknown);
+        let dropped = stage("late-dropped", SteerDisposition::Unknown);
+        let new_turn = stage("late-new-turn", SteerDisposition::Unknown);
+        let settled = stage("late-settled", SteerDisposition::NotDelivered);
+        for (attempt_id, resolution) in [
+            (
+                injected.clone(),
+                SteerResolution::Injected {
+                    wire: buzz_acp::steer::SteerWire::AcpExtension,
+                    native_run_id: None,
+                },
+            ),
+            (
+                dropped.clone(),
+                SteerResolution::NotDelivered {
+                    reason: NotDeliveredReason::PromptRequired,
+                },
+            ),
+            (
+                new_turn.clone(),
+                SteerResolution::StartedNewTurn {
+                    wire: buzz_acp::steer::SteerWire::AcpExtension,
+                },
+            ),
+            // Not at unknown: nothing to reconcile.
+            (
+                settled.clone(),
+                SteerResolution::Injected {
+                    wire: buzz_acp::steer::SteerWire::AcpExtension,
+                    native_run_id: None,
+                },
+            ),
+            // Unknown attempt, unknown answer: nothing established.
+            (
+                "late-injected#1".to_owned(),
+                SteerResolution::Unknown {
+                    reason: UnknownReason::AckTimeout,
+                    wire_request_id: None,
+                },
+            ),
+        ] {
+            provider
+                .handle_session_event(SessionEvent::SteerReconciled {
+                    session_id: session_id.clone(),
+                    attempt_id,
+                    resolution,
+                })
+                .expect("fold");
+        }
+        assert_eq!(
+            dispositions(&provider, "late-injected"),
+            vec![SteerDisposition::ReconciledInjected]
+        );
+        assert_eq!(
+            dispositions(&provider, "late-dropped"),
+            vec![SteerDisposition::ReconciledNotDelivered]
+        );
+        assert_eq!(
+            dispositions(&provider, "late-new-turn"),
+            vec![SteerDisposition::ReconciledNewTurn]
+        );
+        assert_eq!(
+            dispositions(&provider, "late-settled"),
+            vec![SteerDisposition::NotDelivered]
+        );
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        let injected_receipt = sink
+            .contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT)
+            .into_iter()
+            .find(|receipt| receipt["commandId"] == "late-injected")
+            .expect("reconciled receipt");
+        assert_eq!(injected_receipt["status"], "turn_injected");
+        assert_eq!(injected_receipt["turnId"], "turn-x");
+        assert_eq!(
+            steered_prompts(&sink),
+            vec![(
+                "turn-x".to_owned(),
+                "late-injected".to_owned(),
+                test_operator_keys().public_key().to_hex(),
+                "late".to_owned()
+            )],
+            "a reconciled injection carries the steered echo the actor never wrote"
+        );
+        assert_eq!(
+            receipt_codes(&sink, "late-dropped"),
+            vec![(
+                "turn_dropped".to_owned(),
+                payload::STEER_NOT_DELIVERED.to_owned()
+            )]
+        );
+        // A late `startedNewTurn` is ledger-only: the command already carries
+        // its `turn_delivery_unknown`, and a second one under the same
+        // semantic key would be dropped by consumers rather than read.
+        assert!(
+            receipt_stages(&sink, "late-new-turn").is_empty(),
+            "a late new-turn answer publishes no second receipt"
+        );
+        assert!(receipt_stages(&sink, "late-settled").is_empty());
+        for command_id in ["late-injected", "late-dropped", "late-new-turn"] {
+            assert!(
+                provider.state().is_command_refused(command_id),
+                "{command_id}: reconciliation changes no ledger"
+            );
+            assert!(!provider.state().is_command_consumed(command_id));
+        }
+    }
+
+    /// The live shape of the same thing: the adapter answers after the
+    /// transport's drain expired, so the attempt is first `unknown`
+    /// (`STEER_ACK_TIMEOUT`) and then, when the next prompt's read loop meets
+    /// the late answer, reconciled `injected` on the turn it joined.
+    #[tokio::test]
+    async fn an_ack_after_the_drain_reconciles_the_unknown_attempt() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = steering_provider(
+            &dir.path().join("state"),
+            Some(&projects),
+            &steer_agent_acking_late("2.5"),
+            Some(SteerIdleGuard::PromptRequired),
+        );
+        let target = create_steer_session(&mut provider, channel_id).await;
+        provider
+            .handle_command_event(channel_id, &turn_event(channel_id, "turn-1", &target))
+            .await
+            .expect("turn");
+        pump_until_turn_started(&mut provider).await;
+        provider
+            .handle_command_event(
+                channel_id,
+                &steer_event(channel_id, "steer-late", &target, "late one"),
+            )
+            .await
+            .expect("steer");
+        pump_until_turn_finished(&mut provider).await;
+        assert_eq!(
+            dispositions(&provider, "steer-late"),
+            vec![SteerDisposition::Unknown]
+        );
+        let original_turn = provider
+            .state()
+            .steer_attempt("steer-late#1")
+            .and_then(|attempt| attempt.turn_id.clone())
+            .expect("the unknown attempt remembers the turn it was written into");
+
+        // The late answer is on the pipe by now; the next prompt's read loop
+        // is what meets it.
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        provider
+            .handle_command_event(channel_id, &turn_event(channel_id, "turn-2", &target))
+            .await
+            .expect("turn 2");
+        let events = pump_collecting_until(&mut provider, |event| {
+            matches!(event, SessionEvent::TurnFinished { .. })
+        })
+        .await;
+        if !events
+            .iter()
+            .any(|event| matches!(event, SessionEvent::SteerReconciled { .. }))
+        {
+            pump_until(&mut provider, |event| {
+                matches!(event, SessionEvent::SteerReconciled { .. })
+            })
+            .await;
+        }
+        assert_eq!(
+            dispositions(&provider, "steer-late"),
+            vec![SteerDisposition::ReconciledInjected]
+        );
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        assert_eq!(
+            receipt_codes(&sink, "steer-late"),
+            vec![
+                (
+                    "turn_delivery_unknown".to_owned(),
+                    payload::STEER_ACK_TIMEOUT.to_owned()
+                ),
+                ("turn_injected".to_owned(), String::new()),
+            ]
+        );
+        let reconciled = sink
+            .contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT)
+            .into_iter()
+            .find(|receipt| {
+                receipt["commandId"] == "steer-late" && receipt["status"] == "turn_injected"
+            })
+            .expect("reconciled receipt");
+        assert_eq!(reconciled["turnId"], original_turn);
+        assert_eq!(
+            steered_prompts(&sink),
+            vec![(
+                original_turn.clone(),
+                "steer-late".to_owned(),
+                test_operator_keys().public_key().to_hex(),
+                "late one".to_owned()
+            )]
+        );
+        assert!(
+            provider.state().is_command_refused("steer-late"),
+            "the terminal answer stands; reconciliation adds a fact, not a retry"
+        );
+    }
+
+    /// Put `session_id` under an active claim by somebody else on this body.
+    fn claim_for_a_stranger(provider: &mut Provider, session_id: &str) {
+        let body = provider.config.pubkey_hex();
+        provider
+            .state
+            .update_session(session_id, |record| {
+                record.handover = ClaimState::Active(CurrentClaim {
+                    claimant: "ef".repeat(32),
+                    body_pubkey: body.clone(),
+                    accepted_event_id: "12".repeat(32),
+                    seq: 1,
+                });
+            })
+            .expect("claim");
+    }
+
+    /// Read events without folding them until the actor has answered a
+    /// steer: by then it has dequeued and written it.
+    async fn hold_until_steer_resolved(provider: &mut Provider) -> Vec<SessionEvent> {
+        let mut held = Vec::new();
+        loop {
+            let event =
+                tokio::time::timeout(Duration::from_secs(20), provider.next_session_event())
+                    .await
+                    .expect("event")
+                    .expect("open");
+            let resolved = matches!(event, SessionEvent::SteerResolved { .. });
+            held.push(event);
+            if resolved {
+                return held;
+            }
+        }
+    }
+
+    /// Regression (review ADV-A): a takeover lands after the steer was
+    /// dispatched and the runtime has answered `promptRequired`, before the
+    /// provider folds that answer. The actor released the steer's dequeue
+    /// evidence with its answer, so the fence finds the command `Queued`,
+    /// resolves it `prevented` and refuses it; the answer folded afterwards
+    /// settles nothing. The ex-owner's words never run at the boundary.
+    #[tokio::test]
+    async fn a_steer_fenced_after_dispatch_and_not_delivered_is_refused_not_run() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = steering_provider(
+            &dir.path().join("state"),
+            Some(&projects),
+            &steer_agent_answering(r#"{"outcome":"promptRequired"}"#),
+            Some(SteerIdleGuard::PromptRequired),
+        );
+        let target = create_steer_session(&mut provider, channel_id).await;
+        let genesis = "cd".repeat(32);
+        provider
+            .state
+            .update_session(&target.session_id, |record| {
+                record.genesis_ref = Some(genesis.clone());
+            })
+            .expect("genesis");
+        provider
+            .handle_command_event(channel_id, &turn_event(channel_id, "turn-1", &target))
+            .await
+            .expect("turn");
+        pump_until_turn_started(&mut provider).await;
+        provider
+            .handle_command_event(
+                channel_id,
+                &steer_event(channel_id, "steer-x", &target, "steer me"),
+            )
+            .await
+            .expect("steer");
+        let held = hold_until_steer_resolved(&mut provider).await;
+        claim_for_a_stranger(&mut provider, &target.session_id);
+        provider.enforce_claim_for_genesis(&genesis).expect("fence");
+        assert_eq!(
+            dispositions(&provider, "steer-x"),
+            vec![SteerDisposition::Prevented],
+            "the answered steer released its dequeue evidence, so the fence prevents it"
+        );
+        for event in held {
+            provider.handle_session_event(event).expect("fold");
+        }
+        assert_eq!(
+            dispositions(&provider, "steer-x"),
+            vec![SteerDisposition::Prevented],
+            "the answer folded after the fence settles nothing"
+        );
+        assert!(provider.state().is_command_refused("steer-x"));
+        assert!(!provider.state().is_command_consumed("steer-x"));
+        assert!(!provider.in_flight.contains_key("steer-x"));
+        // The held prompt was cancelled by the same fence; drain everything
+        // and make sure the steer never started.
+        pump_until_turn_finished(&mut provider).await;
+        pump_available(&mut provider).await;
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        assert_eq!(
+            receipt_codes(&sink, "steer-x"),
+            vec![(
+                "turn_refused".to_owned(),
+                payload::HANDOVER_FENCED.to_owned()
+            )],
+            "the ex-owner's steer never ran as a boundary turn"
+        );
+        assert!(!provider.state().is_command_consumed("steer-x"));
+    }
+
+    /// The other half of ADV-A: the fence lands while the steer is written
+    /// and **unanswered**. The fence cannot prevent the write, so it marks
+    /// the entry `fenced_after_dispatch` and refuses nothing; when the
+    /// runtime then answers `promptRequired`, the fallback is refused
+    /// `HANDOVER_FENCED` instead of running under revoked authority. The
+    /// running turn belongs to the new claimant, so it is left alone.
+    #[tokio::test]
+    async fn a_steer_fenced_while_unanswered_is_refused_when_it_comes_back_undelivered() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        // Answers `promptRequired` a second after reading the steer, and
+        // keeps the prompt open past that.
+        let agent = crate::session::testing::steer_agent(
+            r#"( sleep 1; printf '{"jsonrpc":"2.0","id":%s,"result":{"outcome":"promptRequired"}}\n' "$id" ) &"#,
+            1_000_000,
+        );
+        let mut provider = steering_provider(
+            &dir.path().join("state"),
+            Some(&projects),
+            &agent,
+            Some(SteerIdleGuard::PromptRequired),
+        );
+        let target = create_steer_session(&mut provider, channel_id).await;
+        let genesis = "cd".repeat(32);
+        let claimant = Keys::generate();
+        let claimant_hex = claimant.public_key().to_hex();
+        provider
+            .state
+            .update_session(&target.session_id, |record| {
+                record.genesis_ref = Some(genesis.clone());
+                record.granted_operators.insert(claimant_hex.clone());
+            })
+            .expect("genesis");
+        // The running turn is the future claimant's; the steer is the
+        // founder's.
+        provider
+            .handle_command_event(
+                channel_id,
+                &command_event_by(
+                    channel_id,
+                    "turn-1",
+                    &target,
+                    serde_json::json!({ "type": "thread.turn.start", "text": "do the thing" }),
+                    &claimant,
+                ),
+            )
+            .await
+            .expect("turn");
+        pump_until_turn_started(&mut provider).await;
+        provider
+            .handle_command_event(
+                channel_id,
+                &steer_event(channel_id, "steer-x", &target, "steer me"),
+            )
+            .await
+            .expect("steer");
+        // Written, unanswered.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let body = provider.config.pubkey_hex();
+        provider
+            .state
+            .update_session(&target.session_id, |record| {
+                record.handover = ClaimState::Active(CurrentClaim {
+                    claimant: claimant_hex.clone(),
+                    body_pubkey: body.clone(),
+                    accepted_event_id: "12".repeat(32),
+                    seq: 1,
+                });
+            })
+            .expect("claim");
+        provider.enforce_claim_for_genesis(&genesis).expect("fence");
+        assert!(
+            provider
+                .in_flight
+                .get("steer-x")
+                .is_some_and(|turn| turn.fenced_after_dispatch),
+            "the fence that could not prevent the write is remembered on the entry"
+        );
+        assert_eq!(
+            dispositions(&provider, "steer-x"),
+            vec![SteerDisposition::Intent],
+            "nothing is refused while the runtime may still inject it"
+        );
+        pump_until_steer_resolved(&mut provider).await;
+        assert_eq!(
+            dispositions(&provider, "steer-x"),
+            vec![SteerDisposition::Prevented]
+        );
+        assert!(provider.state().is_command_refused("steer-x"));
+        assert!(!provider.state().is_command_consumed("steer-x"));
+        assert!(!provider.in_flight.contains_key("steer-x"));
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        assert_eq!(
+            receipt_codes(&sink, "steer-x"),
+            vec![(
+                "turn_refused".to_owned(),
+                payload::HANDOVER_FENCED.to_owned()
+            )]
+        );
+        // The claimant's turn was left alone; end it and make sure the
+        // founder's steer never started.
+        provider
+            .handle_command_event(
+                channel_id,
+                &command_event_by(
+                    channel_id,
+                    "int-1",
+                    &target,
+                    serde_json::json!({ "type": "thread.turn.interrupt" }),
+                    &claimant,
+                ),
+            )
+            .await
+            .expect("interrupt");
+        let events = pump_collecting_until(&mut provider, |event| {
+            matches!(event, SessionEvent::TurnFinished { .. })
+        })
+        .await;
+        pump_available(&mut provider).await;
+        assert!(!events.iter().any(|event| matches!(
+            event,
+            SessionEvent::TurnStarted { command_id, .. } if command_id == "steer-x"
+        )));
+        assert!(!provider.state().is_command_consumed("steer-x"));
+    }
+
+    /// The same re-check, for a generation that moved on and for a grant
+    /// withdrawn while the runtime held the input.
+    #[tokio::test]
+    async fn a_steer_fallback_re_asks_generation_and_grant_before_re_delivery() {
+        type Mutation = fn(&mut SessionRecord);
+        let cases: [(&str, Mutation, &str); 2] = [
+            (
+                "generation",
+                |record| record.generation += 1,
+                payload::STALE_GENERATION,
+            ),
+            (
+                "grant",
+                |record| {
+                    record.founder_pubkey = Some("ab".repeat(32));
+                    record.granted_operators.clear();
+                },
+                payload::UNAUTHORIZED_OPERATOR,
+            ),
+        ];
+        for (case, mutate, code) in cases {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let cwd = dir.path().join("checkout");
+            std::fs::create_dir_all(&cwd).expect("mkdir");
+            let channel_id = Uuid::new_v4();
+            let projects = write_projects(dir.path(), channel_id, &cwd);
+            let mut provider = steering_provider(
+                &dir.path().join("state"),
+                Some(&projects),
+                &steer_agent_answering(r#"{"outcome":"promptRequired"}"#),
+                Some(SteerIdleGuard::PromptRequired),
+            );
+            let target = create_steer_session(&mut provider, channel_id).await;
+            provider
+                .handle_command_event(channel_id, &turn_event(channel_id, "turn-1", &target))
+                .await
+                .expect("turn");
+            pump_until_turn_started(&mut provider).await;
+            provider
+                .handle_command_event(
+                    channel_id,
+                    &steer_event(channel_id, "steer-x", &target, "steer me"),
+                )
+                .await
+                .expect("steer");
+            let held = hold_until_steer_resolved(&mut provider).await;
+            provider
+                .state
+                .update_session(&target.session_id, mutate)
+                .expect("mutate");
+            for event in held {
+                provider.handle_session_event(event).expect("fold");
+            }
+            assert_eq!(
+                dispositions(&provider, "steer-x"),
+                vec![SteerDisposition::Prevented],
+                "{case}"
+            );
+            assert!(provider.state().is_command_refused("steer-x"), "{case}");
+            let sink = CollectingSink::new();
+            provider.flush(&sink).await.expect("flush");
+            assert_eq!(
+                receipt_codes(&sink, "steer-x"),
+                vec![("turn_refused".to_owned(), code.to_owned())],
+                "{case}"
+            );
+            pump_until_turn_finished(&mut provider).await;
+            pump_available(&mut provider).await;
+            assert!(!provider.state().is_command_consumed("steer-x"), "{case}");
+        }
+    }
+
+    /// Regression (review ADV-B): after a `promptRequired` fallback, the
+    /// steer's dequeue evidence is released, so a fence that lands while the
+    /// fallback turn is still queued answers `Queued` — refused *and* dropped
+    /// by the actor, never refused-then-run, and no bystander is cancelled
+    /// on the steer's stale evidence.
+    #[tokio::test]
+    async fn a_fallback_turn_after_a_released_dequeue_is_fenced_while_queued() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        // Holds its first prompt open; only a cancel ends it.
+        let agent = crate::session::testing::steer_agent(
+            r#"printf '{"jsonrpc":"2.0","id":%s,"result":{"outcome":"promptRequired"}}\n' "$id""#,
+            1_000_000,
+        );
+        let mut provider = steering_provider(
+            &dir.path().join("state"),
+            Some(&projects),
+            &agent,
+            Some(SteerIdleGuard::PromptRequired),
+        );
+        let target = create_steer_session(&mut provider, channel_id).await;
+        let genesis = "cd".repeat(32);
+        provider
+            .state
+            .update_session(&target.session_id, |record| {
+                record.genesis_ref = Some(genesis.clone());
+            })
+            .expect("genesis");
+        provider
+            .handle_command_event(channel_id, &turn_event(channel_id, "turn-1", &target))
+            .await
+            .expect("turn");
+        pump_until_turn_started(&mut provider).await;
+        provider
+            .handle_command_event(
+                channel_id,
+                &steer_event(channel_id, "steer-y", &target, "steer me"),
+            )
+            .await
+            .expect("steer");
+        pump_until_steer_resolved(&mut provider).await;
+        assert_eq!(
+            dispositions(&provider, "steer-y"),
+            vec![SteerDisposition::NotDelivered]
+        );
+        assert!(provider.in_flight.contains_key("steer-y"));
+        // Let the actor take the fallback into its queue behind the held
+        // prompt.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        claim_for_a_stranger(&mut provider, &target.session_id);
+        provider.enforce_claim_for_genesis(&genesis).expect("fence");
+        assert!(provider.state().is_command_refused("steer-y"));
+        assert!(!provider.in_flight.contains_key("steer-y"));
+        // The held prompt is cancelled by the fence; the queued fallback is
+        // dropped at dequeue, so no turn ever starts for it.
+        let events = pump_collecting_until(&mut provider, |event| {
+            matches!(event, SessionEvent::TurnFinished { .. })
+        })
+        .await;
+        pump_available(&mut provider).await;
+        assert!(
+            !events.iter().any(|event| matches!(
+                event,
+                SessionEvent::TurnStarted { command_id, .. } if command_id == "steer-y"
+            )),
+            "refused in the ledger and run by the actor is the worst of both answers"
+        );
+        assert!(!provider.state().is_command_consumed("steer-y"));
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        assert_eq!(
+            receipt_codes(&sink, "steer-y"),
+            vec![
+                (
+                    "turn_degraded".to_owned(),
+                    payload::STEER_TURN_ENDED.to_owned()
+                ),
+                ("turn_queued".to_owned(), String::new()),
+                (
+                    "turn_refused".to_owned(),
+                    payload::HANDOVER_FENCED.to_owned()
+                ),
+            ]
+        );
+        let refused = sink
+            .contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT)
+            .into_iter()
+            .find(|receipt| {
+                receipt["commandId"] == "steer-y" && receipt["status"] == "turn_refused"
+            })
+            .expect("refusal");
+        assert_eq!(
+            refused["error"]["message"],
+            Provider::HANDOVER_UNSTARTED_REASON,
+            "the fallback was still queued, and the receipt says so"
+        );
+    }
+
+    /// Regression (review ADV-C): an interrupt while a written steer awaits
+    /// its acknowledgement answers `turn_delivery_unknown`; when the late
+    /// acknowledgement arrives it reconciles to `turn_injected` on the
+    /// cancelled turn **with** the steered echo, so the sender's row settles.
+    #[tokio::test]
+    async fn a_late_ack_after_an_interrupt_reconciles_with_the_steered_echo() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let agent = crate::session::testing::steer_agent(
+            r#"( sleep 1; printf '{"jsonrpc":"2.0","id":%s,"result":{"outcome":"injected"}}\n' "$id" ) &"#,
+            1_000_000,
+        );
+        let mut provider = steering_provider(
+            &dir.path().join("state"),
+            Some(&projects),
+            &agent,
+            Some(SteerIdleGuard::PromptRequired),
+        );
+        let target = create_steer_session(&mut provider, channel_id).await;
+        provider
+            .handle_command_event(channel_id, &turn_event(channel_id, "turn-1", &target))
+            .await
+            .expect("turn");
+        pump_until_turn_started(&mut provider).await;
+        provider
+            .handle_command_event(
+                channel_id,
+                &steer_event(channel_id, "steer-z", &target, "steer me"),
+            )
+            .await
+            .expect("steer");
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        provider
+            .handle_command_event(channel_id, &interrupt_event(channel_id, "int-1", &target))
+            .await
+            .expect("interrupt");
+        pump_until_turn_finished(&mut provider).await;
+        pump_available(&mut provider).await;
+        assert_eq!(
+            dispositions(&provider, "steer-z"),
+            vec![SteerDisposition::Unknown]
+        );
+        let cancelled_turn = provider
+            .state()
+            .steer_attempt("steer-z#1")
+            .and_then(|attempt| attempt.turn_id.clone())
+            .expect("the unknown attempt names the turn it was written into");
+        let before = CollectingSink::new();
+        provider.flush(&before).await.expect("flush");
+        assert_eq!(
+            receipt_codes(&before, "steer-z"),
+            vec![(
+                "turn_delivery_unknown".to_owned(),
+                payload::STEER_ACK_LOST.to_owned()
+            )]
+        );
+        assert!(steered_prompts(&before).is_empty());
+
+        // The late answer is on the pipe; the next prompt's read loop meets
+        // it and routes it to the late sink.
+        tokio::time::sleep(Duration::from_millis(1000)).await;
+        provider
+            .handle_command_event(channel_id, &turn_event(channel_id, "turn-2", &target))
+            .await
+            .expect("turn 2");
+        let events = pump_collecting_until(&mut provider, |event| {
+            matches!(event, SessionEvent::TurnFinished { .. })
+        })
+        .await;
+        if !events
+            .iter()
+            .any(|event| matches!(event, SessionEvent::SteerReconciled { .. }))
+        {
+            pump_until(&mut provider, |event| {
+                matches!(event, SessionEvent::SteerReconciled { .. })
+            })
+            .await;
+        }
+        assert_eq!(
+            dispositions(&provider, "steer-z"),
+            vec![SteerDisposition::ReconciledInjected]
+        );
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        assert_eq!(
+            receipt_codes(&sink, "steer-z"),
+            vec![("turn_injected".to_owned(), String::new())]
+        );
+        let reconciled = sink
+            .contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT)
+            .into_iter()
+            .find(|receipt| receipt["commandId"] == "steer-z")
+            .expect("reconciled receipt");
+        assert_eq!(reconciled["turnId"], cancelled_turn);
+        assert_eq!(
+            steered_prompts(&sink),
+            vec![(
+                cancelled_turn,
+                "steer-z".to_owned(),
+                test_operator_keys().public_key().to_hex(),
+                "steer me".to_owned()
+            )],
+            "the echo is on the record before the receipt that names it"
+        );
+        assert!(provider.state().is_command_refused("steer-z"));
+        assert!(!provider.state().is_command_consumed("steer-z"));
+    }
+
+    /// (11) `threadSteer` is true only when all three facts hold.
+    #[tokio::test]
+    async fn metadata_thread_steer_needs_all_three_facts() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        // Advertises, and the descriptor declares the guard.
+        let mut provider = steering_provider(
+            &dir.path().join("state"),
+            Some(&projects),
+            &steer_agent_answering(r#"{"outcome":"injected"}"#),
+            Some(SteerIdleGuard::PromptRequired),
+        );
+        let target = create_steer_session(&mut provider, channel_id).await;
+        const {
+            assert!(
+                session::NATIVE_STEER_DELIVERABLE,
+                "the third gate: this build ships the native steer transport"
+            )
+        };
+        assert!(
+            provider
+                .metadata_for(&target, SessionStatus::Idle)
+                .capabilities
+                .thread_steer
+        );
+        // Not advertised by this execution's process: false.
+        provider.steering.insert(target.session_id.clone(), false);
+        assert!(
+            !provider
+                .metadata_for(&target, SessionStatus::Idle)
+                .capabilities
+                .thread_steer
+        );
+        // No witnessed process at all: false.
+        provider.steering.remove(&target.session_id);
+        assert!(
+            !provider
+                .metadata_for(&target, SessionStatus::Idle)
+                .capabilities
+                .thread_steer
+        );
+        // Advertised, but the descriptor declares no idle guard: false.
+        provider.steering.insert(target.session_id.clone(), true);
+        for runtime in &mut provider.config.runtimes {
+            runtime.steer_idle_guard = None;
+        }
+        assert!(
+            !provider
+                .metadata_for(&target, SessionStatus::Idle)
+                .capabilities
+                .thread_steer
+        );
     }
 }

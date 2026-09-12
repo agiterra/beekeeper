@@ -376,6 +376,7 @@ fn legacy_claude_descriptor(lookup: &impl Fn(&'static str) -> Option<String>) ->
     let default_model = configured_default_model.unwrap_or_else(|| DEFAULT_MODEL.to_owned());
     let allowed_models = parse_allowed_models(configured_allowed_models.as_deref(), &default_model);
     RuntimeDescriptor {
+        steer_idle_guard: None,
         instance_ref: PROVIDER_INSTANCE_REF.to_owned(),
         driver: DRIVER.to_owned(),
         runtime: RUNTIME.to_owned(),

@@ -29,6 +29,7 @@ fn bench_root() -> PathBuf {
 
 fn descriptor() -> RuntimeDescriptor {
     RuntimeDescriptor {
+        steer_idle_guard: None,
         instance_ref: "claude-primary".to_owned(),
         driver: "claude".to_owned(),
         runtime: "claude".to_owned(),

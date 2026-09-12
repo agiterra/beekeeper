@@ -103,6 +103,43 @@ pub const NO_LIVE_EXECUTION: &str = "NO_LIVE_EXECUTION";
 /// The only code a `turn_degraded` receipt carries today. Degraded is not
 /// refused: the turn still runs, just later than the sender asked.
 pub const STEER_UNSUPPORTED: &str = "STEER_UNSUPPORTED";
+/// A `steer` reached the provider after the running turn had already ended
+/// (or before one existed), so nothing was injected and the turn was
+/// delivered at the next boundary. Includes the adapter's own
+/// `promptRequired` answer under the idle guard.
+pub const STEER_TURN_ENDED: &str = "STEER_TURN_ENDED";
+/// The execution's native-steer admission is full, so this input was not
+/// delivered; nothing was written to the runtime. A `turn_dropped` code —
+/// terminal like [`QUEUE_FULL`] — the sender sends it again once it drains.
+pub const STEER_SATURATED: &str = "STEER_SATURATED";
+/// The runtime answered the steer request with an explicit JSON-RPC error
+/// that proves nothing was injected; delivered at the next boundary.
+pub const STEER_REJECTED: &str = "STEER_REJECTED";
+/// A `steer` carried image attachments, which the native injection path does
+/// not take; delivered at the next boundary with its images.
+pub const STEER_ATTACHMENTS_UNSUPPORTED: &str = "STEER_ATTACHMENTS_UNSUPPORTED";
+/// A late runtime answer proved an input whose delivery had been reported
+/// unknown never reached the turn. Terminal: the sender sends it again.
+pub const STEER_NOT_DELIVERED: &str = "STEER_NOT_DELIVERED";
+/// The steer request's write to the runtime failed part way; bytes may have
+/// reached it. Delivery unknown, never replayed automatically.
+pub const STEER_WRITE_FAILED: &str = "STEER_WRITE_FAILED";
+/// The steer request was written and the prompt ended, or the runtime
+/// exited, before its acknowledgement arrived. Delivery unknown.
+pub const STEER_ACK_LOST: &str = "STEER_ACK_LOST";
+/// The steer request was written and the bounded wait for its
+/// acknowledgement expired. Delivery unknown.
+pub const STEER_ACK_TIMEOUT: &str = "STEER_ACK_TIMEOUT";
+/// The runtime acknowledged the steer request with a result that names no
+/// recognized outcome (a bare `{}`, or its own `failed`). Delivery unknown.
+pub const STEER_ACK_UNRECOGNIZED: &str = "STEER_ACK_UNRECOGNIZED";
+/// The provider restarted with a native-steer intent that no acknowledgement
+/// ever resolved. Delivery unknown.
+pub const STEER_UNRESOLVED_AT_RESTART: &str = "STEER_UNRESOLVED_AT_RESTART";
+/// The runtime reports it started a separate turn with this input, one this
+/// provider does not observe. The input was delivered and must not be
+/// resent; its output may be absent from the published transcript.
+pub const STEER_UNOBSERVED_NEW_TURN: &str = "STEER_UNOBSERVED_NEW_TURN";
 /// A turn carried image attachments, but the runtime behind this execution
 /// never advertised image prompts, so the turn was delivered as text only.
 ///
@@ -326,6 +363,17 @@ pub enum ReceiptStatus {
     /// instead. A `turn_queued` follows; the turn is not lost.
     #[serde(rename = "turn_degraded")]
     TurnDegraded,
+    /// A `steer` was injected into the turn already running; carries that
+    /// turn's `turnId`. The original turn keeps its ownership, streaming
+    /// state and accounting; a `user_prompt{steered:true}` echo precedes it.
+    #[serde(rename = "turn_injected")]
+    TurnInjected,
+    /// A `steer` was written to the runtime and its delivery could not be
+    /// established. Terminal for the provider — never replayed automatically;
+    /// `error.code` says why. A later receipt under the same `commandId` may
+    /// reconcile it.
+    #[serde(rename = "turn_delivery_unknown")]
+    TurnDeliveryUnknown,
     /// A `thread.turn.interrupt` reached a live turn and its cancel was
     /// issued. The turn's own `result` item reports how it actually ended.
     #[serde(rename = "interrupt_delivered")]
@@ -360,9 +408,17 @@ impl ReceiptStatus {
             Self::TurnDropped => "turn_dropped",
             Self::TurnRefused => "turn_refused",
             Self::TurnDegraded => "turn_degraded",
+            Self::TurnInjected => "turn_injected",
+            Self::TurnDeliveryUnknown => "turn_delivery_unknown",
             Self::InterruptDelivered => "interrupt_delivered",
             Self::ContinuationRegistered => "continuation_registered",
         }
+    }
+
+    /// Whether this status carries the sixth `turnId` key: `turn_started`
+    /// names the turn that began, `turn_injected` the turn the input joined.
+    pub const fn carries_turn_id(self) -> bool {
+        matches!(self, Self::TurnStarted | Self::TurnInjected)
     }
 
     /// Whether this status reports a *stage* of one 44220 turn command rather
@@ -379,6 +435,8 @@ impl ReceiptStatus {
                 | Self::TurnDropped
                 | Self::TurnRefused
                 | Self::TurnDegraded
+                | Self::TurnInjected
+                | Self::TurnDeliveryUnknown
                 | Self::InterruptDelivered
                 | Self::ContinuationRegistered
         )
@@ -514,6 +572,50 @@ impl LifecycleReceipt {
             session: Some(target.clone()),
             error: None,
             turn_id: Some(turn_id.to_owned()),
+        }
+    }
+
+    /// A `steer` was injected into the turn already running under `turn_id`.
+    ///
+    /// Says the runtime positively acknowledged the input as joined into that
+    /// turn. It is not a new turn: no second `turn_started`, no new
+    /// accounting, and the `user_prompt{steered:true}` echo that precedes
+    /// this receipt is what settles the sender's pending row.
+    pub fn turn_injected(command_id: &str, target: &CodingSessionTarget, turn_id: &str) -> Self {
+        Self {
+            schema: LIFECYCLE_RECEIPT_SCHEMA.to_owned(),
+            command_id: command_id.to_owned(),
+            status: ReceiptStatus::TurnInjected,
+            session: Some(target.clone()),
+            error: None,
+            turn_id: Some(turn_id.to_owned()),
+        }
+    }
+
+    /// A `steer` was written to the runtime and nothing establishes whether
+    /// it arrived.
+    ///
+    /// Terminal from the provider's side: the command is answered and never
+    /// replayed automatically, because a replay of an input the runtime may
+    /// already hold is the double delivery the classes exist to prevent. The
+    /// sender decides whether to send again. `code` is one of the
+    /// `STEER_*` unknown codes documented in NIP-CSL.
+    pub fn turn_delivery_unknown(
+        command_id: &str,
+        target: &CodingSessionTarget,
+        code: &str,
+        message: &str,
+    ) -> Self {
+        Self {
+            schema: LIFECYCLE_RECEIPT_SCHEMA.to_owned(),
+            command_id: command_id.to_owned(),
+            status: ReceiptStatus::TurnDeliveryUnknown,
+            session: Some(target.clone()),
+            error: Some(ReceiptError {
+                code: code.to_owned(),
+                message: bounded_message(message),
+            }),
+            turn_id: None,
         }
     }
 
@@ -674,8 +776,11 @@ pub fn decode_coding_session_lifecycle_receipt(content: &str) -> Result<Lifecycl
     // no such key at all. Only the strict decoder can tell them apart —
     // `Option<String>` has collapsed both to `None` by the time
     // `validate_lifecycle_receipt` sees the struct.
-    if carries_turn_id != (receipt.status == ReceiptStatus::TurnStarted) {
-        return Err("receipt turnId key is present exactly when status is turn_started".into());
+    if carries_turn_id != receipt.status.carries_turn_id() {
+        return Err(
+            "receipt turnId key is present exactly when status is turn_started or turn_injected"
+                .into(),
+        );
     }
     validate_lifecycle_receipt(&receipt)?;
     Ok(receipt)
@@ -724,7 +829,7 @@ fn validate_lifecycle_receipt(receipt: &LifecycleReceipt) -> Result<(), String> 
     // `turnId` is present exactly when the turn started: a `turn_started`
     // without one names no turn, and any other status carrying one claims a
     // turn that has not begun.
-    let expects_turn_id = receipt.status == ReceiptStatus::TurnStarted;
+    let expects_turn_id = receipt.status.carries_turn_id();
     match (&receipt.turn_id, expects_turn_id) {
         (Some(turn_id), true) => {
             if turn_id.trim().is_empty()
@@ -736,7 +841,10 @@ fn validate_lifecycle_receipt(receipt: &LifecycleReceipt) -> Result<(), String> 
         }
         (None, false) => {}
         _ => {
-            return Err("receipt turnId is present exactly when status is turn_started".into());
+            return Err(
+                "receipt turnId is present exactly when status is turn_started or turn_injected"
+                    .into(),
+            );
         }
     }
     let valid_shape = match receipt.status {
@@ -761,7 +869,7 @@ fn validate_lifecycle_receipt(receipt: &LifecycleReceipt) -> Result<(), String> 
         // Every turn status names the execution the 44220 addressed, even the
         // refusals: "which session did this refer to" is the first thing an
         // operator asks.
-        ReceiptStatus::TurnQueued | ReceiptStatus::TurnStarted => {
+        ReceiptStatus::TurnQueued | ReceiptStatus::TurnStarted | ReceiptStatus::TurnInjected => {
             receipt.session.is_some() && receipt.error.is_none()
         }
         // Open codes, deliberately. Pinning a list here meant a provider that
@@ -769,7 +877,10 @@ fn validate_lifecycle_receipt(receipt: &LifecycleReceipt) -> Result<(), String> 
         // without a coordinated release of every reader — and the desktop
         // already renders an unknown code verbatim. What is still enforced is
         // that the code is well formed.
-        ReceiptStatus::TurnDropped | ReceiptStatus::TurnRefused | ReceiptStatus::TurnDegraded => {
+        ReceiptStatus::TurnDropped
+        | ReceiptStatus::TurnRefused
+        | ReceiptStatus::TurnDegraded
+        | ReceiptStatus::TurnDeliveryUnknown => {
             receipt.session.is_some()
                 && receipt
                     .error
@@ -3729,7 +3840,14 @@ mod tests {
         started.as_object_mut().unwrap().remove("turnId");
         assert!(decode_coding_session_lifecycle_receipt(&started.to_string()).is_err());
 
-        for status in ["turn_queued", "turn_dropped", "turn_refused", "created"] {
+        for status in [
+            "turn_queued",
+            "turn_dropped",
+            "turn_refused",
+            "turn_degraded",
+            "turn_delivery_unknown",
+            "created",
+        ] {
             let mut wrong =
                 serde_json::to_value(LifecycleReceipt::turn_queued("t-1", &target())).unwrap();
             wrong["status"] = serde_json::json!(status);
@@ -3748,7 +3866,13 @@ mod tests {
 
         // An explicit `null` is a six-key object claiming an observed absence,
         // not the five-key shape. Both directions are rejected.
-        for status in ["created", "turn_queued", "turn_dropped", "turn_refused"] {
+        for status in [
+            "created",
+            "turn_queued",
+            "turn_dropped",
+            "turn_refused",
+            "turn_delivery_unknown",
+        ] {
             let mut explicit_null =
                 serde_json::to_value(LifecycleReceipt::turn_queued("t-1", &target())).unwrap();
             explicit_null["status"] = serde_json::json!(status);
@@ -3776,9 +3900,19 @@ mod tests {
             ReceiptStatus::TurnDropped,
             ReceiptStatus::TurnRefused,
             ReceiptStatus::TurnDegraded,
+            ReceiptStatus::TurnInjected,
+            ReceiptStatus::TurnDeliveryUnknown,
             ReceiptStatus::InterruptDelivered,
         ] {
             assert!(status.is_turn_stage(), "{status:?}");
+            assert_eq!(
+                status.carries_turn_id(),
+                matches!(
+                    status,
+                    ReceiptStatus::TurnStarted | ReceiptStatus::TurnInjected
+                ),
+                "{status:?}"
+            );
         }
         for status in [
             ReceiptStatus::Created,
@@ -3791,7 +3925,130 @@ mod tests {
             assert!(!status.is_turn_stage(), "{status:?}");
         }
         assert_eq!(ReceiptStatus::TurnStarted.as_str(), "turn_started");
+        assert_eq!(ReceiptStatus::TurnInjected.as_str(), "turn_injected");
+        assert_eq!(
+            ReceiptStatus::TurnDeliveryUnknown.as_str(),
+            "turn_delivery_unknown"
+        );
         assert_eq!(ReceiptStatus::Created.as_str(), "created");
+    }
+
+    /// `turn_injected` is the second six-key receipt: it names the turn the
+    /// input joined, exactly as `turn_started` names the turn that began.
+    /// The consumer's `hasExactKeys` makes the key set the contract.
+    #[test]
+    fn turn_injected_is_a_six_key_receipt_that_round_trips_strictly() {
+        let receipt = LifecycleReceipt::turn_injected("steer-1", &target(), "turn-7");
+        let value = serde_json::to_value(&receipt).expect("serialize");
+        assert_eq!(
+            keys(&value),
+            sorted(&[
+                "schema",
+                "commandId",
+                "status",
+                "session",
+                "error",
+                "turnId"
+            ])
+        );
+        assert_eq!(value["status"], "turn_injected");
+        assert!(value["error"].is_null());
+        assert_eq!(value["turnId"], "turn-7");
+        assert_eq!(value["session"], serde_json::to_value(target()).unwrap());
+        assert_eq!(
+            decode_coding_session_lifecycle_receipt(&value.to_string()).expect("decode"),
+            receipt
+        );
+
+        // Without the turn it joined it names nothing; a blank or explicit
+        // null is the same absence dressed up as a key.
+        let mut missing = value.clone();
+        missing.as_object_mut().unwrap().remove("turnId");
+        assert!(decode_coding_session_lifecycle_receipt(&missing.to_string()).is_err());
+        let mut blank = value.clone();
+        blank["turnId"] = serde_json::json!("  ");
+        assert!(decode_coding_session_lifecycle_receipt(&blank.to_string()).is_err());
+        let mut null = value.clone();
+        null["turnId"] = serde_json::Value::Null;
+        assert!(decode_coding_session_lifecycle_receipt(&null.to_string()).is_err());
+        // An injected input was delivered: it carries no error.
+        let mut errored = value;
+        errored["error"] = serde_json::json!({ "code": STEER_ACK_LOST, "message": "x" });
+        assert!(decode_coding_session_lifecycle_receipt(&errored.to_string()).is_err());
+    }
+
+    /// `turn_delivery_unknown` is a five-key terminal answer that says *why*
+    /// delivery could not be established, so it needs a well-formed code and
+    /// must not claim a turn it cannot name.
+    #[test]
+    fn turn_delivery_unknown_requires_a_well_formed_code_and_no_turn_id() {
+        for code in [
+            STEER_WRITE_FAILED,
+            STEER_ACK_LOST,
+            STEER_ACK_TIMEOUT,
+            STEER_ACK_UNRECOGNIZED,
+            STEER_UNRESOLVED_AT_RESTART,
+            STEER_UNOBSERVED_NEW_TURN,
+        ] {
+            let receipt = LifecycleReceipt::turn_delivery_unknown(
+                "steer-1",
+                &target(),
+                code,
+                "the prompt ended before the acknowledgement arrived",
+            );
+            let value = serde_json::to_value(&receipt).expect("serialize");
+            assert_eq!(
+                keys(&value),
+                sorted(&["schema", "commandId", "status", "session", "error"]),
+                "{code}"
+            );
+            assert_eq!(value["status"], "turn_delivery_unknown");
+            assert_eq!(value["error"]["code"], code);
+            assert_eq!(
+                decode_coding_session_lifecycle_receipt(&value.to_string()).expect("decode"),
+                receipt,
+                "{code}"
+            );
+            assert!(receipt.error.expect("error").code.len() <= MAX_RECEIPT_ERROR_CODE_BYTES);
+        }
+
+        let value = serde_json::to_value(LifecycleReceipt::turn_delivery_unknown(
+            "steer-1",
+            &target(),
+            STEER_ACK_LOST,
+            "lost",
+        ))
+        .unwrap();
+        // The code is open but still has to be a code.
+        for bad in [
+            "",
+            "   ",
+            "STEER\u{7}ACK",
+            &"c".repeat(MAX_RECEIPT_ERROR_CODE_BYTES + 1),
+        ] {
+            let mut wrong = value.clone();
+            wrong["error"]["code"] = serde_json::json!(bad);
+            assert!(
+                decode_coding_session_lifecycle_receipt(&wrong.to_string()).is_err(),
+                "code {bad:?} must be refused"
+            );
+        }
+        // No error at all is not "unknown", it is a claim of delivery.
+        let mut no_error = value.clone();
+        no_error["error"] = serde_json::Value::Null;
+        assert!(decode_coding_session_lifecycle_receipt(&no_error.to_string()).is_err());
+        // It is not a six-key receipt: a turnId would claim the input joined
+        // a turn, which is exactly what this status cannot say.
+        let mut with_turn = value;
+        with_turn["turnId"] = serde_json::json!("turn-7");
+        assert!(decode_coding_session_lifecycle_receipt(&with_turn.to_string()).is_err());
+
+        // A blank message is bounded and never blank on the wire.
+        let blank = LifecycleReceipt::turn_delivery_unknown("s", &target(), STEER_ACK_LOST, " ");
+        assert_eq!(
+            blank.error.expect("error").message,
+            "unspecified provider error"
+        );
     }
 
     /// A turn-stage refusal, drop, or downgrade carries an *open* code: the

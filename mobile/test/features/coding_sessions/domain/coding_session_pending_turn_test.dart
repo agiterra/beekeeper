@@ -1,4 +1,5 @@
 import 'package:buzz/features/coding_sessions/domain/coding_sessions_domain.dart';
+import 'package:buzz/features/coding_sessions/ui/coding_session_labels.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 const _signer =
@@ -113,6 +114,104 @@ void main() {
       expect(degraded.phase, CodingSessionPendingPhase.degraded);
       expect(degraded.detail, 'STEER_UNSUPPORTED: because');
       expect(degraded.settled, isFalse);
+    });
+
+    test('an injected steer settles the row exactly as a start does', () {
+      final injected = settleCodingSessionPendingTurn(_turn(), [
+        _receipt(CodingSessionReceiptStatus.turnQueued),
+        _receipt(
+          CodingSessionReceiptStatus.turnInjected,
+          createdAt: 11,
+          eventId: 'r2',
+        ),
+      ]);
+      expect(injected.phase, CodingSessionPendingPhase.injected);
+      expect(injected.settled, isTrue);
+      expect(injected.failed, isFalse);
+      expect(
+        codingSessionPendingPhaseLabel(injected),
+        'Injected into the running turn',
+      );
+    });
+
+    test('a delivery-unknown answer parks the row: neither settled nor failed, '
+        'and reconciled only by a later definite receipt', () {
+      final unknown = settleCodingSessionPendingTurn(_turn(), [
+        _receipt(CodingSessionReceiptStatus.turnQueued),
+        _receipt(
+          CodingSessionReceiptStatus.turnDeliveryUnknown,
+          code: 'STEER_ACK_LOST',
+          createdAt: 11,
+          eventId: 'r2',
+        ),
+      ]);
+      expect(unknown.phase, CodingSessionPendingPhase.deliveryUnknown);
+      expect(unknown.settled, isFalse);
+      // Not failed: the words must not go back to the composer.
+      expect(unknown.failed, isFalse);
+      expect(unknown.deliveryUnknown, isTrue);
+      expect(unknown.detail, 'STEER_ACK_LOST: because');
+      expect(unknown.readdressGeneration, isNull);
+      expect(
+        codingSessionPendingPhaseLabel(unknown),
+        'Delivery unknown — STEER_ACK_LOST: because',
+      );
+      // It outranks the queue and degrade receipts beside it.
+      final beside = settleCodingSessionPendingTurn(_turn(), [
+        _receipt(
+          CodingSessionReceiptStatus.turnDeliveryUnknown,
+          code: 'STEER_ACK_LOST',
+        ),
+        _receipt(
+          CodingSessionReceiptStatus.turnDegraded,
+          code: 'STEER_UNSUPPORTED',
+          createdAt: 11,
+          eventId: 'r2',
+        ),
+      ]);
+      expect(beside.phase, CodingSessionPendingPhase.deliveryUnknown);
+      // A late acknowledgement that proves the input never arrived is the
+      // definite answer, and it is a drop — the sender sends again.
+      final reconciledDrop = settleCodingSessionPendingTurn(_turn(), [
+        _receipt(
+          CodingSessionReceiptStatus.turnDeliveryUnknown,
+          code: 'STEER_ACK_LOST',
+        ),
+        _receipt(
+          CodingSessionReceiptStatus.turnDropped,
+          code: 'STEER_NOT_DELIVERED',
+          createdAt: 12,
+          eventId: 'r3',
+        ),
+      ]);
+      expect(reconciledDrop.phase, CodingSessionPendingPhase.dropped);
+      expect(reconciledDrop.failed, isTrue);
+      // ...and one that proves it landed settles the row.
+      final reconciledInjected = settleCodingSessionPendingTurn(_turn(), [
+        _receipt(
+          CodingSessionReceiptStatus.turnDeliveryUnknown,
+          code: 'STEER_ACK_LOST',
+        ),
+        _receipt(
+          CodingSessionReceiptStatus.turnInjected,
+          createdAt: 12,
+          eventId: 'r3',
+        ),
+      ]);
+      expect(reconciledInjected.phase, CodingSessionPendingPhase.injected);
+      expect(reconciledInjected.settled, isTrue);
+      // Whichever order the two are signed in, injected wins: the unknown is
+      // the answer the provider has since replaced.
+      final injectedFirst = settleCodingSessionPendingTurn(_turn(), [
+        _receipt(
+          CodingSessionReceiptStatus.turnDeliveryUnknown,
+          code: 'STEER_ACK_LOST',
+          createdAt: 12,
+          eventId: 'r3',
+        ),
+        _receipt(CodingSessionReceiptStatus.turnInjected),
+      ]);
+      expect(injectedFirst.phase, CodingSessionPendingPhase.injected);
     });
 
     test('a refusal fails the row and offers readdress only when a newer '

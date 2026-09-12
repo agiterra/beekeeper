@@ -3,10 +3,12 @@ import test from "node:test";
 
 import {
   CODING_SESSION_READDRESS_LABEL,
+  CODING_SESSION_TURN_DELIVERY_UNKNOWN_MESSAGE,
   CODING_SESSION_TURN_DROPPED_MESSAGE,
   CODING_SESSION_TURN_REFUSED_MESSAGE,
   forgetCodingSessionTurn,
   formatCodingSessionTurnRefusal,
+  isCodingSessionDeliveryUnknown,
   isCodingSessionReaddressableRefusal,
   MAX_WATCHED_CODING_SESSION_TURNS,
   resolveCodingSessionReaddress,
@@ -264,4 +266,46 @@ test("a turn whose generation this client forgot is not guessed at", () => {
   });
   assert.equal(unknown.kind, "unavailable");
   assert.match(unknown.reason, /which generation/i);
+});
+
+test("a delivery-unknown answer is neither a refusal nor a drop, and is never re-addressed", () => {
+  const unknown = {
+    code: "STEER_ACK_LOST",
+    message: "the prompt ended before the acknowledgement arrived",
+    outcome: "unknown",
+  };
+  assert.equal(isCodingSessionDeliveryUnknown(unknown), true);
+  assert.equal(
+    isCodingSessionDeliveryUnknown({ ...unknown, outcome: "dropped" }),
+    false,
+  );
+  assert.equal(
+    isCodingSessionDeliveryUnknown({ code: "X", message: "y" }),
+    false,
+  );
+  // Named for what it is. "Refused" would send the person looking for a
+  // permission; "dropped" would tell them to send again.
+  assert.equal(
+    formatCodingSessionTurnRefusal(unknown),
+    "Delivery unknown (STEER_ACK_LOST): the prompt ended before the acknowledgement arrived",
+  );
+  assert.equal(
+    formatCodingSessionTurnRefusal({ ...unknown, message: " " }),
+    `Delivery unknown (STEER_ACK_LOST): ${CODING_SESSION_TURN_DELIVERY_UNKNOWN_MESSAGE}`,
+  );
+  // The words may already be inside the running turn: no code — not even the
+  // two owed-turn codes, should a provider ever misuse them here — earns the
+  // resend verb.
+  for (const code of [
+    "STEER_ACK_LOST",
+    "STEER_UNOBSERVED_NEW_TURN",
+    "NO_LIVE_EXECUTION",
+    "STALE_GENERATION",
+  ]) {
+    assert.equal(
+      isCodingSessionReaddressableRefusal({ ...unknown, code }),
+      false,
+      code,
+    );
+  }
 });

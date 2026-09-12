@@ -900,6 +900,18 @@ pub fn decide_turn_command(
     if context.in_flight.contains_key(&command.command_id) {
         return TurnDecision::Ignore(Ignored::AlreadyAccepted);
     }
+    // A native steer attempt that is still open owns this command as surely
+    // as a mailbox does: its answer is owed by the attempt's resolution, and
+    // re-admitting the command here would be a second delivery of an input
+    // that may already be in the runtime. A resolved attempt has already put
+    // the command in the consumed or refused ledger above.
+    if context
+        .state
+        .steer_attempt_for_command(&command.command_id)
+        .is_some_and(|attempt| attempt.disposition.is_open())
+    {
+        return TurnDecision::Ignore(Ignored::AlreadyAccepted);
+    }
     // Same fence, other shape: a cancel this process already put in an actor's
     // mailbox and could not durably record. Issuing it twice destroys work
     // nobody asked to stop.
@@ -1457,7 +1469,10 @@ fn operator_may_resume(record: &crate::state::SessionRecord, operator_pubkey: &s
 /// receipt plus the resolved accepted transition — see [`crate::authority`]).
 /// Legacy no-genesis sessions never gain operators this way (R20): umbrella
 /// authority for them arrives by adoption, not provider inference.
-fn operator_may_steer(record: &crate::state::SessionRecord, operator_pubkey: &str) -> bool {
+pub(crate) fn operator_may_steer(
+    record: &crate::state::SessionRecord,
+    operator_pubkey: &str,
+) -> bool {
     if operator_owns_session(record, operator_pubkey) {
         return true;
     }
@@ -2076,6 +2091,7 @@ mod tests {
 
     fn runtime(instance_ref: &str, driver: &str, runtime: &str) -> RuntimeDescriptor {
         RuntimeDescriptor {
+            steer_idle_guard: None,
             instance_ref: instance_ref.to_owned(),
             driver: driver.to_owned(),
             runtime: runtime.to_owned(),
@@ -3283,6 +3299,10 @@ mod tests {
                 created_at: 1_000,
                 operation_key: None,
                 operator_pubkey: String::new(),
+                steer_attempt: None,
+                text: None,
+                framing: None,
+                fenced_after_dispatch: false,
             },
         );
         // A cancel already in an actor's mailbox whose ledger append failed:

@@ -85,8 +85,9 @@ content as claimed operator attribution.
 A `thread.turn.start` command's `commandId` is the join key for everything
 that command produces downstream: the provider's per-stage
 [NIP-CSL](NIP-CSL.md) `kind:44224` receipts (`turn_queued`, `turn_started`,
-`turn_degraded`, `turn_dropped`, `turn_refused`; and `interrupt_delivered` for
-a `thread.turn.interrupt`) and the [NIP-CST](NIP-CST.md) `kind:44225`
+`turn_injected`, `turn_degraded`, `turn_delivery_unknown`, `turn_dropped`,
+`turn_refused`; and `interrupt_delivered` for a `thread.turn.interrupt`) and
+the [NIP-CST](NIP-CST.md) `kind:44225`
 `user_prompt` transcript item that opens the turn, which carries this same
 `commandId` when present. A consumer that wants to know what became of one
 signed command reads both streams keyed on it, rather than matching prompt
@@ -102,13 +103,14 @@ what it did in a [NIP-CSL](NIP-CSL.md) receipt. There are three classes.
   when the current turn settles. This is the only class a client may assume
   works, and the one every provider on this contract implements.
 - **`steer`.** The turn is injected into the *running* turn where this
-  execution's runtime advertised native steering at initialize. Steering
-  capability is a fact about the execution, not about the driver slug, and it
-  is published per execution as `capabilities.threadSteer` in the
-  `kind:44223` metadata. **Boundary-only in this build:** see the
-  implementation-status note under the downgrade rule — native injection is
-  deferred until an adapter advertises it, so no execution publishes
-  `capabilities.threadSteer: true` today.
+  execution's runtime advertised native steering at initialize **and** the
+  runtime's descriptor declares the `promptRequired` idle guard (below).
+  Steering capability is a fact about the execution, not about the driver
+  slug, and it is published per execution as `capabilities.threadSteer` in
+  the `kind:44223` metadata. A successful injection is answered
+  `turn_injected` (carrying the running turn's `turnId`), preceded by a
+  `user_prompt{steered: true}` transcript item on that turn; nothing is
+  cancelled, no second turn begins, and no new accounting is charged.
 - **`interrupt`.** The provider cancels the running turn and then delivers this
   turn at the boundary that creates. Authority for this class is the **session
   founder only**; any other signer — including an operator holding
@@ -130,38 +132,79 @@ merges the two turns' text: cancel-and-merge loses work that has already been
 done, and doing it silently on a sender's behalf is worse than saying "not
 here, at the boundary instead". A consumer that does not understand
 `turn_degraded` still sees the `turn_queued` and is merely less informed, never
-wrong.
+wrong. The same downgrade answers a native attempt that provably did not
+inject — the running turn had already ended (`STEER_TURN_ENDED`), the runtime
+answered the request with an explicit error (`STEER_REJECTED`), or the input
+carried image attachments the native path does not take
+(`STEER_ATTACHMENTS_UNSUPPORTED`). One admission failure is **not** a
+downgrade: when the execution's native-steer admission is full, nothing is
+written and the command is answered `turn_dropped` / `STEER_SATURATED`,
+terminal like `QUEUE_FULL` — the sender sends it again once it drains.
 
-**Implementation status, 2026-08-26: `steer` is boundary-only in this build;
-native injection is deferred until an adapter advertises it.** The rule above
-is the contract, not a description of what ships today. In this fork's provider
-`NATIVE_STEER_DELIVERABLE` is `false`
-(`crates/buzz-session-provider/src/session.rs:78`) and `metadata_for`
-AND-gates the per-execution witness with it
-(`crates/buzz-session-provider/src/lib.rs:2845-2852`), so
-`capabilities.threadSteer` is `false` for **every** execution and the desktop
-composer never sends `deliver: "steer"`
-(`desktop/src/features/coding-sessions/ui/CodingSessionComposer.tsx:295`
-selects `steer` only when `canSteer`).
+**The idle guard.** A `_session/steering` request that finds no running turn
+is the dangerous case: an adapter with no guard starts a *detached* turn with
+the input, one whose updates and completion the provider does not observe, so
+the words are delivered and their output is lost. Whether an adapter honours
+the request `_meta.steering.idleBehavior: "promptRequired"` — answering
+`{outcome: "promptRequired"}` and leaving the content with the caller — is
+not advertised on the wire. It is therefore a **declared runtime fact**:
+`RuntimeDescriptor.steerIdleGuard` (`crates/buzz-core/src/coding_session_runtime.rs`),
+set by the component that installs and pins the adapter, never inferred from
+the driver slug. Native injection is offered only when the descriptor declares
+`promptRequired` **and** the process advertised steering at `initialize`; a
+runtime that declares no guard keeps every `steer` at the boundary.
 
-**`turn_degraded` is not unreachable here, and a consumer that skips decoding
-it is wrong about what this relay will hand it.** What the paragraph above
-establishes is only that *this fork's desktop* never asks for a steer, so no
-`turn_degraded` originates from it. A `steer` from any other client is accepted
-on the wire — the envelope validates every delivery class and the absent
-field (`crates/buzz-relay/src/handlers/ingest.rs:7474-7479`: `None`,
-`boundary`, `steer`, `interrupt`) — and the
-provider then degrades it out loud: `inject_native_steer` returns `false`
-unconditionally (`crates/buzz-session-provider/src/lib.rs:2264-2276`) and the
-arm behind the delivery publishes `turn_degraded` / `STEER_UNSUPPORTED` beside
-the `turn_queued` (`crates/buzz-session-provider/src/lib.rs:2116-2124`). That
-degrade path has unit coverage with a hand-injected capability and no
-end-to-end evidence, which is why native injection is called deferred; it is
-not why the receipt is called impossible, because it is not.
+**Delivery unknown.** A native attempt is one write into a running turn, and
+its acknowledgement can be lost: the write fails part way, the prompt ends or
+the runtime exits before the answer arrives, the bounded wait for it expires,
+or the answer names no recognized outcome. The provider then publishes
+`turn_delivery_unknown` with a `STEER_*` code (see the [NIP-CSL](NIP-CSL.md)
+code table) and records the command as **refused** — a terminal answer, never
+replayed automatically, because a replay of an input the runtime may already
+hold is the double delivery the classes exist to prevent. The sender decides
+whether to send again. An adapter that reports it started a separate,
+unobserved turn with the input (`startedNewTurn`) is answered the same way
+(`STEER_UNOBSERVED_NEW_TURN`): delivered, never resent, output unobserved. A
+late acknowledgement may reconcile an unknown attempt under the same
+`commandId`: `turn_injected` if it did land, `turn_dropped` /
+`STEER_NOT_DELIVERED` if it provably did not.
 
-Native mid-turn injection needs the `buzz-acp` steer types re-exported (`mod
-pool` is private at `crates/buzz-acp/src/lib.rs:13`) and is a later slice's
-work. Do not read this section as "steer shipped".
+**Implementation status, 2026-09-11: native injection is live for executions
+whose runtime advertised steering at `initialize` AND whose descriptor declares
+the `promptRequired` idle guard; every other runtime stays at the boundary.**
+The 2026-08-26 status ("boundary-only; deferred until an adapter advertises
+it") is superseded by the native steering plan
+(`docs/NATIVE_STEERING_IMPL.md`). What was verified against the installed
+adapters on 2026-09-11:
+
+- `claude-agent-acp` 0.70.0 advertises `_meta.steering.supported` and honours
+  `_meta.steering.idleBehavior: "promptRequired"` (`dist/acp-agent.js:1146-1150`
+  answers `promptRequired` without touching the session; `:1160-1184` pushes a
+  mid-turn input into the same SDK stream and answers `injected`). The desktop
+  host declares `steerIdleGuard: "promptRequired"` for this runtime only
+  (`desktop/src-tauri/src/session_provider/runtimes.rs`), so its executions
+  publish `capabilities.threadSteer: true` and a `steer` is a native attempt.
+- `codex-acp` 1.6.2 advertises steering but has **no idle guard**
+  (`dist/index.js:31387-31400` starts a detached turn when no turn is
+  steerable). Its descriptor declares no guard, so codex executions stay
+  boundary-only: `threadSteer` is `false`, the composer never asks for
+  `steer`, and a `steer` from any other client is degraded out loud.
+- `goose acp` is not installed here; nothing is declared and it stays at the
+  boundary.
+
+`turn_degraded` remains reachable from any client for any execution that does
+not qualify, exactly as before: the envelope validates every delivery class
+(`crates/buzz-relay/src/handlers/ingest.rs`) and the provider answers with the
+downgrade beside the `turn_queued`. The desktop composer selects `steer` only
+when `isWorking && canSteer`
+(`desktop/src/features/coding-sessions/ui/CodingSessionComposer.tsx`), and
+`canSteer` is the execution's published `threadSteer`.
+
+What this section does **not** claim: that every `steer` lands. The native
+path has the unknown-delivery outcomes above, and the provider's evidence for
+them is composition fixtures against scripted agents plus adapter validation
+against the installed claude-agent-acp — see `docs/SESSION_STATE.md` for what
+was run.
 
 An unknown `deliver` value is a malformed command, rejected by the relay's
 envelope validation. Defaulting an unreadable class to `boundary` would take a

@@ -17,6 +17,7 @@ mod queue;
 pub mod relay;
 mod scope;
 mod setup_mode;
+pub mod steer;
 mod usage;
 
 pub use config::ChannelFilter;

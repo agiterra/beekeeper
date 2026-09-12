@@ -736,6 +736,19 @@ const CodingSessionItem = React.memo(function CodingSessionItem({
             >
               {author.label}
             </span>
+            {item.steered === true ? (
+              // A mid-turn correction the running turn took, not the prompt
+              // that opened it. Said beside the author rather than hidden in
+              // the `title`, because "who said it" and "when it went in" are
+              // read together.
+              <span
+                className="ms-1 rounded-sm bg-muted px-1 font-medium text-foreground/75"
+                data-testid="coding-session-user-message-steered"
+                title="Injected into the turn that was already running"
+              >
+                steered
+              </span>
+            ) : null}
             {formatCodingSessionMessageTimestamp(item.timestamp)}
           </p>
         </div>

@@ -140,6 +140,14 @@ export type TranscriptItem =
        * `operatorPubkey` alone cannot tell those apart.
        */
       commandId?: string;
+      /**
+       * True for a `role: "user"` prompt the provider echoed with
+       * `steered: true`: it was injected into a turn already running rather
+       * than starting one. Rendered as a visible marker beside the author, so
+       * a reader can tell a mid-turn correction from the prompt that opened
+       * the turn. Present only when true.
+       */
+      steered?: boolean;
     } & TranscriptItemIdentity)
   | ({
       id: string;

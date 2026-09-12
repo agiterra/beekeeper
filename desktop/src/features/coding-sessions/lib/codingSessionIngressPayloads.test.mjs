@@ -69,7 +69,7 @@ test("a six-key turn_degraded is rejected outright", () => {
       }),
     ),
     null,
-    "turnId belongs to turn_started alone",
+    "turnId belongs to turn_started and turn_injected alone",
   );
   assert.equal(
     parseCodingSessionLifecycleReceipt(
@@ -134,7 +134,9 @@ test("both new statuses are turn statuses, so their keys name the stage", () => 
     [
       "turn_queued",
       "turn_started",
+      "turn_injected",
       "turn_degraded",
+      "turn_delivery_unknown",
       "turn_dropped",
       "turn_refused",
       "interrupt_delivered",
@@ -502,5 +504,137 @@ test("a continuation_registered receipt may claim neither a turn nor a failure",
       }),
     ),
     null,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Native steering: `turn_injected` (six keys) and `turn_delivery_unknown`
+// ---------------------------------------------------------------------------
+
+test("an injected steer decodes as the second six-key status, naming the running turn", () => {
+  const parsed = parseCodingSessionLifecycleReceipt(
+    receipt({ status: "turn_injected", turnId: "turn-running-7" }),
+  );
+  assert.ok(parsed, "a well-formed turn_injected must decode");
+  assert.equal(parsed.status, "turn_injected");
+  assert.equal(parsed.turnId, "turn-running-7");
+  assert.equal(parsed.error, null);
+  assert.deepEqual(parsed.session, SESSION);
+  assert.deepEqual(Object.keys(parsed), [
+    "schema",
+    "commandId",
+    "status",
+    "session",
+    "error",
+    "turnId",
+  ]);
+  assert.equal(isCodingSessionTurnReceiptStatus("turn_injected"), true);
+  assert.equal(
+    codingSessionReceiptSemanticKey("csc-1", "turn_injected"),
+    "coding-session-lifecycle-receipt/v1|5:csc-113:turn_injected",
+  );
+});
+
+test("an injected steer without the turn it joined, or with an error, is rejected", () => {
+  // Same rule as turn_started: the id is the whole claim.
+  assert.equal(
+    parseCodingSessionLifecycleReceipt(receipt({ status: "turn_injected" })),
+    null,
+    "no turnId names no turn",
+  );
+  assert.equal(
+    parseCodingSessionLifecycleReceipt(
+      receipt({ status: "turn_injected", turnId: "   " }),
+    ),
+    null,
+    "a blank turnId is the same absence",
+  );
+  assert.equal(
+    parseCodingSessionLifecycleReceipt(
+      receipt({ status: "turn_injected", turnId: null }),
+    ),
+    null,
+    "an explicit null is a six-key claim of nothing",
+  );
+  assert.equal(
+    parseCodingSessionLifecycleReceipt(
+      receipt({
+        status: "turn_injected",
+        turnId: "turn-running-7",
+        error: { code: "STEER_ACK_LOST", message: "x" },
+      }),
+    ),
+    null,
+    "an injected input was delivered; it carries no error",
+  );
+  assert.equal(
+    parseCodingSessionLifecycleReceipt(
+      receipt({ status: "turn_injected", turnId: "x".repeat(257) }),
+    ),
+    null,
+    "the turn id is bounded like the command id",
+  );
+});
+
+test("a delivery-unknown answer decodes as five keys with a well-formed code", () => {
+  for (const code of [
+    "STEER_WRITE_FAILED",
+    "STEER_ACK_LOST",
+    "STEER_ACK_TIMEOUT",
+    "STEER_ACK_UNRECOGNIZED",
+    "STEER_UNRESOLVED_AT_RESTART",
+    "STEER_UNOBSERVED_NEW_TURN",
+  ]) {
+    const parsed = parseCodingSessionLifecycleReceipt(
+      receipt({
+        status: "turn_delivery_unknown",
+        error: { code, message: "the prompt ended before the ack arrived" },
+      }),
+    );
+    assert.ok(parsed, code);
+    assert.equal(parsed.status, "turn_delivery_unknown");
+    assert.equal(parsed.error.code, code);
+    assert.deepEqual(Object.keys(parsed), [
+      "schema",
+      "commandId",
+      "status",
+      "session",
+      "error",
+    ]);
+  }
+  assert.equal(
+    codingSessionReceiptSemanticKey("csc-1", "turn_delivery_unknown"),
+    "coding-session-lifecycle-receipt/v1|5:csc-121:turn_delivery_unknown",
+  );
+});
+
+test("a delivery-unknown answer must say why, and may not claim a turn", () => {
+  assert.equal(
+    parseCodingSessionLifecycleReceipt(
+      receipt({ status: "turn_delivery_unknown", error: null }),
+    ),
+    null,
+    "no error is a claim of delivery, not of not knowing",
+  );
+  assert.equal(
+    parseCodingSessionLifecycleReceipt(
+      receipt({
+        status: "turn_delivery_unknown",
+        error: { code: "  ", message: "lost" },
+      }),
+    ),
+    null,
+    "a blank code is not a code",
+  );
+  assert.equal(
+    parseCodingSessionLifecycleReceipt(
+      receipt({
+        status: "turn_delivery_unknown",
+        error: { code: "STEER_ACK_LOST", message: "lost" },
+        turnId: "turn-running-7",
+      }),
+    ),
+    null,
+    "a turnId would claim the input joined a turn, which this status cannot say",
   );
 });

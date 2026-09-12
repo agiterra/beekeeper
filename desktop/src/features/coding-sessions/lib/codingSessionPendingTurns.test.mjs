@@ -5,6 +5,8 @@ import {
   formatPendingCodingSessionTurnAge,
   heldPendingCodingSessionTurns,
   markPendingCodingSessionTurnDegraded,
+  markPendingCodingSessionTurnDeliveryUnknown,
+  markPendingCodingSessionTurnInjected,
   markPendingCodingSessionTurnQueued,
   MAX_PENDING_CODING_SESSION_TURNS_PER_TARGET,
   PENDING_CODING_SESSION_TURN_STALL_MS,
@@ -432,4 +434,145 @@ test("the rows a remounting composer must adopt are the held ones, with the draf
   // the editor.
   assert.equal(held[0].draft, "@builder run it");
   assert.deepEqual(heldPendingCodingSessionTurns("other-channel", TARGET), []);
+});
+
+test("an injected steer says so, outranks queued and degraded, and still settles on its echo", () => {
+  recordPendingCodingSessionTurn(turn({ commandId: "csc-i" }));
+  markPendingCodingSessionTurnQueued(CHANNEL, "csc-i");
+  markPendingCodingSessionTurnInjected(CHANNEL, "csc-i");
+  const [stored] = readPendingCodingSessionTurns();
+  assert.equal(stored.published, true);
+  assert.equal(stored.injectedByProvider, true);
+  assert.equal(pendingCodingSessionTurnState(stored, 1_000), "injected");
+  // Injected is the later fact: a degrade that somehow follows does not
+  // demote it, and neither does the stall clock.
+  markPendingCodingSessionTurnDegraded(CHANNEL, "csc-i");
+  const [again] = readPendingCodingSessionTurns();
+  assert.equal(
+    pendingCodingSessionTurnState(
+      again,
+      1_000 + PENDING_CODING_SESSION_TURN_STALL_MS + 1,
+    ),
+    "injected",
+  );
+  // Held: the provider spoke for it, so the unanswered-row TTL does not apply.
+  assert.equal(
+    resolvePendingCodingSessionTurns(
+      readPendingCodingSessionTurns(),
+      { channelId: CHANNEL, targetKey: TARGET },
+      [],
+      1_000 + PENDING_CODING_SESSION_TURN_TTL_MS + 1,
+    ).visible.length,
+    1,
+  );
+  // And it retires exactly as a started turn does: on the provider's echo
+  // whose commandId matches — the steered prompt on the running turn.
+  const resolved = resolvePendingCodingSessionTurns(
+    readPendingCodingSessionTurns(),
+    { channelId: CHANNEL, targetKey: TARGET },
+    [namedEcho("csc-i")],
+    1_000,
+  );
+  assert.deepEqual(resolved.visible, []);
+  assert.deepEqual(
+    resolved.settlements.map((s) => s.by),
+    ["commandId"],
+  );
+});
+
+test("a delivery-unknown answer relabels the row, exempts it from expiry, and keeps the words", () => {
+  recordPendingCodingSessionTurn(
+    turn({ commandId: "csc-u", draft: "@builder look at the second failure" }),
+  );
+  markPendingCodingSessionTurnQueued(CHANNEL, "csc-u");
+  markPendingCodingSessionTurnDeliveryUnknown(CHANNEL, "csc-u", {
+    code: "STEER_ACK_LOST",
+    message: "the prompt ended before the acknowledgement arrived",
+  });
+  const [stored] = readPendingCodingSessionTurns();
+  assert.deepEqual(stored.deliveryUnknown, {
+    code: "STEER_ACK_LOST",
+    message: "the prompt ended before the acknowledgement arrived",
+  });
+  // Terminal and top of the ranking: nothing the provider could add later on
+  // its own demotes it, and the words and draft are exactly as recorded.
+  assert.equal(pendingCodingSessionTurnState(stored, 1_000), "unknown");
+  assert.equal(stored.text, "run the tests");
+  assert.equal(stored.draft, "@builder look at the second failure");
+  // The first answer wins: a replayed receipt with different words is the
+  // same fact, not a revision.
+  markPendingCodingSessionTurnDeliveryUnknown(CHANNEL, "csc-u", {
+    code: "STEER_ACK_TIMEOUT",
+    message: "later",
+  });
+  assert.equal(
+    readPendingCodingSessionTurns()[0].deliveryUnknown.code,
+    "STEER_ACK_LOST",
+  );
+  // Exempt from the unanswered-row TTL: the person settles it, not a clock.
+  const resolved = resolvePendingCodingSessionTurns(
+    readPendingCodingSessionTurns(),
+    { channelId: CHANNEL, targetKey: TARGET },
+    [],
+    1_000 + PENDING_CODING_SESSION_TURN_TTL_MS + 1,
+  );
+  assert.equal(resolved.visible.length, 1);
+  assert.deepEqual(resolved.consumedKeys, []);
+  // It is among the rows a remounting composer must adopt.
+  assert.deepEqual(
+    heldPendingCodingSessionTurns(CHANNEL, TARGET).map(
+      (entry) => entry.commandId,
+    ),
+    ["csc-u"],
+  );
+  // Dismiss is the exit — and the only one this store offers for it.
+  forgetPendingCodingSessionTurn(CHANNEL, "csc-u");
+  assert.deepEqual(readPendingCodingSessionTurns(), []);
+});
+
+test("a delivery-unknown row still settles if the steered echo does name it after all", () => {
+  // A late acknowledgement can reconcile an unknown attempt as injected; the
+  // echo that follows names the command, and that is the one fact that may
+  // retire the row without the person's hand.
+  recordPendingCodingSessionTurn(turn({ commandId: "csc-late" }));
+  markPendingCodingSessionTurnDeliveryUnknown(CHANNEL, "csc-late", {
+    code: "STEER_ACK_LOST",
+    message: "lost",
+  });
+  const resolved = resolvePendingCodingSessionTurns(
+    readPendingCodingSessionTurns(),
+    { channelId: CHANNEL, targetKey: TARGET },
+    [namedEcho("csc-late")],
+    1_000,
+  );
+  assert.deepEqual(resolved.visible, []);
+  assert.deepEqual(resolved.consumedKeys, [
+    pendingCodingSessionTurnKey({ channelId: CHANNEL, commandId: "csc-late" }),
+  ]);
+});
+
+test("a late turn_injected outranks the delivery-unknown that preceded it", () => {
+  recordPendingCodingSessionTurn(turn({ commandId: "csc-r" }));
+  markPendingCodingSessionTurnDeliveryUnknown(CHANNEL, "csc-r", {
+    code: "STEER_ACK_LOST",
+    message: "lost",
+  });
+  assert.equal(
+    pendingCodingSessionTurnState(readPendingCodingSessionTurns()[0], 1_000),
+    "unknown",
+  );
+  markPendingCodingSessionTurnInjected(CHANNEL, "csc-r");
+  const [reconciled] = readPendingCodingSessionTurns();
+  assert.equal(reconciled.injectedByProvider, true);
+  // The earlier answer is kept for the record but no longer read.
+  assert.equal(reconciled.deliveryUnknown.code, "STEER_ACK_LOST");
+  assert.equal(pendingCodingSessionTurnState(reconciled, 1_000), "injected");
+  // And it settles on the steered echo as any injected row does.
+  const resolved = resolvePendingCodingSessionTurns(
+    readPendingCodingSessionTurns(),
+    { channelId: CHANNEL, targetKey: TARGET },
+    [namedEcho("csc-r")],
+    1_000,
+  );
+  assert.deepEqual(resolved.visible, []);
 });

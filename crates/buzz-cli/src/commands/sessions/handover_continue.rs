@@ -634,7 +634,13 @@ pub(super) fn newest_stage_for(
             ReceiptStatus::TurnQueued => 1,
             ReceiptStatus::TurnDegraded => 2,
             ReceiptStatus::TurnStarted => 3,
-            ReceiptStatus::TurnDropped | ReceiptStatus::TurnRefused => 4,
+            // A boundary resume never asks for a steer, so neither of these
+            // is expected here; ranked anyway so an unexpected one is read as
+            // the terminal answer it is rather than as "no stage".
+            ReceiptStatus::TurnInjected => 4,
+            ReceiptStatus::TurnDropped
+            | ReceiptStatus::TurnRefused
+            | ReceiptStatus::TurnDeliveryUnknown => 5,
             _ => 0,
         };
         let code = receipt.error.as_ref().map(|error| error.code.clone());

@@ -1,8 +1,9 @@
 import * as React from "react";
-import { CircleAlert } from "lucide-react";
+import { CircleAlert, CircleHelp } from "lucide-react";
 
 import {
   clearPendingCodingSessionTurns,
+  forgetPendingCodingSessionTurn,
   formatPendingCodingSessionTurnAge,
   noteTextSettledCodingSessionEchoes,
   PENDING_CODING_SESSION_TURN_STALL_MS,
@@ -143,10 +144,19 @@ function CodingSessionPendingTurnRow({
 }) {
   const state = pendingCodingSessionTurnState(turn, now);
   const stalled = state === "stalled";
+  const unknown = state === "unknown";
   const caption = describePendingCodingSessionTurn(
     state,
     Math.max(0, now - turn.recordedAt),
+    turn.deliveryUnknown,
   );
+  // The provider's terminal "I cannot say": the words stay on screen — they
+  // may already be inside the running turn, so nothing here re-sends or
+  // restores them on its own — and the person decides. Dismiss is the only
+  // exit, and it forgets the row without touching the editor.
+  const dismiss = React.useCallback(() => {
+    forgetPendingCodingSessionTurn(turn.channelId, turn.commandId);
+  }, [turn.channelId, turn.commandId]);
   return (
     <div
       className="group flex flex-col items-end gap-1"
@@ -158,20 +168,39 @@ function CodingSessionPendingTurnRow({
       <div
         className={cn(
           "min-w-0 max-w-[80%] rounded-2xl bg-muted px-4 py-3 text-base leading-6 text-foreground shadow-sm ring-1",
-          stalled ? "ring-destructive/40" : "opacity-70 ring-border/40",
+          stalled || unknown
+            ? "ring-destructive/40"
+            : "opacity-70 ring-border/40",
         )}
       >
         <Markdown content={turn.text.trim() || " "} mediaInset />
+        {unknown ? (
+          // Inside the bubble, not on the caption line: the plain workspace's
+          // dock reserve (`pb-44`) is a constant, and at full scroll the last
+          // row's caption sits under the dock's top edge — a control there
+          // cannot be clicked. The bubble is always clear of the dock.
+          <div className="mt-2 flex justify-end">
+            <button
+              className="rounded px-1 text-2xs font-medium text-foreground/75 underline-offset-2 hover:underline"
+              data-testid="coding-session-pending-turn-dismiss"
+              onClick={dismiss}
+              type="button"
+            >
+              Dismiss
+            </button>
+          </div>
+        ) : null}
       </div>
       {caption === null ? null : (
         <p
           className={cn(
             "inline-flex items-center gap-1 pe-1 text-2xs",
-            stalled ? "text-destructive" : "text-muted-foreground",
+            stalled || unknown ? "text-destructive" : "text-muted-foreground",
           )}
           data-testid="coding-session-pending-turn-status"
         >
           {stalled ? <CircleAlert aria-hidden className="size-3" /> : null}
+          {unknown ? <CircleHelp aria-hidden className="size-3" /> : null}
           {caption}
         </p>
       )}
@@ -201,16 +230,31 @@ function CodingSessionPendingTurnRow({
  * otherwise is invisible on touch and unannounced by most screen readers, so
  * the only people who learned the difference were the ones already using a
  * mouse.
+ *
+ * An injected steer says exactly that and nothing about waiting: the words
+ * are already in the running turn. A delivery-unknown row leads with the
+ * provider's own words, because the one thing the person needs is the reason
+ * nobody can say whether their correction arrived.
  */
 export function describePendingCodingSessionTurn(
   state: ReturnType<typeof pendingCodingSessionTurnState>,
   ageMs: number,
+  deliveryUnknown?: { code: string; message: string },
 ): string | null {
   const stalled = ageMs > PENDING_CODING_SESSION_TURN_STALL_MS;
   const age = formatPendingCodingSessionTurnAge(ageMs);
   // Published, signed, and the provider's. There is no client-side cancel for
   // it and there is no 44220 that unsends one.
   const irrevocable = "it cannot be recalled";
+  if (state === "unknown") {
+    const detail = deliveryUnknown?.message.trim() || deliveryUnknown?.code;
+    return detail
+      ? `Delivery unknown — ${detail}`
+      : "Delivery unknown — the provider could not confirm whether this reached the running turn";
+  }
+  if (state === "injected") {
+    return "Injected into the running turn";
+  }
   if (state === "degraded") {
     const degraded =
       "Delivered at the next turn boundary — this provider cannot steer";

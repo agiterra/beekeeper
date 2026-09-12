@@ -304,3 +304,37 @@ test("a prompt that references its images inline does not also count them", () =
   );
   assert.match(countOnly.text, /\(2 attachments\)/);
 });
+
+test("a steered prompt carries the flag the renderer marks it with, and an ordinary one does not", () => {
+  const steered = buildBaseTranscriptItem(
+    {
+      kind: "user_prompt",
+      content: "Also check the tests",
+      steered: true,
+      commandId: "csc-steer-1",
+    },
+    { ...IDENTITY, id: "steered-1" },
+  );
+  assert.equal(steered.type, "message");
+  assert.equal(steered.role, "user");
+  assert.equal(steered.title, "Steered prompt");
+  assert.equal(steered.steered, true);
+  assert.equal(steered.commandId, "csc-steer-1");
+
+  const plain = buildBaseTranscriptItem(
+    { kind: "user_prompt", content: "Fix the bug" },
+    { ...IDENTITY, id: "plain-1" },
+  );
+  assert.equal(plain.title, "Prompt");
+  assert.equal(
+    "steered" in plain,
+    false,
+    "absent, not false: older projections stay byte-identical",
+  );
+  // `steered: false` on the wire is the ordinary prompt.
+  const explicit = buildBaseTranscriptItem(
+    { kind: "user_prompt", content: "Fix the bug", steered: false },
+    { ...IDENTITY, id: "plain-2" },
+  );
+  assert.equal("steered" in explicit, false);
+});

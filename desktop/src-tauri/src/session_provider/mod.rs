@@ -53,6 +53,8 @@ pub(crate) mod supervisor;
 pub(crate) mod trust;
 
 #[cfg(test)]
+mod steer_guard_tests;
+#[cfg(test)]
 mod tests;
 
 pub(crate) use supervisor::{

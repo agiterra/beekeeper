@@ -53,6 +53,8 @@ export default defineConfig({
         "**/coding-session-seat-bee.spec.ts",
         "**/coding-session-surface-host-screenshots.spec.ts",
         "**/coding-session-connect.spec.ts",
+        // Native steering: turn_injected / turn_delivery_unknown on the row.
+        "**/coding-session-native-steer.spec.ts",
         "**/coding-session-width.spec.ts",
         "**/coding-session-worktree-source.spec.ts",
         // Lane V — "New session in this workspace": reuse, refusal, no memory.
