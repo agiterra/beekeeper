@@ -30,7 +30,7 @@ on 2026-09-09, with `just ci` and `just test` green on that exact commit
 
 | Work | Owner | State (2026-09-11) | Where |
 | --- | --- | --- | --- |
-| Native mid-turn steering for Claude and Codex sessions | unassigned; begins when Brian delegates it | planning only: seams, sequence, lane ownership and acceptance written; no code changed | ledger § "September 11 — latest main rebuilt; native steering plan for Claude" |
+| Native mid-turn steering for Claude sessions | Fable built; Astra reviews and integrates | candidate on `work/native-steering-fable` (`d2bb6de8f`, 2026-09-12): Claude injects natively with the `promptRequired` idle guard, Codex stays boundary; `just ci` green, smoke 1309/6 pre-existing; not landed, not installed | ledger item 110; [`history/2026-09-11-native-steering.md`](history/2026-09-11-native-steering.md); `NATIVE_STEERING_IMPL.md` |
 | Automatic project context beside ordinary agent work | paused by Brian on 2026-09-10 | findings saved; next step is proving a harmless marker reaches a fresh Claude session through a hook | ledger § "September 10 — automatic project context: findings saved, work paused" |
 | Collaborative workspace plan, ordered steps 0–6 | Astra finalizes and lands `main`; Fable takes delegated slices; Andy lands his own topic branches | steps 0–4 have integrated candidates per the ledger's September 7–9 sections; no landing of steps 5 or 6 is recorded anywhere found, so treat them as open | [`COLLABORATIVE_WORKSPACE_PLAN.md`](COLLABORATIVE_WORKSPACE_PLAN.md) |
 | Founded-session fixes: Discard deletes, project filing | Andy | landed on `main` 2026-09-11 | ledger § "Fixed 2026-09-11 —" (two items) |
@@ -74,14 +74,18 @@ Rules, each with where it is written down.
 - **hive's `software_commit` is `unknown`** until the deployer is refreshed;
   `/health` prints `ok unknown`. Read it as a disclosed non-answer, not a
   failure.
-- **Native steering** is blocked on proving adapter support.
-  `crates/buzz-session-provider/src/session.rs:58` hard-disables native
-  delivery; nothing may be enabled on a constant flip or on green mock tests.
+- ~~**Native steering** is blocked on proving adapter support.~~ Proven
+  2026-09-11 against the installed adapters (ledger item 110); what remains
+  owed is live use of the candidate in an installed build with a real
+  session. codex-acp 1.6.2 has no idle guard and stays in boundary mode.
 - **Automatic context** is blocked on Brian resuming it; the Claude hook
   transport is a candidate, not proven in the installed adapter.
-- **Unknown:** whether the 62 e2e-smoke failures that ledger §1 calls
-  "inherited, not caused" (2026-08-19) still exist. No later section says.
-  The 2026-09-09 landing ran a targeted 9/9 browser rerun, not the full suite.
+- ~~**Unknown:** whether the 62 e2e-smoke failures that ledger §1 calls
+  "inherited, not caused" (2026-08-19) still exist.~~ Checked 2026-09-12: a
+  full `just smoke` on `main` `77b792de9` plus the steering branch reports
+  1309 passed, 6 failed, 1 skipped; the six fail identically on the untouched
+  base (ledger item 111). Never run `just smoke` while `just ci` builds the
+  desktop: the plain build overwrites the e2e bundle (item 111).
 
 ## Next, in order
 
@@ -95,8 +99,9 @@ Rules, each with where it is written down.
    `bee packs status --project <coordinate> --role lead`.
 2. Rebuild the installed Mac bundle from `main` when Andy's two fixes need
    live use: `scripts/app-from.sh <sha>`. Brian's call.
-3. When Brian delegates native steering: step 1 of the ledger plan, prove
-   adapter support with a held-open prompt fixture before any provider change.
+3. Astra reviews and lands `work/native-steering-fable` (ledger item 110),
+   then rebuilds the bundle and exercises a steer in a real Claude session
+   with a unique marker; the six smoke failures of item 111 need an owner.
 4. When Brian resumes automatic context: the hook-marker experiment exactly as
    the ledger's September 10 section specifies it.
 5. Plan steps 5 and 6.
@@ -127,7 +132,7 @@ agent hits in the first hour.
 
 | Kind | Place | Tracked |
 | --- | --- | --- |
-| Numbered findings, items 1–109 and counting | `SESSION_STATE.md` §2; `grep -n '^<n>\. ' docs/SESSION_STATE.md` | yes |
+| Numbered findings, items 1–111 and counting | `SESSION_STATE.md` §2; `grep -n '^<n>\. ' docs/SESSION_STATE.md` | yes |
 | Session reports 2026-09-06 to 2026-09-11 | the top of `SESSION_STATE.md`, above §1; written before this map and left in place | yes |
 | Session reports from 2026-09-11 on | [`history/`](history/README.md), `YYYY-MM-DD-<slug>.md` | yes |
 | Plans and specs | `COLLABORATIVE_WORKSPACE_PLAN.md`, `*_SPEC.md`, `*_IMPL.md` in `docs/` | yes |
