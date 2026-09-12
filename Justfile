@@ -483,8 +483,10 @@ test: test-genesis test-git-push-gate test-ci-completion
 # existing filter reaches them, plus the write gate's one case in
 # `handlers::repo_protection::tests`, which needed its own filter arm — and L28
 # the mission-lookup cases in two more siblings, `verdict_admission::lookup_tests`
-# and `api::git::verdict_admission_scope::tests`). A
-# filter of `api::git::policy` alone reaches only 10 of them, and one naming
+# and `api::git::verdict_admission_scope::tests`).
+# Project pack-source founder endorsement also runs here: its current-head
+# admission proof needs Postgres and must not remain an unexecuted ignored test.
+# A filter of `api::git::policy` alone reaches only 10 of them, and one naming
 # only `verdict_admission::tests` misses every sibling module entirely — which
 # is exactly how arm (B)'s ten sat unexecuted for one run. **Every new sibling
 # module needs its own substring here**; that is the whole failure mode.
@@ -506,6 +508,7 @@ test-git-push-gate: _ensure-services
         api::git::verdict_admission::observed_tests \
         api::git::verdict_admission::verified_tests \
         handlers::repo_protection::tests \
+        handlers::pack_source::tests \
         api::git::verdict_admission::lookup_tests \
         api::git::verdict_admission::hardening_tests \
         api::git::verdict_admission_scope::tests \

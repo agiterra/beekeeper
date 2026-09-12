@@ -49,6 +49,17 @@ fn repo_announcement(
         .expect("signs")
 }
 
+fn project_head(creator: &Keys, repositories: &[String]) -> nostr::Event {
+    let mut tags = vec![Tag::parse(["d", "agiterra"]).expect("d")];
+    for coordinate in repositories {
+        tags.push(Tag::parse(["a", coordinate]).expect("a"));
+    }
+    EventBuilder::new(Kind::Custom(KIND_PROJECT as u16), r#"{"name":"agiterra"}"#)
+        .tags(tags)
+        .sign_with_keys(creator)
+        .expect("signed project")
+}
+
 /// The creator of the project is always admitted, roster or no roster.
 #[test]
 fn the_project_creator_may_publish_a_pack_source() {
@@ -61,6 +72,7 @@ fn the_project_creator_may_publish_a_pack_source() {
         &[],
         &[],
         false,
+        None,
     )
     .expect("admitted");
     assert_eq!(admitted, PackSourceAdmission::ProjectCreator);
@@ -91,6 +103,7 @@ fn only_a_roster_owner_is_admitted_from_the_roster() {
             &roster,
             &[],
             true,
+            None,
         )
         .expect("owner admitted"),
         PackSourceAdmission::ProjectOwner
@@ -104,6 +117,7 @@ fn only_a_roster_owner_is_admitted_from_the_roster() {
             &roster,
             &[],
             true,
+            None,
         )
         .expect_err("refused");
         assert!(refusal.sentence().contains("Owner of that project"));
@@ -127,6 +141,10 @@ fn a_co_founder_of_a_project_repository_is_admitted() {
         &[&co_founder.public_key().to_hex()],
     );
 
+    let head = project_head(
+        &creator,
+        &[repository_coordinate(&announcement).expect("coordinate")],
+    );
     for founder in [&signer, &co_founder] {
         let admitted = decide_pack_source_admission(
             &founder.public_key().to_hex(),
@@ -135,6 +153,7 @@ fn a_co_founder_of_a_project_repository_is_admitted() {
             &[],
             std::slice::from_ref(&announcement),
             true,
+            Some(&head),
         )
         .expect("a founder is admitted");
         assert_eq!(
@@ -155,6 +174,7 @@ fn a_co_founder_of_a_project_repository_is_admitted() {
         &[],
         std::slice::from_ref(&announcement),
         true,
+        Some(&head),
     )
     .expect_err("a stranger is refused");
     assert_eq!(refusal.repositories_searched, 1);
@@ -181,6 +201,7 @@ fn a_foreign_repository_is_never_offered_to_this_decision() {
         &[],
         &[],
         true,
+        None,
     )
     .expect_err("refused");
     assert_eq!(refusal.repositories_searched, 0);
@@ -200,6 +221,7 @@ fn an_unknown_project_says_no_roster_was_read() {
         &[],
         &[],
         false,
+        None,
     )
     .expect_err("refused");
     assert!(
@@ -285,4 +307,223 @@ async fn ingest_refuses_a_pack_source_from_a_stranger_and_stores_the_creators() 
     .await
     .expect("the creator's pack source stores");
     assert!(accepted.accepted, "the creator's record must be accepted");
+}
+
+#[test]
+fn public_project_self_backlink_cannot_create_pack_source_authority() {
+    let creator = Keys::generate();
+    let outsider = Keys::generate();
+    let coordinate = project_coordinate(&creator.public_key());
+    let head = project_head(&creator, &[]);
+    let self_link = repo_announcement(&outsider, "self-endorsed", Some(&coordinate), &[]);
+    assert!(decide_pack_source_admission(
+        &outsider.public_key().to_hex(),
+        &coordinate,
+        &creator.public_key().to_hex(),
+        &[],
+        &[self_link],
+        true,
+        Some(&head),
+    )
+    .is_err());
+}
+
+#[test]
+fn private_project_viewers_read_access_and_self_backlink_do_not_grant_source_writes() {
+    let creator = Keys::generate();
+    let viewer = Keys::generate();
+    let coordinate = project_coordinate(&creator.public_key());
+    let gate = buzz_db::project_acl::ProjectGate {
+        owner: creator.public_key().to_bytes().to_vec(),
+        members: vec![(viewer.public_key().to_bytes().to_vec(), ProjectRole::Viewer)],
+    };
+    // Repository backlink admission uses this read-level entitlement.
+    assert!(gate.admits_read(viewer.public_key().as_bytes()));
+    assert!(!gate.admits_write(viewer.public_key().as_bytes()));
+    let head = project_head(&creator, &[]);
+    let self_link = repo_announcement(&viewer, "viewer-repo", Some(&coordinate), &[]);
+    assert!(decide_pack_source_admission(
+        &viewer.public_key().to_hex(),
+        &coordinate,
+        &creator.public_key().to_hex(),
+        &[(viewer.public_key().to_hex(), ProjectRole::Viewer)],
+        &[self_link],
+        true,
+        Some(&head),
+    )
+    .is_err());
+}
+
+#[test]
+fn only_the_exact_creator_signed_forward_roster_can_endorse_a_repository() {
+    let creator = Keys::generate();
+    let signer = Keys::generate();
+    let coordinate = project_coordinate(&creator.public_key());
+    let announcement = repo_announcement(&signer, "candidate", Some(&coordinate), &[]);
+    let repo = repository_coordinate(&announcement).expect("repo");
+    let genuine = project_head(&creator, std::slice::from_ref(&repo));
+    let wrong_owner = project_head(&signer, std::slice::from_ref(&repo));
+    let wrong_project = EventBuilder::new(Kind::Custom(KIND_PROJECT as u16), "{}")
+        .tags([
+            Tag::parse(["d", "other-project"]).expect("d"),
+            Tag::parse(["a", &repo]).expect("a"),
+        ])
+        .sign_with_keys(&creator)
+        .expect("sign");
+    let wrong_repo = project_head(
+        &creator,
+        &[format!("30617:{}:candidate", creator.public_key().to_hex())],
+    );
+    let removed = project_head(&creator, &[]);
+    let mut forged = genuine.clone();
+    forged.content.push(' ');
+    for head in [
+        None,
+        Some(&wrong_owner),
+        Some(&wrong_project),
+        Some(&wrong_repo),
+        Some(&removed),
+        Some(&forged),
+    ] {
+        assert!(decide_pack_source_admission(
+            &signer.public_key().to_hex(),
+            &coordinate,
+            &creator.public_key().to_hex(),
+            &[],
+            std::slice::from_ref(&announcement),
+            true,
+            head,
+        )
+        .is_err());
+    }
+    assert!(decide_pack_source_admission(
+        &signer.public_key().to_hex(),
+        &coordinate,
+        &creator.public_key().to_hex(),
+        &[],
+        &[announcement],
+        true,
+        Some(&genuine),
+    )
+    .is_ok());
+}
+
+/// Exercise the production head query, not merely its decision helper.
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn founder_endorsement_uses_current_nondeleted_project_head_in_the_same_community() {
+    let state = crate::api::git::policy::tests::policy_test_state().await;
+    let mut communities = Vec::new();
+    for label in ["unendorsed", "endorsed"] {
+        communities.push(
+            state
+                .db
+                .ensure_configured_community(&format!(
+                    "packs-{label}-{}.example",
+                    uuid::Uuid::new_v4().simple()
+                ))
+                .await
+                .expect("test community")
+                .id,
+        );
+    }
+    let creator = Keys::generate();
+    let signer = Keys::generate();
+    let cofounder = Keys::generate();
+    let project = project_coordinate(&creator.public_key());
+    let announcement = repo_announcement(
+        &signer,
+        "endorsed-repo",
+        Some(&project),
+        &[&cofounder.public_key().to_hex()],
+    );
+    let repo = repository_coordinate(&announcement).expect("repo coordinate");
+    let source = pack_source_event(&cofounder, &project, &repo);
+    let head = |listed: bool, at: u64| {
+        let mut tags = vec![Tag::parse(["d", "agiterra"]).expect("d")];
+        if listed {
+            tags.push(Tag::parse(["a", repo.as_str()]).expect("a"));
+        }
+        EventBuilder::new(Kind::Custom(KIND_PROJECT as u16), r#"{"name":"agiterra"}"#)
+            .tags(tags)
+            .custom_created_at(nostr::Timestamp::from(at))
+            .sign_with_keys(&creator)
+            .expect("signed head")
+    };
+    for community in &communities {
+        state
+            .db
+            .replace_parameterized_event(*community, &announcement, "endorsed-repo", None)
+            .await
+            .expect("repo announcement");
+    }
+    let initial = head(true, 100);
+    state
+        .db
+        .replace_parameterized_event(communities[1], &initial, "agiterra", None)
+        .await
+        .expect("other community endorsement");
+    assert!(pack_source_write_admitted(&state, communities[0], &source)
+        .await
+        .expect("query")
+        .is_err());
+    assert!(matches!(
+        pack_source_write_admitted(&state, communities[1], &source)
+            .await
+            .expect("query"),
+        Ok(PackSourceAdmission::RepositoryFounder { .. })
+    ));
+
+    state
+        .db
+        .replace_parameterized_event(communities[0], &initial, "agiterra", None)
+        .await
+        .expect("local endorsement");
+    assert!(pack_source_write_admitted(&state, communities[0], &source)
+        .await
+        .expect("query")
+        .is_ok());
+    state
+        .db
+        .replace_parameterized_event(communities[0], &head(false, 101), "agiterra", None)
+        .await
+        .expect("remove endorsement");
+    assert!(pack_source_write_admitted(&state, communities[0], &source)
+        .await
+        .expect("query")
+        .is_err());
+    // Reposting an older signed endorsement cannot restore membership.
+    state
+        .db
+        .replace_parameterized_event(communities[0], &initial, "agiterra", None)
+        .await
+        .expect("stale head");
+    assert!(pack_source_write_admitted(&state, communities[0], &source)
+        .await
+        .expect("query")
+        .is_err());
+    assert!(pack_source_write_admitted(&state, communities[1], &source)
+        .await
+        .expect("other community unchanged")
+        .is_ok());
+
+    let restored = head(true, 102);
+    state
+        .db
+        .replace_parameterized_event(communities[0], &restored, "agiterra", None)
+        .await
+        .expect("restore endorsement");
+    assert!(pack_source_write_admitted(&state, communities[0], &source)
+        .await
+        .expect("query")
+        .is_ok());
+    state
+        .db
+        .soft_delete_event(communities[0], restored.id.as_bytes())
+        .await
+        .expect("delete current head");
+    assert!(pack_source_write_admitted(&state, communities[0], &source)
+        .await
+        .expect("query")
+        .is_err());
 }

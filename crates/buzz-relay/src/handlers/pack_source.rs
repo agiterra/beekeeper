@@ -15,9 +15,10 @@
 //!    everywhere else the roster is read;
 //! 2. a roster **Owner** of that project (the same rows
 //!    `get_project_role_by_coordinate` authorizes pushes against);
-//! 3. a **founder** of a repository that belongs to the project — L18's
-//!    [`RepositoryFounders`]: an announcement's signer, its NIP-34
-//!    `maintainers`, and the project's roster Owners.
+//! 3. a **founder** of a repository explicitly listed in the project creator's
+//!    signed kind:30621 `a` roster and backlinked to that project. A repository
+//!    announcement's signer and NIP-34 `maintainers` qualify only after that
+//!    owner endorsement. An author-controlled backlink alone grants nothing.
 //!
 //! (3) is the clause finding 33 bought: `agiterra-beekeeper` is signed by one
 //! human and co-owned by two, and a rule keyed to the signer alone would let
@@ -27,7 +28,8 @@
 //!
 //! (3) reads the newest [`PACK_SOURCE_MAX_REPOSITORIES`] repository
 //! announcements in the community and keeps the ones whose `project`
-//! back-reference names this project. A community holding more than that many
+//! back-reference names this project and whose coordinate the current signed
+//! project head lists. A community holding more than that many
 //! repositories could push an older announcement off the page, and the refusal
 //! says how many were searched rather than reporting "not a founder" as though
 //! the question had been fully asked.
@@ -38,11 +40,12 @@
 //! founder set to the signer on a Postgres blip is exactly the shape of bug
 //! that would hand one co-founder silent control of the team's packs.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use buzz_core::channel::ProjectRole;
-use buzz_core::kind::{repo_project_ref, KIND_GIT_REPO_ANNOUNCEMENT};
-use buzz_core::project_pack_source::decode_project_pack_source;
+use buzz_core::kind::{repo_project_ref, KIND_GIT_REPO_ANNOUNCEMENT, KIND_PROJECT};
+use buzz_core::project_pack_source::{decode_project_pack_source, normalize_repository_coordinate};
 use buzz_core::repository_founders::RepositoryFounders;
 use buzz_db::EventQuery;
 
@@ -86,7 +89,7 @@ impl PackSourceRefusal {
         };
         format!(
             "restricted: a pack source for {} may only be published by an Owner of that project \
-             or a founder of one of its repositories ({}; {} repositor(y|ies) of this project \
+             or a founder of a repository explicitly listed by its creator ({}; {} repositor(y|ies) of this project \
              searched, newest {} announcements)",
             self.project, roster, self.repositories_searched, PACK_SOURCE_MAX_REPOSITORIES
         )
@@ -99,6 +102,8 @@ impl PackSourceRefusal {
 /// `roster` carries every roster row including the creator's implicit Owner;
 /// `repositories` are the project's repository announcements, already filtered
 /// to those whose `project` back-reference names `project_coordinate`.
+/// `project_head` must be the current creator-signed head for that coordinate;
+/// its forward `a` roster, never a repository author's backlink, endorses membership.
 pub(crate) fn decide_pack_source_admission(
     author_hex: &str,
     project_coordinate: &str,
@@ -106,6 +111,7 @@ pub(crate) fn decide_pack_source_admission(
     roster: &[(String, ProjectRole)],
     repositories: &[nostr::Event],
     roster_read: bool,
+    project_head: Option<&nostr::Event>,
 ) -> Result<PackSourceAdmission, PackSourceRefusal> {
     let author = author_hex.trim().to_ascii_lowercase();
 
@@ -119,12 +125,17 @@ pub(crate) fn decide_pack_source_admission(
         return Ok(PackSourceAdmission::ProjectOwner);
     }
 
+    let endorsed = endorsed_repositories(project_coordinate, project_head);
     for announcement in repositories {
+        let Some(coordinate) = repository_coordinate(announcement) else {
+            continue;
+        };
+        if !endorsed.contains(&coordinate) {
+            continue;
+        }
         let founders =
             RepositoryFounders::from_announcement(announcement).with_roster_roles(roster.to_vec());
         if founders.contains(&author) {
-            let coordinate =
-                repository_coordinate(announcement).unwrap_or_else(|| announcement.id.to_hex());
             return Ok(PackSourceAdmission::RepositoryFounder {
                 repo_coordinate: coordinate,
             });
@@ -182,6 +193,7 @@ pub(crate) async fn pack_source_write_admitted(
         );
     }
 
+    let project_head = creator_project_head(state, community, &coordinate).await?;
     let announcements = match project_repository_announcements(state, community, &coordinate).await
     {
         Ok(announcements) => announcements,
@@ -195,7 +207,69 @@ pub(crate) async fn pack_source_write_admitted(
         &rows,
         &announcements,
         roster_read,
+        project_head.as_ref(),
     ))
+}
+
+/// Repository membership is endorsed by the exact creator-signed project head.
+fn endorsed_repositories(coordinate: &str, head: Option<&nostr::Event>) -> BTreeSet<String> {
+    let Some(head) = head else {
+        return BTreeSet::new();
+    };
+    if head.kind.as_u16() as u32 != KIND_PROJECT || head.verify().is_err() {
+        return BTreeSet::new();
+    }
+    let identifiers: Vec<_> = head
+        .tags
+        .iter()
+        .filter(|tag| tag.as_slice().first().is_some_and(|name| name == "d"))
+        .collect();
+    if identifiers.len() != 1 {
+        return BTreeSet::new();
+    }
+    let identifier = identifiers[0].as_slice();
+    if identifier.len() != 2
+        || coordinate != format!("{KIND_PROJECT}:{}:{}", head.pubkey.to_hex(), identifier[1])
+    {
+        return BTreeSet::new();
+    }
+    head.tags
+        .iter()
+        .filter_map(|tag| {
+            let parts = tag.as_slice();
+            if !(parts.len() == 2 || parts.len() == 3) || parts[0] != "a" {
+                return None;
+            }
+            normalize_repository_coordinate(&parts[1])
+        })
+        .collect()
+}
+
+/// Read only the newest nondeleted head at the project's own author coordinate.
+async fn creator_project_head(
+    state: &Arc<AppState>,
+    community: buzz_core::CommunityId,
+    coordinate: &str,
+) -> Result<Option<nostr::Event>, ()> {
+    let mut parts = coordinate.splitn(3, ':');
+    let _kind = parts.next();
+    let creator = parts.next().ok_or(())?;
+    let identifier = parts.next().ok_or(())?;
+    let query = EventQuery {
+        kinds: Some(vec![KIND_PROJECT as i32]),
+        pubkey: Some(hex::decode(creator).map_err(|_| ())?),
+        d_tag: Some(identifier.to_owned()),
+        limit: Some(1),
+        ..EventQuery::for_community(community)
+    };
+    state
+        .db
+        .query_events(&query)
+        .await
+        .map(|events| events.into_iter().next().map(|stored| stored.event))
+        .map_err(|error| {
+            tracing::error!(error = %error, "pack source: signed project head lookup failed");
+        })
 }
 
 /// The repository announcements whose `project` back-reference names
