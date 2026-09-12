@@ -30,6 +30,7 @@ on 2026-09-09, with `just ci` and `just test` green on that exact commit
 
 | Work | Owner | State (2026-09-11) | Where |
 | --- | --- | --- | --- |
+| Project team setup and neutral baseline | Astra; build lanes complete | local candidate on `work/project-team-setup-astra`: neutral packs, draft workbench, checked versions, sealed authoring reservations and Solo fix; no installed or published changes | [`PROJECT_TEAM_SETUP_IMPL.md`](PROJECT_TEAM_SETUP_IMPL.md), [test checkpoint](history/2026-09-11-project-team-setup.md) |
 | Native mid-turn steering for Claude sessions | Fable/Opus candidate; Astra integrates | 2026-09-12: runtime queued-steer fence correction passes 58 ACP/46 provider tests; three original browser failures and five steering cases pass. Both short-window cases pass; authority and persistence review closed with focused tests/clippy green. Combined gates pending. No push or installation | [integration evidence](history/2026-09-12-steering-integration.md), `NATIVE_STEERING_IMPL.md` |
 | Automatic project context beside ordinary agent work | paused by Brian on 2026-09-10 | findings saved; next step is proving a harmless marker reaches a fresh Claude session through a hook | ledger § "September 10 — automatic project context: findings saved, work paused" |
 | Collaborative workspace plan, ordered steps 0–6 | Astra finalizes and lands `main`; Fable takes delegated slices; Andy lands his own topic branches | steps 0–4 have integrated candidates per the ledger's September 7–9 sections; no landing of steps 5 or 6 is recorded anywhere found, so treat them as open | [`COLLABORATIVE_WORKSPACE_PLAN.md`](COLLABORATIVE_WORKSPACE_PLAN.md) |
@@ -42,15 +43,17 @@ on 2026-09-09, with `just ci` and `just test` green on that exact commit
 
 Rules, each with where it is written down.
 
+- **Project teams are optional (Brian, 2026-09-11).** Ordinary Solo sessions
+  require neither setup nor a dedicated lead/managed identity, before or after
+  a project team exists. See `PROJECT_TEAM_SETUP_IMPL.md`.
 - **Git is relay-canonical.** Push to `origin` (hive) only; the bridge mirrors
   GitHub. Topic branches rebase onto `main`, never merge; `vanilla/main`
   merges, never rebases. Commit with `-s`. `AGENTS.md` top block,
   [`INTEGRATION.md`](INTEGRATION.md).
 - **No human gates a landing.** `main` is admitted by the relay's push gate
   from observed gate rows and verifier verdicts. A refusal names a missing
-  fact; the remedy is a command or a hire, never a person. Lead pack,
-  `personas/roles/lead/skills/beekeeper-project/SKILL.md` § "Gates the host
-  can see".
+  fact; the remedy is a command or a hire, never a person. Beekeeper’s specialized project pack in `agiterra-packs`; this is not
+  a policy imposed by the neutral shipped foundation.
 - **Honesty in the product is a first-class concern.** A control that lies
   about what it enforces is a bug of crash severity. `AGENTS.md` § Working
   agreements.
@@ -58,9 +61,9 @@ Rules, each with where it is written down.
   appended; session reports go under `docs/history/`.** `AGENTS.md` top block.
 - **Identities are durable and named, seats are ephemeral, role packs are
   signed and versioned relay records** (D11–D16). Plan § "Decisions already
-  made"; lead pack § "The team model".
-- **"Crew" is "team"** in anything a person reads. Lead pack § "What the
-  operator will not accept".
+  made"; `VISION_COLLABORATION.md` § "Roles evolve with the project".
+- **"Crew" is "team"** in Beekeeper’s user-facing copy. This is a Beekeeper
+  product convention, not a mandatory vocabulary for other projects.
 - **Product authorities:** `VISION.md`, `VISION_COLLABORATION.md`,
   [`SESSION_VISION.md`](SESSION_VISION.md), and the table in ledger §4.
 
@@ -89,6 +92,8 @@ Rules, each with where it is written down.
   desktop: the plain build overwrites the e2e bundle (item 111).
 
 ## Next, in order
+
+Active implementation: project team setup milestone 1. Neutral packs, local drafts and the Team-to-Solo fix passed focused native/browser checks and 9,258 desktop tests (2026-09-11). Exact saved versions and sealed authoring reservations passed 37 native setup tests and independent review. Next: actual setup-agent launch with project/channel binding, exact shipped-pack staging and receipt reconciliation, then publication and lead handoff. See the linked plan and test checkpoint.
 
 1. Done 2026-09-11: the lead pack revision landed on the packs repository
    (`agiterra-packs` `main` at `5f4ae76fa`, the tree seats stage from; this

@@ -2,8 +2,14 @@
   "$schema": "https://open-plugin-spec.org/schema/v1/plugin.json",
   "id": "com.beekeeper.crew.designer",
   "name": "Team Designer",
-  "version": "0.1.0",
-  "description": "Makes every user-visible feature name its surfaces before builders start, or say 'no surface, by decision'. Vendor- and model-agnostic; model_min: reading a codebase's existing screens and writing the exact fields, states and copy a lane must build.",
-  "keywords": ["team", "designer", "surfaces"],
-  "personas": ["personas/designer.persona.md"]
+  "version": "0.2.0",
+  "description": "Defines usable surfaces and checks that their claims match real state.",
+  "keywords": [
+    "team",
+    "designer",
+    "surfaces"
+  ],
+  "personas": [
+    "personas/designer.persona.md"
+  ]
 }

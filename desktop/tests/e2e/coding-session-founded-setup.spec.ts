@@ -86,6 +86,8 @@ const ROLES: RoleFixture[] = [
 function foundedSetupInvokeInitScript(config: {
   roles: RoleFixture[];
   teamId: string;
+  teamReadinessError?: string;
+  projectRef?: string;
 }) {
   return (input: typeof config) => {
     type Invoke = (
@@ -165,6 +167,10 @@ function foundedSetupInvokeInitScript(config: {
         let real: Invoke | undefined;
         const wrapped: Invoke = async (cmd, args, options) => {
           switch (cmd) {
+            case "team_readiness":
+              if (input.teamReadinessError)
+                throw new Error(input.teamReadinessError);
+              break;
             case "build_coding_session_policy_event": {
               const request = (args as { request: Record<string, unknown> })
                 .request;
@@ -235,8 +241,28 @@ function foundedSetupInvokeInitScript(config: {
           }
           if (!real) throw new Error("mock invoke is not installed yet");
           const result = await real(cmd, args, options);
+          if (cmd === "get_channels" && input.projectRef) {
+            const payload = result as {
+              channels: { name: string; project_ref?: string }[] | null;
+            };
+            return {
+              ...payload,
+              channels:
+                payload.channels?.map((channel) =>
+                  channel.name === "engineering"
+                    ? { ...channel, project_ref: input.projectRef }
+                    : channel,
+                ) ?? null,
+            };
+          }
           if (cmd === "list_managed_agents") {
-            return [...input.roles.map(rawAgent), ...(result as unknown[])];
+            const hidden = (
+              window as typeof window & { __FOUNDED_HIDDEN_ACTOR__?: string }
+            ).__FOUNDED_HIDDEN_ACTOR__;
+            return [
+              ...input.roles.map(rawAgent),
+              ...(result as { pubkey?: string }[]),
+            ].filter((agent) => agent.pubkey !== hidden);
           }
           if (cmd === "list_teams") return [team, ...(result as unknown[])];
           return result;
@@ -273,7 +299,11 @@ function runtimeFixture() {
   };
 }
 
-async function openApp(page: Page) {
+async function openApp(
+  page: Page,
+  teamReadinessError?: string,
+  projectRef?: string,
+) {
   await page.addInitScript((identity) => {
     window.localStorage.setItem(
       "buzz:e2e-identity-override.v1",
@@ -297,7 +327,12 @@ async function openApp(page: Page) {
     },
     codingSessionProviderRuntimes: [runtimeFixture()],
   });
-  const config = { roles: ROLES, teamId: TEAM_ID };
+  const config = {
+    roles: ROLES,
+    teamId: TEAM_ID,
+    teamReadinessError,
+    projectRef,
+  };
   await page.addInitScript(foundedSetupInvokeInitScript(config), config);
   await page.goto("/", { waitUntil: "domcontentloaded" });
 }
@@ -801,4 +836,88 @@ test.describe("the founded page is the form", () => {
       fullPage: true,
     });
   });
+});
+
+test("Team to Solo discards hidden readiness blockers and launches without an agent seat", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  await page.addInitScript(
+    ({ owner, channelId }) => {
+      window.__BUZZ_E2E_EXTRA_PROJECT_EVENTS__ = [
+        {
+          id: "solo-project".padEnd(64, "0"),
+          pubkey: owner,
+          created_at: Math.floor(Date.now() / 1000) - 60,
+          kind: 30621,
+          tags: [
+            ["d", "tankloop"],
+            ["name", "Tankloop"],
+            ["channel", channelId],
+          ],
+          content: "",
+          sig: "0".repeat(128),
+        },
+      ];
+    },
+    { owner: FOUNDER_IDENTITY.pubkey, channelId: CHANNEL_ID },
+  );
+  await openApp(
+    page,
+    "Project role packs unavailable.",
+    `30621:${FOUNDER_IDENTITY.pubkey}:tankloop`,
+  );
+  const sessionRef = await foundSession(page);
+  await commitField(
+    page,
+    "coding-session-founded-prompt",
+    "Inspect Tankloop's build instructions.",
+  );
+  await page.getByTestId("coding-session-founded-mode-team").click();
+  await page
+    .getByTestId("new-coding-session-lead-select")
+    .selectOption(ROLES[0].pubkey);
+  await page
+    .getByTestId(`new-coding-session-bench-identity-${ROLES[1].pubkey}`)
+    .click();
+  await page.getByTestId("coding-session-use-roles-toggle").click();
+  await expect(
+    page.getByTestId("new-coding-session-blocker-project-readiness"),
+  ).toBeVisible();
+  await page.evaluate(async (actor) => {
+    (
+      window as typeof window & { __FOUNDED_HIDDEN_ACTOR__?: string }
+    ).__FOUNDED_HIDDEN_ACTOR__ = actor;
+    await window.__BUZZ_E2E_QUERY_CLIENT__?.invalidateQueries({
+      queryKey: ["managed-agents"],
+    });
+  }, ROLES[1].pubkey);
+  await expect(
+    page.getByTestId(`new-coding-session-blocker-bench:${ROLES[1].pubkey}`),
+  ).toBeVisible();
+  await expect(page.getByTestId("coding-session-founded-start")).toBeDisabled();
+  expect(creates(await signedEvents(page))).toHaveLength(0);
+  await page.getByTestId("coding-session-founded-mode-solo").click();
+  await expect(page.getByTestId("coding-session-use-roles-toggle")).toHaveCount(
+    0,
+  );
+  await expect(
+    page.getByTestId("new-coding-session-blocker-project-readiness"),
+  ).toHaveCount(0);
+  await expect(
+    page.getByTestId(`new-coding-session-blocker-bench:${ROLES[1].pubkey}`),
+  ).toHaveCount(0);
+  await expect(page.getByTestId("coding-session-founded-start")).toBeEnabled();
+  await page.getByTestId("coding-session-founded-start").click();
+  await expect
+    .poll(async () => creates(await signedEvents(page)).length)
+    .toBe(1);
+  const create = creates(await signedEvents(page))[0];
+  expect(create.action.sessionRef).toBe(sessionRef);
+  expect(create.action.actor).toBeUndefined();
+  expect(create.action.role).toBeUndefined();
+  const kinds = await signedKinds(page);
+  expect(kinds).not.toContain(44245);
+  expect(kinds).not.toContain(44228);
+  expect(kinds).not.toContain(44220);
 });

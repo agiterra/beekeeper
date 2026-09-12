@@ -2,7 +2,7 @@
 //!
 //! # Why a repository
 //!
-//! Role packs are trees of text — seven roles are roughly 200 KB — and until
+//! Role packs are small trees of text, and until
 //! this module existed they lived only in whatever folder an operator happened
 //! to point the crew-role installer at. That made a role a property of one
 //! computer: an evolved `builder` pack on this machine was invisible on Andy's,
@@ -250,7 +250,7 @@ pub fn packs_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 /// matching `sha` is the app's own version, which is exactly what pins them.
 pub use buzz_core_pkg::project_pack_source::PACK_REF_SHIPPED_REPO;
 
-/// The seven role packs this build ships, or `None` when this build has none.
+/// The role packs this build ships, or `None` when this build has none.
 ///
 /// A packaged app carries `personas/roles` as a bundle resource; a development
 /// build has no resource directory, so the checkout the binary was built from
@@ -834,7 +834,7 @@ mod tests {
     }
 
     /// The addendum's last fallback, checked against the packs this build
-    /// actually ships rather than against a fixture: every one of the seven
+    /// actually ships rather than against a fixture: every shipped
     /// role directories in `personas/roles` must resolve as that role's pack,
     /// or a fresh install hires an architect and gets a bare persona.
     #[test]
@@ -871,10 +871,11 @@ mod tests {
                 "designer",
                 "lead",
                 "poker",
+                "project-setup",
                 "runner",
                 "verifier",
             ],
-            "the seven roles the app ships"
+            "the eight roles the app ships"
         );
     }
 

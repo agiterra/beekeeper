@@ -162,6 +162,7 @@ export default defineConfig({
         "**/project-container-screen.spec.ts",
         "**/project-create-cold-start.spec.ts",
         "**/project-packs.spec.ts",
+        "**/project-team-setup.spec.ts",
         "**/project-repository-protection.spec.ts",
         "**/project-settings-screenshots.spec.ts",
         "**/projectPulse.spec.ts",

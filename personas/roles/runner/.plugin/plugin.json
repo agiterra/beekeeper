@@ -2,8 +2,14 @@
   "$schema": "https://open-plugin-spec.org/schema/v1/plugin.json",
   "id": "com.beekeeper.crew.runner",
   "name": "Team Runner",
-  "version": "0.1.0",
-  "description": "Runs commands and reports exit codes and counts, never opinions. Vendor- and model-agnostic; the cheapest capable model is correct here. model_min: running a shell command, reading its exit code, and quoting output verbatim without editorializing.",
-  "keywords": ["team", "runner", "ci"],
-  "personas": ["personas/runner.persona.md"]
+  "version": "0.2.0",
+  "description": "Runs assigned checks and reports their actual completion and evidence.",
+  "keywords": [
+    "team",
+    "runner",
+    "ci"
+  ],
+  "personas": [
+    "personas/runner.persona.md"
+  ]
 }

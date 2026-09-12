@@ -280,14 +280,14 @@ fn an_unreadable_folder_is_an_error_not_an_empty_scan() {
 }
 
 /// The repo's own `personas/roles` — the folder an operator actually points
-/// the installer at — installs seven agents, seats four of them in launch
+/// the installer at — installs eight agents, seats four of them in launch
 /// order, and every minted agent resolves its pack.
 ///
 /// This is the acceptance case run against the real packs rather than a
 /// fixture: a scan that passes on hand-written fixtures and fails on the
 /// shipped packs would be a green test over a broken front door.
 #[test]
-fn the_repo_role_packs_install_seven_agents_and_seat_four() {
+fn the_repo_role_packs_install_eight_agents_and_seat_four() {
     let roles_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("..")
@@ -309,14 +309,15 @@ fn the_repo_role_packs_install_seven_agents_and_seat_four() {
             "verifier",
             "runner",
             "poker",
-            "designer"
+            "designer",
+            "project-setup"
         ],
-        "install order is the roster, then the two unseated roles"
+        "install order is the roster, then the unseated roles"
     );
     assert!(scan.skipped.is_empty(), "no shipped pack is skipped");
 
     let result = install(&scan, Vec::new(), Vec::new(), &[]);
-    assert_eq!(result.agents.len(), 7);
+    assert_eq!(result.agents.len(), 8);
     let teams = vec![result.team.clone()];
     for agent in &result.agents {
         assert!(
@@ -330,7 +331,7 @@ fn the_repo_role_packs_install_seven_agents_and_seat_four() {
     assert_eq!(
         crew.seats.len(),
         4,
-        "four seats: poker, designer and verifier install unseated"
+        "four seats: poker, designer, verifier and project-setup install unseated"
     );
     assert_eq!(
         crew.seats

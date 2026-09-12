@@ -1,0 +1,14 @@
+{
+  "$schema": "https://open-plugin-spec.org/schema/v1/plugin.json",
+  "id": "com.beekeeper.crew.project-setup",
+  "keywords": [
+    "team",
+    "project-setup"
+  ],
+  "name": "Team Project Setup",
+  "version": "0.2.0",
+  "description": "Establishes project-owned role procedures from intent and observed project facts.",
+  "personas": [
+    "personas/project-setup.persona.md"
+  ]
+}

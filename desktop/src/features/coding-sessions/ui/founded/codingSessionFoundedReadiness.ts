@@ -97,6 +97,8 @@ export function codingSessionFoundedReadiness(input: {
   readiness: CodingSessionLaunchReadiness;
   plan: CodingSessionLaunchPlanLine[];
 } {
+  // Team drafts survive mode switches, but hidden team choices cannot gate Solo.
+  const team = input.mode === "team";
   const readiness = codingSessionLaunchReadiness({
     mode: input.mode,
     goal: input.goal,
@@ -114,13 +116,14 @@ export function codingSessionFoundedReadiness(input: {
     modelOverridden: input.modelOverridden,
     providerRefusal: input.providerRefusal,
     projectReadiness:
-      input.projectRef && input.useRoles
+      team && input.projectRef && input.useRoles
         ? {
             allowed: input.readinessGate.allowed,
             reason: input.readinessGate.reason,
           }
         : null,
     projectReadinessUnknown:
+      team &&
       input.useRoles &&
       input.projectRef !== null &&
       (input.teamReadinessLoading || input.teamReadinessError !== null),
@@ -128,7 +131,7 @@ export function codingSessionFoundedReadiness(input: {
       ? { leadHasRolePack: input.lead.hasRolePack }
       : {}),
     policySet: input.policySet,
-    unresolvedBenchIdentities: input.unresolvedBenchIdentities,
+    unresolvedBenchIdentities: team ? input.unresolvedBenchIdentities : [],
     busySentence: input.busySentence,
   });
   const plan = codingSessionLaunchPlan({

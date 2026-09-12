@@ -19,6 +19,7 @@ import {
 } from "../lib/roleVersionSummary";
 import { AgentsByProject } from "./AgentsByProject";
 import { RoleCard } from "./RoleCard";
+import { ProjectTeamSetupWorkbench } from "./ProjectTeamSetupWorkbench";
 import { RolePackSnapshots } from "./RolePackSnapshots";
 import { RolesHeader } from "./RolesHeader";
 import { RolesSummaryStrip } from "./RolesSummaryStrip";
@@ -209,6 +210,10 @@ export function ProjectPacksScreen({ projectId }: { projectId: string }) {
           packsSource={packsSource}
           projectName={project.name}
           sourceDetail={sourceDetail}
+        />
+        <ProjectTeamSetupWorkbench
+          projectName={project.name}
+          projectRef={project.address}
         />
         {error ? (
           <p

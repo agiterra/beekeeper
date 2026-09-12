@@ -227,3 +227,52 @@ test("project roles gate only when opted in on a project", () => {
     false,
   );
 });
+
+test("switching Team to Solo ignores retained role readiness and missing bench identities", () => {
+  const retained = {
+    ...READY,
+    projectRef: `30621:${"ab".repeat(32)}:tankloop`,
+    useRoles: true,
+    readinessGate: {
+      allowed: false,
+      reason: "Project role packs unavailable.",
+    },
+    teamReadinessError: "Cannot read role packs.",
+    unresolvedBenchIdentities: ["cd".repeat(32)],
+    benchCount: 1,
+    policySet: true,
+  };
+  const team = codingSessionFoundedReadiness({
+    ...retained,
+    mode: "team",
+    lead: AGENT,
+  });
+  assert.equal(team.readiness.canLaunch, false);
+  assert.deepEqual(
+    team.readiness.blockers.map((entry) => entry.id),
+    ["project-readiness", `bench:${"cd".repeat(32)}`],
+  );
+  const solo = codingSessionFoundedReadiness({ ...retained, mode: "solo" });
+  assert.equal(solo.readiness.canLaunch, true);
+  assert.deepEqual(solo.readiness.blockers, []);
+  assert.equal(
+    solo.readiness.unknowns.some((entry) => entry.id === "project-readiness"),
+    false,
+  );
+  assert.deepEqual(
+    solo.plan.map((entry) => entry.kind),
+    [KIND_CODING_SESSION_LIFECYCLE_COMMAND],
+  );
+  for (const patch of [
+    { providerInstanceRef: null },
+    { providerRefusal: "Runtime authentication missing." },
+    { useWorktree: true, worktreeName: "" },
+    { goalReader: "unresolved" },
+  ]) {
+    assert.equal(
+      codingSessionFoundedReadiness({ ...retained, ...patch, mode: "solo" })
+        .readiness.canLaunch,
+      false,
+    );
+  }
+});
