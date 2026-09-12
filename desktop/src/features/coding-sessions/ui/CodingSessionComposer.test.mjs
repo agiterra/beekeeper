@@ -264,8 +264,15 @@ test("a non-steering execution never labels its mid-turn send a steer", () => {
       variant: "floating",
     }),
   );
-  assert.match(markup, />Send next</);
+  // "Queue next", not "Send next": the command is sent now and then waits.
+  assert.match(markup, />Queue next</);
+  assert.doesNotMatch(markup, />Send next</);
   assert.doesNotMatch(markup, />Steer</);
+  // And the one control it does offer says what "next" means, on screen.
+  assert.match(
+    markup,
+    /Runs after the current turn — this execution cannot steer\./,
+  );
 });
 
 test("founder authority gates send, interrupt, resume, and stop together", () => {

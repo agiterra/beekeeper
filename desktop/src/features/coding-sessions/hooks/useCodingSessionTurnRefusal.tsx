@@ -289,9 +289,16 @@ function CodingSessionTurnRefusalWatcher({
       ? turnRefusal
       : null;
   const refusal = deliveryUnknown ? null : turnRefusal;
-  const stage = snapshot.turnProgress?.stage;
+  const progress = snapshot.turnProgress;
+  const stage = progress?.stage;
   const queued = stage === "queued";
-  const degraded = stage === "degraded";
+  // The provider's own code and words for the downgrade, carried so the row
+  // can say which one happened. A turn that ended before the input reached it
+  // and a runtime with no steering at all are different facts about different
+  // things, and only one of them is about the provider's capabilities.
+  const degraded = progress?.stage === "degraded" ? progress : null;
+  const degradedCode = degraded?.code ?? null;
+  const degradedMessage = degraded?.message ?? null;
   const started = stage === "started";
   const injected = stage === "injected";
   // Queued and degraded are the two stages that leave the turn in the
@@ -299,7 +306,7 @@ function CodingSessionTurnRefusalWatcher({
   // delivery-unknown answer is held too: the provider will not act on it
   // again by itself, but a late acknowledgement can reconcile it as injected
   // (or as never delivered), and that receipt has to land on something.
-  const held = queued || degraded || deliveryUnknown !== null;
+  const held = queued || degraded !== null || deliveryUnknown !== null;
 
   // The same subscription answers a second question the person can see: the
   // provider signed for this turn and parked it behind work already running.
@@ -308,14 +315,18 @@ function CodingSessionTurnRefusalWatcher({
     if (!queued) return;
     markPendingCodingSessionTurnQueued(channelId, turn.commandId);
   }, [channelId, queued, turn.commandId]);
-  // And a third: the steer this turn asked for could not happen, so it will
-  // arrive at the next turn boundary instead. Not a refusal — the words stay
-  // sent — but not what was asked for either, so the row must not read as an
-  // ordinary queue.
+  // And a third: the delivery this turn asked for could not happen, so it
+  // will arrive at the next turn boundary instead. Not a refusal — the words
+  // stay sent — but not what was asked for either, so the row must not read
+  // as an ordinary queue. The provider's reason rides along: the row renders
+  // it rather than asserting one of its own.
   React.useEffect(() => {
-    if (!degraded) return;
-    markPendingCodingSessionTurnDegraded(channelId, turn.commandId);
-  }, [channelId, degraded, turn.commandId]);
+    if (degradedCode === null || degradedMessage === null) return;
+    markPendingCodingSessionTurnDegraded(channelId, turn.commandId, {
+      code: degradedCode,
+      message: degradedMessage,
+    });
+  }, [channelId, degradedCode, degradedMessage, turn.commandId]);
   // And a fourth: the steer went in. The row says so instead of "queued";
   // the steered echo, keyed by this command id, is what retires it.
   React.useEffect(() => {

@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  clearCodingSessionDraftRecovery,
   formatPendingCodingSessionTurnAge,
+  readCodingSessionDraftRecovery,
+  requestCodingSessionDraftRecovery,
   heldPendingCodingSessionTurns,
   markPendingCodingSessionTurnDegraded,
   markPendingCodingSessionTurnDeliveryUnknown,
@@ -375,10 +378,16 @@ test("a turn the provider holds outlives the unanswered-row TTL", () => {
 
 test("a degraded steer is held at the boundary, and says which", () => {
   recordPendingCodingSessionTurn(turn({ commandId: "csc-d" }));
-  markPendingCodingSessionTurnDegraded(CHANNEL, "csc-d");
+  markPendingCodingSessionTurnDegraded(CHANNEL, "csc-d", {
+    code: "STEER_UNSUPPORTED",
+    message: "this runtime offers no mid-turn steering",
+  });
   const [stored] = readPendingCodingSessionTurns();
   assert.equal(stored.published, true);
-  assert.equal(stored.degradedByProvider, true);
+  assert.deepEqual(stored.degradedByProvider, {
+    code: "STEER_UNSUPPORTED",
+    message: "this runtime offers no mid-turn steering",
+  });
   assert.equal(pendingCodingSessionTurnState(stored, 1_000), "degraded");
   // Degradation outranks the queue receipt that follows it: the person asked
   // to steer and did not get to.
@@ -416,7 +425,10 @@ test("the rows a remounting composer must adopt are the held ones, with the draf
   );
   markPendingCodingSessionTurnQueued(CHANNEL, "csc-held");
   recordPendingCodingSessionTurn(turn({ commandId: "csc-degraded" }));
-  markPendingCodingSessionTurnDegraded(CHANNEL, "csc-degraded");
+  markPendingCodingSessionTurnDegraded(CHANNEL, "csc-degraded", {
+    code: "STEER_UNSUPPORTED",
+    message: "this runtime offers no mid-turn steering",
+  });
   recordPendingCodingSessionTurn(turn({ commandId: "csc-unheld" }));
   markPendingCodingSessionTurnPublished(CHANNEL, "csc-unheld");
   recordPendingCodingSessionTurn(
@@ -446,7 +458,10 @@ test("an injected steer says so, outranks queued and degraded, and still settles
   assert.equal(pendingCodingSessionTurnState(stored, 1_000), "injected");
   // Injected is the later fact: a degrade that somehow follows does not
   // demote it, and neither does the stall clock.
-  markPendingCodingSessionTurnDegraded(CHANNEL, "csc-i");
+  markPendingCodingSessionTurnDegraded(CHANNEL, "csc-i", {
+    code: "STEER_UNSUPPORTED",
+    message: "this runtime offers no mid-turn steering",
+  });
   const [again] = readPendingCodingSessionTurns();
   assert.equal(
     pendingCodingSessionTurnState(
@@ -575,4 +590,137 @@ test("a late turn_injected outranks the delivery-unknown that preceded it", () =
     1_000,
   );
   assert.deepEqual(resolved.visible, []);
+});
+
+// The reason is evidence, not decoration: `STEER_TURN_ENDED` and
+// `STEER_UNSUPPORTED` are different facts, and a row that stored only "it was
+// degraded" could render only one sentence for both.
+test("a degrade keeps the provider's own reason, and the first answer wins", () => {
+  recordPendingCodingSessionTurn(turn({ commandId: "csc-reason" }));
+  markPendingCodingSessionTurnDegraded(CHANNEL, "csc-reason", {
+    code: "STEER_TURN_ENDED",
+    message: "the turn ended before this reached it",
+  });
+  // A replayed receipt is the same fact; a *different* one arriving later
+  // must not rewrite what the person was already told.
+  markPendingCodingSessionTurnDegraded(CHANNEL, "csc-reason", {
+    code: "STEER_UNSUPPORTED",
+    message: "no",
+  });
+  const [stored] = readPendingCodingSessionTurns();
+  assert.deepEqual(stored.degradedByProvider, {
+    code: "STEER_TURN_ENDED",
+    message: "the turn ended before this reached it",
+  });
+});
+
+// Recovery has to be able to say what it is not bringing back.
+test("a turn records how many images rode it", () => {
+  recordPendingCodingSessionTurn(
+    turn({ commandId: "csc-img", attachmentCount: 2 }),
+  );
+  assert.equal(readPendingCodingSessionTurns()[0].attachmentCount, 2);
+});
+
+// The recovery request is a message from a row to a composer, and nothing
+// more: it carries the words, it is applied once, and a community switch
+// clears it with the rows it refers to.
+test("a draft recovery request is scoped, single-use, and reset with the store", () => {
+  assert.equal(readCodingSessionDraftRecovery(), null);
+  requestCodingSessionDraftRecovery({
+    id: "recover:1",
+    channelId: CHANNEL,
+    targetKey: TARGET,
+    text: "the words",
+    attachmentCount: 1,
+  });
+  assert.deepEqual(readCodingSessionDraftRecovery(), {
+    id: "recover:1",
+    channelId: CHANNEL,
+    targetKey: TARGET,
+    text: "the words",
+    attachmentCount: 1,
+  });
+  // A composer that never saw this request cannot clear it.
+  clearCodingSessionDraftRecovery("recover:other");
+  assert.notEqual(readCodingSessionDraftRecovery(), null);
+  clearCodingSessionDraftRecovery("recover:1");
+  assert.equal(readCodingSessionDraftRecovery(), null);
+
+  requestCodingSessionDraftRecovery({
+    id: "recover:2",
+    channelId: CHANNEL,
+    targetKey: TARGET,
+    text: "still here",
+    attachmentCount: 0,
+  });
+  resetPendingCodingSessionTurns();
+  assert.equal(readCodingSessionDraftRecovery(), null);
+});
+
+// Receipts do not arrive in the order they were written. A relay backfill, a
+// reconnect, or a late reconciliation can put an older answer after a newer
+// one, and the row must read the *later fact about the same command* rather
+// than whichever arrived last.
+test("a receipt arriving out of order never demotes a later fact", () => {
+  recordPendingCodingSessionTurn(turn({ commandId: "csc-order" }));
+  markPendingCodingSessionTurnInjected(CHANNEL, "csc-order");
+  // The runtime acknowledged the input as joined into the running turn. A
+  // delivery-unknown receipt written *before* that acknowledgement, arriving
+  // after it, does not make the delivery unknown again.
+  markPendingCodingSessionTurnDeliveryUnknown(CHANNEL, "csc-order", {
+    code: "STEER_ACK_TIMEOUT",
+    message: "no acknowledgement inside the drain",
+  });
+  const [stored] = readPendingCodingSessionTurns();
+  assert.equal(pendingCodingSessionTurnState(stored, 1_000), "injected");
+  // The unknown answer is still recorded — it happened — but it is not what
+  // the row says.
+  assert.deepEqual(stored.deliveryUnknown, {
+    code: "STEER_ACK_TIMEOUT",
+    message: "no acknowledgement inside the drain",
+  });
+
+  // And the other order, which is the live reconciliation path: unknown
+  // first, then the late acknowledgement that settles it.
+  recordPendingCodingSessionTurn(turn({ commandId: "csc-order-2" }));
+  markPendingCodingSessionTurnDeliveryUnknown(CHANNEL, "csc-order-2", {
+    code: "STEER_ACK_LOST",
+    message: "the prompt ended first",
+  });
+  assert.equal(
+    pendingCodingSessionTurnState(readPendingCodingSessionTurns()[1], 1_000),
+    "unknown",
+  );
+  markPendingCodingSessionTurnInjected(CHANNEL, "csc-order-2");
+  assert.equal(
+    pendingCodingSessionTurnState(readPendingCodingSessionTurns()[1], 1_000),
+    "injected",
+  );
+});
+
+// The text fallback exists for providers that predate `commandId`, and it is
+// a guess. Two commands carrying the same words are two commands: one echo
+// settles one row, and the surface is told the join was made on text so it
+// can say so.
+test("identical words under different command ids settle one row each", () => {
+  recordPendingCodingSessionTurn(
+    turn({ commandId: "csc-same-1", text: "run it" }),
+  );
+  recordPendingCodingSessionTurn(
+    turn({ commandId: "csc-same-2", text: "run it" }),
+  );
+  const first = resolvePendingCodingSessionTurns(
+    readPendingCodingSessionTurns(),
+    { channelId: CHANNEL, targetKey: TARGET },
+    [promptEcho("run it")],
+    1_000,
+  );
+  assert.equal(first.visible.length, 1);
+  assert.equal(first.settlements.length, 1);
+  assert.equal(
+    first.settlements[0].by,
+    "text",
+    "an echo with no command id is matched on words, and says so",
+  );
 });

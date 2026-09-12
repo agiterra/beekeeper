@@ -23,6 +23,9 @@ before(() => {
     Element: dom.window.Element,
     HTMLElement: dom.window.HTMLElement,
     IS_REACT_ACT_ENVIRONMENT: true,
+    // The router reads `self` when it constructs; the pending row renders
+    // Markdown, which reads the router.
+    self: dom.window,
     window: dom.window,
   });
 });
@@ -310,6 +313,365 @@ test("a steerable execution is asked to steer; anything else is a boundary", asy
     assert.equal(published.length, 2);
     assert.equal(published[1].deliver, "boundary");
   } finally {
+    cleanup();
+  }
+});
+
+// Validation 1: a working Claude execution can be told "not into this turn —
+// after it", explicitly, and the command says so. Before this the composer
+// decided for the person: any mid-turn send on a steering execution became a
+// steer, so "when you're done, run the gate" landed in the middle of the run.
+test("a steering execution can be asked for the boundary instead, explicitly", async () => {
+  const React = (await import("react")).default;
+  const { act, cleanup, fireEvent, render, screen } = await import(
+    "@testing-library/react"
+  );
+  const { CodingSessionComposer } = await import("./CodingSessionComposer.tsx");
+  const published = [];
+  const props = {
+    canInterrupt: true,
+    canSteer: true,
+    channelId: CHANNEL_ID,
+    currentUserPubkey: OPERATOR,
+    immersive: true,
+    isMember: true,
+    isWorking: true,
+    target: TARGET,
+    variant: "floating",
+    publishCommand: async (input) => {
+      published.push(input);
+      return { eventId: "e", kind: 44220, commandId: input.commandId };
+    },
+  };
+
+  try {
+    await act(async () => {
+      render(React.createElement(CodingSessionComposer, props));
+    });
+    // Both classes are offered, and the one that joins the running turn is
+    // still the primary.
+    assert.ok(screen.getByTestId("coding-session-composer-steer"));
+    const queueNext = screen.getByTestId("coding-session-composer-queue-next");
+    assert.equal(queueNext.textContent, "Queue next");
+    // And the difference is stated on screen, not only in a tooltip.
+    assert.equal(
+      screen.getByTestId("coding-session-composer-delivery-hint").textContent,
+      "Steer joins the turn that is running. Queue next runs after it.",
+    );
+
+    const editor = screen.getByLabelText("Coding-session instruction");
+    await act(async () => {
+      fireEvent.change(editor, {
+        target: { value: "when this finishes, run the gate" },
+      });
+      fireEvent.click(screen.getByTestId("coding-session-composer-queue-next"));
+    });
+    assert.equal(published.length, 1);
+    assert.equal(published[0].deliver, "boundary");
+    assert.equal(published[0].text, "when this finishes, run the gate");
+    assert.equal(editor.value, "");
+  } finally {
+    cleanup();
+  }
+});
+
+// An execution that never advertised steering must not be offered a second
+// control implying there is a class it is not using: its primary already
+// queues, and the sentence beside it says what that means.
+test("an execution that cannot steer offers one control and explains it", async () => {
+  const React = (await import("react")).default;
+  const { act, cleanup, render, screen } = await import(
+    "@testing-library/react"
+  );
+  const { CodingSessionComposer } = await import("./CodingSessionComposer.tsx");
+
+  try {
+    await act(async () => {
+      render(
+        React.createElement(CodingSessionComposer, {
+          canInterrupt: true,
+          canSteer: false,
+          channelId: CHANNEL_ID,
+          currentUserPubkey: OPERATOR,
+          immersive: true,
+          isMember: true,
+          isWorking: true,
+          target: TARGET,
+          variant: "floating",
+          publishCommand: async (input) => ({
+            eventId: "e",
+            kind: 44220,
+            commandId: input.commandId,
+          }),
+        }),
+      );
+    });
+    assert.equal(screen.queryByTestId("coding-session-composer-steer"), null);
+    assert.equal(
+      screen.queryByTestId("coding-session-composer-queue-next"),
+      null,
+      "the primary already queues; a second button would be the same act twice",
+    );
+    assert.equal(
+      screen.getByTestId("coding-session-composer-delivery-hint").textContent,
+      "Runs after the current turn — this execution cannot steer.",
+    );
+  } finally {
+    cleanup();
+  }
+});
+
+// Validation 2: the delivery class is resolved against the execution in front
+// of the person at the moment they press, not against whatever was true when
+// the control was drawn. A capability that arrives late must not leave a
+// steer aimed at an execution that no longer offers one.
+test("a capability that changes under the composer cannot leak the old class", async () => {
+  const React = (await import("react")).default;
+  const { act, cleanup, fireEvent, render, screen } = await import(
+    "@testing-library/react"
+  );
+  const { CodingSessionComposer } = await import("./CodingSessionComposer.tsx");
+  const published = [];
+  const props = {
+    canInterrupt: true,
+    channelId: CHANNEL_ID,
+    currentUserPubkey: OPERATOR,
+    immersive: true,
+    isMember: true,
+    isWorking: true,
+    target: TARGET,
+    variant: "floating",
+    publishCommand: async (input) => {
+      published.push(input);
+      return { eventId: "e", kind: 44220, commandId: input.commandId };
+    },
+  };
+
+  try {
+    let view;
+    await act(async () => {
+      view = render(
+        React.createElement(CodingSessionComposer, {
+          ...props,
+          canSteer: true,
+        }),
+      );
+    });
+    // The execution's own 44223 arrives and says it cannot steer after all.
+    await act(async () => {
+      view.rerender(
+        React.createElement(CodingSessionComposer, {
+          ...props,
+          canSteer: false,
+        }),
+      );
+    });
+    assert.equal(
+      screen.queryByTestId("coding-session-composer-steer"),
+      null,
+      "the steer control goes with the capability",
+    );
+    const editor = screen.getByLabelText("Coding-session instruction");
+    await act(async () => {
+      fireEvent.change(editor, { target: { value: "look again" } });
+      fireEvent.click(screen.getByTestId("coding-session-composer-queue"));
+    });
+    assert.equal(published.length, 1);
+    assert.equal(published[0].deliver, "boundary");
+  } finally {
+    cleanup();
+  }
+});
+
+// A second press while the first publish is still in flight must not sign a
+// second command for the same words.
+test("a double press publishes one command, not two", async () => {
+  const React = (await import("react")).default;
+  const { act, cleanup, fireEvent, render, screen } = await import(
+    "@testing-library/react"
+  );
+  const { CodingSessionComposer } = await import("./CodingSessionComposer.tsx");
+  const published = [];
+  let release;
+  const inFlight = new Promise((resolve) => {
+    release = resolve;
+  });
+
+  try {
+    await act(async () => {
+      render(
+        React.createElement(CodingSessionComposer, {
+          canInterrupt: true,
+          canSteer: true,
+          channelId: CHANNEL_ID,
+          currentUserPubkey: OPERATOR,
+          immersive: true,
+          isMember: true,
+          isWorking: true,
+          target: TARGET,
+          variant: "floating",
+          publishCommand: async (input) => {
+            published.push(input);
+            await inFlight;
+            return { eventId: "e", kind: 44220, commandId: input.commandId };
+          },
+        }),
+      );
+    });
+    const editor = screen.getByLabelText("Coding-session instruction");
+    await act(async () => {
+      fireEvent.change(editor, { target: { value: "twice" } });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("coding-session-composer-steer"));
+    });
+    // The editor is already empty and the send is in flight; pressing the
+    // other class now must not publish the same words under a second command.
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("coding-session-composer-queue-next"));
+    });
+    assert.equal(published.length, 1);
+    assert.equal(published[0].deliver, "steer");
+    await act(async () => {
+      release();
+      await inFlight;
+    });
+  } finally {
+    cleanup();
+  }
+});
+
+// Validation 4: the person gets their words back without anything being
+// claimed about the turn they came from. The original row stays exactly as it
+// was — the provider could not say whether the input arrived, and a client
+// that quietly retired the row would be making that claim on its behalf.
+test("copy to draft recovers the words, sends nothing, and keeps the unknown row", async () => {
+  const React = (await import("react")).default;
+  const { act, cleanup, fireEvent, render, screen } = await import(
+    "@testing-library/react"
+  );
+  const { CodingSessionComposer } = await import("./CodingSessionComposer.tsx");
+  const { CodingSessionPendingTurnList } = await import(
+    "./CodingSessionPendingTurns.tsx"
+  );
+  const { buildCodingSessionTargetKey } = await import(
+    "../lib/codingSessionCommand.ts"
+  );
+  const store = await loadStore();
+  const targetKey = buildCodingSessionTargetKey(TARGET);
+  const published = [];
+
+  store.recordPendingCodingSessionTurn({
+    channelId: CHANNEL_ID,
+    targetKey,
+    commandId: "csc-unknown",
+    text: "re-read the failing case",
+    draft: "re-read the failing case",
+    operatorPubkey: OPERATOR,
+    recordedAt: Date.now(),
+    published: true,
+    attachmentCount: 2,
+  });
+  store.markPendingCodingSessionTurnDeliveryUnknown(CHANNEL_ID, "csc-unknown", {
+    code: "STEER_ACK_LOST",
+    message: "the runtime never acknowledged the write",
+  });
+
+  function Both() {
+    const turns = store.usePendingCodingSessionTurns();
+    return React.createElement(
+      "div",
+      null,
+      React.createElement(CodingSessionPendingTurnList, {
+        now: Date.now(),
+        turns,
+      }),
+      React.createElement(CodingSessionComposer, {
+        canInterrupt: true,
+        canSteer: true,
+        channelId: CHANNEL_ID,
+        currentUserPubkey: OPERATOR,
+        immersive: true,
+        isMember: true,
+        isWorking: true,
+        target: TARGET,
+        variant: "floating",
+        publishCommand: async (input) => {
+          published.push(input);
+          return { eventId: "e", kind: 44220, commandId: input.commandId };
+        },
+      }),
+    );
+  }
+
+  // The pending row renders Markdown, which reads the router for link
+  // handling. Same wrapper the other UI tests here use.
+  const { createMemoryHistory, createRootRoute, createRouter, RouterProvider } =
+    await import("@tanstack/react-router");
+  const rootRoute = createRootRoute({
+    component: () => React.createElement(Both),
+  });
+  const router = createRouter({
+    history: createMemoryHistory({ initialEntries: ["/"] }),
+    routeTree: rootRoute,
+  });
+  await router.load();
+
+  try {
+    await act(async () => {
+      render(React.createElement(RouterProvider, { router }));
+    });
+    // The person is already writing something else. Recovery must not cost
+    // them that.
+    const editor = screen.getByLabelText("Coding-session instruction");
+    await act(async () => {
+      fireEvent.change(editor, { target: { value: "meanwhile, check CI" } });
+    });
+
+    // The row discloses what it will and will not bring back before it is
+    // pressed, on screen rather than in a tooltip.
+    const row = screen.getByTestId("coding-session-pending-turn");
+    assert.match(row.textContent, /may already have reached the running turn/);
+    assert.match(row.textContent, /Its 2 images are not copied\./);
+
+    await act(async () => {
+      fireEvent.click(
+        screen.getByTestId("coding-session-pending-turn-copy-draft"),
+      );
+    });
+
+    // The words are back, beside what was already being written, not instead
+    // of it.
+    assert.equal(
+      editor.value,
+      "re-read the failing case\n\nmeanwhile, check CI",
+    );
+    // Nothing was sent, and nothing about the original changed.
+    assert.equal(published.length, 0);
+    const [pending] = store.readPendingCodingSessionTurns();
+    assert.equal(pending.commandId, "csc-unknown");
+    assert.deepEqual(pending.deliveryUnknown, {
+      code: "STEER_ACK_LOST",
+      message: "the runtime never acknowledged the write",
+    });
+    assert.ok(
+      screen.getByTestId("coding-session-pending-turn"),
+      "the row stays until the person dismisses it",
+    );
+
+    // A second press is the same request, not a second copy of the words.
+    await act(async () => {
+      fireEvent.click(
+        screen.getByTestId("coding-session-pending-turn-copy-draft"),
+      );
+    });
+    assert.equal(
+      editor.value,
+      "re-read the failing case\n\nmeanwhile, check CI",
+    );
+    assert.equal(published.length, 0);
+  } finally {
+    store.resetPendingCodingSessionTurns();
     cleanup();
   }
 });

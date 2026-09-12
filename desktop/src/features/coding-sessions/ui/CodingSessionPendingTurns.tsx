@@ -9,6 +9,7 @@ import {
   PENDING_CODING_SESSION_TURN_STALL_MS,
   pendingCodingSessionTurnKey,
   pendingCodingSessionTurnState,
+  requestCodingSessionDraftRecovery,
   resolvePendingCodingSessionTurns,
   usePendingCodingSessionTurns,
   type PendingCodingSessionTurn,
@@ -149,14 +150,42 @@ function CodingSessionPendingTurnRow({
     state,
     Math.max(0, now - turn.recordedAt),
     turn.deliveryUnknown,
+    turn.degradedByProvider,
   );
   // The provider's terminal "I cannot say": the words stay on screen — they
   // may already be inside the running turn, so nothing here re-sends or
-  // restores them on its own — and the person decides. Dismiss is the only
-  // exit, and it forgets the row without touching the editor.
+  // restores them on its own — and the person decides. Dismiss forgets the
+  // row without touching the editor; Copy to draft does the opposite.
   const dismiss = React.useCallback(() => {
     forgetPendingCodingSessionTurn(turn.channelId, turn.commandId);
   }, [turn.channelId, turn.commandId]);
+  // Recovery that costs nothing and claims nothing. The words the person
+  // typed go back into the composer *beside* whatever they are typing now;
+  // this row stays exactly where it is, still saying delivery is unknown,
+  // because it still is. Nothing is published, dismissed, cancelled, or
+  // marked delivered — an input the runtime may already hold must never be
+  // re-sent on the client's initiative, and a button that quietly retired
+  // the row would be doing the claiming the provider refused to do.
+  const attachmentCount = turn.attachmentCount ?? 0;
+  const copyToDraft = React.useCallback(() => {
+    requestCodingSessionDraftRecovery({
+      // Two presses of the same button on the same row are the same request.
+      id: `recover:${turn.channelId}:${turn.commandId}`,
+      channelId: turn.channelId,
+      targetKey: turn.targetKey,
+      // The draft is what they wrote; `text` is the wire form the umbrella
+      // composer produced from it. Hand back the writing, not the wire.
+      text: turn.draft ?? turn.text,
+      attachmentCount,
+    });
+  }, [
+    attachmentCount,
+    turn.channelId,
+    turn.commandId,
+    turn.draft,
+    turn.targetKey,
+    turn.text,
+  ]);
   return (
     <div
       className="group flex flex-col items-end gap-1"
@@ -179,15 +208,36 @@ function CodingSessionPendingTurnRow({
           // dock reserve (`pb-44`) is a constant, and at full scroll the last
           // row's caption sits under the dock's top edge — a control there
           // cannot be clicked. The bubble is always clear of the dock.
-          <div className="mt-2 flex justify-end">
-            <button
-              className="rounded px-1 text-2xs font-medium text-foreground/75 underline-offset-2 hover:underline"
-              data-testid="coding-session-pending-turn-dismiss"
-              onClick={dismiss}
-              type="button"
-            >
-              Dismiss
-            </button>
+          <div className="mt-2 flex flex-col items-end gap-1">
+            {/* On screen, not in a `title`: the one thing that decides
+                whether copying these words is safe is whether they might
+                already have arrived, and a tooltip saying so is invisible on
+                touch and unannounced by most screen readers. */}
+            <p className="text-2xs text-muted-foreground">
+              Copying leaves this message where it is. It may already have
+              reached the running turn.
+              {attachmentCount > 0
+                ? ` ${attachmentCount === 1 ? "Its image is" : `Its ${attachmentCount} images are`} not copied.`
+                : ""}
+            </p>
+            <div className="flex items-center gap-2">
+              <button
+                className="rounded px-1 text-2xs font-medium text-foreground/75 underline-offset-2 hover:underline"
+                data-testid="coding-session-pending-turn-copy-draft"
+                onClick={copyToDraft}
+                type="button"
+              >
+                Copy to draft
+              </button>
+              <button
+                className="rounded px-1 text-2xs font-medium text-foreground/75 underline-offset-2 hover:underline"
+                data-testid="coding-session-pending-turn-dismiss"
+                onClick={dismiss}
+                type="button"
+              >
+                Dismiss
+              </button>
+            </div>
           </div>
         ) : null}
       </div>
@@ -206,6 +256,52 @@ function CodingSessionPendingTurnRow({
       )}
     </div>
   );
+}
+
+/**
+ * Why a turn the sender asked to deliver one way is waiting for the boundary
+ * instead, in the provider's own terms.
+ *
+ * Two things were wrong with the single sentence this replaced, and both were
+ * the kind of comfortable guess the product contract calls a bug.
+ *
+ * It said the turn had been **delivered** at the next boundary. It has not
+ * been: `turn_degraded` is published beside the `turn_queued` that follows
+ * it, and the turn is sitting in the provider's mailbox. "Delivered" is a
+ * claim about something that has not happened yet.
+ *
+ * And it said **this provider cannot steer**, for every degrade, whatever the
+ * provider actually reported. `STEER_TURN_ENDED` — the turn ended before the
+ * input reached it, which says nothing about the runtime's capabilities — was
+ * rendered as a permanent capability defect, sending the reader after a
+ * problem that is not there. The code is on the receipt; this reads it.
+ *
+ * An unrecognized code falls back to the provider's own message rather than a
+ * reason invented here: a newer provider may name a downgrade this build has
+ * never heard of, and repeating what it said is the only honest option.
+ */
+export function describeCodingSessionTurnDegrade(
+  degraded: { code: string; message: string } | undefined,
+): string {
+  const queued = "queued for the next turn boundary";
+  switch (degraded?.code) {
+    case "STEER_UNSUPPORTED":
+      return `Not steered — this execution's runtime does not offer mid-turn steering; ${queued}`;
+    case "STEER_TURN_ENDED":
+      return `Not steered — the turn ended before this reached it; ${queued}`;
+    case "STEER_REJECTED":
+      return `Not steered — the runtime refused the mid-turn delivery; ${queued}`;
+    case "STEER_ATTACHMENTS_UNSUPPORTED":
+      return `Not steered — images cannot ride a mid-turn steer; ${queued}`;
+    case "IMAGE_UNSUPPORTED":
+      return `Images were dropped — this execution's runtime does not accept them; ${queued}`;
+    default: {
+      const detail = degraded?.message.trim() || degraded?.code.trim();
+      return detail
+        ? `Not delivered as asked — ${detail}; ${queued}`
+        : `Not delivered as asked; ${queued}`;
+    }
+  }
 }
 
 /**
@@ -240,6 +336,7 @@ export function describePendingCodingSessionTurn(
   state: ReturnType<typeof pendingCodingSessionTurnState>,
   ageMs: number,
   deliveryUnknown?: { code: string; message: string },
+  degradedByProvider?: { code: string; message: string },
 ): string | null {
   const stalled = ageMs > PENDING_CODING_SESSION_TURN_STALL_MS;
   const age = formatPendingCodingSessionTurnAge(ageMs);
@@ -256,8 +353,7 @@ export function describePendingCodingSessionTurn(
     return "Injected into the running turn";
   }
   if (state === "degraded") {
-    const degraded =
-      "Delivered at the next turn boundary — this provider cannot steer";
+    const degraded = describeCodingSessionTurnDegrade(degradedByProvider);
     return stalled
       ? `${degraded}; not started yet — ${age}; ${irrevocable}`
       : `${degraded}; ${irrevocable}`;

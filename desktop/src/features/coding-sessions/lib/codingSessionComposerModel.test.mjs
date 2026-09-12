@@ -25,7 +25,9 @@ test("member gate is fail-closed while the composer remains reachable", () => {
     }),
     {
       canSend: false,
+      deliveryHint: null,
       primaryLabel: "Send",
+      secondaryLabel: null,
       sendLabel: "Send",
       showAuthorityFailure: true,
       showStopAction: false,
@@ -89,7 +91,7 @@ test("a non-steering execution is not offered a steer it cannot get", () => {
       isWorking: true,
       text: "go",
     }).sendLabel,
-    "Send next",
+    "Queue next",
   );
   assert.equal(
     getCodingSessionComposerState({
@@ -123,7 +125,7 @@ test("a caller that says nothing about steering does not get a Steer button", ()
       isWorking: true,
       text: "Steer",
     }).sendLabel,
-    "Send next",
+    "Queue next",
   );
 });
 
@@ -199,4 +201,73 @@ test("other keys are not history", () => {
     matchCodingSessionHistoryKey(arrow({ key: "Enter", metaKey: true })),
     null,
   );
+});
+
+// The point of the second control: an execution that *can* steer now offers
+// both classes, and the person picks. Before this the composer decided, and
+// "look at the other file when you're done" went into the middle of a running
+// turn because that is what the only button did.
+test("a steering execution offers the boundary as a named second choice", () => {
+  const working = getCodingSessionComposerState({
+    canSteer: true,
+    isMember: true,
+    isWorking: true,
+    text: "when you finish, run the gate",
+  });
+  assert.equal(working.sendLabel, "Steer");
+  assert.equal(working.secondaryLabel, "Queue next");
+  assert.equal(
+    working.deliveryHint,
+    "Steer joins the turn that is running. Queue next runs after it.",
+  );
+});
+
+// And the converse: where the primary already queues, a second button beside
+// it would be the same act under two names.
+test("an execution that cannot steer offers one choice and explains it", () => {
+  const working = getCodingSessionComposerState({
+    canSteer: false,
+    isMember: true,
+    isWorking: true,
+    text: "when you finish, run the gate",
+  });
+  assert.equal(working.sendLabel, "Queue next");
+  assert.equal(working.secondaryLabel, null);
+  assert.equal(
+    working.deliveryHint,
+    "Runs after the current turn — this execution cannot steer.",
+  );
+});
+
+// An idle execution has no turn to steer or to wait for, so neither the
+// second control nor the sentence explaining it has anything to say.
+test("an idle execution says nothing about delivery classes", () => {
+  for (const canSteer of [true, false]) {
+    const idle = getCodingSessionComposerState({
+      canSteer,
+      isMember: true,
+      isWorking: false,
+      text: "start here",
+    });
+    assert.equal(idle.sendLabel, "Send");
+    assert.equal(idle.secondaryLabel, null);
+    assert.equal(idle.deliveryHint, null);
+  }
+});
+
+// "Queue next" and not "Send next": the command *is* sent — signed,
+// published, irrevocable — and then waits. "Send next" reads as "send the
+// next one", which is the one thing this control does not do.
+test("the mid-turn boundary control is never labelled as a deferred send", () => {
+  for (const canSteer of [true, false]) {
+    const state = getCodingSessionComposerState({
+      canSteer,
+      isMember: true,
+      isWorking: true,
+      text: "go",
+    });
+    for (const label of [state.sendLabel, state.secondaryLabel]) {
+      assert.notEqual(label, "Send next");
+    }
+  }
 });

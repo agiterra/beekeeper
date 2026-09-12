@@ -301,6 +301,31 @@ Provider (`lib.rs` + `state.rs`):
   §"Fork amendment: delivery classes" describing the idle guard.
 - No launcher/dialog edits. No automatic project-context work.
 
+**Extended 2026-09-12** (see `history/2026-09-12-steering-experience.md`).
+Three additions to this client section; the runtime design above is unchanged.
+
+- **The degrade reason is carried, not dropped.** The progress stage is
+  `{stage: "degraded", code, message}` and the pending row stores
+  `degradedByProvider: {code, message}` (required). A row renders the
+  provider's own reason: `STEER_UNSUPPORTED` is a statement about the
+  runtime's capabilities, `STEER_TURN_ENDED` is not, and an unrecognized code
+  repeats the provider's message rather than inventing one. No caption may
+  say a degraded turn was *delivered* — `turn_degraded` precedes the
+  `turn_queued`, so the turn is queued.
+- **The delivery class is the sender's choice, resolved at submit.** Working
+  and steering advertised: primary `steer`, secondary explicit `boundary`.
+  Working without steering: `boundary` alone. Idle: `boundary`. The class is
+  computed from the render's own target and capability, never carried from
+  when a control was drawn, and the difference is stated on screen rather
+  than in a `title`. A composer must never offer an enabled control promising
+  steering to an execution whose `threadSteer` is false.
+- **A delivery-unknown row offers recovery that claims nothing.** Copy to
+  draft appends the sender's words to the composer, publishes nothing, leaves
+  the row and its `deliveryUnknown` state untouched, and discloses both that
+  the input may already have arrived and any attachments it is not bringing
+  back. Dismiss stays local. No client control may cancel, edit or recall a
+  published command.
+
 ## 4. Composition fixtures (finalizer runs; lanes may reuse)
 
 Scripted fake agents in the provider tests (shell style as `STEERING_AGENT`):

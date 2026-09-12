@@ -54,6 +54,10 @@ import { CodingSessionFounderLine } from "./CodingSessionFounderLine";
 import { CodingSessionHandoverHost } from "./CodingSessionHandoverHost";
 import { cn } from "@/shared/lib/cn";
 
+import {
+  useCodingSessionDockReserve,
+  useNarrowCodingSessionWorkspace,
+} from "../hooks/useCodingSessionWorkspaceLayout";
 import { useCodingSessionColumnGutter } from "../lib/codingSessionWidthPreference";
 import {
   CODING_SESSION_COMPOSER_DOCK_CLASS,
@@ -612,6 +616,11 @@ function ReadyCodingSessionWorkspace({
     model: taskModel,
     transcript: session.transcript,
   });
+  // The dock overlays the transcript; the column reserves its measured
+  // height. See the hook for what the old constant cost.
+  const dockReserve = useCodingSessionDockReserve(
+    taskDock.open && !isNarrow && "pb-[34rem]",
+  );
   const narrativeExpanded = surfaceHost.activeTab === null;
 
   // Use the sidebar's project resolution for the breadcrumb too.
@@ -750,11 +759,9 @@ function ReadyCodingSessionWorkspace({
             ref={scrollRef}
           >
             <CodingSessionColumn
-              className={cn(
-                "min-h-full pt-7",
-                taskDock.open && !isNarrow ? "pb-[34rem]" : "pb-44",
-              )}
+              className={cn("min-h-full pt-7", dockReserve.className)}
               expanded={narrativeExpanded}
+              style={dockReserve.style}
             >
               <div className="flex min-w-0 flex-col gap-5" ref={contentRef}>
                 {/* "No conversation yet" is false the moment a turn is in
@@ -796,7 +803,10 @@ function ReadyCodingSessionWorkspace({
             </div>
           ) : null}
           {session.commandTarget && !sessionClosed ? (
-            <div className={cn(CODING_SESSION_COMPOSER_DOCK_CLASS, gutter)}>
+            <div
+              className={cn(CODING_SESSION_COMPOSER_DOCK_CLASS, gutter)}
+              ref={dockReserve.ref}
+            >
               <CodingSessionColumn
                 className="pointer-events-auto"
                 expanded={narrativeExpanded}
@@ -952,45 +962,4 @@ function CodingSessionWorkspaceState({
 
 function shortGenerationId(value: string): string {
   return value.length <= 28 ? value : `${value.slice(0, 28)}…`;
-}
-
-const NARROW_CODING_SESSION_WORKSPACE_WIDTH = 960;
-
-/**
- * `null` until the workspace width is first measured, so responsive chrome
- * (the surface host in particular) never mounts its desktop inline layout
- * only to be torn down and replaced by an animated sheet a frame later.
- */
-function useNarrowCodingSessionWorkspace(
-  workspaceRef: React.RefObject<HTMLElement | null>,
-): boolean | null {
-  const [isNarrow, setIsNarrow] = React.useState<boolean | null>(null);
-
-  React.useEffect(() => {
-    const workspace = workspaceRef.current;
-    if (!workspace) return;
-
-    const update = (width: number) => {
-      setIsNarrow(width < NARROW_CODING_SESSION_WORKSPACE_WIDTH);
-    };
-    update(workspace.getBoundingClientRect().width);
-
-    if (typeof ResizeObserver === "undefined") {
-      const media = window.matchMedia(
-        `(max-width: ${NARROW_CODING_SESSION_WORKSPACE_WIDTH - 1}px)`,
-      );
-      const updateFromMedia = () => setIsNarrow(media.matches);
-      media.addEventListener("change", updateFromMedia);
-      return () => media.removeEventListener("change", updateFromMedia);
-    }
-
-    const observer = new ResizeObserver((entries) => {
-      const entry = entries[0];
-      if (entry) update(entry.contentRect.width);
-    });
-    observer.observe(workspace);
-    return () => observer.disconnect();
-  }, [workspaceRef]);
-
-  return isNarrow;
 }

@@ -41,7 +41,39 @@ export function getCodingSessionComposerState({
     // reading Stop is how an operator ends an execution while meaning to end a
     // turn (asked about live, 2026-08-24).
     primaryLabel: isWorking ? "Interrupt" : "Send",
-    sendLabel: isWorking ? (canSteer ? "Steer" : "Send next") : "Send",
+    // "Queue next", not "Send next": the two words say different things about
+    // the same act, and only one of them is true. The command *is* sent —
+    // signed, published, irrevocable — and then it waits in the provider's
+    // mailbox. "Send next" reads as "send the next one", which is the thing
+    // this button does not do.
+    sendLabel: isWorking ? (canSteer ? "Steer" : "Queue next") : "Send",
+    /**
+     * The second way to deliver a message into a working execution, offered
+     * only where the first one is steering.
+     *
+     * An execution that cannot steer already queues from its primary button,
+     * so a second control beside it would be the same act under two names. An
+     * execution that *can* steer gives the person a real choice — join the
+     * turn that is running, or wait for it to finish — and before this there
+     * was no way to ask for the second one. Sending "look at the other file
+     * when you're done" into the middle of a running turn is a different
+     * instruction from sending it at the boundary, and the composer used to
+     * decide which one the person meant.
+     */
+    secondaryLabel: isWorking && canSteer ? "Queue next" : null,
+    /**
+     * One line saying what the mid-turn controls will actually do.
+     *
+     * The delivery class is the least visible and most consequential thing
+     * about a message sent into a working session, and until now it was
+     * inferable only from a button's label and a tooltip. Neither survives a
+     * touch screen or a screen reader.
+     */
+    deliveryHint: isWorking
+      ? canSteer
+        ? "Steer joins the turn that is running. Queue next runs after it."
+        : "Runs after the current turn — this execution cannot steer."
+      : null,
     showStopAction: isWorking,
     showAuthorityFailure: !isMember,
   };

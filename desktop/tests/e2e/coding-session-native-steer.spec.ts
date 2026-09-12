@@ -236,21 +236,29 @@ function transcriptEvent(eventSeq: number, item: unknown): RelayEvent {
 /** A per-stage turn receipt, keyed exactly as the provider's outbox keys it. */
 function turnReceiptEvent(input: {
   commandId: string;
-  status: "turn_injected" | "turn_delivery_unknown";
+  status: "turn_injected" | "turn_delivery_unknown" | "turn_degraded";
   createdAt: number;
+  /** Overrides the default error for statuses that carry one. */
+  error?: { code: string; message: string };
 }): RelayEvent {
+  const defaultError =
+    input.status === "turn_delivery_unknown"
+      ? {
+          code: "STEER_ACK_LOST",
+          message: "the prompt ended before the acknowledgement arrived",
+        }
+      : input.status === "turn_degraded"
+        ? {
+            code: "STEER_TURN_ENDED",
+            message: "the turn ended before the steer reached it",
+          }
+        : null;
   const content: Record<string, unknown> = {
     schema: CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
     commandId: input.commandId,
     status: input.status,
     session: TARGET,
-    error:
-      input.status === "turn_delivery_unknown"
-        ? {
-            code: "STEER_ACK_LOST",
-            message: "the prompt ended before the acknowledgement arrived",
-          }
-        : null,
+    error: input.error ?? defaultError,
   };
   if (input.status === "turn_injected") content.turnId = RUNNING_TURN_ID;
   return finalizeEvent(
@@ -478,4 +486,201 @@ test("a steer whose delivery is unknown keeps its words on the row, says why, an
   await row.getByTestId("coding-session-pending-turn-dismiss").click();
   await expect(page.getByTestId("coding-session-pending-turn")).toHaveCount(0);
   await expect(page.getByLabel("Coding-session instruction")).toHaveValue("");
+});
+
+/** Press the named composer control and return the 44220 it signed. */
+async function sendFromComposer(
+  page: Page,
+  text: string,
+  control:
+    | "coding-session-composer-steer"
+    | "coding-session-composer-queue-next",
+) {
+  const before = await page.evaluate(
+    () => (window.__BUZZ_E2E_SIGNED_EVENTS__ ?? []).length,
+  );
+  const editor = page.getByLabel("Coding-session instruction");
+  await expect(editor).toBeEnabled();
+  await editor.fill(text);
+  const button = page.getByTestId(control);
+  await expect(button).toBeVisible();
+  await button.click();
+  const signed = await page.waitForFunction((count) => {
+    const events = window.__BUZZ_E2E_SIGNED_EVENTS__ ?? [];
+    return events.slice(count).find((event) => event.kind === 44220) ?? null;
+  }, before);
+  const value = (await signed.jsonValue()) as { content: string };
+  return JSON.parse(value.content) as {
+    commandId: string;
+    action: { type: string; text: string; deliver?: string };
+  };
+}
+
+// The choice the composer used to make for the person. A working execution
+// that can steer now offers both classes, and asking for the boundary signs a
+// boundary command — not a steer the provider would have to downgrade.
+test("a working execution can be asked for the next boundary instead of the running turn", async ({
+  page,
+}) => {
+  // Both controls are present, and the sentence naming the difference is on
+  // screen rather than in a tooltip.
+  await expect(page.getByTestId("coding-session-composer-steer")).toBeVisible();
+  await expect(
+    page.getByTestId("coding-session-composer-queue-next"),
+  ).toBeVisible();
+  await expect(
+    page.getByTestId("coding-session-composer-delivery-hint"),
+  ).toHaveText(
+    "Steer joins the turn that is running. Queue next runs after it.",
+  );
+
+  const command = await sendFromComposer(
+    page,
+    "When this finishes, run the gate",
+    "coding-session-composer-queue-next",
+  );
+  expect(command.action.type).toBe("thread.turn.start");
+  expect(command.action.text).toBe("When this finishes, run the gate");
+  // The whole point: the class the person chose, not the one the composer
+  // would have chosen for them. `boundary` is the wire default and this fork
+  // omits the key at its default (NIP-CSC), so the absence of `deliver` *is*
+  // the boundary class — what must not appear is a steer.
+  expect(command.action.deliver ?? "boundary").toBe("boundary");
+
+  const row = page.getByTestId("coding-session-pending-turn");
+  await expect(row).toHaveCount(1);
+  await expect(row).toContainText("When this finishes, run the gate");
+  await expect(page.getByLabel("Coding-session instruction")).toHaveValue("");
+  await waitForAnimations(page);
+  await row.screenshot({
+    path: "test-results/screenshots/native-steer-queue-next-row.png",
+  });
+});
+
+// The degrade reason used to be discarded on the way to the row, which then
+// rendered one fixed sentence: "Delivered at the next turn boundary — this
+// provider cannot steer". Both halves could be false. This is the half that
+// was false most often: a turn that ended before the input reached it says
+// nothing about whether the runtime can steer.
+test("a downgraded steer names the provider's own reason and never claims delivery", async ({
+  page,
+}) => {
+  const commandId = await steerFromComposer(page, "Check the other file too");
+  const row = page.getByTestId("coding-session-pending-turn");
+  await expect(row).toHaveCount(1);
+
+  await seed(page, [
+    turnReceiptEvent({
+      commandId,
+      status: "turn_degraded",
+      createdAt: BASE_CREATED_AT + 10,
+    }),
+  ]);
+  await expect(row).toHaveAttribute("data-pending-state", "degraded");
+  const status = row.getByTestId("coding-session-pending-turn-status");
+  await expect(status).toContainText(
+    "Not steered — the turn ended before this reached it",
+  );
+  await expect(status).toContainText("queued for the next turn boundary");
+  // The two claims that were wrong before.
+  await expect(status).not.toContainText("Delivered at");
+  await expect(status).not.toContainText("does not offer mid-turn steering");
+  // The words stay sent: a downgrade is not a refusal.
+  await expect(page.getByLabel("Coding-session instruction")).toHaveValue("");
+  await waitForAnimations(page);
+  await row.screenshot({
+    path: "test-results/screenshots/native-steer-degraded-reason-row.png",
+  });
+});
+
+// Recovery for an input nobody can account for: the words come back beside
+// whatever is being written now, the original row is untouched, and nothing
+// is published. The narrow viewport and 250% text are where a control that
+// only just fits stops being reachable.
+test("copy to draft recovers the words at 250% text without sending or settling anything", async ({
+  page,
+}) => {
+  const commandId = await steerFromComposer(
+    page,
+    "Stop after the first failure",
+  );
+  const row = page.getByTestId("coding-session-pending-turn");
+  await expect(row).toHaveCount(1);
+  await seed(page, [
+    turnReceiptEvent({
+      commandId,
+      status: "turn_delivery_unknown",
+      createdAt: BASE_CREATED_AT + 10,
+    }),
+  ]);
+  await expect(row).toHaveAttribute("data-pending-state", "unknown");
+
+  // Now the conditions the recovery has to survive: a narrow window and text
+  // at 250%, where every label in this row wraps and the bubble grows.
+  //
+  // The *width* is the narrow case. The height is deliberately generous, and
+  // that is a disclosure rather than a convenience. At 250% this panel's own
+  // chrome is about 1,000px tall — a 140px header, the founder banner, and a
+  // composer dock that measures 635px once its controls and hint wrap — so in
+  // a 720px window the conversation has roughly 257px and the chrome covers
+  // all of it: nothing in the transcript can be clicked, including this
+  // control. That is a pre-existing responsive limit of the panel, not of
+  // this slice — measured with the delivery hint removed entirely, the header
+  // and the send control still occupied identical coordinates — and it is
+  // reported in this branch's history note rather than asserted here.
+  await page.setViewportSize({ width: 900, height: 1600 });
+  await page.addStyleTag({ content: "html { font-size: 250% }" });
+
+  // What the row promises before it is pressed: it may already have arrived.
+  await expect(row).toContainText("may already have reached the running turn");
+
+  // Something else is already half-written.
+  const editor = page.getByLabel("Coding-session instruction");
+  await editor.fill("meanwhile, check CI");
+
+  const signedBefore = await page.evaluate(
+    () => (window.__BUZZ_E2E_SIGNED_EVENTS__ ?? []).length,
+  );
+  // Where a person is after sending, and after a resize: looking at the
+  // latest. The conversation reserves the composer dock's *measured* height,
+  // so at the end of the scroll this row clears the dock even at 250%, where
+  // the dock is three times its usual height. Before that reserve was
+  // measured it was the constant `pb-44`, and this click landed on the
+  // composer instead.
+  await page.evaluate(() => {
+    const row = document.querySelector(
+      '[data-testid="coding-session-pending-turn"]',
+    );
+    const scroller = row?.closest(".overflow-y-auto") as HTMLElement | null;
+    if (scroller) scroller.scrollTop = scroller.scrollHeight;
+  });
+  await waitForAnimations(page);
+  const copy = row.getByTestId("coding-session-pending-turn-copy-draft");
+  await expect(copy).toBeVisible();
+  await copy.click();
+
+  // Recovered beside the existing draft, not instead of it.
+  await expect(editor).toHaveValue(
+    "Stop after the first failure\n\nmeanwhile, check CI",
+  );
+  // Nothing signed: copying is not sending.
+  expect(
+    await page.evaluate(() => (window.__BUZZ_E2E_SIGNED_EVENTS__ ?? []).length),
+  ).toBe(signedBefore);
+  // And the original still says what it said: the provider could not
+  // establish delivery, and copying did not change that.
+  await expect(row).toHaveAttribute("data-pending-state", "unknown");
+  await expect(row).toContainText("Stop after the first failure");
+  await waitForAnimations(page);
+  await row.screenshot({
+    path: "test-results/screenshots/native-steer-copy-to-draft-row.png",
+  });
+
+  // Dismiss remains local and separate: it retires this client's row and
+  // leaves the recovered words in the editor.
+  await row.getByTestId("coding-session-pending-turn-dismiss").click();
+  await expect(page.getByTestId("coding-session-pending-turn")).toHaveCount(0);
+  await expect(editor).toHaveValue(
+    "Stop after the first failure\n\nmeanwhile, check CI",
+  );
 });

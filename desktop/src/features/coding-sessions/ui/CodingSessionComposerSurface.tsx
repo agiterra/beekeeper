@@ -55,9 +55,19 @@ type ComposerSurfaceProps = {
   isUngovernedSession: boolean;
   isWorking: boolean;
   layout: "inline" | "stacked";
+  /**
+   * One line naming what the mid-turn controls will do, or `null` when the
+   * execution is idle and Send means only what it says.
+   */
+  deliveryHint: string | null;
   onAddProvider?: () => void;
   onInterrupt: () => void;
   onPrimary: () => void;
+  /**
+   * Publish explicitly at the next turn boundary, whatever the primary would
+   * have done. Rendered only where {@link secondaryLabel} is set.
+   */
+  onQueueNext: () => void;
   /** Walk this operator's prompt history; absent when there is none. */
   onRecallHistory?: (direction: "older" | "newer") => void;
   onReconnect: () => void;
@@ -68,6 +78,12 @@ type ComposerSurfaceProps = {
   recipientControl?: React.ReactNode;
   /** Runtime slug named in the disabled attach tooltip. */
   runtimeLabel?: string | null;
+  /**
+   * The second delivery choice, or `null` when there is only one. Set only
+   * where the primary steers, because an execution that cannot steer already
+   * queues from its primary button.
+   */
+  secondaryLabel: string | null;
   sendLabel: string;
   showAuthorityFailure: boolean;
   showStopAction: boolean;
@@ -104,10 +120,12 @@ export function CodingSessionComposerSurface({
   isUngovernedSession,
   isWorking,
   layout,
+  deliveryHint,
   onAddProvider,
   onInterrupt,
   runtimeLabel,
   onPrimary,
+  onQueueNext,
   onRecallHistory,
   onReconnect,
   onSessionStop,
@@ -115,6 +133,7 @@ export function CodingSessionComposerSurface({
   pendingAction,
   providerAuthorityPubkey,
   recipientControl,
+  secondaryLabel,
   sendLabel,
   showAuthorityFailure,
   showStopAction,
@@ -277,13 +296,16 @@ export function CodingSessionComposerSurface({
             canInterrupt={canInterrupt}
             canSessionStop={canSessionStop}
             canSubmitText={canSubmitText}
+            deliveryHint={deliveryHint}
             isDisconnected={isDisconnected}
             isMember={isMember}
             isSending={isSending}
             layout={layout}
             onInterrupt={onInterrupt}
             onPrimary={onPrimary}
+            onQueueNext={onQueueNext}
             onSessionStop={onSessionStop}
+            secondaryLabel={secondaryLabel}
             sendLabel={sendLabel}
             showStopAction={showStopAction}
           />
@@ -302,12 +324,15 @@ export function CodingSessionComposerSurface({
             isUnavailable={isUnavailable}
             isUngovernedSession={isUngovernedSession}
             isWorking={isWorking}
+            deliveryHint={deliveryHint}
             onInterrupt={onInterrupt}
             onPrimary={onPrimary}
+            onQueueNext={onQueueNext}
             onSessionStop={onSessionStop}
             pendingAction={pendingAction}
             primaryDisabled={!canSubmitText || isSending}
             recipientControl={recipientControl}
+            secondaryLabel={secondaryLabel}
           />
         )}
       </div>
@@ -320,13 +345,16 @@ function CompactComposerActions({
   canInterrupt,
   canSessionStop,
   canSubmitText,
+  deliveryHint,
   isDisconnected,
   isMember,
   isSending,
   layout,
   onInterrupt,
   onPrimary,
+  onQueueNext,
   onSessionStop,
+  secondaryLabel,
   sendLabel,
   showStopAction,
 }: {
@@ -334,13 +362,16 @@ function CompactComposerActions({
   canInterrupt: boolean;
   canSessionStop: boolean;
   canSubmitText: boolean;
+  deliveryHint: string | null;
   isDisconnected: boolean;
   isMember: boolean;
   isSending: boolean;
   layout: "inline" | "stacked";
   onInterrupt: () => void;
   onPrimary: () => void;
+  onQueueNext: () => void;
   onSessionStop: () => void;
+  secondaryLabel: string | null;
   sendLabel: string;
   showStopAction: boolean;
 }) {
@@ -352,6 +383,17 @@ function CompactComposerActions({
       )}
       data-testid="coding-session-composer-actions"
     >
+      {/* Ahead of the buttons in the reading order, because it is what tells
+          the person which of them they want. Wraps onto its own line in the
+          stacked layout rather than squeezing the controls. */}
+      {deliveryHint === null ? null : (
+        <p
+          className="me-auto text-2xs text-muted-foreground"
+          data-testid="coding-session-composer-delivery-hint"
+        >
+          {deliveryHint}
+        </p>
+      )}
       <Button
         data-testid="coding-session-composer-primary"
         disabled={!canSubmitText || isSending}
@@ -360,6 +402,18 @@ function CompactComposerActions({
       >
         {sendLabel}
       </Button>
+      {secondaryLabel === null ? null : (
+        <Button
+          data-testid="coding-session-composer-queue-next"
+          disabled={!canSubmitText || isSending}
+          onClick={onQueueNext}
+          title="Send now; this provider runs it when the current turn ends, and it cannot be recalled"
+          type="button"
+          variant="outline"
+        >
+          {secondaryLabel}
+        </Button>
+      )}
       {showStopAction ? (
         <Button
           data-testid="coding-session-composer-stop"

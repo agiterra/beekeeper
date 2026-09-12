@@ -62,12 +62,26 @@ export type PendingCodingSessionTurn = {
   queuedByProvider?: boolean;
   /**
    * Set once the provider's own signed `turn_degraded` receipt names this
-   * command: the sender asked to steer the running turn and this execution's
-   * runtime cannot, so the turn waits for the next boundary instead. The turn
-   * is not lost and was not merged into the running one — but it is not what
-   * was asked for, so the row says so rather than reading as an ordinary queue.
+   * command, with the code and words it carried: the sender asked for a
+   * delivery class this execution could not give the turn, so it waits for
+   * the next boundary instead. The turn is not lost and was not merged into
+   * the running one — but it is not what was asked for, so the row says so
+   * rather than reading as an ordinary queue.
+   *
+   * The reason is stored, not just the fact. It used to be a boolean and the
+   * row rendered one fixed sentence for every degrade, so a turn that ended
+   * before the input reached it (`STEER_TURN_ENDED`) was reported as a
+   * provider that cannot steer (`STEER_UNSUPPORTED`) — a claim about a
+   * capability from evidence that says nothing about it.
    */
-  degradedByProvider?: boolean;
+  degradedByProvider?: { code: string; message: string };
+  /**
+   * How many images rode this turn, so a later recovery can say what it did
+   * not bring back. Recovering the words of a turn that carried pictures and
+   * staying silent about them is the quiet half-truth this exists to prevent:
+   * the text comes back, the attachments do not.
+   */
+  attachmentCount?: number;
   /**
    * Set once the provider's own signed `turn_injected` receipt names this
    * command: the runtime acknowledged the input as joined into the turn that
@@ -101,7 +115,7 @@ export function pendingCodingSessionTurnHeldByProvider(
 ): boolean {
   return (
     pending.queuedByProvider === true ||
-    pending.degradedByProvider === true ||
+    pending.degradedByProvider !== undefined ||
     pending.injectedByProvider === true ||
     pending.deliveryUnknown !== undefined
   );
@@ -234,25 +248,34 @@ export function markPendingCodingSessionTurnQueued(
  * Record the provider's signed `turn_degraded` for a turn this client sent.
  *
  * Kept apart from `queuedByProvider` because it is a different sentence: the
- * turn is queued *because the steer could not happen*, and a row that only
- * said "queued" would quietly swallow the fact that the person's mid-turn
- * correction is not reaching the running turn.
+ * turn is queued *because the asked-for delivery could not happen*, and a row
+ * that only said "queued" would quietly swallow the fact that the person's
+ * mid-turn correction is not reaching the turn that is running.
+ *
+ * `outcome` is the provider's own code and message. It is required rather
+ * than optional so no caller can reintroduce the fixed sentence this
+ * replaced; see {@link PendingCodingSessionTurn.degradedByProvider}.
  */
 export function markPendingCodingSessionTurnDegraded(
   channelId: string,
   commandId: string,
+  outcome: { code: string; message: string },
 ): void {
   const key = pendingCodingSessionTurnKey({ channelId, commandId });
   let changed = false;
   const next = pendingTurns.map((entry) => {
     if (
       pendingCodingSessionTurnKey(entry) !== key ||
-      entry.degradedByProvider === true
+      entry.degradedByProvider !== undefined
     ) {
       return entry;
     }
     changed = true;
-    return { ...entry, published: true, degradedByProvider: true };
+    return {
+      ...entry,
+      published: true,
+      degradedByProvider: { code: outcome.code, message: outcome.message },
+    };
   });
   if (!changed) return;
   pendingTurns = next;
@@ -417,12 +440,87 @@ export function useTextSettledCodingSessionEchoes(): ReadonlySet<string> {
   );
 }
 
+/**
+ * One request to put a pending turn's words back in the editor, without
+ * touching the turn.
+ *
+ * Recovery for an input whose delivery the provider could not establish. The
+ * words may already be inside the running turn, so nothing here re-sends,
+ * dismisses, cancels or settles anything: it hands the text to the composer,
+ * which *appends* it to whatever is already being typed, and the original row
+ * stays exactly as it was, still saying delivery is unknown.
+ *
+ * A store rather than a callback because the row and the composer are
+ * siblings under two different surfaces (the workspace and the umbrella
+ * timeline), and threading a setter through both trees to move one string
+ * would put the recovery path at the mercy of every layout change.
+ *
+ * It lives in this module so `resetPendingCodingSessionTurns` clears it on a
+ * community switch along with the rows it refers to — a module-level cache
+ * that survives the remount is exactly the leak `resetCommunityState()`
+ * exists to prevent.
+ */
+export type CodingSessionDraftRecovery = {
+  /** Idempotency key; the composer applies each request exactly once. */
+  id: string;
+  channelId: string;
+  targetKey: string;
+  /** The words to append. */
+  text: string;
+  /** Images that rode the original turn and are *not* being recovered. */
+  attachmentCount: number;
+};
+
+let draftRecovery: CodingSessionDraftRecovery | null = null;
+
+/**
+ * Ask the composer for this execution to append `text` to its draft.
+ *
+ * Only the newest request is held: two recoveries in a row are two presses of
+ * the same button, and the composer applies whichever it sees. Nothing is
+ * published, and the pending row the text came from is untouched.
+ */
+export function requestCodingSessionDraftRecovery(
+  request: CodingSessionDraftRecovery,
+): void {
+  draftRecovery = request;
+  notify();
+}
+
+/** The outstanding recovery request, if the composer has not applied it. */
+export function readCodingSessionDraftRecovery(): CodingSessionDraftRecovery | null {
+  return draftRecovery;
+}
+
+/** The outstanding recovery request, as a stable subscription. */
+export function useCodingSessionDraftRecovery(): CodingSessionDraftRecovery | null {
+  return React.useSyncExternalStore(
+    subscribe,
+    readCodingSessionDraftRecovery,
+    readCodingSessionDraftRecovery,
+  );
+}
+
+/**
+ * Retire a request the composer has applied.
+ *
+ * Guarded by id so a second composer mounting between the request and this
+ * call cannot clear a request it never applied.
+ */
+export function clearCodingSessionDraftRecovery(id: string): void {
+  if (draftRecovery === null || draftRecovery.id !== id) return;
+  draftRecovery = null;
+  notify();
+}
+
 /** Community switch teardown — see `resetCommunityState()`. */
 export function resetPendingCodingSessionTurns(): void {
   const hadTextSettled = textSettledEchoIds.size > 0;
-  if (pendingTurns.length === 0 && !hadTextSettled) return;
+  const hadRecovery = draftRecovery !== null;
+  if (pendingTurns.length === 0 && !hadTextSettled && !hadRecovery) return;
   pendingTurns = [];
   textSettledEchoIds = NO_TEXT_SETTLED_ECHOES;
+  draftRecovery = null;
   notify();
 }
 
@@ -493,7 +591,7 @@ export function pendingCodingSessionTurnState(
   // worth reading.
   if (pending.injectedByProvider === true) return "injected";
   if (pending.deliveryUnknown !== undefined) return "unknown";
-  if (pending.degradedByProvider === true) return "degraded";
+  if (pending.degradedByProvider !== undefined) return "degraded";
   if (pending.queuedByProvider === true) return "queued";
   return now - pending.recordedAt > PENDING_CODING_SESSION_TURN_STALL_MS
     ? "stalled"

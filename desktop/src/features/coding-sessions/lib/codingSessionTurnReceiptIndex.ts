@@ -88,12 +88,19 @@ export function resolveImmutableReceipt(
 export type CodingSessionTurnProgress =
   | { stage: "queued" }
   /**
-   * The sender asked to steer a running turn and this execution's runtime
-   * cannot: the turn was not cancelled, merged, or lost — it waits for the
-   * next boundary like any other. A stage rather than a failure precisely
-   * because the turn still runs.
+   * The sender asked for a delivery class the provider could not give this
+   * turn, so it waits for the next boundary like any other. A stage rather
+   * than a failure precisely because the turn still runs.
+   *
+   * `code` and `message` are the provider's own, and they are carried rather
+   * than dropped because the reasons are not interchangeable. A runtime that
+   * never advertised steering answers `STEER_UNSUPPORTED`; one that steers
+   * perfectly well but whose turn ended before the input reached it answers
+   * `STEER_TURN_ENDED`. Rendering the second as the first tells the person
+   * their provider cannot do something it can, and sends them looking for a
+   * capability problem that does not exist.
    */
-  | { stage: "degraded" }
+  | { stage: "degraded"; code: string; message: string }
   | { stage: "started"; turnId: string }
   /**
    * The native steer landed: the runtime acknowledged the input as joined
@@ -259,15 +266,22 @@ export class CodingSessionTurnReceiptIndex {
     if (started && started.status === "turn_started") {
       return { stage: "started", turnId: started.turnId };
     }
-    if (
-      this.resolve(
-        channelId,
-        commandId,
-        "turn_degraded",
-        providerAuthorityPubkey,
-      )
-    ) {
-      return { stage: "degraded" };
+    const degraded = this.resolve(
+      channelId,
+      commandId,
+      "turn_degraded",
+      providerAuthorityPubkey,
+    );
+    // The decoder requires `{code, message}` on a `turn_degraded`, so the
+    // guard is a type narrowing rather than a real branch — but it degrades
+    // into "the provider said something we could not read" instead of
+    // asserting a reason, which is the whole point of carrying the field.
+    if (degraded && degraded.error !== null) {
+      return {
+        stage: "degraded",
+        code: degraded.error.code,
+        message: degraded.error.message,
+      };
     }
     return this.resolve(
       channelId,

@@ -1644,11 +1644,18 @@ test("a degraded steer is progress, not a failure, and outranks queued", () => {
     [CHANNEL_ID],
     AUTHORITY,
   );
-  // The provider says both: it could not steer, and the turn is in the
-  // mailbox. The later fact about the same turn is the one the row reads.
+  // The provider says both: it could not deliver as asked, and the turn is in
+  // the mailbox. The later fact about the same turn is the one the row reads,
+  // and it carries the provider's own reason — `STEER_UNSUPPORTED` and
+  // `STEER_TURN_ENDED` are different facts, and only one of them is about the
+  // runtime's capabilities.
   assert.deepEqual(
     store.resolveTurnProgress(CHANNEL_ID, TURN_COMMAND_ID, PROVIDER_PUBKEY),
-    { stage: "degraded" },
+    {
+      stage: "degraded",
+      code: "STEER_UNSUPPORTED",
+      message: "this runtime advertised no native steering",
+    },
   );
   // A turn that will still run must never restore the draft.
   assert.equal(

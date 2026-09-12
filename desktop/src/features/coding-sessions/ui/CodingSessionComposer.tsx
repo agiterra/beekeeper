@@ -9,9 +9,11 @@ import {
   type CodingSessionTurnDelivery,
 } from "@/features/coding-sessions/lib/codingSessionCommand";
 import {
+  clearCodingSessionDraftRecovery,
   forgetPendingCodingSessionTurn,
   markPendingCodingSessionTurnPublished,
   recordPendingCodingSessionTurn,
+  useCodingSessionDraftRecovery,
 } from "@/features/coding-sessions/lib/codingSessionPendingTurns";
 import {
   createCodingSessionLifecycleCommandId,
@@ -240,6 +242,27 @@ export function CodingSessionComposer({
     setRecall(IDLE_PROMPT_RECALL);
     setText(prefill.text);
   }
+  // Recovering the words of a turn whose delivery the provider could not
+  // establish. Deliberately *not* the `prefill` path above: that one replaces
+  // the draft, and this one must not — the person pressed a button on an old
+  // message while a new one may be half-written, and eating it to return the
+  // old one would lose more than it recovered. `restoreCodingSessionDraft` is
+  // the same append the refusal path uses, including its "already there"
+  // check for a second press.
+  const draftRecovery = useCodingSessionDraftRecovery();
+  const recoverable =
+    draftRecovery !== null &&
+    draftRecovery.channelId === channelId &&
+    draftRecovery.targetKey === buildCodingSessionTargetKey(target)
+      ? draftRecovery
+      : null;
+  React.useEffect(() => {
+    if (recoverable === null) return;
+    setRecall(IDLE_PROMPT_RECALL);
+    setText((current) => restoreCodingSessionDraft(current, recoverable.text));
+    clearCodingSessionDraftRecovery(recoverable.id);
+    editorRef.current?.focus();
+  }, [recoverable]);
   /**
    * Write an image token where the person is typing.
    *
@@ -416,6 +439,9 @@ export function CodingSessionComposer({
         operatorPubkey: currentUserPubkey,
         recordedAt: Date.now(),
         published: false,
+        // So a later recovery can say what it is not bringing back: the words
+        // come home, the pictures do not.
+        attachmentCount: attachmentRefs.length,
       });
       setPendingAction("send");
       setError(null);
@@ -471,35 +497,53 @@ export function CodingSessionComposer({
     ],
   );
 
-  const submit = React.useCallback(async () => {
-    if (!canSubmitText || isSending) return;
-    // Steering is asked for only where the execution advertised it and there
-    // is a turn to steer; everything else is an explicit boundary delivery.
-    // The provider may still downgrade a steer, and says so in a receipt.
-    const deliver: CodingSessionTurnDelivery =
-      isWorking && canSteer ? "steer" : "boundary";
-    // Keep the person's own words, not the prepared wire text: a refusal has
-    // to hand back exactly what they typed, routing handle and all.
-    const draft = text;
-    const attachmentRefs = attachments.attachmentRefs;
-    setRecall(IDLE_PROMPT_RECALL);
-    setText("");
-    await publishPreparedText({
-      attachmentRefs,
-      deliver,
-      draft,
+  /**
+   * Publish the draft, in the delivery class the person actually asked for.
+   *
+   * `"primary"` is the button under the cursor by default: steer where the
+   * execution advertised it and a turn is running, an ordinary boundary send
+   * everywhere else. `"boundary"` is the explicit second choice — "not into
+   * this turn; after it" — and it stays a boundary send even where steering
+   * is available, which is the whole point of offering it.
+   *
+   * The class is resolved here, from this render's `isWorking`/`canSteer` and
+   * against this render's `target`, rather than carried from whenever a menu
+   * was opened. A capability that arrives late or a target that changes under
+   * an open menu re-creates this callback, so the press that follows cannot
+   * publish a class the execution in front of the person no longer offers.
+   */
+  const submit = React.useCallback(
+    async (intent: "primary" | "boundary" = "primary") => {
+      if (!canSubmitText || isSending) return;
+      // Steering is asked for only where the execution advertised it, there is
+      // a turn to steer, and the person did not ask for the boundary instead.
+      // The provider may still downgrade a steer, and says so in a receipt.
+      const deliver: CodingSessionTurnDelivery =
+        intent === "primary" && isWorking && canSteer ? "steer" : "boundary";
+      // Keep the person's own words, not the prepared wire text: a refusal has
+      // to hand back exactly what they typed, routing handle and all.
+      const draft = text;
+      const attachmentRefs = attachments.attachmentRefs;
+      setRecall(IDLE_PROMPT_RECALL);
+      setText("");
+      await publishPreparedText({
+        attachmentRefs,
+        deliver,
+        draft,
+        preparedText,
+      });
+    },
+    [
+      attachments.attachmentRefs,
+      canSteer,
+      canSubmitText,
+      isSending,
+      isWorking,
       preparedText,
-    });
-  }, [
-    attachments.attachmentRefs,
-    canSteer,
-    canSubmitText,
-    isSending,
-    isWorking,
-    preparedText,
-    publishPreparedText,
-    text,
-  ]);
+      publishPreparedText,
+      text,
+    ],
+  );
 
   /** ⌘↑/⌘↓: walk back and forward through the earlier prompts. */
   const recallHistory = React.useCallback(
@@ -744,14 +788,17 @@ export function CodingSessionComposer({
         onAddProvider={onAddProvider}
         onRecallHistory={promptHistory.length > 0 ? recallHistory : undefined}
         runtimeLabel={runtimeLabel}
+        deliveryHint={state.deliveryHint}
         onInterrupt={() => void handleStop()}
-        onPrimary={() => void submit()}
+        onPrimary={() => void submit("primary")}
+        onQueueNext={() => void submit("boundary")}
         onReconnect={() => void handleResume()}
         onSessionStop={requestSessionEnd}
         onTextChange={handleTextChange}
         pendingAction={pendingAction}
         providerAuthorityPubkey={providerAuthorityPubkey}
         recipientControl={recipientControl}
+        secondaryLabel={state.secondaryLabel}
         sendLabel={state.sendLabel}
         showAuthorityFailure={state.showAuthorityFailure}
         showStopAction={state.showStopAction}

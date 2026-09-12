@@ -45,6 +45,14 @@ type CodingSessionComposerDeckProps = {
   canInterrupt: boolean;
   canSessionStop: boolean;
   canSteer: boolean;
+  /**
+   * One line naming what the mid-turn controls will do, or `null` when the
+   * execution is idle. Rendered above the control row rather than in a
+   * `title`: the delivery class is the most consequential and least visible
+   * thing about a message sent into a working session, and a tooltip is
+   * invisible on touch and unannounced by most screen readers.
+   */
+  deliveryHint: string | null;
   context: CodingSessionComposerControlContext | undefined;
   contextWindow: CodingSessionContextWindow | null;
   isMember: boolean;
@@ -54,9 +62,13 @@ type CodingSessionComposerDeckProps = {
   isWorking: boolean;
   onInterrupt: () => void;
   onPrimary: () => void;
+  /** Publish explicitly at the next boundary, whatever the primary would do. */
+  onQueueNext: () => void;
   onSessionStop: () => void;
   pendingAction: "send" | "interrupt" | "resume" | "stop" | null;
   primaryDisabled: boolean;
+  /** The second delivery choice, or `null` when the primary is the only one. */
+  secondaryLabel: string | null;
   recipientControl?: React.ReactNode;
 };
 
@@ -68,6 +80,7 @@ export function CodingSessionComposerDeck({
   canInterrupt,
   canSessionStop,
   canSteer,
+  deliveryHint,
   context,
   contextWindow,
   isMember,
@@ -77,9 +90,11 @@ export function CodingSessionComposerDeck({
   isWorking,
   onInterrupt,
   onPrimary,
+  onQueueNext,
   onSessionStop,
   pendingAction,
   primaryDisabled,
+  secondaryLabel,
   recipientControl,
 }: CodingSessionComposerDeckProps) {
   const mission = useCodingSessionMissionLens();
@@ -131,235 +146,266 @@ export function CodingSessionComposerDeck({
     : [];
 
   return (
-    <div
-      className="flex min-h-14 min-w-0 items-center gap-2 px-4 pb-3"
-      data-testid="coding-session-control-deck"
-    >
-      <div className="flex min-w-0 items-center text-sm text-muted-foreground">
-        {recipientControl ?? (
+    <div className="flex min-w-0 flex-col">
+      {/* Its own line, above the controls it describes, so it survives a
+          narrow window and 250% text instead of being truncated out of the
+          deck's single row. */}
+      {deliveryHint === null ? null : (
+        <p
+          className="px-4 pb-1 text-2xs leading-snug text-muted-foreground"
+          data-testid="coding-session-composer-delivery-hint"
+        >
+          {deliveryHint}
+        </p>
+      )}
+      <div
+        className="flex min-h-14 min-w-0 items-center gap-2 px-4 pb-3"
+        data-testid="coding-session-control-deck"
+      >
+        <div className="flex min-w-0 items-center text-sm text-muted-foreground">
+          {recipientControl ?? (
+            <Popover>
+              <PopoverTrigger asChild>
+                <button
+                  aria-label="Show execution identity"
+                  className="flex min-w-0 items-center gap-2 rounded-lg py-1.5 pr-3 text-foreground/75 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  data-testid="coding-session-control-identity"
+                  type="button"
+                >
+                  <span className="grid size-5 shrink-0 place-items-center rounded-full border border-border/80 bg-muted/40">
+                    <Bot aria-hidden className="size-3" />
+                  </span>
+                  <span className="max-w-52 truncate">{identityLabel}</span>
+                </button>
+              </PopoverTrigger>
+              <PopoverContent align="start" className="w-72" side="top">
+                <p className="text-sm font-medium">Execution identity</p>
+                <dl className="mt-3 grid gap-2 text-xs">
+                  {context?.providerLabel ? (
+                    <ComposerDefinition
+                      label="Provider"
+                      value={context.providerLabel}
+                    />
+                  ) : null}
+                  {context?.runtimeLabel ? (
+                    <ComposerDefinition
+                      label="Runtime"
+                      value={context.runtimeLabel}
+                    />
+                  ) : null}
+                  {modelName ? (
+                    <ComposerDefinition label="Model" value={modelName} />
+                  ) : null}
+                  {traits ? (
+                    <ComposerDefinition label="Model traits" value={traits} />
+                  ) : null}
+                  <ComposerDefinition
+                    label="Capabilities"
+                    value={
+                      availableCapabilities.length > 0
+                        ? availableCapabilities.join(", ")
+                        : "Not declared"
+                    }
+                  />
+                  {context?.turnBudget ? (
+                    <ComposerDefinition
+                      label="Team turns"
+                      testId="coding-session-control-turn-budget"
+                      value={codingSessionTurnBudgetUsage(context.turnBudget)}
+                    />
+                  ) : null}
+                </dl>
+                <p className="mt-3 text-xs text-muted-foreground">
+                  This identifies the signed execution. Its model and traits are
+                  fixed for this execution.
+                </p>
+                {context?.turnBudget ? (
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    The turn count is the whole team session's, shared by every
+                    execution under it. At the limit the provider refuses
+                    further turns from the agents; only the execution's founder
+                    is exempt.
+                  </p>
+                ) : null}
+              </PopoverContent>
+            </Popover>
+          )}
+
+          <ComposerDeckSeparator />
+
           <Popover>
             <PopoverTrigger asChild>
               <button
-                aria-label="Show execution identity"
-                className="flex min-w-0 items-center gap-2 rounded-lg py-1.5 pr-3 text-foreground/75 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                data-testid="coding-session-control-identity"
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 transition-colors hover:bg-muted/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                data-testid="coding-session-control-authority"
                 type="button"
               >
-                <span className="grid size-5 shrink-0 place-items-center rounded-full border border-border/80 bg-muted/40">
-                  <Bot aria-hidden className="size-3" />
-                </span>
-                <span className="max-w-52 truncate">{identityLabel}</span>
+                <ShieldCheck aria-hidden className="size-3.5" />
+                {accessLabel}
               </button>
             </PopoverTrigger>
             <PopoverContent align="start" className="w-72" side="top">
-              <p className="text-sm font-medium">Execution identity</p>
-              <dl className="mt-3 grid gap-2 text-xs">
-                {context?.providerLabel ? (
-                  <ComposerDefinition
-                    label="Provider"
-                    value={context.providerLabel}
-                  />
-                ) : null}
-                {context?.runtimeLabel ? (
-                  <ComposerDefinition
-                    label="Runtime"
-                    value={context.runtimeLabel}
-                  />
-                ) : null}
-                {modelName ? (
-                  <ComposerDefinition label="Model" value={modelName} />
-                ) : null}
-                {traits ? (
-                  <ComposerDefinition label="Model traits" value={traits} />
-                ) : null}
-                <ComposerDefinition
-                  label="Capabilities"
-                  value={
-                    availableCapabilities.length > 0
-                      ? availableCapabilities.join(", ")
-                      : "Not declared"
-                  }
-                />
-                {context?.turnBudget ? (
-                  <ComposerDefinition
-                    label="Team turns"
-                    testId="coding-session-control-turn-budget"
-                    value={codingSessionTurnBudgetUsage(context.turnBudget)}
-                  />
-                ) : null}
-              </dl>
-              <p className="mt-3 text-xs text-muted-foreground">
-                This identifies the signed execution. Its model and traits are
-                fixed for this execution.
+              <p className="text-sm font-medium">{accessLabel}</p>
+              <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                {accessExplanation({
+                  authorityReason,
+                  canControl,
+                  isMember,
+                  isUngovernedSession,
+                })}
               </p>
-              {context?.turnBudget ? (
-                <p className="mt-2 text-xs text-muted-foreground">
-                  The turn count is the whole team session's, shared by every
-                  execution under it. At the limit the provider refuses further
-                  turns from the agents; only the execution's founder is exempt.
-                </p>
-              ) : null}
+              <p className="mt-3 text-xs text-muted-foreground">
+                Access comes from signed channel membership and the provider’s
+                operator grant. It is not a local preference.
+              </p>
             </PopoverContent>
           </Popover>
-        )}
 
-        <ComposerDeckSeparator />
-
-        <Popover>
-          <PopoverTrigger asChild>
-            <button
-              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 transition-colors hover:bg-muted/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              data-testid="coding-session-control-authority"
-              type="button"
-            >
-              <ShieldCheck aria-hidden className="size-3.5" />
-              {accessLabel}
-            </button>
-          </PopoverTrigger>
-          <PopoverContent align="start" className="w-72" side="top">
-            <p className="text-sm font-medium">{accessLabel}</p>
-            <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-              {accessExplanation({
-                authorityReason,
-                canControl,
-                isMember,
-                isUngovernedSession,
-              })}
-            </p>
-            <p className="mt-3 text-xs text-muted-foreground">
-              Access comes from signed channel membership and the provider’s
-              operator grant. It is not a local preference.
-            </p>
-          </PopoverContent>
-        </Popover>
-
-        {deckTraits ? (
-          <>
-            <ComposerDeckSeparator />
-            <span
-              className="shrink-0 px-3 py-1.5"
-              data-testid="coding-session-control-traits"
-              title="Fixed model traits for this execution"
-            >
-              {deckTraits}
-            </span>
-          </>
-        ) : null}
-      </div>
-
-      <div
-        className="ml-auto flex shrink-0 items-center gap-2"
-        data-testid="coding-session-composer-actions"
-      >
-        {canSessionStop && !isUnavailable && !isWorking ? (
-          <Popover>
-            <PopoverTrigger asChild>
-              <button
-                aria-label="More execution actions"
-                className="grid size-8 place-items-center rounded-full text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                data-testid="coding-session-composer-more"
-                type="button"
+          {deckTraits ? (
+            <>
+              <ComposerDeckSeparator />
+              <span
+                className="shrink-0 px-3 py-1.5"
+                data-testid="coding-session-control-traits"
+                title="Fixed model traits for this execution"
               >
-                <Ellipsis aria-hidden className="size-4" />
-              </button>
-            </PopoverTrigger>
-            <PopoverContent align="end" className="w-64 p-2" side="top">
-              <button
-                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-destructive transition-colors hover:bg-destructive/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                disabled={isSending}
-                onClick={onSessionStop}
-                type="button"
-              >
-                <Square aria-hidden className="size-3.5" />
-                <span>
-                  <span className="block font-medium">Stop execution</span>
-                  <span className="block text-xs text-muted-foreground">
-                    Terminal; confirmation required
+                {deckTraits}
+              </span>
+            </>
+          ) : null}
+        </div>
+
+        <div
+          className="ml-auto flex shrink-0 items-center gap-2"
+          data-testid="coding-session-composer-actions"
+        >
+          {canSessionStop && !isUnavailable && !isWorking ? (
+            <Popover>
+              <PopoverTrigger asChild>
+                <button
+                  aria-label="More execution actions"
+                  className="grid size-8 place-items-center rounded-full text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  data-testid="coding-session-composer-more"
+                  type="button"
+                >
+                  <Ellipsis aria-hidden className="size-4" />
+                </button>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-64 p-2" side="top">
+                <button
+                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-destructive transition-colors hover:bg-destructive/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  disabled={isSending}
+                  onClick={onSessionStop}
+                  type="button"
+                >
+                  <Square aria-hidden className="size-3.5" />
+                  <span>
+                    <span className="block font-medium">Stop execution</span>
+                    <span className="block text-xs text-muted-foreground">
+                      Terminal; confirmation required
+                    </span>
                   </span>
-                </span>
-              </button>
-            </PopoverContent>
-          </Popover>
-        ) : null}
+                </button>
+              </PopoverContent>
+            </Popover>
+          ) : null}
 
-        {contextWindow ? (
-          <CodingSessionContextMeter usage={contextWindow} />
-        ) : null}
+          {contextWindow ? (
+            <CodingSessionContextMeter usage={contextWindow} />
+          ) : null}
 
-        {!isUnavailable ? (
-          <button
-            aria-label={
-              pendingAction === "send"
-                ? "Sending"
-                : isWorking
+          {!isUnavailable ? (
+            <button
+              aria-label={
+                pendingAction === "send"
+                  ? "Sending"
+                  : isWorking
+                    ? canSteer
+                      ? "Steer current turn"
+                      : "Send at the next turn boundary; it cannot be recalled"
+                    : "Send message"
+              }
+              className="grid size-9 place-items-center rounded-full bg-primary text-primary-foreground shadow-sm transition-transform enabled:hover:scale-105 disabled:cursor-not-allowed disabled:opacity-30"
+              // `…-queue` is a historical selector, kept so specs that already
+              // point at the mid-turn action keep working. Nothing is queued in
+              // this client any more: the command is published now and the
+              // provider's mailbox holds it until the current turn ends.
+              data-testid={
+                isWorking
+                  ? canSteer
+                    ? "coding-session-composer-steer"
+                    : "coding-session-composer-queue"
+                  : "coding-session-composer-primary"
+              }
+              disabled={primaryDisabled}
+              onClick={onPrimary}
+              title={
+                isWorking
                   ? canSteer
                     ? "Steer current turn"
-                    : "Send at the next turn boundary; it cannot be recalled"
+                    : "Sends now; this provider runs it when the current turn ends, and it cannot be recalled"
                   : "Send message"
-            }
-            className="grid size-9 place-items-center rounded-full bg-primary text-primary-foreground shadow-sm transition-transform enabled:hover:scale-105 disabled:cursor-not-allowed disabled:opacity-30"
-            // `…-queue` is a historical selector, kept so specs that already
-            // point at the mid-turn action keep working. Nothing is queued in
-            // this client any more: the command is published now and the
-            // provider's mailbox holds it until the current turn ends.
-            data-testid={
-              isWorking
-                ? canSteer
-                  ? "coding-session-composer-steer"
-                  : "coding-session-composer-queue"
-                : "coding-session-composer-primary"
-            }
-            disabled={primaryDisabled}
-            onClick={onPrimary}
-            title={
-              isWorking
-                ? canSteer
-                  ? "Steer current turn"
-                  : "Sends now; this provider runs it when the current turn ends, and it cannot be recalled"
-                : "Send message"
-            }
-            type="button"
-          >
-            {pendingAction === "send" ? (
-              <span
-                aria-hidden
-                className="size-4 animate-spin rounded-full border-2 border-current border-r-transparent"
-              />
-            ) : (
-              <ArrowUp aria-hidden className="size-4" />
-            )}
-          </button>
-        ) : null}
+              }
+              type="button"
+            >
+              {pendingAction === "send" ? (
+                <span
+                  aria-hidden
+                  className="size-4 animate-spin rounded-full border-2 border-current border-r-transparent"
+                />
+              ) : (
+                <ArrowUp aria-hidden className="size-4" />
+              )}
+            </button>
+          ) : null}
 
-        {isWorking ? (
-          <button
-            aria-label="Interrupt current turn"
-            className="grid size-9 place-items-center rounded-full bg-destructive text-destructive-foreground shadow-sm transition-transform enabled:hover:scale-105 disabled:cursor-not-allowed disabled:opacity-35"
-            data-testid="coding-session-composer-interrupt"
-            disabled={
-              !canControl ||
-              !isMember ||
-              !canInterrupt ||
-              pendingAction !== null
-            }
-            onClick={onInterrupt}
-            title={
-              canInterrupt
-                ? "Interrupt only the current turn"
-                : "Current-turn interrupt is unavailable for this provider"
-            }
-            type="button"
-          >
-            {pendingAction === "interrupt" ? (
-              <span
-                aria-hidden
-                className="size-4 animate-spin rounded-full border-2 border-current border-r-transparent"
-              />
-            ) : (
-              <Square aria-hidden className="size-3.5 fill-current" />
-            )}
-          </button>
-        ) : null}
+          {secondaryLabel === null ? null : (
+            // Labelled, not an icon: "queue this for after the turn" has no
+            // established glyph, and the one thing this control must not be is
+            // mistaken for the steer beside it.
+            <button
+              aria-label="Queue for the next turn boundary"
+              className="shrink-0 rounded-full border border-border/80 px-3 py-1.5 text-2xs font-medium text-foreground/80 transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40"
+              data-testid="coding-session-composer-queue-next"
+              disabled={primaryDisabled}
+              onClick={onQueueNext}
+              title="Send now; this provider runs it when the current turn ends, and it cannot be recalled"
+              type="button"
+            >
+              {secondaryLabel}
+            </button>
+          )}
+
+          {isWorking ? (
+            <button
+              aria-label="Interrupt current turn"
+              className="grid size-9 place-items-center rounded-full bg-destructive text-destructive-foreground shadow-sm transition-transform enabled:hover:scale-105 disabled:cursor-not-allowed disabled:opacity-35"
+              data-testid="coding-session-composer-interrupt"
+              disabled={
+                !canControl ||
+                !isMember ||
+                !canInterrupt ||
+                pendingAction !== null
+              }
+              onClick={onInterrupt}
+              title={
+                canInterrupt
+                  ? "Interrupt only the current turn"
+                  : "Current-turn interrupt is unavailable for this provider"
+              }
+              type="button"
+            >
+              {pendingAction === "interrupt" ? (
+                <span
+                  aria-hidden
+                  className="size-4 animate-spin rounded-full border-2 border-current border-r-transparent"
+                />
+              ) : (
+                <Square aria-hidden className="size-3.5 fill-current" />
+              )}
+            </button>
+          ) : null}
+        </div>
       </div>
     </div>
   );

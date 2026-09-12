@@ -569,7 +569,13 @@ test("a degraded steer relabels the row and leaves the editor alone", async () =
   });
   await scope.settle();
 
-  assert.equal(readPendingCodingSessionTurns()[0].degradedByProvider, true);
+  // The provider's own code and words reach the row, so it can say which
+  // downgrade happened instead of asserting a fixed one. A turn that ended
+  // before the input reached it is not a runtime that cannot steer.
+  assert.deepEqual(readPendingCodingSessionTurns()[0].degradedByProvider, {
+    code: "STEER_UNSUPPORTED",
+    message: "this runtime advertised no native steering",
+  });
   // The turn still runs, so the words stay sent: a downgrade is not a refusal
   // and must never hand the draft back as though nothing was published.
   assert.equal(scope.error(), null);
