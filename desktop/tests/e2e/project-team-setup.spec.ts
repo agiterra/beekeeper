@@ -3,6 +3,7 @@ import { waitForAnimations } from "../helpers/animations";
 import { expect, test, type Page } from "@playwright/test";
 import { installMockBridge } from "../helpers/bridge";
 import type { ProjectTeamSetupDraft } from "../../src/features/roles/lib/projectTeamSetup";
+import type { ProjectTeamSetupLaunch } from "../../src/features/roles/lib/projectTeamSetup";
 
 const OWNER = "a1".repeat(32);
 const PROJECT = `30621:${OWNER}:general`;
@@ -11,6 +12,7 @@ type FixtureWindow = Window & {
   __setupFailGet: boolean;
   __setupValid: boolean;
   __setupSnapshotFail: boolean;
+  __setupRuntimeFail: boolean;
   __TAURI_INTERNALS__: {
     invoke: (
       command: string,
@@ -52,17 +54,118 @@ async function openRoles(page: Page, failGet = false) {
       const w = window as unknown as FixtureWindow;
       const original = w.__TAURI_INTERNALS__.invoke.bind(w.__TAURI_INTERNALS__);
       let draft: ProjectTeamSetupDraft | null = null;
+      let reservation: Record<string, unknown> | null = null;
+      let launch: ProjectTeamSetupLaunch | null = null;
+      let provisioned = false;
+      let startCount = 0;
       w.__setupCalls = [];
       w.__setupFailGet = failGet;
       w.__setupValid = true;
       w.__setupSnapshotFail = false;
+      w.__setupRuntimeFail = false;
       w.__TAURI_INTERNALS__.invoke = async (command, args = {}) => {
         if (
           !command.startsWith("project_team_setup_") &&
-          command !== "pick_coding_session_workdir"
+          command !== "pick_coding_session_workdir" &&
+          ![
+            "coding_session_provider_status",
+            "coding_session_provider_runtimes",
+            "coding_session_provider_models",
+            "provision_coding_session_provider",
+          ].includes(command)
         )
           return original(command, args);
         w.__setupCalls.push({ command, args });
+        if (
+          command === "coding_session_provider_status" ||
+          command === "provision_coding_session_provider"
+        ) {
+          if (command === "provision_coding_session_provider")
+            provisioned = true;
+          return {
+            provisioned,
+            running: provisioned,
+            ...(provisioned
+              ? { providerPubkey: "b".repeat(64), instanceId: "local-provider" }
+              : {}),
+          };
+        }
+        if (command === "coding_session_provider_runtimes") {
+          if (w.__setupRuntimeFail)
+            throw new Error("Runtime discovery unavailable");
+          return [
+            {
+              instanceRef: "claude-primary",
+              runtime: "claude",
+              driver: "claude",
+              label: "Claude",
+              authState: "ready",
+              defaultModel: "default",
+              allowedModels: ["default"],
+              capabilities: {
+                threadTurnStart: true,
+                threadTurnInterrupt: true,
+                threadSteer: false,
+                context: true,
+                diff: true,
+                plan: true,
+              },
+            },
+          ];
+        }
+        if (command === "coding_session_provider_models")
+          return {
+            instanceRef: "claude-primary",
+            defaultModel: "default",
+            allowedModels: ["default"],
+          };
+        if (command === "project_team_setup_get_authoring") return reservation;
+        if (command === "project_team_setup_get_launch") return launch;
+        if (command === "project_team_setup_reserve_authoring") {
+          reservation ??= {
+            authoringId: "authoring-1",
+            sessionRef: "setup-session-1",
+            channelId: args.channelId,
+            createCommandId: "csl-fixed-request",
+            status: "reserved",
+            genesisEventId: "c".repeat(64),
+          };
+          return reservation;
+        }
+        if (command === "project_team_setup_start_authoring") {
+          startCount += 1;
+          if (!reservation) throw new Error("Reserve first");
+          launch = {
+            setupId: String(args.setupId),
+            sessionRef: String(reservation.sessionRef),
+            channelId: String(reservation.channelId),
+            createCommandId: String(reservation.createCommandId),
+            providerPubkey: String(args.providerPubkey),
+            providerInstanceRef: String(args.providerInstanceRef),
+            runtime: String(args.runtime),
+            model: String(args.model),
+            actorPubkey: "d".repeat(64),
+            packRef: {
+              repo: "app:shipped",
+              sha: "0.5.16",
+              role: "project-setup",
+              path: "personas/roles/project-setup",
+            },
+            status: startCount === 1 ? "ambiguous" : "created",
+            ...(startCount > 1
+              ? {
+                  receiptEventId: "e".repeat(64),
+                  target: {
+                    driver: "claude",
+                    instanceId: "local-provider",
+                    sessionId: "native-setup",
+                    generation: 1,
+                  },
+                }
+              : {}),
+          };
+          return launch;
+        }
         if (command === "pick_coding_session_workdir")
           return "/projects/tankloop";
         if (command === "project_team_setup_get") {
@@ -134,6 +237,19 @@ async function setupCalls(page: Page) {
   return page.evaluate(() => (window as unknown as FixtureWindow).__setupCalls);
 }
 
+async function workbenchCalls(page: Page) {
+  const authoringReads = new Set([
+    "coding_session_provider_status",
+    "coding_session_provider_runtimes",
+    "coding_session_provider_models",
+    "project_team_setup_get_authoring",
+    "project_team_setup_get_launch",
+  ]);
+  return (await setupCalls(page)).filter(
+    (call) => !authoringReads.has(call.command),
+  );
+}
+
 test("open is read-only; explicit preparation and validation stay separate from publication; reopening resumes", async ({
   page,
 }) => {
@@ -142,7 +258,7 @@ test("open is read-only; explicit preparation and validation stay separate from 
   await expect(
     dialog.getByLabel("What should this project accomplish?"),
   ).toBeVisible();
-  expect((await setupCalls(page)).map((call) => call.command)).toEqual([
+  expect((await workbenchCalls(page)).map((call) => call.command)).toEqual([
     "project_team_setup_get",
   ]);
   await dialog
@@ -260,7 +376,11 @@ test("saving and reopening reverify the same separate copy; failed retry clears 
     dialog.getByTestId("project-team-setup-validation"),
   ).toContainText("has not been checked yet");
   await expect(save).toHaveCount(0);
-  expect((await setupCalls(page)).at(-1)).toEqual({
+  expect(
+    (await setupCalls(page)).findLast(
+      (call) => call.command === "project_team_setup_snapshot",
+    ),
+  ).toEqual({
     command: "project_team_setup_snapshot",
     args: {
       projectRef: PROJECT,
@@ -287,7 +407,7 @@ test("saving and reopening reverify the same separate copy; failed retry clears 
   await expect(
     dialog.getByTestId("project-team-setup-publication"),
   ).toContainText("has not been published or applied");
-  expect((await setupCalls(page)).map((call) => call.command)).toEqual([
+  expect((await workbenchCalls(page)).map((call) => call.command)).toEqual([
     "project_team_setup_get",
     "project_team_setup_prepare",
     "project_team_setup_validate",
@@ -321,7 +441,7 @@ test("a failed saved-draft read stays actionable and retry never creates a draft
   await expect(
     dialog.getByLabel("What should this project accomplish?"),
   ).toBeVisible();
-  expect((await setupCalls(page)).map((call) => call.command)).toEqual([
+  expect((await workbenchCalls(page)).map((call) => call.command)).toEqual([
     "project_team_setup_get",
     "project_team_setup_get",
   ]);
@@ -391,6 +511,17 @@ for (const layout of [
     await dialog
       .getByRole("status")
       .screenshot({ path: testInfo.outputPath("saved-version.png") });
+    const authoringStart = dialog.getByRole("button", {
+      name: "Start authoring session",
+      exact: true,
+    });
+    await expect(authoringStart).toBeEnabled();
+    await authoringStart.scrollIntoViewIfNeeded();
+    await checkFit();
+    await waitForAnimations(page);
+    await dialog.screenshot({
+      path: testInfo.outputPath("setup-authoring.png"),
+    });
     await dialog.evaluate((element) => {
       element.scrollTop = 0;
     });
@@ -403,3 +534,123 @@ for (const layout of [
     );
   });
 }
+
+test("authoring opens read-only, provisions explicitly and retries one durable request", async ({
+  page,
+}) => {
+  await openRoles(page);
+  const dialog = page.getByTestId("project-team-setup-dialog");
+  await dialog
+    .getByLabel("What should this project accomplish?")
+    .fill("Build the project's baseline team.");
+  await dialog
+    .getByLabel("Local project repository")
+    .fill("/projects/tankloop");
+  await dialog
+    .getByRole("button", { name: "Prepare draft", exact: true })
+    .click();
+  const authoring = dialog.getByRole("region", {
+    name: "Project team authoring",
+  });
+  const start = authoring.getByRole("button", {
+    name: "Start authoring session",
+    exact: true,
+  });
+  await expect(start).toBeEnabled();
+  expect(
+    (await setupCalls(page)).filter((call) =>
+      /provision_|reserve_authoring|start_authoring/.test(call.command),
+    ),
+  ).toEqual([]);
+  await dialog
+    .getByRole("button", { name: "Check draft", exact: true })
+    .click();
+  await expect(
+    dialog.getByTestId("project-team-setup-validation"),
+  ).toContainText("Pack structure passed");
+  await start.click();
+  await expect(
+    dialog.getByTestId("project-team-setup-validation"),
+  ).toContainText("has not been checked yet");
+  await expect(authoring.getByRole("status")).toContainText(
+    "Delivery is uncertain",
+  );
+  await expect(authoring).not.toContainText("provider confirmed creation");
+  await authoring
+    .getByRole("button", { name: "Retry saved authoring request", exact: true })
+    .click();
+  await expect(authoring.getByRole("status")).toContainText(
+    "provider confirmed creation",
+  );
+  await expect(
+    authoring.getByRole("button", { name: "Open authoring session" }),
+  ).toBeVisible();
+  const calls = await setupCalls(page);
+  expect(
+    calls.filter(
+      (call) => call.command === "provision_coding_session_provider",
+    ),
+  ).toHaveLength(1);
+  expect(
+    calls.filter(
+      (call) => call.command === "project_team_setup_reserve_authoring",
+    ),
+  ).toHaveLength(1);
+  const starts = calls.filter(
+    (call) => call.command === "project_team_setup_start_authoring",
+  );
+  expect(starts).toHaveLength(2);
+  expect(starts[0].args).toEqual(starts[1].args);
+  expect(JSON.stringify(starts)).not.toContain("/projects/tankloop");
+  await page.keyboard.press("Escape");
+  await expect(dialog).not.toBeVisible();
+  await page.getByTestId("project-team-setup-open").click();
+  await expect(authoring.getByRole("status")).toContainText(
+    "provider confirmed creation",
+  );
+  expect(
+    (await setupCalls(page)).filter(
+      (call) => call.command === "project_team_setup_start_authoring",
+    ),
+  ).toHaveLength(2);
+});
+
+test("runtime discovery failure gives a recoverable setup blocker without provisioning", async ({
+  page,
+}) => {
+  await openRoles(page);
+  await page.evaluate(() => {
+    (window as unknown as FixtureWindow).__setupRuntimeFail = true;
+  });
+  const dialog = page.getByTestId("project-team-setup-dialog");
+  await dialog
+    .getByLabel("What should this project accomplish?")
+    .fill("Build the project's baseline team.");
+  await dialog
+    .getByLabel("Local project repository")
+    .fill("/projects/tankloop");
+  await dialog
+    .getByRole("button", { name: "Prepare draft", exact: true })
+    .click();
+  const authoring = dialog.getByRole("region", {
+    name: "Project team authoring",
+  });
+  await expect(authoring.getByRole("alert")).toContainText(
+    "Runtime discovery unavailable",
+  );
+  await expect(
+    authoring.getByRole("button", { name: "Start authoring session" }),
+  ).toBeDisabled();
+  expect(
+    (await setupCalls(page)).filter((call) =>
+      /provision_|reserve_authoring|start_authoring/.test(call.command),
+    ),
+  ).toEqual([]);
+  await page.evaluate(() => {
+    (window as unknown as FixtureWindow).__setupRuntimeFail = false;
+  });
+  await authoring.getByRole("button", { name: "Refresh runtimes" }).click();
+  await expect(
+    authoring.getByRole("button", { name: "Start authoring session" }),
+  ).toBeEnabled();
+});

@@ -820,6 +820,12 @@ pub async fn stage_coding_session_actor_seat(
             .iter()
             .find(|record| record.pubkey == pubkey)
             .ok_or_else(|| format!("agent {pubkey} is not a managed agent on this computer"))?;
+        if crate::managed_agents::project_team_setup::actor::restage::is_setup_actor(record) {
+            return Err(
+                crate::managed_agents::project_team_setup::actor::restage::SCOPED_STAGE_REQUIRED
+                    .to_string(),
+            );
+        }
         let plan = plan_seat_pack(
             &app,
             &state,

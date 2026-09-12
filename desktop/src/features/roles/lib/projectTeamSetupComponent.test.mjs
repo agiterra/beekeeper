@@ -49,7 +49,7 @@ const draftA = {
 async function harness() {
   const React = (await import("react")).default;
   const { ProjectTeamSetupForm } = await import(
-    "../ui/ProjectTeamSetupWorkbench.tsx"
+    "../ui/ProjectTeamSetupForm.tsx"
   );
   const testing = await import("@testing-library/react");
   const element = (projectRef) =>
@@ -60,6 +60,14 @@ async function harness() {
     });
   return { ...testing, element };
 }
+
+test("importing the scoped form does not start application-wide IPC discovery", async () => {
+  // The community wrapper imports mediaUrl's eager proxy polling. Keep this
+  // reusable form independent: those delayed calls otherwise leak between
+  // component tests and make the read-only contract depend on machine load.
+  await harness();
+  assert.deepEqual(calls, [], "Importing the form must not invoke native APIs");
+});
 
 test("a late saved-draft read cannot replace the newly selected project's form", async () => {
   let resolveA;
@@ -165,15 +173,18 @@ test("saving a checked version uses the scoped host snapshot and does not publis
       },
     ],
   );
-  assert.ok(
-    calls.every(({ command }) =>
-      [
-        "project_team_setup_get",
-        "get_coding_session_workdir_state",
-        "project_team_setup_validate",
-        "project_team_setup_snapshot",
-      ].includes(command),
+  assert.deepEqual(
+    calls.filter(
+      ({ command }) =>
+        ![
+          "project_team_setup_get",
+          "get_coding_session_workdir_state",
+          "project_team_setup_validate",
+          "project_team_setup_snapshot",
+        ].includes(command),
     ),
+    [],
+    "Snapshot workbench made unexpected IPC calls",
   );
   answers.project_team_setup_snapshot = () => {
     throw { message: "Draft changed and is no longer valid." };

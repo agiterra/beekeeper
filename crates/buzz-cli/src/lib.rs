@@ -5277,18 +5277,16 @@ mod tests {
         let mut checked = 0;
         for role in std::fs::read_dir(&roles).expect("read shipped role packs") {
             let persona_dir = role.expect("role directory").path().join("personas");
-            let Ok(personas) = std::fs::read_dir(persona_dir) else {
-                continue;
-            };
-            for persona in personas {
+            for persona in std::fs::read_dir(persona_dir).into_iter().flatten() {
                 let path = persona.expect("persona file").path();
                 if path.extension().and_then(|extension| extension.to_str()) != Some("md") {
                     continue;
                 }
                 let body = std::fs::read_to_string(&path).expect("read role persona");
+                let body = body.split_whitespace().collect::<Vec<_>>().join(" ");
                 assert!(
-                    body.contains("bee sessions\noperation get --id <operationId>")
-                        || body.contains("bee sessions operation get --id\n<operationId>"),
+                    body.contains("$BEE sessions operation get --id <operationId>")
+                        || body.contains("bee sessions operation get --id <operationId>"),
                     "{} does not teach the exact pointer fetch command",
                     path.display()
                 );

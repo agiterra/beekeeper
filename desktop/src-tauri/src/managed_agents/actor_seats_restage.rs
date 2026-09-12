@@ -370,6 +370,20 @@ pub(crate) async fn restage_actor_seats_for_provider(
         let Some(record) = records.iter().find(|record| record.pubkey == request.actor) else {
             continue;
         };
+        let setup =
+            crate::managed_agents::project_team_setup::actor::restage::is_setup_actor(record);
+        if setup {
+            let plan = crate::managed_agents::project_team_setup::actor::restage::restage_plan(
+                app,
+                state,
+                record,
+                request.project_ref.as_deref(),
+                &request.role,
+                request.pack_ref.as_ref(),
+            );
+            resolved_packs.insert(key, plan);
+            continue;
+        }
         let pack_source = match request.project_ref.as_deref() {
             Some(project_ref) => match fetch_project_pack_source(state, project_ref).await {
                 Ok(source) => source,

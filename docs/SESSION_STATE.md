@@ -12055,6 +12055,39 @@ without actor/role/policy/grants. This is a checked local fix, not an installed
 or published claim. Details and limits:
 [`history/2026-09-11-project-team-setup.md`](history/2026-09-11-project-team-setup.md).
 
+111. **Concurrent host directory mutations could lose another session's hint
+(2026-09-11).** The desktop's `workdir_store::mutate` and four worktree writers
+loaded and replaced the entire shared JSON record without a transaction lock.
+A per-project setup launch lock cannot protect another project's hint or a
+normal worktree mutation. The local candidate now takes the same OS file lock
+before every desktop read/modify/write and provider-view rematerialization;
+the setup hint pins its relay and never seeds project defaults or MRU.
+`coding_sessions/workdir_store_lock.rs` exercises twelve concurrent hint
+writes while preserving existing defaults, and rejects a symlink lock. Source
+audit found all desktop writers participate; the CLI worktree command only
+reads this record. No lost-hint live incident or native Windows reproduction
+is claimed. Details: [project setup checkpoint](history/2026-09-11-project-team-setup.md).
+
+112. **A repository self-backlink could establish project pack-source authority
+(2026-09-11).** `handlers/ingest.rs` admits a kind-30617 project backlink on
+project read access: public/unknown projects, or any private-project member.
+`handlers/pack_source.rs` then selected community repository announcements by
+that author-controlled backlink and admitted their founders/maintainers to
+publish kind 30624. No project Owner endorsement was required. A separate
+author's source address suffices because clients resolve sources across authors.
+NIP-OA does not substitute the owner's pubkey at this gate; this is authority
+through an unendorsed relationship. Two independent source traces confirmed
+the chain, including the existing co-founder admission test; no live exploit
+was attempted. The narrow correction requires a project creator-signed forward
+repository relationship for the founder exception, preserving creator/Owner
+rights. **Fixed by local commit `0f70d7633`:** `pack_source.rs` resolves the current signed
+project head in the same community and requires that forward endorsement.
+The production-query regression passes against scratch Postgres for current,
+removed, restored and deleted endorsements, stale reposts and community
+isolation; `just test-git-push-gate` includes it. Existing backlink-only
+founders need creator endorsement before another source update. No deployed
+fix is claimed. See [publication contract](PROJECT_TEAM_SETUP_IMPL.md).
+
 ## 2a. Direction settled 2026-08-18
 
 Three independent answers to "what should a new execution get on its first

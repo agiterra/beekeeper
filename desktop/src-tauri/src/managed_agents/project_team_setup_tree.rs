@@ -245,7 +245,7 @@ fn identities(roles: &Path) -> Result<Vec<SetupRoleIdentity>, SetupError> {
     Ok(result)
 }
 
-fn check_relative_reference(reference: &str) -> Result<(), SetupError> {
+pub(super) fn check_relative_reference(reference: &str) -> Result<(), SetupError> {
     // Reject Windows paths on Unix too: a draft can later move to Windows.
     let portable = reference.replace('\\', "/");
     if portable.is_empty()
@@ -261,7 +261,7 @@ fn check_relative_reference(reference: &str) -> Result<(), SetupError> {
     Ok(())
 }
 
-fn check_manifest_references(pack: &Path) -> Result<(), SetupError> {
+pub(super) fn check_manifest_references(pack: &Path) -> Result<(), SetupError> {
     let path = pack.join(".plugin/plugin.json");
     check_regular_file(&path, MAX_FILE_BYTES)?;
     let manifest: serde_json::Value = serde_json::from_slice(&std::fs::read(path)?)

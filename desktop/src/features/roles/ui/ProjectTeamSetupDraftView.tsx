@@ -22,9 +22,11 @@ export type StartProjectTeamAuthoring = (
 export function ProjectTeamSetupDraftView({
   draft,
   onStartAuthoring,
+  authoring,
 }: {
   draft: ProjectTeamSetupDraft;
   onStartAuthoring?: StartProjectTeamAuthoring;
+  authoring?: (onDraftMayChange: () => void) => React.ReactNode;
 }) {
   const [validation, setValidation] =
     React.useState<ProjectTeamSetupValidation | null>(null);
@@ -194,25 +196,26 @@ export function ProjectTeamSetupDraftView({
           value={brief}
         />
       </details>
-      {onStartAuthoring ? (
-        <Button
-          disabled={busy}
-          onClick={() =>
-            void run(async () => {
-              setValidation(null);
-              await onStartAuthoring(draft, brief);
-            })
-          }
-          type="button"
-        >
-          Start authoring session
-        </Button>
-      ) : (
-        <p className="text-sm text-muted-foreground">
-          Next: use the setup brief to adapt these draft packs in a project
-          authoring session.
-        </p>
-      )}
+      {authoring?.(() => setValidation(null)) ??
+        (onStartAuthoring ? (
+          <Button
+            disabled={busy}
+            onClick={() =>
+              void run(async () => {
+                setValidation(null);
+                await onStartAuthoring(draft, brief);
+              })
+            }
+            type="button"
+          >
+            Start authoring session
+          </Button>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            Next: use the setup brief to adapt these draft packs in a project
+            authoring session.
+          </p>
+        ))}
       {error ? (
         <p className="text-sm text-destructive" role="alert">
           {error}

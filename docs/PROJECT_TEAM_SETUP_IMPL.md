@@ -115,6 +115,44 @@ Build first; it provides the surface on which we can test the setup agent.
   Until that connection is implemented, show a draft and an inspectable brief;
   do not label a prepared workspace as an agent-created team.
 
+### Authoring launch contract (2026-09-11)
+
+- Opening the draft discovers installed/authenticated local runtimes and their
+  actual models through read-only probes. Failed discovery remains unknown;
+  there is no optimistic Claude fallback or provider provisioning on mount.
+- Explicit Start provisions the local provider if needed, reserves one signed
+  genesis and create-command ID, and starts the native coordinator. The chosen
+  channel must be verified against the project on the captured relay. A shared
+  remote provider cannot use this computer's local draft.
+- The host preserves one standalone setup identity and an exact shipped
+  `project-setup` pack snapshot, outside the editable role draft. Owner-encrypted
+  mint recovery is durable before identity-store/keyring side effects. Retry
+  reconciles that identity; it never silently replaces it or installs a global
+  team. The recorded bootstrap retains its original packRef and byte digest.
+- `PROJECT_TEAM_SETUP.md` in the editable draft workspace carries the local
+  project paths, intent and draft-writing brief. The create event contains a
+  short instruction to read that file, not the private paths. This is an agent
+  instruction boundary, not a new filesystem sandbox or publication grant.
+  The existing seat write fence covers that workspace; private custody and the
+  preserved bootstrap are sibling storage outside it. Repository inspection
+  outside the workspace remains read-only.
+- The coordinator seals the complete signed create and its runtime/model/actor
+  binding before channel membership, custody staging or session-event
+  publication. Explicit provisioning may already have started the reusable
+  local provider; it does not create this authoring execution. Retries use the
+  saved events and IDs. A verified provider
+  receipt distinguishes execution creation from failure of its first turn;
+  relay acceptance alone never becomes a “running” claim.
+- The workbench keeps an Open session action and explicit status refresh. A
+  read of saved launch state may query receipts but never republishes or starts
+  a provider. Publication of the resulting packs remains milestone 2.
+
+Build ownership for this connection: setup authority owns new actor/identity/
+bootstrap modules; setup coordinator owns new launch/journal/proof modules;
+setup UI owns the authoring controls and read-only runtime hook; Astra owns
+shared IPC/types, module registration, local prompt, pinned working-directory
+hint, integration tests, review and the final commit.
+
 Strict build ownership in the isolated topic worktree:
 
 | Lane | Files | Responsibility |
@@ -174,6 +212,56 @@ best-effort local check.
 - Publication capability stays with the host. Existing-source maintenance must
   be an explicit supported path with optimistic concurrency, not calling init
   again or reseeding the source from the app.
+
+### Publication contract from the code review (2026-09-11)
+
+The authoring brief's host-publication rule is an instruction, not proof of a
+relay restriction. Finding 112 identifies an existing authority escalation:
+repository announcements can self-link to a project, and that backlink alone
+currently qualifies their founders to publish its pack source. Close this
+before automated publication: repository-founder eligibility must come from
+repositories explicitly named by the project creator's signed forward roster.
+Project creators and project Owners retain their existing rights. Ordinary
+repository announcements remain available. Existing backlink-only founder
+configurations need endorsement before their next source change; do not claim
+deployed behavior changed until the relay is actually updated.
+
+Use kind 30624 with a versioned conditional extension, not a new endpoint.
+Preserve v1's unconditional behavior. A proposed v2 requires
+`expectedSourceId` (an event ID, or explicit null for initial creation); missing
+or malformed conditions refuse. Update strict readers before producing v2.
+An old relay must refuse the version, never silently drop the condition.
+
+All source writes, including legacy writes, take the same transaction lock for
+community and normalized project coordinate. Resolve the effective live source
+across authors under that lock, compare its ID and atomically replace/insert.
+The ordering must match readers (`created_at` descending, then ID ascending).
+A conditional successor must outrank its expected head. Exact stored-event
+retries reconcile without resurrection after supersession or deletion. Source
+deletions participate in the same lock. Legacy writes can still change the
+source after a conditional transaction; this is atomic comparison and update,
+not permanent exclusivity.
+
+Persist exact signed publication bytes before sending. A named source conflict
+maps to HTTP 409, WebSocket conflict refusal and CLI exit 5. Authorization stays
+a distinct refusal. After an uncertain response, read stored ID and effective
+head; admission's timestamp window means a delayed retry cannot always resend
+successfully. Never silently sign a replacement to evade that check.
+
+Publishing Git before the source switch must not change an already adopted
+moving ref. Push the checked snapshot to a new candidate ref, verify its SHA,
+then conditionally adopt that immutable revision. Updating an existing shared
+branch also needs expected Git-head concurrency; source-event comparison alone
+cannot protect bytes changed by an earlier Git push.
+
+Build lanes, dispatched only after the contract is locked: wire/readers own
+core source schema, SDK, TS decoder and conformance; database owns the project
+transaction and deletion serialization; relay owns authority and conflict
+mapping; host finalizer owns snapshot publication journal, exact retries and
+CLI wiring. Required cases include competing creators/owners, legacy writes,
+deletion races, same-second ordering, rollback, stale timestamps, replay after
+supersession/deletion and community isolation. This section is the next-slice
+contract, not a claim that conditional publication is implemented.
 
 ## Milestone 3 — project team and lead handoff
 

@@ -30,7 +30,7 @@ on 2026-09-09, with `just ci` and `just test` green on that exact commit
 
 | Work | Owner | State (2026-09-11) | Where |
 | --- | --- | --- | --- |
-| Project team setup and neutral baseline | Astra; build lanes complete | local candidate on `work/project-team-setup-astra`: neutral packs, draft workbench, checked versions, sealed authoring reservations and Solo fix; no installed or published changes | [`PROJECT_TEAM_SETUP_IMPL.md`](PROJECT_TEAM_SETUP_IMPL.md), [test checkpoint](history/2026-09-11-project-team-setup.md) |
+| Project team setup and neutral baseline | Astra; authoring milestone checked locally | local candidate on `work/project-team-setup-astra`: neutral packs, draft workbench, checked versions, authoring launch with preserved identity/bootstrap and exact retries, Solo fix and pack-source authority correction (`0f70d7633`); no installed or published changes | [`PROJECT_TEAM_SETUP_IMPL.md`](PROJECT_TEAM_SETUP_IMPL.md), [test checkpoint](history/2026-09-11-project-team-setup.md) |
 | Native mid-turn steering for Claude sessions | Fable/Opus candidate; Astra integrates | 2026-09-12: runtime queued-steer fence correction passes 58 ACP/46 provider tests; three original browser failures and five steering cases pass. Both short-window cases pass; authority and persistence review closed with focused tests/clippy green. Combined gates pending. No push or installation | [integration evidence](history/2026-09-12-steering-integration.md), `NATIVE_STEERING_IMPL.md` |
 | Automatic project context beside ordinary agent work | paused by Brian on 2026-09-10 | findings saved; next step is proving a harmless marker reaches a fresh Claude session through a hook | ledger § "September 10 — automatic project context: findings saved, work paused" |
 | Collaborative workspace plan, ordered steps 0–6 | Astra finalizes and lands `main`; Fable takes delegated slices; Andy lands his own topic branches | steps 0–4 have integrated candidates per the ledger's September 7–9 sections; no landing of steps 5 or 6 is recorded anywhere found, so treat them as open | [`COLLABORATIVE_WORKSPACE_PLAN.md`](COLLABORATIVE_WORKSPACE_PLAN.md) |
@@ -93,7 +93,7 @@ Rules, each with where it is written down.
 
 ## Next, in order
 
-Active implementation: project team setup milestone 1. Neutral packs, local drafts and the Team-to-Solo fix passed focused native/browser checks and 9,258 desktop tests (2026-09-11). Exact saved versions and sealed authoring reservations passed 37 native setup tests and independent review. Next: actual setup-agent launch with project/channel binding, exact shipped-pack staging and receipt reconciliation, then publication and lead handoff. See the linked plan and test checkpoint.
+Project team setup milestone 1 is checked locally. On 2026-09-11 authoring passed 3,250 Tauri tests (18 ignored), 9,267 desktop tests, two provider subprocess/fence tests and seven mock-bridge browser cases. Final `just test` passed, including both pack-source admission database tests. Corrected neutral operation instructions also passed 188 persona tests and a fresh 63-test native setup run. No push, installation or relay deployment is claimed. Next: conditional snapshot publication using an isolated Git candidate ref, project-qualified installation and lead handoff, then live Tankloop acceptance. Ordinary Solo remains independent. The linked plan records missing first-project channel creation and explicit resume of setup identities.
 
 1. Done 2026-09-11: the lead pack revision landed on the packs repository
    (`agiterra-packs` `main` at `5f4ae76fa`, the tree seats stage from; this
@@ -140,7 +140,7 @@ agent hits in the first hour.
 
 | Kind | Place | Tracked |
 | --- | --- | --- |
-| Numbered findings, items 1–111 and counting | `SESSION_STATE.md` §2; `grep -n '^<n>\. ' docs/SESSION_STATE.md` | yes |
+| Numbered findings, items 1–112 and counting | `SESSION_STATE.md` §2; `grep -n '^<n>\. ' docs/SESSION_STATE.md` | yes |
 | Session reports 2026-09-06 to 2026-09-11 | the top of `SESSION_STATE.md`, above §1; written before this map and left in place | yes |
 | Session reports from 2026-09-11 on | [`history/`](history/README.md), `YYYY-MM-DD-<slug>.md` | yes |
 | Plans and specs | `COLLABORATIVE_WORKSPACE_PLAN.md`, `*_SPEC.md`, `*_IMPL.md` in `docs/` | yes |

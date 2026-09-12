@@ -1142,7 +1142,7 @@ pub(super) use deploy::build_deploy_payload;
 use deploy::{deploy_payload_json, DeployProjections};
 #[cfg(test)]
 use deploy::{ensure_remote_provider_supported, resolve_deploy_model_provider};
-pub(super) use mint::mint_agent_identity;
+pub(crate) use mint::mint_agent_identity;
 pub use start::start_managed_agent;
 
 #[path = "agents_profile.rs"]

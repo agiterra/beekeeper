@@ -15,8 +15,12 @@ mod tests;
 #[path = "project_team_setup_tree.rs"]
 mod tree;
 pub use snapshot::ProjectTeamSetupSnapshot;
+#[path = "project_team_setup_actor.rs"]
+pub(crate) mod actor;
 #[path = "project_team_setup_authoring.rs"]
 pub(crate) mod authoring;
+#[path = "project_team_setup_launch.rs"]
+pub(crate) mod launch;
 
 static PREPARE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 const MAX_INTENT_BYTES: usize = 16 * 1024;

@@ -3497,6 +3497,10 @@ done
 "#;
 }
 
+#[cfg(all(test, unix))]
+#[path = "session_setup_authoring_tests.rs"]
+mod setup_authoring_tests;
+
 #[cfg(test)]
 mod tests {
     use super::testing::*;

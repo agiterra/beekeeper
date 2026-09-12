@@ -526,6 +526,7 @@ pub async fn set_coding_session_worktree_parent(
         return Err("That folder is not a git repository.".to_string());
     };
     let key = resolved.root.to_string_lossy().into_owned();
+    let _lock = super::workdir_store::lock_workdir_store(&app)?;
     let mut store = load_workdir_store(&app)?;
     match parent
         .map(PathBuf::from)
@@ -658,6 +659,7 @@ fn record_created_worktree(
     session_id: Option<&str>,
     created: &CodingSessionWorktreeCreated,
 ) -> Result<(), String> {
+    let _lock = super::workdir_store::lock_workdir_store(app)?;
     let mut store = load_workdir_store(app)?;
     store.record_seat_worktree(
         session_ref,
@@ -726,6 +728,7 @@ pub async fn record_coding_session_worktree(
         // purpose is naming what may later be removed.
         return Ok(false);
     }
+    let _lock = super::workdir_store::lock_workdir_store(&app)?;
     let mut store = load_workdir_store(&app)?;
     store.record_seat_worktree(
         &session_ref,
@@ -771,6 +774,7 @@ pub(crate) fn remove_recorded_seat_worktree(
     reason: &str,
 ) -> Result<String, String> {
     let key = seat_worktree_key(session_ref, seat_label);
+    let _lock = super::workdir_store::lock_workdir_store(app)?;
     let mut store = load_workdir_store(app)?;
     let Some(entry) = store.worktrees.get(&key).cloned() else {
         return Err(format!("this host has no worktree recorded for {key}"));

@@ -217,6 +217,8 @@ pub(crate) fn invoke_handler(
         managed_agents::project_team_setup::project_team_setup_snapshot,
         managed_agents::project_team_setup::authoring::project_team_setup_reserve_authoring,
         managed_agents::project_team_setup::authoring::project_team_setup_get_authoring,
+        managed_agents::project_team_setup::launch::project_team_setup_start_authoring,
+        managed_agents::project_team_setup::launch::project_team_setup_get_launch,
         managed_agents::actor_seats::clear_coding_session_actor_seat,
         start_managed_agent,
         stop_managed_agent,

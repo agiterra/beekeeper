@@ -42,6 +42,10 @@ use crate::session_provider::store::{
 };
 use crate::util::now_iso;
 
+#[path = "workdir_store_lock.rs"]
+mod lock;
+pub(crate) use lock::lock_workdir_store;
+
 /// Current on-disk schema version of the desktop's own record.
 ///
 /// Version 2 (L11) adds [`CodingSessionWorkdirStore::worktrees`]. Version 1
@@ -778,6 +782,7 @@ pub(crate) fn remateralize_provider_projects_view(
     app: &AppHandle,
     relay_url: &str,
 ) -> Result<(), String> {
+    let _lock = lock_workdir_store(app)?;
     let store = load_workdir_store(app)?;
     materialize_projects_view_for_relay(app, relay_url, &store)
 }
@@ -797,6 +802,7 @@ fn mutate<F>(
 where
     F: FnOnce(&mut CodingSessionWorkdirStore),
 {
+    let _lock = lock_workdir_store(app)?;
     let mut store = load_workdir_store(app)?;
     apply(&mut store);
     store.version = WORKDIR_STORE_VERSION;
@@ -907,6 +913,27 @@ pub fn clear_coding_session_create_hint(
 ) -> Result<CodingSessionWorkdirStore, String> {
     let command_id = command_id.trim().to_string();
     mutate(&app, &state, |store| store.clear_hint(&command_id))
+}
+
+/// Stage one command's directory for a captured relay, without changing defaults.
+/// Callers serialize their launch and validate the owner/relay before invoking it.
+pub(crate) fn stage_coding_session_create_hint_at(
+    app: &AppHandle,
+    relay_url: &str,
+    command_id: &str,
+    path: &Path,
+) -> Result<(), String> {
+    if command_id.trim().is_empty() || !path.is_absolute() {
+        return Err("a command id and an absolute working directory are required".to_string());
+    }
+    let _lock = lock_workdir_store(app)?;
+    let mut store = load_workdir_store(app)?;
+    store.stage_hint(command_id, path.to_path_buf());
+    store.version = WORKDIR_STORE_VERSION;
+    let payload = serde_json::to_vec_pretty(&store)
+        .map_err(|error| format!("failed to serialize coding-session workdir store: {error}"))?;
+    atomic_write_json_restricted(&workdir_store_path(app)?, &payload)?;
+    materialize_projects_view_for_relay(app, relay_url, &store)
 }
 
 /// Check a candidate directory before it is committed to anything.

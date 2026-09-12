@@ -289,3 +289,17 @@ fn oversized_journal_is_refused_without_replacing_it() {
     assert!(reserve(&draft, &owner, &Uuid::new_v4().to_string()).is_err());
     assert_eq!(std::fs::read(path).expect("preserved"), bytes);
 }
+
+#[test]
+fn local_brief_accepts_full_intent_and_keeps_writes_scoped_to_draft() {
+    let (_root, mut draft, _) = fixture();
+    draft.intent = "x".repeat(16 * 1024);
+    let brief = authoring_prompt(&draft).expect("full supported intent");
+    assert!(brief.contains(&draft.intent));
+    assert!(brief.contains(&draft.project_directory));
+    assert!(brief.contains(&draft.roles_directory));
+    assert!(brief.contains("Ordinary solo sessions must remain possible"));
+    assert!(brief.contains("Do not publish packs"));
+    draft.project_directory = "x".repeat(32 * 1024);
+    assert!(authoring_prompt(&draft).is_err());
+}

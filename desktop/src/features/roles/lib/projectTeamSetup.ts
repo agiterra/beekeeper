@@ -1,3 +1,6 @@
+import type { CodingSessionCommandTarget } from "@/features/coding-sessions/lib/codingSessionCommand";
+import type { PackRef } from "@/features/coding-sessions/lib/codingSessionPackRef";
+
 /** Host-local setup work; preparing a draft does not publish a pack source. */
 export type ProjectTeamSetupDraft = {
   setupId: string;
@@ -31,6 +34,40 @@ export type ProjectTeamSetupSnapshot = {
   rolesDirectory: string;
   manifestPath: string;
   roles: string[];
+};
+
+/** Durable IDs; reserving them neither publishes nor launches. */
+export type ProjectTeamSetupAuthoringReservation = {
+  authoringId: string;
+  sessionRef: string;
+  channelId: string;
+  createCommandId: string;
+  status: "reserved";
+  genesisEventId: string;
+};
+
+/** Host journal plus a verified provider receipt, when one has been observed. */
+export type ProjectTeamSetupLaunch = {
+  setupId: string;
+  sessionRef: string;
+  channelId: string;
+  createCommandId: string;
+  providerPubkey: string;
+  providerInstanceRef: string;
+  runtime: string;
+  model: string;
+  actorPubkey: string;
+  packRef: PackRef;
+  status:
+    | "prepared"
+    | "awaiting_receipt"
+    | "ambiguous"
+    | "created"
+    | "initial_turn_failed"
+    | "failed";
+  message?: string | null;
+  target?: CodingSessionCommandTarget | null;
+  receiptEventId?: string | null;
 };
 
 /** Explain the prerequisite the user can resolve before preparing a draft. */
