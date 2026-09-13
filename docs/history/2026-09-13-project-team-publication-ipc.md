@@ -49,3 +49,25 @@ focused publication filter passed 11 tests; native format and all-target Tauri
 clippy passed. Local red/green logs are under
 `../review-2026-09-13-final-ci-sol/publication-ipc-{red,green}.log`. No full
 smoke run was needed for this serialization correction.
+
+## Landing
+
+`b2e4c35c278257d1ec8b3fe9ab25752d5c601438` landed on relay main and the GitHub
+mirror on September 13, confirmed by both `git ls-remote` answers. Local main
+advanced fast-forward. The normal push checks passed; local evidence is
+`../review-2026-09-13-final-ci-sol/publication-ipc-push.log`.
+
+## Installed artifact
+
+On September 13, `scripts/app-from.sh b2e4c35c278257d1ec8b3fe9ab25752d5c601438`
+completed and relaunched `/Users/brian/Applications/Beekeeper Dev.app`. The
+bundled CLI reports `bee 0.1.0 (b2e4c35c)`, built `2026-09-13T21:31:33Z`.
+Independent `codesign --verify --deep --strict --verbose=2` passed; desktop,
+session-provider and ACP processes were observed running. The previous bundle
+is retained as `Beekeeper Dev.app.prev`. Local build evidence is
+`../review-2026-09-13-final-ci-sol/app-from-b2e4c35c2.log`.
+
+The normal product push ran 3,273 native tests and completed in 127 seconds.
+No live Tank Loop publication was performed by Astra. Brian can reopen setup
+and retry Publish checked version using the existing saved snapshot; authoring
+and snapshot creation need not be repeated.
