@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
-use tokio::sync::Mutex;
+use tokio::sync::{oneshot, Mutex};
 
 struct CapturingLlm {
     url: String,
@@ -28,6 +28,21 @@ async fn spawn_capturing_llm(responses: Vec<Value>) -> CapturingLlm {
 /// status, so a test can serve a real provider rejection (e.g. a context-window
 /// 400) instead of only success bodies.
 async fn spawn_capturing_llm_with_status(responses: Vec<(u16, Value)>) -> CapturingLlm {
+    spawn_capturing_llm_with_gate(responses, None).await
+}
+
+struct LlmResponseGate {
+    request_number: usize,
+    reached: oneshot::Sender<()>,
+    release: oneshot::Receiver<()>,
+}
+
+/// Hold one response until the test observes the independent protocol ACK.
+async fn spawn_capturing_llm_with_gate(
+    responses: Vec<(u16, Value)>,
+    gate: Option<LlmResponseGate>,
+) -> CapturingLlm {
+    let gate = Arc::new(Mutex::new(gate));
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     let queue = Arc::new(Mutex::new(VecDeque::from(responses)));
@@ -41,6 +56,7 @@ async fn spawn_capturing_llm_with_status(responses: Vec<(u16, Value)>) -> Captur
             };
             let queue = queue.clone();
             let captured = cap2.clone();
+            let gate = gate.clone();
             tokio::spawn(async move {
                 let mut buf = Vec::new();
                 let mut tmp = [0u8; 8192];
@@ -71,7 +87,26 @@ async fn spawn_capturing_llm_with_status(responses: Vec<(u16, Value)>) -> Captur
                     }
                 }
                 if let Ok(req) = serde_json::from_slice::<Value>(&buf[header_end..]) {
-                    captured.lock().await.push(req);
+                    let request_number = {
+                        let mut captured = captured.lock().await;
+                        captured.push(req);
+                        captured.len()
+                    };
+                    let gate = {
+                        let mut gate = gate.lock().await;
+                        if gate
+                            .as_ref()
+                            .is_some_and(|g| g.request_number == request_number)
+                        {
+                            gate.take()
+                        } else {
+                            None
+                        }
+                    };
+                    if let Some(gate) = gate {
+                        gate.reached.send(()).expect("test awaits response gate");
+                        gate.release.await.expect("test releases response gate");
+                    }
                 }
                 let (status, body) = queue
                     .lock()
@@ -3521,10 +3556,10 @@ async fn handoff_cap_binds_within_a_single_turn() {
     //  req 1: turn 1 complete()            → usage=950 (over threshold=900)
     //  req 2: turn 2 round 0 summarize()   → summary (handoff_attempts: 0→1)
     //  req 3: turn 2 round 0 complete()    → tool_call + usage=950 (re-arms gate)
-    //         [fake-mcp tool executes; steer queued while run is active]
-    //  req 4: turn 2 round 1 preflight     → 950 >= 900 AND attempts=1 >= max=1
+    //         [response held until steer accepted; fake-mcp tool executes]
+    //         turn 2 round 1 preflight     → 950 >= 900 AND attempts=1 >= max=1
     //                                         → WARN, skip (cap exhausted for this turn)
-    //  req 5: turn 2 round 1 complete()    → end_turn (steer text folded into messages)
+    //  req 4: turn 2 round 1 complete()    → end_turn (steer text folded into messages)
     let fake_mcp = env!("CARGO_BIN_EXE_fake-mcp");
     // Build a tool-call response that also carries usage so the gate re-arms
     // on round 1's preflight (without usage, last_request_input_tokens is None
@@ -3538,12 +3573,21 @@ async fn handoff_cap_binds_within_a_single_turn() {
         });
         v
     };
-    let llm = spawn_capturing_llm(vec![
-        openai_text_with_usage("seed", 950), // turn 1: seed high usage
-        openai_text("handoff-summary"),      // turn 2 round 0: summarize
-        tool_call_with_usage,                // turn 2 round 0: tool call + usage (re-arms)
-        openai_text_with_usage("end_turn_text", 10), // turn 2 round 1: final answer
-    ])
+    let (gate_reached_tx, gate_reached) = oneshot::channel();
+    let (release_response, release_response_rx) = oneshot::channel();
+    let llm = spawn_capturing_llm_with_gate(
+        vec![
+            (200, openai_text_with_usage("seed", 950)),
+            (200, openai_text("handoff-summary")),
+            (200, tool_call_with_usage),
+            (200, openai_text_with_usage("end_turn_text", 10)),
+        ],
+        Some(LlmResponseGate {
+            request_number: 3,
+            reached: gate_reached_tx,
+            release: release_response_rx,
+        }),
+    )
     .await;
 
     let mut h = Harness::spawn_with_env(
@@ -3604,47 +3648,54 @@ async fn handoff_cap_binds_within_a_single_turn() {
         )
         .await;
 
-    // Drain until the final response, approving tool-permission requests,
-    // capturing the activeRunId once it is broadcast, sending one steer,
-    // and verifying that it is accepted in the live run.
-    let mut run_id: Option<String> = None;
-    let mut steer_id: i64 = -1;
+    // Run metadata is not a barrier: the immediate canned responses can
+    // finish the turn before the harness sends its steer. Hold response 3,
+    // after summarize consumed the cap but before the next round, until the
+    // same-run steer ACK proves its input has been queued.
+    let update = h
+        .recv_until(|v| v["params"]["update"]["_meta"]["goose"]["activeRunId"].is_string())
+        .await;
+    let run_id = update["params"]["update"]["_meta"]["goose"]["activeRunId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    // Same failure watchdog as Harness::recv; the oneshot, not elapsed time,
+    // establishes that the post-handoff request is actually waiting.
+    tokio::time::timeout(Duration::from_secs(15), gate_reached)
+        .await
+        .expect("post-handoff request reaches gate")
+        .expect("LLM response gate remains open");
+    assert_eq!(llm.captured.lock().await.len(), 3);
+    let steer_id = h
+        .send(
+            "_goose/unstable/session/steer",
+            json!({
+                "sessionId": sid,
+                "expectedRunId": run_id,
+                "prompt": [{"type":"text","text":"STEER-CANARY: also consider the edge case"}],
+            }),
+        )
+        .await;
+    let mut release_response = Some(release_response);
     let mut steer_accepted = false;
     loop {
         let v = h.recv().await;
-
-        // Capture the run id from the first session/update that carries it,
-        // then immediately queue a steer.  This must happen before round 1 so
-        // the steer text is present but the cap check still fires — proving
-        // the counter is not reset by the steer path.
-        if run_id.is_none() {
-            if let Some(rid) = v["params"]["update"]["_meta"]["goose"]["activeRunId"].as_str() {
-                run_id = Some(rid.to_owned());
-                steer_id = h
-                    .send(
-                        "_goose/unstable/session/steer",
-                        json!({
-                            "sessionId": sid,
-                            "expectedRunId": rid,
-                            "prompt": [{"type":"text","text":"STEER-CANARY: also consider the edge case"}],
-                        }),
-                    )
-                    .await;
-            }
-        }
-
-        // Steer response: assert it was accepted in the live run.
-        if steer_id >= 0 && v["id"] == json!(steer_id) {
+        if v["id"] == json!(steer_id) {
             assert!(
                 v.get("result").is_some(),
                 "steer must be accepted while the run is active; got: {v}"
             );
             assert_eq!(
                 v["result"]["runId"].as_str(),
-                run_id.as_deref(),
+                Some(run_id.as_str()),
                 "steer must reference the live run id"
             );
             steer_accepted = true;
+            release_response
+                .take()
+                .expect("one steer ACK")
+                .send(())
+                .expect("LLM response still waiting for accepted steer");
             continue;
         }
 
@@ -3678,6 +3729,22 @@ async fn handoff_cap_binds_within_a_single_turn() {
         count, 4,
         "expected 4 LLM requests (seed + summarize + tool-call + final); got {count}"
     );
+
+    let requests = llm.captured.lock().await;
+    assert!(
+        requests[3]["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|message| {
+                message["role"] == "user"
+                    && message["content"].as_str().is_some_and(|content| {
+                        content.contains("STEER-CANARY: also consider the edge case")
+                    })
+            }),
+        "the final request must incorporate the accepted steer without resetting the cap"
+    );
+    drop(requests);
 
     let stderr = h.stderr_text();
     assert!(

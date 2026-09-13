@@ -107,7 +107,7 @@ Project team setup milestone 1 is checked locally. On 2026-09-11 authoring passe
    live use: `scripts/app-from.sh <sha>`. Brian's call.
 3. The reviewed steering and project-setup candidates are combined on
    `work/steering-integration-astra`. Combined `just ci` passed on `0e4c2cd84`.
-   Broad `just test` passed on `939607485`. Resolve baseline browser failures and run full smoke before landing and
+   Broad `just test` passed on `939607485`; all six unchanged baseline browser cases pass. Final CI exposed a corrected test-fixture race (ledger 120). Rerun CI and full smoke before landing and
    installed Claude acceptance. All three reported browser failures now pass
    in the focused integration run. The original smoke findings and the
    separate umbrella layout remain open; see the integration evidence above.

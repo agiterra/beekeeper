@@ -587,7 +587,7 @@ export function codingSessionSeatGrantKey(
   actorPubkey: string,
   role: string,
 ): string {
-  return `${actorPubkey} ${role}`;
+  return `${actorPubkey}\u0000${role}`;
 }
 
 /** The accepted 44228 seat facts this derivation is allowed to read. */

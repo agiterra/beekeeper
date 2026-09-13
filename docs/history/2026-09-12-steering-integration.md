@@ -197,3 +197,34 @@ Steer/Queue next acceptance remains owed. No safe deterministic installed-UI
 delivery-unknown induction is established; the process fault tests and mock
 Copy-to-draft proof cover complementary seams. Do not kill a shared provider
 or claim that disconnecting network necessarily loses its local stdio ACK.
+
+## Final CI exposed a test synchronization race
+
+The final `just ci` on `3060ef8e0` stopped in
+`buzz-agent/tests/regressions.rs::handoff_cap_binds_within_a_single_turn`: the
+test finished its second turn before observing the steer acknowledgement.
+The same Rust source passed the earlier combined CI and broad integration
+run. Log: `combined-final-ci.log`. This run is failed, not counted as green.
+
+The fixture used immediate canned model responses and treated an active-run
+metadata notification as if it kept that run open. The test-only correction
+holds the third model response until the same-run steer acknowledgement is
+received, after the handoff attempt budget has been consumed. It keeps the
+four-model-request count, accepted-steer assertion and cap warning, and also
+asserts the final model request contains the steer canary. No production
+steering path changes. The original isolated test passed 30/30 repetitions,
+so the failed CI is the failing-before evidence. The corrected fixture passes
+all 52 regression tests and 100/100 focused repetitions; formatting and diff
+checks pass. A 15-second watchdog matches the existing harness response bound
+and only fails a missing gate; the oneshot/ACK establishes ordering. A new
+complete CI run remains owed. Raw logs: `handoff-cap-before-loops.log`,
+`handoff-cap-regressions-green.log` and the final handoff-cap logs under
+`../review-2026-09-12-smoke-read-triage/`.
+
+A final changed-file scan found one additional literal NUL already present
+in `codingSessionTeamDeliveryStatus.ts` on main and the Opus candidate. Its
+source spelling is normalized to `\u0000`, preserving the runtime key. All
+22 delivery-status tests pass with the repository test loader. The initial
+plain-Node invocation failed to resolve the repo's `@/` aliases and is retained
+as a harness error, not a product failure (`delivery-source-escape.log` and
+`delivery-source-escape-green.log`).

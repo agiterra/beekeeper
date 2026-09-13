@@ -12171,6 +12171,15 @@ Evidence and limits: [conditional publication checkpoint](history/2026-09-12-pro
      Inspector must distinguish unread, failed and empty evidence. Validation
      and limitations: [startup-read report](history/2026-09-12-startup-read-corrections.md).
 
+120. **An active-run update was not a synchronization barrier in the
+     handoff-cap regression fixture (2026-09-12).** Final combined CI on
+     `3060ef8e0` reached turn completion before observing the steer ACK, while
+     earlier identical Rust runs passed. Immediate fake model replies allowed
+     the race. The test-only correction holds the post-summary response until
+     an accepted same-run steer, preserving the handoff-cap and four-request
+     assertions and checking the canary in the final request. Production
+     steering is unchanged. Exact results: [integration report](history/2026-09-12-steering-integration.md).
+
 ## 2a. Direction settled 2026-08-18
 
 Three independent answers to "what should a new execution get on its first
