@@ -12224,6 +12224,17 @@ Evidence and limits: [conditional publication checkpoint](history/2026-09-12-pro
      The focused regression uses a disposable sentinel, never the working repo.
      Evidence and correction: [activation report](history/2026-09-13-project-team-activation.md).
 
+125. **Project setup publication failed on its first native JSON boundary (2026-09-13).**
+     Brian's six-role Tank Loop draft passed host validation and was saved,
+     but Publish failed before command execution: `snapshotId` was unknown;
+     native decoding expected `snapshot_id`. Enum variant renaming did not
+     rename its struct fields; `eventId` had the same latent mismatch.
+     Explicit field wire names with legacy journal aliases correct both.
+     Browser mocks had bypassed the native decoder, and native tests had
+     constructed Rust structs directly. The regression must decode the actual
+     browser-shaped JSON. Evidence and follow-up UX observations:
+     [IPC correction report](history/2026-09-13-project-team-publication-ipc.md).
+
 ## 2a. Direction settled 2026-08-18
 
 Three independent answers to "what should a new execution get on its first

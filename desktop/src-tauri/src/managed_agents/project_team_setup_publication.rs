@@ -80,13 +80,19 @@ pub struct PublicationAnnouncement {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum PublicationSourceExpectation {
     IfUnset,
-    Expected { event_id: String },
+    Expected {
+        #[serde(rename = "eventId", alias = "event_id")]
+        event_id: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum PublicationOutput {
-    Snapshot { snapshot_id: String },
+    Snapshot {
+        #[serde(rename = "snapshotId", alias = "snapshot_id")]
+        snapshot_id: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

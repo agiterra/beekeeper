@@ -30,7 +30,7 @@ on 2026-09-09, with `just ci` and `just test` green on that exact commit
 
 | Work | Owner | State (check date in row) | Where |
 | --- | --- | --- | --- |
-| Project team setup and neutral baseline | Astra integrates Terra/Sol work | 2026-09-13: first-project checked snapshot → publication → local installation → lead handoff landed as `1820d238d`. Nine native tests, twelve UI tests, typecheck and one fresh browser flow pass. Mac bundle installed; live Tankloop and installed UI acceptance pending; existing-source maintenance deliberately refuses without provenance | [`PROJECT_TEAM_ACTIVATION_SLICE.md`](PROJECT_TEAM_ACTIVATION_SLICE.md), [activation evidence](history/2026-09-13-project-team-activation.md), [`PROJECT_TEAM_SETUP_IMPL.md`](PROJECT_TEAM_SETUP_IMPL.md) |
+| Project team setup and neutral baseline | Astra integrates Terra/Sol work | 2026-09-13: first-project checked snapshot → publication → local installation → lead handoff landed as `1820d238d`. Nine native tests, twelve UI tests, typecheck and one fresh browser flow pass. Mac bundle installed. Brian completed Tank Loop authoring, host validation and snapshot save; Publish exposed a native JSON naming mismatch, corrected with failing-before/passing-after native decoder tests; landing and rebuild pending. Existing-source maintenance deliberately refuses without provenance | [`PROJECT_TEAM_ACTIVATION_SLICE.md`](PROJECT_TEAM_ACTIVATION_SLICE.md), [activation evidence](history/2026-09-13-project-team-activation.md), [`PROJECT_TEAM_SETUP_IMPL.md`](PROJECT_TEAM_SETUP_IMPL.md) |
 | Native mid-turn steering for Claude sessions | Fable/Opus; landed by Astra | 2026-09-13: static checks and fresh E2E build passed; selected browser matrix was 44 passed/1 failed, only dense history. Isolated dense repeat also failed (336/450; matrix 286/450), so diagnosis remains open. Brian accepted landing with that limitation; final CI completed successfully; [recovered evidence](history/2026-09-13-final-ci-recovery.md) records every recipe leg. Push completed as `e12495c63`; Mac installation completed at `1820d238d`; installed UI acceptance remains pending | [startup evidence](history/2026-09-13-startup-smoke-corrections.md), [integration evidence](history/2026-09-12-steering-integration.md), `NATIVE_STEERING_IMPL.md` |
 | Automatic project context beside ordinary agent work | paused by Brian on 2026-09-10 | findings saved; next step is proving a harmless marker reaches a fresh Claude session through a hook | ledger § "September 10 — automatic project context: findings saved, work paused" |
 | Collaborative workspace plan, ordered steps 0–6 | Astra finalizes and lands `main`; Fable takes delegated slices; Andy lands his own topic branches | steps 0–4 have integrated candidates per the ledger's September 7–9 sections; no landing of steps 5 or 6 is recorded anywhere found, so treat them as open | [`COLLABORATIVE_WORKSPACE_PLAN.md`](COLLABORATIVE_WORKSPACE_PLAN.md) |
@@ -104,11 +104,12 @@ slice is published as `1820d238d`; it preserves ordinary Solo sessions and
 separates publication, installation and provider-confirmed lead startup.
 
 1. Done 2026-09-13: installed and relaunched the Mac bundle from landed
-   `1820d238d`, verified its signature and bundled CLI. UI automation timed
-   out twice, so the window and live setup workflow are not verified.
+   `1820d238d`, verified its signature and bundled CLI. Brian then exercised
+   Tank Loop through a six-role checked snapshot; Publish failed at native
+   argument decoding. Land and install the [IPC correction](history/2026-09-13-project-team-publication-ipc.md), then retry the saved version.
 2. Exercise installed Claude Steer/Queue next and the first-project setup flow.
-   Live Tankloop mutation has not been performed; the fixture run is not live
-   acceptance. The relay reports an unknown SHA, so Git landing alone does not
+   Brian completed live local draft authoring and validation; shared Tank Loop
+   publication has not succeeded. The relay reports an unknown SHA, so Git landing alone does not
    establish server support for the new conditional publication path. Existing-source maintenance and automatic setup completion are
    deferred, as the [activation report](history/2026-09-13-project-team-activation.md) explains.
 3. Diagnose the accepted dense-history limitation after landing: the selected

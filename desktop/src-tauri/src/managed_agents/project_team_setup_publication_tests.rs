@@ -57,6 +57,56 @@ fn selected_snapshot_request_rejects_unpinned_or_nonportable_destination() {
     );
 }
 
+fn browser_request(source_expectation: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
+        "destination": {
+            "repoRef": format!("30617:{OWNER}:garden-packs"),
+            "packPath": DEFAULT_PACK_PATH,
+            "baseCommit": null
+        },
+        "sourceExpectation": source_expectation,
+        "output": { "kind": "snapshot", "snapshotId": "a".repeat(64) }
+    })
+}
+
+#[test]
+fn publication_request_accepts_browser_camel_case_and_emits_it() {
+    for source_expectation in [
+        serde_json::json!({ "kind": "if_unset" }),
+        serde_json::json!({ "kind": "expected", "eventId": "b".repeat(64) }),
+    ] {
+        let request: PublicationRequest =
+            serde_json::from_value(browser_request(source_expectation)).expect("browser request");
+        let emitted = serde_json::to_value(request).expect("emit request");
+        assert!(emitted["output"].get("snapshotId").is_some());
+        assert!(emitted["output"].get("snapshot_id").is_none());
+        if emitted["sourceExpectation"]["kind"] == "expected" {
+            assert!(emitted["sourceExpectation"].get("eventId").is_some());
+            assert!(emitted["sourceExpectation"].get("event_id").is_none());
+        }
+    }
+}
+
+#[test]
+fn publication_request_accepts_legacy_journal_fields_but_rejects_unknown_ones() {
+    let mut legacy = browser_request(serde_json::json!({
+        "kind": "expected",
+        "event_id": "b".repeat(64)
+    }));
+    let output = legacy["output"].as_object_mut().expect("output object");
+    let snapshot = output.remove("snapshotId").expect("snapshot id");
+    output.insert("snapshot_id".to_string(), snapshot);
+    let request: PublicationRequest = serde_json::from_value(legacy).expect("legacy journal");
+    assert!(matches!(
+        request.source_expectation,
+        PublicationSourceExpectation::Expected { ref event_id } if event_id == &"b".repeat(64)
+    ));
+
+    let mut unknown = browser_request(serde_json::json!({ "kind": "if_unset" }));
+    unknown["output"]["unexpected"] = serde_json::json!(true);
+    assert!(serde_json::from_value::<PublicationRequest>(unknown).is_err());
+}
+
 #[test]
 fn candidate_uses_owned_snapshot_bytes_and_conditional_source_pins_its_commit() {
     let temp = tempfile::tempdir().expect("temp");
