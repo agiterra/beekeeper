@@ -12158,6 +12158,19 @@ Evidence and limits: [conditional publication checkpoint](history/2026-09-12-pro
      alone. Final status is in the integration report. The separate umbrella
      workspace remains outside this correction's verified coverage.
 
+119. **Startup send admission delayed scoped reads; a history/live gap lost
+     session goals (2026-09-12).** Six unchanged baseline browser cases fail
+     before the fix. Timestamp probes show repository/observation/source REQs
+     reaching IPC only after the assertion, with correct signed results later.
+     Separately, a goal published after HTTP history but before a limit-zero
+     live REQ remains absent. A local send completion does not prove server
+     subscription readiness; the existing readiness timeout can precede send
+     admission and suppress a later EOSE callback. Scoped one-shot reads use
+     the existing coalesced reader; the goal watch requests bounded history
+     with the same channel/kind filters and unchanged signed founder fold.
+     Inspector must distinguish unread, failed and empty evidence. Validation
+     and limitations: [startup-read report](history/2026-09-12-startup-read-corrections.md).
+
 ## 2a. Direction settled 2026-08-18
 
 Three independent answers to "what should a new execution get on its first

@@ -523,7 +523,12 @@ export function useCodingSessionMissionSurface(input: {
                   model={model}
                   onFocusParticipant={input.onFocusParticipant}
                   onOpenFileTrace={input.onOpenTrace}
-                  onRefresh={evidence.refresh}
+                  onRefresh={() => {
+                    evidence.refresh();
+                    observations.refresh();
+                  }}
+                  observationsLoading={observations.isLoading}
+                  observationsError={observations.errorMessage}
                   gateRows={observationView.gates}
                   seatAuthorities={input.seatAuthorities}
                   unseatedReportEventIds={pending.unseatedReportEventIds}

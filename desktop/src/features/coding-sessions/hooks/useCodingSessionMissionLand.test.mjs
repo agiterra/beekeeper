@@ -166,3 +166,32 @@ test("L20.2: a project with no repositories at all reads an empty set, not an er
   );
   assert.deepEqual(addresses, []);
 });
+
+test("repository and rule one-shot reads use coalescing with their original scope", async () => {
+  const { relayClient } = await import("../../../shared/api/relayClient.ts");
+  const original = relayClient.fetchEventsCoalesced;
+  const filters = [];
+  relayClient.fetchEventsCoalesced = async (filter) => {
+    filters.push(filter);
+    return filter.kinds[0] === 30617
+      ? [announcement([["d", "agiterra-beekeeper"]])]
+      : [];
+  };
+  try {
+    const repository = await readCodingSessionRepository(
+      `30617:${OWNER}:agiterra-beekeeper`,
+    );
+    assert.equal(repository.ownerPubkey, OWNER);
+    assert.deepEqual(filters, [
+      {
+        kinds: [30617],
+        authors: [OWNER],
+        "#d": ["agiterra-beekeeper"],
+        limit: 1,
+      },
+      { kinds: [30625], "#d": [`${OWNER}:agiterra-beekeeper`], limit: 64 },
+    ]);
+  } finally {
+    relayClient.fetchEventsCoalesced = original;
+  }
+});

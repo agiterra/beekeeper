@@ -58,7 +58,7 @@ const PROJECT_ADDRESS = /^30621:([0-9a-f]{64}):(.+)$/i;
 export async function readProjectOwners(
   coordinate: string,
   fetchEvents: typeof relayClient.fetchEvents = (filter) =>
-    relayClient.fetchEvents(filter),
+    relayClient.fetchEventsCoalesced(filter),
 ): Promise<readonly string[]> {
   const match = PROJECT_ADDRESS.exec(coordinate.trim());
   if (match === null) return [];
@@ -114,7 +114,7 @@ export function codingSessionRepoAddress(
 export async function readCodingSessionRepository(
   repoRef: string,
   fetchEvents: typeof relayClient.fetchEvents = (filter) =>
-    relayClient.fetchEvents(filter),
+    relayClient.fetchEventsCoalesced(filter),
 ): Promise<CodingSessionMissionLandRepository | null> {
   const address = codingSessionRepoAddress(repoRef);
   if (address === null) return null;
@@ -173,7 +173,7 @@ export async function readCodingSessionRepository(
 export async function readProjectRepositoryAddresses(
   projectRef: string,
   fetchEvents: typeof relayClient.fetchEvents = (filter) =>
-    relayClient.fetchEvents(filter),
+    relayClient.fetchEventsCoalesced(filter),
 ): Promise<readonly string[]> {
   const events = await fetchEvents({
     kinds: [KIND_REPO_ANNOUNCEMENT],

@@ -131,7 +131,13 @@ export function ChannelCodingSessionsMenu({
   }
 
   return (
-    <Popover onOpenChange={setOpen} open={open}>
+    <Popover
+      onOpenChange={(nextOpen) => {
+        setOpen(nextOpen);
+        if (nextOpen) goalSnapshot.refresh();
+      }}
+      open={open}
+    >
       <PopoverTrigger asChild>
         <ChannelCodingSessionsTrigger
           count={entries.length + founded.length}
@@ -154,6 +160,15 @@ export function ChannelCodingSessionsMenu({
                 : "No signed sessions in this channel yet."}
           </p>
         </div>
+        {goalSnapshot.errorMessage ? (
+          <p className="px-2 pb-2 text-xs text-muted-foreground" role="status">
+            Session goal read: {goalSnapshot.errorMessage}
+          </p>
+        ) : !goalSnapshot.resolved ? (
+          <p className="px-2 pb-2 text-xs text-muted-foreground" role="status">
+            Reading session goals…
+          </p>
+        ) : null}
         {entries.length > 0 || founded.length === 0 ? (
           <ChannelCodingSessionList
             authorityByGeneration={authorityByGeneration}

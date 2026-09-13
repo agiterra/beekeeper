@@ -56,7 +56,7 @@ test("the read hands the relay's events to the native fold, unfiltered", async (
     scope: SCOPE,
     knownAssignmentRefs: ["cd".repeat(32)],
     providerPubkeys: ["66".repeat(32)],
-    client: { fetchEvents: async () => fetched },
+    client: { fetchEventsCoalesced: async () => fetched },
     invoke: async (command, args) => {
       calls.push({ command, args });
       return structuredClone(FIXTURE);
@@ -90,7 +90,7 @@ test("a relay that returns nothing folds to an empty answer, not to an error", a
     scope: SCOPE,
     knownAssignmentRefs: [],
     providerPubkeys: null,
-    client: { fetchEvents: async () => [] },
+    client: { fetchEventsCoalesced: async () => [] },
     invoke: async () => structuredClone(empty),
   });
   assert.deepEqual(result.fold.gates, []);

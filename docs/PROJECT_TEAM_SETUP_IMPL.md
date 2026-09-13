@@ -70,9 +70,12 @@ prerequisites may block it; lack of a project team is not one.
 7. Project-specific responsibilities, constraints and workflow come from the
    actual project. Generic packs must not demand Beekeeper's docs, Hermit,
    Cargo, release policy, people or a fixed army of specialists.
-8. New source defaults follow a branch deliberately, so published improvements
-   can reach new executions. Existing explicit SHA pins and existing sources
-   are preserved unless the scoped operation explicitly changes them.
+8. New executions resolve the project's current published source. Host setup
+   publication adopts an immutable SHA with a conditional source update; later
+   maintenance publishes another checked revision through the same operation.
+   This supersedes the earlier moving-branch default: source comparison cannot
+   protect bytes changed by an earlier push to an adopted branch. Existing
+   sources/pins remain untouched unless the scoped operation changes them.
 
 ## Evidence informing the sequence
 
@@ -166,6 +169,12 @@ Lanes never commit. The finalizer reviews and signs the integrated candidate.
 No lane edits another lane's files without transferring ownership explicitly.
 
 ## Milestone 2 — scoped autonomous publication
+
+The [reviewed host-publication proposal](PROJECT_TEAM_PUBLICATION_IMPL.md)
+locks the next host/UI seams, exact output binding, retry reservation and
+source-seeded maintenance. It is not implemented. The conditional source
+transaction is checked locally; publication, installation and lead handoff
+remain distinct milestones.
 
 Lock this interface before dispatching its build lanes; it is not fulfilled by
 an agent prompt saying it can publish.

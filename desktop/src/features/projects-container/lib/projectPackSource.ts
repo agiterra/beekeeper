@@ -233,7 +233,7 @@ export function newestProjectPackSource(
 export async function fetchProjectPackSource(
   projectCoord: string,
 ): Promise<ProjectPackSource | null> {
-  const events = await relayClient.fetchEvents({
+  const events = await relayClient.fetchEventsCoalesced({
     kinds: [KIND_PROJECT_PACK_SOURCE],
     "#d": [projectCoord],
     limit: 4,

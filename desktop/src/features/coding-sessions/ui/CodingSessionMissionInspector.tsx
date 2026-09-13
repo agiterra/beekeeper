@@ -76,6 +76,9 @@ export type CodingSessionMissionInspectorProps = {
    * which is unknown rather than "no gate ran". The card says so.
    */
   gateRows?: readonly CodingSessionObservationGateView[];
+  /** Observation reads settle separately from signed mission reports. */
+  observationsLoading?: boolean;
+  observationsError?: string | null;
   /** The founder's goal edit control, rendered under Current goal. */
   goalEditor?: ReactNode;
   /**
@@ -114,6 +117,8 @@ export function CodingSessionMissionInspector({
   deliveries,
   errorMessage = null,
   gateRows = [],
+  observationsLoading = false,
+  observationsError = null,
   goalEditor,
   goalReader = { kind: "resolved" },
   openHolds,
@@ -432,22 +437,42 @@ export function CodingSessionMissionInspector({
               44244 `report.tests[]` entries it also holds are counted beside
               them, never merged into them: a claim inside a report and a signed
               gate row are different facts. */}
-          <CodingSessionGateRows
-            emptyCopy={
-              <>
-                <span className="block">
-                  {CODING_SESSION_OBSERVATION_EMPTY.gates}
-                </span>
-                <span className="block text-2xs">
-                  {model.tests.length === 0
-                    ? "Kind 44246 carries a gate’s name, its outcome and the command that produced it. None has been published for this session."
-                    : `Kind 44246 carries a gate’s name, its outcome and the command that produced it. None has been published for this session; ${model.tests.length} test result${model.tests.length === 1 ? " is" : "s are"} claimed inside signed reports below.`}
-                </span>
-              </>
-            }
-            rows={gateRows}
-            testId="coding-session-inspector-gates"
-          />
+          {observationsError || observationsLoading ? (
+            <p
+              className="text-xs text-muted-foreground"
+              data-testid="coding-session-inspector-gates"
+            >
+              {observationsError
+                ? `Could not read this session's signed gate rows: ${observationsError}`
+                : "Reading this session's signed gate rows…"}
+              {observationsError && onRefresh ? (
+                <button
+                  className="ml-2 font-medium text-primary underline-offset-2 hover:underline"
+                  onClick={onRefresh}
+                  type="button"
+                >
+                  Retry gate rows
+                </button>
+              ) : null}
+            </p>
+          ) : (
+            <CodingSessionGateRows
+              emptyCopy={
+                <>
+                  <span className="block">
+                    {CODING_SESSION_OBSERVATION_EMPTY.gates}
+                  </span>
+                  <span className="block text-2xs">
+                    {model.tests.length === 0
+                      ? "Kind 44246 carries a gate’s name, its outcome and the command that produced it. None has been published for this session."
+                      : `Kind 44246 carries a gate’s name, its outcome and the command that produced it. None has been published for this session; ${model.tests.length} test result${model.tests.length === 1 ? " is" : "s are"} claimed inside signed reports below.`}
+                  </span>
+                </>
+              }
+              rows={gateRows}
+              testId="coding-session-inspector-gates"
+            />
+          )}
           {model.tests.length > 0 ? (
             <ul
               aria-label="Structured test results"
@@ -719,9 +744,9 @@ function Goal({
   goal: CodingSessionMissionGoalModel;
   reader: CodingSessionGoalReader;
 }) {
-  // The reader speaks before the record does: with nothing read yet there is
-  // no honest sentence about what the wire holds.
-  if (reader.kind === "unresolved") {
+  // An absent/untrusted goal cannot answer an unsettled read. A valid signed
+  // goal already observed remains evidence, with its freshness disclosed below.
+  if (reader.kind === "unresolved" && goal.kind !== "available") {
     return (
       <EmptyCopy>
         <span data-testid="mission-goal-unresolved">
@@ -730,7 +755,7 @@ function Goal({
       </EmptyCopy>
     );
   }
-  if (reader.kind === "errored") {
+  if (reader.kind === "errored" && goal.kind !== "available") {
     return (
       <p
         className="text-xs text-amber-700 dark:text-amber-300"
@@ -779,6 +804,21 @@ function Goal({
   }
   return (
     <div>
+      {reader.kind !== "resolved" ? (
+        <p
+          className="mb-1 text-xs text-amber-700 dark:text-amber-300"
+          data-testid={
+            reader.kind === "unresolved"
+              ? "mission-goal-unresolved"
+              : "mission-goal-errored"
+          }
+        >
+          Last observed signed goal.{" "}
+          {reader.kind === "unresolved"
+            ? "Refreshing the current read…"
+            : `Current read: ${reader.message}`}
+        </p>
+      ) : null}
       <p className="text-sm">{goal.text}</p>
       <p className="mt-1 text-2xs text-muted-foreground">
         Published by {goal.authorLabel}

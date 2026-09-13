@@ -1677,3 +1677,123 @@ test("an observed row and a declared one both appear, each naming its source", a
     view.cleanup();
   }
 });
+
+for (const state of [
+  {
+    observationsLoading: true,
+    expected: /Reading this session's signed gate rows/,
+  },
+  {
+    observationsError: "relay refused the observation filter",
+    expected: /relay refused the observation filter/,
+  },
+]) {
+  test(`unread gate rows never claim none published: ${state.expected}`, async () => {
+    const view = await renderInspector({
+      model: richModel(),
+      variant: "panel",
+      focusedExecutionKey: null,
+      gateRows: [],
+      ...state,
+    });
+    try {
+      const card = view.getByTestId("coding-session-inspector-gates");
+      assert.match(card.textContent, state.expected);
+      assert.doesNotMatch(
+        card.textContent,
+        /No gate row yet|None has been published/,
+      );
+      assert.match(view.container.textContent, /claimed in a report by/);
+    } finally {
+      view.cleanup();
+    }
+  });
+}
+
+test("an observation-only failure has a retry without a mission evidence failure", async () => {
+  let refreshed = 0;
+  const view = await renderInspector({
+    model: richModel(),
+    variant: "panel",
+    focusedExecutionKey: null,
+    observationsError: "gate history refused",
+    errorMessage: null,
+    onRefresh: () => {
+      refreshed++;
+    },
+  });
+  try {
+    const { fireEvent } = await import("@testing-library/react");
+    fireEvent.click(view.getByRole("button", { name: "Retry gate rows" }));
+    assert.equal(refreshed, 1);
+  } finally {
+    view.cleanup();
+  }
+});
+
+for (const reader of [
+  { kind: "unresolved" },
+  { kind: "errored", message: "relay refused the latest history read" },
+  {
+    kind: "errored",
+    message:
+      "Only the latest 1000 goal records were read; older session goals may be missing.",
+  },
+]) {
+  test(`a known signed goal remains visible beside its read disclosure: ${reader.message ?? reader.kind}`, async () => {
+    const view = await renderInspector({
+      model: richModel(),
+      variant: "panel",
+      focusedExecutionKey: null,
+      goalReader: reader,
+      goalEditor: "EDIT-GOAL-CONTROL",
+    });
+    try {
+      assert.ok(view.getByText("Ship an honest Mission inspector."));
+      assert.match(view.container.textContent, /Last observed signed goal/);
+      assert.match(view.container.textContent, /Published by Helios · Lead/);
+      assert.equal(view.queryByText("EDIT-GOAL-CONTROL"), null);
+      if (reader.kind === "errored") {
+        assert.ok(
+          view
+            .getByTestId("mission-goal-errored")
+            .textContent.includes(reader.message),
+        );
+      } else {
+        assert.match(
+          view.getByTestId("mission-goal-unresolved").textContent,
+          /Refreshing/,
+        );
+      }
+      assert.equal(
+        view.queryByText("No accepted mission goal published."),
+        null,
+      );
+    } finally {
+      view.cleanup();
+    }
+  });
+}
+
+test("an initially absent unread goal is never labelled last observed", async () => {
+  const view = await renderInspector({
+    model: deriveCodingSessionMissionInspectorModel(input()),
+    variant: "panel",
+    focusedExecutionKey: null,
+    goalReader: { kind: "unresolved" },
+    goalEditor: "EDIT-GOAL-CONTROL",
+  });
+  try {
+    assert.match(
+      view.getByTestId("mission-goal-unresolved").textContent,
+      /Goal not read yet/,
+    );
+    assert.doesNotMatch(
+      view.container.textContent,
+      /Last observed signed goal|No accepted mission goal published/,
+    );
+    assert.equal(view.queryByText("EDIT-GOAL-CONTROL"), null);
+  } finally {
+    view.cleanup();
+  }
+});

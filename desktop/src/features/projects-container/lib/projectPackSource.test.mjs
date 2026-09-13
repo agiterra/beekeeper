@@ -483,3 +483,23 @@ test("duplicate schema cannot downgrade a conditional body to v1", () => {
     null,
   );
 });
+
+test("a source one-shot read settles without a WebSocket admission slot", async () => {
+  const { relayClient } = await import("../../../shared/api/relayClient.ts");
+  const { fetchProjectPackSource } = await import("./projectPackSource.ts");
+  const original = relayClient.fetchEventsCoalesced;
+  const filters = [];
+  relayClient.fetchEventsCoalesced = async (filter) => {
+    filters.push(filter);
+    return [event()];
+  };
+  try {
+    const source = await fetchProjectPackSource(PROJECT_COORD);
+    assert.equal(source.eventId, event().id);
+    assert.deepEqual(filters, [
+      { kinds: [30624], "#d": [PROJECT_COORD], limit: 4 },
+    ]);
+  } finally {
+    relayClient.fetchEventsCoalesced = original;
+  }
+});

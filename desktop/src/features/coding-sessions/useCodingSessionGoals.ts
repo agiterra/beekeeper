@@ -56,6 +56,8 @@ export function useCodingSessionGoals(
   errorMessage: string | null;
   /** True only once the history fetch settled — resolved *or* rejected. */
   resolved: boolean;
+  /** Read current history without restarting the live subscription. */
+  refresh: () => void;
 } {
   const scope = [...new Set(channelIds)].sort().join("\u0000");
   const stableChannelIds = React.useMemo(
@@ -65,14 +67,27 @@ export function useCodingSessionGoals(
   const [events, setEvents] = React.useState<Map<string, RelayEvent>>(
     () => new Map(),
   );
-  const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
+  const [historyError, setHistoryError] = React.useState<string | null>(null);
+  const [watchError, setWatchError] = React.useState<string | null>(null);
+  const [historyAtLimit, setHistoryAtLimit] = React.useState(false);
+  const errorMessage =
+    historyError ??
+    watchError ??
+    (historyAtLimit
+      ? `Only the latest ${GOAL_HISTORY_LIMIT} goal records were read; older session goals may be missing.`
+      : null);
   const [resolved, setResolved] = React.useState(false);
+
+  const refreshRead = React.useRef<(() => void) | null>(null);
+  const refresh = React.useCallback(() => refreshRead.current?.(), []);
 
   React.useEffect(() => {
     let cancelled = false;
     let unsubscribeLive: (() => void) | null = null;
     setEvents(new Map());
-    setErrorMessage(null);
+    setHistoryError(null);
+    setWatchError(null);
+    setHistoryAtLimit(false);
     // A new scope is a new read: whatever the last one settled says nothing
     // about this one. Nothing to read is the one scope that starts settled.
     setResolved(stableChannelIds.length === 0);
@@ -86,20 +101,25 @@ export function useCodingSessionGoals(
         return next;
       });
     };
+    let latestRead = 0;
     const load = () => {
+      if (cancelled) return;
+      const read = ++latestRead;
+      setResolved(false);
       void client
         .fetchEventsCoalesced(
           buildCodingSessionGoalFilter(stableChannelIds, GOAL_HISTORY_LIMIT),
         )
         .then((history) => {
           admit(history);
-          if (cancelled) return;
-          setErrorMessage(null);
+          if (cancelled || read !== latestRead) return;
+          setHistoryError(null);
+          setHistoryAtLimit(history.length >= GOAL_HISTORY_LIMIT);
           setResolved(true);
         })
         .catch((error: unknown) => {
-          if (cancelled) return;
-          setErrorMessage(
+          if (cancelled || read !== latestRead) return;
+          setHistoryError(
             error instanceof Error
               ? error.message
               : "Failed to load session goals.",
@@ -108,10 +128,14 @@ export function useCodingSessionGoals(
           setResolved(true);
         });
     };
+    refreshRead.current = load;
     load();
     void client
       .subscribeLive(
-        buildCodingSessionGoalFilter(stableChannelIds, 0),
+        // The watch can wait behind outbound admission after HTTP history
+        // settles. Its own bounded history covers that gap, then streams live.
+        // A readiness timeout or local write is not server admission evidence.
+        buildCodingSessionGoalFilter(stableChannelIds, GOAL_HISTORY_LIMIT),
         (event) => admit([event]),
       )
       .then((unsubscribe) => {
@@ -120,7 +144,7 @@ export function useCodingSessionGoals(
       })
       .catch((error: unknown) => {
         if (!cancelled) {
-          setErrorMessage(
+          setWatchError(
             error instanceof Error
               ? error.message
               : "Failed to watch session goals.",
@@ -130,6 +154,7 @@ export function useCodingSessionGoals(
     const unsubscribeReconnect = client.subscribeToReconnects?.(load);
     return () => {
       cancelled = true;
+      if (refreshRead.current === load) refreshRead.current = null;
       unsubscribeLive?.();
       unsubscribeReconnect?.();
     };
@@ -140,8 +165,8 @@ export function useCodingSessionGoals(
     [events],
   );
   return React.useMemo(
-    () => ({ goals, errorMessage, resolved }),
-    [errorMessage, goals, resolved],
+    () => ({ goals, errorMessage, resolved, refresh }),
+    [errorMessage, goals, resolved, refresh],
   );
 }
 

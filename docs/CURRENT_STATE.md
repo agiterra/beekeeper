@@ -30,8 +30,8 @@ on 2026-09-09, with `just ci` and `just test` green on that exact commit
 
 | Work | Owner | State (check date in row) | Where |
 | --- | --- | --- | --- |
-| Project team setup and neutral baseline | Astra | 2026-09-12: authoring candidate through `048dc4e02` checked locally; conditional source transaction passes focused core/CLI/database/relay tests, typecheck and lint; combined CI passed on `0e4c2cd84`; broad integration/browser acceptance pending; no installed or published changes | [`PROJECT_TEAM_SETUP_IMPL.md`](PROJECT_TEAM_SETUP_IMPL.md), [authoring evidence](history/2026-09-11-project-team-setup.md), [publication checkpoint](history/2026-09-12-project-team-publication.md) |
-| Native mid-turn steering for Claude sessions | Fable/Opus candidate; Astra integrates | 2026-09-12: runtime queued-steer fence correction passes 58 ACP/46 provider tests; three original browser failures and five steering cases pass. Both short-window cases pass; authority and persistence review closed with focused tests/clippy green. Combined CI passed on `0e4c2cd84`; browser/integration acceptance pending. No push or installation | [integration evidence](history/2026-09-12-steering-integration.md), `NATIVE_STEERING_IMPL.md` |
+| Project team setup and neutral baseline | Astra | 2026-09-12: authoring candidate through `048dc4e02` checked locally; conditional source transaction passes focused core/CLI/database/relay tests, typecheck and lint; combined CI passed on `0e4c2cd84`; broad `just test` passed on `939607485`; browser acceptance pending; no installed or published changes | [`PROJECT_TEAM_SETUP_IMPL.md`](PROJECT_TEAM_SETUP_IMPL.md), [authoring evidence](history/2026-09-11-project-team-setup.md), [publication checkpoint](history/2026-09-12-project-team-publication.md) |
+| Native mid-turn steering for Claude sessions | Fable/Opus candidate; Astra integrates | 2026-09-12: runtime queued-steer fence correction passes 58 ACP/46 provider tests; three original browser failures and five steering cases pass. Both short-window cases pass; authority and persistence review closed with focused tests/clippy green. Combined CI and broad `just test` passed; real Claude adapter steer and idle guard passed (marker in linked report). Browser/installed UI acceptance pending. No push or installation | [integration evidence](history/2026-09-12-steering-integration.md), `NATIVE_STEERING_IMPL.md` |
 | Automatic project context beside ordinary agent work | paused by Brian on 2026-09-10 | findings saved; next step is proving a harmless marker reaches a fresh Claude session through a hook | ledger § "September 10 — automatic project context: findings saved, work paused" |
 | Collaborative workspace plan, ordered steps 0–6 | Astra finalizes and lands `main`; Fable takes delegated slices; Andy lands his own topic branches | steps 0–4 have integrated candidates per the ledger's September 7–9 sections; no landing of steps 5 or 6 is recorded anywhere found, so treat them as open | [`COLLABORATIVE_WORKSPACE_PLAN.md`](COLLABORATIVE_WORKSPACE_PLAN.md) |
 | Founded-session fixes: Discard deletes, project filing | Andy | landed on `main` 2026-09-11 | ledger § "Fixed 2026-09-11 —" (two items) |
@@ -107,13 +107,16 @@ Project team setup milestone 1 is checked locally. On 2026-09-11 authoring passe
    live use: `scripts/app-from.sh <sha>`. Brian's call.
 3. The reviewed steering and project-setup candidates are combined on
    `work/steering-integration-astra`. Combined `just ci` passed on `0e4c2cd84`.
-   Resolve baseline browser failures, run broad integration/full smoke before landing and
+   Broad `just test` passed on `939607485`. Resolve baseline browser failures and run full smoke before landing and
    installed Claude acceptance. All three reported browser failures now pass
    in the focused integration run. The original smoke findings and the
    separate umbrella layout remain open; see the integration evidence above.
 4. When Brian resumes automatic context: the hook-marker experiment exactly as
    the ledger's September 10 section specifies it.
-5. Plan steps 5 and 6.
+5. Implement host publication from `PROJECT_TEAM_PUBLICATION_IMPL.md`: one
+   scoped reservation, exact output snapshot, isolated Git push and conditional
+   SHA adoption. Then project-qualified installation/lead handoff and Tankloop
+   acceptance. Collaborative workspace plan steps 5 and 6 remain separate.
 
 ## Environment facts most likely to bite first
 

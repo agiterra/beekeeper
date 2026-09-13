@@ -164,3 +164,36 @@ unchanged rerun and timestamped probes are next; no timeout or assertion was
 weakened. Broad `just test`, full smoke alone and installed Claude acceptance
 remain owed. Host publication beyond the conditional source transaction is a
 separate unfinished project-setup milestone.
+
+## Broad integration verification
+
+`just test` passed on the combined Rust tree at `939607485` (exit 0),
+with the same invocation-local pnpm setting. No Rust source changed during
+the run. Raw log: `combined-integration.log` beside `combined-ci.log`. The
+recipe ran its scratch genesis, push-gate and CI-completion prerequisites,
+then workspace tests, database tests and workspace integration tests; the
+runner reports all steps passed (421 seconds for its final `run-tests.sh`
+portion). Ignored native continuation compositions stay ignored unless their
+separate recipe is invoked. This is local infrastructure evidence, not a
+production deployment or installed-app acceptance claim.
+
+## Real installed-adapter verification
+
+The ignored `buzz-acp` test
+`native_steer_against_installed_claude_agent_acp` passed on the combined Rust
+tree (1 passed, 0 failed, 16.64 seconds). It actually ran rather than taking
+the missing-adapter skip. Claude ACP 0.70.0 reported steering support; after
+41 characters streamed, the ACP extension answered `Injected`. Marker
+`cef155a3c7564975a3beac002bd079a2` was echoed in that same prompt before
+`EndTurn`. The idle guard then answered `NotDelivered(PromptRequired)` with
+no additional agent text during the 12-second observation. The log ends
+`LIVE PASS marker=cef155a3c7564975a3beac002bd079a2`.
+
+Raw evidence: `combined-live-adapter.log` in the triage directory. This used
+the installed adapter and a real model in an empty temporary folder, with
+no MCP servers. It verifies the current ACP transport and idle guard, not
+the installed sidecar, signed relay receipts or UI actions. Installed-app
+Steer/Queue next acceptance remains owed. No safe deterministic installed-UI
+delivery-unknown induction is established; the process fault tests and mock
+Copy-to-draft proof cover complementary seams. Do not kill a shared provider
+or claim that disconnecting network necessarily loses its local stdio ACK.
