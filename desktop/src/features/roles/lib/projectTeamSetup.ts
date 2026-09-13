@@ -120,9 +120,14 @@ export type ProjectTeamSetupActivation = {
       | "refused";
     channelId: string | null;
     sessionRef: string | null;
+    /** The journal's reserved lead identity; `null` when no lead is installed. */
+    leadPubkey: string | null;
     message: string | null;
   };
 };
+
+/** The exact brief the host writes for, and sends to, the authoring agent. */
+export type ProjectTeamSetupBrief = { text: string };
 
 /** Durable IDs; reserving them neither publishes nor launches. */
 export type ProjectTeamSetupAuthoringReservation = {
@@ -166,7 +171,7 @@ export function projectTeamSetupBlocker(input: {
   projectDirectory: string;
 }): string | null {
   if (!/^30621:[a-f0-9]{64}:[^:]+$/i.test(input.projectRef.trim())) {
-    return "Open a saved project to set up its team.";
+    return "Open a saved project to set up its roles.";
   }
   if (!input.relayUrl.trim())
     return "Connect to this project's community first.";
@@ -178,6 +183,76 @@ export function projectTeamSetupBlocker(input: {
   if (!input.projectDirectory.trim())
     return "Choose this project's local repository folder.";
   return null;
+}
+
+/**
+ * One plain sentence per native `SetupError.code`, each naming what the user
+ * can do next. The native message is never dropped: it stays as `detail`.
+ */
+const FAILURE_SUMMARY: Record<string, string> = {
+  existing_authoring:
+    "An authoring session is already saved for this draft. Check authoring status to continue it.",
+  existing_draft:
+    "This project already has a saved draft. Continue that draft instead of preparing a new one.",
+  filesystem:
+    "A local file couldn't be read or written. Check that the folder still exists and this app can access it, then try again.",
+  invalid_authoring:
+    "The saved authoring request doesn't match this draft. Check authoring status before retrying.",
+  invalid_draft:
+    "The draft has problems. Check the draft and fix what it lists.",
+  invalid_input: "Some setup details aren't valid. Review them and try again.",
+  invalid_publication:
+    "The saved publication doesn't match this draft. Reopen setup before retrying.",
+  invalid_setup_actor:
+    "The setup agent identity on this computer doesn't match this draft. Reopen setup before retrying.",
+  invalid_setup_launch:
+    "The saved authoring request can't be used as recorded. Check authoring status before retrying.",
+  invalid_snapshot:
+    "The saved checked version no longer matches its files. Check the draft and save it again.",
+  publication_unavailable:
+    "This step didn't complete. Details are below; retrying resends the same saved request when one exists.",
+  scope_changed:
+    "The community or project changed since setup opened. Reopen setup from the right project.",
+  setup_launch_unavailable:
+    "This step didn't complete. Details are below; retrying resends the same saved request when one exists.",
+  source_changed:
+    "The project's shared roles changed since this draft was checked. Reopen setup, then check the draft again.",
+};
+
+/** A setup failure as the UI shows it: a plain summary plus the raw detail. */
+export type ProjectTeamSetupFailure = {
+  summary: string;
+  /** The native or thrown message, when it differs from the summary. */
+  detail: string | null;
+  code: string | null;
+};
+
+function errorPayload(error: unknown): unknown {
+  return typeof error === "object" && error !== null && "payload" in error
+    ? error.payload
+    : null;
+}
+
+function setupErrorCode(value: unknown): string | null {
+  return typeof value === "object" &&
+    value !== null &&
+    "code" in value &&
+    typeof value.code === "string"
+    ? value.code
+    : null;
+}
+
+/** Map a native `SetupError {code, message}` (or any thrown value) for display. */
+export function projectTeamSetupFailure(
+  error: unknown,
+): ProjectTeamSetupFailure {
+  const message = projectTeamSetupError(error);
+  // `invokeTauri` wraps a native refusal in `TauriInvokeError`, keeping the
+  // original `{code, message}` as `payload`; a direct object carries `code`.
+  const code = setupErrorCode(error) ?? setupErrorCode(errorPayload(error));
+  const summary = code ? FAILURE_SUMMARY[code] : undefined;
+  if (!summary) return { summary: message, detail: null, code };
+  return { summary, detail: message === summary ? null : message, code };
 }
 
 /** Preserve native structured refusal messages instead of showing Object. */
@@ -193,19 +268,4 @@ export function projectTeamSetupError(error: unknown): string {
   return typeof error === "string"
     ? error
     : "Project setup could not be completed. Try again.";
-}
-
-/** Instructions for the authoring execution; paths are local to its host. */
-export function projectTeamSetupBrief(draft: ProjectTeamSetupDraft): string {
-  return [
-    "Build a useful baseline team for this project.",
-    `Project: ${draft.projectRef}`,
-    `Intent: ${draft.intent}`,
-    `Inspect the project repository at ${draft.projectDirectory}. Read its contributor instructions, product documents, code and actual build/test commands.`,
-    `Write project-specific role packs and skills only under ${draft.rolesDirectory}. This isolated draft begins with neutral defaults; it has not been published.`,
-    "Adapt the role roster to the project: keep a lead, retain the identity of any starting role you keep, and add or remove other roles when the work warrants it. Cover leadership, implementation and verification responsibilities with the smallest useful team. Existing test agents are not project requirements.",
-    "Give the lead responsibility for maintaining this shared project baseline as evidence changes. Keep procedures grounded in this repository, and distinguish verified commands from unknowns.",
-    "Do not include credentials, personal configuration or machine-specific paths in the role packs. Do not invent tool access, spending permission, installed providers or approval requirements.",
-    "Validate the complete pack structure and report changed roles, skills, evidence and unresolved limitations. Draft validation, publication and execution adoption are separate facts.",
-  ].join("\n\n");
 }

@@ -1,6 +1,7 @@
 import * as React from "react";
 import { toast } from "sonner";
 
+import type { CodingSessionChannelAccess } from "@/features/coding-sessions/lib/codingSessionChannelAccess";
 import {
   readCodingSessionLensPreference,
   type CodingSessionLens,
@@ -105,7 +106,7 @@ export function UmbrellaCodingSessionWorkspace({
   channelName,
   communityScope,
   generationId,
-  isMember,
+  channelAccess,
   onAddProvider,
   onCloseSession,
   onReopenSession,
@@ -133,7 +134,8 @@ export function UmbrellaCodingSessionWorkspace({
   /** Stable normalized relay/community identity for local lens persistence. */
   communityScope: string;
   generationId: string;
-  isMember: boolean;
+  /** Write access to the session's channel (`codingSessionChannelAccess`). */
+  channelAccess: CodingSessionChannelAccess;
   /** Opens the join flow (design §B); absent when this session cannot join. */
   onAddProvider?: () => void;
   onCloseSession?: () => void;
@@ -909,7 +911,7 @@ export function UmbrellaCodingSessionWorkspace({
                     dockRef={dockRef}
                     focusedExecutionKey={focusedExecutionKey}
                     gutter={gutter}
-                    isMember={isMember}
+                    channelAccess={channelAccess}
                     isMultiExecution={isMultiExecution}
                     isNarrow={isNarrow}
                     mission={mission}

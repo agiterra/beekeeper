@@ -49,6 +49,10 @@ import {
   useCodingSessionImageAttachments,
   type CodingSessionAttachmentRef,
 } from "@/features/coding-sessions/lib/useCodingSessionImageAttachments";
+import {
+  type CodingSessionChannelAccess,
+  codingSessionChannelAccessAllowsSend,
+} from "@/features/coding-sessions/lib/codingSessionChannelAccess";
 import type { CodingSessionComposerControlContext } from "./CodingSessionComposerDeck";
 import { CodingSessionComposerSurface } from "./CodingSessionComposerSurface";
 
@@ -88,7 +92,13 @@ type CodingSessionComposerProps = {
    */
   currentUserPubkey?: string | null;
   immersive?: boolean;
-  isMember: boolean;
+  /**
+   * Write access to the session's channel, as the relay would decide it
+   * (`lib/codingSessionChannelAccess.ts`): an explicit member, or on a project
+   * transport the project's owner or collaborator. Separate from `canControl`,
+   * which is the session's founder / operator authority.
+   */
+  channelAccess: CodingSessionChannelAccess;
   isWorking: boolean;
   isUngovernedSession?: boolean;
   lifecycleStatus?: CodingSessionStatus;
@@ -194,7 +204,7 @@ export function CodingSessionComposer({
   controlContext,
   currentUserPubkey = null,
   immersive = false,
-  isMember,
+  channelAccess,
   isWorking,
   isUngovernedSession = false,
   lifecycleStatus,
@@ -219,6 +229,7 @@ export function CodingSessionComposer({
   variant = "panel",
 }: CodingSessionComposerProps) {
   const editorRef = React.useRef<HTMLTextAreaElement>(null);
+  const canWriteChannel = codingSessionChannelAccessAllowsSend(channelAccess);
   const [text, setText] = React.useState(prefill?.text ?? "");
   /**
    * Where ⌘↑/⌘↓ has walked to in this operator's earlier prompts.
@@ -383,7 +394,7 @@ export function CodingSessionComposer({
   const state = getCodingSessionComposerState({
     canSteer,
     hasUnsettledAttachments: attachments.isUploading || attachments.hasFailed,
-    isMember,
+    canWriteChannel,
     isWorking,
     text: preparedText,
   });
@@ -407,7 +418,8 @@ export function CodingSessionComposer({
   // provider then answers with its own signed receipt — a turn is never held
   // in this client's memory waiting for a moment that a crash would erase.
   const canSubmitText = canControl && !isUnavailable && state.canSend;
-  const editorDisabled = !canControl || !isMember || isSending || isUnavailable;
+  const editorDisabled =
+    !canControl || !canWriteChannel || isSending || isUnavailable;
 
   const publishPreparedText = React.useCallback(
     async ({
@@ -648,7 +660,7 @@ export function CodingSessionComposer({
     );
 
   const handleStop = React.useCallback(async () => {
-    if (!canControl || !isMember || !canInterrupt || isSending) return;
+    if (!canControl || !canWriteChannel || !canInterrupt || isSending) return;
     setPendingAction("interrupt");
     setError(null);
     try {
@@ -666,12 +678,12 @@ export function CodingSessionComposer({
     } finally {
       setPendingAction(null);
     }
-  }, [canControl, canInterrupt, channelId, isMember, isSending, target]);
+  }, [canControl, canInterrupt, canWriteChannel, channelId, isSending, target]);
 
   const handleResume = React.useCallback(async () => {
     if (
       !canControl ||
-      !isMember ||
+      !canWriteChannel ||
       !isDisconnected ||
       isSending ||
       !providerAuthorityPubkey
@@ -718,9 +730,9 @@ export function CodingSessionComposer({
     beginResume,
     channelId,
     canControl,
+    canWriteChannel,
     failResume,
     isDisconnected,
-    isMember,
     isSending,
     projectRef,
     providerAuthorityPubkey,
@@ -736,7 +748,7 @@ export function CodingSessionComposer({
   const endDialog = useEndCodingSessionDialog();
   const canSessionStop =
     canStopExecution &&
-    isMember &&
+    canWriteChannel &&
     providerAuthorityPubkey !== null &&
     !isEnded;
   const requestSessionEnd = React.useCallback(() => {
@@ -778,7 +790,7 @@ export function CodingSessionComposer({
         immersive={immersive}
         isDisconnected={isDisconnected}
         isEnded={isEnded}
-        isMember={isMember}
+        channelAccess={channelAccess}
         isResuming={isResuming}
         isSending={isSending}
         isUnavailable={isUnavailable}

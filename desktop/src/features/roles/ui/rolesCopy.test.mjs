@@ -267,6 +267,30 @@ test("the source line names one place in plain words, and refuses to average", (
       shaTitle: null,
     },
   );
+  // An unfinished setup draft is named only while roles are still built-in.
+  const shipped = {
+    origins: ["shipped"],
+    location: "/app/shipped",
+    sha: "0.4.2",
+    shasDiffer: false,
+  };
+  assert.equal(
+    packsSourceSentence("Beekeeper", 1, shipped, {
+      checkedAgeSeconds: null,
+      shippedVersion: "0.4.2",
+      draftInProgress: true,
+    }).text,
+    "Instructions come from this app's built-in defaults (v0.4.2). A project roles draft is in progress on this computer.",
+  );
+  assert.doesNotMatch(
+    packsSourceSentence(
+      "Beekeeper",
+      1,
+      { ...shipped, origins: ["project"], sha: "a".repeat(40) },
+      { checkedAgeSeconds: 5, shippedVersion: null, draftInProgress: true },
+    ).text,
+    /draft/,
+  );
   assert.deepEqual(
     packsSourceSentence("Beekeeper", 1, {
       origins: ["installed"],

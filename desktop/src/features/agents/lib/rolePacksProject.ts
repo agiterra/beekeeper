@@ -1,4 +1,5 @@
 import type { ProjectContainer } from "@/features/projects-container/hooks";
+import { LOCAL_GENERAL_ID } from "@/features/projects-container/lib/projectContainerModel";
 
 /**
  * Which project the team-role installer reads packs from, on a surface whose
@@ -113,4 +114,30 @@ export function resolveRolePacksProject(
   return first
     ? { project: first, source: ROLE_PACKS_PROJECT_SOURCES.firstMembership }
     : { project: null, source: ROLE_PACKS_PROJECT_SOURCES.none };
+}
+
+/**
+ * The projects the role-pack selector offers, drawn from the Agents tab's one
+ * project list (the same list the directory's project filter shows).
+ *
+ * The local General placeholder is left out: it is displayed until a real
+ * `general` project is published, has no owner and no published address, and
+ * so cannot have role packs or a recorded checkout. Every other project is
+ * offered in the list's own order.
+ */
+export function rolePacksProjectCandidates(
+  projects: readonly ProjectContainer[],
+): ProjectContainer[] {
+  return projects.filter((project) => project.id !== LOCAL_GENERAL_ID);
+}
+
+/** True when `source` means nobody chose the project — it was resolved. */
+export function isRolePacksProjectFallback(
+  source: RolePacksProjectSource,
+): boolean {
+  return (
+    source === ROLE_PACKS_PROJECT_SOURCES.recentCheckout ||
+    source === ROLE_PACKS_PROJECT_SOURCES.onlyMembership ||
+    source === ROLE_PACKS_PROJECT_SOURCES.firstMembership
+  );
 }

@@ -272,3 +272,192 @@ test("directory preserves stopped-agent errors and running restart state without
   assert.equal(running[0].lastError, null);
   assert.equal(running[0].needsRestart, true);
 });
+
+// ── Installed for a project (Tank Loop walkthrough §2) ─────────────────────
+//
+// Installation is recorded in the setup journals, not in seats. An agent a
+// project's setup installed a minute ago has no seat yet, and must still be
+// found under that project — stopped or running — without that fact being
+// written into `seatProjectIds`.
+
+const TANK_OWNER = "c".repeat(64);
+const TANK_LOOP = {
+  id: `${TANK_OWNER}:tank-loop`,
+  address: `30621:${TANK_OWNER}:tank-loop`,
+  name: "Tank Loop",
+};
+const OTHER_PROJECT = {
+  id: `${TANK_OWNER}:attic`,
+  address: `30621:${TANK_OWNER}:attic`,
+  name: "Attic",
+};
+const ANY_FILTERS = {
+  role: null,
+  status: "any",
+  projectId: null,
+  installedOnly: true,
+};
+
+function installedDirectory({ status = "stopped", seats = [], ref } = {}) {
+  return buildAgentDirectory({
+    managedAgents: [managedAgent({ homeRole: null, status })],
+    relayAgents: [],
+    seats,
+    openSeatKeys: new Set(seats.map((entry) => entry.key)),
+    defaultModel: "gpt",
+    projects: [TANK_LOOP, OTHER_PROJECT],
+    installationsByAgent: new Map([
+      [LEAD_PUBKEY, [{ projectRef: ref ?? TANK_LOOP.address, role: "lead" }]],
+    ]),
+  });
+}
+
+test("an installed agent with no seat appears under its project's filter", () => {
+  const rows = installedDirectory();
+  const row = rows[0];
+  assert.equal(row.seatProjectIds.size, 0, "installation is not a seat");
+  assert.deepEqual([...row.installedProjectIds], [TANK_LOOP.id]);
+  assert.deepEqual(row.installedProjects, [
+    {
+      projectRef: TANK_LOOP.address,
+      projectId: TANK_LOOP.id,
+      projectName: "Tank Loop",
+      role: "lead",
+    },
+  ]);
+  assert.equal(
+    agentDirectoryFilter(rows, { ...ANY_FILTERS, projectId: TANK_LOOP.id })
+      .length,
+    1,
+  );
+  assert.equal(
+    agentDirectoryFilter(rows, { ...ANY_FILTERS, projectId: OTHER_PROJECT.id })
+      .length,
+    0,
+  );
+  assert.ok(row.roleSlugs.includes("lead"), "the installed role is filterable");
+});
+
+test("a stopped installed agent stays visible under the project filter with status any", () => {
+  const rows = installedDirectory({ status: "stopped" });
+  assert.equal(rows[0].isStopped, true);
+  const visible = agentDirectoryFilter(rows, {
+    ...ANY_FILTERS,
+    projectId: TANK_LOOP.id,
+  });
+  assert.deepEqual(
+    visible.map((row) => row.pubkey),
+    [LEAD_PUBKEY],
+  );
+  // "Running" keeps its meaning: an installed, stopped agent is not running.
+  assert.equal(
+    agentDirectoryFilter(rows, {
+      ...ANY_FILTERS,
+      projectId: TANK_LOOP.id,
+      status: "running",
+    }).length,
+    0,
+  );
+});
+
+test("project identity: the journal's address resolves to the container id, case-folded, and either spelling filters", () => {
+  const rows = installedDirectory({
+    ref: `30621:${TANK_OWNER.toUpperCase()}:tank-loop`,
+  });
+  assert.equal(rows[0].installedProjects[0].projectId, TANK_LOOP.id);
+  assert.equal(
+    agentDirectoryFilter(rows, { ...ANY_FILTERS, projectId: TANK_LOOP.id })
+      .length,
+    1,
+    "filter by project.id",
+  );
+  assert.equal(
+    agentDirectoryFilter(rows, {
+      ...ANY_FILTERS,
+      projectId: TANK_LOOP.address,
+    }).length,
+    1,
+    "filter by project address",
+  );
+});
+
+test("an installation for a project that is not listed keeps its ref but invents no id", () => {
+  const rows = installedDirectory({ ref: `30621:${"d".repeat(64)}:hidden` });
+  const [installation] = rows[0].installedProjects;
+  assert.equal(installation.projectId, null);
+  assert.equal(installation.projectName, null);
+  assert.equal(rows[0].installedProjectIds.size, 0);
+  assert.equal(
+    agentDirectoryFilter(rows, {
+      ...ANY_FILTERS,
+      projectId: `${"d".repeat(64)}:hidden`,
+    }).length,
+    0,
+    "no string surgery turns an address into an id",
+  );
+});
+
+test("seat meaning is unchanged: a seat-only agent still matches its project and has no installation", () => {
+  const rows = buildAgentDirectory({
+    managedAgents: [managedAgent()],
+    relayAgents: [],
+    seats: [seat()],
+    openSeatKeys: new Set(["chan-1/gen-1"]),
+    defaultModel: "gpt",
+    projects: [TANK_LOOP],
+    installationsByAgent: new Map(),
+  });
+  const row = rows[0];
+  assert.deepEqual([...row.seatProjectIds], ["proj-1"]);
+  assert.deepEqual(row.installedProjects, []);
+  assert.equal(
+    agentDirectoryFilter(rows, { ...ANY_FILTERS, projectId: "proj-1" }).length,
+    1,
+  );
+  assert.equal(
+    agentDirectoryFilter(rows, {
+      ...ANY_FILTERS,
+      status: "installed-for-project",
+    }).length,
+    0,
+  );
+});
+
+test("status installed-for-project narrows to the chosen project's installations", () => {
+  const rows = installedDirectory({ status: "running" });
+  assert.equal(
+    agentDirectoryFilter(rows, {
+      ...ANY_FILTERS,
+      status: "installed-for-project",
+    }).length,
+    1,
+  );
+  assert.equal(
+    agentDirectoryFilter(rows, {
+      ...ANY_FILTERS,
+      status: "installed-for-project",
+      projectId: TANK_LOOP.id,
+    }).length,
+    1,
+  );
+  assert.equal(
+    agentDirectoryFilter(rows, {
+      ...ANY_FILTERS,
+      status: "installed-for-project",
+      projectId: OTHER_PROJECT.id,
+    }).length,
+    0,
+  );
+});
+
+test("building without installation input leaves every row with none (older callers)", () => {
+  const rows = buildAgentDirectory({
+    managedAgents: [managedAgent()],
+    relayAgents: [],
+    seats: [],
+    openSeatKeys: new Set(),
+    defaultModel: "gpt",
+  });
+  assert.deepEqual(rows[0].installedProjects, []);
+  assert.equal(rows[0].installedProjectIds.size, 0);
+});

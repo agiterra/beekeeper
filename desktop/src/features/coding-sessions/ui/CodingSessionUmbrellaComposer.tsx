@@ -23,6 +23,11 @@ import {
   stripCodingSessionMentionForTarget,
   type CodingSessionMentionResolution,
 } from "@/features/coding-sessions/lib/codingSessionMentionRouting";
+import {
+  type CodingSessionChannelAccess,
+  codingSessionChannelAccessAllowsSend,
+  describeCodingSessionChannelAccess,
+} from "@/features/coding-sessions/lib/codingSessionChannelAccess";
 import { formatCodingSessionRuntimeLabel } from "@/features/coding-sessions/lib/codingSessionLabels";
 import { deriveCodingSessionWorkspaceStatus } from "@/features/coding-sessions/lib/codingSessionWorkspaceModel";
 import {
@@ -53,7 +58,8 @@ type CodingSessionUmbrellaComposerProps = {
    */
   actorNames?: CodingSessionActorNameResolver;
   channelId: string;
-  isMember: boolean;
+  /** Write access to the session's channel (`codingSessionChannelAccess`). */
+  channelAccess: CodingSessionChannelAccess;
   umbrella: CodingSessionUmbrellaRecord;
   /** The signed-in identity, for founder preflight; null while loading. */
   currentUserPubkey: string | null;
@@ -88,7 +94,7 @@ export function CodingSessionUmbrellaComposer({
   actorNames,
   channelId,
   currentUserPubkey,
-  isMember,
+  channelAccess,
   layout = "inline",
   onAddProvider,
   prefill = null,
@@ -214,8 +220,8 @@ export function CodingSessionUmbrellaComposer({
       ) : null}
       {selected === null ? null : selected.kind === "session" ? (
         <CodingSessionLaneComposer
+          channelAccess={channelAccess}
           channelId={channelId}
-          isMember={isMember}
           publishLaneMessage={publishLaneMessage}
           recipientControl={recipientControl}
           sessionRef={selected.sessionRef}
@@ -236,7 +242,7 @@ export function CodingSessionUmbrellaComposer({
           canStopExecution={canStopExecution}
           channelId={channelId}
           currentUserPubkey={currentUserPubkey}
-          isMember={isMember}
+          channelAccess={channelAccess}
           // Keyed by explicit selection: the editor holds its draft in local
           // state, so without a fresh instance per hand-picked participant a
           // half-written prompt for Claude would be sitting in the box — and
@@ -269,7 +275,7 @@ function ExecutionComposer({
   canStopExecution,
   channelId,
   currentUserPubkey,
-  isMember,
+  channelAccess,
   layout,
   onAddProvider,
   onTextChange,
@@ -283,7 +289,7 @@ function ExecutionComposer({
   canStopExecution: boolean;
   channelId: string;
   currentUserPubkey: string | null;
-  isMember: boolean;
+  channelAccess: CodingSessionChannelAccess;
   layout: "inline" | "stacked";
   onAddProvider?: () => void;
   onTextChange: (text: string) => void;
@@ -370,7 +376,7 @@ function ExecutionComposer({
       }}
       currentUserPubkey={currentUserPubkey}
       immersive
-      isMember={isMember}
+      channelAccess={channelAccess}
       isWorking={isWorking}
       isUngovernedSession={authority.isUngovernedSession}
       lifecycleStatus={record.status}
@@ -557,14 +563,14 @@ function describeCodingSessionMention(
  * with channel write may speak, founder or not.
  */
 function CodingSessionLaneComposer({
+  channelAccess,
   channelId,
-  isMember,
   publishLaneMessage,
   recipientControl,
   sessionRef,
 }: {
+  channelAccess: CodingSessionChannelAccess;
   channelId: string;
-  isMember: boolean;
   publishLaneMessage: typeof publishCodingSessionLaneMessage;
   recipientControl?: React.ReactNode;
   sessionRef: string;
@@ -572,7 +578,9 @@ function CodingSessionLaneComposer({
   const [text, setText] = React.useState("");
   const [isSending, setIsSending] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
-  const canSend = isMember && !isSending && text.trim().length > 0;
+  const canWriteChannel = codingSessionChannelAccessAllowsSend(channelAccess);
+  const accessCopy = describeCodingSessionChannelAccess(channelAccess);
+  const canSend = canWriteChannel && !isSending && text.trim().length > 0;
 
   const submit = React.useCallback(async () => {
     if (!canSend) return;
@@ -607,7 +615,7 @@ function CodingSessionLaneComposer({
       <Textarea
         aria-label="Session conversation message"
         className="block min-h-24 w-full resize-none rounded-none border-0 bg-transparent px-4 pt-4 pb-1 shadow-none focus-visible:ring-0"
-        disabled={!isMember || isSending}
+        disabled={!canWriteChannel || isSending}
         onChange={(event) => setText(event.target.value)}
         onKeyDown={(event) => {
           if (shouldSubmitCodingSessionComposerKey(event)) {
@@ -615,7 +623,9 @@ function CodingSessionLaneComposer({
             void submit();
           }
         }}
-        placeholder="Message everyone in this session…"
+        placeholder={
+          accessCopy?.placeholder ?? "Message everyone in this session…"
+        }
         value={text}
       />
       <div className="flex min-h-14 items-center gap-3 px-4 pb-3 text-sm text-muted-foreground">

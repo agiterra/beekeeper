@@ -2,10 +2,22 @@ import { useQuery } from "@tanstack/react-query";
 import * as React from "react";
 
 import { useManagedAgentsQuery } from "@/features/agents/hooks";
+import { useCommunities } from "@/features/communities/useCommunities";
+import { useCodingSessionProject } from "@/features/projects-container/hooks";
+import {
+  installedRolesForProject,
+  useProjectInstalledRolesQuery,
+} from "@/features/roles/lib/projectInstalledRoles";
 import {
   listCodingSessionCrewTeams,
   type CodingSessionCrewTeam,
 } from "../../lib/codingSessionCrewTeams";
+import {
+  applyCodingSessionInstalledRoles,
+  codingSessionInstalledLeadDefault,
+  groupCodingSessionCandidates,
+  resolveCodingSessionLeadActor,
+} from "../../lib/codingSessionLeadCandidateGroups";
 import {
   type CodingSessionFoundedDraft,
   readCodingSessionFoundedDraft,
@@ -239,31 +251,75 @@ export function useCodingSessionFoundedSetup(input: {
     () => roleHintsQuery.data ?? [],
     [roleHintsQuery.data],
   );
+  // What this project installed on this computer, from its setup journals:
+  // those identities lead the picker, and a single installed `lead` is the
+  // default. Scoped to the active relay so another community's installs never
+  // attribute here.
+  const { activeCommunity } = useCommunities();
+  const installedRolesQuery = useProjectInstalledRolesQuery(
+    activeCommunity?.relayUrl ?? null,
+  );
+  const installedRoles = React.useMemo(
+    () => installedRolesForProject(installedRolesQuery.data, projectRef),
+    [installedRolesQuery.data, projectRef],
+  );
+  const projectName =
+    useCodingSessionProject(channelId, projectRef)?.name ?? null;
   const candidates = React.useMemo<NewCodingSessionLeadCandidate[]>(
     () =>
-      managedAgents.map((agent) => ({
-        pubkey: agent.pubkey,
-        name: agent.name,
-        // Read, never typed. A role record wins over the home role because it
-        // names what the identity is *for* in this project.
-        role:
-          roleHintRecords
-            .flatMap((team) => team.crew.seats)
-            .find((seat) => seat.personaId === agent.personaId)?.role ??
-          agent.homeRole ??
-          null,
-        model: agent.model,
-        ...(agent.hasRolePack === undefined
-          ? {}
-          : { hasRolePack: agent.hasRolePack }),
-      })),
-    [roleHintRecords, managedAgents],
+      applyCodingSessionInstalledRoles(
+        managedAgents.map((agent) => ({
+          pubkey: agent.pubkey,
+          name: agent.name,
+          // Read, never typed. A role record wins over the home role because it
+          // names what the identity is *for* in this project.
+          role:
+            roleHintRecords
+              .flatMap((team) => team.crew.seats)
+              .find((seat) => seat.personaId === agent.personaId)?.role ??
+            agent.homeRole ??
+            null,
+          model: agent.model,
+          ...(agent.hasRolePack === undefined
+            ? {}
+            : { hasRolePack: agent.hasRolePack }),
+        })),
+        installedRoles,
+      ),
+    [installedRoles, roleHintRecords, managedAgents],
+  );
+  const leadGroups = React.useMemo(
+    () =>
+      groupCodingSessionCandidates({
+        candidates: candidates.filter((candidate) => candidate.role !== null),
+        installedRoles,
+        projectRef,
+        projectName,
+      }),
+    [candidates, installedRoles, projectName, projectRef],
   );
 
   // Solo: you, whatever the Team picker last held. Team: the picked agent,
   // or `unset` — never "you" by fallback, which would seat a person as the
   // agent lead.
-  const [leadActor, setLeadActor] = React.useState<string | null>(null);
+  //
+  // An explicit pick is never overwritten; until there is one, the project's
+  // single installed lead is preselected (Team only — Solo never reads it).
+  const [leadSelection, setLeadSelection] = React.useState<{
+    actor: string | null;
+    explicit: boolean;
+  }>({ actor: null, explicit: false });
+  const setLeadActor = React.useCallback(
+    (actor: string | null) => setLeadSelection({ actor, explicit: true }),
+    [],
+  );
+  const leadActor = resolveCodingSessionLeadActor({
+    selection: leadSelection,
+    installedDefault: codingSessionInstalledLeadDefault({
+      candidates,
+      installedRoles,
+    }),
+  });
   const lead = React.useMemo<CodingSessionLaunchLead>(
     () =>
       mode === "solo"
@@ -533,17 +589,26 @@ export function useCodingSessionFoundedSetup(input: {
       ? create.lifecycle.error.code
       : undefined;
 
-  const benchIdentityOptions: NewCodingSessionBenchOption[] = candidates
-    .filter(
+  const benchGroups = groupCodingSessionCandidates({
+    candidates: candidates.filter(
       (candidate) =>
         candidate.role !== null &&
         !(lead.kind === "agent" && candidate.pubkey === lead.actor),
-    )
-    .map((candidate) => ({
-      value: candidate.pubkey,
-      label: candidate.name,
-      detail: candidate.role,
-    }));
+    ),
+    installedRoles,
+    projectRef,
+    projectName,
+  });
+  // Project roles first, under the same headings as the lead picker.
+  const benchIdentityOptions: NewCodingSessionBenchOption[] =
+    benchGroups.flatMap((group) =>
+      group.candidates.map((candidate) => ({
+        value: candidate.pubkey,
+        label: candidate.name,
+        detail: candidate.role,
+        group: group.heading,
+      })),
+    );
   const benchProviderOptions: NewCodingSessionBenchOption[] = targets.map(
     (target) => ({
       value: target.provider.providerInstanceRef,
@@ -574,6 +639,8 @@ export function useCodingSessionFoundedSetup(input: {
     overrideReason,
     setOverrideReason,
     candidates,
+    /** "Who leads" options: the project's installed roles first. */
+    leadGroups,
     lead,
     setLeadActor,
     governed,

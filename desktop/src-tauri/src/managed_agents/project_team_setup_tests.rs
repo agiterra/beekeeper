@@ -365,3 +365,42 @@ fn actual_neutral_baseline_prepares_and_validates() {
     let validated = tree::validate(&record);
     assert!(validated.valid, "{:?}", validated.diagnostics);
 }
+
+/// Write a bound draft record exactly where `read_draft` looks for it, without
+/// a seed or repository. `relay` is canonicalized as the scope stores it.
+pub(super) fn write_bound_draft(
+    root: &Path,
+    owner: &str,
+    relay: &str,
+    slug: &str,
+) -> ProjectTeamSetupDraft {
+    std::fs::create_dir_all(root).expect("storage root");
+    let root = std::fs::canonicalize(root).expect("canonical root");
+    let scope = SetupScope::new(&format!("30621:{owner}:{slug}"), owner, relay).expect("scope");
+    let directory = scope.directory(&root);
+    std::fs::create_dir_all(directory.join("draft/personas/roles")).expect("draft tree");
+    let record = ProjectTeamSetupDraft {
+        setup_id: uuid::Uuid::new_v4().to_string(),
+        project_ref: scope.project.clone(),
+        project_directory: root.join("project").to_string_lossy().into_owned(),
+        draft_directory: directory.join("draft").to_string_lossy().into_owned(),
+        roles_directory: directory
+            .join("draft/personas/roles")
+            .to_string_lossy()
+            .into_owned(),
+        status: SetupStatus::Draft,
+        intent: "Build a garden".to_string(),
+        owner_pubkey: scope.owner.clone(),
+        relay_url: scope.relay.clone(),
+        roles: Vec::new(),
+        expected_roles: Vec::new(),
+        created_at: "2026-09-13T00:00:00Z".to_string(),
+        latest_snapshot_id: None,
+    };
+    std::fs::write(
+        directory.join("record.json"),
+        serde_json::to_vec_pretty(&record).expect("record json"),
+    )
+    .expect("record");
+    record
+}

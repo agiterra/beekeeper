@@ -16,6 +16,7 @@ import {
   CodingSessionUmbrellaComposer,
   type CodingSessionUmbrellaComposerPrefill,
 } from "./CodingSessionUmbrellaComposer";
+import type { CodingSessionChannelAccess } from "@/features/coding-sessions/lib/codingSessionChannelAccess";
 import type { CodingSessionTaskModel } from "@/features/coding-sessions/lib/codingSessionTaskModel";
 import type { CodingSessionStreamPresence } from "@/features/coding-sessions/lib/codingSessionStreamPresence";
 import type { CodingSessionReachabilityResolver } from "@/features/coding-sessions/hooks/useCodingSessionProviderReachability";
@@ -43,7 +44,7 @@ export function CodingSessionUmbrellaDock({
   dockRef,
   focusedExecutionKey,
   gutter,
-  isMember,
+  channelAccess,
   isMultiExecution,
   isNarrow,
   mission,
@@ -67,7 +68,7 @@ export function CodingSessionUmbrellaDock({
   dockRef: React.RefObject<HTMLDivElement | null>;
   focusedExecutionKey: string | null;
   gutter: string;
-  isMember: boolean;
+  channelAccess: CodingSessionChannelAccess;
   isMultiExecution: boolean;
   isNarrow: boolean;
   mission: boolean;
@@ -129,7 +130,7 @@ export function CodingSessionUmbrellaDock({
           acceptedOperators={acceptedOperators}
           channelId={channelId}
           currentUserPubkey={currentUserPubkey}
-          isMember={isMember}
+          channelAccess={channelAccess}
           onAddProvider={onAddProvider}
           onSelectedParticipantChange={onSelectedParticipantChange}
           prefill={prefill}

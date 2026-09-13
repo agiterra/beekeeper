@@ -13,6 +13,11 @@ type RolePacksProjectSelectorProps = {
   projects: readonly ProjectContainer[];
   /** The project id the operator picked. */
   onSelect: (projectId: string) => void;
+  /**
+   * Set when nobody chose `project` — it was resolved as a fallback — and
+   * rendered beside it, so the fallback never reads as the selection.
+   */
+  fallbackNote?: string | null;
 };
 
 /**
@@ -25,20 +30,47 @@ type RolePacksProjectSelectorProps = {
  * project can say so before installing, instead of discovering it from the
  * identities that appeared afterwards.
  *
- * With nothing to choose between — one project, or none — this renders
- * nothing. The single project is still named, on the installer's own folder
- * label; a control offering one option would only be furniture.
+ * With nothing to choose between — a single selectable project — the
+ * dropdown is left out, but the project is still named in plain text
+ * (`role-packs-project-static`). That case is not rare: with General plus one
+ * real project and the directory's filter on General, role packs resolve to
+ * the other project, and a surface that went silent would show General while
+ * Install reads another project's packs. So whenever a fallback note is
+ * produced it is shown too. With no project at all this renders nothing.
  */
 export function RolePacksProjectSelector({
   project,
   projects,
   onSelect,
+  fallbackNote,
 }: RolePacksProjectSelectorProps) {
-  if (!project || projects.length < 2) return null;
+  if (!project) return null;
+
+  const note = fallbackNote ? (
+    <span data-testid="role-packs-project-fallback">{fallbackNote}</span>
+  ) : null;
+
+  if (projects.length < 2) {
+    return (
+      <div
+        className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground"
+        data-testid="role-packs-project-static"
+      >
+        <span>{ROLE_PACKS_PROJECT_SELECTOR_LABEL}</span>
+        <span
+          className="font-medium text-foreground"
+          data-testid="role-packs-project-name"
+        >
+          {project.name}
+        </span>
+        {note}
+      </div>
+    );
+  }
 
   return (
     <div
-      className="flex items-center gap-1 text-xs text-muted-foreground"
+      className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground"
       data-testid="role-packs-project-selector"
     >
       <span>{ROLE_PACKS_PROJECT_SELECTOR_LABEL}</span>
@@ -53,6 +85,7 @@ export function RolePacksProjectSelector({
         triggerTestId="role-packs-project-trigger"
         value={project.id}
       />
+      {note}
     </div>
   );
 }

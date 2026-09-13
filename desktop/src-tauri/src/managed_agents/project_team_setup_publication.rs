@@ -49,6 +49,10 @@ mod announcement;
 mod blocker_tests;
 #[path = "project_team_setup_publication_git.rs"]
 mod git;
+#[path = "project_team_installed_roles.rs"]
+pub(crate) mod installed_roles;
+#[path = "project_team_setup_publication_peek.rs"]
+pub(crate) mod peek;
 #[cfg(test)]
 #[path = "project_team_setup_publication_tests.rs"]
 mod tests;

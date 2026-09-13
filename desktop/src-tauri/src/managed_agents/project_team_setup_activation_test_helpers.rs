@@ -95,3 +95,19 @@ fn lead_staging_requires_the_exact_adopted_repo_sha_role_and_path() {
     };
     assert!(require_exact_staged_pack(&wrong, &expected_pack_ref(&source, "lead")).is_err());
 }
+
+#[test]
+fn lead_first_message_asks_to_reconcile_earlier_staffing_instructions() {
+    let source = ProjectTeamActivationSource {
+        repo_ref: "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:packs"
+            .to_string(),
+        commit: "b".repeat(40),
+        pack_path: "personas/roles".to_string(),
+    };
+    let turn = projection::lead_initial_turn(&source);
+    assert!(turn.starts_with("You are the project lead."));
+    assert!(turn.contains(&source.repo_ref) && turn.contains(&source.commit));
+    assert!(turn.contains(
+        "Before depending on existing project instructions, reconcile any that name specific agents, reviewers, budgets or staffing arrangements from an earlier setup: keep the underlying product, security, testing and independent-review requirements, map them to available roles, and ask the owner once when the mapping is unclear. Inspect tools, configuration and repository state yourself before asking a person."
+    ));
+}

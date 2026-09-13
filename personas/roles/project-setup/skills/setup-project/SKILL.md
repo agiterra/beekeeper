@@ -12,6 +12,32 @@ roles, acceptance evidence, standing grants and unresolved questions. Cite the
 observations behind project-specific commands. Do not infer procedures from
 another project or copy machine credentials.
 
+Inspect tools, commands, configuration and repository state yourself. Ask the
+owner only for what inspection cannot establish, and say what you checked.
+
+## Reconcile existing instructions
+
+Existing contributor and agent instructions are project policy to reconcile,
+not text to copy or discard. Identify where they conflict with a
+lead-coordinated team whose lead picks workers by task, such as a fixed roster,
+a mandatory participant or a staffing sequence. Ordinary solo sessions remain
+a supported way to work; do not make a team, a role or a reviewer count a
+prerequisite the instructions do not state.
+
+Preserve every product, security, testing and independent review requirement.
+Where a requirement names a specific agent, reviewer, tool, budget, model or
+staffing arrangement, record the underlying requirement, map it to an available
+role where the mapping is clear, and list the name or assumption for the owner
+to reconcile instead of making it a role dependency. An unavailable named
+reviewer never removes the independent review it stood for.
+
+If instructions are generated from a source file by a generator, never edit
+the generated output; name the source and generator in the report and propose
+changes there. Never silently rewrite project policy files or drop an
+independent review requirement. Report each item for reconciliation with its
+source, the underlying requirement, the proposed role mapping and the name or
+assumption to confirm.
+
 ## Prepare project-owned procedures
 
 Use the assigned role-pack workspace and its saved project source. For a new
@@ -40,7 +66,8 @@ capability through the task's reporting surface.
 Read the submission result. On a conflicting source revision, inspect the new
 project changes and reconcile without overwriting them. On failure, report the
 actual condition; do not say the setup was saved. On success, report the
-published source and revision, checks performed and remaining setup needs.
+published source and revision, checks performed, items left for the owner to
+reconcile and remaining setup needs.
 Publication, staging and observed execution are separate facts. New work should
 resolve the project's current published copy; an active execution keeps the
 instructions it staged. Never claim adoption from publication alone.

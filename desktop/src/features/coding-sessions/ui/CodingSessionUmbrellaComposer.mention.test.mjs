@@ -105,7 +105,7 @@ async function mount(records) {
       React.createElement(CodingSessionUmbrellaComposer, {
         channelId: CHANNEL_ID,
         currentUserPubkey: null,
-        isMember: true,
+        channelAccess: { kind: "member" },
         umbrella,
         publishLaneMessage: async () => {},
       }),

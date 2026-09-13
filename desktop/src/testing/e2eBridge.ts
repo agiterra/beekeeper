@@ -14,6 +14,7 @@ import {
   respondToMockMultiChannelSessionFacts,
   type MockFilter,
 } from "./e2eBridgeSessionFacts.ts";
+import { handleMockProjectTeamSetupCommand } from "./e2eBridgeProjectTeamSetup.ts";
 import { relayClient } from "@/shared/api/relayClient";
 import {
   mockChannelHistoryPage,
@@ -14193,6 +14194,16 @@ export function maybeInstallE2eTauriMocks() {
         return (config?.mock?.bakedBuildEnv ?? []).map((entry) => entry.key);
       case "agent_access_owner_only":
         return config?.mock?.ownerOnlyAccessBuild ?? false;
+      case "project_team_list_installed_roles":
+      case "project_team_setup_get":
+      case "project_team_setup_get_publication":
+      case "project_team_setup_peek_publication":
+      case "project_team_setup_get_brief":
+      case "project_team_setup_get_activation":
+        return handleMockProjectTeamSetupCommand(
+          command,
+          payload as Record<string, unknown> | null,
+        )?.value;
       case "update_managed_agent":
         return handleUpdateManagedAgent(
           payload as Parameters<typeof handleUpdateManagedAgent>[0],

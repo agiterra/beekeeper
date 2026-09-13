@@ -303,3 +303,37 @@ fn local_brief_accepts_full_intent_and_keeps_writes_scoped_to_draft() {
     draft.project_directory = "x".repeat(32 * 1024);
     assert!(authoring_prompt(&draft).is_err());
 }
+
+#[test]
+fn brief_ipc_returns_saved_bytes_renders_when_absent_and_refuses_another_scope() {
+    let temp = tempfile::tempdir().expect("temp");
+    let root = temp.path().join("storage");
+    let owner = Keys::generate().public_key().to_hex();
+    let draft =
+        super::super::tests::write_bound_draft(&root, &owner, "wss://garden.example", "garden");
+    let root = std::fs::canonicalize(&root).expect("canonical root");
+    let scope = SetupScope::new(&draft.project_ref, &owner, &draft.relay_url).expect("scope");
+    let saved = Path::new(&draft.draft_directory).join("PROJECT_TEAM_SETUP.md");
+
+    let rendered = read_brief(&root, &scope, &draft.setup_id).expect("rendered brief");
+    assert_eq!(rendered.text, authoring_prompt(&draft).expect("prompt"));
+    assert!(!saved.exists(), "reading the brief must not write it");
+
+    let bytes = "Saved brief — edited by an earlier build.\n\nKeep exact bytes.\r\n";
+    std::fs::write(&saved, bytes).expect("saved brief");
+    let brief = read_brief(&root, &scope, &draft.setup_id).expect("saved brief");
+    assert_eq!(brief.text.as_bytes(), bytes.as_bytes());
+    assert_eq!(
+        serde_json::to_value(&brief).expect("json"),
+        serde_json::json!({ "text": bytes })
+    );
+
+    let other_relay =
+        SetupScope::new(&draft.project_ref, &owner, "wss://orchard.example").expect("scope");
+    assert!(read_brief(&root, &other_relay, &draft.setup_id).is_err());
+    let other_owner = Keys::generate().public_key().to_hex();
+    let other_owner =
+        SetupScope::new(&draft.project_ref, &other_owner, &draft.relay_url).expect("scope");
+    assert!(read_brief(&root, &other_owner, &draft.setup_id).is_err());
+    assert!(read_brief(&root, &scope, &Uuid::new_v4().to_string()).is_err());
+}

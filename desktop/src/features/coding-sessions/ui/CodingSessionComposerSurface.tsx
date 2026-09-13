@@ -1,5 +1,11 @@
 import type * as React from "react";
 
+import {
+  type CodingSessionChannelAccess,
+  type CodingSessionChannelAccessCopy,
+  codingSessionChannelAccessAllowsSend,
+  describeCodingSessionChannelAccess,
+} from "@/features/coding-sessions/lib/codingSessionChannelAccess";
 import type { CodingSessionContextWindow } from "@/features/coding-sessions/lib/codingSessionContextWindow";
 import {
   matchCodingSessionHistoryKey,
@@ -48,7 +54,8 @@ type ComposerSurfaceProps = {
   immersive: boolean;
   isDisconnected: boolean;
   isEnded: boolean;
-  isMember: boolean;
+  /** Channel write access; see `lib/codingSessionChannelAccess.ts`. */
+  channelAccess: CodingSessionChannelAccess;
   isResuming: boolean;
   isSending: boolean;
   isUnavailable: boolean;
@@ -113,7 +120,7 @@ export function CodingSessionComposerSurface({
   immersive,
   isDisconnected,
   isEnded,
-  isMember,
+  channelAccess,
   isResuming,
   isSending,
   isUnavailable,
@@ -144,6 +151,8 @@ export function CodingSessionComposerSurface({
 }: ComposerSurfaceProps) {
   const mission = useCodingSessionMissionLens();
   const recipientLabel = useCodingSessionComposerRecipient();
+  const canWriteChannel = codingSessionChannelAccessAllowsSend(channelAccess);
+  const accessCopy = describeCodingSessionChannelAccess(channelAccess);
   return (
     <div
       className={cn(
@@ -166,7 +175,7 @@ export function CodingSessionComposerSurface({
           errorAction={errorAction}
           isDisconnected={isDisconnected}
           isEnded={isEnded}
-          isMember={isMember}
+          accessCopy={accessCopy}
           isResuming={isResuming}
           isSending={isSending}
           onAddProvider={onAddProvider}
@@ -184,6 +193,7 @@ export function CodingSessionComposerSurface({
         />
       ) : (
         <CompactComposerNotices
+          accessCopy={accessCopy}
           authorityReason={authorityReason}
           canControl={canControl}
           error={error}
@@ -284,7 +294,7 @@ export function CodingSessionComposerSurface({
             canSteer,
             isDisconnected,
             isEnded,
-            isMember,
+            accessCopy,
             isWorking,
           })}
           ref={editorRef}
@@ -298,7 +308,7 @@ export function CodingSessionComposerSurface({
             canSubmitText={canSubmitText}
             deliveryHint={deliveryHint}
             isDisconnected={isDisconnected}
-            isMember={isMember}
+            canWriteChannel={canWriteChannel}
             isSending={isSending}
             layout={layout}
             onInterrupt={onInterrupt}
@@ -319,7 +329,7 @@ export function CodingSessionComposerSurface({
             canSteer={canSteer}
             context={context}
             contextWindow={contextWindow}
-            isMember={isMember}
+            accessCopy={accessCopy}
             isSending={isSending}
             isUnavailable={isUnavailable}
             isUngovernedSession={isUngovernedSession}
@@ -347,7 +357,7 @@ function CompactComposerActions({
   canSubmitText,
   deliveryHint,
   isDisconnected,
-  isMember,
+  canWriteChannel,
   isSending,
   layout,
   onInterrupt,
@@ -364,7 +374,7 @@ function CompactComposerActions({
   canSubmitText: boolean;
   deliveryHint: string | null;
   isDisconnected: boolean;
-  isMember: boolean;
+  canWriteChannel: boolean;
   isSending: boolean;
   layout: "inline" | "stacked";
   onInterrupt: () => void;
@@ -417,7 +427,9 @@ function CompactComposerActions({
       {showStopAction ? (
         <Button
           data-testid="coding-session-composer-stop"
-          disabled={!canControl || !isMember || !canInterrupt || isSending}
+          disabled={
+            !canControl || !canWriteChannel || !canInterrupt || isSending
+          }
           onClick={onInterrupt}
           title={
             canInterrupt
@@ -454,7 +466,7 @@ function ComposerLifecycleNotice({
   errorAction,
   isDisconnected,
   isEnded,
-  isMember,
+  accessCopy,
   isResuming,
   isSending,
   onAddProvider,
@@ -474,7 +486,8 @@ function ComposerLifecycleNotice({
   errorAction: React.ReactNode;
   isDisconnected: boolean;
   isEnded: boolean;
-  isMember: boolean;
+  /** Why channel write is refused, or null when it is allowed. */
+  accessCopy: CodingSessionChannelAccessCopy | null;
   isResuming: boolean;
   isSending: boolean;
   onAddProvider?: () => void;
@@ -487,8 +500,8 @@ function ComposerLifecycleNotice({
   if (!error && !errorAction && !unreachable && !isDisconnected && !isEnded) {
     return null;
   }
-  const reconnectDisabledReason = !isMember
-    ? "Join this channel to reconnect this execution."
+  const reconnectDisabledReason = accessCopy
+    ? accessCopy.reconnect
     : !canControl
       ? (authorityReason ??
         "You do not have permission to reconnect this execution.")
@@ -497,8 +510,8 @@ function ComposerLifecycleNotice({
         : null;
   const stopDisabledReason = canSessionStop
     ? null
-    : !isMember
-      ? "Join this channel to stop this execution."
+    : accessCopy
+      ? accessCopy.stop
       : !providerAuthorityPubkey
         ? "Stop is unavailable until provider authority is available."
         : "Only the session founder can stop this execution.";
@@ -539,7 +552,7 @@ function ComposerLifecycleNotice({
                 data-testid="coding-session-composer-resume"
                 disabled={
                   !canControl ||
-                  !isMember ||
+                  accessCopy !== null ||
                   !providerAuthorityPubkey ||
                   isSending
                 }
@@ -612,6 +625,7 @@ function LifecycleNoticeRow({
 }
 
 function CompactComposerNotices({
+  accessCopy,
   authorityReason,
   canControl,
   error,
@@ -619,6 +633,7 @@ function CompactComposerNotices({
   isUngovernedSession,
   showAuthorityFailure,
 }: {
+  accessCopy: CodingSessionChannelAccessCopy | null;
   authorityReason: string | null;
   canControl: boolean;
   error: string | null;
@@ -628,13 +643,12 @@ function CompactComposerNotices({
 }) {
   return (
     <>
-      {showAuthorityFailure ? (
+      {showAuthorityFailure && accessCopy ? (
         <p
           className="mb-2 text-sm text-muted-foreground"
           data-testid="coding-session-composer-membership-failure"
         >
-          Join this channel for native control. Compatibility control also
-          requires an allowlisted operator.
+          {accessCopy.notice}
         </p>
       ) : null}
       {isUngovernedSession ? (
@@ -674,7 +688,7 @@ function composerPlaceholder({
   canSteer,
   isDisconnected,
   isEnded,
-  isMember,
+  accessCopy,
   isWorking,
 }: {
   authorityReason: string | null;
@@ -683,12 +697,12 @@ function composerPlaceholder({
   canSteer: boolean;
   isDisconnected: boolean;
   isEnded: boolean;
-  isMember: boolean;
+  accessCopy: CodingSessionChannelAccessCopy | null;
   isWorking: boolean;
 }): string {
   if (isEnded) return "This execution has ended.";
   if (isDisconnected) return "Reconnect this execution to continue…";
-  if (!isMember) return "Join this channel to send a message.";
+  if (accessCopy) return accessCopy.placeholder;
   if (!canControl && authorityUnresolved) {
     return authorityReason ?? "Session access is unresolved.";
   }

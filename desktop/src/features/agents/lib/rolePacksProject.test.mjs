@@ -136,3 +136,92 @@ test("with nothing recorded, the first project in the list — never an arbitrar
   assert.equal(resolved.project?.id, GENERAL.id);
   assert.equal(resolved.source, ROLE_PACKS_PROJECT_SOURCES.firstMembership);
 });
+
+// ── One selected project (Tank Loop walkthrough §5) ─────────────────────────
+//
+// The Agents tab has one selection: the directory's project filter. The
+// installer resolves from that same value over the same project list, and a
+// fallback is reported as one so the surface can say so.
+
+import {
+  isRolePacksProjectFallback,
+  rolePacksProjectCandidates,
+} from "./rolePacksProject.ts";
+import { rolePacksProjectFallbackNote } from "../ui/installCrewRolesCopy.ts";
+
+const LOCAL_GENERAL = {
+  ...makeProject("general", 0),
+  id: "local:general",
+  owner: "",
+};
+
+test("the directory's selected project is the installer's project", () => {
+  const projects = rolePacksProjectCandidates([LOCAL_GENERAL, GENERAL, ATTIC]);
+  const resolved = resolveRolePacksProject({
+    routeProject: null,
+    chosenId: ATTIC.id,
+    projects,
+    workdirsByProject: { [GENERAL.address]: { updatedAt: "2026-09-01" } },
+  });
+  assert.equal(resolved.project?.id, ATTIC.id);
+  assert.equal(isRolePacksProjectFallback(resolved.source), false);
+  assert.equal(rolePacksProjectFallbackNote(resolved.source, true), null);
+});
+
+test("the local General placeholder is not offered for role packs; the rest keep list order", () => {
+  assert.deepEqual(
+    rolePacksProjectCandidates([LOCAL_GENERAL, ATTIC, GENERAL]).map(
+      (project) => project.id,
+    ),
+    [ATTIC.id, GENERAL.id],
+  );
+});
+
+test("Any project in the directory: the installer falls back and the note says so", () => {
+  const resolved = resolveRolePacksProject({
+    routeProject: null,
+    chosenId: null,
+    projects: [GENERAL, ATTIC],
+    workdirsByProject: {
+      [ATTIC.address]: { updatedAt: "2026-08-27T00:00:00Z" },
+    },
+  });
+  assert.equal(isRolePacksProjectFallback(resolved.source), true);
+  assert.equal(
+    rolePacksProjectFallbackNote(resolved.source, false),
+    "No project is chosen in the project filter, so this fell back to the project with this computer's newest checkout.",
+  );
+  assert.equal(
+    rolePacksProjectFallbackNote(
+      ROLE_PACKS_PROJECT_SOURCES.firstMembership,
+      false,
+    ),
+    "No project is chosen in the project filter, so this fell back to the first project in the list.",
+  );
+});
+
+test("a directory project that cannot hold role packs falls back, and says it was chosen but unusable", () => {
+  const projects = rolePacksProjectCandidates([LOCAL_GENERAL, GENERAL, ATTIC]);
+  const resolved = resolveRolePacksProject({
+    routeProject: null,
+    chosenId: LOCAL_GENERAL.id,
+    projects,
+    workdirsByProject: undefined,
+  });
+  assert.equal(resolved.project?.id, GENERAL.id);
+  assert.equal(
+    rolePacksProjectFallbackNote(resolved.source, true),
+    "The project chosen in the project filter cannot hold role packs, so this fell back to the first project in the list.",
+  );
+});
+
+test("route and chosen sources disclose nothing", () => {
+  for (const source of [
+    ROLE_PACKS_PROJECT_SOURCES.route,
+    ROLE_PACKS_PROJECT_SOURCES.chosen,
+    ROLE_PACKS_PROJECT_SOURCES.none,
+  ]) {
+    assert.equal(isRolePacksProjectFallback(source), false);
+    assert.equal(rolePacksProjectFallbackNote(source, false), null);
+  }
+});

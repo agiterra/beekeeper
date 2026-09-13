@@ -28,7 +28,8 @@ import { provisionCodingSessionProvider } from "@/shared/api/tauriSessionProvide
 import type { Channel } from "@/shared/api/types";
 import { Button } from "@/shared/ui/button";
 import {
-  projectTeamSetupError,
+  projectTeamSetupFailure,
+  type ProjectTeamSetupFailure,
   type ProjectTeamSetupDraft,
   type ProjectTeamSetupAuthoringReservation,
   type ProjectTeamSetupLaunch,
@@ -40,6 +41,8 @@ import {
   startProjectTeamSetupAuthoring,
 } from "../lib/projectTeamSetupApi";
 import { useProjectTeamSetupRuntimes } from "../lib/useProjectTeamSetupRuntimes";
+import type { ProjectTeamSetupLaunchObservation } from "./ProjectTeamSetupDraftView";
+import { ProjectTeamSetupFailureNotice } from "./ProjectTeamSetupFailureNotice";
 
 /** Receipt facts remain separate from a locally prepared or accepted request. */
 export function projectTeamSetupLaunchSentence(
@@ -65,9 +68,11 @@ export function projectTeamSetupLaunchSentence(
 export function ProjectTeamSetupAuthoring({
   draft,
   onDraftMayChange,
+  onLaunchObserved,
 }: {
   draft: ProjectTeamSetupDraft;
   onDraftMayChange?: () => void;
+  onLaunchObserved?: (launch: ProjectTeamSetupLaunchObservation) => void;
 }) {
   const channels = useChannelsQuery({ includeSessionTransports: true });
   const projects = useProjectContainersQuery();
@@ -102,6 +107,7 @@ export function ProjectTeamSetupAuthoring({
       preferredChannelId={preferred?.channelId ?? null}
       channelError={channelError}
       onDraftMayChange={onDraftMayChange}
+      onLaunchObserved={onLaunchObserved}
       onProviderProvisioned={() => refreshGlobalAgentConfig(queryClient)}
       onOpen={(launch) => {
         if (launch.target)
@@ -126,6 +132,7 @@ export function ProjectTeamSetupAuthoringControls({
   channelError,
   onOpen,
   onDraftMayChange,
+  onLaunchObserved,
   onProviderProvisioned,
 }: {
   draft: ProjectTeamSetupDraft;
@@ -134,6 +141,8 @@ export function ProjectTeamSetupAuthoringControls({
   channelError: string | null;
   onOpen: (launch: ProjectTeamSetupLaunch) => void;
   onDraftMayChange?: () => void;
+  /** Reports the saved launch after it is read, so the stage can follow it. */
+  onLaunchObserved?: (launch: ProjectTeamSetupLaunchObservation) => void;
   onProviderProvisioned?: () => void;
 }) {
   const scope = React.useMemo(
@@ -153,8 +162,11 @@ export function ProjectTeamSetupAuthoringControls({
     null,
   );
   const [loaded, setLoaded] = React.useState(false);
+  const [readFailed, setReadFailed] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
+  const [error, setError] = React.useState<ProjectTeamSetupFailure | null>(
+    null,
+  );
   const [channelSelection, setChannelSelection] = React.useState<string | null>(
     null,
   );
@@ -176,14 +188,22 @@ export function ProjectTeamSetupAuthoringControls({
         setReservation(saved);
         setLaunch(started);
         setLoaded(true);
+        setReadFailed(false);
       })
       .catch((failure: unknown) => {
-        if (!cancelled) setError(projectTeamSetupError(failure));
+        if (cancelled) return;
+        setReadFailed(true);
+        setError(projectTeamSetupFailure(failure));
       });
     return () => {
       cancelled = true;
     };
   }, [scope]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: onLaunchObserved is a parent callback; report only when the observed record changes.
+  React.useEffect(() => {
+    if (loaded) onLaunchObserved?.(launch);
+    else if (readFailed) onLaunchObserved?.("unreadable");
+  }, [loaded, readFailed, launch]);
   const channelId =
     launch?.channelId ??
     reservation?.channelId ??
@@ -229,7 +249,7 @@ export function ProjectTeamSetupAuthoringControls({
     try {
       await action();
     } catch (failure) {
-      setError(projectTeamSetupError(failure));
+      setError(projectTeamSetupFailure(failure));
     } finally {
       setBusy(false);
     }
@@ -280,6 +300,7 @@ export function ProjectTeamSetupAuthoringControls({
         setLaunch(await getProjectTeamSetupLaunch(scope));
       } catch {
         setLoaded(false);
+        setReadFailed(true);
       }
       throw failure;
     }
@@ -287,9 +308,9 @@ export function ProjectTeamSetupAuthoringControls({
   return (
     <section
       className="space-y-3 rounded-md border p-3"
-      aria-label="Project team authoring"
+      aria-label="Project roles authoring"
     >
-      <h3 className="text-sm font-medium">Author the project team</h3>
+      <h3 className="text-sm font-medium">Author project roles</h3>
       <p className="text-sm text-muted-foreground">
         Use an installed runtime on this computer to inspect the repository and
         adapt the draft. This does not publish role packs.
@@ -476,6 +497,7 @@ export function ProjectTeamSetupAuthoringControls({
               setReservation(saved);
               setLaunch(started);
               setLoaded(true);
+              setReadFailed(false);
             })
           }
         >
@@ -498,15 +520,17 @@ export function ProjectTeamSetupAuthoringControls({
         </p>
       ) : null}
       {launch ? (
-        <p role="status" className="text-sm">
-          {projectTeamSetupLaunchSentence(launch)} {launch.message}
-        </p>
+        <div className="space-y-1 text-sm">
+          <p role="status">{projectTeamSetupLaunchSentence(launch)}</p>
+          {launch.message ? (
+            <details className="text-muted-foreground">
+              <summary className="cursor-pointer">Details</summary>
+              <p className="break-words">{launch.message}</p>
+            </details>
+          ) : null}
+        </div>
       ) : null}
-      {error ? (
-        <p role="alert" className="text-sm text-destructive">
-          {error}
-        </p>
-      ) : null}
+      <ProjectTeamSetupFailureNotice failure={error} />
     </section>
   );
 }

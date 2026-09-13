@@ -20,3 +20,20 @@ export async function openAgentDefinitions(page: Page) {
   await expect(section.getByTestId("unified-agents-groups")).toBeVisible();
   return section;
 }
+
+/**
+ * Open the collapsed "Saved agent groups" disclosure on the Agents page.
+ *
+ * Saved groups are a secondary tool for adding several agents to a channel at
+ * once; the page no longer leads with them, so specs that exercise team cards
+ * open this first.
+ */
+export async function openSavedAgentGroups(page: Page) {
+  const section = page.getByTestId("agents-saved-groups");
+  await expect(section).toBeVisible({ timeout: 15_000 });
+  if (!(await section.evaluate((element) => element.hasAttribute("open")))) {
+    await section.locator("summary").click();
+  }
+  await expect(section.getByTestId("agents-library-teams")).toBeVisible();
+  return section;
+}

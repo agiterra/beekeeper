@@ -8,8 +8,9 @@ import { Input } from "@/shared/ui/input";
 import { Textarea } from "@/shared/ui/textarea";
 import {
   projectTeamSetupBlocker,
-  projectTeamSetupError,
+  projectTeamSetupFailure,
   type ProjectTeamSetupDraft,
+  type ProjectTeamSetupFailure,
 } from "../lib/projectTeamSetup";
 import {
   getProjectTeamSetup,
@@ -17,8 +18,10 @@ import {
 } from "../lib/projectTeamSetupApi";
 import {
   ProjectTeamSetupDraftView,
+  type ProjectTeamSetupLaunchObservation,
   type StartProjectTeamAuthoring,
 } from "./ProjectTeamSetupDraftView";
+import { ProjectTeamSetupFailureNotice } from "./ProjectTeamSetupFailureNotice";
 
 /** Mounted only while open. Initial reads never prepare or publish a draft. */
 export function ProjectTeamSetupForm({
@@ -35,6 +38,7 @@ export function ProjectTeamSetupForm({
   renderAuthoring?: (
     draft: ProjectTeamSetupDraft,
     onDraftMayChange: () => void,
+    onLaunchObserved: (launch: ProjectTeamSetupLaunchObservation) => void,
   ) => React.ReactNode;
 }) {
   const [intent, setIntent] = React.useState("");
@@ -43,7 +47,9 @@ export function ProjectTeamSetupForm({
   const [loading, setLoading] = React.useState(true);
   const [readFailed, setReadFailed] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
+  const [error, setError] = React.useState<ProjectTeamSetupFailure | null>(
+    null,
+  );
   const [reload, setReload] = React.useState(0);
   const directoryTouched = React.useRef(false);
   // biome-ignore lint/correctness/useExhaustiveDependencies: reload is the explicit retry trigger after a failed read.
@@ -60,7 +66,7 @@ export function ProjectTeamSetupForm({
       if (saved.status === "fulfilled") setDraft(saved.value);
       else {
         setReadFailed(true);
-        setError(projectTeamSetupError(saved.reason));
+        setError(projectTeamSetupFailure(saved.reason));
       }
       if (workdirs.status === "fulfilled" && !directoryTouched.current) {
         setDirectory(workdirs.value.byProject[projectRef]?.path ?? "");
@@ -92,7 +98,7 @@ export function ProjectTeamSetupForm({
         }),
       );
     } catch (failure) {
-      setError(projectTeamSetupError(failure));
+      setError(projectTeamSetupFailure(failure));
     } finally {
       setBusy(false);
     }
@@ -112,7 +118,8 @@ export function ProjectTeamSetupForm({
         projectName={projectName}
         authoring={
           renderAuthoring
-            ? (onDraftMayChange) => renderAuthoring(draft, onDraftMayChange)
+            ? (onDraftMayChange, onLaunchObserved) =>
+                renderAuthoring(draft, onDraftMayChange, onLaunchObserved)
             : undefined
         }
       />
@@ -130,7 +137,7 @@ export function ProjectTeamSetupForm({
           disabled={busy}
           id="project-team-setup-intent"
           onChange={(event) => setIntent(event.target.value)}
-          placeholder="Describe the product and the work you want the team to handle."
+          placeholder="Describe the product and the work you want its agents to handle."
           value={intent}
         />
       </div>
@@ -162,7 +169,7 @@ export function ProjectTeamSetupForm({
                   }
                 })
                 .catch((failure: unknown) =>
-                  setError(projectTeamSetupError(failure)),
+                  setError(projectTeamSetupFailure(failure)),
                 );
             }}
             type="button"
@@ -176,11 +183,7 @@ export function ProjectTeamSetupForm({
           a separate local draft.
         </p>
       </div>
-      {error ? (
-        <p className="text-sm text-destructive" role="alert">
-          {error}
-        </p>
-      ) : null}
+      <ProjectTeamSetupFailureNotice failure={error} />
       {readFailed ? (
         <Button
           onClick={() => setReload((value) => value + 1)}
@@ -191,8 +194,8 @@ export function ProjectTeamSetupForm({
         </Button>
       ) : null}
       <p className="text-sm text-muted-foreground">
-        This new baseline draft starts from neutral role packs. Your existing
-        project pack source stays unchanged; this does not edit published packs.
+        This new draft of the project's roles starts from neutral role packs.
+        The project's existing shared roles stay unchanged until you publish.
       </p>
       {blocker ? (
         <p className="text-sm text-muted-foreground">{blocker}</p>

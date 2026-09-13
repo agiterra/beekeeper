@@ -1,6 +1,7 @@
 import {
   openAgentDefinitions,
   openDirectoryAgentProfile,
+  openSavedAgentGroups,
 } from "../helpers/agentDirectory";
 import { expect, test, type Page } from "@playwright/test";
 import {
@@ -698,9 +699,7 @@ test.describe("crew front door", () => {
     await openApp(page);
     await openDashboardTab(page, "agents");
     await openAgentDefinitions(page);
-    await expect(page.getByTestId("agents-library-teams")).toBeVisible({
-      timeout: 15_000,
-    });
+    await openSavedAgentGroups(page);
 
     // The entry point: the "New team" card's dropdown.
     await page.getByTestId("new-team-card").click();
@@ -816,9 +815,7 @@ test.describe("crew front door", () => {
     await openApp(page);
     await openDashboardTab(page, "agents");
     await openAgentDefinitions(page);
-    await expect(page.getByTestId("agents-library-teams")).toBeVisible({
-      timeout: 15_000,
-    });
+    await openSavedAgentGroups(page);
     await page.evaluate((droppedRole) => {
       const w = window as unknown as {
         __FD1__: { dropRole: string | null };
@@ -874,9 +871,7 @@ test.describe("crew front door", () => {
     await openApp(page);
     await openDashboardTab(page, "agents");
     await openAgentDefinitions(page);
-    await expect(page.getByTestId("agents-library-teams")).toBeVisible({
-      timeout: 15_000,
-    });
+    await openSavedAgentGroups(page);
     await page.evaluate(() => {
       const w = window as unknown as {
         __FD1__: {

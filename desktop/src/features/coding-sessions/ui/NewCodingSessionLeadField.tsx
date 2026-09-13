@@ -2,6 +2,10 @@ import {
   type CodingSessionLaunchLead,
   codingSessionLeadIdentityLine,
 } from "../lib/codingSessionLaunchForm";
+import {
+  type CodingSessionCandidateGroup,
+  codingSessionCandidateOptionLabel,
+} from "../lib/codingSessionLeadCandidateGroups";
 
 /** A managed agent this computer could seat as the lead. */
 export type NewCodingSessionLeadCandidate = {
@@ -28,14 +32,22 @@ export type NewCodingSessionLeadCandidate = {
  * The identity line carries the whole name **and** the canonical short pubkey,
  * because two managed agents can be called Keystone and this is the screen
  * where picking the wrong one costs a session.
+ *
+ * With `groups`, a project's installed roles come first under a heading that
+ * names the project, and every other agent on this computer follows under its
+ * own; each option then carries name, role and short pubkey, because "Loom ·
+ * lead" alone does not say which project installed it.
  */
 export function NewCodingSessionLeadField({
   candidates,
+  groups,
   disabled = false,
   lead,
   onLeadChange,
 }: {
   candidates: readonly NewCodingSessionLeadCandidate[];
+  /** Grouped options; absent, the seatable candidates as one flat list. */
+  groups?: readonly CodingSessionCandidateGroup<NewCodingSessionLeadCandidate>[];
   disabled?: boolean;
   lead: CodingSessionLaunchLead;
   onLeadChange: (actor: string | null) => void;
@@ -60,11 +72,25 @@ export function NewCodingSessionLeadField({
         value={lead.kind === "agent" ? lead.actor : ""}
       >
         <option value="">Pick an agent…</option>
-        {seatable.map((candidate) => (
-          <option key={candidate.pubkey} value={candidate.pubkey}>
-            {candidate.name} · {candidate.role}
-          </option>
-        ))}
+        {groups?.some((group) => group.heading !== null)
+          ? groups.map((group) => (
+              <optgroup
+                data-testid={`new-coding-session-lead-group-${group.id}`}
+                key={group.id}
+                label={group.heading ?? ""}
+              >
+                {group.candidates.map((candidate) => (
+                  <option key={candidate.pubkey} value={candidate.pubkey}>
+                    {codingSessionCandidateOptionLabel(candidate)}
+                  </option>
+                ))}
+              </optgroup>
+            ))
+          : seatable.map((candidate) => (
+              <option key={candidate.pubkey} value={candidate.pubkey}>
+                {candidate.name} · {candidate.role}
+              </option>
+            ))}
       </select>
       <p
         className="text-2xs text-muted-foreground"

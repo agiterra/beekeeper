@@ -19,7 +19,7 @@ test("member gate is fail-closed while the composer remains reachable", () => {
   assert.deepEqual(
     getCodingSessionComposerState({
       canSteer: false,
-      isMember: false,
+      canWriteChannel: false,
       isWorking: false,
       text: "Steer",
     }),
@@ -39,7 +39,7 @@ test("a running turn offers Steer beside the interrupt, and Enter steers", () =>
   assert.equal(
     getCodingSessionComposerState({
       canSteer: true,
-      isMember: true,
+      canWriteChannel: true,
       isWorking: true,
       text: "Steer",
     }).sendLabel,
@@ -48,7 +48,7 @@ test("a running turn offers Steer beside the interrupt, and Enter steers", () =>
   assert.equal(
     getCodingSessionComposerState({
       canSteer: true,
-      isMember: true,
+      canWriteChannel: true,
       isWorking: true,
       text: "Steer",
     }).showStopAction,
@@ -70,7 +70,7 @@ test("a running turn offers Steer beside the interrupt, and Enter steers", () =>
 test("only the terminal control is called Stop", () => {
   const working = getCodingSessionComposerState({
     canSteer: true,
-    isMember: true,
+    canWriteChannel: true,
     isWorking: true,
     text: "go",
   });
@@ -87,7 +87,7 @@ test("a non-steering execution is not offered a steer it cannot get", () => {
   assert.equal(
     getCodingSessionComposerState({
       canSteer: false,
-      isMember: true,
+      canWriteChannel: true,
       isWorking: true,
       text: "go",
     }).sendLabel,
@@ -96,7 +96,7 @@ test("a non-steering execution is not offered a steer it cannot get", () => {
   assert.equal(
     getCodingSessionComposerState({
       canSteer: false,
-      isMember: true,
+      canWriteChannel: true,
       isWorking: false,
       text: "go",
     }).sendLabel,
@@ -105,7 +105,7 @@ test("a non-steering execution is not offered a steer it cannot get", () => {
   assert.equal(
     getCodingSessionComposerState({
       canSteer: true,
-      isMember: true,
+      canWriteChannel: true,
       isWorking: true,
       text: "go",
     }).sendLabel,
@@ -121,7 +121,7 @@ test("a caller that says nothing about steering does not get a Steer button", ()
   // which is exactly what the delivery classes exist to prevent.
   assert.equal(
     getCodingSessionComposerState({
-      isMember: true,
+      canWriteChannel: true,
       isWorking: true,
       text: "Steer",
     }).sendLabel,
@@ -132,7 +132,7 @@ test("a caller that says nothing about steering does not get a Steer button", ()
 test("send is held closed while an attachment is unsettled", () => {
   const base = {
     canSteer: false,
-    isMember: true,
+    canWriteChannel: true,
     isWorking: false,
     text: "look at this",
   };
@@ -210,7 +210,7 @@ test("other keys are not history", () => {
 test("a steering execution offers the boundary as a named second choice", () => {
   const working = getCodingSessionComposerState({
     canSteer: true,
-    isMember: true,
+    canWriteChannel: true,
     isWorking: true,
     text: "when you finish, run the gate",
   });
@@ -227,7 +227,7 @@ test("a steering execution offers the boundary as a named second choice", () => 
 test("an execution that cannot steer offers one choice and explains it", () => {
   const working = getCodingSessionComposerState({
     canSteer: false,
-    isMember: true,
+    canWriteChannel: true,
     isWorking: true,
     text: "when you finish, run the gate",
   });
@@ -245,7 +245,7 @@ test("an idle execution says nothing about delivery classes", () => {
   for (const canSteer of [true, false]) {
     const idle = getCodingSessionComposerState({
       canSteer,
-      isMember: true,
+      canWriteChannel: true,
       isWorking: false,
       text: "start here",
     });
@@ -262,7 +262,7 @@ test("the mid-turn boundary control is never labelled as a deferred send", () =>
   for (const canSteer of [true, false]) {
     const state = getCodingSessionComposerState({
       canSteer,
-      isMember: true,
+      canWriteChannel: true,
       isWorking: true,
       text: "go",
     });

@@ -1,10 +1,11 @@
 import * as React from "react";
 import { CircleAlert, Plus } from "lucide-react";
 
-import type {
-  AgentDirectoryFilters,
-  AgentDirectoryRow,
-  AgentDirectoryStatusFilter,
+import {
+  installationsForProject,
+  type AgentDirectoryFilters,
+  type AgentDirectoryRow,
+  type AgentDirectoryStatusFilter,
 } from "@/features/agents/lib/agentDirectoryModel";
 import type { ProjectContainer } from "@/features/projects-container/hooks";
 import { Button } from "@/shared/ui/button";
@@ -17,6 +18,7 @@ import {
   AGENT_DIRECTORY_ERROR_TESTID,
   AGENT_DIRECTORY_FILTERED_EMPTY,
   AGENT_DIRECTORY_FILTERED_EMPTY_TESTID,
+  AGENT_DIRECTORY_INSTALLATIONS_ERROR_TESTID,
   AGENT_DIRECTORY_LOADING_ARIA,
   AGENT_DIRECTORY_LOADING_TESTID,
   AGENT_DIRECTORY_SEAT_NOTICE_TESTID,
@@ -30,12 +32,14 @@ import {
   AGENT_FILTER_PROJECT_GROUP_LABEL,
   AGENT_FILTER_PROJECT_TESTID,
   AGENT_FILTER_ROLE_TESTID,
+  AGENT_FILTER_STATUS_INSTALLED_FOR_PROJECT,
   AGENT_FILTER_STATUS_NOT_SEATED,
   AGENT_FILTER_STATUS_RUNNING,
   AGENT_FILTER_STATUS_SEATED,
   AGENT_FILTER_STATUS_STOPPED,
   AGENT_FILTER_STATUS_TESTID,
   AGENT_INSTALLED_HERE_NO,
+  AGENT_ROW_INSTALLED_FOR_TESTID,
   AGENT_ROW_LAUNCHES_AS_TESTID,
   AGENT_ROW_NAME_TESTID,
   AGENT_ROW_NOT_INSTALLED_TESTID,
@@ -45,9 +49,15 @@ import {
   AGENT_ROW_TESTID,
   agentDirectoryErrorText,
   currentSeatText,
+  installationsErrorText,
+  installedForText,
   launchesAsText,
   seatNoticeText,
 } from "./agentDirectoryCopy";
+import {
+  AgentDirectoryRenameButton,
+  AgentDirectoryRenameForm,
+} from "./AgentDirectoryRename";
 import {
   AGENT_NO_ROLE_PACK_LABEL,
   AGENT_SHARED_HOME_LABEL,
@@ -77,6 +87,50 @@ function AddAgentButton({ onAddAgent }: { onAddAgent: () => void }) {
   );
 }
 
+function AgentDirectoryRowItem({
+  row,
+  isSelected,
+  seatUnknown,
+  projectId,
+  onSelect,
+}: {
+  row: AgentDirectoryRow;
+  isSelected: boolean;
+  seatUnknown: boolean;
+  projectId: string | null;
+  onSelect: (pubkey: string) => void;
+}) {
+  const [isRenaming, setIsRenaming] = React.useState(false);
+  const canRename = canRenameFromRow(row);
+  return (
+    <div className="relative flex flex-col gap-2">
+      <AgentDirectoryRowButton
+        isSelected={isSelected}
+        onSelect={onSelect}
+        projectId={projectId}
+        reserveActionSpace={canRename && !isRenaming}
+        row={row}
+        seatUnknown={seatUnknown}
+      />
+      {canRename && !isRenaming ? (
+        <div className="absolute right-2 top-2">
+          <AgentDirectoryRenameButton
+            name={row.name}
+            onClick={() => setIsRenaming(true)}
+          />
+        </div>
+      ) : null}
+      {canRename && isRenaming ? (
+        <AgentDirectoryRenameForm
+          name={row.name}
+          onDone={() => setIsRenaming(false)}
+          pubkey={row.pubkey}
+        />
+      ) : null}
+    </div>
+  );
+}
+
 function AgentDirectoryListSkeleton() {
   return (
     <div
@@ -92,26 +146,49 @@ function AgentDirectoryListSkeleton() {
   );
 }
 
+/**
+ * Installed project agents can be renamed from their row. A wire-only agent
+ * is not this computer's to rename, and an agent no project installed keeps
+ * its existing edit paths.
+ */
+function canRenameFromRow(row: AgentDirectoryRow): boolean {
+  return row.isInstalled && row.installedProjects.length > 0;
+}
+
 function AgentDirectoryRowButton({
   row,
   isSelected,
   seatUnknown,
+  projectId,
   onSelect,
+  reserveActionSpace,
 }: {
   row: AgentDirectoryRow;
   isSelected: boolean;
   seatUnknown: boolean;
+  /** The directory's selected project, so its installation is named first. */
+  projectId: string | null;
   onSelect: (pubkey: string) => void;
+  /** Leave room at the top right for the row's rename action. */
+  reserveActionSpace: boolean;
 }) {
   const packText = agentRowPackText(row);
+  const matching = installationsForProject(row, projectId);
+  const installedText = installedForText(
+    matching.length > 0
+      ? [
+          ...matching,
+          ...row.installedProjects.filter((entry) => !matching.includes(entry)),
+        ]
+      : row.installedProjects,
+  );
   return (
     <button
       className={`flex w-full flex-col gap-1 rounded-lg border px-4 py-3 text-left transition-colors hover:bg-muted/60 ${
         isSelected ? "border-ring bg-muted/40" : "border-border"
-      }`}
+      } ${reserveActionSpace ? "pr-28" : ""}`}
       data-testid={AGENT_ROW_TESTID}
       data-pubkey={row.pubkey}
-      key={row.pubkey}
       onClick={() => onSelect(row.pubkey)}
       type="button"
     >
@@ -135,6 +212,14 @@ function AgentDirectoryRowButton({
           </span>
         ) : null}
       </div>
+      {installedText ? (
+        <span
+          className="text-sm text-foreground"
+          data-testid={AGENT_ROW_INSTALLED_FOR_TESTID}
+        >
+          {installedText}
+        </span>
+      ) : null}
       {row.needsRestart ? (
         <span
           className="text-sm text-amber-800 dark:text-amber-400"
@@ -183,6 +268,7 @@ export function AgentDirectoryList({
   isLoading,
   error,
   seatNotice,
+  installationsError = null,
 }: {
   rows: AgentDirectoryRow[];
   /** Unfiltered rows, used to compute filter option lists. */
@@ -197,6 +283,8 @@ export function AgentDirectoryList({
   isLoading: boolean;
   error: string | null;
   seatNotice: { message: string; detail: string } | null;
+  /** The setup-journal read failed; installed-for facts are missing. */
+  installationsError?: string | null;
 }) {
   const roleOptions = React.useMemo(() => {
     const slugs = new Set<string>();
@@ -275,6 +363,9 @@ export function AgentDirectoryList({
           <option value="stopped">{AGENT_FILTER_STATUS_STOPPED}</option>
           <option value="seated">{AGENT_FILTER_STATUS_SEATED}</option>
           <option value="not-seated">{AGENT_FILTER_STATUS_NOT_SEATED}</option>
+          <option value="installed-for-project">
+            {AGENT_FILTER_STATUS_INSTALLED_FOR_PROJECT}
+          </option>
         </select>
 
         <select
@@ -323,6 +414,15 @@ export function AgentDirectoryList({
         </div>
       </div>
 
+      {installationsError ? (
+        <div
+          className="rounded-lg border border-warning/40 bg-warning/10 px-4 py-2 text-sm"
+          data-testid={AGENT_DIRECTORY_INSTALLATIONS_ERROR_TESTID}
+        >
+          {installationsErrorText(installationsError)}
+        </div>
+      ) : null}
+
       {seatNotice ? (
         <div
           className="rounded-lg border border-warning/40 bg-warning/10 px-4 py-2 text-sm"
@@ -342,10 +442,11 @@ export function AgentDirectoryList({
       ) : (
         <div className="flex flex-col gap-2">
           {rows.map((row) => (
-            <AgentDirectoryRowButton
+            <AgentDirectoryRowItem
               isSelected={row.pubkey === selectedPubkey}
               key={row.pubkey}
               onSelect={onSelectRow}
+              projectId={filters.projectId}
               row={row}
               seatUnknown={seatNotice !== null && row.currentSeat === null}
             />

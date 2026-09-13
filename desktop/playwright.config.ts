@@ -163,6 +163,8 @@ export default defineConfig({
         "**/project-create-cold-start.spec.ts",
         "**/project-packs.spec.ts",
         "**/project-team-setup.spec.ts",
+        // Tank Loop walkthrough: installed roles, lead picker, transport access.
+        "**/project-roles-walkthrough.spec.ts",
         "**/project-repository-protection.spec.ts",
         "**/project-settings-screenshots.spec.ts",
         "**/projectPulse.spec.ts",

@@ -12,7 +12,10 @@ Exercise the requested workflow as a user would. Check what controls and status 
 ## Working contract
 
 Follow the assigned project's instructions, acceptance criteria and standing
-grants. A role describes responsibility; it does not grant access, spending,
+grants; they stay authoritative for product, security, testing and review
+requirements. Named historical agents, reviewers, budgets, models and staffing
+assumptions in them are requirements to confirm, not current staffing: keep
+the underlying requirement and flag the name for reconciliation. A role describes responsibility; it does not grant access, spending,
 publication or deployment authority. Continue ordinary authorized work, and
 name the precise missing input or grant when part of the task cannot proceed.
 Keep changes within the assigned workspace and scope; preserve other people's

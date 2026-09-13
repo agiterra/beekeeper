@@ -87,12 +87,14 @@ function seed() {
     providerPubkey: launch.providerPubkey,
   };
 }
+let observed = [];
 async function harness() {
   const React = (await import("react")).default;
   const { ProjectTeamSetupAuthoringControls } = await import(
     "../ui/ProjectTeamSetupAuthoring.tsx"
   );
   const testing = await import("@testing-library/react");
+  observed = [];
   return {
     ...testing,
     element: React.createElement(ProjectTeamSetupAuthoringControls, {
@@ -101,6 +103,7 @@ async function harness() {
       preferredChannelId: "channel",
       channelError: null,
       onOpen: () => {},
+      onLaunchObserved: (launch) => observed.push(launch),
     }),
   };
 }
@@ -235,6 +238,7 @@ test("saved launch is read on mount without replay and does not label relay acce
     view.queryByRole("button", { name: "Open authoring session" }),
     null,
   );
+  assert.equal(observed.at(-1)?.status, "awaiting_receipt");
   assert.equal(
     calls.some((call) =>
       /start_authoring|reserve_authoring|provision_coding/.test(call.command),
@@ -274,6 +278,11 @@ test("failed durable read blocks Start until explicit status check recovers both
   const view = render(element);
   await waitFor(() =>
     assert.ok(view.getByText("Saved reservation unreadable")),
+  );
+  assert.equal(
+    observed.at(-1),
+    "unreadable",
+    "a failed read is not 'no launch'",
   );
   assert.equal(
     view.getByRole("button", { name: "Start authoring session" }).disabled,

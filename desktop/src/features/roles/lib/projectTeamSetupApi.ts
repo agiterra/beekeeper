@@ -2,6 +2,7 @@ import { invokeTauri } from "@/shared/api/tauri";
 import type {
   ProjectTeamSetupAuthoringReservation,
   ProjectTeamSetupActivation,
+  ProjectTeamSetupBrief,
   ProjectTeamSetupDraft,
   ProjectTeamSetupLaunch,
   ProjectTeamSetupPublication,
@@ -26,6 +27,14 @@ type PublicationScope = AuthoringScope & { publicationId: string };
 export function getProjectTeamSetupAuthoring(input: AuthoringScope) {
   return invokeTauri<ProjectTeamSetupAuthoringReservation | null>(
     "project_team_setup_get_authoring",
+    input,
+  );
+}
+
+/** Read the exact native brief this setup writes and sends; never writes it. */
+export function getProjectTeamSetupBrief(input: AuthoringScope) {
+  return invokeTauri<ProjectTeamSetupBrief>(
+    "project_team_setup_get_brief",
     input,
   );
 }
@@ -126,10 +135,27 @@ export function startProjectTeamSetupPublication(
   );
 }
 
-/** Read a publication journal without advancing it. */
+/**
+ * Reconcile and return the publication journal. Not a pure read: the host
+ * re-observes the repository and relay and may save what it observed, so
+ * call it only from an explicitly opened setup dialog. For display on page
+ * load, use `peekProjectTeamSetupPublication`.
+ */
 export function getProjectTeamSetupPublication(input: AuthoringScope) {
   return invokeTauri<ProjectTeamSetupPublication | null>(
     "project_team_setup_get_publication",
+    input,
+  );
+}
+
+/**
+ * The publication journal's last recorded status, strictly read-only: no
+ * reconciliation, no lock, no save. Safe on page mount; describe the result
+ * as last recorded, never as a live check.
+ */
+export function peekProjectTeamSetupPublication(input: AuthoringScope) {
+  return invokeTauri<ProjectTeamSetupPublication | null>(
+    "project_team_setup_peek_publication",
     input,
   );
 }

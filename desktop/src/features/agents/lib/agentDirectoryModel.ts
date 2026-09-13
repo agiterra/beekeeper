@@ -35,6 +35,31 @@ export type AgentDirectorySeat = {
   isClosed: boolean;
 };
 
+/**
+ * One project this agent was installed for, as a setup journal recorded it.
+ *
+ * Installation is not participation: an agent installed a minute ago holds no
+ * seat yet, and one that held a seat was not necessarily installed for that
+ * project. The two facts are kept apart on the row (`seatProjectIds` versus
+ * `installedProjectIds`) so neither can be read as the other.
+ */
+export type AgentDirectoryInstallation = {
+  /** `30621:<owner>:<d>` — the address the journal recorded, verbatim. */
+  projectRef: string;
+  /** The project container's `id`, when a listed project has this address. */
+  projectId: string | null;
+  /** That project's display name, when it is listed. */
+  projectName: string | null;
+  role: string;
+};
+
+/** The project fields the directory needs to resolve an installation. */
+export type AgentDirectoryProject = {
+  id: string;
+  address: string;
+  name: string;
+};
+
 export type AgentDirectoryRow = {
   pubkey: string;
   name: string;
@@ -54,12 +79,19 @@ export type AgentDirectoryRow = {
   packRefusedSharedHome?: boolean;
   /** "lead ×12 · verifier ×3", or "no seats recorded". */
   roleHistoryLabel: string;
-  /** Distinct role slugs from `homeRole` and seat history, for filter options. */
+  /** Distinct role slugs from `homeRole`, seat history and installations, for filter options. */
   roleSlugs: string[];
   /** The freshest open seat, or `null` when this agent holds none right now. */
   currentSeat: AgentDirectorySeat | null;
   /** Every project this agent holds or held a seat in. */
   seatProjectIds: ReadonlySet<string>;
+  /**
+   * Every project this computer installed this agent for, from the setup
+   * journals. Empty when none is recorded or the journals are not read yet.
+   */
+  installedProjects: AgentDirectoryInstallation[];
+  /** `projectId`s of `installedProjects` that resolve to a listed project. */
+  installedProjectIds: ReadonlySet<string>;
   /** Open first, then closed; freshest first within each group. */
   seats: AgentDirectorySeat[];
 };
@@ -122,13 +154,62 @@ export type BuildAgentDirectoryInput = {
   /** Keys (`channelId/generationId`) of shelf entries that are not closed. */
   openSeatKeys: ReadonlySet<string>;
   defaultModel: string;
+  /**
+   * `installedProjectRefsByAgent(...)` from `roles/lib/projectInstalledRoles`:
+   * lowercased agent pubkey → the project addresses it was installed for.
+   */
+  installationsByAgent?: ReadonlyMap<
+    string,
+    readonly { projectRef: string; role: string }[]
+  >;
+  /** The listed projects, used to turn an installation's address into an id. */
+  projects?: readonly AgentDirectoryProject[];
 };
+
+/**
+ * Key for comparing project addresses. The journal and the project container
+ * both spell `30621:<owner>:<d>`; case is folded the same way the shared
+ * installed-roles module folds it, so the two never disagree.
+ */
+function projectAddressKey(address: string): string {
+  return address.trim().toLowerCase();
+}
+
+/**
+ * Resolve each installation's address to a listed project.
+ *
+ * The directory's project filter speaks in `project.id` (`<owner>:<d>`), and
+ * the journal records the address (`30621:<owner>:<d>`). The bridge is the
+ * container's own `address` field — never string surgery on the ref, which
+ * would invent an id for a project this viewer cannot see.
+ */
+export function resolveAgentInstallations(
+  entries: readonly { projectRef: string; role: string }[],
+  projects: readonly AgentDirectoryProject[],
+): AgentDirectoryInstallation[] {
+  const byAddress = new Map(
+    projects.map(
+      (project) => [projectAddressKey(project.address), project] as const,
+    ),
+  );
+  return entries.map((entry) => {
+    const project = byAddress.get(projectAddressKey(entry.projectRef)) ?? null;
+    return {
+      projectRef: entry.projectRef,
+      projectId: project?.id ?? null,
+      projectName: project?.name ?? null,
+      role: entry.role,
+    };
+  });
+}
 
 export function buildAgentDirectory(
   input: BuildAgentDirectoryInput,
 ): AgentDirectoryRow[] {
   const { managedAgents, relayAgents, seats, openSeatKeys, defaultModel } =
     input;
+  const installationsByAgent = input.installationsByAgent ?? new Map();
+  const projects = input.projects ?? [];
 
   const managedByPubkey = new Map(
     managedAgents.map(
@@ -194,6 +275,18 @@ export function buildAgentDirectory(
 
     const isRunning = managed ? isManagedAgentActive(managed) : false;
 
+    const installedProjects = resolveAgentInstallations(
+      installationsByAgent.get(pubkey) ?? [],
+      projects,
+    );
+    const installedProjectIds = new Set<string>();
+    for (const installation of installedProjects) {
+      if (installation.projectId) {
+        installedProjectIds.add(installation.projectId);
+      }
+      roleSlugSet.add(installation.role);
+    }
+
     rows.push({
       pubkey,
       name,
@@ -215,6 +308,8 @@ export function buildAgentDirectory(
       roleSlugs: [...roleSlugSet].sort(),
       currentSeat,
       seatProjectIds,
+      installedProjects,
+      installedProjectIds,
       seats: directorySeats,
     });
   }
@@ -227,7 +322,8 @@ export type AgentDirectoryStatusFilter =
   | "running"
   | "stopped"
   | "seated"
-  | "not-seated";
+  | "not-seated"
+  | "installed-for-project";
 
 export type AgentDirectoryFilters = {
   role: string | null;
@@ -238,6 +334,44 @@ export type AgentDirectoryFilters = {
   installedOnly: boolean;
 };
 
+/**
+ * The installations of `row` that belong to `projectId`, or every one with
+ * no project chosen.
+ *
+ * `projectId` is normally a container id (`<owner>:<d>`); an address
+ * (`30621:<owner>:<d>`) is matched against the journal's own ref too, so a
+ * caller holding either spelling gets the same answer.
+ */
+export function installationsForProject(
+  row: Pick<AgentDirectoryRow, "installedProjects">,
+  projectId: string | null,
+): AgentDirectoryInstallation[] {
+  if (!projectId) return row.installedProjects;
+  const wantedAddress = projectAddressKey(projectId);
+  return row.installedProjects.filter(
+    (installation) =>
+      installation.projectId === projectId ||
+      projectAddressKey(installation.projectRef) === wantedAddress,
+  );
+}
+
+/**
+ * True when `row` belongs under `projectId`: it holds or held a seat there,
+ * or this computer installed it for that project. Either fact is enough;
+ * neither is rewritten into the other.
+ */
+export function agentDirectoryRowInProject(
+  row: Pick<
+    AgentDirectoryRow,
+    "seatProjectIds" | "installedProjectIds" | "installedProjects"
+  >,
+  projectId: string,
+): boolean {
+  if (row.seatProjectIds.has(projectId)) return true;
+  if (row.installedProjectIds.has(projectId)) return true;
+  return installationsForProject(row, projectId).length > 0;
+}
+
 export function agentDirectoryFilter(
   rows: readonly AgentDirectoryRow[],
   filters: AgentDirectoryFilters,
@@ -245,7 +379,10 @@ export function agentDirectoryFilter(
   return rows.filter((row) => {
     if (filters.installedOnly && !row.isInstalled) return false;
     if (filters.role && !row.roleSlugs.includes(filters.role)) return false;
-    if (filters.projectId && !row.seatProjectIds.has(filters.projectId)) {
+    if (
+      filters.projectId &&
+      !agentDirectoryRowInProject(row, filters.projectId)
+    ) {
       return false;
     }
     switch (filters.status) {
@@ -257,6 +394,8 @@ export function agentDirectoryFilter(
         return row.currentSeat !== null;
       case "not-seated":
         return row.currentSeat === null;
+      case "installed-for-project":
+        return installationsForProject(row, filters.projectId).length > 0;
       default:
         return true;
     }

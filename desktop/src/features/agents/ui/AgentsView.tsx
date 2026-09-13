@@ -48,7 +48,19 @@ import {
   DropdownMenuTrigger,
 } from "@/shared/ui/dropdown-menu";
 import { PageHeader } from "@/shared/ui/PageHeader";
-import { crewRolesInstalledToast } from "./installCrewRolesCopy";
+import {
+  crewRolesInstalledToast,
+  INSTALL_CREW_ROLES_MENU_LABEL,
+  rolePacksProjectFallbackNote,
+} from "./installCrewRolesCopy";
+import {
+  AGENTS_PROJECT_ROLES_DESCRIPTION,
+  AGENTS_PROJECT_ROLES_TESTID,
+  INSTALL_PROJECT_ROLES_TESTID,
+  SAVED_AGENT_GROUPS_DESCRIPTION,
+  SAVED_AGENT_GROUPS_TESTID,
+  SAVED_AGENT_GROUPS_TITLE,
+} from "./agentDirectoryCopy";
 
 const DEFAULT_AGENT_DIRECTORY_FILTERS: AgentDirectoryFilters = {
   role: null,
@@ -71,13 +83,6 @@ export function AgentsView() {
   const [isAiDefaultsOpen, setIsAiDefaultsOpen] = React.useState(false);
   const [isInstallCrewRolesOpen, setIsInstallCrewRolesOpen] =
     React.useState(false);
-  // Ledger 85: the installer opens on the project's own `personas/roles`
-  // folder. This surface is a Dashboard tab, so the route names no project and
-  // one is resolved from what the app already records — and then named, on the
-  // selector when there is a choice and on the dialog's folder label always.
-  // With no project at all nothing is resolved and the dialog is unchanged.
-  const rolePacksProject = useRolePacksProject();
-  const activeProject = rolePacksProject.project;
   const { goCodingSession } = useAppNavigation();
   const directory = useAgentDirectory();
   const [selectedPubkey, setSelectedPubkey] = React.useState<string | null>(
@@ -85,6 +90,20 @@ export function AgentsView() {
   );
   const [directoryFilters, setDirectoryFilters] =
     React.useState<AgentDirectoryFilters>(DEFAULT_AGENT_DIRECTORY_FILTERS);
+  // Ledger 85: the installer opens on the project's own `personas/roles`
+  // folder. There is ONE selected project on this page — the directory's
+  // project filter — and the role-pack selector reads and writes that same
+  // value from the same project list. On "Any project" a project is resolved
+  // from what the app already records, and the selector says it fell back.
+  // With no project at all nothing is resolved and the dialog is unchanged.
+  const rolePacksProject = useRolePacksProject({
+    projects: directory.projects,
+    selectedProjectId: directoryFilters.projectId,
+  });
+  const activeProject = rolePacksProject.project;
+  const chooseProject = React.useCallback((projectId: string) => {
+    setDirectoryFilters((current) => ({ ...current, projectId }));
+  }, []);
   const filteredDirectoryRows = React.useMemo(
     () => agentDirectoryFilter(directory.rows, directoryFilters),
     [directory.rows, directoryFilters],
@@ -276,10 +295,41 @@ export function AgentsView() {
               title="Agents"
             />
             <div className="flex flex-col gap-8">
+              <section
+                className="flex flex-col gap-2"
+                data-testid={AGENTS_PROJECT_ROLES_TESTID}
+              >
+                <div className="flex flex-wrap items-center gap-3">
+                  <RolePacksProjectSelector
+                    fallbackNote={rolePacksProjectFallbackNote(
+                      rolePacksProject.source,
+                      directoryFilters.projectId !== null,
+                    )}
+                    onSelect={chooseProject}
+                    project={activeProject}
+                    projects={rolePacksProject.projects}
+                  />
+                  <Button
+                    data-testid={INSTALL_PROJECT_ROLES_TESTID}
+                    disabled={isActionPending}
+                    onClick={() => setIsInstallCrewRolesOpen(true)}
+                    size="sm"
+                    type="button"
+                    variant="outline"
+                  >
+                    {INSTALL_CREW_ROLES_MENU_LABEL}
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {AGENTS_PROJECT_ROLES_DESCRIPTION}
+                </p>
+              </section>
+
               <AgentDirectoryList
                 allRows={directory.rows}
                 error={directory.error}
                 filters={directoryFilters}
+                installationsError={directory.installationsError}
                 isLoading={directory.isLoading}
                 onAddAgent={openAgentCatalog}
                 onFiltersChange={setDirectoryFilters}
@@ -359,38 +409,39 @@ export function AgentsView() {
                 />
               </details>
 
-              <TeamsSection
-                error={
-                  teamActions.teamsQuery.error instanceof Error
-                    ? teamActions.teamsQuery.error
-                    : null
-                }
-                isLoading={teamActions.teamsQuery.isLoading}
-                isPending={
-                  teamActions.createTeamMutation.isPending ||
-                  teamActions.updateTeamMutation.isPending ||
-                  teamActions.deleteTeamMutation.isPending
-                }
-                onCreate={teamActions.openCreateDialog}
-                onDelete={teamActions.setTeamToDelete}
-                onDuplicate={teamActions.openDuplicateDialog}
-                onEdit={teamActions.openEditDialog}
-                onAddToChannel={teamActions.setTeamToAddToChannel}
-                onShare={teamActions.openShare}
-                onImport={() => {
-                  teamImportInputRef.current?.click();
-                }}
-                onInstallCrewRoles={() => setIsInstallCrewRolesOpen(true)}
-                personas={personas.libraryPersonas}
-                projectSelector={
-                  <RolePacksProjectSelector
-                    onSelect={rolePacksProject.chooseProject}
-                    project={activeProject}
-                    projects={rolePacksProject.projects}
-                  />
-                }
-                teams={teamActions.teams}
-              />
+              <details data-testid={SAVED_AGENT_GROUPS_TESTID}>
+                <summary className="cursor-pointer text-sm font-medium">
+                  {SAVED_AGENT_GROUPS_TITLE}
+                </summary>
+                <p className="my-3 text-sm text-muted-foreground">
+                  {SAVED_AGENT_GROUPS_DESCRIPTION}
+                </p>
+                <TeamsSection
+                  error={
+                    teamActions.teamsQuery.error instanceof Error
+                      ? teamActions.teamsQuery.error
+                      : null
+                  }
+                  isLoading={teamActions.teamsQuery.isLoading}
+                  isPending={
+                    teamActions.createTeamMutation.isPending ||
+                    teamActions.updateTeamMutation.isPending ||
+                    teamActions.deleteTeamMutation.isPending
+                  }
+                  onCreate={teamActions.openCreateDialog}
+                  onDelete={teamActions.setTeamToDelete}
+                  onDuplicate={teamActions.openDuplicateDialog}
+                  onEdit={teamActions.openEditDialog}
+                  onAddToChannel={teamActions.setTeamToAddToChannel}
+                  onShare={teamActions.openShare}
+                  onImport={() => {
+                    teamImportInputRef.current?.click();
+                  }}
+                  onInstallCrewRoles={() => setIsInstallCrewRolesOpen(true)}
+                  personas={personas.libraryPersonas}
+                  teams={teamActions.teams}
+                />
+              </details>
             </div>
           </div>
         </div>
@@ -438,6 +489,7 @@ export function AgentsView() {
           void teamActions.teamsQuery.refetch();
           void agents.refetchManagedAgents();
           void personas.personasQuery.refetch();
+          directory.refetchInstallations();
           agents.setActionNoticeMessage(crewRolesInstalledToast(result));
         }}
         onOpenChange={setIsInstallCrewRolesOpen}

@@ -5,6 +5,10 @@ import type {
   InstallCrewRolePacksResponse,
   ProjectRolePacksScan,
 } from "@/shared/api/tauriTeams";
+import {
+  ROLE_PACKS_PROJECT_SOURCES,
+  type RolePacksProjectSource,
+} from "@/features/agents/lib/rolePacksProject";
 
 /**
  * Copy and result derivations for the role-pack installer dialog.
@@ -20,8 +24,14 @@ import type {
 
 export const INSTALL_CREW_ROLES_TITLE = "Install role packs";
 
+/**
+ * What installing does, in the three words this surface keeps apart: a
+ * project's roles are shared instructions, an installed agent is an identity
+ * on this computer, and a session is where workers take part. Installing
+ * creates the second from the first and starts nothing.
+ */
 export const INSTALL_CREW_ROLES_BODY =
-  "Pick a folder of role packs. Every pack whose persona declares a role becomes one agent on this computer — carrying that role and that pack — and they all join one team you can launch.";
+  "Pick a folder of the project's role packs. Each pack is a role's shared instructions; every pack whose persona declares a role is installed as one agent on this computer, carrying that role and that pack. Installing starts nothing — a lead picks workers from the installed agents when a session needs them.";
 
 export const INSTALL_CREW_ROLES_CHOOSE_FOLDER = "Choose folder…";
 
@@ -63,6 +73,37 @@ export const ROLE_PACKS_PROJECT_SELECTOR_LABEL = "Role packs for:";
 
 /** Accessible name of that selector's trigger. */
 export const ROLE_PACKS_PROJECT_SELECTOR_ARIA = "Choose the role packs project";
+
+const ROLE_PACKS_FALLBACK_REASON: Partial<
+  Record<RolePacksProjectSource, string>
+> = {
+  [ROLE_PACKS_PROJECT_SOURCES.recentCheckout]:
+    "the project with this computer's newest checkout",
+  [ROLE_PACKS_PROJECT_SOURCES.onlyMembership]: "the only project",
+  [ROLE_PACKS_PROJECT_SOURCES.firstMembership]: "the first project in the list",
+};
+
+/**
+ * Said beside the selector whenever nobody chose its project — the Agents
+ * tab resolved one — so a fallback is never shown as if it were the
+ * directory's selection. `null` when the project was chosen (or named by the
+ * route), and there is nothing to disclose.
+ *
+ * `directoryProjectChosen` tells the two ways to get here apart: no project
+ * picked in the directory's project filter, or a picked project that cannot hold role packs (the
+ * local General placeholder).
+ */
+export function rolePacksProjectFallbackNote(
+  source: RolePacksProjectSource,
+  directoryProjectChosen: boolean,
+): string | null {
+  const reason = ROLE_PACKS_FALLBACK_REASON[source];
+  if (!reason) return null;
+  const prefix = directoryProjectChosen
+    ? "The project chosen in the project filter cannot hold role packs, so this fell back to"
+    : "No project is chosen in the project filter, so this fell back to";
+  return `${prefix} ${reason}.`;
+}
 
 /**
  * The project this dialog was opened in has no checkout directory on this

@@ -150,3 +150,112 @@ fn setup_preserves_project_copies_and_requires_scoped_publication() {
         assert!(body.contains(contract), "setup omits {contract:?}");
     }
 }
+
+/// Reads a shipped pack file with line wrapping collapsed, so contracts match
+/// wording rather than where a paragraph happens to wrap.
+fn shipped_text(relative: &str) -> String {
+    let text = std::fs::read_to_string(roles_root().join(relative)).expect("shipped pack file");
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+#[test]
+fn setup_reconciles_existing_instructions_instead_of_copying_them() {
+    let body = shipped_text("project-setup/skills/setup-project/SKILL.md");
+    for contract in [
+        "## Reconcile existing instructions",
+        "project policy to reconcile, not text to copy or discard",
+        "lead-coordinated team whose lead picks workers by task",
+        "Ordinary solo sessions remain a supported way to work",
+        "Preserve every product, security, testing and independent review requirement",
+        "names a specific agent, reviewer, tool, budget, model or staffing arrangement",
+        "record the underlying requirement",
+        "list the name or assumption for the owner to reconcile instead of making it a role dependency",
+        "never removes the independent review it stood for",
+        "generated from a source file by a generator, never edit the generated output",
+        "name the source and generator in the report and propose changes there",
+        "Never silently rewrite project policy files or drop an independent review requirement",
+        "Inspect tools, commands, configuration and repository state yourself",
+        "Ask the owner only for what inspection cannot establish",
+    ] {
+        assert!(body.contains(contract), "setup omits {contract:?}");
+    }
+}
+
+#[test]
+fn every_role_treats_named_staffing_as_requirements_to_confirm() {
+    for role in ROLES {
+        let persona = format!("{role}/personas/{role}.persona.md");
+        let body = shipped_text(&persona);
+        for contract in [
+            "authoritative for product, security, testing and review requirements",
+            "Named historical agents, reviewers, budgets, models and staffing assumptions",
+            "requirements to confirm, not current staffing",
+            "keep the underlying requirement and flag the name for reconciliation",
+        ] {
+            assert!(body.contains(contract), "{persona} omits {contract:?}");
+        }
+    }
+}
+
+#[test]
+fn lead_meets_required_independent_review_without_mandating_a_second_worker() {
+    let body = shipped_text("lead/personas/lead.persona.md");
+    assert!(body.contains(
+        "Do not require a second worker for routine work unless project policy requires \
+         independent review; then meet that requirement with an available role."
+    ));
+}
+
+#[test]
+fn lead_confirms_figures_and_inspects_before_asking() {
+    let choose = shipped_text("lead/skills/choose-model/SKILL.md");
+    for contract in [
+        "Budget and model figures",
+        "confirm them against current project grants and routing before repeating or relying on them",
+    ] {
+        assert!(choose.contains(contract), "choose-model omits {contract:?}");
+    }
+    let ruling = shipped_text("lead/skills/ask-for-a-ruling/SKILL.md");
+    for contract in [
+        "Inspect tools, configuration, grants and repository state before asking a person",
+        "ask only for what inspection cannot establish",
+        "keep the underlying requirement",
+        "flag the name for the owner to reconcile rather than waiting on it",
+    ] {
+        assert!(
+            ruling.contains(contract),
+            "ask-for-a-ruling omits {contract:?}"
+        );
+    }
+}
+
+// Word-level scan: role text stays generic, so no agent, person, project or
+// model name may appear. A model name would pin work to one provider, and a
+// fixed reviewer count would make a team mandatory.
+#[test]
+fn shipped_seed_names_no_agent_person_project_or_model() {
+    let forbidden_words = [
+        "astra", "fable", "loom", "amas", "tank", "opus", "sonnet", "haiku", "claude", "codex",
+        "gpt", "gemini",
+    ];
+    let forbidden_phrases = ["two reviewers", "two independent reviewers", "at least two"];
+    for path in files_under(&roles_root()) {
+        let text = std::fs::read_to_string(&path)
+            .expect("shipped content is text")
+            .to_lowercase();
+        for word in text.split(|c: char| !c.is_ascii_alphanumeric()) {
+            assert!(
+                !forbidden_words.contains(&word),
+                "{} names {word:?}",
+                path.display()
+            );
+        }
+        for phrase in forbidden_phrases {
+            assert!(
+                !text.contains(phrase),
+                "{} fixes a reviewer count {phrase:?}",
+                path.display()
+            );
+        }
+    }
+}

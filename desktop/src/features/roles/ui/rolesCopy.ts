@@ -218,7 +218,16 @@ export type PacksSourceDetail = {
   checkedAgeSeconds: number | null;
   /** The `version` every built-in role agrees on, or `null`. */
   shippedVersion: string | null;
+  /**
+   * A project roles setup draft is saved on this computer and not finished.
+   * Only mentioned while the roles are still the built-in defaults.
+   */
+  draftInProgress?: boolean;
 };
+
+/** Appended to the built-in source line while a setup draft is unfinished. */
+export const PACKS_SOURCE_DRAFT_IN_PROGRESS =
+  "A project roles draft is in progress on this computer.";
 
 const NO_SOURCE_DETAIL: PacksSourceDetail = {
   checkedAgeSeconds: null,
@@ -256,11 +265,14 @@ export function packsSourceSentence(
   const origin = source.origins[0] ?? null;
   if (origin === "shipped") {
     const version = detail.shippedVersion ?? source.sha;
+    const text =
+      version === null
+        ? "Instructions come from this app's built-in defaults."
+        : `Instructions come from this app's built-in defaults (v${version}).`;
     return {
-      text:
-        version === null
-          ? "Instructions come from this app's built-in defaults."
-          : `Instructions come from this app's built-in defaults (v${version}).`,
+      text: detail.draftInProgress
+        ? `${text} ${PACKS_SOURCE_DRAFT_IN_PROGRESS}`
+        : text,
       shaTitle: null,
     };
   }

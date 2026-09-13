@@ -106,7 +106,7 @@ test("two projects: the selector renders and names the resolved one", async () =
   );
 });
 
-test("one project: nothing to choose between, so no selector", async () => {
+test("one project: no dropdown, but the project is still named", async () => {
   const { screen } = await import("@testing-library/react");
   await mountSelector({
     onSelect: () => {},
@@ -115,6 +115,15 @@ test("one project: nothing to choose between, so no selector", async () => {
   });
 
   assert.equal(screen.queryByTestId("role-packs-project-selector"), null);
+  assert.equal(screen.queryByTestId("role-packs-project-trigger"), null);
+  assert.equal(
+    screen.getByTestId("role-packs-project-name").textContent,
+    "General",
+  );
+  assert.match(
+    screen.getByTestId("role-packs-project-static").textContent,
+    /Role packs for:/,
+  );
 });
 
 test("no project at all: no selector, and nothing claimed", async () => {
@@ -126,6 +135,7 @@ test("no project at all: no selector, and nothing claimed", async () => {
   });
 
   assert.equal(screen.queryByTestId("role-packs-project-selector"), null);
+  assert.equal(screen.queryByTestId("role-packs-project-static"), null);
 });
 
 test("switching names another project and reports the switch once", async () => {
@@ -154,4 +164,77 @@ test("switching names another project and reports the switch once", async () => 
   });
 
   assert.deepEqual(chosen, [ATTIC.id]);
+});
+
+test("a fallback project is disclosed beside the selector, not shown as the selection", async () => {
+  const { screen } = await import("@testing-library/react");
+  await mountSelector({
+    fallbackNote:
+      "No project is chosen in the project filter, so this fell back to the first project in the list.",
+    onSelect: () => {},
+    project: GENERAL,
+    projects: [GENERAL, ATTIC],
+  });
+
+  assert.equal(
+    screen.getByTestId("role-packs-project-fallback").textContent,
+    "No project is chosen in the project filter, so this fell back to the first project in the list.",
+  );
+});
+
+test("a chosen project carries no fallback note", async () => {
+  const { screen } = await import("@testing-library/react");
+  await mountSelector({
+    fallbackNote: null,
+    onSelect: () => {},
+    project: ATTIC,
+    projects: [GENERAL, ATTIC],
+  });
+
+  assert.equal(screen.queryByTestId("role-packs-project-fallback"), null);
+});
+
+test("General plus one real project, directory on General: the other project and the fallback are both on screen", async () => {
+  const { screen } = await import("@testing-library/react");
+  const { resolveRolePacksProject, rolePacksProjectCandidates } = await import(
+    "../lib/rolePacksProject.ts"
+  );
+  const { rolePacksProjectFallbackNote } = await import(
+    "./installCrewRolesCopy.ts"
+  );
+  const localGeneral = {
+    ...makeProject("general", "General"),
+    id: "local:general",
+    owner: "",
+  };
+  // The Agents tab's one list: the local General placeholder plus Attic.
+  const candidates = rolePacksProjectCandidates([localGeneral, ATTIC]);
+  const resolved = resolveRolePacksProject({
+    routeProject: null,
+    chosenId: localGeneral.id,
+    projects: candidates,
+    workdirsByProject: undefined,
+  });
+  assert.equal(resolved.project?.id, ATTIC.id);
+
+  await mountSelector({
+    fallbackNote: rolePacksProjectFallbackNote(resolved.source, true),
+    onSelect: () => {},
+    project: resolved.project,
+    projects: candidates,
+  });
+
+  assert.equal(
+    screen.queryByTestId("role-packs-project-trigger"),
+    null,
+    "one selectable project: nothing to choose, so no dropdown",
+  );
+  assert.equal(
+    screen.getByTestId("role-packs-project-name").textContent,
+    "Attic",
+  );
+  assert.equal(
+    screen.getByTestId("role-packs-project-fallback").textContent,
+    "The project chosen in the project filter cannot hold role packs, so this fell back to the only project.",
+  );
 });

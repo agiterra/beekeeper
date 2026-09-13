@@ -1,4 +1,7 @@
-import { openAgentDefinitions } from "../helpers/agentDirectory";
+import {
+  openAgentDefinitions,
+  openSavedAgentGroups,
+} from "../helpers/agentDirectory";
 import { expect, test } from "@playwright/test";
 import { hexToBytes } from "@noble/hashes/utils.js";
 import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
@@ -516,6 +519,7 @@ test("the new team card offers create and import", async ({ page }) => {
   await gotoApp(page);
   await openDashboardTab(page, "agents");
   await openAgentDefinitions(page);
+  await openSavedAgentGroups(page);
 
   const newTeamCard = page.getByTestId("new-team-card");
   await expect(newTeamCard).toHaveText("");
@@ -552,6 +556,7 @@ test("team cards follow the agents grid alignment at compact widths", async ({
   await gotoApp(page);
   await openDashboardTab(page, "agents");
   await openAgentDefinitions(page);
+  await openSavedAgentGroups(page);
 
   const agentsContent = page.getByTestId("agents-page-content");
   const firstAgentCard = page.getByTestId(

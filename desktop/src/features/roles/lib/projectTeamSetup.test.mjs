@@ -4,8 +4,8 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
   projectTeamSetupBlocker,
-  projectTeamSetupBrief,
   projectTeamSetupError,
+  projectTeamSetupFailure,
 } from "./projectTeamSetup.ts";
 import { ProjectTeamSetupDraftView } from "../ui/ProjectTeamSetupDraftView.tsx";
 
@@ -74,27 +74,98 @@ test("native refusal retains its actionable explanation", () => {
   assert.doesNotMatch(projectTeamSetupError(null), /Object|undefined|null/);
 });
 
-test("authoring brief binds real project input and the isolated write destination", () => {
-  const brief = projectTeamSetupBrief(draft);
-  assert.ok(brief.includes(projectRef));
-  assert.ok(brief.includes(input.intent));
-  assert.ok(brief.includes(input.projectDirectory));
-  assert.ok(brief.includes(draft.rolesDirectory));
-  assert.match(brief, /has not been published/);
-  assert.doesNotMatch(
-    brief,
-    /hive\.agiterra|beekeeper-project|just ci|BUZZ_PRIVATE_KEY/,
+const SETUP_ERROR_CODES = [
+  "existing_authoring",
+  "existing_draft",
+  "filesystem",
+  "invalid_authoring",
+  "invalid_draft",
+  "invalid_input",
+  "invalid_publication",
+  "invalid_setup_actor",
+  "invalid_setup_launch",
+  "invalid_snapshot",
+  "publication_unavailable",
+  "scope_changed",
+  "setup_launch_unavailable",
+  "source_changed",
+];
+
+test("every native setup code maps to one plain sentence and keeps the raw detail", () => {
+  const summaries = new Map();
+  for (const code of SETUP_ERROR_CODES) {
+    const raw = `native ${code} message: /Users/x/drafts/${"a".repeat(64)}`;
+    const failure = projectTeamSetupFailure({ code, message: raw });
+    assert.equal(failure.code, code);
+    assert.equal(failure.detail, raw, `${code} must keep the native message`);
+    assert.notEqual(failure.summary, raw);
+    assert.doesNotMatch(failure.summary, /[a-f0-9]{16}|\/Users|_/, code);
+    assert.match(failure.summary, /\.$/, code);
+    summaries.set(code, failure.summary);
+  }
+  assert.match(summaries.get("source_changed"), /shared roles changed/);
+  assert.match(summaries.get("source_changed"), /check the draft again/);
+  for (const code of ["publication_unavailable", "setup_launch_unavailable"]) {
+    // Also raised for local install, option-read and provider failures, so
+    // the copy must not blame the relay.
+    assert.doesNotMatch(summaries.get(code), /relay/i);
+    assert.match(summaries.get(code), /didn't complete/);
+    assert.match(summaries.get(code), /same saved request when one exists/);
+  }
+  assert.match(summaries.get("scope_changed"), /community or project changed/);
+  assert.match(
+    summaries.get("filesystem"),
+    /local file couldn't be read or written/,
   );
 });
 
-test("recovered draft is visible without claiming validation, publication or an implemented launcher", () => {
+test("a native refusal wrapped by invokeTauri still maps by its payload code", async () => {
+  const { TauriInvokeError } = await import("@/shared/api/tauri");
+  const payload = { code: "scope_changed", message: "Relay changed." };
+  const failure = projectTeamSetupFailure(
+    new TauriInvokeError(payload.message, payload),
+  );
+  assert.equal(failure.code, "scope_changed");
+  assert.match(failure.summary, /community or project changed/);
+  assert.equal(failure.detail, "Relay changed.");
+});
+
+test("uncoded or unknown failures show their own message with nothing hidden", () => {
+  assert.deepEqual(projectTeamSetupFailure(new Error("Response lost")), {
+    summary: "Response lost",
+    detail: null,
+    code: null,
+  });
+  assert.deepEqual(
+    projectTeamSetupFailure({ code: "brand_new_code", message: "Try later" }),
+    { summary: "Try later", detail: null, code: "brand_new_code" },
+  );
+  assert.doesNotMatch(
+    projectTeamSetupFailure(undefined).summary,
+    /Object|undefined|null/,
+  );
+});
+
+test("a recovered draft shows one current stage and keeps paths under Technical details", () => {
   const html = renderToStaticMarkup(
     React.createElement(ProjectTeamSetupDraftView, { draft }),
   );
-  assert.match(html, /Draft ready/);
+  assert.match(html, /Author project roles/);
+  assert.doesNotMatch(html, /Draft ready/);
+  assert.match(html, /aria-current="step"/);
   assert.match(html, /has not been checked yet/);
   assert.match(html, /Draft edits stay local/);
   assert.match(html, /Check draft/);
-  assert.doesNotMatch(html, /Start authoring session|>Publish</);
-  assert.ok(html.includes(input.projectDirectory));
+  assert.doesNotMatch(html, />Start authoring session<|<button[^>]*>Publish/);
+  const details = html.slice(
+    html.indexOf('data-testid="project-team-setup-technical-details"'),
+  );
+  assert.ok(details.includes(input.projectDirectory));
+  assert.ok(details.includes(draft.rolesDirectory));
+  const beforeDetails = html.slice(
+    0,
+    html.indexOf('data-testid="project-team-setup-technical-details"'),
+  );
+  assert.ok(!beforeDetails.includes(input.projectDirectory));
+  assert.ok(!beforeDetails.includes(draft.rolesDirectory));
 });

@@ -3,6 +3,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { Info } from "lucide-react";
 import { toast } from "sonner";
 
+import { useCommunities } from "@/features/communities/useCommunities";
 import { InstallCrewRolesDialog } from "@/features/agents/ui/InstallCrewRolesDialog";
 import { crewRolesInstalledToast } from "@/features/agents/ui/installCrewRolesCopy";
 import { ProjectPageTabs } from "@/features/projects-container/ui/ProjectPageTabs";
@@ -11,6 +12,7 @@ import { Skeleton } from "@/shared/ui/skeleton";
 
 import { rolesPageSummary } from "../lib/rolesPageSummary";
 import { useProjectPacksView } from "../lib/useProjectPacksView";
+import { useProjectTeamSetupSummaryQuery } from "../lib/useProjectTeamSetupSummary";
 import type { SeatRow } from "../lib/rolesViewModel";
 import {
   rolesUncertaintySentence,
@@ -97,6 +99,16 @@ export function ProjectPacksScreen({ projectId }: { projectId: string }) {
     [navigate],
   );
 
+  // Shares its query with the setup button, so this adds no second read.
+  const { activeCommunity } = useCommunities();
+  const setupSummary = useProjectTeamSetupSummaryQuery(
+    project?.address ?? "",
+    activeCommunity?.relayUrl ?? "",
+  );
+  // Only mentioned while roles are still built-in defaults (rolesCopy), so a
+  // saved draft there is by definition not yet installed from the project.
+  const draftInProgress = setupSummary.data != null;
+
   const { refetchAgents, refetchPacks } = state;
   const onRecheck = React.useCallback(() => {
     refetchPacks();
@@ -176,6 +188,7 @@ export function ProjectPacksScreen({ projectId }: { projectId: string }) {
             Math.floor((Date.now() - rolePackSnapshots.resolvedAt) / 1_000),
           ),
     shippedVersion,
+    draftInProgress,
   };
   const shelfNotice =
     shelfState.kind !== "ready" && shelfState.kind !== "loading"

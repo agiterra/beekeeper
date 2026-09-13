@@ -162,7 +162,7 @@ async function harness() {
         canInterrupt: false,
         channelId: CHANNEL_ID,
         currentUserPubkey: OPERATOR,
-        isMember: true,
+        channelAccess: { kind: "member" },
         isWorking: false,
         providerAuthorityPubkey: PROVIDER_PUBKEY,
         publishCommand,

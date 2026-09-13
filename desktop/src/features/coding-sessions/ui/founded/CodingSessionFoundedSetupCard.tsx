@@ -246,6 +246,7 @@ export function CodingSessionFoundedSetupCard({
           <NewCodingSessionLeadField
             candidates={setup.candidates}
             disabled={locked}
+            groups={setup.leadGroups}
             lead={setup.lead}
             onLeadChange={setup.setLeadActor}
           />

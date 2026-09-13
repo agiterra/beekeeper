@@ -161,6 +161,73 @@ fn candidate_uses_owned_snapshot_bytes_and_conditional_source_pins_its_commit() 
     ));
 }
 
+/// An adopted journal whose installation recorded `roles`, bound to `draft`.
+pub(super) fn installed_journal(
+    draft: &ProjectTeamSetupDraft,
+    commit: &str,
+    roles: &[(&str, &str)],
+    lead: Option<LeadJournal>,
+) -> PublicationJournal {
+    let owner = &draft.owner_pubkey;
+    let publication_id = uuid::Uuid::new_v4().to_string();
+    let mut request = request(&"e".repeat(64));
+    request.destination.repo_ref = format!("30617:{owner}:garden-packs");
+    PublicationJournal {
+        version: 1,
+        setup_id: draft.setup_id.clone(),
+        project_ref: draft.project_ref.clone(),
+        owner_pubkey: owner.clone(),
+        relay_url: draft.relay_url.clone(),
+        candidate_ref: format!("refs/heads/setup/{publication_id}"),
+        publication_id,
+        request,
+        candidate_commit: Some(commit.to_string()),
+        source_event: None,
+        installation: Some(InstallationJournal {
+            team_id: uuid::Uuid::new_v4().to_string(),
+            planned_roles: Vec::new(),
+            channel: None,
+            roles: roles
+                .iter()
+                .map(
+                    |(role, agent_pubkey)| activation::ProjectTeamInstalledRole {
+                        role: role.to_string(),
+                        agent_pubkey: agent_pubkey.to_string(),
+                        pack_ref: packs_cache::PackRef {
+                            repo: format!("30617:{owner}:garden-packs"),
+                            sha: commit.to_string(),
+                            role: role.to_string(),
+                            path: format!("{DEFAULT_PACK_PATH}/{role}"),
+                        },
+                    },
+                )
+                .collect(),
+        }),
+        lead,
+        status: PublicationStatus::Adopted,
+        message: None,
+    }
+}
+
+pub(super) fn ready_lead(channel_id: &str, lead_pubkey: &str) -> LeadJournal {
+    LeadJournal {
+        channel_id: channel_id.to_string(),
+        lead_pubkey: lead_pubkey.to_string(),
+        session_ref: None,
+        create_command_id: None,
+        provider_pubkey: None,
+        provider_instance_ref: None,
+        runtime: None,
+        driver: None,
+        provider_host_instance_id: None,
+        model: None,
+        genesis_event: None,
+        create_event: None,
+        status: ProjectTeamLeadStatus::Ready,
+        message: Some("saved".to_string()),
+    }
+}
+
 #[test]
 fn activation_keeps_one_recorded_channel_and_lead_identity_across_reopen() {
     let temp = tempfile::tempdir().expect("temp");
@@ -168,51 +235,12 @@ fn activation_keeps_one_recorded_channel_and_lead_identity_across_reopen() {
     let commit = "c".repeat(40);
     let lead_pubkey = "d".repeat(64);
     let channel_id = uuid::Uuid::new_v4().to_string();
-    let journal = PublicationJournal {
-        version: 1,
-        setup_id: draft.setup_id.clone(),
-        project_ref: draft.project_ref.clone(),
-        owner_pubkey: draft.owner_pubkey.clone(),
-        relay_url: draft.relay_url.clone(),
-        publication_id: uuid::Uuid::new_v4().to_string(),
-        request: request(&"e".repeat(64)),
-        candidate_ref: "refs/heads/setup/test".to_string(),
-        candidate_commit: Some(commit.clone()),
-        source_event: None,
-        installation: Some(InstallationJournal {
-            team_id: uuid::Uuid::new_v4().to_string(),
-            planned_roles: Vec::new(),
-            channel: None,
-            roles: vec![activation::ProjectTeamInstalledRole {
-                role: "lead".to_string(),
-                agent_pubkey: lead_pubkey.clone(),
-                pack_ref: packs_cache::PackRef {
-                    repo: format!("30617:{OWNER}:garden-packs"),
-                    sha: commit.clone(),
-                    role: "lead".to_string(),
-                    path: format!("{DEFAULT_PACK_PATH}/lead"),
-                },
-            }],
-        }),
-        lead: Some(LeadJournal {
-            channel_id: channel_id.clone(),
-            lead_pubkey: lead_pubkey.clone(),
-            session_ref: None,
-            create_command_id: None,
-            provider_pubkey: None,
-            provider_instance_ref: None,
-            runtime: None,
-            driver: None,
-            provider_host_instance_id: None,
-            model: None,
-            genesis_event: None,
-            create_event: None,
-            status: ProjectTeamLeadStatus::Ready,
-            message: Some("saved".to_string()),
-        }),
-        status: PublicationStatus::Adopted,
-        message: None,
-    };
+    let journal = installed_journal(
+        &draft,
+        &commit,
+        &[("lead", &lead_pubkey)],
+        Some(ready_lead(&channel_id, &lead_pubkey)),
+    );
 
     let activation = activation::activation(&journal);
     assert_eq!(activation.source.expect("source").commit, commit);
@@ -226,4 +254,47 @@ fn activation_keeps_one_recorded_channel_and_lead_identity_across_reopen() {
         Some(channel_id.as_str())
     );
     assert_eq!(activation.lead.session_ref, None);
+    assert_eq!(
+        activation.lead.lead_pubkey.as_deref(),
+        Some(lead_pubkey.as_str())
+    );
+}
+
+#[test]
+fn activation_projects_lead_pubkey_from_lead_journal_then_installation_else_null() {
+    let temp = tempfile::tempdir().expect("temp");
+    let draft = draft(temp.path());
+    let commit = "c".repeat(40);
+    let installed_lead = "d".repeat(64);
+    let worker = "f".repeat(64);
+    let roles = [
+        ("builder", worker.as_str()),
+        ("lead", installed_lead.as_str()),
+    ];
+
+    let mut journal = installed_journal(&draft, &commit, &roles, None);
+    let projected = activation::activation(&journal);
+    assert_eq!(projected.lead.status, ProjectTeamLeadStatus::NeedsChannel);
+    assert_eq!(
+        projected.lead.lead_pubkey.as_deref(),
+        Some(installed_lead.as_str())
+    );
+    let json = serde_json::to_value(&projected.lead).expect("lead json");
+    assert_eq!(json["leadPubkey"], serde_json::json!(installed_lead));
+
+    // The reserved lead journal's identity is the one the lead request uses.
+    let reserved = "a".repeat(64);
+    journal.lead = Some(ready_lead(&uuid::Uuid::new_v4().to_string(), &reserved));
+    assert_eq!(
+        activation::activation(&journal).lead.lead_pubkey.as_deref(),
+        Some(reserved.as_str())
+    );
+
+    let not_installed = installed_journal(&draft, &commit, &[], None);
+    let projected = activation::activation(&not_installed);
+    assert_eq!(projected.lead.lead_pubkey, None);
+    assert_eq!(
+        serde_json::to_value(&projected.lead).expect("lead json")["leadPubkey"],
+        serde_json::Value::Null
+    );
 }

@@ -3,8 +3,8 @@ import { hasPrimaryShortcutModifier } from "@/shared/lib/platform";
 /** UI model for the provider-neutral coding-session composer. */
 export function getCodingSessionComposerState({
   canSteer,
+  canWriteChannel,
   hasUnsettledAttachments = false,
-  isMember,
   isWorking,
   text,
 }: {
@@ -30,12 +30,17 @@ export function getCodingSessionComposerState({
    * arrived.
    */
   hasUnsettledAttachments?: boolean;
-  isMember: boolean;
+  /**
+   * Channel write access as the relay decides it — membership, or a project
+   * owner/collaborator on a session transport (`codingSessionChannelAccess`).
+   */
+  canWriteChannel: boolean;
   isWorking: boolean;
   text: string;
 }) {
   return {
-    canSend: isMember && text.trim().length > 0 && !hasUnsettledAttachments,
+    canSend:
+      canWriteChannel && text.trim().length > 0 && !hasUnsettledAttachments,
     // "Interrupt", never "Stop": the composer also carries **Stop execution**,
     // which is terminal and cannot be undone. Two adjacent buttons both
     // reading Stop is how an operator ends an execution while meaning to end a
@@ -75,7 +80,7 @@ export function getCodingSessionComposerState({
         : "Runs after the current turn — this execution cannot steer."
       : null,
     showStopAction: isWorking,
-    showAuthorityFailure: !isMember,
+    showAuthorityFailure: !canWriteChannel,
   };
 }
 

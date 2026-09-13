@@ -1,5 +1,5 @@
 import * as React from "react";
-import { ArrowDown, CircleAlert } from "lucide-react";
+import { ArrowDown } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -16,6 +16,11 @@ import {
   umbrellaHasCollapsedHistory,
 } from "@/features/coding-sessions/lib/codingSessionWorkspaceModel";
 import { useCodingSessionReachabilityResolver } from "@/features/coding-sessions/hooks/useCodingSessionProviderReachability";
+import { useCodingSessionChannelAccess } from "@/features/coding-sessions/hooks/useCodingSessionChannelAccess";
+import {
+  type CodingSessionChannelAccess,
+  codingSessionChannelAccessAllowsSend,
+} from "@/features/coding-sessions/lib/codingSessionChannelAccess";
 import type { CodingSessionReachabilityResolver } from "@/features/coding-sessions/hooks/useCodingSessionProviderReachability";
 import { resolveCodingSessionUmbrellaComposerAuthority } from "@/features/coding-sessions/lib/codingSessionUmbrellaComposerModel";
 import { useCodingSessionOperatorProfiles } from "@/features/coding-sessions/hooks/useCodingSessionOperatorProfiles";
@@ -44,12 +49,12 @@ import { useFeatureEnabled } from "@/shared/features/useFeatureEnabled";
 import { useAnchoredScroll } from "@/features/messages/ui/useAnchoredScroll";
 import { useStableArrayShallow } from "@/shared/hooks/useStableReference";
 import { Button } from "@/shared/ui/button";
-import { FuzzyLogo } from "@/shared/ui/buzz-logo/FuzzyLogo";
 import { Sheet, SheetContent, SheetTitle } from "@/shared/ui/sheet";
 import { AddCodingSessionProviderDialog } from "./AddCodingSessionProviderDialog";
 import { CodingSessionComposer } from "./CodingSessionComposer";
 import { CodingSessionPeoplePopover } from "./CodingSessionPeoplePopover";
 import { CodingSessionHeader } from "./CodingSessionHeader";
+import { CodingSessionWorkspaceState } from "./CodingSessionWorkspaceState";
 import { CodingSessionFounderLine } from "./CodingSessionFounderLine";
 import { CodingSessionHandoverHost } from "./CodingSessionHandoverHost";
 import { cn } from "@/shared/lib/cn";
@@ -146,6 +151,10 @@ export function CodingSessionWorkspace({
   });
   const channel =
     channelsQuery.data?.find((candidate) => candidate.id === channelId) ?? null;
+  // Channel write access as the relay decides it — membership, or a project
+  // owner/collaborator on a transport — kept apart from founder authority.
+  const channelAccess = useCodingSessionChannelAccess(channelId);
+  const canWriteChannel = codingSessionChannelAccessAllowsSend(channelAccess);
   const resolution = resolveCodingSessionWorkspace({
     catalog,
     generationId,
@@ -201,7 +210,6 @@ export function CodingSessionWorkspace({
   // a sentence about it. `errorMessage` has existed since this hook was
   // written and nothing read it.
   const goalReader = deriveCodingSessionGoalReader(goalSnapshot);
-  const isMember = channel?.isMember ?? false;
   const umbrella = resolution.umbrella;
   // Finding 23: this used to be an exact-key `Map.get`, and a published goal
   // that any one of the three keys spelled differently simply vanished — the
@@ -239,7 +247,7 @@ export function CodingSessionWorkspace({
   const sessionClosed =
     closure?.action === "closed" || closure?.action === "archived";
   const canCloseSession =
-    isMember &&
+    canWriteChannel &&
     !sessionClosed &&
     umbrella.sessionRef !== null &&
     umbrella.genesisRef !== null &&
@@ -247,7 +255,7 @@ export function CodingSessionWorkspace({
     identity.data?.pubkey.toLowerCase() ===
       umbrella.founderPubkey.toLowerCase();
   const canReopenSession =
-    isMember &&
+    canWriteChannel &&
     sessionClosed &&
     umbrella.sessionRef !== null &&
     umbrella.genesisRef !== null;
@@ -267,7 +275,7 @@ export function CodingSessionWorkspace({
   // is not this user, the attach UI is absent exactly as the design specifies.
   const canAddProvider =
     !sessionClosed &&
-    isMember &&
+    canWriteChannel &&
     umbrella.sessionRef !== null &&
     resolveCodingSessionUmbrellaComposerAuthority({
       umbrella,
@@ -312,7 +320,7 @@ export function CodingSessionWorkspace({
           communityScope={communityScope}
           focusedExecution={resolution.focusedExecution}
           generationId={generationId}
-          isMember={isMember}
+          channelAccess={channelAccess}
           currentUserPubkey={identity.data?.pubkey ?? null}
           key={`${channelId}:${umbrella.umbrellaKey}`}
           acceptedOperators={acceptedOperators}
@@ -340,7 +348,7 @@ export function CodingSessionWorkspace({
           resolveReachability={resolveHandoverReachability}
           channelName={channel?.name ?? null}
           generationId={generationId}
-          isMember={isMember}
+          channelAccess={channelAccess}
           key={`${channelId}:${generationId}`}
           acceptedOperators={acceptedOperators}
           onAddProvider={onAddProvider}
@@ -410,7 +418,7 @@ function ReadyCodingSessionWorkspace({
   sessionClosed,
   currentUserPubkey,
   sessionRef,
-  isMember,
+  channelAccess,
   onAddProvider,
   onCloseSession,
   onReopenSession,
@@ -437,7 +445,7 @@ function ReadyCodingSessionWorkspace({
   sessionClosed: boolean;
   currentUserPubkey: string | null;
   sessionRef: string | null;
-  isMember: boolean;
+  channelAccess: CodingSessionChannelAccess;
   onAddProvider?: () => void;
   onCloseSession?: () => void;
   onReopenSession?: () => void;
@@ -875,7 +883,7 @@ function ReadyCodingSessionWorkspace({
                     contextWindow={contextWindow}
                     currentUserPubkey={currentUserPubkey}
                     immersive
-                    isMember={isMember}
+                    channelAccess={channelAccess}
                     onAddProvider={onAddProvider}
                     isWorking={isWorking}
                     isUngovernedSession={composerAuthority.isUngovernedSession}
@@ -929,66 +937,4 @@ function ReadyCodingSessionWorkspace({
       ) : null}
     </main>
   );
-}
-
-function CodingSessionWorkspaceState({
-  channelName,
-  generationId,
-  onClose,
-  resolution,
-}: {
-  channelName: string | null;
-  generationId: string;
-  /** Closes the pop-out window. Absent in the main window, where the app's
-   * own back/forward in the top chrome is the way out of a session. */
-  onClose?: () => void;
-  resolution: Exclude<
-    ReturnType<typeof resolveCodingSessionWorkspace>,
-    { kind: "ready" }
-  >;
-}) {
-  const loading = resolution.kind === "loading";
-  return (
-    <main
-      className="flex h-full min-h-0 flex-1 flex-col bg-background"
-      data-testid={`coding-session-workspace-${resolution.kind}`}
-    >
-      <CodingSessionHeader
-        channelName={channelName}
-        generationLabel={shortGenerationId(generationId)}
-        onClose={onClose}
-        status={{ kind: "unknown", label: "Status unknown" }}
-      />
-      <div className="flex min-h-0 flex-1 items-center justify-center px-6 py-10 text-center">
-        <div className="max-w-md">
-          {loading ? (
-            <FuzzyLogo
-              ariaLabel="Loading coding session"
-              className="mx-auto text-muted-foreground"
-              fuzz={false}
-              loop
-            />
-          ) : (
-            <CircleAlert className="mx-auto h-5 w-5 text-muted-foreground" />
-          )}
-          <h2 className="mt-4 text-base font-semibold">
-            {loading
-              ? "Loading coding session"
-              : resolution.kind === "untrusted"
-                ? "Generation not trusted"
-                : "Generation not found"}
-          </h2>
-          <p className="mt-2 text-sm text-muted-foreground">
-            {loading
-              ? "Resolving the exact signed generation from the relay catalog."
-              : resolution.description}
-          </p>
-        </div>
-      </div>
-    </main>
-  );
-}
-
-function shortGenerationId(value: string): string {
-  return value.length <= 28 ? value : `${value.slice(0, 28)}…`;
 }

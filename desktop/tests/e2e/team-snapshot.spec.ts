@@ -7,6 +7,7 @@ import {
 } from "../helpers/bridge";
 import { waitForAnimations } from "../helpers/animations";
 import { openDashboardTab } from "../helpers/dashboard";
+import { openSavedAgentGroups } from "../helpers/agentDirectory";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -27,6 +28,8 @@ async function readCommandLog(page: import("@playwright/test").Page) {
 async function gotoAgentsPage(page: import("@playwright/test").Page) {
   await page.goto("/");
   await openDashboardTab(page, "agents");
+  // Team cards live in the collapsed "Saved agent groups" disclosure.
+  await openSavedAgentGroups(page);
 }
 
 // Minimal .team.json bytes — the bridge returns a canned preview/result

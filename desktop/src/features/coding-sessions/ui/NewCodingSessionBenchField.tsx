@@ -9,6 +9,11 @@ export type NewCodingSessionBenchOption = {
   label: string;
   /** Extra fact shown beside the label — a role, a runtime name. */
   detail: string | null;
+  /**
+   * The heading this identity sits under — the project's installed roles, or
+   * other agents on this computer. Absent or null: no heading.
+   */
+  group?: string | null;
 };
 
 /**
@@ -69,7 +74,18 @@ export function NewCodingSessionBenchField({
         </p>
       ) : (
         <ul className="flex flex-col gap-1 rounded-lg border border-border/60 bg-muted/30 px-3 py-2.5">
-          {identities.map((option) => (
+          {identities.flatMap((option, index) => [
+            ...(option.group && option.group !== identities[index - 1]?.group
+              ? [
+                  <li
+                    className="pt-1 text-2xs font-medium text-muted-foreground"
+                    data-testid="new-coding-session-bench-group"
+                    key={`group:${option.group}`}
+                  >
+                    {option.group}
+                  </li>,
+                ]
+              : []),
             <li className="flex items-center gap-2 text-sm" key={option.value}>
               <Checkbox
                 checked={selectedIdentities.includes(option.value)}
@@ -90,8 +106,8 @@ export function NewCodingSessionBenchField({
                   {option.detail ? ` · ${option.detail}` : ""}
                 </span>
               </label>
-            </li>
-          ))}
+            </li>,
+          ])}
         </ul>
       )}
 

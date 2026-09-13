@@ -374,6 +374,69 @@ pub async fn project_team_setup_get_authoring(
     read_reservation(&bound_draft(&root, &scope, &setup_id)?)
 }
 
+/// The exact authoring brief a setup writes for, and sends to, its agent.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectTeamSetupBrief {
+    pub text: String,
+}
+
+/// The saved `PROJECT_TEAM_SETUP.md` bytes when the setup actor wrote them,
+/// otherwise the brief it would write. Reads only; never creates the file.
+fn saved_or_rendered_brief(draft: &ProjectTeamSetupDraft) -> Result<String, SetupError> {
+    let path = Path::new(&draft.draft_directory).join("PROJECT_TEAM_SETUP.md");
+    match std::fs::symlink_metadata(&path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => authoring_prompt(draft),
+        Err(error) => Err(error.into()),
+        Ok(_) => {
+            tree::check_regular_file(&path, JOURNAL_LIMIT)?;
+            let mut options = std::fs::OpenOptions::new();
+            options.read(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.custom_flags(libc::O_NOFOLLOW);
+            }
+            let mut bytes = Vec::new();
+            options
+                .open(&path)?
+                .take(JOURNAL_LIMIT + 1)
+                .read_to_end(&mut bytes)?;
+            if bytes.len() as u64 > JOURNAL_LIMIT {
+                return Err(invalid("The saved setup brief exceeds its size limit."));
+            }
+            String::from_utf8(bytes)
+                .map_err(|_| invalid("The saved setup brief is not UTF-8 text."))
+        }
+    }
+}
+
+/// Read the brief this setup sends to its authoring agent, without writing it.
+#[tauri::command]
+pub async fn project_team_setup_get_brief(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    project_ref: String,
+    expected_relay_url: String,
+    setup_id: String,
+) -> Result<ProjectTeamSetupBrief, SetupError> {
+    let (root, scope) = context(&app, &state, &project_ref, &expected_relay_url)?;
+    let brief = read_brief(&root, &scope, &setup_id)?;
+    verify_context(&state, &scope)?;
+    Ok(brief)
+}
+
+fn read_brief(
+    root: &Path,
+    scope: &SetupScope,
+    setup_id: &str,
+) -> Result<ProjectTeamSetupBrief, SetupError> {
+    let draft = bound_draft(root, scope, setup_id)?;
+    Ok(ProjectTeamSetupBrief {
+        text: saved_or_rendered_brief(&draft)?,
+    })
+}
+
 #[cfg(test)]
 #[path = "project_team_setup_authoring_tests.rs"]
 mod tests;

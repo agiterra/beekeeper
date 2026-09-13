@@ -112,7 +112,7 @@ test("a draft typed for one execution never survives a participant switch", asyn
         React.createElement(CodingSessionUmbrellaComposer, {
           channelId: CHANNEL_ID,
           currentUserPubkey: null,
-          isMember: true,
+          channelAccess: { kind: "member" },
           umbrella,
           publishLaneMessage: async () => {},
         }),

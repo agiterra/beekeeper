@@ -28,6 +28,7 @@ import {
 import { installMockBridge } from "../helpers/bridge";
 import { openDashboardTab } from "../helpers/dashboard";
 import { waitForAnimations } from "../helpers/animations";
+import { openSavedAgentGroups } from "../helpers/agentDirectory";
 
 /**
  * The Roles tab says which project's role instructions it will install, and
@@ -93,9 +94,7 @@ async function openAgentsTab(page: Page) {
   await installMockBridge(page, {});
   await page.goto("/");
   await openDashboardTab(page, "agents");
-  await expect(page.getByTestId("agents-library-teams")).toBeVisible({
-    timeout: 15_000,
-  });
+  await openSavedAgentGroups(page);
 }
 
 async function openInstaller(page: Page) {

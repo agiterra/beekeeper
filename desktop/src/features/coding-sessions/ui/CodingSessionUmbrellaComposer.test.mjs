@@ -114,7 +114,7 @@ function render(props) {
   return renderToStaticMarkup(
     React.createElement(CodingSessionUmbrellaComposer, {
       channelId: "channel-1",
-      isMember: true,
+      channelAccess: { kind: "member" },
       ...props,
     }),
   );
@@ -206,6 +206,71 @@ test("an unresolved founder leaves prompting to the relay's membership gate", ()
   });
   assert.doesNotMatch(markup, /coding-session-umbrella-composer-gated/);
   assert.match(markup, /data-testid="coding-session-composer"/);
+});
+
+test("a founder with project write access but no channel membership keeps both composers", () => {
+  const umbrella = multiExecutionUmbrella({ creates: foundedCreates(FOUNDER) });
+  const writer = { kind: "project-writer", role: "owner" };
+  const execution = render({
+    channelAccess: writer,
+    currentUserPubkey: FOUNDER,
+    umbrella,
+  });
+  assert.doesNotMatch(
+    execution,
+    /aria-label="Coding-session instruction"[^>]*disabled=""/,
+  );
+  assert.doesNotMatch(execution, /Join this channel|View only|Read only/);
+  const lane = render({
+    channelAccess: writer,
+    currentUserPubkey: FOUNDER,
+    prefill: { id: "lane", participantKey: "session", text: "" },
+    umbrella,
+  });
+  assert.match(lane, /data-testid="coding-session-lane-composer"/);
+  assert.doesNotMatch(
+    lane,
+    /aria-label="Session conversation message"[^>]*disabled=""/,
+  );
+});
+
+test("project readers and an unresolved roster are refused on both composers, each named", () => {
+  const umbrella = multiExecutionUmbrella({ creates: foundedCreates(FOUNDER) });
+  const reader = { kind: "project-reader", projectRole: "viewer" };
+  const execution = render({
+    channelAccess: reader,
+    currentUserPubkey: FOUNDER,
+    umbrella,
+  });
+  assert.match(
+    execution,
+    /aria-label="Coding-session instruction"[^>]*disabled=""/,
+  );
+  assert.match(
+    execution,
+    /placeholder="You can read this project session, but your project role \(Viewer\) does not allow steering\."/,
+  );
+  assert.match(execution, />Read only</);
+  const lane = render({
+    channelAccess: reader,
+    currentUserPubkey: FOUNDER,
+    prefill: { id: "lane", participantKey: "session", text: "" },
+    umbrella,
+  });
+  assert.match(
+    lane,
+    /aria-label="Session conversation message"[^>]*disabled=""/,
+  );
+  assert.match(lane, /You can read this project session/);
+
+  const checking = render({
+    channelAccess: { kind: "unresolved", reason: "loading" },
+    currentUserPubkey: FOUNDER,
+    umbrella,
+  });
+  assert.match(checking, /placeholder="Checking your access to this session…"/);
+  assert.match(checking, />Checking access</);
+  assert.doesNotMatch(checking, /Join this channel|View only/);
 });
 
 test("a session prefill selects the lane target's execution and stages its text", () => {

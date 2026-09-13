@@ -68,6 +68,8 @@ pub struct ProjectTeamLead {
     pub status: ProjectTeamLeadStatus,
     pub channel_id: Option<String>,
     pub session_ref: Option<String>,
+    /// The reserved lead identity, or `None` when no lead is installed.
+    pub lead_pubkey: Option<String>,
     pub message: Option<String>,
 }
 
@@ -854,14 +856,14 @@ pub async fn project_team_setup_start_lead(
                 repo_ref: Some(source.repo_ref.clone()),
                 session_ref: Some(session_ref.clone()),
                 genesis_ref: Some(genesis_event.id.to_hex()),
-                provider_instance_ref: ProviderInstanceAlias::from_wire(runtime.instance_ref.clone()).map_err(invalid)?,
+                provider_instance_ref: ProviderInstanceAlias::from_wire(
+                    runtime.instance_ref.clone(),
+                )
+                .map_err(invalid)?,
                 provider_authority_pubkey: provider_record.provider_pubkey.clone(),
                 model: Some(model.clone()),
                 title: Some("Project lead".to_string()),
-                initial_turn: Some(format!(
-                    "You are the project lead. Read this project's repository instructions before acting. Your role pack is pinned to {} at {}. Establish the work from the project evidence, preserve Solo as independent, and use the project team only when it helps.",
-                    source.repo_ref, source.commit
-                )),
+                initial_turn: Some(projection::lead_initial_turn(&source)),
                 actor: Some(lead.lead_pubkey.clone()),
                 role: Some("lead".to_string()),
                 hire_ref: None,

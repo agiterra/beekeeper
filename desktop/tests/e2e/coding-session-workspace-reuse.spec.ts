@@ -554,6 +554,10 @@ test.describe("new session in this workspace", () => {
       // checkouts, the team's readiness, and a relay query. All getters.
       "list_project_local_repositories",
       "team_readiness",
+      // Which agents this computer installed for the project, read from setup
+      // journals so the lead picker can put the project's own roles first. A
+      // listing: it creates, repairs and publishes nothing.
+      "project_team_list_installed_roles",
       "query_relay_filters",
     ]);
     // Ambient subscription maintenance may flush during the click window.

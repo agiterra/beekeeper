@@ -9,9 +9,10 @@ const MODES: readonly { value: CodingSessionSetupMode; label: string }[] = [
 /**
  * **Solo | Team** — the first control on the founded page.
  *
- * The one decision every other field hangs off: Solo is you leading one
- * runtime with the prompt as your first message; Team is an agent leading,
- * with a bench and a policy, under an authority chain. Native radios rather
+ * The one decision every other field hangs off: Solo is you working directly
+ * with one agent, the prompt as your first message; Team is an agent leading
+ * and bringing in workers as the task needs them, under an authority chain —
+ * not a team assembled up front. Native radios rather
  * than a checkbox because both answers are named, and neither is the default
  * shape of the other; the label carries the testid so a click on the word
  * is the click that selects.
@@ -61,8 +62,8 @@ export function CodingSessionFoundedModeSwitch({
         })}
       </fieldset>
       <p className="text-2xs text-muted-foreground">
-        Solo: you lead, one runtime. Team: an agent leads, with a bench and a
-        policy.
+        Solo: you work directly with one agent. Team: an agent leads and brings
+        in workers as the task needs.
       </p>
     </div>
   );

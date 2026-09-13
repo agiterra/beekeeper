@@ -4,12 +4,10 @@ import * as React from "react";
 
 import {
   resolveRolePacksProject,
+  rolePacksProjectCandidates,
   type RolePacksProjectSource,
 } from "@/features/agents/lib/rolePacksProject";
-import {
-  useProjectContainersQuery,
-  type ProjectContainer,
-} from "@/features/projects-container/hooks";
+import type { ProjectContainer } from "@/features/projects-container/hooks";
 import { useActiveProjectContainer } from "@/features/projects-container/useActiveProjectTint";
 import { getCodingSessionWorkdirState } from "@/shared/api/tauriCodingSessionWorkdirs";
 import { useFeatureEnabled } from "@/shared/features";
@@ -24,8 +22,20 @@ export type RolePacksProjectState = {
   projects: readonly ProjectContainer[];
   /** Why `project` is the one it is. */
   source: RolePacksProjectSource;
-  /** Record the operator's pick; it outranks every fallback below the route. */
-  chooseProject: (projectId: string) => void;
+};
+
+export type UseRolePacksProjectInput = {
+  /**
+   * The Agents tab's one project list — the list its directory filter shows.
+   * The selector offers the same projects, minus the local General
+   * placeholder (see `rolePacksProjectCandidates`).
+   */
+  projects: readonly ProjectContainer[];
+  /**
+   * The directory's selected project id, or `null` for "Any project". There
+   * is no second selection: the installer reads the directory's.
+   */
+  selectedProjectId: string | null;
 };
 
 /**
@@ -33,18 +43,19 @@ export type RolePacksProjectState = {
  *
  * The Agents tab is a Dashboard tab, so the route names no project and the
  * tint's resolution answers `null` — which is what left ledger 85's
- * pre-chosen folder unreachable. This resolves one anyway, from records the
- * app already keeps, and hands back the whole list so the surface can offer
- * the choice rather than making it silently.
+ * pre-chosen folder unreachable. The directory's project filter is the
+ * selection; when it is on "Any project" this resolves one from records the
+ * app already keeps and reports `source` so the surface can say it fell back.
  */
-export function useRolePacksProject(): RolePacksProjectState {
+export function useRolePacksProject(
+  input: UseRolePacksProjectInput,
+): RolePacksProjectState {
   const pathname = useLocation({ select: (location) => location.pathname });
   const routeProject = useActiveProjectContainer(pathname, null);
   const projectsEnabled = useFeatureEnabled("projects");
-  const projectsQuery = useProjectContainersQuery({ enabled: projectsEnabled });
   const projects = React.useMemo(
-    () => (projectsEnabled ? (projectsQuery.data ?? []) : []),
-    [projectsEnabled, projectsQuery.data],
+    () => (projectsEnabled ? rolePacksProjectCandidates(input.projects) : []),
+    [projectsEnabled, input.projects],
   );
   // Only asked for once there is something to order by; on a machine with no
   // projects this surface reads nothing from the workdir store at all.
@@ -54,23 +65,21 @@ export function useRolePacksProject(): RolePacksProjectState {
     queryFn: getCodingSessionWorkdirState,
     staleTime: 60_000,
   });
-  const [chosenId, setChosenId] = React.useState<string | null>(null);
 
   const resolution = React.useMemo(
     () =>
       resolveRolePacksProject({
         routeProject,
-        chosenId,
+        chosenId: input.selectedProjectId,
         projects,
         workdirsByProject: workdirs.data?.byProject,
       }),
-    [chosenId, projects, routeProject, workdirs.data?.byProject],
+    [input.selectedProjectId, projects, routeProject, workdirs.data?.byProject],
   );
 
   return {
     project: resolution.project,
     projects,
     source: resolution.source,
-    chooseProject: setChosenId,
   };
 }

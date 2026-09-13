@@ -46,3 +46,76 @@ test("the surface's two evidenced facts are unchanged by this addition", () => {
   assert.equal(currentSeatText(null), "not seated");
   assert.equal(launchesAsText(null), "launches as — not set");
 });
+
+// ── Project roles, installed agents, session participation ─────────────────
+
+import {
+  AGENT_FILTER_PROJECT_GROUP_LABEL,
+  AGENT_FILTER_STATUS_INSTALLED_FOR_PROJECT,
+  AGENT_FILTER_STATUS_RUNNING,
+  AGENTS_PROJECT_ROLES_DESCRIPTION,
+  SAVED_AGENT_GROUPS_DESCRIPTION,
+  SAVED_AGENT_GROUPS_TITLE,
+  installedForText,
+  renameFailedText,
+} from "@/features/agents/ui/agentDirectoryCopy";
+import { INSTALL_CREW_ROLES_BODY } from "@/features/agents/ui/installCrewRolesCopy";
+
+test("an installation reads as installed-for, never in the seat cell's shape", () => {
+  assert.equal(
+    installedForText([{ projectName: "Tank Loop", role: "lead" }]),
+    "Installed for Tank Loop · lead",
+  );
+  assert.equal(
+    installedForText([
+      { projectName: "Tank Loop", role: "lead" },
+      { projectName: "Attic", role: "builder" },
+    ]),
+    "Installed for Tank Loop · lead (+1 more)",
+  );
+  assert.equal(
+    installedForText([{ projectName: null, role: "verifier" }]),
+    "Installed for a project not listed here · verifier",
+  );
+  assert.equal(installedForText([]), null);
+});
+
+test("the project filter names both facts it matches, and Running keeps its word", () => {
+  assert.equal(
+    AGENT_FILTER_PROJECT_GROUP_LABEL,
+    "installed for it, or holds or held a seat there",
+  );
+  assert.equal(
+    AGENT_FILTER_STATUS_INSTALLED_FOR_PROJECT,
+    "Installed for a project",
+  );
+  assert.equal(AGENT_FILTER_STATUS_RUNNING, "Running");
+});
+
+test("saved groups are described as channel conveniences, not a project's roles", () => {
+  assert.equal(SAVED_AGENT_GROUPS_TITLE, "Saved agent groups");
+  assert.match(
+    SAVED_AGENT_GROUPS_DESCRIPTION,
+    /add several agents to a channel at once/,
+  );
+  assert.match(SAVED_AGENT_GROUPS_DESCRIPTION, /not a project's roles/);
+  assert.match(AGENTS_PROJECT_ROLES_DESCRIPTION, /shared instructions/);
+  assert.match(AGENTS_PROJECT_ROLES_DESCRIPTION, /agents on this computer/);
+});
+
+test("the installer no longer promises one team you can launch", () => {
+  assert.equal(
+    INSTALL_CREW_ROLES_BODY.includes("one team you can launch"),
+    false,
+  );
+  assert.match(INSTALL_CREW_ROLES_BODY, /shared instructions/);
+  assert.match(INSTALL_CREW_ROLES_BODY, /one agent on this computer/);
+  assert.match(INSTALL_CREW_ROLES_BODY, /Installing starts nothing/);
+});
+
+test("a failed rename is said plainly with its cause", () => {
+  assert.equal(
+    renameFailedText("keychain locked"),
+    "The name was not changed: keychain locked",
+  );
+});

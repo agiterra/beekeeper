@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { waitForAnimations } from "../helpers/animations";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { installMockBridge } from "../helpers/bridge";
 import type { ProjectTeamSetupDraft } from "../../src/features/roles/lib/projectTeamSetup";
 import type { ProjectTeamSetupLaunch } from "../../src/features/roles/lib/projectTeamSetup";
@@ -138,7 +138,10 @@ async function openRoles(page: Page, failGet = false) {
             sourceExpectation: { kind: "if_unset" },
             publication,
           };
-        if (command === "project_team_setup_get_publication")
+        if (
+          command === "project_team_setup_get_publication" ||
+          command === "project_team_setup_peek_publication"
+        )
           return publication;
         if (command === "project_team_setup_get_activation") return activation;
         if (command === "project_team_setup_install_adopted_roles") {
@@ -377,6 +380,30 @@ async function workbenchCalls(page: Page) {
   );
 }
 
+/**
+ * The draft check appears once authoring has produced something to check.
+ * A person who edited the draft by hand reveals it explicitly; this does the
+ * same, and is a no-op when the check is already on screen.
+ */
+async function revealDraftCheck(dialog: Locator) {
+  const reveal = dialog.getByRole("button", {
+    name: "Edited the draft yourself? Check it now",
+    exact: true,
+  });
+  await expect(
+    dialog.getByTestId("project-team-setup-stage-heading"),
+  ).toBeVisible();
+  if (await reveal.isVisible()) await reveal.click();
+}
+
+/** Hashes, refs, folders and raw messages live under Technical details. */
+async function openTechnicalDetails(dialog: Locator) {
+  const details = dialog.getByTestId("project-team-setup-technical-details");
+  if (!(await details.evaluate((element) => element.hasAttribute("open")))) {
+    await details.locator("summary").click();
+  }
+}
+
 test("open is read-only; explicit preparation and validation stay separate from publication; reopening resumes", async ({
   page,
 }) => {
@@ -398,9 +425,10 @@ test("open is read-only; explicit preparation and validation stay separate from 
   await dialog
     .getByRole("button", { name: "Prepare draft", exact: true })
     .click();
+  await revealDraftCheck(dialog);
   await expect(
-    dialog.getByRole("heading", { name: "Draft ready" }),
-  ).toBeVisible();
+    dialog.getByTestId("project-team-setup-stage-heading"),
+  ).toHaveText("Author project roles");
   await expect(
     dialog.getByTestId("project-team-setup-validation"),
   ).toContainText("has not been checked yet");
@@ -436,8 +464,9 @@ test("open is read-only; explicit preparation and validation stay separate from 
   await expect(dialog).not.toBeVisible();
   await page.getByTestId("project-team-setup-open").click();
   await expect(
-    dialog.getByRole("heading", { name: "Draft ready" }),
-  ).toBeVisible();
+    dialog.getByTestId("project-team-setup-stage-heading"),
+  ).toHaveText("Author project roles");
+  await revealDraftCheck(dialog);
   await expect(
     dialog.getByTestId("project-team-setup-validation"),
   ).toContainText("has not been checked yet");
@@ -465,6 +494,7 @@ test("saving and reopening reverify the same separate copy; failed retry clears 
   await dialog
     .getByRole("button", { name: "Prepare draft", exact: true })
     .click();
+  await revealDraftCheck(dialog);
   const save = dialog.getByRole("button", {
     name: "Save checked version",
     exact: true,
@@ -475,13 +505,12 @@ test("saving and reopening reverify the same separate copy; failed retry clears 
     .click();
   await save.click();
   await expect(dialog.getByRole("status")).toContainText(
-    "Later draft edits do not change this copy. Publication status appears below.",
+    "Checked version saved. Later draft edits do not change this copy.",
   );
-  await dialog.getByText("Saved version details", { exact: true }).click();
-  await expect(dialog.getByRole("status")).toContainText("a".repeat(64));
-  await expect(dialog.getByRole("status")).toContainText(
-    "Roles: lead, aquarium-specialist",
-  );
+  await openTechnicalDetails(dialog);
+  const savedVersion = dialog.getByTestId("project-team-setup-saved-version");
+  await expect(savedVersion).toContainText("a".repeat(64));
+  await expect(savedVersion).toContainText("Roles: lead, aquarium-specialist");
   await expect(dialog).toContainText("/drafts/setup-tankloop/personas/roles");
   const calls = await setupCalls(page);
   expect(
@@ -518,8 +547,10 @@ test("saving and reopening reverify the same separate copy; failed retry clears 
       snapshotId: "a".repeat(64),
     },
   });
-  await dialog.getByText("Saved version details", { exact: true }).click();
-  await expect(dialog.getByRole("status")).toContainText("a".repeat(64));
+  await openTechnicalDetails(dialog);
+  await expect(
+    dialog.getByTestId("project-team-setup-saved-version"),
+  ).toContainText("a".repeat(64));
   await dialog
     .getByRole("button", { name: "Check draft", exact: true })
     .click();
@@ -540,6 +571,10 @@ test("saving and reopening reverify the same separate copy; failed retry clears 
     "project_team_setup_validate",
     "project_team_setup_snapshot",
     "project_team_setup_get_publication_options",
+    // Closing the dialog refreshes the Roles page's summary through
+    // read-only commands only: the draft read and a no-write publication peek.
+    "project_team_setup_get",
+    "project_team_setup_peek_publication",
     "project_team_setup_get",
     "project_team_setup_snapshot",
     "project_team_setup_get_publication_options",
@@ -562,6 +597,7 @@ test("checked draft publishes, installs the adopted source, and starts one proje
   await dialog
     .getByRole("button", { name: "Prepare draft", exact: true })
     .click();
+  await revealDraftCheck(dialog);
   await dialog
     .getByRole("button", { name: "Check draft", exact: true })
     .click();
@@ -647,7 +683,7 @@ test("a failed saved-draft read stays actionable and retry never creates a draft
     dialog.getByRole("button", { name: "Prepare draft", exact: true }),
   ).toBeDisabled();
   await expect(
-    dialog.getByRole("heading", { name: "Draft ready" }),
+    dialog.getByTestId("project-team-setup-stage-heading"),
   ).toHaveCount(0);
   await page.evaluate(() => {
     (window as unknown as FixtureWindow).__setupFailGet = false;
@@ -707,9 +743,10 @@ for (const layout of [
       .getByRole("button", { name: "Prepare draft", exact: true })
       .click();
     await expect(
-      dialog.getByRole("heading", { name: "Draft ready" }),
-    ).toBeVisible();
+      dialog.getByTestId("project-team-setup-stage-heading"),
+    ).toHaveText("Author project roles");
     await checkFit();
+    await revealDraftCheck(dialog);
     await dialog
       .getByRole("button", { name: "Check draft", exact: true })
       .click();
@@ -720,8 +757,10 @@ for (const layout of [
     await expect(dialog.getByRole("status")).toContainText(
       "Checked version saved",
     );
-    await dialog.getByText("Saved version details", { exact: true }).click();
-    await expect(dialog.getByRole("status")).toContainText("a".repeat(64));
+    await openTechnicalDetails(dialog);
+    await expect(
+      dialog.getByTestId("project-team-setup-saved-version"),
+    ).toContainText("a".repeat(64));
     await checkFit();
     await waitForAnimations(page);
     await dialog
@@ -765,8 +804,9 @@ test("authoring opens read-only, provisions explicitly and retries one durable r
   await dialog
     .getByRole("button", { name: "Prepare draft", exact: true })
     .click();
+  await revealDraftCheck(dialog);
   const authoring = dialog.getByRole("region", {
-    name: "Project team authoring",
+    name: "Project roles authoring",
   });
   const start = authoring.getByRole("button", {
     name: "Start authoring session",
@@ -848,8 +888,9 @@ test("runtime discovery failure gives a recoverable setup blocker without provis
   await dialog
     .getByRole("button", { name: "Prepare draft", exact: true })
     .click();
+  await revealDraftCheck(dialog);
   const authoring = dialog.getByRole("region", {
-    name: "Project team authoring",
+    name: "Project roles authoring",
   });
   await expect(authoring.getByRole("alert")).toContainText(
     "Runtime discovery unavailable",

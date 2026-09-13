@@ -8,12 +8,17 @@ import {
 import { getInheritedAgentDefaults } from "@/features/agents/ui/bakedEnvHelpers";
 import { useGlobalAgentConfig } from "@/features/agents/useGlobalAgentConfig";
 import { useChannelsQuery } from "@/features/channels/hooks";
+import { useCommunities } from "@/features/communities/useCommunities";
 import {
   useDisplayProjectContainers,
   useProjectCodingSessionBuckets,
   type ProjectContainer,
 } from "@/features/projects-container/hooks";
 import type { ProjectCodingSessionShelfEntry } from "@/features/projects-container/lib/projectCodingSessionShelf";
+import {
+  installedProjectRefsByAgent,
+  useProjectInstalledRolesQuery,
+} from "@/features/roles/lib/projectInstalledRoles";
 import { buildSeatRows } from "@/features/roles/lib/seatRows";
 import {
   buildAgentDirectory,
@@ -50,8 +55,15 @@ export type AgentDirectoryState = {
   error: string | null;
   /** True while the seat read is partial/unavailable (§A States — Partial). */
   seatNotice: { message: string; detail: string } | null;
+  /**
+   * The setup-journal read failed, so "installed for <project>" facts are
+   * missing from every row — said, rather than shown as "none installed".
+   */
+  installationsError: string | null;
   refetchAgents: () => void;
   refetchRelayAgents: () => void;
+  /** Re-read the setup journals, e.g. after installing role packs. */
+  refetchInstallations: () => void;
 };
 
 /**
@@ -71,6 +83,20 @@ export function useAgentDirectory(): AgentDirectoryState {
   const managedAgentsQuery = useManagedAgentsQuery();
   const relayAgentsQuery = useRelayAgentsQuery();
   const projects = useDisplayProjectContainers();
+
+  // Handed over verbatim (see `useDetachedAgentStart`): the native side
+  // compares relay scope itself. No active relay → the read stays disabled,
+  // because a list read against the wrong relay would attribute another
+  // community's installations to this one.
+  const { activeCommunity } = useCommunities();
+  const expectedRelayUrl = activeCommunity?.relayUrl?.trim()
+    ? activeCommunity.relayUrl
+    : null;
+  const installedRolesQuery = useProjectInstalledRolesQuery(expectedRelayUrl);
+  const installationsByAgent = React.useMemo(
+    () => installedProjectRefsByAgent(installedRolesQuery.data),
+    [installedRolesQuery.data],
+  );
 
   const channelsQuery = useChannelsQuery({ includeSessionTransports: true });
   const buckets = useProjectCodingSessionBuckets(
@@ -114,6 +140,8 @@ export function useAgentDirectory(): AgentDirectoryState {
         seats,
         openSeatKeys,
         defaultModel: inheritedDefaults.model.value,
+        installationsByAgent,
+        projects,
       }),
     [
       managedAgentsQuery.data,
@@ -121,6 +149,8 @@ export function useAgentDirectory(): AgentDirectoryState {
       seats,
       openSeatKeys,
       inheritedDefaults.model.value,
+      installationsByAgent,
+      projects,
     ],
   );
 
@@ -139,7 +169,11 @@ export function useAgentDirectory(): AgentDirectoryState {
     isLoading: managedAgentsQuery.isLoading,
     error,
     seatNotice,
+    installationsError: errorSentence(installedRolesQuery.error),
     refetchAgents: () => void managedAgentsQuery.refetch(),
     refetchRelayAgents: () => void relayAgentsQuery.refetch(),
+    refetchInstallations: () => {
+      if (expectedRelayUrl !== null) void installedRolesQuery.refetch();
+    },
   };
 }

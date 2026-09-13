@@ -1,8 +1,9 @@
 import * as React from "react";
 import { Button } from "@/shared/ui/button";
 import {
-  projectTeamSetupError,
+  projectTeamSetupFailure,
   type ProjectTeamSetupActivation,
+  type ProjectTeamSetupFailure,
   type ProjectTeamSetupDraft,
   type ProjectTeamSetupPublication as ProjectTeamSetupPublicationState,
   type ProjectTeamSetupPublicationOptions,
@@ -17,17 +18,35 @@ import {
   startProjectTeamSetupLead,
   startProjectTeamSetupPublication,
 } from "../lib/projectTeamSetupApi";
+import { ProjectTeamSetupFailureNotice } from "./ProjectTeamSetupFailureNotice";
+import {
+  ProjectTeamSetupInstalledRoles,
+  ProjectTeamSetupLeadIdentity,
+} from "./ProjectTeamSetupInstalledRoles";
+
+/**
+ * What this card has observed, lifted so the draft view can derive one stage
+ * and show identifiers under Technical details. `activation` is `undefined`
+ * until read and `null` when the read failed.
+ */
+export type ProjectTeamSetupPublicationProgress = {
+  loading: boolean;
+  options: ProjectTeamSetupPublicationOptions | null;
+  publication: ProjectTeamSetupPublicationState | null;
+  blocked: "missing_destination" | "missing_base" | "unavailable" | null;
+  activation: ProjectTeamSetupActivation | null | undefined;
+};
 
 function publicationStatus(status: ProjectTeamSetupPublicationState["status"]) {
   switch (status) {
     case "checking":
       return "Checking the selected version";
     case "candidate_prepared":
-      return "Candidate revision prepared; it has not been pushed or adopted";
+      return "Revision prepared; it has not been pushed or adopted";
     case "push_unknown":
       return "Repository push needs confirmation";
     case "pushed":
-      return "Repository revision pushed; source adoption is still pending";
+      return "Repository revision pushed; the project hasn't adopted it yet";
     case "source_unknown":
       return "Shared source adoption needs confirmation";
     case "adopted":
@@ -67,10 +86,13 @@ function activationScope(draft: ProjectTeamSetupDraft, publicationId: string) {
 export function ProjectTeamSetupPublication({
   draft,
   snapshot,
+  projectName,
+  onProgress,
 }: {
   draft: ProjectTeamSetupDraft;
   snapshot: ProjectTeamSetupSnapshot;
   projectName?: string;
+  onProgress?: (progress: ProjectTeamSetupPublicationProgress) => void;
 }) {
   const [options, setOptions] =
     React.useState<ProjectTeamSetupPublicationOptions | null>(null);
@@ -80,8 +102,11 @@ export function ProjectTeamSetupPublication({
   const [busy, setBusy] = React.useState(false);
   const [activation, setActivation] =
     React.useState<ProjectTeamSetupActivation | null>(null);
+  const [activationReadFailed, setActivationReadFailed] = React.useState(false);
   const [creatingChannel, setCreatingChannel] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
+  const [error, setError] = React.useState<ProjectTeamSetupFailure | null>(
+    null,
+  );
 
   React.useEffect(() => {
     let cancelled = false;
@@ -97,16 +122,19 @@ export function ProjectTeamSetupPublication({
       .then((next) => {
         if (cancelled) return;
         if (!next) {
-          setError(
-            "Publication choices are unavailable. Reopen setup and try again.",
-          );
+          setError({
+            summary:
+              "Publication choices are unavailable. Reopen setup and try again.",
+            detail: null,
+            code: null,
+          });
           return;
         }
         setOptions(next);
         setPublication(next.publication);
       })
       .catch((failure: unknown) => {
-        if (!cancelled) setError(projectTeamSetupError(failure));
+        if (!cancelled) setError(projectTeamSetupFailure(failure));
       })
       .finally(() => {
         if (!cancelled) setLoadingOptions(false);
@@ -123,6 +151,7 @@ export function ProjectTeamSetupPublication({
     }
     let cancelled = false;
     setError(null);
+    setActivationReadFailed(false);
     void getProjectTeamSetupActivation(
       activationScope(draft, publication.publicationId),
     )
@@ -130,7 +159,9 @@ export function ProjectTeamSetupPublication({
         if (!cancelled) setActivation(next);
       })
       .catch((failure: unknown) => {
-        if (!cancelled) setError(projectTeamSetupError(failure));
+        if (cancelled) return;
+        setActivationReadFailed(true);
+        setError(projectTeamSetupFailure(failure));
       });
     return () => {
       cancelled = true;
@@ -158,7 +189,7 @@ export function ProjectTeamSetupPublication({
         }),
       );
     } catch (failure) {
-      setError(projectTeamSetupError(failure));
+      setError(projectTeamSetupFailure(failure));
     } finally {
       setBusy(false);
     }
@@ -178,7 +209,7 @@ export function ProjectTeamSetupPublication({
         }),
       );
     } catch (failure) {
-      setError(projectTeamSetupError(failure));
+      setError(projectTeamSetupFailure(failure));
     } finally {
       setBusy(false);
     }
@@ -195,7 +226,7 @@ export function ProjectTeamSetupPublication({
         ),
       );
     } catch (failure) {
-      setError(projectTeamSetupError(failure));
+      setError(projectTeamSetupFailure(failure));
     } finally {
       setBusy(false);
     }
@@ -213,7 +244,7 @@ export function ProjectTeamSetupPublication({
         }),
       );
     } catch (failure) {
-      setError(projectTeamSetupError(failure));
+      setError(projectTeamSetupFailure(failure));
     } finally {
       setBusy(false);
     }
@@ -230,7 +261,7 @@ export function ProjectTeamSetupPublication({
         ),
       );
     } catch (failure) {
-      setError(projectTeamSetupError(failure));
+      setError(projectTeamSetupFailure(failure));
     } finally {
       setCreatingChannel(false);
     }
@@ -242,6 +273,29 @@ export function ProjectTeamSetupPublication({
     !publication &&
     options?.sourceExpectation.kind === "expected" &&
     !options.suggestedDestination?.baseCommit;
+  const blocked: ProjectTeamSetupPublicationProgress["blocked"] = loadingOptions
+    ? null
+    : !options
+      ? "unavailable"
+      : blockedByMissingDestination
+        ? "missing_destination"
+        : blockedByMissingImmutableBase
+          ? "missing_base"
+          : null;
+  const reportedActivation =
+    publication?.status !== "adopted"
+      ? null
+      : (activation ?? (activationReadFailed ? null : undefined));
+  // biome-ignore lint/correctness/useExhaustiveDependencies: onProgress is a parent callback; progress is reported when observed facts change.
+  React.useEffect(() => {
+    onProgress?.({
+      loading: loadingOptions,
+      options,
+      publication,
+      blocked,
+      activation: reportedActivation,
+    });
+  }, [loadingOptions, options, publication, blocked, reportedActivation]);
 
   return (
     <section
@@ -250,33 +304,25 @@ export function ProjectTeamSetupPublication({
     >
       <h3 className="text-sm font-medium">Publish checked version</h3>
       <p className="text-sm text-muted-foreground">
-        Publish saved version {snapshot.snapshotId}. This authorizes these exact
-        checked bytes; it does not install roles or start a lead session.
+        Publishing shares exactly the saved version with the project. It does
+        not install roles or start a lead session.
       </p>
       {loadingOptions ? (
         <p className="text-sm text-muted-foreground">
-          Checking the project source before publication…
+          Checking the project's shared roles before publishing…
         </p>
       ) : blockedByMissingDestination ? (
         <p className="text-sm text-destructive" role="alert">
-          The host could not identify a project destination from the current
-          source. Publication is blocked so existing project procedures are not
-          replaced.
+          This computer couldn't identify where the project's shared roles live.
+          Publishing is blocked so existing project roles are not replaced.
         </p>
       ) : blockedByMissingImmutableBase ? (
         <p className="text-sm text-destructive" role="alert">
-          The current project source has no immutable base revision. Refresh the
-          project source before replacing its procedures.
+          The project's shared roles have no fixed base version. Refresh the
+          project source before replacing its roles.
         </p>
       ) : options ? (
         <div className="space-y-2">
-          <p
-            className="text-sm"
-            data-testid="project-team-setup-publication-target"
-          >
-            Shared destination: {options.suggestedDestination?.repoRef} at{" "}
-            {options.suggestedDestination?.packPath}
-          </p>
           {!publication ? (
             <Button
               disabled={busy}
@@ -288,18 +334,10 @@ export function ProjectTeamSetupPublication({
           ) : (
             <div className="space-y-2" role="status">
               <p>{publicationStatus(publication.status)}</p>
-              {publication.message ? <p>{publication.message}</p> : null}
-              {publication.status === "adopted" ? (
-                activation?.source ? (
-                  <p data-testid="project-team-setup-adopted-source">
-                    Adopted source: {activation.source.repoRef} @{" "}
-                    {activation.source.commit} / {activation.source.packPath}
-                  </p>
-                ) : (
-                  <p className="text-sm text-muted-foreground">
-                    Resolving the adopted source on this computer…
-                  </p>
-                )
+              {publication.status === "adopted" && !activation?.source ? (
+                <p className="text-sm text-muted-foreground">
+                  Resolving the adopted source on this computer…
+                </p>
               ) : null}
               {needsContinuation(publication.status) ? (
                 <Button
@@ -321,25 +359,17 @@ export function ProjectTeamSetupPublication({
           data-testid="project-team-setup-activation-stage"
         >
           <h3 className="text-sm font-medium">Install and start lead</h3>
-          {activation.source ? (
-            <p className="text-sm text-muted-foreground">
-              Shared source: {activation.source.repoRef} @{" "}
-              {activation.source.commit} / {activation.source.packPath}
-            </p>
-          ) : (
+          {!activation.source ? (
             <p className="text-sm text-destructive" role="alert">
-              The adopted source could not be resolved on this device. Refresh
-              publication before installing roles.
+              The published roles could not be resolved on this computer. Reopen
+              setup before installing roles.
             </p>
-          )}
+          ) : null}
           {activation.source &&
           activation.installation.status === "installed" ? (
-            <p data-testid="project-team-setup-installed-roles">
-              Roles available on this computer:{" "}
-              {activation.installation.installedRoles
-                .map((role) => role.role)
-                .join(", ") || "none reported"}
-            </p>
+            <ProjectTeamSetupInstalledRoles
+              roles={activation.installation.installedRoles}
+            />
           ) : activation.source ? (
             <Button
               disabled={busy}
@@ -353,17 +383,16 @@ export function ProjectTeamSetupPublication({
                   : "Install project roles"}
             </Button>
           ) : null}
-          {activation.installation.message ? (
-            <p className="text-sm text-muted-foreground">
-              {activation.installation.message}
-            </p>
-          ) : null}
           {activation.source &&
           activation.installation.status === "installed" ? (
             <div
               className="space-y-2"
               data-testid="project-team-setup-lead-handoff"
             >
+              <ProjectTeamSetupLeadIdentity
+                activation={activation}
+                projectName={projectName}
+              />
               {activation.lead.status === "needs_channel" ||
               (activation.lead.status === "unknown" &&
                 !activation.lead.sessionRef) ? (
@@ -380,16 +409,37 @@ export function ProjectTeamSetupPublication({
                       : "Create project session channel"}
                 </Button>
               ) : activation.lead.status === "started" ? (
-                <p data-testid="project-team-setup-lead-started">
-                  Project lead started in {activation.lead.channelId} (session{" "}
-                  {activation.lead.sessionRef}).
-                </p>
+                <div
+                  className="space-y-1 text-sm"
+                  data-testid="project-team-setup-lead-started"
+                >
+                  <p>
+                    The project lead was started
+                    {projectName ? ` in ${projectName}` : ""}.
+                  </p>
+                  <details className="text-muted-foreground">
+                    <summary className="cursor-pointer">
+                      Session details
+                    </summary>
+                    <p className="break-all">
+                      Channel {activation.lead.channelId}
+                    </p>
+                    <p className="break-all">
+                      Session {activation.lead.sessionRef}
+                    </p>
+                  </details>
+                </div>
               ) : activation.lead.status === "starting" ? (
                 <p className="text-sm text-muted-foreground" role="status">
                   Project lead handoff is in progress. Reopen this setup to
                   check the recorded outcome.
                 </p>
-              ) : activation.lead.status === "refused" ? null : (
+              ) : activation.lead.status === "refused" ? (
+                <p className="text-sm text-destructive">
+                  The project lead couldn't start. See Technical details for the
+                  reason.
+                </p>
+              ) : (
                 <Button
                   disabled={busy || !activation.lead.channelId}
                   onClick={() => void startLead()}
@@ -402,20 +452,11 @@ export function ProjectTeamSetupPublication({
                       : "Start project lead"}
                 </Button>
               )}
-              {activation.lead.message ? (
-                <p className="text-sm text-muted-foreground">
-                  {activation.lead.message}
-                </p>
-              ) : null}
             </div>
           ) : null}
         </section>
       ) : null}
-      {error ? (
-        <p className="text-sm text-destructive" role="alert">
-          {error}
-        </p>
-      ) : null}
+      <ProjectTeamSetupFailureNotice failure={error} />
     </section>
   );
 }

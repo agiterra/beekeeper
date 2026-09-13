@@ -46,19 +46,32 @@ const draftA = {
   roles: ["lead"],
   createdAt: "2026-09-11",
 };
-async function harness() {
+async function harness({ agents, renderAuthoring } = {}) {
   const React = (await import("react")).default;
   const { ProjectTeamSetupForm } = await import(
     "../ui/ProjectTeamSetupForm.tsx"
   );
+  const { ProjectTeamSetupAgentsContext } = await import(
+    "../ui/ProjectTeamSetupAgents.tsx"
+  );
   const testing = await import("@testing-library/react");
-  const element = (projectRef) =>
-    React.createElement(ProjectTeamSetupForm, {
+  const element = (projectRef) => {
+    const form = React.createElement(ProjectTeamSetupForm, {
       key: projectRef,
       projectRef,
+      projectName: "Tank Loop",
       relayUrl: "wss://example.test",
+      renderAuthoring,
     });
-  return { ...testing, element };
+    return agents
+      ? React.createElement(
+          ProjectTeamSetupAgentsContext.Provider,
+          { value: agents },
+          form,
+        )
+      : form;
+  };
+  return { ...testing, React, element };
 }
 
 test("importing the scoped form does not start application-wide IPC discovery", async () => {
@@ -86,7 +99,7 @@ test("a late saved-draft read cannot replace the newly selected project's form",
     assert.ok(view.getByLabelText("Local project repository")),
   );
   await act(async () => resolveA(draftA));
-  assert.equal(view.queryByText("Draft ready"), null);
+  assert.equal(view.queryByTestId("project-team-setup-draft"), null);
   assert.equal(
     calls.filter((call) => call.command === "project_team_setup_prepare")
       .length,
@@ -120,7 +133,7 @@ test("an in-flight prepare stays bound to its original project after scope remou
     assert.ok(view.getByLabelText("Local project repository")),
   );
   await act(async () => resolvePrepare(draftA));
-  assert.equal(view.queryByText("Draft ready"), null);
+  assert.equal(view.queryByTestId("project-team-setup-draft"), null);
   const writes = calls.filter(
     (call) => call.command === "project_team_setup_prepare",
   );
@@ -154,7 +167,7 @@ test("saving a checked version uses the scoped host snapshot and does not publis
   };
   const { render, waitFor, fireEvent, element } = await harness();
   const view = render(element(projectA));
-  await waitFor(() => assert.ok(view.getByText("Draft ready")));
+  await waitFor(() => assert.ok(view.getByText("Author project roles")));
   assert.equal(
     view.queryByRole("button", { name: "Save checked version" }),
     null,
@@ -165,7 +178,24 @@ test("saving a checked version uses the scoped host snapshot and does not publis
   );
   fireEvent.click(view.getByRole("button", { name: "Save checked version" }));
   await waitFor(() => assert.ok(view.getByText(/Checked version saved/)));
-  assert.ok(view.getByText("Roles: lead, reviewer"));
+  const technical = view.getByTestId("project-team-setup-technical-details");
+  assert.equal(technical.open, false, "Technical details start collapsed");
+  assert.match(technical.textContent, /Roles: lead, reviewer/);
+  assert.ok(technical.textContent.includes("c".repeat(64)));
+  assert.equal(
+    view
+      .getByTestId("project-team-setup-draft")
+      .textContent.replace(technical.textContent, "")
+      .includes("c".repeat(64)),
+    false,
+    "the snapshot id appears only under Technical details",
+  );
+  await waitFor(() =>
+    assert.equal(
+      view.getByTestId("project-team-setup-stage-heading").textContent,
+      "Publishing is blocked",
+    ),
+  );
   assert.deepEqual(
     calls.filter(({ command }) => command === "project_team_setup_snapshot"),
     [
@@ -194,11 +224,30 @@ test("saving a checked version uses the scoped host snapshot and does not publis
     "Snapshot workbench made unexpected IPC calls",
   );
   answers.project_team_setup_snapshot = () => {
-    throw { message: "Draft changed and is no longer valid." };
+    throw {
+      code: "source_changed",
+      message: "Draft changed and is no longer valid.",
+    };
   };
   fireEvent.click(view.getByRole("button", { name: "Save checked version" }));
   await waitFor(() =>
-    assert.match(view.getByRole("alert").textContent, /no longer valid/),
+    assert.ok(
+      view
+        .getAllByRole("alert")
+        .some((alert) => /shared roles changed/.test(alert.textContent)),
+    ),
+  );
+  const alert = view
+    .getAllByRole("alert")
+    .find((entry) => /shared roles changed/.test(entry.textContent));
+  assert.match(
+    alert.querySelector("p").textContent,
+    /^The project's shared roles changed since this draft was checked/,
+  );
+  assert.match(
+    alert.querySelector("details").textContent,
+    /no longer valid/,
+    "the native message stays available under Details",
   );
   assert.equal(view.queryByText(/Checked version saved/), null);
 });
@@ -269,6 +318,7 @@ test("publication, adopted-source installation, and lead handoff each use one sc
       status: "needs_channel",
       channelId: null,
       sessionRef: null,
+      leadPubkey: null,
       message: "Create a project session channel before starting its lead.",
     },
   };
@@ -295,6 +345,7 @@ test("publication, adopted-source installation, and lead handoff each use one sc
       status: "needs_channel",
       channelId: null,
       sessionRef: null,
+      leadPubkey: "9".repeat(64),
       message: null,
     },
   };
@@ -304,6 +355,7 @@ test("publication, adopted-source installation, and lead handoff each use one sc
       status: "started",
       channelId: "project-session-channel",
       sessionRef: "lead-session-1",
+      leadPubkey: "9".repeat(64),
       message: "The reserved project lead is running.",
     },
   };
@@ -313,13 +365,22 @@ test("publication, adopted-source installation, and lead handoff each use one sc
       status: "ready",
       channelId: "project-session-channel",
       sessionRef: null,
+      leadPubkey: "9".repeat(64),
       message: "Project session channel recorded for this publication.",
     },
   };
-  const { render, waitFor, fireEvent, element } = await harness();
+  const { render, waitFor, fireEvent, element } = await harness({
+    agents: { names: new Map([["9".repeat(64), "Loom"]]), rename: null },
+  });
   const view = render(element(projectA));
   await waitFor(() =>
     assert.ok(view.getByRole("button", { name: "Publish checked version" })),
+  );
+  await waitFor(() =>
+    assert.equal(
+      view.getByTestId("project-team-setup-stage-heading").textContent,
+      "Publish project roles",
+    ),
   );
   fireEvent.click(
     view.getByRole("button", { name: "Publish checked version" }),
@@ -372,7 +433,21 @@ test("publication, adopted-source installation, and lead handoff each use one sc
   );
   fireEvent.click(view.getByRole("button", { name: "Install project roles" }));
   await waitFor(() =>
-    assert.ok(view.getByText(/Roles available on this computer: lead/)),
+    assert.ok(view.getByTestId("project-team-setup-installed-roles")),
+  );
+  const installedRow = view.getByTestId("project-team-setup-installed-role");
+  assert.match(installedRow.textContent, /Loom/);
+  assert.match(installedRow.textContent, /· lead/);
+  assert.match(installedRow.textContent, /99999999…9999/);
+  await waitFor(() =>
+    assert.equal(
+      view.getByTestId("project-team-setup-stage-heading").textContent,
+      "Start the project lead",
+    ),
+  );
+  assert.match(
+    view.getByTestId("project-team-setup-lead-identity").textContent,
+    /Project lead: Loom · lead · Tank Loop · 99999999…9999/,
   );
   fireEvent.click(
     view.getByRole("button", { name: "Create project session channel" }),
@@ -397,10 +472,26 @@ test("publication, adopted-source installation, and lead handoff each use one sc
   );
   fireEvent.click(view.getByRole("button", { name: "Start project lead" }));
   await waitFor(() =>
-    assert.ok(
-      view.getByText(/Project lead started in project-session-channel/),
+    assert.ok(view.getByText("The project lead was started in Tank Loop.")),
+  );
+  const started = view.getByTestId("project-team-setup-lead-started");
+  assert.match(started.querySelector("details").textContent, /lead-session-1/);
+  await waitFor(() =>
+    assert.equal(
+      view.getByTestId("project-team-setup-stage-heading").textContent,
+      "Project lead started",
     ),
   );
+  assert.equal(
+    view
+      .getByTestId("project-team-setup-stepper")
+      .querySelector('[aria-current="step"]').dataset.state,
+    "done",
+  );
+  const technical = view.getByTestId("project-team-setup-technical-details");
+  assert.ok(technical.textContent.includes("1".repeat(40)));
+  assert.match(technical.textContent, /Installed from the adopted revision/);
+  assert.match(technical.textContent, /lead-session-1/);
   assert.deepEqual(
     calls.find(
       ({ command }) => command === "project_team_setup_install_adopted_roles",
@@ -452,7 +543,9 @@ test("missing host destination blocks publication rather than inventing a new so
   const { render, waitFor, element } = await harness();
   const view = render(element(projectA));
   await waitFor(() =>
-    assert.ok(view.getByText(/could not identify a project destination/)),
+    assert.ok(
+      view.getByText(/couldn't identify where the project's shared roles/),
+    ),
   );
   assert.equal(
     view.queryByRole("button", { name: "Publish checked version" }),
@@ -496,6 +589,357 @@ test("reopening reverifies the saved version without treating the current draft 
   );
   assert.equal(
     calls.some(({ command }) => command === "project_team_setup_prepare"),
+    false,
+  );
+});
+
+test("authoring comes first; check and save appear once authoring is created; the brief shown is the native brief", async () => {
+  answers.project_team_setup_get = draftA;
+  answers.get_coding_session_workdir_state = { byProject: {} };
+  answers.project_team_setup_get_brief = { text: "NATIVE BRIEF: exact text" };
+  let report;
+  const { React, render, waitFor, fireEvent, act, element } = await harness({
+    renderAuthoring: (_draft, _onDraftMayChange, onLaunchObserved) => {
+      report = onLaunchObserved;
+      return React.createElement(FakeAuthoring, { onLaunchObserved });
+    },
+  });
+  function FakeAuthoring({ onLaunchObserved }) {
+    React.useEffect(() => onLaunchObserved(null), [onLaunchObserved]);
+    return React.createElement("section", {
+      "aria-label": "Project roles authoring",
+      "data-testid": "fake-authoring",
+    });
+  }
+  const view = render(element(projectA));
+  await waitFor(() =>
+    assert.equal(
+      view.getByTestId("project-team-setup-stage-heading").textContent,
+      "Author project roles",
+    ),
+  );
+  assert.equal(view.queryByTestId("project-team-setup-validation"), null);
+  await waitFor(() =>
+    assert.match(
+      view.getByTestId("project-team-setup-next-action").textContent,
+      /Start an authoring session/,
+    ),
+  );
+  assert.match(
+    view
+      .getByTestId("project-team-setup-stepper")
+      .querySelector('[aria-current="step"]').textContent,
+    /Author/,
+  );
+  await act(async () => report({ status: "created" }));
+  await waitFor(() =>
+    assert.equal(
+      view.getByTestId("project-team-setup-stage-heading").textContent,
+      "Check the draft",
+    ),
+  );
+  const authoring = view.getByTestId("fake-authoring");
+  const validation = view.getByTestId("project-team-setup-validation");
+  assert.ok(
+    authoring.compareDocumentPosition(validation) &
+      dom.window.Node.DOCUMENT_POSITION_FOLLOWING,
+    "authoring renders before Check draft",
+  );
+  assert.ok(view.getByRole("button", { name: "Check draft" }));
+
+  const brief = view
+    .getByText("Setup brief sent to the authoring session")
+    .closest("details");
+  brief.open = true;
+  fireEvent(brief, new dom.window.Event("toggle"));
+  await waitFor(() =>
+    assert.equal(
+      view.getByLabelText("Setup brief").value,
+      "NATIVE BRIEF: exact text",
+    ),
+  );
+  assert.deepEqual(
+    calls.find(({ command }) => command === "project_team_setup_get_brief")
+      ?.args,
+    {
+      projectRef: projectA,
+      expectedRelayUrl: draftA.relayUrl,
+      setupId: draftA.setupId,
+    },
+  );
+});
+
+test("installed roles show the agent's current name, role and short pubkey; rename sends only pubkey and name", async () => {
+  const pubkey = "ab".repeat(32);
+  const rawAgent = (name) => ({
+    pubkey,
+    name,
+    persona_id: null,
+    home_role: "lead",
+    relay_url: "wss://example.test",
+    status: "stopped",
+  });
+  let currentName = "Loom";
+  answers.list_managed_agents = () => [rawAgent(currentName)];
+  answers.update_managed_agent = ({ input }) => {
+    currentName = input.name;
+    return { agent: rawAgent(input.name), profile_sync_error: null };
+  };
+  const React = (await import("react")).default;
+  const { QueryClient, QueryClientProvider } = await import(
+    "@tanstack/react-query"
+  );
+  const { useProjectTeamSetupAgentDirectory } = await import(
+    "./useProjectTeamSetupAgentDirectory.ts"
+  );
+  const { ProjectTeamSetupAgentsContext } = await import(
+    "../ui/ProjectTeamSetupAgents.tsx"
+  );
+  const { ProjectTeamSetupInstalledRoles } = await import(
+    "../ui/ProjectTeamSetupInstalledRoles.tsx"
+  );
+  const { render, waitFor, fireEvent } = await import("@testing-library/react");
+  function Connected() {
+    const agents = useProjectTeamSetupAgentDirectory(true);
+    return React.createElement(
+      ProjectTeamSetupAgentsContext.Provider,
+      { value: agents },
+      React.createElement(ProjectTeamSetupInstalledRoles, {
+        roles: [
+          {
+            role: "lead",
+            agentPubkey: pubkey,
+            packRef: { repo: "r", sha: "s", role: "lead", path: "p" },
+          },
+        ],
+      }),
+    );
+  }
+  // Infinite gcTime schedules no five-minute garbage-collection timers that
+  // would otherwise hold this file's process open after its last test.
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false, gcTime: Number.POSITIVE_INFINITY },
+      mutations: { gcTime: Number.POSITIVE_INFINITY },
+    },
+  });
+  try {
+    const view = render(
+      React.createElement(
+        QueryClientProvider,
+        { client },
+        React.createElement(Connected),
+      ),
+    );
+    const row = () => view.getByTestId("project-team-setup-installed-role");
+    await waitFor(() => assert.match(row().textContent, /Loom/));
+    assert.match(row().textContent, /· lead/);
+    assert.match(row().textContent, /abababab…abab/);
+    fireEvent.click(view.getByRole("button", { name: "Rename" }));
+    const input = view.getByLabelText("New name for the lead agent");
+    fireEvent.change(input, { target: { value: "   " } });
+    assert.equal(
+      view.getByRole("button", { name: "Save name" }).disabled,
+      true,
+    );
+    fireEvent.change(input, { target: { value: "  Tank Lead  " } });
+    fireEvent.click(view.getByRole("button", { name: "Save name" }));
+    await waitFor(() => assert.match(row().textContent, /Tank Lead/));
+    assert.deepEqual(
+      calls
+        .filter(({ command }) => command === "update_managed_agent")
+        .map(({ args }) => args),
+      [{ input: { pubkey, name: "Tank Lead" } }],
+    );
+    answers.update_managed_agent = () => {
+      throw "Agent is busy";
+    };
+    fireEvent.click(view.getByRole("button", { name: "Rename" }));
+    fireEvent.change(view.getByLabelText("New name for the lead agent"), {
+      target: { value: "Other" },
+    });
+    fireEvent.click(view.getByRole("button", { name: "Save name" }));
+    await waitFor(() =>
+      assert.match(
+        view.getByRole("alert").textContent,
+        /The name couldn't be changed\. Agent is busy/,
+      ),
+    );
+    assert.match(
+      row().textContent,
+      /Tank Lead/,
+      "a failed rename keeps the name",
+    );
+  } finally {
+    client.clear();
+  }
+});
+
+test("the Roles page mount path invokes only read-only commands and describes the last recorded status", async () => {
+  const React = (await import("react")).default;
+  const { render, waitFor } = await import("@testing-library/react");
+  const { QueryClient, QueryClientProvider } = await import(
+    "@tanstack/react-query"
+  );
+  const { ProjectTeamSetupOpenButton } = await import(
+    "../ui/ProjectTeamSetupOpenButton.tsx"
+  );
+  const { PROJECT_TEAM_SETUP_MOUNT_COMMANDS, useProjectTeamSetupSummaryQuery } =
+    await import("./useProjectTeamSetupSummary.ts");
+  const forbidden = [
+    "project_team_setup_get_publication",
+    "project_team_setup_get_publication_options",
+    "project_team_setup_get_launch",
+    "project_team_setup_get_activation",
+  ];
+  for (const command of forbidden)
+    answers[command] = () => {
+      throw new Error(`${command} must not run on mount`);
+    };
+  answers.project_team_setup_get = {
+    ...draftA,
+    latestSnapshotId: "d".repeat(64),
+  };
+  answers.project_team_setup_peek_publication = { status: "adopted" };
+  answers.project_team_list_installed_roles = [
+    {
+      projectRef: projectA,
+      setupId: draftA.setupId,
+      publicationId: "publication-1",
+      teamId: "team",
+      source: null,
+      leadChannelId: null,
+      roles: [
+        {
+          role: "lead",
+          agentPubkey: "9".repeat(64),
+          packRef: { repo: "r", sha: "s", role: "lead", path: "p" },
+        },
+      ],
+    },
+  ];
+  function Mounted() {
+    const summary = useProjectTeamSetupSummaryQuery(
+      projectA,
+      "wss://example.test",
+    );
+    return React.createElement(ProjectTeamSetupOpenButton, {
+      summary: summary.data,
+      failed: summary.isError,
+      unavailable: null,
+      onOpen: () => {},
+    });
+  }
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false, gcTime: Number.POSITIVE_INFINITY },
+    },
+  });
+  const mount = () =>
+    render(
+      React.createElement(
+        QueryClientProvider,
+        { client },
+        React.createElement(Mounted),
+      ),
+    );
+  try {
+    const adopted = mount();
+    await waitFor(() =>
+      assert.equal(
+        adopted.getByTestId("project-team-setup-status").textContent,
+        "A project roles draft is saved on this computer. Last recorded: published and adopted, roles installed on this computer.",
+      ),
+    );
+    assert.ok(
+      adopted.getByRole("button", { name: "Continue project role setup" }),
+    );
+    assert.deepEqual(
+      calls.filter(
+        ({ command }) => !PROJECT_TEAM_SETUP_MOUNT_COMMANDS.includes(command),
+      ),
+      [],
+      "the mount path invoked a command outside the read-only set",
+    );
+    assert.deepEqual(
+      calls.find(
+        ({ command }) => command === "project_team_setup_peek_publication",
+      )?.args,
+      {
+        projectRef: projectA,
+        expectedRelayUrl: "wss://example.test",
+        setupId: draftA.setupId,
+      },
+    );
+    adopted.unmount();
+    client.clear();
+
+    answers.project_team_setup_peek_publication = null;
+    const saved = mount();
+    await waitFor(() =>
+      assert.equal(
+        saved.getByTestId("project-team-setup-status").textContent,
+        "A project roles draft is saved on this computer. Last recorded: a checked version is saved, not yet published.",
+      ),
+    );
+    saved.unmount();
+    client.clear();
+
+    answers.project_team_setup_get = null;
+    const none = mount();
+    await waitFor(() =>
+      assert.ok(none.getByRole("button", { name: "Set up project roles" })),
+    );
+    assert.equal(none.queryByTestId("project-team-setup-status"), null);
+    none.unmount();
+    client.clear();
+
+    answers.project_team_setup_get = () => {
+      throw { code: "filesystem", message: "unreadable" };
+    };
+    const failed = mount();
+    await waitFor(() =>
+      assert.match(
+        failed.getByTestId("project-team-setup-status").textContent,
+        /Couldn't check for a saved draft/,
+      ),
+    );
+    assert.ok(failed.getByRole("button", { name: "Set up project roles" }));
+    assert.equal(
+      calls.some(({ command }) => forbidden.includes(command)),
+      false,
+    );
+  } finally {
+    client.clear();
+  }
+});
+
+test("a saved version that can't be re-checked gets its own stage instead of falling back", async () => {
+  answers.project_team_setup_get = {
+    ...draftA,
+    latestSnapshotId: "d".repeat(64),
+  };
+  answers.get_coding_session_workdir_state = { byProject: {} };
+  answers.project_team_setup_snapshot = () => {
+    throw { code: "invalid_snapshot", message: "Manifest hash mismatch." };
+  };
+  const { render, waitFor, element } = await harness();
+  const view = render(element(projectA));
+  await waitFor(() =>
+    assert.equal(
+      view.getByTestId("project-team-setup-stage-heading").textContent,
+      "The saved version couldn't be re-checked",
+    ),
+  );
+  assert.match(
+    view.getByRole("alert").textContent,
+    /no longer matches its files/,
+  );
+  assert.ok(view.getByRole("button", { name: "Check draft" }));
+  assert.equal(
+    calls.some(
+      ({ command }) => command === "project_team_setup_get_publication_options",
+    ),
     false,
   );
 });

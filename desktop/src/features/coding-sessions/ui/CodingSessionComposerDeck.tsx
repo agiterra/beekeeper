@@ -1,6 +1,7 @@
 import { ArrowUp, Bot, Ellipsis, ShieldCheck, Square } from "lucide-react";
 
 import { codingSessionTurnBudgetUsage } from "@/features/coding-sessions/lib/codingSessionCapacity";
+import type { CodingSessionChannelAccessCopy } from "@/features/coding-sessions/lib/codingSessionChannelAccess";
 import type { CodingSessionContextWindow } from "@/features/coding-sessions/lib/codingSessionContextWindow";
 import type { CodingSessionTurnBudget } from "@/features/coding-sessions/lib/codingSessionIngressPayloads";
 import {
@@ -55,7 +56,12 @@ type CodingSessionComposerDeckProps = {
   deliveryHint: string | null;
   context: CodingSessionComposerControlContext | undefined;
   contextWindow: CodingSessionContextWindow | null;
-  isMember: boolean;
+  /**
+   * Why this identity may not write to the session's channel, or null when it
+   * may (`describeCodingSessionChannelAccess`). A refused or unresolved channel
+   * names its own state; it is never folded into "View only" by default.
+   */
+  accessCopy: CodingSessionChannelAccessCopy | null;
   isSending: boolean;
   isUnavailable: boolean;
   isUngovernedSession: boolean;
@@ -83,7 +89,7 @@ export function CodingSessionComposerDeck({
   deliveryHint,
   context,
   contextWindow,
-  isMember,
+  accessCopy,
   isSending,
   isUnavailable,
   isUngovernedSession,
@@ -135,10 +141,11 @@ export function CodingSessionComposerDeck({
   const identityLabel = [providerName, modelName]
     .filter((value): value is string => Boolean(value))
     .join(" · ");
-  const accessLabel =
-    canControl && isMember
+  const accessLabel = accessCopy
+    ? accessCopy.label
+    : canControl
       ? "Can control"
-      : authorityUnresolved && isMember
+      : authorityUnresolved
         ? "Access unresolved"
         : "View only";
   const availableCapabilities = context
@@ -248,15 +255,16 @@ export function CodingSessionComposerDeck({
               <p className="text-sm font-medium">{accessLabel}</p>
               <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
                 {accessExplanation({
+                  accessCopy,
                   authorityReason,
                   canControl,
-                  isMember,
                   isUngovernedSession,
                 })}
               </p>
               <p className="mt-3 text-xs text-muted-foreground">
-                Access comes from signed channel membership and the provider’s
-                operator grant. It is not a local preference.
+                Access comes from signed channel membership (for a project
+                session, your project role) and the session’s operator grant. It
+                is not a local preference.
               </p>
             </PopoverContent>
           </Popover>
@@ -383,7 +391,7 @@ export function CodingSessionComposerDeck({
               data-testid="coding-session-composer-interrupt"
               disabled={
                 !canControl ||
-                !isMember ||
+                accessCopy !== null ||
                 !canInterrupt ||
                 pendingAction !== null
               }
@@ -505,16 +513,14 @@ function CodingSessionContextMeter({
 }
 
 function accessExplanation(input: {
+  accessCopy: CodingSessionChannelAccessCopy | null;
   authorityReason: string | null;
   canControl: boolean;
-  isMember: boolean;
   isUngovernedSession: boolean;
 }): string {
-  if (input.canControl && input.isMember) {
+  if (input.accessCopy) return input.accessCopy.explanation;
+  if (input.canControl) {
     return "This identity may publish commands to the selected execution.";
-  }
-  if (!input.isMember) {
-    return "Join this channel, then ask the session owner for an operator grant if the provider requires one.";
   }
   if (input.authorityReason) return input.authorityReason;
   if (input.isUngovernedSession) {
