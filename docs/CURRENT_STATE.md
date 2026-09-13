@@ -16,9 +16,9 @@ unknown and both links are kept. "Ledger §" means a heading in
 
 | Surface | Observed | How |
 | --- | --- | --- |
-| `main` on the relay and on GitHub | `060052b33`, checked 2026-09-13; steering, setup authoring and startup corrections landed on top of Andy’s redaction fix | `git fetch origin main` then `git rev-parse FETCH_HEAD`; `GIT_TERMINAL_PROMPT=0 git ls-remote upstream refs/heads/main` |
-| Relay at hive.agiterra.org | `build_time` `2026-09-10T19:48:29Z`; `software_commit` is `unknown`, a disclosed non-answer from the stale deployer (ledger §3a, "hive's `software_commit` is `unknown`") | `curl -s -H 'Accept: application/nostr+json' https://hive.agiterra.org/ \| jq '{software_commit, build_time}'` |
-| Installed Mac dev bundle | `/Users/brian/Applications/Beekeeper Dev.app`, built 2026-09-11 from `77b792de9`; rebuild pending; its bundled `bee --version` reports `77b792de` | ledger § "September 11 — latest main rebuilt"; log `../review-2026-09-11-local-rebuild/build.log` |
+| `main` on the relay and on GitHub | `1820d238d`, checked 2026-09-13; steering, startup corrections and project-team activation landed on top of Andy’s redaction fix | `git fetch origin main` then `git rev-parse FETCH_HEAD`; `GIT_TERMINAL_PROMPT=0 git ls-remote upstream refs/heads/main` |
+| Relay at hive.agiterra.org | `build_time` `2026-09-12T00:05:56Z`, checked 2026-09-13; `software_commit` is `unknown`, a disclosed non-answer from the stale deployer (ledger §3a, "hive's `software_commit` is `unknown`") | `curl -s -H 'Accept: application/nostr+json' https://hive.agiterra.org/ \| jq '{software_commit, build_time}'` |
+| Installed Mac dev bundle | `/Users/brian/Applications/Beekeeper Dev.app`, installed/relaunched 2026-09-13 from `1820d238d`; bundled CLI says `bee 0.1.0 (1820d238)` built `2026-09-13T17:54:19Z`; signature verified. UI acceptance remains pending | `scripts/app-from.sh 1820d238d`; installed `bee --version`; `codesign --verify --deep --strict`; [activation evidence](history/2026-09-13-project-team-activation.md) |
 | Windows | unavailable: Brian no longer has the Windows machine (2026-09-09). Native Windows agent setup and cross-account acceptance are deferred, not done | ledger § "September 9 checkpoint published; Windows testing deferred" |
 | Mobile | not independently checked for this map. Last recorded claim: the phone drops a deleted session only on its next channel refresh (Andy, 2026-09-11) | ledger § "Fixed 2026-09-11 — Discard deletes a never-started session" |
 
@@ -30,8 +30,8 @@ on 2026-09-09, with `just ci` and `just test` green on that exact commit
 
 | Work | Owner | State (check date in row) | Where |
 | --- | --- | --- | --- |
-| Project team setup and neutral baseline | Astra integrates Terra/Sol work | 2026-09-13: first-project checked snapshot → publication → local installation → lead handoff implemented and reviewed. Nine native tests, twelve UI tests, typecheck and one fresh browser flow pass. Live Tankloop and installed-app acceptance pending; existing-source maintenance deliberately refuses without provenance | [`PROJECT_TEAM_ACTIVATION_SLICE.md`](PROJECT_TEAM_ACTIVATION_SLICE.md), [activation evidence](history/2026-09-13-project-team-activation.md), [`PROJECT_TEAM_SETUP_IMPL.md`](PROJECT_TEAM_SETUP_IMPL.md) |
-| Native mid-turn steering for Claude sessions | Fable/Opus; landed by Astra | 2026-09-13: static checks and fresh E2E build passed; selected browser matrix was 44 passed/1 failed, only dense history. Isolated dense repeat also failed (336/450; matrix 286/450), so diagnosis remains open. Brian accepted landing with that limitation; final CI completed successfully; [recovered evidence](history/2026-09-13-final-ci-recovery.md) records every recipe leg. Push completed as `e12495c63`; installation and installed UI acceptance remain pending | [startup evidence](history/2026-09-13-startup-smoke-corrections.md), [integration evidence](history/2026-09-12-steering-integration.md), `NATIVE_STEERING_IMPL.md` |
+| Project team setup and neutral baseline | Astra integrates Terra/Sol work | 2026-09-13: first-project checked snapshot → publication → local installation → lead handoff landed as `1820d238d`. Nine native tests, twelve UI tests, typecheck and one fresh browser flow pass. Mac bundle installed; live Tankloop and installed UI acceptance pending; existing-source maintenance deliberately refuses without provenance | [`PROJECT_TEAM_ACTIVATION_SLICE.md`](PROJECT_TEAM_ACTIVATION_SLICE.md), [activation evidence](history/2026-09-13-project-team-activation.md), [`PROJECT_TEAM_SETUP_IMPL.md`](PROJECT_TEAM_SETUP_IMPL.md) |
+| Native mid-turn steering for Claude sessions | Fable/Opus; landed by Astra | 2026-09-13: static checks and fresh E2E build passed; selected browser matrix was 44 passed/1 failed, only dense history. Isolated dense repeat also failed (336/450; matrix 286/450), so diagnosis remains open. Brian accepted landing with that limitation; final CI completed successfully; [recovered evidence](history/2026-09-13-final-ci-recovery.md) records every recipe leg. Push completed as `e12495c63`; Mac installation completed at `1820d238d`; installed UI acceptance remains pending | [startup evidence](history/2026-09-13-startup-smoke-corrections.md), [integration evidence](history/2026-09-12-steering-integration.md), `NATIVE_STEERING_IMPL.md` |
 | Automatic project context beside ordinary agent work | paused by Brian on 2026-09-10 | findings saved; next step is proving a harmless marker reaches a fresh Claude session through a hook | ledger § "September 10 — automatic project context: findings saved, work paused" |
 | Collaborative workspace plan, ordered steps 0–6 | Astra finalizes and lands `main`; Fable takes delegated slices; Andy lands his own topic branches | steps 0–4 have integrated candidates per the ledger's September 7–9 sections; no landing of steps 5 or 6 is recorded anywhere found, so treat them as open | [`COLLABORATIVE_WORKSPACE_PLAN.md`](COLLABORATIVE_WORKSPACE_PLAN.md) |
 | Founded-session fixes: Discard deletes, project filing | Andy | landed on `main` 2026-09-11 | ledger § "Fixed 2026-09-11 —" (two items) |
@@ -100,14 +100,16 @@ Rules, each with where it is written down.
 ## Next, in order
 
 The steering/startup/setup-authoring stack is published on main. The activation
-slice is committed for final landing; it preserves ordinary Solo sessions and
+slice is published as `1820d238d`; it preserves ordinary Solo sessions and
 separates publication, installation and provider-confirmed lead startup.
 
-1. Land the reviewed activation commit, then rebuild the installed Mac bundle
-   once with `scripts/app-from.sh <sha>`. No manual relay deployment is authorized.
+1. Done 2026-09-13: installed and relaunched the Mac bundle from landed
+   `1820d238d`, verified its signature and bundled CLI. UI automation timed
+   out twice, so the window and live setup workflow are not verified.
 2. Exercise installed Claude Steer/Queue next and the first-project setup flow.
    Live Tankloop mutation has not been performed; the fixture run is not live
-   acceptance. Existing-source maintenance and automatic setup completion are
+   acceptance. The relay reports an unknown SHA, so Git landing alone does not
+   establish server support for the new conditional publication path. Existing-source maintenance and automatic setup completion are
    deferred, as the [activation report](history/2026-09-13-project-team-activation.md) explains.
 3. Diagnose the accepted dense-history limitation after landing: the selected
    matrix was 44 passed/1 failed (286/450 rows), and its isolated repeat reached

@@ -94,3 +94,30 @@ The native helpers passed 15 worktree-prune and 22 seat-hook tests with
 `GIT_DIR`, `GIT_WORK_TREE` and `GIT_COMMON_DIR` injected from a disposable
 sentinel repository. Its HEAD, index tree, `core.bare=false` and clean status
 were unchanged. Native formatting and diff checks passed.
+
+## Landing
+
+`1820d238dceef8ccddeb737c405f4ae7f8030f3a` landed on relay main and the GitHub
+mirror on 2026-09-13, confirmed by both `git ls-remote` answers. Live local main
+advanced fast-forward to the same commit. The normal push floor passed in
+466.78 seconds: format, file sizes, desktop lint/typecheck/tests, workspace
+and Tauri clippy, web tests and mobile tests. Script changes selected the full
+push floor; workspace test suites and E2E remained CI-only in that recipe.
+Local log: `../review-2026-09-13-final-ci-sol/activation-push-3.log`.
+
+NIP-11 checked after landing reports relay build time `2026-09-12T00:05:56Z`
+and `software_commit: unknown`. No production deployment is claimed, and this
+metadata does not prove conditional publication support in the live relay.
+
+## Installed Mac artifact
+
+`app-from.sh 1820d238dceef8ccddeb737c405f4ae7f8030f3a` completed with exit 0
+on 2026-09-13 at 17:56:12 UTC. The installed bundle's CLI reports
+`bee 0.1.0 (1820d238)` built at 17:54:19 UTC; independent deep/strict codesign
+verification passed. The installed app relaunched successfully (PID 68998 at
+verification), and the previous bundle is retained as `Beekeeper Dev.app.prev`.
+Log: `../review-2026-09-13-final-ci-sol/app-from-1820d238d.log`.
+
+Root's two native UI automation attempts timed out while selecting the app,
+so process liveness is not claimed as window or functional acceptance. No
+Keychain prompt was observed, and no live Tankloop configuration was changed.
