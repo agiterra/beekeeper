@@ -1,5 +1,9 @@
 # 2026-09-12 — the steering experience: an explicit delivery choice, honest downgrade reasons, and recovery for an unknown delivery
 
+Historical ledger references 110 and 111 in this report belong to the
+[original steering branch register](2026-09-12-steering-branch-ledger.md),
+retained verbatim. The combined ledger points to them from 114 and 115.
+
 **Status:** implementation candidate on `work/native-steering-fable`, not landed,
 not installed. Continues Fable's native-steering candidate
 ([`2026-09-11-native-steering.md`](2026-09-11-native-steering.md)) under

@@ -276,8 +276,9 @@ Provider (`lib.rs` + `state.rs`):
     any sticky authority-loss reason recorded after dispatch. A refused
     fallback saves its terminal answer before resolving `prevented`. Restoring
     a grant does not resurrect an input whose authority was lost while its
-    ACK was pending. Otherwise resolve `not_delivered` and hand the saved text
-    to the ordinary boundary-turn path. On delivery, publish `turn_degraded`
+    ACK was pending. Otherwise hand the saved text
+    to the ordinary boundary-turn path, then resolve `not_delivered` only
+    after successful mailbox handoff. On delivery, publish `turn_degraded`
     then `turn_queued`; the attempt no longer owns the ordinary queued turn.
     Codes: `Unsupported | MethodNotFound → STEER_UNSUPPORTED`;
     `PromptRequired | PromptEndedBeforeWrite | idle → STEER_TURN_ENDED`;

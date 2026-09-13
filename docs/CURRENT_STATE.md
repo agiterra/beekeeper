@@ -78,7 +78,7 @@ Rules, each with where it is written down.
   `/health` prints `ok unknown`. Read it as a disclosed non-answer, not a
   failure.
 - ~~**Native steering** is blocked on proving adapter support.~~ Proven
-  2026-09-11 against the installed adapters (ledger item 110); what remains
+  2026-09-11 against the installed adapters (ledger item 114); what remains
   owed includes final combined gates and live use in an installed build with a real
   session. The queued-steer prevention race found during integration is corrected
   and has a failing-before/passing-after process test. codex-acp 1.6.2 has no idle guard and stays in boundary mode.
@@ -88,8 +88,8 @@ Rules, each with where it is written down.
   "inherited, not caused" (2026-08-19) still exist.~~ Checked 2026-09-12: a
   full `just smoke` on `main` `77b792de9` plus the steering branch reports
   1309 passed, 6 failed, 1 skipped; the six fail identically on the untouched
-  base (ledger item 111). Never run `just smoke` while `just ci` builds the
-  desktop: the plain build overwrites the e2e bundle (item 111).
+  base (ledger item 115). Never run `just smoke` while `just ci` builds the
+  desktop: the plain build overwrites the e2e bundle (item 115).
 
 ## Next, in order
 
@@ -105,8 +105,8 @@ Project team setup milestone 1 is checked locally. On 2026-09-11 authoring passe
    `bee packs status --project <coordinate> --role lead`.
 2. Rebuild the installed Mac bundle from `main` when Andy's two fixes need
    live use: `scripts/app-from.sh <sha>`. Brian's call.
-3. Combine the reviewed steering corrections with the project-setup candidate,
-   then run full gates before landing and
+3. The reviewed steering and project-setup candidates are combined on
+   `work/steering-integration-astra`. Run full gates before landing and
    installed Claude acceptance. All three reported browser failures now pass
    in the focused integration run. The original smoke findings and the
    separate umbrella layout remain open; see the integration evidence above.
@@ -133,8 +133,10 @@ agent hits in the first hour.
   `GIT_TERMINAL_PROMPT=0`.
 - `just desktop-check`, clippy with `--all-targets` and the file-size ratchet
   are what CI runs. Run them before claiming green.
-- macOS has no `timeout`. pnpm 11 deletes a shared `node_modules` when a
-  worktree's state file is stale.
+- macOS has no `timeout`. pnpm 11 may reinstall a shared `node_modules` when
+  a worktree's state file is stale. For already-installed matching dependencies,
+  `PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=false` prevents that automatic install;
+  the actual hook checks still run. Verified with pnpm 11.4.0 on 2026-09-12.
 
 ## Where evidence lives
 

@@ -1,5 +1,9 @@
 # 2026-09-11/12 — native steering implemented for Claude; candidate on `work/native-steering-fable`
 
+Historical ledger references 110 and 111 in this report belong to the
+[original steering branch register](2026-09-12-steering-branch-ledger.md),
+retained verbatim. The combined ledger points to them from 114 and 115.
+
 **Status:** implementation candidate, not landed. Built by Fable as
 orchestrator per the September 11 brief below, on worktree
 `/Users/brian/Projects/beekeeper/review-native-steering-fable`, branch

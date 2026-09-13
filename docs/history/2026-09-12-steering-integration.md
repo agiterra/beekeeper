@@ -131,3 +131,19 @@ full smoke run alone, and installed Claude steering/Queue next acceptance
 remain owed. Delivery unknown must retain its evidence while Copy to draft
 sends nothing. Codex remains boundary-only. `TESTING.md` now dates the observed
 1.5-hour smoke duration rather than presenting the obsolete 47-minute figure.
+
+## Combined candidate and gate environment
+
+The four project-setup commits are now combined with the steering correction
+`89ed8285e` on `work/steering-integration-astra`; no merge commit is used.
+Both branches independently allocated ledger items 110/111. The original
+steering entries remain verbatim in the linked historical branch register;
+canonical entries 114/115 point to them, and 116–118 record integration findings.
+
+The first commit hook entered pnpm 11.4.0 automatic dependency installation
+because this isolated worktree reuses matching installed dependencies. It was
+stopped before shared-directory removal. The invocation-local
+`PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=false` resolves to `false` and runs the
+actual Biome hook without installation; no hook is edited or skipped. The
+commit then passed pre-commit and signoff. Logs: `combine-setup-hooks.log` in
+the triage directory above. Full combined gates still remain owed.

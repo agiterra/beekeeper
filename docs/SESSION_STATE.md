@@ -12101,6 +12101,63 @@ still needs its durable journal and an isolated Git candidate ref; this source
 transaction alone cannot protect an earlier update of an adopted Git branch.
 Evidence and limits: [conditional publication checkpoint](history/2026-09-12-project-team-publication.md).
 
+
+114. **Native steering branch findings retained with their original numbers
+     (integration 2026-09-12).** Fable's unlanded branch also allocated item
+     110. Its entire original entry remains in
+     [the historical branch register](history/2026-09-12-steering-branch-ledger.md),
+     qualified by `f7d628b4a`; it is not the Solo finding 110 above. The native
+     contract is `NATIVE_STEERING_IMPL.md`. Runtime-write fencing and focused
+     browser corrections are recorded in
+     [the integration report](history/2026-09-12-steering-integration.md).
+     No installed runtime or deployment is claimed by that candidate.
+
+115. **Steering branch smoke baseline evidence retained (2026-09-12).**
+     Fable's original item 111 remains verbatim in the same
+     [historical branch register](history/2026-09-12-steering-branch-ledger.md).
+     It records six cases failing on both its candidate and untouched
+     `77b792de9`. Opus's later full run and Astra's narrower causal traces
+     are distinct evidence, linked from the integration report. They do not
+     establish an introducing commit by comparing two differently timed runs.
+
+
+116. **Native queue admission was mistaken for runtime dispatch, and ordinary
+     grant changes did not prevent queued steers (2026-09-12).** The original
+     transport waits for a previous steer ACK, while the provider had already
+     recorded its next input as dequeued. A held-ACK process regression fails
+     on `f7d628b4a` and passes when `acp_steer_write.rs` checks the shared
+     `session_steer_guard.rs` immediately before writing. Follow-up process
+     regressions reproduce accepted operator revocation and accepted links
+     whose chain cannot be read leaving the next queued input executable.
+     The pending-reverification set is separate from `ClaimState` and must be
+     enforced too. Terminal prevention must reach the durable outbox before
+     closing the attempt. Exact status and test evidence are in
+     [the integration report](history/2026-09-12-steering-integration.md).
+
+117. **Successful branch writes and available session goals waited behind
+     unrelated reads (2026-09-12).** Traced original browser failures on
+     `f7d628b4a`: branch create returned in 0.1ms while the UI remained Creating
+     for seconds awaiting broad project query invalidation. A signed goal
+     returned by the catalog still waited behind separate WebSocket history
+     reads. `branchMutations.ts` separates confirmed mutation results from
+     background refresh; `useCodingSessionGoals.ts` uses the existing coalesced
+     one-shot reader with the same filter. Both original browser assertions
+     pass unchanged. The third failure was a read-only allowlist omission of
+     `get_relay_self`, not a write. Attribution to Andy/rebase is unsupported;
+     an older September 8 artifact already records the PR timeout. Evidence:
+     [integration report](history/2026-09-12-steering-integration.md).
+
+118. **Standalone session chrome consumed the reading area at 250% text and
+     720px height (2026-09-12).** Measured composer padding alone cannot make
+     a viewport when fixed header, handover warning and composer exceed it.
+     A stable outer shell must include the warning in its scrollable flow
+     while retaining a bounded transcript viewport and its virtualizer.
+     Moving the handover host between branches would lose its pending action
+     state; the correction keeps its mount stable. The short-window browser
+     spec checks full control bounds and hit targets, rather than visibility
+     alone. Final status is in the integration report. The separate umbrella
+     workspace remains outside this correction's verified coverage.
+
 ## 2a. Direction settled 2026-08-18
 
 Three independent answers to "what should a new execution get on its first
