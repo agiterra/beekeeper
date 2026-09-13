@@ -18,6 +18,33 @@ export type CodingSessionGoal = {
   sessionRef: string;
 };
 
+type AcceptedCodingSessionGoalListener = (event: RelayEvent) => void;
+
+// An accepted write can precede a mounted reader's live subscription. Share
+// that receipt's event; readers still validate and fold it with relay history.
+const acceptedCodingSessionGoalListeners = new WeakMap<
+  object,
+  Set<{ listener: AcceptedCodingSessionGoalListener }>
+>();
+
+/** Observe this client's future publications after acceptance, until disposal. */
+export function subscribeToAcceptedCodingSessionGoals(
+  listener: AcceptedCodingSessionGoalListener,
+  publisher: object = relayClient,
+): () => void {
+  let listeners = acceptedCodingSessionGoalListeners.get(publisher);
+  if (!listeners) {
+    listeners = new Set();
+    acceptedCodingSessionGoalListeners.set(publisher, listeners);
+  }
+  // Callback identity is not subscription identity: React can unmount and
+  // mount a replacement reader using the same callback function while a
+  // publication is still awaiting relay acceptance.
+  const registration = { listener };
+  listeners.add(registration);
+  return () => listeners.delete(registration);
+}
+
 export function buildCodingSessionGoalFilter(
   channelIds: readonly string[],
   limit = 1000,
@@ -177,14 +204,30 @@ export async function publishCodingSessionGoal(
     signer?: typeof signRelayEvent;
   } = {},
 ): Promise<RelayEvent> {
+  const publisher = dependencies.publisher ?? relayClient;
+  // Capture recipients before signing or publication can await. A late result
+  // must not enter a replacement community's newly mounted readers, even if
+  // that community reuses the same client singleton and signed coordinates.
+  const recipients = new Set(acceptedCodingSessionGoalListeners.get(publisher));
   const event = await (dependencies.signer ?? signRelayEvent)(
     buildCodingSessionGoalEvent(input),
   );
-  return await (dependencies.publisher ?? relayClient).publishEvent(
+  const accepted = await publisher.publishEvent(
     event,
     "Timed out while updating the session goal.",
     "Failed to update the session goal.",
   );
+  for (const registration of recipients) {
+    if (!acceptedCodingSessionGoalListeners.get(publisher)?.has(registration)) {
+      continue;
+    }
+    try {
+      registration.listener(accepted);
+    } catch (error) {
+      console.error("Failed to apply an accepted coding-session goal", error);
+    }
+  }
+  return accepted;
 }
 
 /**

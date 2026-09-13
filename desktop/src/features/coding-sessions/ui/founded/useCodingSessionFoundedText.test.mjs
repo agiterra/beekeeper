@@ -37,6 +37,7 @@ const SESSION_REF = "22222222-2222-4222-8222-222222222222";
 async function mount({
   wireName = null,
   namesResolved = true,
+  nameReadError = null,
   goal = { kind: "absent" },
   draftName = null,
   publishName = async () => ({}),
@@ -67,13 +68,14 @@ async function mount({
         sessionRef: SESSION_REF,
         wireName: props.wireName,
         namesResolved: props.namesResolved,
+        nameReadError: props.nameReadError,
         goal: props.goal,
         nameDraft,
         deps,
       });
       return { model, draftName: name };
     },
-    { initialProps: { wireName, namesResolved, goal } },
+    { initialProps: { wireName, namesResolved, nameReadError, goal } },
   );
   return {
     calls,
@@ -90,7 +92,13 @@ async function mount({
     },
     rerender: async (props) => {
       await act(async () => {
-        mounted.rerender({ wireName, namesResolved, goal, ...props });
+        mounted.rerender({
+          wireName,
+          namesResolved,
+          nameReadError,
+          goal,
+          ...props,
+        });
       });
     },
     unmount: () => mounted.unmount(),
@@ -205,7 +213,10 @@ test("honesty: no name is published while names have not settled", async () => {
   const page = await mount({ namesResolved: false });
   await page.act(() => page.model.setName("Typed early"));
   await page.act(async () => {
-    assert.deepEqual(await page.model.commitName(), { ok: true });
+    const result = await page.model.commitName();
+    assert.equal(result.ok, false);
+    assert.equal(result.field, "name");
+    assert.match(result.reason, /Name not saved.*still being read/);
   });
   assert.deepEqual(page.calls, [], "the wire name has not been read yet");
   assert.equal(page.draftName, "Typed early", "the draft stands");
@@ -480,5 +491,34 @@ test("a Start pressed during the blur's publish rides that publish: one 44227, n
   assert.equal(page.calls.filter(([kind]) => kind === "goal").length, 1);
   assert.equal(page.model.prompt, "Typed, then Start");
   assert.equal(page.model.promptDirty, false);
+  page.unmount();
+});
+
+test("a settled failed name read refuses a dirty save while preserving the draft", async () => {
+  const page = await mount({
+    nameReadError: "forbidden: history refused",
+    draftName: "Keep my name",
+  });
+  await page.act(async () => {
+    const result = await page.model.commitName();
+    assert.equal(result.ok, false);
+    assert.match(result.reason, /forbidden.*draft is preserved/);
+  });
+  assert.deepEqual(page.calls, []);
+  assert.equal(page.draftName, "Keep my name");
+  await page.rerender({ nameReadError: null });
+  await page.act(async () => {
+    assert.equal((await page.model.commitName()).ok, true);
+  });
+  assert.equal(page.calls.length, 1);
+  page.unmount();
+});
+
+test("an empty optional name does not block Solo flush while name history is pending", async () => {
+  const page = await mount({ namesResolved: false });
+  await page.act(async () => {
+    assert.deepEqual(await page.model.flush(), { ok: true });
+  });
+  assert.deepEqual(page.calls, []);
   page.unmount();
 });

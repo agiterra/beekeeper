@@ -9,6 +9,7 @@ import {
   foldLatestCodingSessionNamesByFounder,
   parseCodingSessionName,
   publishCodingSessionName,
+  subscribeToAcceptedCodingSessionNames,
 } from "./codingSessionName.ts";
 
 const CHANNEL_ID = "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2";
@@ -128,4 +129,114 @@ test("name validates byte/line bounds and publishes the signed event", async () 
   );
   assert.equal(published, signed);
   assert.equal(accepted.id, signed.id);
+});
+
+test("an accepted rename notifies only listeners of its publisher", async () => {
+  const signed = name("Scoped accepted name", 20);
+  const publisher = { publishEvent: async () => signed };
+  const other = { publishEvent: async () => signed };
+  const observed = [],
+    foreign = [];
+  const stop = subscribeToAcceptedCodingSessionNames(
+    (event) => observed.push(event),
+    publisher,
+  );
+  const stopOther = subscribeToAcceptedCodingSessionNames(
+    (event) => foreign.push(event),
+    other,
+  );
+  try {
+    await publishCodingSessionName(
+      {
+        channelId: CHANNEL_ID,
+        sessionRef: SESSION_REF,
+        content: signed.content,
+      },
+      { signer: async () => signed, publisher },
+    );
+    assert.deepEqual(observed, [signed]);
+    assert.deepEqual(foreign, []);
+  } finally {
+    stop();
+    stopOther();
+  }
+});
+
+test("an old accepted rename cannot notify a replacement registration after a held acknowledgement", async () => {
+  const signed = name("Prior community name", 20);
+  let finish, started;
+  const admitted = new Promise((resolve) => (started = resolve));
+  const publisher = {
+    publishEvent: () => {
+      started();
+      return new Promise((resolve) => (finish = resolve));
+    },
+  };
+  const old = [],
+    replacement = [];
+  const stop = subscribeToAcceptedCodingSessionNames(
+    (event) => old.push(event),
+    publisher,
+  );
+  const pending = publishCodingSessionName(
+    { channelId: CHANNEL_ID, sessionRef: SESSION_REF, content: signed.content },
+    { signer: async () => signed, publisher },
+  );
+  await admitted;
+  stop();
+  const stopReplacement = subscribeToAcceptedCodingSessionNames(
+    (event) => replacement.push(event),
+    publisher,
+  );
+  try {
+    finish(signed);
+    assert.equal(await pending, signed);
+    assert.deepEqual(old, []);
+    assert.deepEqual(replacement, []);
+  } finally {
+    stopReplacement();
+  }
+});
+
+test("a reused callback is a new registration and cannot receive an old acceptance", async () => {
+  const signed = name("Prior registration name", 21);
+  let finish, started;
+  const admitted = new Promise((resolve) => (started = resolve));
+  const publisher = {
+    publishEvent: () => {
+      started();
+      return new Promise((resolve) => (finish = resolve));
+    },
+  };
+  const observed = [];
+  const listener = (event) => observed.push(event);
+  const stop = subscribeToAcceptedCodingSessionNames(listener, publisher);
+  const input = {
+    channelId: CHANNEL_ID,
+    sessionRef: SESSION_REF,
+    content: signed.content,
+  };
+  const pending = publishCodingSessionName(input, {
+    signer: async () => signed,
+    publisher,
+  });
+  await admitted;
+  stop();
+  const stopReplacement = subscribeToAcceptedCodingSessionNames(
+    listener,
+    publisher,
+  );
+  try {
+    finish(signed);
+    await pending;
+    assert.deepEqual(observed, []);
+    publisher.publishEvent = async () => signed;
+    await publishCodingSessionName(input, {
+      signer: async () => signed,
+      publisher,
+    });
+    assert.deepEqual(observed, [signed]);
+  } finally {
+    stopReplacement();
+  }
 });

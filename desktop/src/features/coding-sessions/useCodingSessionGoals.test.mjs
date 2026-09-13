@@ -188,6 +188,186 @@ async function signedGoal(channelId = CHANNEL) {
   );
 }
 
+test("accepted publication reaches mounted readers before live admission, but signing alone does not", async () => {
+  const { act } = await import("@testing-library/react");
+  const { publishCodingSessionGoal } = await import(
+    "./lib/codingSessionGoal.ts"
+  );
+  const goal = await signedGoal();
+  const liveCallbacks = [];
+  let accept;
+  const relay = {
+    publishEvent: () =>
+      new Promise((resolve) => {
+        accept = resolve;
+      }),
+    fetchEventsCoalesced: async () => [],
+    subscribeLive: (_filter, onEvent) => {
+      liveCallbacks.push(onEvent);
+      return new Promise(() => {});
+    },
+  };
+  const first = await renderGoals([CHANNEL], relay);
+  const second = await renderGoals([CHANNEL], relay);
+  await act(async () => {});
+  let publication;
+  await act(async () => {
+    publication = publishCodingSessionGoal(
+      {
+        channelId: CHANNEL,
+        sessionRef: goal.tags[1][1],
+        content: goal.content,
+      },
+      {
+        signer: async () => goal,
+        publisher: relay,
+      },
+    );
+  });
+  assert.equal(first.result.current.goals.size, 0, "signing is not acceptance");
+  assert.equal(second.result.current.goals.size, 0);
+  await act(async () => {
+    accept(goal);
+    await publication;
+  });
+  for (const reader of [first, second]) {
+    assert.equal(
+      [...reader.result.current.goals.values()][0]?.eventId,
+      goal.id,
+    );
+    assert.equal(reader.result.current.resolved, true);
+  }
+  await act(async () => {
+    for (const onEvent of liveCallbacks) onEvent(goal);
+  });
+  assert.equal(
+    first.result.current.goals.size,
+    1,
+    "later relay replay deduplicates",
+  );
+});
+
+test("accepted goals respect current scope and signatures without settling or clearing failed reads", async () => {
+  const { act } = await import("@testing-library/react");
+  const { publishCodingSessionGoal } = await import(
+    "./lib/codingSessionGoal.ts"
+  );
+  const original = await signedGoal();
+  const current = await signedGoal("chan-2");
+  const relay = {
+    publishEvent: async (event) => event,
+    fetchEventsCoalesced: () => new Promise(() => {}),
+    subscribeLive: async () => {
+      throw new Error("watch refused");
+    },
+  };
+  const { result, rerender, unmount } = await renderGoals([CHANNEL], relay);
+  rerender({ ids: ["chan-2"], relay });
+  const publish = (event) =>
+    publishCodingSessionGoal(
+      {
+        channelId: event.tags[0][1],
+        sessionRef: event.tags[1][1],
+        content: event.content,
+      },
+      {
+        signer: async () => event,
+        publisher: relay,
+      },
+    );
+  await act(async () => {
+    await publish(original);
+    await publish({ ...current, sig: "0".repeat(128) });
+  });
+  assert.equal(
+    result.current.goals.size,
+    0,
+    "old scope and invalid signature are not admitted",
+  );
+  await act(async () => publish(current));
+  assert.equal([...result.current.goals.values()][0]?.eventId, current.id);
+  assert.equal(
+    result.current.resolved,
+    false,
+    "one accepted write does not settle history",
+  );
+  assert.equal(result.current.errorMessage, "watch refused");
+  unmount();
+  await act(async () => publish(current));
+});
+
+test("an old publication cannot notify a newly mounted context with identical channel and session ids", async () => {
+  const { act } = await import("@testing-library/react");
+  const { publishCodingSessionGoal } = await import(
+    "./lib/codingSessionGoal.ts"
+  );
+  const goal = await signedGoal();
+  let accept;
+  const relay = {
+    fetchEventsCoalesced: async () => [],
+    subscribeLive: () => new Promise(() => {}),
+    publishEvent: () =>
+      new Promise((resolve) => {
+        accept = resolve;
+      }),
+  };
+  const previous = await renderGoals([CHANNEL], relay);
+  let publication;
+  await act(async () => {
+    publication = publishCodingSessionGoal(
+      {
+        channelId: CHANNEL,
+        sessionRef: goal.tags[1][1],
+        content: goal.content,
+      },
+      { signer: async () => goal, publisher: relay },
+    );
+  });
+  previous.unmount();
+  const current = await renderGoals([CHANNEL], relay);
+  await act(async () => {
+    accept(goal);
+    await publication;
+  });
+  assert.equal(
+    current.result.current.goals.size,
+    0,
+    "a late accepted result belongs to the disposed context",
+  );
+});
+
+test("accepted publication does not cross injected relay clients", async () => {
+  const { act } = await import("@testing-library/react");
+  const { publishCodingSessionGoal } = await import(
+    "./lib/codingSessionGoal.ts"
+  );
+  const goal = await signedGoal();
+  const makeRelay = () => ({
+    fetchEventsCoalesced: async () => [],
+    subscribeLive: () => new Promise(() => {}),
+    publishEvent: async () => goal,
+  });
+  const publisher = makeRelay();
+  const own = await renderGoals([CHANNEL], publisher);
+  const other = await renderGoals([CHANNEL], makeRelay());
+  await act(async () =>
+    publishCodingSessionGoal(
+      {
+        channelId: CHANNEL,
+        sessionRef: goal.tags[1][1],
+        content: goal.content,
+      },
+      { signer: async () => goal, publisher },
+    ),
+  );
+  assert.equal([...own.result.current.goals.values()][0]?.eventId, goal.id);
+  assert.equal(
+    other.result.current.goals.size,
+    0,
+    "same signed coordinates are not proof of the other relay's acceptance",
+  );
+});
+
 test("bounded live history catches a signed goal missed by the initial read without assuming readiness", async () => {
   const { act } = await import("@testing-library/react");
   const goal = await signedGoal();

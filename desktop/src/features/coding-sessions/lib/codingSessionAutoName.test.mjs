@@ -129,6 +129,88 @@ test("a name that landed while the model was thinking is kept; nothing is publis
   );
 });
 
+test("the exact session name is retained beyond a channel's latest 1000 other names", async () => {
+  const existing = signedName("Keep the founder's older name");
+  const newer = Array.from({ length: 1000 }, (_, index) => {
+    const built = buildCodingSessionNameEvent({
+      channelId: CHANNEL_ID,
+      sessionRef: `11111111-1111-4111-8111-${index.toString().padStart(12, "0")}`,
+      content: `Another session ${index}`,
+    });
+    return finalizeEvent(
+      { ...built, created_at: 1_700_000_001 + index },
+      FOUNDER_SECRET,
+    );
+  });
+  const d = deps();
+  let query;
+  d.deps.readNames = async (filter) => {
+    query = filter;
+    // Model the relay's filtering before its newest-first LIMIT. The old
+    // channel-only request loses the real target below the 1000-row boundary.
+    return [...newer.reverse(), existing]
+      .filter(
+        (event) =>
+          (!filter.authors || filter.authors.includes(event.pubkey)) &&
+          (!filter["#h"] || filter["#h"].includes(event.tags[0][1])) &&
+          (!filter["#d"] || filter["#d"].includes(event.tags[1][1])),
+      )
+      .slice(0, filter.limit ?? 1000);
+  };
+  assert.deepEqual(
+    await autoNameCodingSession(
+      { ...INPUT, founderPubkey: FOUNDER.toUpperCase() },
+      d.deps,
+    ),
+    {
+      kind: "named-meanwhile",
+      name: existing.content,
+    },
+  );
+  assert.deepEqual(query, {
+    kinds: [44229],
+    "#h": [CHANNEL_ID],
+    "#d": [SESSION_REF],
+    authors: [FOUNDER],
+    limit: 1000,
+  });
+  assert.equal(
+    d.calls.some(([name]) => name === "publish"),
+    false,
+  );
+});
+
+test("an unreadable or saturated exact name history never authorizes an absence-based rename", async () => {
+  const refused = deps();
+  refused.deps.readNames = async () => {
+    throw new Error("name read refused");
+  };
+  assert.deepEqual(await autoNameCodingSession(INPUT, refused.deps), {
+    kind: "failed",
+    reason: "name read refused",
+  });
+  assert.equal(
+    refused.calls.some(([name]) => name === "publish"),
+    false,
+  );
+  const invalid = { ...signedName("Unverifiable"), sig: "0".repeat(128) };
+  const capped = deps({ names: Array(1000).fill(invalid) });
+  const outcome = await autoNameCodingSession(INPUT, capped.deps);
+  assert.equal(outcome.kind, "failed");
+  assert.match(outcome.reason, /incomplete/);
+  assert.equal(
+    capped.calls.some(([name]) => name === "publish"),
+    false,
+  );
+  const known = deps({
+    names: [signedName("Still known"), ...Array(999).fill(invalid)],
+  });
+  assert.deepEqual(await autoNameCodingSession(INPUT, known.deps), {
+    kind: "named-meanwhile",
+    name: "Still known",
+  });
+});
+
 test("an empty answer, a model refusal and a relay refusal are stated, never invented", async () => {
   assert.deepEqual(
     await autoNameCodingSession(INPUT, deps({ generated: "  " }).deps),

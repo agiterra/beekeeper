@@ -51,7 +51,7 @@ import {
 import {
   bootstrapClaudeCodingSessionRuntime,
   canRepairNewCodingSessionWorkdir,
-  canStartFreshNewCodingSessionCreate,
+  newCodingSessionStartFreshReadiness,
   canRetryNewCodingSessionCreate,
   NEW_CODING_SESSION_STALL_MS,
   newCodingSessionWaitKey,
@@ -659,17 +659,15 @@ export function useNewCodingSessionCreate({
     stalled,
   ]);
 
+  const startFreshReadiness = newCodingSessionStartFreshReadiness({
+    isPublishing,
+    lifecycleIsLoading: lifecycleSnapshot.isLoading,
+    lifecycleErrorMessage: lifecycleSnapshot.errorMessage,
+    lifecycleState: lifecycle?.state,
+    publishState: scoped?.publishState,
+  });
   const startFresh = React.useCallback(() => {
-    if (
-      !canStartFreshNewCodingSessionCreate({
-        isPublishing,
-        lifecycleIsLoading: lifecycleSnapshot.isLoading,
-        lifecycleErrorMessage: lifecycleSnapshot.errorMessage,
-        lifecycleState: lifecycle?.state,
-        publishState: scoped?.publishState,
-      })
-    )
-      return false;
+    if (!startFreshReadiness.allowed) return false;
     const cleared = clearDurableCodingSessionCreate(scopeId);
     if (!cleared.ok) {
       setDurabilityError(cleared.errorMessage);
@@ -691,14 +689,7 @@ export function useNewCodingSessionCreate({
     setSeatPackRef(null);
     settledCommandRef.current = null;
     return true;
-  }, [
-    isPublishing,
-    lifecycle,
-    lifecycleSnapshot.isLoading,
-    lifecycleSnapshot.errorMessage,
-    scoped,
-    scopeId,
-  ]);
+  }, [startFreshReadiness.allowed, scoped, scopeId]);
 
   const repairWorkdir = React.useCallback(() => {
     if (
@@ -758,6 +749,7 @@ export function useNewCodingSessionCreate({
     seatPackRef,
     stalled,
     startFresh,
+    startFreshReadiness,
     submit,
     transaction: scoped,
   };

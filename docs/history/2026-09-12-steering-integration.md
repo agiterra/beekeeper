@@ -3,8 +3,8 @@
 Owner: Astra. Candidate starts at Opus's `f7d628b4a`, which includes Fable's
 `d2bb6de8f` and `0963723b4`, plus Opus's `ecd4336f4` and report commit.
 The original worktree remains unchanged. Corrections are developed on
-`work/steering-integration-astra`; no push, installation or live-model
-acceptance is claimed here.
+`work/steering-integration-astra`; no push, installation or installed-app
+acceptance is claimed here. Real-adapter verification is recorded below.
 
 ## A queued steer remained executable after prevention
 
@@ -228,3 +228,12 @@ source spelling is normalized to `\u0000`, preserving the runtime key. All
 plain-Node invocation failed to resolve the repo's `@/` aliases and is retained
 as a harness error, not a product failure (`delivery-source-escape.log` and
 `delivery-source-escape-green.log`).
+
+## September 13 continuation
+
+The complete CI rerun on `1669550d2` passed: Rust 10,693, desktop 9,332,
+mobile 2,011, with zero failures and the repository checks/builds green.
+The full browser run and its overnight low-power interruption are recorded
+in [the September 13 report](2026-09-13-startup-smoke-corrections.md).
+That report supersedes the pending-CI and pending-baseline statements above;
+it does not claim that an interrupted full run was a single green run.

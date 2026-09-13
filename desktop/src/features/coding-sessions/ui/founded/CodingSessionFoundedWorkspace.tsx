@@ -213,6 +213,8 @@ export function CodingSessionFoundedWorkspace({
           genesisRef={umbrella.genesisRef}
           goal={goal}
           nameResolved={nameSnapshot.resolved}
+          nameReadError={nameSnapshot.readErrorMessage}
+          refreshNames={nameSnapshot.refresh}
           onCreated={({ channelId: createdChannelId, generationId }) => {
             void goCodingSession(createdChannelId, generationId, {
               replace: true,

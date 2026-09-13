@@ -6,6 +6,7 @@ import type { RelayEvent } from "@/shared/api/types";
 import {
   buildCodingSessionGoalFilter,
   foldLatestCodingSessionGoalsByFounder,
+  subscribeToAcceptedCodingSessionGoals,
   type CodingSessionGoal,
 } from "./lib/codingSessionGoal";
 
@@ -101,6 +102,18 @@ export function useCodingSessionGoals(
         return next;
       });
     };
+    const unsubscribeAccepted = subscribeToAcceptedCodingSessionGoals(
+      (event) => {
+        if (
+          event.tags.some(
+            (tag) => tag[0] === "h" && stableChannelIds.includes(tag[1]),
+          )
+        ) {
+          admit([event]);
+        }
+      },
+      client,
+    );
     let latestRead = 0;
     const load = () => {
       if (cancelled) return;
@@ -157,6 +170,7 @@ export function useCodingSessionGoals(
       if (refreshRead.current === load) refreshRead.current = null;
       unsubscribeLive?.();
       unsubscribeReconnect?.();
+      unsubscribeAccepted();
     };
   }, [client, stableChannelIds]);
 

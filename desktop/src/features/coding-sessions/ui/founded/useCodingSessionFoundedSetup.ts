@@ -104,6 +104,10 @@ export function useCodingSessionFoundedSetup(input: {
   wireName: string | null;
   /** Whether the names read has settled once for this channel. */
   nameResolved: boolean;
+  /** Failed or incomplete name history must not enable a name write. */
+  nameReadError?: string | null;
+  /** Explicitly retry name history and a failed live watch. */
+  refreshNames?: () => void;
   /**
    * Whether the channel record — and so `projectRef` — has been read. Until
    * it has, a null `projectRef` means "not read", not "no project", and Start
@@ -123,6 +127,8 @@ export function useCodingSessionFoundedSetup(input: {
     goal,
     wireName,
     nameResolved,
+    nameReadError = null,
+    refreshNames,
     channelReader,
     onCreated,
     textDeps,
@@ -373,6 +379,8 @@ export function useCodingSessionFoundedSetup(input: {
     sessionRef,
     wireName,
     namesResolved: nameResolved,
+    nameReadError,
+    refreshNames,
     goal,
     nameDraft,
     ...(textDeps ? { deps: textDeps } : {}),
@@ -458,7 +466,7 @@ export function useCodingSessionFoundedSetup(input: {
     goal: text.prompt,
     goalOverflow: text.goalOverflow,
     goalReader: text.goalReader,
-    nameResolved,
+    nameResolved: nameResolved && !nameReadError,
     lead,
     providerInstanceRef: selectedTarget?.provider.providerInstanceRef ?? null,
     providerAuthorityPubkey: selectedTarget?.signerPubkey ?? null,
@@ -618,6 +626,7 @@ export function useCodingSessionFoundedSetup(input: {
     beginLoginWatch: create.beginLoginWatch,
     submit: create.submit,
     startFresh: create.startFresh,
+    startFreshReadiness: create.startFreshReadiness,
     transaction: create.transaction,
     lifecycleState: create.lifecycle?.state ?? null,
     failureCode,

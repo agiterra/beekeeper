@@ -18,7 +18,7 @@ import {
 const NAME_HISTORY_LIMIT = 1000;
 
 type NameClient = {
-  fetchEvents(filter: RelaySubscriptionFilter): Promise<RelayEvent[]>;
+  fetchEventsCoalesced(filter: RelaySubscriptionFilter): Promise<RelayEvent[]>;
   subscribeLive(
     filter: RelaySubscriptionFilter,
     onEvent: (event: RelayEvent) => void,
@@ -49,6 +49,10 @@ export function useCodingSessionNames(
   errorMessage: string | null;
   /** True only once the history fetch settled — resolved *or* rejected. */
   resolved: boolean;
+  /** History failure or incomplete coverage; distinct from a failed live watch. */
+  readErrorMessage: string | null;
+  /** Recheck history and retry a failed live watch without replacing this scope. */
+  refresh: () => void;
 } {
   const scope = [...new Set(channelIds)].sort().join("\u0000");
   const stableChannelIds = React.useMemo(
@@ -60,6 +64,12 @@ export function useCodingSessionNames(
   );
   const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
   const [resolved, setResolved] = React.useState(false);
+  const [readErrorMessage, setReadErrorMessage] = React.useState<string | null>(
+    null,
+  );
+  const [readScope, setReadScope] = React.useState(scope);
+  const refreshRead = React.useRef<(() => void) | null>(null);
+  const refresh = React.useCallback(() => refreshRead.current?.(), []);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -67,6 +77,9 @@ export function useCodingSessionNames(
     let liveSubscribePending = false;
     let historyError: string | null = null;
     let liveError: string | null = null;
+    let historyAtLimit = false;
+    setReadScope(scope);
+    setReadErrorMessage(null);
     setEvents(new Map());
     setErrorMessage(null);
     // A new scope is a new read; nothing to read is the one scope that
@@ -76,10 +89,16 @@ export function useCodingSessionNames(
 
     const publishError = () => {
       if (cancelled) return;
+      const readError =
+        historyError ??
+        (historyAtLimit
+          ? `Only the latest ${NAME_HISTORY_LIMIT} name records were read; older session names may be missing.`
+          : null);
+      setReadErrorMessage(readError);
       setErrorMessage(
-        historyError && liveError
-          ? `${historyError}\n${liveError}`
-          : (historyError ?? liveError),
+        readError && liveError
+          ? `${readError}\n${liveError}`
+          : (readError ?? liveError),
       );
     };
     const admit = (incoming: readonly RelayEvent[]) => {
@@ -93,15 +112,19 @@ export function useCodingSessionNames(
 
     const historyController = createCodingSessionDiscoveryController({
       async load() {
-        const history = await client.fetchEvents(
+        const history = await client.fetchEventsCoalesced(
           buildCodingSessionNameFilter(stableChannelIds, NAME_HISTORY_LIMIT),
         );
         if (cancelled) return;
         admit(history);
+        return history.length;
       },
-      onAttemptStart() {},
-      onSuccess() {
+      onAttemptStart() {
+        if (!cancelled) setResolved(false);
+      },
+      onSuccess(count) {
         historyError = null;
+        historyAtLimit = (count ?? 0) >= NAME_HISTORY_LIMIT;
         publishError();
         if (!cancelled) setResolved(true);
       },
@@ -120,11 +143,13 @@ export function useCodingSessionNames(
     });
 
     const establishLive = () => {
-      if (unsubscribeLive || liveSubscribePending) return;
+      if (cancelled || unsubscribeLive || liveSubscribePending) return;
       liveSubscribePending = true;
       client
         .subscribeLive(
-          buildCodingSessionNameFilter(stableChannelIds, 0),
+          // Bounded replay closes the gap after the independent HTTP read.
+          // Subscription resolution can be a timeout, not server readiness.
+          buildCodingSessionNameFilter(stableChannelIds, NAME_HISTORY_LIMIT),
           (event) => admit([event]),
         )
         .then((unsubscribe) => {
@@ -136,9 +161,6 @@ export function useCodingSessionNames(
           unsubscribeLive = unsubscribe;
           liveError = null;
           publishError();
-          // The live fence comes first; this history read then closes the
-          // channel-add window without missing a name published in between.
-          historyController.request();
         })
         .catch((error: unknown) => {
           liveSubscribePending = false;
@@ -153,16 +175,28 @@ export function useCodingSessionNames(
         });
     };
 
-    establishLive();
-    const disarm = armCodingSessionDiscoveryOnConnect(client, () => {
-      if (unsubscribeLive) historyController.request();
-      else establishLive();
-    });
-    const unsubscribeAccepted = subscribeToAcceptedCodingSessionNames((event) =>
-      admit([event]),
+    const refreshScope = () => {
+      if (cancelled) return;
+      historyController.request();
+      establishLive();
+    };
+    refreshRead.current = refreshScope;
+    refreshScope();
+    const disarm = armCodingSessionDiscoveryOnConnect(client, refreshScope);
+    const unsubscribeAccepted = subscribeToAcceptedCodingSessionNames(
+      (event) => {
+        if (
+          event.tags.some(
+            (tag) => tag[0] === "h" && stableChannelIds.includes(tag[1]),
+          )
+        )
+          admit([event]);
+      },
+      client,
     );
     return () => {
       cancelled = true;
+      if (refreshRead.current === refreshScope) refreshRead.current = null;
       historyController.cancel();
       unsubscribeLive?.();
       disarm();
@@ -175,7 +209,21 @@ export function useCodingSessionNames(
     [events],
   );
   return React.useMemo(
-    () => ({ names, errorMessage, resolved }),
-    [errorMessage, names, resolved],
+    () => ({
+      names,
+      errorMessage: readScope === scope ? errorMessage : null,
+      resolved: readScope === scope && resolved,
+      readErrorMessage: readScope === scope ? readErrorMessage : null,
+      refresh,
+    }),
+    [
+      errorMessage,
+      names,
+      readErrorMessage,
+      readScope,
+      refresh,
+      resolved,
+      scope,
+    ],
   );
 }

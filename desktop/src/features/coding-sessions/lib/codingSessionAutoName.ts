@@ -1,4 +1,5 @@
 import { relayClient } from "@/shared/api/relayClient";
+import type { RelaySubscriptionFilter } from "@/shared/api/relayClientShared";
 import type { RelayEvent } from "@/shared/api/types";
 import {
   type CodingSessionNamingSettings,
@@ -12,6 +13,8 @@ import {
   publishCodingSessionName,
 } from "./codingSessionName";
 import { MIN_CODING_SESSION_NAME_SUGGEST_CHARS } from "./codingSessionNameSuggestion";
+
+const NAME_HISTORY_LIMIT = 1000;
 
 /**
  * Name a session that was started without one, from its first message.
@@ -51,8 +54,8 @@ export type CodingSessionAutoNameDeps = {
   /** Resolves null where there is no host to ask (browser preview, mock). */
   getSettings: () => Promise<CodingSessionNamingSettings | null>;
   generate: (firstMessage: string) => Promise<string>;
-  /** The channel's 44229 history, read at publish time. */
-  readNames: (channelId: string) => Promise<RelayEvent[]>;
+  /** Read the exact founder/session's 44229 history at publish time. */
+  readNames: (filter: RelaySubscriptionFilter) => Promise<RelayEvent[]>;
   publishName: (input: {
     channelId: string;
     content: string;
@@ -63,8 +66,7 @@ export type CodingSessionAutoNameDeps = {
 const DEFAULT_DEPS: CodingSessionAutoNameDeps = {
   getSettings: () => getCodingSessionNamingSettings().catch(() => null),
   generate: generateCodingSessionName,
-  readNames: (channelId) =>
-    relayClient.fetchEvents(buildCodingSessionNameFilter([channelId])),
+  readNames: (filter) => relayClient.fetchEventsCoalesced(filter),
   publishName: publishCodingSessionName,
 };
 
@@ -103,9 +105,12 @@ export async function autoNameCodingSession(
   }
   if (name.length === 0) return { kind: "empty" };
   try {
-    const onWire = foldLatestCodingSessionNamesByFounder(
-      await deps.readNames(input.channelId),
-    ).get(
+    const history = await deps.readNames({
+      ...buildCodingSessionNameFilter([input.channelId], NAME_HISTORY_LIMIT),
+      "#d": [input.sessionRef],
+      authors: [input.founderPubkey.toLowerCase()],
+    });
+    const onWire = foldLatestCodingSessionNamesByFounder(history).get(
       codingSessionNameKey(
         input.channelId,
         input.sessionRef,
@@ -114,6 +119,13 @@ export async function autoNameCodingSession(
     );
     if (onWire && onWire.content.trim().length > 0) {
       return { kind: "named-meanwhile", name: onWire.content };
+    }
+    if (history.length >= NAME_HISTORY_LIMIT) {
+      return {
+        kind: "failed",
+        reason:
+          "Cannot confirm that this session is unnamed: name history is incomplete.",
+      };
     }
     await deps.publishName({
       channelId: input.channelId,

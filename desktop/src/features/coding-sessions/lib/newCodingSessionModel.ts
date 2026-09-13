@@ -464,6 +464,23 @@ export function canStartFreshNewCodingSessionCreate(input: {
   );
 }
 
+/** The guarded discard action and the reason it cannot yet be offered. */
+export function newCodingSessionStartFreshReadiness(
+  input: Parameters<typeof canStartFreshNewCodingSessionCreate>[0],
+): { allowed: true; reason: null } | { allowed: false; reason: string } {
+  if (canStartFreshNewCodingSessionCreate(input)) {
+    return { allowed: true, reason: null };
+  }
+  const reason = input.isPublishing
+    ? "Publishing this request. Wait before discarding the attempt."
+    : input.lifecycleIsLoading
+      ? "Reading the provider's receipt history before discarding this attempt…"
+      : input.lifecycleErrorMessage !== null
+        ? "The provider's receipt history could not be read. This attempt is retained until its outcome can be checked."
+        : "Only an unsent draft or a confirmed failed request can be discarded.";
+  return { allowed: false, reason };
+}
+
 /** A verified terminal directory refusal can be edited into a fresh request. */
 export function canRepairNewCodingSessionWorkdir(input: {
   isPublishing: boolean;

@@ -88,18 +88,29 @@ test("dense single second beyond one window page is fully reachable via composit
       return found;
     });
 
-  // Drive a real wheel-up gesture each pass: the older-history sentinel arms on
-  // a genuine leave→enter transition (IntersectionObserver), so a raw
-  // `scrollTop = 0` write on the virtualized container can fail to re-fire.
-  // A wheel event is what a real user issues and what the observer honors.
+  const traversal: Array<Record<string, number | string>> = [];
+  // Traverse overlapping viewports and collect after each gesture. Jumping
+  // 6,000px repeatedly before sampling can skip entire virtualized windows;
+  // the collector then reports missing rows without testing their reachability.
+  // Keep real wheel input so the virtualizer's scroll-driven pager participates.
   const wheelToTop = async () => {
     for (let step = 0; step < 12; step += 1) {
-      const atTop = await timeline.evaluate(
-        (element) => (element as HTMLDivElement).scrollTop <= 1,
+      await collectRendered();
+      const position = await timeline.evaluate((element) => ({
+        top: element.scrollTop,
+        height: element.clientHeight,
+        extent: element.scrollHeight,
+      }));
+      traversal.push({ direction: "up", ...position, seen: seen.size });
+      if (position.top <= 1) break;
+      await page.mouse.wheel(0, -Math.max(1, position.height * 0.75));
+      await page.evaluate(
+        () =>
+          new Promise<void>((resolve) =>
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+          ),
       );
-      if (atTop) break;
-      await page.mouse.wheel(0, -6000);
-      await page.waitForTimeout(40);
+      await collectRendered();
     }
   };
 
@@ -119,6 +130,9 @@ test("dense single second beyond one window page is fully reachable via composit
   ) {
     const before = seen.size;
     await wheelToTop();
+    // This intro is rendered only once older history is exhausted and its
+    // prepend has settled. Stop paging and inspect the loaded rows below.
+    if (await timeline.getByTestId("message-channel-intro").count()) break;
     // Each gesture pages a bounded step (one pass of the row-floor pager, which
     // may itself engage the keyset drain). The sentinel disconnects while the
     // prepend's index-restore owns scroll and only re-arms once settled, so
@@ -145,6 +159,28 @@ test("dense single second beyond one window page is fully reachable via composit
     }
   }
 
+  // Prepending restores the reader's anchor and may carry newly loaded rows
+  // past it. Reaching the oldest page is not a tour through every rendered
+  // window: walk back down in overlapping steps before judging reachability.
+  for (let step = 0; step < 240 && seen.size < DENSE_COUNT; step += 1) {
+    await collectRendered();
+    const position = await timeline.evaluate((element) => ({
+      top: element.scrollTop,
+      height: element.clientHeight,
+      extent: element.scrollHeight,
+    }));
+    traversal.push({ direction: "down", ...position, seen: seen.size });
+    if (position.extent - position.height - position.top <= 1) break;
+    await page.mouse.wheel(0, Math.max(1, position.height * 0.75));
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        ),
+    );
+    await collectRendered();
+  }
+
   // (a) Keyset paging actually engaged — the head load always issues
   // `get_channel_window` with a null cursor, so require at least one
   // continuation request carrying a composite cursor.
@@ -156,6 +192,15 @@ test("dense single second beyond one window page is fully reachable via composit
           (entry.payload as { cursor?: unknown } | null)?.cursor != null,
       ).length,
   );
+  await testInfo.attach("dense-reachability", {
+    body: JSON.stringify({
+      seeded: DENSE_COUNT,
+      rendered: [...seen].sort((a, b) => a - b),
+      continuationRequests,
+      traversal,
+    }),
+    contentType: "application/json",
+  });
   expect(continuationRequests).toBeGreaterThan(0);
 
   // (b) Reachability parity: the union of paged dense rows crosses far past

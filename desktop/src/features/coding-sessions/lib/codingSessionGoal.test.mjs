@@ -9,6 +9,7 @@ import {
   foldLatestCodingSessionGoalsByFounder,
   parseCodingSessionGoal,
   publishCodingSessionGoal,
+  subscribeToAcceptedCodingSessionGoals,
 } from "./codingSessionGoal.ts";
 
 const CHANNEL_ID = "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2";
@@ -122,6 +123,125 @@ test("goal validates byte bounds and publishes the signed event", async () => {
   );
   assert.equal(published, signed);
   assert.equal(accepted.id, signed.id);
+});
+
+test("accepted goal listeners exclude refused publications and can unsubscribe", async () => {
+  const signed = goal("Only a confirmed publication", 10);
+  const accepted = { ...signed };
+  const observed = [];
+  let refuse = true;
+  const publisher = {
+    publishEvent: async () => {
+      if (refuse) throw new Error("relay refused");
+      return accepted;
+    },
+  };
+  const unsubscribe = subscribeToAcceptedCodingSessionGoals(
+    (event) => observed.push(event),
+    publisher,
+  );
+  const input = {
+    channelId: CHANNEL_ID,
+    content: signed.content,
+    sessionRef: SESSION_REF,
+  };
+  try {
+    await assert.rejects(
+      publishCodingSessionGoal(input, {
+        signer: async () => signed,
+        publisher,
+      }),
+      /relay refused/,
+    );
+    assert.deepEqual(observed, []);
+    refuse = false;
+    const publish = () =>
+      publishCodingSessionGoal(input, {
+        signer: async () => signed,
+        publisher,
+      });
+    assert.equal(await publish(), accepted);
+    assert.equal(
+      observed[0],
+      accepted,
+      "notify with the accepted result, not the signed draft",
+    );
+    unsubscribe();
+    await publish();
+    assert.equal(observed.length, 1);
+  } finally {
+    unsubscribe();
+  }
+});
+
+test("a failed local listener cannot turn an accepted goal into a publication failure", async (t) => {
+  const signed = goal("Already accepted by the relay", 10);
+  const errors = t.mock.method(console, "error", () => {});
+  const publisher = { publishEvent: async () => signed };
+  const unsubscribeBroken = subscribeToAcceptedCodingSessionGoals(() => {
+    throw new Error("local reader failed");
+  }, publisher);
+  let received;
+  const unsubscribeHealthy = subscribeToAcceptedCodingSessionGoals((event) => {
+    received = event;
+  }, publisher);
+  try {
+    const accepted = await publishCodingSessionGoal(
+      {
+        channelId: CHANNEL_ID,
+        content: signed.content,
+        sessionRef: SESSION_REF,
+      },
+      {
+        signer: async () => signed,
+        publisher,
+      },
+    );
+    assert.equal(accepted, signed);
+    assert.equal(received, signed);
+    assert.equal(errors.mock.callCount(), 1);
+  } finally {
+    unsubscribeBroken();
+    unsubscribeHealthy();
+  }
+});
+
+test("reusing a callback creates a new registration that cannot receive an old publication", async () => {
+  const signed = goal("Belongs to the old registration", 10);
+  let accept;
+  const publisher = {
+    publishEvent: () =>
+      new Promise((resolve) => {
+        accept = resolve;
+      }),
+  };
+  const observed = [];
+  const listener = (event) => observed.push(event);
+  const unsubscribeOld = subscribeToAcceptedCodingSessionGoals(
+    listener,
+    publisher,
+  );
+  const publication = publishCodingSessionGoal(
+    { channelId: CHANNEL_ID, content: signed.content, sessionRef: SESSION_REF },
+    { signer: async () => signed, publisher },
+  );
+  await Promise.resolve();
+  unsubscribeOld();
+  const unsubscribeNew = subscribeToAcceptedCodingSessionGoals(
+    listener,
+    publisher,
+  );
+  try {
+    accept(signed);
+    await publication;
+    assert.deepEqual(
+      observed,
+      [],
+      "callback identity is not registration identity",
+    );
+  } finally {
+    unsubscribeNew();
+  }
 });
 
 test("F1: an over-cap goal is refused by the launch block, with both numbers", async () => {

@@ -97,6 +97,10 @@ export function useCodingSessionFoundedText(input: {
   wireName: string | null;
   /** Whether `useCodingSessionNames` has settled once for this scope. */
   namesResolved: boolean;
+  /** A settled failed or partial read cannot authorize replacing a name. */
+  nameReadError?: string | null;
+  /** Explicitly retry the name reader without losing the local draft. */
+  refreshNames?: () => void;
   /** The goal as the page could read it — `available` is the wire goal. */
   goal: CodingSessionFoundedGoal;
   /** The founded draft's Name text and its writer. */
@@ -108,6 +112,8 @@ export function useCodingSessionFoundedText(input: {
     sessionRef,
     wireName,
     namesResolved,
+    nameReadError = null,
+    refreshNames,
     goal,
     nameDraft,
     deps = DEFAULT_TEXT_DEPS,
@@ -185,7 +191,8 @@ export function useCodingSessionFoundedText(input: {
   // names have settled and whenever a wire name exists, so it can never fire
   // over either: the namer refuses a blank message, on its tick and on
   // `requestNow` alike.
-  const suggestionAllowed = namesResolved && knownName === null;
+  const suggestionAllowed =
+    namesResolved && !nameReadError && knownName === null;
   const naming = useNewCodingSessionTitleSuggestion({
     firstMessage: suggestionAllowed ? prompt : "",
     title: name,
@@ -195,16 +202,21 @@ export function useCodingSessionFoundedText(input: {
 
   const commitNameNow =
     React.useCallback(async (): Promise<CodingSessionFoundedTextOutcome> => {
-      if (!namesResolved) {
-        // Not an error: nothing was asked of the relay, and the draft stands.
-        return { ok: true };
-      }
       if (!codingSessionFoundedTextDirty(name, knownName)) {
         // A blank field over a published name publishes nothing (a name cannot
         // be unset on the wire) and shows the wire name again.
         if (name.trim().length === 0 && knownName !== null)
           nameDraft.setName(null);
         return { ok: true };
+      }
+      if (!namesResolved || nameReadError) {
+        return {
+          ok: false,
+          field: "name",
+          reason: nameReadError
+            ? `Name not saved: ${nameReadError} Your draft is preserved; retry the name read.`
+            : "Name not saved: the existing name is still being read. Your draft is preserved.",
+        };
       }
       const content = name.trim();
       try {
@@ -243,6 +255,7 @@ export function useCodingSessionFoundedText(input: {
       name,
       nameDraft,
       namesResolved,
+      nameReadError,
       sessionRef,
       wireName,
     ]);
@@ -340,6 +353,9 @@ export function useCodingSessionFoundedText(input: {
     name,
     setName,
     nameError,
+    nameReadPending: !namesResolved,
+    nameReadError,
+    refreshNames,
     nameDirty,
     commitName,
     suggestion: suggestionAllowed ? naming.status : null,

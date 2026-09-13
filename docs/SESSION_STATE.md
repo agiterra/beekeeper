@@ -12180,6 +12180,38 @@ Evidence and limits: [conditional publication checkpoint](history/2026-09-12-pro
      assertions and checking the canary in the final request. Production
      steering is unchanged. Exact results: [integration report](history/2026-09-12-steering-integration.md).
 
+121. **A name blur could report success before name history was read
+     (2026-09-13).** The unchanged browser case and a passive trace show blur
+     at 1,365 ms with names unresolved, zero name events and no error; the
+     history REQ arrived at 10,588 ms. `useCodingSessionFoundedText.ts` returned
+     success without saving. Name readiness must distinguish pending, failed
+     and capped history; blank optional names remain compatible with Solo.
+     The separate post-Start `codingSessionAutoName.ts` lookup also needs
+     exact session/founder scope so absence from the newest 1,000 unrelated
+     names cannot authorize overwriting an omitted older name. Evidence and
+     correction status: [September 13 report](history/2026-09-13-startup-smoke-corrections.md).
+
+122. **A relay-accepted goal could leave the session header stale
+     (2026-09-13).** The Solo probe captures positive OK at 1,380 ms and an
+     unchanged header at 6,468.7 ms. The child retained accepted text while
+     the parent awaited its live watch. Accepted-publication notification
+     feeds the existing signed founder fold; it must remain bound to the
+     originating client and still-active subscription registration so a late
+     completion cannot enter a new community/view. Signing alone is not
+     acceptance. The mock's `live-*` branch ignores replay limits, so this
+     observation does not prove indefinite loss on a real relay. Evidence:
+     [September 13 report](history/2026-09-13-startup-smoke-corrections.md).
+
+123. **Discard's button and handler disagreed about readiness (2026-09-13).**
+     A live failed receipt made the button enabled while receipt history
+     remained loading. At the original click the handler silently retained
+     the durable create. History settled at 10,517 ms; a separate explicit
+     second click at 10,804 ms cleared the transaction and enabled Start,
+     without signing another create. The UI and handler must share the same
+     guard, disclose its reason and retain uncertain attempts. A later read
+     does not replay a person's earlier click. Evidence and limitations:
+     [September 13 report](history/2026-09-13-startup-smoke-corrections.md).
+
 ## 2a. Direction settled 2026-08-18
 
 Three independent answers to "what should a new execution get on its first

@@ -173,7 +173,12 @@ export function CodingSessionFoundedSetupCard({
         </label>
         <Input
           data-testid="coding-session-founded-name"
-          disabled={locked}
+          disabled={locked || text.nameReadPending || !!text.nameReadError}
+          aria-describedby={
+            text.nameReadPending || text.nameReadError
+              ? "coding-session-founded-name-read-status"
+              : undefined
+          }
           id="coding-session-founded-name"
           maxLength={MAX_CODING_SESSION_NAME_BYTES}
           onBlur={() => void text.commitName()}
@@ -187,6 +192,27 @@ export function CodingSessionFoundedSetupCard({
           placeholder="Short name for this session"
           value={text.name}
         />
+        {text.nameReadPending || text.nameReadError ? (
+          <p
+            id="coding-session-founded-name-read-status"
+            data-testid="coding-session-founded-name-read-status"
+            className="text-2xs text-muted-foreground"
+            role="status"
+          >
+            {text.nameReadError
+              ? `The existing session name could not be checked: ${text.nameReadError} Your draft is preserved.`
+              : "Reading the existing session name… Your draft is preserved; the name is not editable yet."}
+            {text.nameReadError && text.refreshNames ? (
+              <button
+                type="button"
+                className="ml-2 text-primary underline"
+                onClick={text.refreshNames}
+              >
+                Retry name read
+              </button>
+            ) : null}
+          </p>
+        ) : null}
         {text.nameError ? (
           <FieldError testId="coding-session-founded-name-error">
             {text.nameError}
@@ -387,14 +413,32 @@ export function CodingSessionFoundedSetupCard({
           // A failed create would otherwise hold the busy blocker forever;
           // discarding it is the one way this card offers out, and it is
           // named as what it is.
-          <Button
-            data-testid="coding-session-founded-discard-attempt"
-            onClick={setup.startFresh}
-            type="button"
-            variant="outline"
-          >
-            Discard the failed attempt
-          </Button>
+          <>
+            {setup.startFreshReadiness.reason ? (
+              <p
+                id="coding-session-founded-discard-attempt-status"
+                data-testid="coding-session-founded-discard-attempt-status"
+                className="basis-full text-2xs text-muted-foreground"
+                role="status"
+              >
+                {setup.startFreshReadiness.reason}
+              </p>
+            ) : null}
+            <Button
+              data-testid="coding-session-founded-discard-attempt"
+              disabled={!setup.startFreshReadiness.allowed}
+              aria-describedby={
+                setup.startFreshReadiness.reason
+                  ? "coding-session-founded-discard-attempt-status"
+                  : undefined
+              }
+              onClick={setup.startFresh}
+              type="button"
+              variant="outline"
+            >
+              Discard the failed attempt
+            </Button>
+          </>
         ) : null}
         {onDiscard ? (
           // A click founded this session; an abandoned click is a row on
@@ -461,6 +505,8 @@ export function CodingSessionFoundedSetupHost({
   genesisRef,
   goal,
   nameResolved,
+  nameReadError = null,
+  refreshNames,
   onCreated,
   projectRef,
   sessionRef,
@@ -476,6 +522,10 @@ export function CodingSessionFoundedSetupHost({
   goal: CodingSessionFoundedGoal;
   /** Whether the names read has settled once for this channel. */
   nameResolved: boolean;
+  /** Failed or partial history cannot authorize replacing a name. */
+  nameReadError?: string | null;
+  /** Retry the name read without replacing the draft. */
+  refreshNames?: () => void;
   onCreated: (input: { channelId: string; generationId: string }) => void;
   projectRef: string | null;
   sessionRef: string;
@@ -493,6 +543,8 @@ export function CodingSessionFoundedSetupHost({
     goal,
     wireName,
     nameResolved,
+    nameReadError,
+    refreshNames,
     channelReader,
     starting,
     onCreated,

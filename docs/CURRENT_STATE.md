@@ -16,7 +16,7 @@ unknown and both links are kept. "Ledger §" means a heading in
 
 | Surface | Observed | How |
 | --- | --- | --- |
-| `main` on the relay and on GitHub | `9aebb1262`, checked 2026-09-12; no newer commit arrived during integration | `git fetch origin main` then `git rev-parse FETCH_HEAD`; `GIT_TERMINAL_PROMPT=0 git ls-remote upstream refs/heads/main` |
+| `main` on the relay and on GitHub | `343ea8bd9`, checked 2026-09-13; Andy landed the desktop redaction fix after the integration base | `git fetch origin main` then `git rev-parse FETCH_HEAD`; `GIT_TERMINAL_PROMPT=0 git ls-remote upstream refs/heads/main` |
 | Relay at hive.agiterra.org | `build_time` `2026-09-10T19:48:29Z`; `software_commit` is `unknown`, a disclosed non-answer from the stale deployer (ledger §3a, "hive's `software_commit` is `unknown`") | `curl -s -H 'Accept: application/nostr+json' https://hive.agiterra.org/ \| jq '{software_commit, build_time}'` |
 | Installed Mac dev bundle | `/Users/brian/Applications/Beekeeper Dev.app`, built 2026-09-11 from `77b792de9`, two commits behind `main`; its bundled `bee --version` reports `77b792de` | ledger § "September 11 — latest main rebuilt"; log `../review-2026-09-11-local-rebuild/build.log` |
 | Windows | unavailable: Brian no longer has the Windows machine (2026-09-09). Native Windows agent setup and cross-account acceptance are deferred, not done | ledger § "September 9 checkpoint published; Windows testing deferred" |
@@ -30,8 +30,8 @@ on 2026-09-09, with `just ci` and `just test` green on that exact commit
 
 | Work | Owner | State (check date in row) | Where |
 | --- | --- | --- | --- |
-| Project team setup and neutral baseline | Astra | 2026-09-12: authoring candidate through `048dc4e02` checked locally; conditional source transaction passes focused core/CLI/database/relay tests, typecheck and lint; combined CI passed on `0e4c2cd84`; broad `just test` passed on `939607485`; browser acceptance pending; no installed or published changes | [`PROJECT_TEAM_SETUP_IMPL.md`](PROJECT_TEAM_SETUP_IMPL.md), [authoring evidence](history/2026-09-11-project-team-setup.md), [publication checkpoint](history/2026-09-12-project-team-publication.md) |
-| Native mid-turn steering for Claude sessions | Fable/Opus candidate; Astra integrates | 2026-09-12: runtime queued-steer fence correction passes 58 ACP/46 provider tests; three original browser failures and five steering cases pass. Both short-window cases pass; authority and persistence review closed with focused tests/clippy green. Combined CI and broad `just test` passed; real Claude adapter steer and idle guard passed (marker in linked report). Browser/installed UI acceptance pending. No push or installation | [integration evidence](history/2026-09-12-steering-integration.md), `NATIVE_STEERING_IMPL.md` |
+| Project team setup and neutral baseline | Astra | 2026-09-13: the Tankloop → Roles → Set up project team path supports draft, authoring, validation and snapshot. Publication, project-qualified installation and lead handoff remain the next milestone; no installed or published changes | [`PROJECT_TEAM_SETUP_IMPL.md`](PROJECT_TEAM_SETUP_IMPL.md), [authoring evidence](history/2026-09-11-project-team-setup.md), [publication checkpoint](history/2026-09-12-project-team-publication.md) |
+| Native mid-turn steering for Claude sessions | Fable/Opus candidate; Astra integrates | 2026-09-13: static checks and fresh E2E build passed; selected browser matrix was 44 passed/1 failed, only dense history. Isolated dense repeat also failed (336/450; matrix 286/450), so diagnosis remains open. Brian accepted landing with that limitation; final CI completed successfully; [recovered evidence](history/2026-09-13-final-ci-recovery.md) records every recipe leg. Push, installation and installed UI acceptance remain pending | [startup evidence](history/2026-09-13-startup-smoke-corrections.md), [integration evidence](history/2026-09-12-steering-integration.md), `NATIVE_STEERING_IMPL.md` |
 | Automatic project context beside ordinary agent work | paused by Brian on 2026-09-10 | findings saved; next step is proving a harmless marker reaches a fresh Claude session through a hook | ledger § "September 10 — automatic project context: findings saved, work paused" |
 | Collaborative workspace plan, ordered steps 0–6 | Astra finalizes and lands `main`; Fable takes delegated slices; Andy lands his own topic branches | steps 0–4 have integrated candidates per the ledger's September 7–9 sections; no landing of steps 5 or 6 is recorded anywhere found, so treat them as open | [`COLLABORATIVE_WORKSPACE_PLAN.md`](COLLABORATIVE_WORKSPACE_PLAN.md) |
 | Founded-session fixes: Discard deletes, project filing | Andy | landed on `main` 2026-09-11 | ledger § "Fixed 2026-09-11 —" (two items) |
@@ -86,14 +86,20 @@ Rules, each with where it is written down.
   transport is a candidate, not proven in the installed adapter.
 - ~~**Unknown:** whether the 62 e2e-smoke failures that ledger §1 calls
   "inherited, not caused" (2026-08-19) still exist.~~ Checked 2026-09-12: a
-  full `just smoke` on `main` `77b792de9` plus the steering branch reports
-  1309 passed, 6 failed, 1 skipped; the six fail identically on the untouched
-  base (ledger item 115). Never run `just smoke` while `just ci` builds the
-  desktop: the plain build overwrites the e2e bundle (item 115).
+  prior full smoke on the steering branch reported six failures also
+  reproduced on base `77b792de9` (ledger item 115). Checked 2026-09-13:
+  all nine cases from Opus's later report now pass on the combined candidate.
+  The fresh selected matrix is 44 passed/1 failed, only dense history; its
+  isolated repeat also fails (286/450 and 336/450). Brian accepted landing
+  with that known limitation while diagnosis continues. The overnight sleep
+  failure passed in the completed 77-case remainder. See [September 13 evidence](history/2026-09-13-startup-smoke-corrections.md).
+  Never run smoke while CI builds the desktop: the plain build overwrites
+  the E2E bundle. Prevent idle sleep during unattended checks; low battery
+  interrupted this run.
 
 ## Next, in order
 
-Project team setup milestone 1 is checked locally. On 2026-09-11 authoring passed 3,250 Tauri tests (18 ignored), 9,267 desktop tests, two provider subprocess/fence tests and seven mock-bridge browser cases. Final `just test` passed, including both pack-source admission database tests. Corrected neutral operation instructions also passed 188 persona tests and a fresh 63-test native setup run. No push, installation or relay deployment is claimed. Next: integrate the checked conditional source transaction (2026-09-12), wire snapshot publication using an isolated Git candidate ref, then project-qualified installation, lead handoff and live Tankloop acceptance. Ordinary Solo remains independent. The linked plan records missing first-project channel creation and explicit resume of setup identities.
+Project team setup milestone 1 is checked locally. The Tankloop → Roles → Set up project team path now covers draft, authoring, validation and snapshot. Publication using an isolated Git candidate ref, project-qualified installation and lead handoff are the next milestone. Ordinary Solo remains independent. No push, installation or relay deployment is claimed.
 
 1. Done 2026-09-11: the lead pack revision landed on the packs repository
    (`agiterra-packs` `main` at `5f4ae76fa`, the tree seats stage from; this
@@ -103,20 +109,22 @@ Project team setup milestone 1 is checked locally. On 2026-09-11 authoring passe
    so a seat hired from now on reads the new pointer. Seats already running
    keep the revision they staged; none were restarted. Check with
    `bee packs status --project <coordinate> --role lead`.
-2. Rebuild the installed Mac bundle from `main` when Andy's two fixes need
-   live use: `scripts/app-from.sh <sha>`. Brian's call.
+2. After landing the verified combined candidate, rebuild the installed Mac
+   bundle with `scripts/app-from.sh <sha>` for the already-authorized live test.
 3. The reviewed steering and project-setup candidates are combined on
-   `work/steering-integration-astra`. Combined `just ci` passed on `0e4c2cd84`.
-   Broad `just test` passed on `939607485`; all six unchanged baseline browser cases pass. Final CI exposed a corrected test-fixture race (ledger 120). Rerun CI and full smoke before landing and
-   installed Claude acceptance. All three reported browser failures now pass
-   in the focused integration run. The original smoke findings and the
-   separate umbrella layout remain open; see the integration evidence above.
+   `work/steering-integration-astra`. Brian accepted landing on 2026-09-13
+   with the known dense-history limitation: the fresh selected matrix was
+   44 passed/1 failed (286/450 dense rows) and the isolated repeat failed
+   at 336/450. Final CI completed successfully; rebase onto Andy’s new main, land, push and rebuild the
+   installed Mac bundle with `scripts/app-from.sh <sha>`. Dense diagnosis
+   continues after landing. The separate umbrella layout remains open; see
+   the September 13 report and ledger 121–123.
 4. When Brian resumes automatic context: the hook-marker experiment exactly as
    the ledger's September 10 section specifies it.
 5. Implement host publication from `PROJECT_TEAM_PUBLICATION_IMPL.md`: one
    scoped reservation, exact output snapshot, isolated Git push and conditional
-   SHA adoption. Then project-qualified installation/lead handoff and Tankloop
-   acceptance. Collaborative workspace plan steps 5 and 6 remain separate.
+   SHA adoption. Then project-qualified installation and lead handoff.
+   Collaborative workspace plan steps 5 and 6 remain separate.
 
 ## Environment facts most likely to bite first
 

@@ -58,7 +58,8 @@ test("an accepted local rename updates every mounted name consumer without a liv
   const renamed = await nameEvent("Renamed everywhere", 1_800_000_001);
   const subscriptions = [];
   const client = {
-    fetchEvents: async () => [initial],
+    publishEvent: async () => renamed,
+    fetchEventsCoalesced: async () => [initial],
     subscribeLive: async (_filter, onEvent) => {
       subscriptions.push(onEvent);
       return () => {};
@@ -83,9 +84,7 @@ test("an accepted local rename updates every mounted name consumer without a liv
       },
       {
         signer: async () => renamed,
-        publisher: {
-          publishEvent: async () => renamed,
-        },
+        publisher: client,
       },
     );
   });
@@ -103,38 +102,44 @@ test("an accepted local rename updates every mounted name consumer without a liv
   second.unmount();
 });
 
-test("a newly-added channel backfills names only after its live fence is ready", async () => {
+test("immediate history and bounded live replay cover an attaching watch", async () => {
   const { act, renderHook } = await import("@testing-library/react");
   const { codingSessionNameKey } = await import("./lib/codingSessionName.ts");
   const { useCodingSessionNames } = await import("./useCodingSessionNames.ts");
-  const initial = await nameEvent("First session name", 1_800_000_010);
-  let relayHistory = [];
-  let historyCalls = 0;
-  let markLiveReady = () => {};
+  const initial = await nameEvent("Between history and watch", 1_800_000_010);
+  let deliverLive;
+  const filters = [];
   const client = {
-    fetchEvents: async () => {
-      historyCalls += 1;
-      return relayHistory;
+    fetchEventsCoalesced: async (filter) => {
+      filters.push(filter);
+      return [];
     },
-    subscribeLive: () =>
-      new Promise((resolve) => {
-        markLiveReady = () => resolve(() => {});
-      }),
-    subscribeToReconnects: () => () => {},
+    subscribeLive: (filter, onEvent) => {
+      filters.push(filter);
+      deliverLive = onEvent;
+      return new Promise(() => {});
+    },
   };
   const { result, unmount } = renderHook(() =>
     useCodingSessionNames([CHANNEL_ID], client),
   );
-
   await act(async () => {});
-  assert.equal(historyCalls, 0);
-
-  relayHistory = [initial];
-  await act(async () => markLiveReady());
-  const key = codingSessionNameKey(CHANNEL_ID, SESSION_REF, FOUNDER_PUBKEY);
-  assert.equal(historyCalls, 1);
-  assert.equal(result.current.names.get(key)?.content, "First session name");
-
+  assert.equal(
+    result.current.resolved,
+    true,
+    "HTTP history does not wait on live admission",
+  );
+  assert.deepEqual(filters, [
+    { kinds: [44229], "#h": [CHANNEL_ID], limit: 1000 },
+    { kinds: [44229], "#h": [CHANNEL_ID], limit: 1000 },
+  ]);
+  await act(async () => deliverLive(initial));
+  assert.equal(
+    result.current.names.get(
+      codingSessionNameKey(CHANNEL_ID, SESSION_REF, FOUNDER_PUBKEY),
+    )?.content,
+    "Between history and watch",
+  );
   unmount();
 });
 
@@ -142,13 +147,13 @@ test("resolved is false until the history read settles, and true on success or o
   const { act, renderHook } = await import("@testing-library/react");
   const { useCodingSessionNames } = await import("./useCodingSessionNames.ts");
   const initial = await nameEvent("Settled name", 1_800_000_020);
-  let markLiveReady = () => {};
+  let finishHistory;
   const okClient = {
-    fetchEvents: async () => [initial],
-    subscribeLive: () =>
+    fetchEventsCoalesced: () =>
       new Promise((resolve) => {
-        markLiveReady = () => resolve(() => {});
+        finishHistory = resolve;
       }),
+    subscribeLive: () => new Promise(() => {}),
     subscribeToReconnects: () => () => {},
   };
   const ok = renderHook(() => useCodingSessionNames([CHANNEL_ID], okClient));
@@ -156,14 +161,14 @@ test("resolved is false until the history read settles, and true on success or o
   assert.equal(ok.result.current.resolved, false);
   await act(async () => {});
   assert.equal(ok.result.current.resolved, false);
-  await act(async () => markLiveReady());
+  await act(async () => finishHistory([initial]));
   assert.equal(ok.result.current.resolved, true);
   assert.equal(ok.result.current.errorMessage, null);
   ok.unmount();
 
   // A refusal is an answer: the read is over either way.
   const failingClient = {
-    fetchEvents: async () => {
+    fetchEventsCoalesced: async () => {
       throw new Error("forbidden: not a member of this channel");
     },
     subscribeLive: async () => () => {},
@@ -179,6 +184,7 @@ test("resolved is false until the history read settles, and true on success or o
   });
   assert.equal(failed.result.current.resolved, true);
   assert.match(failed.result.current.errorMessage ?? "", /forbidden/);
+  assert.match(failed.result.current.readErrorMessage ?? "", /forbidden/);
   failed.unmount();
 
   // Nothing to read is the one scope that starts settled.
@@ -186,4 +192,112 @@ test("resolved is false until the history read settles, and true on success or o
   await act(async () => {});
   assert.equal(empty.result.current.resolved, true);
   empty.unmount();
+});
+
+test("refresh retries a failed watch, preserves signed names, and discloses a full history window", async () => {
+  const { act, renderHook } = await import("@testing-library/react");
+  const { useCodingSessionNames } = await import("./useCodingSessionNames.ts");
+  const initial = await nameEvent("Known name", 1_800_000_020);
+  const fullHistory = Array.from({ length: 1000 }, (_, index) =>
+    finalizeEvent(
+      { ...initial, created_at: initial.created_at + index },
+      FOUNDER_SECRET,
+    ),
+  );
+  let full = true,
+    attempts = 0;
+  const client = {
+    fetchEventsCoalesced: async () => (full ? fullHistory : []),
+    subscribeLive: async () => {
+      attempts++;
+      if (attempts === 1) throw new Error("watch failed");
+      return () => {};
+    },
+  };
+  const { result, unmount } = renderHook(() =>
+    useCodingSessionNames([CHANNEL_ID], client),
+  );
+  await act(async () => {});
+  assert.match(result.current.readErrorMessage, /latest 1000/);
+  assert.match(result.current.errorMessage, /watch failed/);
+  assert.equal(result.current.names.size, 1);
+  const refresh = result.current.refresh;
+  full = false;
+  await act(async () => refresh());
+  assert.equal(result.current.refresh, refresh);
+  assert.equal(attempts, 2);
+  assert.equal(result.current.readErrorMessage, null);
+  assert.equal(result.current.errorMessage, null);
+  assert.equal(result.current.names.size, 1);
+  unmount();
+});
+
+test("scope disposal ignores late history and unsubscribes a pending old watch", async () => {
+  const { act, renderHook } = await import("@testing-library/react");
+  const { useCodingSessionNames } = await import("./useCodingSessionNames.ts");
+  const initial = await nameEvent("Old channel", 1_800_000_020);
+  const reads = [],
+    watches = [];
+  let closed = false,
+    connected;
+  const client = {
+    fetchEventsCoalesced: (filter) =>
+      new Promise((resolve) => reads.push({ filter, resolve })),
+    subscribeLive: () => new Promise((resolve) => watches.push(resolve)),
+    subscribeToConnectionState: (fn) => {
+      connected = fn;
+      return () => {};
+    },
+  };
+  const { result, rerender, unmount } = renderHook(
+    ({ channel }) => useCodingSessionNames([channel], client),
+    { initialProps: { channel: CHANNEL_ID } },
+  );
+  rerender({ channel: "other-channel" });
+  await act(async () => {
+    reads[0].resolve([initial]);
+    watches[0](() => {
+      closed = true;
+    });
+    reads[1].resolve([]);
+  });
+  assert.equal(closed, true);
+  assert.equal(result.current.names.size, 0);
+  await act(async () => connected("connected"));
+  assert.deepEqual(reads[2].filter["#h"], ["other-channel"]);
+  unmount();
+});
+
+test("a held rename cannot enter a remounted community with the same client and coordinates", async () => {
+  const { act, renderHook } = await import("@testing-library/react");
+  const { useCodingSessionNames } = await import("./useCodingSessionNames.ts");
+  const { publishCodingSessionName } = await import(
+    "./lib/codingSessionName.ts"
+  );
+  const signed = await nameEvent("Old community result", 1_800_000_030);
+  let finish, notifyStarted;
+  const started = new Promise((resolve) => (notifyStarted = resolve));
+  const client = {
+    fetchEventsCoalesced: async () => [],
+    subscribeLive: async () => () => {},
+    publishEvent: () => {
+      notifyStarted();
+      return new Promise((resolve) => (finish = resolve));
+    },
+  };
+  const old = renderHook(() => useCodingSessionNames([CHANNEL_ID], client));
+  await act(async () => {});
+  const pending = publishCodingSessionName(
+    { channelId: CHANNEL_ID, sessionRef: SESSION_REF, content: signed.content },
+    { signer: async () => signed, publisher: client },
+  );
+  await started;
+  old.unmount();
+  const next = renderHook(() => useCodingSessionNames([CHANNEL_ID], client));
+  await act(async () => {
+    finish(signed);
+    await pending;
+  });
+  assert.equal(next.result.current.names.size, 0);
+  next.unmount();
 });

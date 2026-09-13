@@ -102,6 +102,7 @@ function model(overrides = {}, calls = []) {
     ...(overrides.text ?? {}),
   };
   return {
+    startFreshReadiness: { allowed: true, reason: null },
     mode: "solo",
     setMode: record("setMode"),
     channelReader: "resolved",
@@ -558,5 +559,98 @@ test("an unnamed worktree is said under the worktree field, only after a press",
   assert.equal(
     page.query("new-coding-session-blocker-worktree-name").textContent,
     blocker.sentence,
+  );
+});
+
+test("Name is unavailable with an explicit pending read and retains the saved draft", async () => {
+  const page = await mount({
+    setup: model({ text: { name: "Saved draft", nameReadPending: true } }),
+  });
+  assert.equal(page.query("coding-session-founded-name").disabled, true);
+  assert.equal(page.query("coding-session-founded-name").value, "Saved draft");
+  assert.match(
+    page.query("coding-session-founded-name-read-status").textContent,
+    /Reading.*draft is preserved/,
+  );
+  assert.equal(
+    page.query("coding-session-founded-start").disabled,
+    false,
+    "optional Name does not block blank-name Solo",
+  );
+  await page.rerender({
+    setup: model({ text: { name: "Saved draft", nameReadPending: false } }),
+  });
+  assert.equal(page.query("coding-session-founded-name").disabled, false);
+  assert.equal(page.query("coding-session-founded-name").value, "Saved draft");
+});
+
+test("a failed name read disables editing and offers an explicit retry", async () => {
+  let retries = 0;
+  const page = await mount({
+    setup: model({
+      text: {
+        name: "Saved draft",
+        nameReadError: "forbidden: name history",
+        refreshNames: () => retries++,
+      },
+    }),
+  });
+  assert.equal(page.query("coding-session-founded-name").disabled, true);
+  assert.match(
+    page.query("coding-session-founded-name-read-status").textContent,
+    /forbidden: name history/,
+  );
+  const { act } = await import("@testing-library/react");
+  await act(async () =>
+    page
+      .query("coding-session-founded-name-read-status")
+      .querySelector("button")
+      .click(),
+  );
+  assert.equal(retries, 1);
+});
+
+test("failed-attempt discard stays unavailable with its guard reason until history settles", async () => {
+  const calls = [];
+  const reason =
+    "Reading the provider's receipt history before discarding this attempt…";
+  const page = await mount({
+    setup: model(
+      {
+        transaction: {},
+        lifecycleState: "failed",
+        startFreshReadiness: { allowed: false, reason },
+      },
+      calls,
+    ),
+  });
+  assert.equal(
+    page.query("coding-session-founded-discard-attempt").disabled,
+    true,
+  );
+  assert.equal(
+    page.query("coding-session-founded-discard-attempt-status").textContent,
+    reason,
+  );
+  await page.click("coding-session-founded-discard-attempt");
+  assert.deepEqual(calls, []);
+  await page.rerender({
+    setup: model(
+      {
+        transaction: {},
+        lifecycleState: "failed",
+        startFreshReadiness: { allowed: true, reason: null },
+      },
+      calls,
+    ),
+  });
+  assert.equal(
+    page.query("coding-session-founded-discard-attempt").disabled,
+    false,
+  );
+  await page.click("coding-session-founded-discard-attempt");
+  assert.deepEqual(
+    calls.map((call) => call[0]),
+    ["startFresh"],
   );
 });
