@@ -30,8 +30,8 @@ on 2026-09-09, with `just ci` and `just test` green on that exact commit
 
 | Work | Owner | State (check date in row) | Where |
 | --- | --- | --- | --- |
-| Project team setup and neutral baseline | Astra | 2026-09-12: authoring candidate through `048dc4e02` checked locally; conditional source transaction passes focused core/CLI/database/relay tests, typecheck and lint; combined gates pending; no installed or published changes | [`PROJECT_TEAM_SETUP_IMPL.md`](PROJECT_TEAM_SETUP_IMPL.md), [authoring evidence](history/2026-09-11-project-team-setup.md), [publication checkpoint](history/2026-09-12-project-team-publication.md) |
-| Native mid-turn steering for Claude sessions | Fable/Opus candidate; Astra integrates | 2026-09-12: runtime queued-steer fence correction passes 58 ACP/46 provider tests; three original browser failures and five steering cases pass. Both short-window cases pass; authority and persistence review closed with focused tests/clippy green. Combined gates pending. No push or installation | [integration evidence](history/2026-09-12-steering-integration.md), `NATIVE_STEERING_IMPL.md` |
+| Project team setup and neutral baseline | Astra | 2026-09-12: authoring candidate through `048dc4e02` checked locally; conditional source transaction passes focused core/CLI/database/relay tests, typecheck and lint; combined CI passed on `0e4c2cd84`; broad integration/browser acceptance pending; no installed or published changes | [`PROJECT_TEAM_SETUP_IMPL.md`](PROJECT_TEAM_SETUP_IMPL.md), [authoring evidence](history/2026-09-11-project-team-setup.md), [publication checkpoint](history/2026-09-12-project-team-publication.md) |
+| Native mid-turn steering for Claude sessions | Fable/Opus candidate; Astra integrates | 2026-09-12: runtime queued-steer fence correction passes 58 ACP/46 provider tests; three original browser failures and five steering cases pass. Both short-window cases pass; authority and persistence review closed with focused tests/clippy green. Combined CI passed on `0e4c2cd84`; browser/integration acceptance pending. No push or installation | [integration evidence](history/2026-09-12-steering-integration.md), `NATIVE_STEERING_IMPL.md` |
 | Automatic project context beside ordinary agent work | paused by Brian on 2026-09-10 | findings saved; next step is proving a harmless marker reaches a fresh Claude session through a hook | ledger § "September 10 — automatic project context: findings saved, work paused" |
 | Collaborative workspace plan, ordered steps 0–6 | Astra finalizes and lands `main`; Fable takes delegated slices; Andy lands his own topic branches | steps 0–4 have integrated candidates per the ledger's September 7–9 sections; no landing of steps 5 or 6 is recorded anywhere found, so treat them as open | [`COLLABORATIVE_WORKSPACE_PLAN.md`](COLLABORATIVE_WORKSPACE_PLAN.md) |
 | Founded-session fixes: Discard deletes, project filing | Andy | landed on `main` 2026-09-11 | ledger § "Fixed 2026-09-11 —" (two items) |
@@ -79,7 +79,7 @@ Rules, each with where it is written down.
   failure.
 - ~~**Native steering** is blocked on proving adapter support.~~ Proven
   2026-09-11 against the installed adapters (ledger item 114); what remains
-  owed includes final combined gates and live use in an installed build with a real
+  owed includes broad integration/browser gates and live use in an installed build with a real
   session. The queued-steer prevention race found during integration is corrected
   and has a failing-before/passing-after process test. codex-acp 1.6.2 has no idle guard and stays in boundary mode.
 - **Automatic context** is blocked on Brian resuming it; the Claude hook
@@ -106,7 +106,8 @@ Project team setup milestone 1 is checked locally. On 2026-09-11 authoring passe
 2. Rebuild the installed Mac bundle from `main` when Andy's two fixes need
    live use: `scripts/app-from.sh <sha>`. Brian's call.
 3. The reviewed steering and project-setup candidates are combined on
-   `work/steering-integration-astra`. Run full gates before landing and
+   `work/steering-integration-astra`. Combined `just ci` passed on `0e4c2cd84`.
+   Resolve baseline browser failures, run broad integration/full smoke before landing and
    installed Claude acceptance. All three reported browser failures now pass
    in the focused integration run. The original smoke findings and the
    separate umbrella layout remain open; see the integration evidence above.

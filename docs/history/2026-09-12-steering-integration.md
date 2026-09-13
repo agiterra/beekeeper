@@ -146,4 +146,21 @@ stopped before shared-directory removal. The invocation-local
 `PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=false` resolves to `false` and runs the
 actual Biome hook without installation; no hook is edited or skipped. The
 commit then passed pre-commit and signoff. Logs: `combine-setup-hooks.log` in
-the triage directory above. Full combined gates still remain owed.
+the triage directory above.
+
+Full `just ci` passed on combined commit `0e4c2cd84` (exit 0), with the
+invocation-local pnpm setting above. Raw log: `combined-ci.log` in the triage
+directory. The completed Rust harnesses report 10,693 passed / 0 failed
+including native desktop's 3,252; desktop JavaScript reports 9,316 / 0 and
+mobile reports 2,011 / 0. Formatting, clippy, frontend checks, size gates and
+desktop/web builds passed. Rust ignored tests remain ignored; this is not
+live relay or installed-app evidence. Independent read-only integration review
+confirmed the three automatically combined code/config files preserve both
+patches, and the 3,490-byte archived steering findings plus the ledger's
+54,646-byte historical suffix remain byte-identical to their inputs.
+
+The six original baseline browser assertions remain current. An isolated
+unchanged rerun and timestamped probes are next; no timeout or assertion was
+weakened. Broad `just test`, full smoke alone and installed Claude acceptance
+remain owed. Host publication beyond the conditional source transaction is a
+separate unfinished project-setup milestone.
