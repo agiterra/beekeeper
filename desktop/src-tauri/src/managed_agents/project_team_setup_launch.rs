@@ -23,7 +23,7 @@ mod journal;
 #[path = "project_team_setup_launch_tests.rs"]
 mod tests;
 #[path = "project_team_setup_launch_wire.rs"]
-mod wire;
+pub(crate) mod wire;
 
 /// The full runtime choice; retries must keep every field unchanged.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

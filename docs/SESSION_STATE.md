@@ -12212,6 +12212,18 @@ Evidence and limits: [conditional publication checkpoint](history/2026-09-12-pro
      does not replay a person's earlier click. Evidence and limitations:
      [September 13 report](history/2026-09-13-startup-smoke-corrections.md).
 
+124. **Push-hook Git environment escaped temporary test repositories (2026-09-13).**
+     The activation push's native gate failed eight tests with the actual
+     feature worktree's index-lock path in their temporary-repository errors.
+     A fixture committed a generated README as `e8f230fc5`; shared `core.bare`
+     also became true. Root retained that test commit on a recovery ref,
+     restored the intended feature commit and non-bare setting, and checked
+     that main and Brian's existing untracked handoff were unchanged. No push
+     succeeded. Temporary Git helpers must clear repository-selection variables;
+     the push floor must not export its hook repository into build/test children.
+     The focused regression uses a disposable sentinel, never the working repo.
+     Evidence and correction: [activation report](history/2026-09-13-project-team-activation.md).
+
 ## 2a. Direction settled 2026-08-18
 
 Three independent answers to "what should a new execution get on its first

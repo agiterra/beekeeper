@@ -146,6 +146,12 @@ test("saving a checked version uses the scoped host snapshot and does not publis
     manifestPath: "/snapshots/c/manifest.json",
     roles: ["lead", "reviewer"],
   };
+  answers.project_team_setup_get_publication_options = {
+    currentSourceEventId: null,
+    suggestedDestination: null,
+    sourceExpectation: { kind: "if_unset" },
+    publication: null,
+  };
   const { render, waitFor, fireEvent, element } = await harness();
   const view = render(element(projectA));
   await waitFor(() => assert.ok(view.getByText("Draft ready")));
@@ -181,6 +187,7 @@ test("saving a checked version uses the scoped host snapshot and does not publis
           "get_coding_session_workdir_state",
           "project_team_setup_validate",
           "project_team_setup_snapshot",
+          "project_team_setup_get_publication_options",
         ].includes(command),
     ),
     [],
@@ -194,6 +201,269 @@ test("saving a checked version uses the scoped host snapshot and does not publis
     assert.match(view.getByRole("alert").textContent, /no longer valid/),
   );
   assert.equal(view.queryByText(/Checked version saved/), null);
+});
+
+test("publication, adopted-source installation, and lead handoff each use one scoped retry identity", async () => {
+  answers.project_team_setup_get = {
+    ...draftA,
+    latestSnapshotId: "d".repeat(64),
+  };
+  answers.get_coding_session_workdir_state = { byProject: {} };
+  answers.project_team_setup_snapshot = {
+    setupId: draftA.setupId,
+    snapshotId: "d".repeat(64),
+    rolesDirectory: "/saved/roles",
+    manifestPath: "/saved/manifest.json",
+    roles: ["lead"],
+  };
+  const destination = {
+    repoRef: `30617:${"b".repeat(64)}:tankloop-packs`,
+    packPath: "personas/roles",
+    baseCommit: "e".repeat(40),
+    createAnnouncement: null,
+  };
+  const sourceExpectation = { kind: "expected", eventId: "f".repeat(64) };
+  answers.project_team_setup_get_publication_options = {
+    currentSourceEventId: sourceExpectation.eventId,
+    suggestedDestination: destination,
+    sourceExpectation,
+    publication: null,
+  };
+  answers.project_team_setup_start_publication = {
+    publicationId: "publication-1",
+    setupId: draftA.setupId,
+    status: "source_unknown",
+    snapshotId: "d".repeat(64),
+    destination,
+    sourceExpectation,
+    candidateRef: "refs/heads/setup/publication-1",
+    candidateCommit: "1".repeat(40),
+    sourceEventId: null,
+    message: "Checking whether the shared source was adopted.",
+  };
+  answers.project_team_setup_continue_publication = {
+    publicationId: "publication-1",
+    setupId: draftA.setupId,
+    status: "adopted",
+    snapshotId: "d".repeat(64),
+    destination,
+    sourceExpectation,
+    candidateRef: "refs/heads/setup/publication-1",
+    candidateCommit: "1".repeat(40),
+    sourceEventId: "2".repeat(64),
+    message: null,
+  };
+  const activation = {
+    publicationId: "publication-1",
+    source: {
+      repoRef: destination.repoRef,
+      commit: "1".repeat(40),
+      packPath: destination.packPath,
+    },
+    installation: {
+      status: "not_installed",
+      installedRoles: [],
+      message: null,
+    },
+    lead: {
+      status: "needs_channel",
+      channelId: null,
+      sessionRef: null,
+      message: "Create a project session channel before starting its lead.",
+    },
+  };
+  answers.project_team_setup_get_activation = activation;
+  answers.project_team_setup_install_adopted_roles = {
+    ...activation,
+    installation: {
+      status: "installed",
+      installedRoles: [
+        {
+          role: "lead",
+          agentPubkey: "9".repeat(64),
+          packRef: {
+            repo: destination.repoRef,
+            sha: "1".repeat(40),
+            role: "lead",
+            path: "personas/roles/lead",
+          },
+        },
+      ],
+      message: "Installed from the adopted revision.",
+    },
+    lead: {
+      status: "needs_channel",
+      channelId: null,
+      sessionRef: null,
+      message: null,
+    },
+  };
+  answers.project_team_setup_start_lead = {
+    ...answers.project_team_setup_install_adopted_roles,
+    lead: {
+      status: "started",
+      channelId: "project-session-channel",
+      sessionRef: "lead-session-1",
+      message: "The reserved project lead is running.",
+    },
+  };
+  answers.project_team_setup_ensure_lead_channel = {
+    ...answers.project_team_setup_install_adopted_roles,
+    lead: {
+      status: "ready",
+      channelId: "project-session-channel",
+      sessionRef: null,
+      message: "Project session channel recorded for this publication.",
+    },
+  };
+  const { render, waitFor, fireEvent, element } = await harness();
+  const view = render(element(projectA));
+  await waitFor(() =>
+    assert.ok(view.getByRole("button", { name: "Publish checked version" })),
+  );
+  fireEvent.click(
+    view.getByRole("button", { name: "Publish checked version" }),
+  );
+  await waitFor(() =>
+    assert.ok(view.getByText("Shared source adoption needs confirmation")),
+  );
+  assert.deepEqual(
+    calls.find(
+      ({ command }) => command === "project_team_setup_start_publication",
+    ),
+    {
+      command: "project_team_setup_start_publication",
+      args: {
+        projectRef: projectA,
+        expectedRelayUrl: draftA.relayUrl,
+        setupId: draftA.setupId,
+        destination,
+        sourceExpectation,
+        output: { kind: "snapshot", snapshotId: "d".repeat(64) },
+      },
+    },
+  );
+  fireEvent.click(view.getByRole("button", { name: "Retry publication" }));
+  await waitFor(() =>
+    assert.ok(view.getByText("Shared project source adopted")),
+  );
+  assert.equal(
+    calls.filter(
+      ({ command }) => command === "project_team_setup_start_publication",
+    ).length,
+    1,
+  );
+  assert.deepEqual(
+    calls.find(
+      ({ command }) => command === "project_team_setup_continue_publication",
+    ),
+    {
+      command: "project_team_setup_continue_publication",
+      args: {
+        projectRef: projectA,
+        expectedRelayUrl: draftA.relayUrl,
+        setupId: draftA.setupId,
+        publicationId: "publication-1",
+      },
+    },
+  );
+  await waitFor(() =>
+    assert.ok(view.getByRole("button", { name: "Install project roles" })),
+  );
+  fireEvent.click(view.getByRole("button", { name: "Install project roles" }));
+  await waitFor(() =>
+    assert.ok(view.getByText(/Roles available on this computer: lead/)),
+  );
+  fireEvent.click(
+    view.getByRole("button", { name: "Create project session channel" }),
+  );
+  await waitFor(() =>
+    assert.ok(view.getByRole("button", { name: "Start project lead" })),
+  );
+  assert.equal(
+    calls.filter(({ command }) => command === "create_channel").length,
+    0,
+  );
+  assert.deepEqual(
+    calls.find(
+      ({ command }) => command === "project_team_setup_ensure_lead_channel",
+    )?.args,
+    {
+      projectRef: projectA,
+      expectedRelayUrl: draftA.relayUrl,
+      setupId: draftA.setupId,
+      publicationId: "publication-1",
+    },
+  );
+  fireEvent.click(view.getByRole("button", { name: "Start project lead" }));
+  await waitFor(() =>
+    assert.ok(
+      view.getByText(/Project lead started in project-session-channel/),
+    ),
+  );
+  assert.deepEqual(
+    calls.find(
+      ({ command }) => command === "project_team_setup_install_adopted_roles",
+    ),
+    {
+      command: "project_team_setup_install_adopted_roles",
+      args: {
+        projectRef: projectA,
+        expectedRelayUrl: draftA.relayUrl,
+        setupId: draftA.setupId,
+        publicationId: "publication-1",
+      },
+    },
+  );
+  assert.deepEqual(
+    calls.find(({ command }) => command === "project_team_setup_start_lead"),
+    {
+      command: "project_team_setup_start_lead",
+      args: {
+        projectRef: projectA,
+        expectedRelayUrl: draftA.relayUrl,
+        setupId: draftA.setupId,
+        publicationId: "publication-1",
+        channelId: "project-session-channel",
+      },
+    },
+  );
+});
+
+test("missing host destination blocks publication rather than inventing a new source", async () => {
+  answers.project_team_setup_get = {
+    ...draftA,
+    latestSnapshotId: "d".repeat(64),
+  };
+  answers.get_coding_session_workdir_state = { byProject: {} };
+  answers.project_team_setup_snapshot = {
+    setupId: draftA.setupId,
+    snapshotId: "d".repeat(64),
+    rolesDirectory: "/saved/roles",
+    manifestPath: "/saved/manifest.json",
+    roles: ["lead"],
+  };
+  answers.project_team_setup_get_publication_options = {
+    currentSourceEventId: null,
+    suggestedDestination: null,
+    sourceExpectation: { kind: "if_unset" },
+    publication: null,
+  };
+  const { render, waitFor, element } = await harness();
+  const view = render(element(projectA));
+  await waitFor(() =>
+    assert.ok(view.getByText(/could not identify a project destination/)),
+  );
+  assert.equal(
+    view.queryByRole("button", { name: "Publish checked version" }),
+    null,
+  );
+  assert.equal(
+    calls.some(
+      ({ command }) => command === "project_team_setup_start_publication",
+    ),
+    false,
+  );
 });
 
 test("reopening reverifies the saved version without treating the current draft as checked", async () => {

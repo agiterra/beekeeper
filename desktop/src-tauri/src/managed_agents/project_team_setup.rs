@@ -21,6 +21,8 @@ pub(crate) mod actor;
 pub(crate) mod authoring;
 #[path = "project_team_setup_launch.rs"]
 pub(crate) mod launch;
+#[path = "project_team_setup_publication.rs"]
+pub(crate) mod publication;
 
 static PREPARE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 const MAX_INTENT_BYTES: usize = 16 * 1024;

@@ -69,6 +69,7 @@ export function ProjectTeamSetupWorkbench({
               key={`${projectRef}:${relayUrl}`}
               onStartAuthoring={onStartAuthoring}
               projectRef={projectRef}
+              projectName={projectName}
               relayUrl={relayUrl}
               renderAuthoring={(draft, onDraftMayChange) => (
                 <React.Suspense

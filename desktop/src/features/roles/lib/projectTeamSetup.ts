@@ -36,6 +36,94 @@ export type ProjectTeamSetupSnapshot = {
   roles: string[];
 };
 
+/** A host-resolved publication target; the UI never constructs repository data. */
+export type ProjectTeamSetupPublicationDestination = {
+  repoRef: string;
+  packPath: string;
+  baseCommit: string | null;
+  createAnnouncement: { name: string; description: string } | null;
+};
+
+/** Explicitly names the source head the host must compare before adoption. */
+export type ProjectTeamSetupSourceExpectation =
+  | { kind: "if_unset" }
+  | { kind: "expected"; eventId: string };
+
+/**
+ * The host reads and verifies source state before producing these choices.
+ * A null destination blocks publication; the UI never invents one.
+ */
+export type ProjectTeamSetupPublicationOptions = {
+  currentSourceEventId: string | null;
+  suggestedDestination: ProjectTeamSetupPublicationDestination | null;
+  sourceExpectation: ProjectTeamSetupSourceExpectation;
+  publication: ProjectTeamSetupPublication | null;
+};
+
+export type ProjectTeamSetupPublicationOutput = {
+  kind: "snapshot";
+  snapshotId: string;
+};
+
+/** Durable, host-observed publication state. It says nothing about local install. */
+export type ProjectTeamSetupPublication = {
+  publicationId: string;
+  setupId: string;
+  status:
+    | "checking"
+    | "candidate_prepared"
+    | "push_unknown"
+    | "pushed"
+    | "source_unknown"
+    | "adopted"
+    | "superseded"
+    | "conflict"
+    | "refused";
+  snapshotId: string;
+  destination: ProjectTeamSetupPublicationDestination;
+  sourceExpectation: ProjectTeamSetupSourceExpectation;
+  candidateRef: string;
+  candidateCommit: string | null;
+  sourceEventId: string | null;
+  message: string | null;
+};
+
+/** The source actually resolved for a publication, before local installation. */
+export type ProjectTeamSetupActivationSource = {
+  repoRef: string;
+  commit: string;
+  packPath: string;
+};
+
+/** One identity the host installed from the adopted project source. */
+export type ProjectTeamSetupInstalledRole = {
+  role: string;
+  agentPubkey: string;
+  packRef: PackRef;
+};
+
+/** Durable local installation and lead-launch observations for one publication. */
+export type ProjectTeamSetupActivation = {
+  source: ProjectTeamSetupActivationSource | null;
+  installation: {
+    status: "not_installed" | "installed" | "unknown" | "refused";
+    installedRoles: ProjectTeamSetupInstalledRole[];
+    message: string | null;
+  };
+  lead: {
+    status:
+      | "needs_channel"
+      | "ready"
+      | "starting"
+      | "started"
+      | "unknown"
+      | "refused";
+    channelId: string | null;
+    sessionRef: string | null;
+    message: string | null;
+  };
+};
+
 /** Durable IDs; reserving them neither publishes nor launches. */
 export type ProjectTeamSetupAuthoringReservation = {
   authoringId: string;

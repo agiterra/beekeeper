@@ -12,6 +12,7 @@ import {
   snapshotProjectTeamSetup,
   validateProjectTeamSetup,
 } from "../lib/projectTeamSetupApi";
+import { ProjectTeamSetupPublication } from "./ProjectTeamSetupPublication";
 
 /** An authoring handoff; it conveys no authority to publish the draft. */
 export type StartProjectTeamAuthoring = (
@@ -23,10 +24,12 @@ export function ProjectTeamSetupDraftView({
   draft,
   onStartAuthoring,
   authoring,
+  projectName,
 }: {
   draft: ProjectTeamSetupDraft;
   onStartAuthoring?: StartProjectTeamAuthoring;
   authoring?: (onDraftMayChange: () => void) => React.ReactNode;
+  projectName?: string;
 }) {
   const [validation, setValidation] =
     React.useState<ProjectTeamSetupValidation | null>(null);
@@ -78,7 +81,8 @@ export function ProjectTeamSetupDraftView({
           your project in an authoring session.
         </p>
         <p className="text-sm" data-testid="project-team-setup-publication">
-          This draft has not been published or applied to team sessions.
+          Draft edits stay local. Shared publication and installation status
+          appear below.
         </p>
       </div>
       <dl className="space-y-2 text-sm">
@@ -173,7 +177,7 @@ export function ProjectTeamSetupDraftView({
           <div className="space-y-1 text-sm" role="status">
             <p>
               Checked version saved. Later draft edits do not change this copy.
-              It has not been published.
+              Publication status appears below.
             </p>
             <details>
               <summary className="cursor-pointer">
@@ -185,6 +189,13 @@ export function ProjectTeamSetupDraftView({
           </div>
         ) : null}
       </div>
+      {snapshot ? (
+        <ProjectTeamSetupPublication
+          draft={draft}
+          projectName={projectName}
+          snapshot={snapshot}
+        />
+      ) : null}
       <details>
         <summary className="cursor-pointer text-sm font-medium">
           Setup brief for the authoring session

@@ -93,7 +93,7 @@ test("recovered draft is visible without claiming validation, publication or an 
   );
   assert.match(html, /Draft ready/);
   assert.match(html, /has not been checked yet/);
-  assert.match(html, /has not been published or applied/);
+  assert.match(html, /Draft edits stay local/);
   assert.match(html, /Check draft/);
   assert.doesNotMatch(html, /Start authoring session|>Publish</);
   assert.ok(html.includes(input.projectDirectory));

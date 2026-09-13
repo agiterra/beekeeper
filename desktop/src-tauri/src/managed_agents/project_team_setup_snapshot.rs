@@ -54,6 +54,14 @@ struct Capture {
     contents: Vec<Vec<u8>>,
 }
 
+/// Immutable bytes re-read from a verified snapshot.  This stays inside the
+/// setup host boundary: callers receive owned bytes, never a path back into
+/// the editable draft tree.
+pub(super) struct VerifiedSnapshotContents {
+    pub snapshot: ProjectTeamSetupSnapshot,
+    pub files: Vec<(String, Vec<u8>)>,
+}
+
 fn invalid(message: impl Into<String>) -> SetupError {
     SetupError::new("invalid_snapshot", message)
 }
@@ -441,6 +449,44 @@ pub(super) fn run(
             Ok(candidate)
         }
     }
+}
+
+/// Reverify a selected saved snapshot and copy its role-file bytes into owned
+/// memory before any publication work starts.  A later git operation must use
+/// these bytes, not reopen the candidate directory or the editable draft.
+pub(super) fn run_verified_contents(
+    root: &Path,
+    scope: &SetupScope,
+    setup_id: &str,
+    snapshot_id: &str,
+) -> Result<VerifiedSnapshotContents, SetupError> {
+    let _guard = SNAPSHOT_LOCK
+        .lock()
+        .map_err(|error| invalid(error.to_string()))?;
+    let record =
+        read_draft(root, scope)?.ok_or_else(|| invalid("Prepare a project setup draft first."))?;
+    if record.setup_id != setup_id {
+        return Err(invalid("The setup ID does not match the scoped draft."));
+    }
+    let snapshot = verify(&record, snapshot_id)?;
+    let roles = Path::new(&snapshot.roles_directory);
+    let captured = capture(roles, true)?;
+    let bytes = manifest_bytes(&captured.manifest)?;
+    if hash(&bytes) != snapshot.snapshot_id {
+        return Err(invalid(
+            "The snapshot changed while its bytes were being copied.",
+        ));
+    }
+    Ok(VerifiedSnapshotContents {
+        snapshot,
+        files: captured
+            .manifest
+            .files
+            .into_iter()
+            .zip(captured.contents)
+            .map(|(entry, bytes)| (entry.path, bytes))
+            .collect(),
+    })
 }
 
 #[derive(Serialize, Deserialize)]

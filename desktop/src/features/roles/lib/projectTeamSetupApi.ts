@@ -1,9 +1,15 @@
 import { invokeTauri } from "@/shared/api/tauri";
 import type {
   ProjectTeamSetupAuthoringReservation,
+  ProjectTeamSetupActivation,
   ProjectTeamSetupDraft,
   ProjectTeamSetupLaunch,
+  ProjectTeamSetupPublication,
+  ProjectTeamSetupPublicationDestination,
+  ProjectTeamSetupPublicationOptions,
+  ProjectTeamSetupPublicationOutput,
   ProjectTeamSetupSnapshot,
+  ProjectTeamSetupSourceExpectation,
   ProjectTeamSetupValidation,
 } from "./projectTeamSetup";
 
@@ -13,6 +19,8 @@ export type ProjectTeamSetupScope = {
 };
 
 type AuthoringScope = ProjectTeamSetupScope & { setupId: string };
+
+type PublicationScope = AuthoringScope & { publicationId: string };
 
 /** Read reserved IDs without creating or publishing any event. */
 export function getProjectTeamSetupAuthoring(input: AuthoringScope) {
@@ -89,6 +97,91 @@ export function snapshotProjectTeamSetup(
 ) {
   return invokeTauri<ProjectTeamSetupSnapshot>(
     "project_team_setup_snapshot",
+    input,
+  );
+}
+
+/** Read host-selected, provenance-checked choices before publication can start. */
+export function getProjectTeamSetupPublicationOptions(input: AuthoringScope) {
+  return invokeTauri<ProjectTeamSetupPublicationOptions>(
+    "project_team_setup_get_publication_options",
+    input,
+  );
+}
+
+/**
+ * Reserve or resume the same durable publication. All source and destination
+ * values are previously resolved by the host, never inferred from draft files.
+ */
+export function startProjectTeamSetupPublication(
+  input: AuthoringScope & {
+    destination: ProjectTeamSetupPublicationDestination;
+    sourceExpectation: ProjectTeamSetupSourceExpectation;
+    output: ProjectTeamSetupPublicationOutput;
+  },
+) {
+  return invokeTauri<ProjectTeamSetupPublication>(
+    "project_team_setup_start_publication",
+    input,
+  );
+}
+
+/** Read a publication journal without advancing it. */
+export function getProjectTeamSetupPublication(input: AuthoringScope) {
+  return invokeTauri<ProjectTeamSetupPublication | null>(
+    "project_team_setup_get_publication",
+    input,
+  );
+}
+
+/** Retry the host-recorded publication operation without changing its scope. */
+export function continueProjectTeamSetupPublication(input: PublicationScope) {
+  return invokeTauri<ProjectTeamSetupPublication>(
+    "project_team_setup_continue_publication",
+    input,
+  );
+}
+
+/** Read observed local installation and lead handoff state without advancing it. */
+export function getProjectTeamSetupActivation(input: PublicationScope) {
+  return invokeTauri<ProjectTeamSetupActivation>(
+    "project_team_setup_get_activation",
+    input,
+  );
+}
+
+/** Install only the role packs resolved from this adopted immutable source. */
+export function installProjectTeamSetupActivation(input: PublicationScope) {
+  return invokeTauri<ProjectTeamSetupActivation>(
+    "project_team_setup_install_adopted_roles",
+    input,
+  );
+}
+
+/** Persist the one project session channel before a lead can be launched there. */
+export function recordProjectTeamSetupLeadChannel(
+  input: PublicationScope & { channelId: string },
+) {
+  return invokeTauri<ProjectTeamSetupActivation>(
+    "project_team_setup_record_lead_channel",
+    input,
+  );
+}
+
+/** Start or recover the one durably reserved project lead for this channel. */
+export function startProjectTeamSetupLead(
+  input: PublicationScope & { channelId: string },
+) {
+  return invokeTauri<ProjectTeamSetupActivation>(
+    "project_team_setup_start_lead",
+    input,
+  );
+}
+
+/** Reserve and recover this publication's one project session channel. */
+export function ensureProjectTeamSetupLeadChannel(input: PublicationScope) {
+  return invokeTauri<ProjectTeamSetupActivation>(
+    "project_team_setup_ensure_lead_channel",
     input,
   );
 }

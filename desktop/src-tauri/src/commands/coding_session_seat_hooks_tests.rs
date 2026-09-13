@@ -12,6 +12,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::*;
+use crate::commands::project_git_exec::GIT_REPO_SELECTION_VARS;
 
 const SEAT: &str = "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90";
 const ASSIGNMENT: &str = "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0";
@@ -40,26 +41,22 @@ fn fixture_dir(name: &str) -> PathBuf {
 /// A git invocation for the fixtures: hermetic, and pointed at a throwaway
 /// `HOME`/global config so a test can prove the real one is never touched.
 fn fixture_git(cwd: &Path, home: &Path, args: &[&str]) -> std::process::Output {
-    Command::new("git")
+    let mut command = Command::new("git");
+    command
         .args(args)
         .current_dir(cwd)
         .env("HOME", home)
         .env("GIT_CONFIG_GLOBAL", home.join("gitconfig"))
         .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_INDEX_FILE")
-        .env_remove("GIT_OBJECT_DIRECTORY")
-        .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
-        .env_remove("GIT_COMMON_DIR")
-        .env_remove("GIT_NAMESPACE")
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_AUTHOR_NAME", "Fixture")
         .env("GIT_AUTHOR_EMAIL", "fixture@example.invalid")
         .env("GIT_COMMITTER_NAME", "Fixture")
-        .env("GIT_COMMITTER_EMAIL", "fixture@example.invalid")
-        .output()
-        .expect("git ran")
+        .env("GIT_COMMITTER_EMAIL", "fixture@example.invalid");
+    for key in GIT_REPO_SELECTION_VARS {
+        command.env_remove(key);
+    }
+    command.output().expect("git ran")
 }
 
 /// Run git and fail loudly, so a broken fixture never looks like a finding.
@@ -148,27 +145,23 @@ impl Fixture {
 
 /// Run one of the repo's hook scripts directly, the way git would.
 fn run_hook(script: &str, cwd: &Path, home: &Path, args: &[&str]) -> std::process::Output {
-    Command::new("bash")
+    let mut command = Command::new("bash");
+    command
         .arg(repo_root().join("scripts").join(script))
         .args(args)
         .current_dir(cwd)
         .env("HOME", home)
         .env("GIT_CONFIG_GLOBAL", home.join("gitconfig"))
         .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_INDEX_FILE")
-        .env_remove("GIT_OBJECT_DIRECTORY")
-        .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
-        .env_remove("GIT_COMMON_DIR")
-        .env_remove("GIT_NAMESPACE")
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_AUTHOR_NAME", "Fixture")
         .env("GIT_AUTHOR_EMAIL", "fixture@example.invalid")
         .env("GIT_COMMITTER_NAME", "Fixture")
-        .env("GIT_COMMITTER_EMAIL", "fixture@example.invalid")
-        .output()
-        .expect("hook ran")
+        .env("GIT_COMMITTER_EMAIL", "fixture@example.invalid");
+    for key in GIT_REPO_SELECTION_VARS {
+        command.env_remove(key);
+    }
+    command.output().expect("hook ran")
 }
 
 // ------------------------------------------------------------------ install
@@ -861,24 +854,30 @@ static GIT_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// repositories are OS-temp throwaways, never anything under this worktree's
 /// `target/`, so a bug here can only corrupt its own fixtures.
 fn init_bare_local_repo(dir: &Path) {
-    let status = Command::new("git")
+    let mut command = Command::new("git");
+    command
         .args(["init", "-q", "--initial-branch=main"])
         .current_dir(dir)
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .status()
-        .expect("git init");
+        .env("GIT_CONFIG_SYSTEM", "/dev/null");
+    for key in GIT_REPO_SELECTION_VARS {
+        command.env_remove(key);
+    }
+    let status = command.status().expect("git init");
     assert!(status.success(), "git init failed in {}", dir.display());
 }
 
 fn read_local_config(dir: &Path, key: &str) -> Option<String> {
-    let output = Command::new("git")
+    let mut command = Command::new("git");
+    command
         .args(["config", "--local", "--get", key])
         .current_dir(dir)
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .output()
-        .expect("git config --get");
+        .env("GIT_CONFIG_SYSTEM", "/dev/null");
+    for key in GIT_REPO_SELECTION_VARS {
+        command.env_remove(key);
+    }
+    let output = command.output().expect("git config --get");
     output
         .status
         .success()
@@ -889,13 +888,12 @@ fn read_local_config(dir: &Path, key: &str) -> Option<String> {
 /// own `git()` — the same one `install()` uses to write every
 /// `buzz.*`/signing config line into a seat's worktree.
 ///
-/// `git()` already cleared `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`,
-/// `GIT_OBJECT_DIRECTORY` and `GIT_ALTERNATE_OBJECT_DIRECTORIES`, but not
-/// `GIT_COMMON_DIR` — and `GIT_COMMON_DIR` alone, with no `GIT_DIR` at all,
-/// is enough for git to resolve `--local` config against a repository other
-/// than the one named by `cwd`. This poisons only `GIT_COMMON_DIR`, exactly
-/// what a leaked-but-partially-cleared environment would leave behind, and
-/// asserts the write still lands in the given worktree and nowhere else.
+/// `git()` clears every repository-selection variable through
+/// `GIT_REPO_SELECTION_VARS`. This poisons only `GIT_COMMON_DIR` to preserve
+/// the regression boundary: that variable alone, with no `GIT_DIR`, is enough
+/// for git to resolve `--local` config against a repository other than the one
+/// named by `cwd`. The write must still land in the given worktree and nowhere
+/// else.
 #[test]
 fn a_config_write_addresses_the_worktree_it_was_given_not_a_poisoned_git_common_dir() {
     let _guard = GIT_ENV_LOCK

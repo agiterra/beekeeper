@@ -128,7 +128,7 @@ pub(super) fn project_channel_proof(
     Ok(())
 }
 
-pub(super) async fn verify_project_channel(
+pub(crate) async fn verify_project_channel(
     state: &AppState,
     draft: &ProjectTeamSetupDraft,
     channel_id: &str,
@@ -187,7 +187,7 @@ async fn members(
         })
         .collect())
 }
-pub(super) async fn ensure_membership(
+pub(crate) async fn ensure_membership(
     state: &AppState,
     draft: &ProjectTeamSetupDraft,
     channel: &str,

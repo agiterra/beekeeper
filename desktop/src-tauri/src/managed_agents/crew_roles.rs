@@ -34,6 +34,10 @@ use crate::managed_agents::{
     TeamRecord,
 };
 
+#[path = "crew_roles_project.rs"]
+mod project;
+pub(crate) use project::install_role_packs_in_named_team;
+
 /// Name of the one team every installed role pack joins. Also the dedupe key:
 /// a second run updates this team rather than minting `Team roles (2)`.
 pub const CREW_ROLES_TEAM_NAME: &str = "Team roles";
@@ -590,30 +594,6 @@ fn mint_definition_id(persona_name: &str, definitions: &[AgentDefinition]) -> St
     }
 }
 
-/// An agent handle that is free among every agent except `keep`.
-fn mint_agent_name(
-    display_name: &str,
-    agents: &[ManagedAgentRecord],
-    keep: Option<&str>,
-) -> String {
-    let taken = |candidate: &str| {
-        agents
-            .iter()
-            .any(|record| record.name == candidate && Some(record.pubkey.as_str()) != keep)
-    };
-    if !taken(display_name) {
-        return display_name.to_string();
-    }
-    let mut suffix = 2usize;
-    loop {
-        let candidate = format!("{display_name} {suffix}");
-        if !taken(&candidate) {
-            return candidate;
-        }
-        suffix += 1;
-    }
-}
-
 /// Keep a host-owned value across a role-pack reinstall.
 ///
 /// `slot` starts out as whatever the pack projection produced. A non-blank
@@ -648,8 +628,8 @@ fn carry_over_host_value(slot: &mut Option<String>, previous: Option<&str>) {
 /// second one, which is the whole of D11's "minted once" rule.
 pub fn install_role_packs(
     scan: &RolePackScan,
-    mut definitions: Vec<AgentDefinition>,
-    mut agents: Vec<ManagedAgentRecord>,
+    definitions: Vec<AgentDefinition>,
+    agents: Vec<ManagedAgentRecord>,
     teams: &[TeamRecord],
     now: &str,
     names: &HashMap<String, String>,
@@ -662,13 +642,37 @@ pub fn install_role_packs(
     let team_id = existing_team
         .map(|team| team.id.clone())
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    install_role_packs_for_team(
+        scan,
+        definitions,
+        agents,
+        now,
+        names,
+        mint,
+        team_id,
+        CREW_ROLES_TEAM_NAME,
+        existing_team,
+    )
+}
 
+#[allow(clippy::too_many_arguments)]
+fn install_role_packs_for_team(
+    scan: &RolePackScan,
+    mut definitions: Vec<AgentDefinition>,
+    mut agents: Vec<ManagedAgentRecord>,
+    now: &str,
+    names: &HashMap<String, String>,
+    mint: &mut dyn FnMut() -> Result<MintedCrewIdentity, String>,
+    team_id: String,
+    team_name: &str,
+    existing_team: Option<&TeamRecord>,
+) -> Result<CrewRoleInstall, CrewRoleInstallError> {
     let mut installed: Vec<InstalledCrewRole> = Vec::new();
     let mut persona_ids: Vec<String> = Vec::new();
     let mut roles_to_personas: Vec<(String, String)> = Vec::new();
 
     for pack in &scan.packs {
-        let existing = existing_agent_for(&agents, pack).cloned();
+        let existing = project::existing_agent_for_team(&agents, pack, &team_id).cloned();
         let persona_id = match existing
             .as_ref()
             .and_then(|record| record.persona_id.clone())
@@ -687,8 +691,8 @@ pub fn install_role_packs(
         let agent_name = match existing.as_ref() {
             // A refresh keeps the handle the operator already knows unless the
             // pack renamed the persona; either way the name stays unique.
-            Some(record) => mint_agent_name(wanted_name, &agents, Some(&record.pubkey)),
-            None => mint_agent_name(wanted_name, &agents, None),
+            Some(record) => project::mint_agent_name(wanted_name, &agents, Some(&record.pubkey)),
+            None => project::mint_agent_name(wanted_name, &agents, None),
         };
         // A rename is only a rename when an identity that already existed here
         // ends the run under a different name. A fresh mint is a naming.
@@ -853,7 +857,7 @@ pub fn install_role_packs(
         .collect();
     let team = TeamRecord {
         id: team_id,
-        name: CREW_ROLES_TEAM_NAME.to_string(),
+        name: team_name.to_string(),
         description: existing_team.and_then(|team| team.description.clone()),
         instructions: existing_team.and_then(|team| team.instructions.clone()),
         persona_ids,

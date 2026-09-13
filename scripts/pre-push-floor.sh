@@ -34,6 +34,18 @@ set -uo pipefail
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$repo_root" || exit 1
 
+# Git exports the current repository's local environment into hooks. In a
+# linked worktree that includes an absolute GIT_DIR pointing into the shared
+# repository, so `cargo test` would pass that pointer to every test process and
+# `git -C <temporary-repo>` would still operate on the checkout being pushed.
+# Clear Git's canonical local-variable list after entering this checkout; the
+# floor's own git commands rediscover it from cwd, while every tool and test it
+# launches gets a neutral environment for its temporary repositories.
+while IFS= read -r git_local_variable; do
+  [ -n "$git_local_variable" ] && unset "$git_local_variable"
+done < <(git rev-parse --local-env-vars)
+unset git_local_variable
+
 # Never prompt, and never fetch. `scripts/check-branch-skew.sh` learned this on
 # 2026-08-24: a pre-push hook that waits on a terminal has no terminal to wait
 # on, and `|| true` does not catch a command that never returns.

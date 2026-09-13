@@ -6,7 +6,7 @@
 
 use crate::{app_state::AppState, managed_agents::resolve_command};
 use nostr::{Keys, ToBech32};
-use std::io::Read;
+use std::io::{Read, Write};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 use url::Url;
@@ -219,6 +219,86 @@ pub(crate) fn run_git(
         });
     }
     Ok(outcome.stdout)
+}
+
+/// Run one hardened Git command with caller-owned bytes on stdin and return
+/// stdout without a lossy UTF-8 conversion.  Snapshot publication uses this
+/// for `hash-object` and `cat-file`: Git must receive and return the exact
+/// bytes the snapshot verifier accepted, unaffected by attributes or a
+/// worktree filter.
+pub(crate) fn run_git_bytes(
+    args: &[&str],
+    cwd: Option<&std::path::Path>,
+    auth: &GitAuthConfig,
+    input: &[u8],
+) -> Result<Vec<u8>, String> {
+    let mut command = Command::new(&auth.git_path);
+    command.args(args);
+    if let Some(cwd) = cwd {
+        command.current_dir(cwd);
+    }
+    let needs_credentials = git_needs_credentials(args);
+    let timeout = if needs_credentials {
+        REMOTE_GIT_TIMEOUT
+    } else {
+        LOCAL_GIT_TIMEOUT
+    };
+    configure_git_auth(&mut command, auth, needs_credentials);
+    command.stdin(Stdio::piped());
+    command.stdout(Stdio::piped());
+    command.stderr(Stdio::piped());
+    crate::util::configure_no_window(&mut command);
+
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("failed to run git: {error}"))?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| "git did not expose stdin".to_string())?;
+    stdin
+        .write_all(input)
+        .map_err(|error| format!("write git stdin: {error}"))?;
+    drop(stdin);
+
+    let stdout_pipe = child.stdout.take();
+    let stderr_pipe = child.stderr.take();
+    let stdout_thread = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        if let Some(mut pipe) = stdout_pipe {
+            let _ = pipe.read_to_end(&mut bytes);
+        }
+        bytes
+    });
+    let stderr_thread = std::thread::spawn(move || read_pipe_lossy(stderr_pipe));
+    let started = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if started.elapsed() > timeout => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = stdout_thread.join();
+                let _ = stderr_thread.join();
+                return Err(format!("git timed out after {}s", timeout.as_secs()));
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(50)),
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("failed to wait for git: {error}"));
+            }
+        }
+    };
+    let stdout = stdout_thread.join().unwrap_or_default();
+    let stderr = stderr_thread.join().unwrap_or_default();
+    if status.success() {
+        Ok(stdout)
+    } else if stderr.trim().is_empty() {
+        Err(format!("git exited with status {status}"))
+    } else {
+        Err(stderr.trim().to_string())
+    }
 }
 
 fn configure_git_auth(command: &mut Command, auth: &GitAuthConfig, needs_credentials: bool) {

@@ -24,11 +24,13 @@ import {
 export function ProjectTeamSetupForm({
   projectRef,
   relayUrl,
+  projectName,
   onStartAuthoring,
   renderAuthoring,
 }: {
   projectRef: string;
   relayUrl: string;
+  projectName?: string;
   onStartAuthoring?: StartProjectTeamAuthoring;
   renderAuthoring?: (
     draft: ProjectTeamSetupDraft,
@@ -107,6 +109,7 @@ export function ProjectTeamSetupForm({
         draft={draft}
         key={draft.setupId}
         onStartAuthoring={onStartAuthoring}
+        projectName={projectName}
         authoring={
           renderAuthoring
             ? (onDraftMayChange) => renderAuthoring(draft, onDraftMayChange)

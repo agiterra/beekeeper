@@ -12,9 +12,11 @@ use crate::coding_sessions::workdir_store::{
     is_inside_worktree_parent, load_workdir_store_readonly_from, seat_worktree_key,
     CodingSessionWorkdirStore, WORKDIR_STORE_VERSION,
 };
+use crate::commands::project_git_exec::GIT_REPO_SELECTION_VARS;
 
 fn git(args: &[&str], cwd: &Path) {
-    let status = Command::new("git")
+    let mut command = Command::new("git");
+    command
         .args(args)
         .current_dir(cwd)
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
@@ -22,9 +24,11 @@ fn git(args: &[&str], cwd: &Path) {
         .env("GIT_AUTHOR_NAME", "L11")
         .env("GIT_AUTHOR_EMAIL", "l11@example.invalid")
         .env("GIT_COMMITTER_NAME", "L11")
-        .env("GIT_COMMITTER_EMAIL", "l11@example.invalid")
-        .output()
-        .expect("run git");
+        .env("GIT_COMMITTER_EMAIL", "l11@example.invalid");
+    for key in GIT_REPO_SELECTION_VARS {
+        command.env_remove(key);
+    }
+    let status = command.output().expect("run git");
     assert!(
         status.status.success(),
         "git {args:?} failed: {}",

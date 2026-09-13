@@ -56,6 +56,8 @@ async function openRoles(page: Page, failGet = false) {
       let draft: ProjectTeamSetupDraft | null = null;
       let reservation: Record<string, unknown> | null = null;
       let launch: ProjectTeamSetupLaunch | null = null;
+      let publication: Record<string, unknown> | null = null;
+      let activation: Record<string, unknown> | null = null;
       let provisioned = false;
       let startCount = 0;
       w.__setupCalls = [];
@@ -121,6 +123,131 @@ async function openRoles(page: Page, failGet = false) {
           };
         if (command === "project_team_setup_get_authoring") return reservation;
         if (command === "project_team_setup_get_launch") return launch;
+        if (command === "project_team_setup_get_publication_options")
+          return {
+            currentSourceEventId: null,
+            suggestedDestination: {
+              repoRef: `30617:${owner}:tankloop-packs-0123456789ab`,
+              packPath: "personas/roles",
+              baseCommit: null,
+              createAnnouncement: {
+                name: "Tankloop role packs",
+                description: "Project role packs",
+              },
+            },
+            sourceExpectation: { kind: "if_unset" },
+            publication,
+          };
+        if (command === "project_team_setup_get_publication")
+          return publication;
+        if (command === "project_team_setup_get_activation") return activation;
+        if (command === "project_team_setup_install_adopted_roles") {
+          if (!publication) throw new Error("Publish first");
+          activation = {
+            publicationId: "publication-1",
+            source: {
+              repoRef: `30617:${owner}:tankloop-packs-0123456789ab`,
+              commit: "c".repeat(40),
+              packPath: "personas/roles",
+            },
+            installation: {
+              status: "installed",
+              installedRoles: [
+                {
+                  role: "lead",
+                  agentPubkey: "f".repeat(64),
+                  packRef: {
+                    repo: `30617:${owner}:tankloop-packs-0123456789ab`,
+                    sha: "c".repeat(40),
+                    role: "lead",
+                    path: "personas/roles/lead",
+                  },
+                },
+              ],
+              message: "Installed from the adopted revision.",
+            },
+            lead: {
+              status: "needs_channel",
+              channelId: null,
+              sessionRef: null,
+              message:
+                "Create or select this project's session channel before starting its lead.",
+            },
+          };
+          return activation;
+        }
+        if (command === "project_team_setup_ensure_lead_channel") {
+          if (!activation) throw new Error("Install first");
+          activation = {
+            ...activation,
+            lead: {
+              status: "ready",
+              channelId: "project-session-channel",
+              sessionRef: null,
+              message: "Project session channel recorded for this publication.",
+            },
+          };
+          return activation;
+        }
+        if (command === "project_team_setup_start_lead") {
+          if (!activation) throw new Error("Install first");
+          activation = {
+            ...activation,
+            lead: {
+              status: "started",
+              channelId: String(args.channelId),
+              sessionRef: "lead-session-1",
+              message: "The reserved project lead is running.",
+            },
+          };
+          return activation;
+        }
+        if (command === "project_team_setup_start_publication") {
+          publication ??= {
+            publicationId: "publication-1",
+            setupId: String(args.setupId),
+            status: "adopted",
+            snapshotId: "a".repeat(64),
+            destination: {
+              repoRef: `30617:${owner}:tankloop-packs-0123456789ab`,
+              packPath: "personas/roles",
+              baseCommit: null,
+              createAnnouncement: {
+                name: "Tankloop role packs",
+                description: "Project role packs",
+              },
+            },
+            sourceExpectation: { kind: "if_unset" },
+            candidateRef: "refs/heads/setup/publication-1",
+            candidateCommit: "c".repeat(40),
+            sourceEventId: "d".repeat(64),
+            message: null,
+          };
+          activation ??= {
+            publicationId: "publication-1",
+            source: {
+              repoRef: `30617:${owner}:tankloop-packs-0123456789ab`,
+              commit: "c".repeat(40),
+              packPath: "personas/roles",
+            },
+            installation: {
+              status: "not_installed",
+              installedRoles: [],
+              message: null,
+            },
+            lead: {
+              status: "needs_channel",
+              channelId: null,
+              sessionRef: null,
+              message: "Install roles before starting the lead.",
+            },
+          };
+          return publication;
+        }
+        if (command === "project_team_setup_continue_publication") {
+          if (!publication) throw new Error("Start publication first");
+          return publication;
+        }
         if (command === "project_team_setup_reserve_authoring") {
           reservation ??= {
             authoringId: "authoring-1",
@@ -279,7 +406,7 @@ test("open is read-only; explicit preparation and validation stay separate from 
   ).toContainText("has not been checked yet");
   await expect(
     dialog.getByTestId("project-team-setup-publication"),
-  ).toContainText("has not been published or applied");
+  ).toContainText("Draft edits stay local");
   expect(
     (await setupCalls(page)).filter(
       (call) => call.command === "project_team_setup_prepare",
@@ -348,7 +475,7 @@ test("saving and reopening reverify the same separate copy; failed retry clears 
     .click();
   await save.click();
   await expect(dialog.getByRole("status")).toContainText(
-    "Later draft edits do not change this copy. It has not been published.",
+    "Later draft edits do not change this copy. Publication status appears below.",
   );
   await dialog.getByText("Saved version details", { exact: true }).click();
   await expect(dialog.getByRole("status")).toContainText("a".repeat(64));
@@ -406,17 +533,106 @@ test("saving and reopening reverify the same separate copy; failed retry clears 
   await expect(dialog.getByRole("status")).toHaveCount(0);
   await expect(
     dialog.getByTestId("project-team-setup-publication"),
-  ).toContainText("has not been published or applied");
+  ).toContainText("Draft edits stay local");
   expect((await workbenchCalls(page)).map((call) => call.command)).toEqual([
     "project_team_setup_get",
     "project_team_setup_prepare",
     "project_team_setup_validate",
     "project_team_setup_snapshot",
+    "project_team_setup_get_publication_options",
     "project_team_setup_get",
     "project_team_setup_snapshot",
+    "project_team_setup_get_publication_options",
     "project_team_setup_validate",
     "project_team_setup_snapshot",
   ]);
+});
+
+test("checked draft publishes, installs the adopted source, and starts one project lead", async ({
+  page,
+}) => {
+  await openRoles(page);
+  const dialog = page.getByTestId("project-team-setup-dialog");
+  await dialog
+    .getByLabel("What should this project accomplish?")
+    .fill("Maintain Tankloop reliably.");
+  await dialog
+    .getByLabel("Local project repository")
+    .fill("/projects/tankloop");
+  await dialog
+    .getByRole("button", { name: "Prepare draft", exact: true })
+    .click();
+  await dialog
+    .getByRole("button", { name: "Check draft", exact: true })
+    .click();
+  await dialog
+    .getByRole("button", { name: "Save checked version", exact: true })
+    .click();
+  await expect(
+    dialog.getByRole("button", { name: "Publish checked version" }),
+  ).toBeVisible();
+  await dialog.getByRole("button", { name: "Publish checked version" }).click();
+  await expect(dialog).toContainText("Shared project source adopted");
+  await expect(
+    dialog.getByTestId("project-team-setup-adopted-source"),
+  ).toContainText("c".repeat(40));
+  await expect(
+    dialog.getByRole("button", { name: "Install project roles" }),
+  ).toBeVisible();
+  await dialog.getByRole("button", { name: "Install project roles" }).click();
+  await expect(
+    dialog.getByTestId("project-team-setup-installed-roles"),
+  ).toContainText("lead");
+  await dialog
+    .getByRole("button", { name: "Create project session channel" })
+    .click();
+  await expect(
+    dialog.getByRole("button", { name: "Start project lead" }),
+  ).toBeVisible();
+  await dialog.getByRole("button", { name: "Start project lead" }).click();
+  await expect(
+    dialog.getByTestId("project-team-setup-lead-started"),
+  ).toContainText("lead-session-1");
+  await page.keyboard.press("Escape");
+  await expect(dialog).not.toBeVisible();
+  await page.getByTestId("project-team-setup-open").click();
+  await expect(
+    dialog.getByTestId("project-team-setup-adopted-source"),
+  ).toContainText("c".repeat(40));
+  await expect(
+    dialog.getByTestId("project-team-setup-lead-started"),
+  ).toContainText("lead-session-1");
+  await expect(
+    dialog.getByRole("button", { name: "Create project session channel" }),
+  ).toHaveCount(0);
+  const publicationCall = (await setupCalls(page)).find(
+    (call) => call.command === "project_team_setup_start_publication",
+  );
+  expect(publicationCall?.args).toMatchObject({
+    projectRef: PROJECT,
+    setupId: "setup-tankloop",
+    output: { kind: "snapshot", snapshotId: "a".repeat(64) },
+    sourceExpectation: { kind: "if_unset" },
+  });
+  const calls = await setupCalls(page);
+  expect(
+    calls.filter(
+      (call) => call.command === "project_team_setup_start_publication",
+    ),
+  ).toHaveLength(1);
+  expect(
+    calls.filter(
+      (call) => call.command === "project_team_setup_install_adopted_roles",
+    ),
+  ).toHaveLength(1);
+  expect(
+    calls.filter(
+      (call) => call.command === "project_team_setup_ensure_lead_channel",
+    ),
+  ).toHaveLength(1);
+  expect(
+    calls.filter((call) => call.command === "project_team_setup_start_lead"),
+  ).toHaveLength(1);
 });
 
 test("a failed saved-draft read stays actionable and retry never creates a draft", async ({

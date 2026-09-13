@@ -60,6 +60,14 @@ for tool in cargo pnpm just flutter node_stub; do
   cat >"$work/bin/$tool" <<STUB
 #!/usr/bin/env bash
 echo "$tool \$*" >>"\$STUB_LOG"
+if [ "\${STUB_REFUSE_GIT_REPO_ENV:-}" = "1" ]; then
+  for key in \$(git rev-parse --local-env-vars); do
+    if env | grep -q "^\${key}="; then
+      echo "$tool: inherited \${key} from the repository running the hook" >&2
+      exit 97
+    fi
+  done
+fi
 if [ -n "\${STUB_FAIL_MATCH:-}" ] && [[ "$tool \$*" == *"\$STUB_FAIL_MATCH"* ]]; then
   echo "$tool: stubbed failure" >&2
   exit 1
@@ -307,6 +315,25 @@ push_out=$(
 )
 check_contains "the push printed the floor's summary" "$push_out" "pre-push floor: buzz-cli ("
 check_equal "and ran cargo exactly three times" "$(count_of cargo)" "3"
+
+echo "── 9b. a push from a linked worktree does not leak its repository into tests"
+# Git gives a linked-worktree hook an absolute GIT_DIR in the shared
+# repository. That pointer used to survive into `cargo test`, where a fixture's
+# `git -C <temp>` consequently committed to and reconfigured the real branch.
+linked="$work/linked"
+git -C "$scratch" worktree add --quiet -b linked-hook "$linked" cli-only
+git -C "$scratch" config core.hooksPath "$scratch/.githooks"
+: >"$work/stub.log"
+push_out=$(
+  cd "$linked" && PATH="$work/bin:$PATH" STUB_LOG="$work/stub.log" \
+    STUB_REFUSE_GIT_REPO_ENV=1 \
+    BUZZ_PRE_PUSH_FLOOR_GRAPH="$work/graph.json" \
+    git push --quiet "$bare" linked-hook 2>&1
+)
+push_status=$?
+check_equal "the linked-worktree push exits 0" "$push_status" "0"
+check_contains "its hook printed the floor's summary" "$push_out" "pre-push floor: buzz-cli ("
+check_equal "all three cargo steps received a neutral git environment" "$(count_of cargo)" "3"
 
 git -C "$scratch" config --unset core.hooksPath
 : >"$work/stub.log"

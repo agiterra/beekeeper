@@ -16,9 +16,9 @@ unknown and both links are kept. "Ledger §" means a heading in
 
 | Surface | Observed | How |
 | --- | --- | --- |
-| `main` on the relay and on GitHub | `e12495c63`, checked 2026-09-13; steering, setup authoring and startup corrections landed on top of Andy’s redaction fix | `git fetch origin main` then `git rev-parse FETCH_HEAD`; `GIT_TERMINAL_PROMPT=0 git ls-remote upstream refs/heads/main` |
+| `main` on the relay and on GitHub | `060052b33`, checked 2026-09-13; steering, setup authoring and startup corrections landed on top of Andy’s redaction fix | `git fetch origin main` then `git rev-parse FETCH_HEAD`; `GIT_TERMINAL_PROMPT=0 git ls-remote upstream refs/heads/main` |
 | Relay at hive.agiterra.org | `build_time` `2026-09-10T19:48:29Z`; `software_commit` is `unknown`, a disclosed non-answer from the stale deployer (ledger §3a, "hive's `software_commit` is `unknown`") | `curl -s -H 'Accept: application/nostr+json' https://hive.agiterra.org/ \| jq '{software_commit, build_time}'` |
-| Installed Mac dev bundle | `/Users/brian/Applications/Beekeeper Dev.app`, built 2026-09-11 from `77b792de9`, two commits behind `main`; its bundled `bee --version` reports `77b792de` | ledger § "September 11 — latest main rebuilt"; log `../review-2026-09-11-local-rebuild/build.log` |
+| Installed Mac dev bundle | `/Users/brian/Applications/Beekeeper Dev.app`, built 2026-09-11 from `77b792de9`; rebuild pending; its bundled `bee --version` reports `77b792de` | ledger § "September 11 — latest main rebuilt"; log `../review-2026-09-11-local-rebuild/build.log` |
 | Windows | unavailable: Brian no longer has the Windows machine (2026-09-09). Native Windows agent setup and cross-account acceptance are deferred, not done | ledger § "September 9 checkpoint published; Windows testing deferred" |
 | Mobile | not independently checked for this map. Last recorded claim: the phone drops a deleted session only on its next channel refresh (Andy, 2026-09-11) | ledger § "Fixed 2026-09-11 — Discard deletes a never-started session" |
 
@@ -30,12 +30,12 @@ on 2026-09-09, with `just ci` and `just test` green on that exact commit
 
 | Work | Owner | State (check date in row) | Where |
 | --- | --- | --- | --- |
-| Project team setup and neutral baseline | Astra | 2026-09-13: the Tankloop → Roles → Set up project team path supports draft, authoring, validation and snapshot. Publication, project-qualified installation and lead handoff remain the next milestone; no installed or published changes | [`PROJECT_TEAM_SETUP_IMPL.md`](PROJECT_TEAM_SETUP_IMPL.md), [authoring evidence](history/2026-09-11-project-team-setup.md), [publication checkpoint](history/2026-09-12-project-team-publication.md) |
-| Native mid-turn steering for Claude sessions | Fable/Opus candidate; Astra integrates | 2026-09-13: static checks and fresh E2E build passed; selected browser matrix was 44 passed/1 failed, only dense history. Isolated dense repeat also failed (336/450; matrix 286/450), so diagnosis remains open. Brian accepted landing with that limitation; final CI completed successfully; [recovered evidence](history/2026-09-13-final-ci-recovery.md) records every recipe leg. Push completed as `e12495c63`; installation and installed UI acceptance remain pending | [startup evidence](history/2026-09-13-startup-smoke-corrections.md), [integration evidence](history/2026-09-12-steering-integration.md), `NATIVE_STEERING_IMPL.md` |
+| Project team setup and neutral baseline | Astra integrates Terra/Sol work | 2026-09-13: first-project checked snapshot → publication → local installation → lead handoff implemented and reviewed. Nine native tests, twelve UI tests, typecheck and one fresh browser flow pass. Live Tankloop and installed-app acceptance pending; existing-source maintenance deliberately refuses without provenance | [`PROJECT_TEAM_ACTIVATION_SLICE.md`](PROJECT_TEAM_ACTIVATION_SLICE.md), [activation evidence](history/2026-09-13-project-team-activation.md), [`PROJECT_TEAM_SETUP_IMPL.md`](PROJECT_TEAM_SETUP_IMPL.md) |
+| Native mid-turn steering for Claude sessions | Fable/Opus; landed by Astra | 2026-09-13: static checks and fresh E2E build passed; selected browser matrix was 44 passed/1 failed, only dense history. Isolated dense repeat also failed (336/450; matrix 286/450), so diagnosis remains open. Brian accepted landing with that limitation; final CI completed successfully; [recovered evidence](history/2026-09-13-final-ci-recovery.md) records every recipe leg. Push completed as `e12495c63`; installation and installed UI acceptance remain pending | [startup evidence](history/2026-09-13-startup-smoke-corrections.md), [integration evidence](history/2026-09-12-steering-integration.md), `NATIVE_STEERING_IMPL.md` |
 | Automatic project context beside ordinary agent work | paused by Brian on 2026-09-10 | findings saved; next step is proving a harmless marker reaches a fresh Claude session through a hook | ledger § "September 10 — automatic project context: findings saved, work paused" |
 | Collaborative workspace plan, ordered steps 0–6 | Astra finalizes and lands `main`; Fable takes delegated slices; Andy lands his own topic branches | steps 0–4 have integrated candidates per the ledger's September 7–9 sections; no landing of steps 5 or 6 is recorded anywhere found, so treat them as open | [`COLLABORATIVE_WORKSPACE_PLAN.md`](COLLABORATIVE_WORKSPACE_PLAN.md) |
 | Founded-session fixes: Discard deletes, project filing | Andy | landed on `main` 2026-09-11 | ledger § "Fixed 2026-09-11 —" (two items) |
-| Revealed-redaction badge as an icon; a streaming transcript resolves every marker | Andy | landing 2026-09-13 on `fix/redaction-pill` | ledger § "Fixed 2026-09-13 — the revealed-redaction badge is an icon" |
+| Revealed-redaction badge as an icon; a streaming transcript resolves every marker | Andy | landed 2026-09-13 as `343ea8bd9`, included in current main | ledger § "Fixed 2026-09-13 — the revealed-redaction badge is an icon" |
 | Delegated agent-directory visibility follow-up | unassigned | "can resume separately on main" (Astra, 2026-09-09) | ledger § "September 9 main published" |
 | This map, the ledger split and its size gate | Fable | landed 2026-09-11 (`f80781969`); lead pack landed on `agiterra-packs` (`5f4ae76fa`) | `AGENTS.md` top block; `scripts/check-current-state-size.mjs` |
 
@@ -79,8 +79,8 @@ Rules, each with where it is written down.
   failure.
 - ~~**Native steering** is blocked on proving adapter support.~~ Proven
   2026-09-11 against the installed adapters (ledger item 114); what remains
-  owed includes broad integration/browser gates and live use in an installed build with a real
-  session. The queued-steer prevention race found during integration is corrected
+  owed is live use in an installed build with a real
+  session; the completed gate and selected browser evidence are linked above. The queued-steer prevention race found during integration is corrected
   and has a failing-before/passing-after process test. codex-acp 1.6.2 has no idle guard and stays in boundary mode.
 - **Automatic context** is blocked on Brian resuming it; the Claude hook
   transport is a candidate, not proven in the installed adapter.
@@ -99,32 +99,25 @@ Rules, each with where it is written down.
 
 ## Next, in order
 
-Project team setup milestone 1 is checked locally. The Tankloop → Roles → Set up project team path now covers draft, authoring, validation and snapshot. Publication using an isolated Git candidate ref, project-qualified installation and lead handoff are the next milestone. Ordinary Solo remains independent. No push, installation or relay deployment is claimed.
+The steering/startup/setup-authoring stack is published on main. The activation
+slice is committed for final landing; it preserves ordinary Solo sessions and
+separates publication, installation and provider-confirmed lead startup.
 
-1. Done 2026-09-11: the lead pack revision landed on the packs repository
-   (`agiterra-packs` `main` at `5f4ae76fa`, the tree seats stage from; this
-   repo's `personas/roles` is only its source). The project's pack source
-   pins `refs/heads/main`, which the host fetches on every staging
-   (`desktop/src-tauri/src/managed_agents/packs_cache.rs`, `sync_packs_checkout`),
-   so a seat hired from now on reads the new pointer. Seats already running
-   keep the revision they staged; none were restarted. Check with
-   `bee packs status --project <coordinate> --role lead`.
-2. After landing the verified combined candidate, rebuild the installed Mac
-   bundle with `scripts/app-from.sh <sha>` for the already-authorized live test.
-3. The reviewed steering and project-setup candidates are combined on
-   `work/steering-integration-astra`. Brian accepted landing on 2026-09-13
-   with the known dense-history limitation: the fresh selected matrix was
-   44 passed/1 failed (286/450 dense rows) and the isolated repeat failed
-   at 336/450. Final CI completed successfully; rebase onto Andy’s new main, land, push and rebuild the
-   installed Mac bundle with `scripts/app-from.sh <sha>`. Dense diagnosis
-   continues after landing. The separate umbrella layout remains open; see
-   the September 13 report and ledger 121–123.
-4. When Brian resumes automatic context: the hook-marker experiment exactly as
-   the ledger's September 10 section specifies it.
-5. Implement host publication from `PROJECT_TEAM_PUBLICATION_IMPL.md`: one
-   scoped reservation, exact output snapshot, isolated Git push and conditional
-   SHA adoption. Then project-qualified installation and lead handoff.
-   Collaborative workspace plan steps 5 and 6 remain separate.
+1. Land the reviewed activation commit, then rebuild the installed Mac bundle
+   once with `scripts/app-from.sh <sha>`. No manual relay deployment is authorized.
+2. Exercise installed Claude Steer/Queue next and the first-project setup flow.
+   Live Tankloop mutation has not been performed; the fixture run is not live
+   acceptance. Existing-source maintenance and automatic setup completion are
+   deferred, as the [activation report](history/2026-09-13-project-team-activation.md) explains.
+3. Diagnose the accepted dense-history limitation after landing: the selected
+   matrix was 44 passed/1 failed (286/450 rows), and its isolated repeat reached
+   336/450. No repeated full smoke marathon is required for the activation slice.
+4. The lead pack is already published in `agiterra-packs` at `5f4ae76fa`.
+   Running seats retain their staged revision; use `bee packs status` to inspect
+   a project's source before claiming that a live seat has the new instructions.
+5. When Brian resumes automatic context, run the hook-marker experiment in the
+   ledger's September 10 section. Collaborative workspace plan steps 5 and 6
+   remain separate.
 
 ## Environment facts most likely to bite first
 
