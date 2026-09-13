@@ -12,7 +12,7 @@ import {
 const GOAL_HISTORY_LIMIT = 1000;
 
 type GoalClient = {
-  fetchEvents(filter: RelaySubscriptionFilter): Promise<RelayEvent[]>;
+  fetchEventsCoalesced(filter: RelaySubscriptionFilter): Promise<RelayEvent[]>;
   subscribeLive(
     filter: RelaySubscriptionFilter,
     onEvent: (event: RelayEvent) => void,
@@ -88,7 +88,7 @@ export function useCodingSessionGoals(
     };
     const load = () => {
       void client
-        .fetchEvents(
+        .fetchEventsCoalesced(
           buildCodingSessionGoalFilter(stableChannelIds, GOAL_HISTORY_LIMIT),
         )
         .then((history) => {

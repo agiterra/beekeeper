@@ -112,3 +112,63 @@ export function useNarrowCodingSessionWorkspace(
 
   return isNarrow;
 }
+
+/**
+ * Keep the transcript viewport bounded when fixed chrome no longer fits.
+ * Only the stable shell scrolls additionally; the transcript keeps its
+ * element, virtualizer and anchoring. Observe the fixed shell border box,
+ * not its scrollHeight, so entering normal flow cannot grow the fit budget.
+ */
+export function useCodingSessionReflow(
+  workspaceRef: React.RefObject<HTMLElement | null>,
+  dockRef: React.RefObject<HTMLDivElement | null>,
+): { active: boolean; height: number } {
+  const [fit, setFit] = React.useState({ active: false, height: 0 });
+  React.useLayoutEffect(() => {
+    const workspace = workspaceRef.current;
+    if (!workspace) return;
+    const shell =
+      workspace.closest<HTMLElement>('[data-testid="coding-session-shell"]') ??
+      workspace;
+    const handover = shell.querySelector<HTMLElement>(
+      '[data-testid="coding-session-handover-slot"]',
+    );
+    const header = workspace.querySelector<HTMLElement>(
+      '[data-testid="coding-session-authority-summary"]',
+    );
+    const goal = workspace.querySelector<HTMLElement>(
+      '[data-testid="coding-session-goal-slot"]',
+    );
+    const dock = dockRef.current;
+    const update = () => {
+      const height = shell.clientHeight;
+      if (height <= 0) return;
+      const rootSize = Number.parseFloat(
+        window.getComputedStyle(document.documentElement).fontSize,
+      );
+      const readingRoom = (Number.isFinite(rootSize) ? rootSize : 16) * 6;
+      const chrome = [handover, header, goal, dock].reduce(
+        (total, element) =>
+          total + (element?.getBoundingClientRect().height ?? 0),
+        0,
+      );
+      const active = chrome + readingRoom > height;
+      setFit((previous) =>
+        previous.active === active && previous.height === height
+          ? previous
+          : { active, height },
+      );
+    };
+    update();
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", update);
+      return () => window.removeEventListener("resize", update);
+    }
+    const observer = new ResizeObserver(update);
+    for (const element of [shell, handover, header, goal, dock]) {
+      if (element) observer.observe(element);
+    }
+    return () => observer.disconnect();
+  });
+  return fit;
+}

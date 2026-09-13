@@ -12,11 +12,11 @@ sources disagreed and the evidence could not settle it, the state is marked
 unknown and both links are kept. "Ledger §" means a heading in
 [`SESSION_STATE.md`](SESSION_STATE.md); find it with `grep -n`.
 
-## What is live (checked 2026-09-11)
+## What is live (check dates in observations)
 
 | Surface | Observed | How |
 | --- | --- | --- |
-| `main` on the relay and on GitHub | Andy's `49b4f81c4` ("a founded session files under its project, not General") plus this map's landing commit on top of it | `GIT_TERMINAL_PROMPT=0 git ls-remote origin refs/heads/main`, same for `upstream` |
+| `main` on the relay and on GitHub | `9aebb1262`, checked 2026-09-12; no newer commit arrived during integration | `git fetch origin main` then `git rev-parse FETCH_HEAD`; `GIT_TERMINAL_PROMPT=0 git ls-remote upstream refs/heads/main` |
 | Relay at hive.agiterra.org | `build_time` `2026-09-10T19:48:29Z`; `software_commit` is `unknown`, a disclosed non-answer from the stale deployer (ledger §3a, "hive's `software_commit` is `unknown`") | `curl -s -H 'Accept: application/nostr+json' https://hive.agiterra.org/ \| jq '{software_commit, build_time}'` |
 | Installed Mac dev bundle | `/Users/brian/Applications/Beekeeper Dev.app`, built 2026-09-11 from `77b792de9`, two commits behind `main`; its bundled `bee --version` reports `77b792de` | ledger § "September 11 — latest main rebuilt"; log `../review-2026-09-11-local-rebuild/build.log` |
 | Windows | unavailable: Brian no longer has the Windows machine (2026-09-09). Native Windows agent setup and cross-account acceptance are deferred, not done | ledger § "September 9 checkpoint published; Windows testing deferred" |
@@ -30,7 +30,7 @@ on 2026-09-09, with `just ci` and `just test` green on that exact commit
 
 | Work | Owner | State (2026-09-11) | Where |
 | --- | --- | --- | --- |
-| Native mid-turn steering for Claude sessions | Fable built the runtime, Opus the experience; Astra reviews and integrates | candidate on `work/native-steering-fable` (2026-09-12): Claude injects natively with the `promptRequired` idle guard, Codex stays boundary; a working execution can now be asked for the boundary explicitly, a downgrade names the provider's own reason, and a delivery-unknown input can be copied back to the draft; not landed, not installed | ledger item 110; [`history/2026-09-11-native-steering.md`](history/2026-09-11-native-steering.md), [`history/2026-09-12-steering-experience.md`](history/2026-09-12-steering-experience.md); `NATIVE_STEERING_IMPL.md` |
+| Native mid-turn steering for Claude sessions | Fable/Opus candidate; Astra integrates | 2026-09-12: runtime queued-steer fence correction passes 58 ACP/46 provider tests; three original browser failures and five steering cases pass. Both short-window cases pass; authority and persistence review closed with focused tests/clippy green. Combined gates pending. No push or installation | [integration evidence](history/2026-09-12-steering-integration.md), `NATIVE_STEERING_IMPL.md` |
 | Automatic project context beside ordinary agent work | paused by Brian on 2026-09-10 | findings saved; next step is proving a harmless marker reaches a fresh Claude session through a hook | ledger § "September 10 — automatic project context: findings saved, work paused" |
 | Collaborative workspace plan, ordered steps 0–6 | Astra finalizes and lands `main`; Fable takes delegated slices; Andy lands his own topic branches | steps 0–4 have integrated candidates per the ledger's September 7–9 sections; no landing of steps 5 or 6 is recorded anywhere found, so treat them as open | [`COLLABORATIVE_WORKSPACE_PLAN.md`](COLLABORATIVE_WORKSPACE_PLAN.md) |
 | Founded-session fixes: Discard deletes, project filing | Andy | landed on `main` 2026-09-11 | ledger § "Fixed 2026-09-11 —" (two items) |
@@ -76,8 +76,9 @@ Rules, each with where it is written down.
   failure.
 - ~~**Native steering** is blocked on proving adapter support.~~ Proven
   2026-09-11 against the installed adapters (ledger item 110); what remains
-  owed is live use of the candidate in an installed build with a real
-  session. codex-acp 1.6.2 has no idle guard and stays in boundary mode.
+  owed includes final combined gates and live use in an installed build with a real
+  session. The queued-steer prevention race found during integration is corrected
+  and has a failing-before/passing-after process test. codex-acp 1.6.2 has no idle guard and stays in boundary mode.
 - **Automatic context** is blocked on Brian resuming it; the Claude hook
   transport is a candidate, not proven in the installed adapter.
 - ~~**Unknown:** whether the 62 e2e-smoke failures that ledger §1 calls
@@ -99,14 +100,11 @@ Rules, each with where it is written down.
    `bee packs status --project <coordinate> --role lead`.
 2. Rebuild the installed Mac bundle from `main` when Andy's two fixes need
    live use: `scripts/app-from.sh <sha>`. Brian's call.
-3. Astra reviews and lands `work/native-steering-fable` (ledger item 110 and
-   the two history notes), then rebuilds the bundle and exercises, in a real
-   Claude session: a steer with a unique marker, an explicit Queue next, and
-   a delivery-unknown answer recovered with Copy to draft. The six smoke
-   failures of item 111 still need an owner, as do two findings in
-   [`history/2026-09-12-steering-experience.md`](history/2026-09-12-steering-experience.md):
-   the 250% panel-fit defect (F1) and three smoke specs that fail since the
-   rebase onto `9aebb1262`, before any steering-experience change (F3).
+3. Combine the reviewed steering corrections with the project-setup candidate,
+   then run full gates before landing and
+   installed Claude acceptance. All three reported browser failures now pass
+   in the focused integration run. The original smoke findings and the
+   separate umbrella layout remain open; see the integration evidence above.
 4. When Brian resumes automatic context: the hook-marker experiment exactly as
    the ledger's September 10 section specifies it.
 5. Plan steps 5 and 6.

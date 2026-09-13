@@ -25,10 +25,13 @@ export function useCreateProjectRemoteBranchMutation(
         ...input,
       });
     },
-    onSuccess: () =>
-      queryClient.invalidateQueries({
+    onSuccess: () => {
+      // The remote operation already succeeded. Unrelated project reads must
+      // not keep its mutation pending; query errors remain in their sections.
+      void queryClient.invalidateQueries({
         queryKey: ["project", project?.id ?? "none"],
-      }),
+      });
+    },
   });
 }
 
@@ -45,11 +48,39 @@ export function useDeleteProjectRemoteBranchMutation(
         ...input,
       });
     },
-    onSuccess: () =>
-      queryClient.invalidateQueries({
+    onSuccess: () => {
+      // The remote operation already succeeded. Unrelated project reads must
+      // not keep its mutation pending; query errors remain in their sections.
+      void queryClient.invalidateQueries({
         queryKey: ["project", project?.id ?? "none"],
-      }),
+      });
+    },
   });
+}
+
+function refreshAfterBranchMutation(
+  refetch: () => Promise<unknown>,
+  action: "created" | "deleted",
+) {
+  void refetch()
+    .then((result) => {
+      // React Query refetch normally resolves with an error result rather
+      // than rejecting. Either form is a read failure after a successful write.
+      if (
+        result &&
+        typeof result === "object" &&
+        "error" in result &&
+        result.error
+      ) {
+        throw result.error;
+      }
+    })
+    .catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : "Unknown error.";
+      toast.warning(
+        `Branch ${action}, but repository refresh failed: ${message}`,
+      );
+    });
 }
 
 /** Coordinates branch dialogs and refreshes around the remote mutations. */
@@ -82,10 +113,10 @@ export function useProjectBranchActions(input: {
         expectedCommit: input.activeBranchCommit,
         newBranch,
       });
-      await input.refetchRepoState();
       input.rememberBranch({ name: result.branch, commit: result.commit });
       input.selectBranch(result.branch);
       toast.success(result.message);
+      refreshAfterBranchMutation(input.refetchRepoState, "created");
     },
     [
       createBranch,
@@ -110,8 +141,8 @@ export function useProjectBranchActions(input: {
     });
     input.forgetBranch(result.branch);
     input.selectBranch(input.defaultBranch);
-    await input.refetchRepoState();
     toast.success(result.message);
+    refreshAfterBranchMutation(input.refetchRepoState, "deleted");
   }, [
     deleteBranch,
     input.activeBranch,

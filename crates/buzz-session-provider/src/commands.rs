@@ -3303,6 +3303,7 @@ mod tests {
                 text: None,
                 framing: None,
                 fenced_after_dispatch: false,
+                native_authority_refusal: None,
             },
         );
         // A cancel already in an actor's mailbox whose ledger append failed:

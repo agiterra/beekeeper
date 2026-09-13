@@ -125,8 +125,8 @@ The nine smoke failures, each checked against evidence rather than assumed:
 | `coding-session-observations.spec.ts:33`, `:114`, `:144` | pre-existing | three of the six ledger item 111 found failing on untouched base `77b792de9` |
 | `coding-sessions.spec.ts:458` | pre-existing | ledger item 111 |
 | `project-packs.spec.ts:40` | pre-existing | ledger item 111 |
-| `coding-session-mission-lens.spec.ts:1121` | predates this change | fails identically (inspector reads *Goal not read yet*) on `0963723b4`, the commit before this change; passed in Fable's pre-rebase run, so it arrived with the rebase onto `9aebb1262` |
-| `project-pr-review.spec.ts:1213` | predates this change | fails on `0963723b4`; its error is *navigation invoked commands outside the read-only set: get_relay_self* |
+| `coding-session-mission-lens.spec.ts:1121` | predates this change | fails identically (inspector reads *Goal not read yet*) on `0963723b4`, the commit before this change; passed in Fable's pre-rebase run, ~~so it arrived with the rebase onto `9aebb1262`~~. The differing runs establish an observed failure, not its introducing commit; the integration trace identifies delayed goal reads |
+| `project-pr-review.spec.ts:1213` | predates this change | fails on `0963723b4`; ~~its error is *navigation invoked commands outside the read-only set: get_relay_self*~~. Corrected by Astra 2026-09-12: the original log fails the branch-created toast assertion at line 1234. See [the integration correction](2026-09-12-steering-integration.md). |
 | `project-pulse-declared-work.spec.ts:232` | predates this change | fails on `0963723b4` with the same `get_relay_self` guard error |
 | `mentions.spec.ts:326` | flake | passed on `0963723b4`, and 5/5 with `--repeat-each=5` on `ecd4336f4` |
 
@@ -186,10 +186,13 @@ interaction passes. Worth its own numbered ledger item and an owner.
 candidate.** `coding-session-mission-lens.spec.ts:1121`,
 `project-pr-review.spec.ts:1213` and `project-pulse-declared-work.spec.ts:232`
 passed in Fable's run on the `77b792de9` base and fail on `0963723b4`, before
-any change here. Two report a command-guard error (`get_relay_self` outside the
-read-only set). The rebase brought in Andy's two founded-session fixes, which
+any change here. ~~Two report a command-guard error (`get_relay_self` outside the
+read-only set).~~ Only declared-work has that failure; PR fails its success-toast assertion. ~~The rebase brought in Andy's two founded-session fixes, which
 touch the projects container and the e2e bridge; that is the likely source but
-is not proven here. Owed an owner, alongside ledger item 111.
+is not proven here.~~ Astra's 2026-09-12 trace supersedes that attribution: the
+PR creation succeeds immediately but its acknowledgement waits on unrelated
+refreshes, and an older September 8 artifact already records that timeout.
+Only declared-work fails the `get_relay_self` guard. See [the integration correction](2026-09-12-steering-integration.md). Owed an owner, alongside ledger item 111.
 
 **F2 — the degrade reason was on the wire and discarded by the client.** Fixed
 here. Recorded because the shape of the mistake is reusable: the receipt

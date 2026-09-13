@@ -72,10 +72,15 @@ pub struct SteerInput {
     pub attempt_id: String,          // caller-minted; echoed on every outcome
     pub prompt_blocks: Vec<String>,  // each becomes one ACP `text` block
     pub idle_guard: IdleGuard,
+    pub write_guard: Option<Arc<dyn SteerWriteGuard>>,
     pub outcome_tx: tokio::sync::oneshot::Sender<SteerResolution>,
 }
 
 pub enum IdleGuard { PromptRequired, AdapterDefault }
+pub enum SteerWriteRefusal { Fenced, OperatorRevoked, AuthorityUnverified, Unavailable }
+pub trait SteerWriteGuard: Send + Sync + std::fmt::Debug {
+    fn begin_write(&self) -> Result<(), SteerWriteRefusal>;
+}
 
 pub enum SteerWire { AcpExtension, Goose }
 
@@ -92,6 +97,7 @@ pub enum NotDeliveredReason {
     MethodNotFound { message: String },// JSON-RPC -32601
     Rejected { code: i64, message: String }, // any other JSON-RPC error
     PromptEndedBeforeWrite,            // request never left the channel
+    DispatchPrevented { reason: SteerWriteRefusal }, // terminal; no fallback
 }
 
 pub enum UnknownReason {
@@ -203,8 +209,13 @@ pub const STEER_ADMISSION_DEPTH: usize = 4;
 
 - Install the steer channel and late sink **before** the prompt borrows the
   client; hand `steer_tx` to the select loop.
-- Steer arm: same fence dance as a turn (`fenced.remove` → drop silently,
-  else `dequeued.insert`), then `steer_tx.try_send`; full →
+- Steer arm: pass a shared write guard into `steer_tx.try_send`. Native queue admission is not dequeue/dispatch
+  evidence. Immediately before the transport starts writing, the guard checks
+  the fence and records dispatch under the same mutex; no await separates
+  admission from beginning the write. A queued input waiting behind an ACK
+  therefore remains preventable. An unverifiable/poisoned guard refuses as
+  `ACTOR_UNAVAILABLE`; an observed fence refuses as `HANDOVER_FENCED`. Neither
+  falls back to an ordinary turn. A full native queue →
   `SteerResolved{Saturated}` (a provider-side wrapper variant, not in
   `buzz-acp`); the provider answers it terminally (`turn_dropped` /
   `STEER_SATURATED`, §2). Before emitting any `SteerResolved` whose resolution
@@ -244,41 +255,56 @@ Provider (`lib.rs` + `state.rs`):
   a native attempt (`turn_degraded`/`STEER_ATTACHMENTS_UNSUPPORTED` + boundary).
   Otherwise: `stage_steer_intent` (durable) **before** `handle.deliver(Steer)`;
   keep an `InFlightTurn` entry with `steer_attempt: Some(attempt_id)` and
-  `text: Some(text)`; `DeliverError` ⇒ resolve `prevented` and answer with the
-  existing undelivered-turn path.
+  `text: Some(text)`; `DeliverError` ⇒ persist the terminal undelivered answer
+  before resolving `prevented`.
 - `decide_turn`: a command whose attempt is open or resolved is not re-admitted
   (open ⇒ silent ignore; resolved ⇒ already in consumed/refused ledgers).
 - `SteerResolved` fold, keyed by `attempt_id`:
-  - `Injected` ⇒ resolve `injected`; `consume_command`; `consume_operation`
-    when keyed; **no** `record_turn_spend`; `handle.acknowledge_turn_started`;
-    receipt `turn_injected(command, target, turn_id)`; remove in-flight.
-  - `NotDelivered{reason}` ⇒ resolve `not_delivered`; build
-    `SessionCommand::Turn` from the stored text with `framing.delivery =
-    Boundary`; `handle.deliver`; on `Ok` publish `turn_degraded(code)` then
-    `turn_queued`, keep the in-flight entry as an ordinary turn (attempt
-    cleared); on `Err` use `report_undelivered_turn`. Codes: `Unsupported |
-    MethodNotFound → STEER_UNSUPPORTED`; `PromptRequired |
-    PromptEndedBeforeWrite | idle → STEER_TURN_ENDED`; `Rejected →
-    STEER_REJECTED`. The fallback re-runs `handover_fence` and the generation
-    check before `handle.deliver`; a refusal resolves `prevented` and publishes
-    `turn_refused`. Saturation never falls back (§2).
-  - `Unknown{reason}` ⇒ resolve `unknown`; `record_refusal`; receipt
-    `turn_delivery_unknown(code)`: `WriteFailed → STEER_WRITE_FAILED`;
-    `PromptEndedBeforeAck | RuntimeExited → STEER_ACK_LOST`; `AckTimeout →
-    STEER_ACK_TIMEOUT`; `UnrecognizedAck | AdapterReportedFailure →
-    STEER_ACK_UNRECOGNIZED`; release dequeue evidence; remove in-flight.
-  - `StartedNewTurn` ⇒ resolve `started_new_turn`; `consume_command`;
-    receipt `turn_delivery_unknown(STEER_UNOBSERVED_NEW_TURN)`.
+  - `Injected` ⇒ consume the operation when keyed, then the command; enqueue
+    `turn_injected(command, target, turn_id)` before resolving `injected`.
+    **No** `record_turn_spend`: ownership and accounting remain with the
+    original turn. Release actor bookkeeping and remove in-flight only after
+    the durable projections succeed.
+  - `StartedNewTurn` ⇒ likewise consume operation/command and enqueue
+    `turn_delivery_unknown(STEER_UNOBSERVED_NEW_TURN)` before resolving
+    `started_new_turn`. The runtime accepted it but its output is unobserved.
+  - `NotDelivered{DispatchPrevented}` ⇒ a durable terminal refusal before
+    resolving `prevented`: `HANDOVER_FENCED`, `UNAUTHORIZED_OPERATOR`,
+    `AUTHORITY_NOT_REVERIFIED` or `ACTOR_UNAVAILABLE` according to the guard.
+    Zero runtime writes; no boundary fallback.
+  - Other `NotDelivered{reason}` ⇒ recheck generation, current authority and
+    any sticky authority-loss reason recorded after dispatch. A refused
+    fallback saves its terminal answer before resolving `prevented`. Restoring
+    a grant does not resurrect an input whose authority was lost while its
+    ACK was pending. Otherwise resolve `not_delivered` and hand the saved text
+    to the ordinary boundary-turn path. On delivery, publish `turn_degraded`
+    then `turn_queued`; the attempt no longer owns the ordinary queued turn.
+    Codes: `Unsupported | MethodNotFound → STEER_UNSUPPORTED`;
+    `PromptRequired | PromptEndedBeforeWrite | idle → STEER_TURN_ENDED`;
+    `Rejected → STEER_REJECTED`.
+  - `Unknown{reason}` ⇒ stage the durable terminal
+    `turn_delivery_unknown(code)` before resolving `unknown`;
+    `WriteFailed → STEER_WRITE_FAILED`; `PromptEndedBeforeAck | RuntimeExited →
+    STEER_ACK_LOST`; `AckTimeout → STEER_ACK_TIMEOUT`;
+    `UnrecognizedAck | AdapterReportedFailure → STEER_ACK_UNRECOGNIZED`.
+  - Saturation ⇒ stage the durable `turn_dropped(STEER_SATURATED)` before
+    resolving `prevented`. Never reorder it into the boundary queue.
+  - If a projection fails before an attempt closes, its open intent remains
+    available to restart recovery. A stored command/operation claim or terminal
+    answer still fences replay; recovery reports unknown where delivery cannot
+    be established, rather than replaying a possible runtime write.
 - `SteerReconciled` fold: only for attempts in `unknown`; per §2 table.
 - Restart: before replaying the watermark, every `intent` attempt ⇒
   `record_refusal` + `turn_delivery_unknown(STEER_UNRESOLVED_AT_RESTART)` +
   resolve `unknown`.
-- Handover/takeover fence loop (`lib.rs` ≈5140): steer attempts participate.
-  `FencedAt::Queued` ⇒ resolve `prevented`, `record_refusal`, `turn_refused`
-  (existing code), zero writes. `FencedAt::AlreadyDequeued` ⇒ do **not**
-  refuse yet; mark the in-flight attempt fenced-after-dispatch. An `Injected`
-  resolution stays truthful (`turn_injected`, logged as delivered before the
-  fence); any other resolution is refused instead of falling back.
+- Authority enforcement first fences/latches every affected native input
+  across the genesis's local records before any fallible terminal persistence.
+  `FencedAt::Queued` means zero writes; persist the terminal answer before
+  resolving `prevented`. `AlreadyDequeued` preserves a typed sticky reason:
+  `Injected` remains truthful, `Unknown` remains unknown, and `NotDelivered`
+  cannot fall back. This covers verified takeover, grant removal/downgrade
+  and a chain that cannot be reverified. Ordinary turn cancellation policy is
+  unchanged by the native grant correction.
 - `metadata_for` publishes `threadSteer = native_steer_deliverable(session)`.
 - Turn framing for a native steer keeps `Delivery: steer`.
 
@@ -345,3 +371,15 @@ Lanes: `cargo test -p <crate>`, `cargo clippy -p <crate> --all-targets`,
 `cargo fmt`, plus `just desktop-check`/`desktop-test`/`mobile-check`/`mobile-test`
 for the client lane. Finalizer: `just ci`, `just smoke` (desktop changed),
 adapter validation against the installed claude-agent-acp with a unique marker.
+
+## September 12 integration correction
+
+The native queue and actual runtime dispatch are distinct boundaries. The
+original candidate recorded dequeue before placing a steer behind a pending
+ACK, so an authority change could no longer prevent an unwritten queued input.
+The shared guard now linearizes prevention versus beginning a runtime write.
+`native_steer_fence_tests.rs` holds the first ACK, queues and revokes a second
+input, releases the ACK and proves the second input never reaches the adapter.
+It also preserves the original open turn and its spend. The same regression
+fails against `f7d628b4a` and passes with the correction. These are fake-adapter
+process tests; installed real-adapter acceptance remains separate.

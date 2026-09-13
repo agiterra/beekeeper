@@ -61,6 +61,37 @@ export const CODING_SESSION_COMPOSER_DOCK_CLASS =
   "pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-background pb-4 before:pointer-events-none before:absolute before:inset-x-0 before:bottom-full before:h-8 before:bg-linear-to-b before:from-transparent before:to-background before:content-['']";
 
 /**
+ * The stable shell keeps handover state across execution/history branches.
+ * A standalone workspace that cannot fit makes this shell scroll, including
+ * the handover notice, which can itself fill most of a short window.
+ */
+export const CODING_SESSION_SHELL_CLASS =
+  "flex h-full min-h-0 flex-1 flex-col overflow-hidden [&:has([data-reflow='true'])]:overflow-y-auto";
+
+/**
+ * Short-window fallback: the transcript still owns a finite virtualized
+ * viewport; header and dock join the shell's flow. Controls wrap without
+ * shrinking text or removing actions.
+ */
+export const CODING_SESSION_REFLOW_CLASS = [
+  "h-auto flex-none overflow-visible",
+  "[&_[data-testid='coding-session-body']]:flex-none",
+  "[&_[data-testid='coding-session-transcript-pane']]:overflow-visible",
+  "[&_[data-testid='coding-session-transcript-scroll']]:flex-none",
+  "[&_[data-testid='coding-session-transcript-scroll']]:overscroll-auto",
+  "[&_[data-testid='coding-session-composer-dock']]:static",
+  "[&_[data-testid='coding-session-composer-dock']]:before:hidden",
+  "[&_[data-testid='coding-session-header']]:h-auto",
+  "[&_[data-testid='coding-session-header']]:min-h-14",
+  "[&_[data-testid='coding-session-header']]:flex-wrap",
+  "[&_[data-testid='coding-session-header']>div:first-of-type]:basis-full",
+  "[&_[data-testid='coding-session-control-deck']]:flex-wrap",
+  "[&_[data-testid='coding-session-control-deck']>div]:w-full",
+  "[&_[data-testid='coding-session-control-deck']>div]:max-w-full",
+  "[&_[data-testid='coding-session-control-deck']>div]:flex-wrap",
+].join(" ");
+
+/**
  * Centers `children` in the coding-session reading measure.
  *
  * `expanded` says no side surface is sharing the workspace, which earns a

@@ -260,6 +260,8 @@ test("Open session navigates to the execution and publishes nothing", async ({
   // Nothing publishes, signs or starts a turn.
   const READ_ONLY_ON_NAVIGATION = new Set([
     "get_huddle_state",
+    // The session catalog reads NIP-11 to authenticate deletion receipts.
+    "get_relay_self",
     "take_pending_entity_deep_link",
     "take_pending_navigation_deep_link",
     "query_relay_filters",

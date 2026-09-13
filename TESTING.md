@@ -34,9 +34,10 @@ just smoke              # pnpm build:e2e + the whole desktop smoke project
 `just ci` (justfile:379) runs `desktop-test` — the Vitest/node unit tests — and
 the desktop and web *builds*. It does **not** run the Playwright smoke project,
 and neither does any pre-commit or pre-push hook. That is on purpose: the smoke
-project is ~1149 browser tests and takes about **47 minutes** on an M-series
-laptop, several times the rest of `just ci` combined, so wiring it into the
-per-commit gate would make every commit unaffordable.
+project ran 1,319 browser cases in about **1.5 hours** on this M-series
+laptop on 2026-09-12 (see [the steering experience report](docs/history/2026-09-12-steering-experience.md)).
+That is an observation, not a duration guarantee; fixtures and machine load
+change it. Wiring that run into every commit would make the local gate costly.
 
 The cost of that choice is that the suite rots silently — in August 2026 it sat
 at 75 failing tests that no green `just ci` ever mentioned. So run `just smoke`

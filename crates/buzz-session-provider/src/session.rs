@@ -27,6 +27,9 @@ use futures_util::stream::{FuturesUnordered, StreamExt};
 use tokio::sync::{mpsc, oneshot, watch};
 use uuid::Uuid;
 
+#[path = "session_steer_guard.rs"]
+mod steer_guard;
+
 use tokio::sync::broadcast;
 
 use buzz_acp::acp::{
@@ -741,7 +744,7 @@ pub enum FencedAt {
     AlreadyDequeued,
 }
 
-/// The two sets the provider and one actor share to settle a late refusal.
+/// The refusal reasons and dispatch evidence shared by provider and actor.
 ///
 /// The mailbox is an `mpsc` queue: once a turn is in it there is no way to
 /// take it back out, and `shutdown` is too blunt — it ends the actor, which is
@@ -751,13 +754,14 @@ pub enum FencedAt {
 /// Shared rather than sent, for the same reason `shutdown` is a `watch`: a
 /// control fact must not queue behind the very work it is about. And under one
 /// mutex rather than two, because the ordering *is* the answer — either the
-/// actor recorded its dequeue before the provider took the lock, or the
-/// provider's refusal is in place before the actor can read it.
+/// actor recorded its dispatch before the provider took the lock, or the
+/// refusal is in place first. Native steering records this at the transport
+/// write boundary, after waiting for previous ACKs, not at native queue admission.
 #[derive(Debug, Default)]
 pub struct FenceState {
     /// Command ids refused after delivery, to be dropped at dequeue.
-    fenced: HashSet<String>,
-    /// Command ids the actor has taken out of the queue whose start the
+    fenced: HashMap<String, buzz_acp::steer::SteerWriteRefusal>,
+    /// Command ids dispatched by the actor (or native write guard) whose start the
     /// provider has not yet acknowledged. Completion cannot erase this fact:
     /// the provider may still have both TurnStarted and TurnFinished waiting
     /// in its inbox while it processes a takeover.
@@ -808,13 +812,22 @@ impl SessionHandle {
     /// A poisoned lock answers `AlreadyDequeued`, which is the conservative
     /// direction: it claims less.
     pub fn fence_command(&self, command_id: &str) -> FencedAt {
+        self.fence_command_with_reason(command_id, buzz_acp::steer::SteerWriteRefusal::Fenced)
+    }
+
+    /// Fence native input with the observed reason, under the dispatch lock.
+    pub(crate) fn fence_command_with_reason(
+        &self,
+        command_id: &str,
+        reason: buzz_acp::steer::SteerWriteRefusal,
+    ) -> FencedAt {
         let Ok(mut state) = self.fenced.lock() else {
             return FencedAt::AlreadyDequeued;
         };
         if state.dequeued.contains(command_id) {
             return FencedAt::AlreadyDequeued;
         }
-        state.fenced.insert(command_id.to_owned());
+        state.fenced.entry(command_id.to_owned()).or_insert(reason);
         FencedAt::Queued
     }
 
@@ -2008,7 +2021,7 @@ type PendingSteers =
 fn dequeue_or_drop(fenced: &Arc<Mutex<FenceState>>, command_id: &str) -> bool {
     match fenced.lock() {
         Ok(mut state) => {
-            if state.fenced.remove(command_id) {
+            if state.fenced.remove(command_id).is_some() {
                 true
             } else {
                 state.dequeued.insert(command_id.to_owned());
@@ -2270,7 +2283,7 @@ impl SessionActor {
                     // interrupting rather than preventing.
                     let dropped = match self.fenced.lock() {
                         Ok(mut state) => {
-                            if state.fenced.remove(&command_id) {
+                            if state.fenced.remove(&command_id).is_some() {
                                 true
                             } else {
                                 state.dequeued.insert(command_id.clone());
@@ -2515,15 +2528,6 @@ impl SessionActor {
                         operator_pubkey,
                         framing,
                     }) => {
-                        if dequeue_or_drop(&self.fenced, &command_id) {
-                            tracing::warn!(
-                                target: "csp::session",
-                                session_id = %self.session_id,
-                                %command_id,
-                                "dropping a queued steer the provider refused before it was dequeued"
-                            );
-                            continue;
-                        }
                         // The adapter is handed the framed rendering — who
                         // sent it and how to answer, with `Delivery: steer`
                         // because that is the delivery it is getting. The
@@ -2538,6 +2542,10 @@ impl SessionActor {
                             attempt_id: attempt_id.clone(),
                             prompt_blocks: vec![rendered],
                             idle_guard: IdleGuard::PromptRequired,
+                            write_guard: Some(Arc::new(steer_guard::NativeSteerWriteGuard {
+                                command_id: command_id.clone(),
+                                fenced: Arc::clone(&self.fenced),
+                            })),
                             outcome_tx,
                         };
                         let admitted = match steer_tx.as_ref() {

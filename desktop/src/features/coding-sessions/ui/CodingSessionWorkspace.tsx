@@ -56,11 +56,14 @@ import { cn } from "@/shared/lib/cn";
 
 import {
   useCodingSessionDockReserve,
+  useCodingSessionReflow,
   useNarrowCodingSessionWorkspace,
 } from "../hooks/useCodingSessionWorkspaceLayout";
 import { useCodingSessionColumnGutter } from "../lib/codingSessionWidthPreference";
 import {
   CODING_SESSION_COMPOSER_DOCK_CLASS,
+  CODING_SESSION_REFLOW_CLASS,
+  CODING_SESSION_SHELL_CLASS,
   CodingSessionColumn,
 } from "./CodingSessionColumn";
 import { CodingSessionGoalPill } from "./CodingSessionGoalPill";
@@ -280,16 +283,21 @@ export function CodingSessionWorkspace({
   const peopleCount = rosterQuery.data?.length ?? 0;
 
   return (
-    <>
-      {/* Above both branches: a claim is umbrella-wide (§1). */}
-      <CodingSessionHandoverHost
-        channelId={channelId}
-        focusedExecution={resolution.focusedExecution}
-        projectRef={joinProject?.address ?? null}
-        resolveReachability={resolveHandoverReachability}
-        title={sessionName?.content ?? umbrella.title}
-        umbrella={umbrella}
-      />
+    <div
+      className={CODING_SESSION_SHELL_CLASS}
+      data-testid="coding-session-shell"
+    >
+      {/* Stable across render branches, including in-flight continuations. */}
+      <div className="shrink-0" data-testid="coding-session-handover-slot">
+        <CodingSessionHandoverHost
+          channelId={channelId}
+          focusedExecution={resolution.focusedExecution}
+          projectRef={joinProject?.address ?? null}
+          resolveReachability={resolveHandoverReachability}
+          title={sessionName?.content ?? umbrella.title}
+          umbrella={umbrella}
+        />
+      </div>
       {/* The umbrella surface is a render branch, not a mode: an umbrella with
           no collapsed history falls through to exactly today's single-session
           tree. Routing on collapsed history rather than execution count is
@@ -385,7 +393,7 @@ export function CodingSessionWorkspace({
           open={peopleOpen}
         />
       ) : null}
-    </>
+    </div>
   );
 }
 
@@ -621,6 +629,7 @@ function ReadyCodingSessionWorkspace({
   const dockReserve = useCodingSessionDockReserve(
     taskDock.open && !isNarrow && "pb-[34rem]",
   );
+  const reflow = useCodingSessionReflow(workspaceRef, dockReserve.ref);
   const narrativeExpanded = surfaceHost.activeTab === null;
 
   // Use the sidebar's project resolution for the breadcrumb too.
@@ -649,7 +658,11 @@ function ReadyCodingSessionWorkspace({
 
   return (
     <main
-      className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-background"
+      className={cn(
+        "relative flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-background",
+        reflow.active && CODING_SESSION_REFLOW_CLASS,
+      )}
+      data-reflow={reflow.active ? "true" : undefined}
       data-testid="coding-session-workspace"
       ref={workspaceRef}
     >
@@ -735,12 +748,16 @@ function ReadyCodingSessionWorkspace({
           sessionRef={sessionRef}
         />
       ) : null}
-      <div className="flex min-h-0 flex-1">
+      <div className="flex min-h-0 flex-1" data-testid="coding-session-body">
         <section
           aria-label="Session transcript"
+          data-testid="coding-session-transcript-pane"
           className="relative flex min-w-0 flex-1 flex-col overflow-hidden"
         >
-          <div className={cn(gutter, "pb-2")}>
+          <div
+            className={cn(gutter, "pb-2")}
+            data-testid="coding-session-goal-slot"
+          >
             <CodingSessionGoalPill
               channelId={channelId}
               currentUserPubkey={currentUserPubkey}
@@ -755,13 +772,18 @@ function ReadyCodingSessionWorkspace({
               "min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain",
               gutter,
             )}
+            data-testid="coding-session-transcript-scroll"
             onScroll={onScroll}
             ref={scrollRef}
+            style={reflow.active ? { height: reflow.height } : undefined}
           >
             <CodingSessionColumn
-              className={cn("min-h-full pt-7", dockReserve.className)}
+              className={cn(
+                "min-h-full pt-7",
+                reflow.active ? "pb-4" : dockReserve.className,
+              )}
               expanded={narrativeExpanded}
-              style={dockReserve.style}
+              style={reflow.active ? undefined : dockReserve.style}
             >
               <div className="flex min-w-0 flex-col gap-5" ref={contentRef}>
                 {/* "No conversation yet" is false the moment a turn is in
@@ -786,7 +808,13 @@ function ReadyCodingSessionWorkspace({
             </CodingSessionColumn>
           </div>
           {!isAtBottom ? (
-            <div className="pointer-events-none absolute inset-x-0 bottom-32 z-30 flex justify-center">
+            <div
+              className={
+                reflow.active
+                  ? "flex justify-center py-2"
+                  : "pointer-events-none absolute inset-x-0 bottom-32 z-30 flex justify-center"
+              }
+            >
               <Button
                 className="pointer-events-auto rounded-full bg-background/90 shadow-md backdrop-blur-xl"
                 data-testid="coding-session-scroll-to-latest"
@@ -805,6 +833,7 @@ function ReadyCodingSessionWorkspace({
           {session.commandTarget && !sessionClosed ? (
             <div
               className={cn(CODING_SESSION_COMPOSER_DOCK_CLASS, gutter)}
+              data-testid="coding-session-composer-dock"
               ref={dockReserve.ref}
             >
               <CodingSessionColumn

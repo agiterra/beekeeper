@@ -24,6 +24,29 @@ use std::time::Duration;
 /// same tick it pushes the message, is never cut off.
 pub const STEER_ACK_DRAIN: Duration = Duration::from_millis(1500);
 
+/// A caller's revocable admission, checked immediately before a native write.
+///
+/// Queueing an input is not a dispatch. Implementations atomically check any
+/// revocation and record dispatch under the same lock that revokes admission.
+/// A denied input is positively not delivered and must not be auto-requeued.
+pub trait SteerWriteGuard: std::fmt::Debug + Send + Sync {
+    /// Claim this input's write boundary, or refuse it without writing bytes.
+    fn begin_write(&self) -> Result<(), SteerWriteRefusal>;
+}
+
+/// Why the caller prevented an input before any runtime write.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SteerWriteRefusal {
+    /// A recorded authority fence revoked this queued input.
+    Fenced,
+    /// The sender lost its previously verified operator grant.
+    OperatorRevoked,
+    /// The session authority chain is known to require verification.
+    AuthorityUnverified,
+    /// The caller could not read its authority guard reliably.
+    Unavailable,
+}
+
 /// One mid-turn input the caller wants delivered into the running turn.
 #[derive(Debug)]
 pub struct SteerInput {
@@ -35,6 +58,8 @@ pub struct SteerInput {
     pub prompt_blocks: Vec<String>,
     /// What the adapter is asked to do when no turn is running.
     pub idle_guard: IdleGuard,
+    /// Optional caller authority fence, rechecked after all earlier ACKs.
+    pub write_guard: Option<std::sync::Arc<dyn SteerWriteGuard>>,
     /// Answered exactly once by the read loop. Dropped unanswered only when
     /// the input never left the channel, which the caller reads as
     /// [`NotDeliveredReason::PromptEndedBeforeWrite`].
@@ -121,6 +146,11 @@ pub enum NotDeliveredReason {
     /// The prompt ended before the read loop took this input from its
     /// channel; nothing was written.
     PromptEndedBeforeWrite,
+    /// The caller's authority fence prevented this queued input's write.
+    DispatchPrevented {
+        /// Observed revocation or unavailable authority verification.
+        reason: SteerWriteRefusal,
+    },
 }
 
 /// Why delivery could not be established.
