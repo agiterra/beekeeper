@@ -30,7 +30,7 @@ on 2026-09-09, with `just ci` and `just test` green on that exact commit
 
 | Work | Owner | State (2026-09-11) | Where |
 | --- | --- | --- | --- |
-| Native mid-turn steering for Claude sessions | Fable built; Astra reviews and integrates | candidate on `work/native-steering-fable` (`d2bb6de8f`, 2026-09-12): Claude injects natively with the `promptRequired` idle guard, Codex stays boundary; `just ci` green, smoke 1309/6 pre-existing; not landed, not installed | ledger item 110; [`history/2026-09-11-native-steering.md`](history/2026-09-11-native-steering.md); `NATIVE_STEERING_IMPL.md` |
+| Native mid-turn steering for Claude sessions | Fable built the runtime, Opus the experience; Astra reviews and integrates | candidate on `work/native-steering-fable` (2026-09-12): Claude injects natively with the `promptRequired` idle guard, Codex stays boundary; a working execution can now be asked for the boundary explicitly, a downgrade names the provider's own reason, and a delivery-unknown input can be copied back to the draft; not landed, not installed | ledger item 110; [`history/2026-09-11-native-steering.md`](history/2026-09-11-native-steering.md), [`history/2026-09-12-steering-experience.md`](history/2026-09-12-steering-experience.md); `NATIVE_STEERING_IMPL.md` |
 | Automatic project context beside ordinary agent work | paused by Brian on 2026-09-10 | findings saved; next step is proving a harmless marker reaches a fresh Claude session through a hook | ledger § "September 10 — automatic project context: findings saved, work paused" |
 | Collaborative workspace plan, ordered steps 0–6 | Astra finalizes and lands `main`; Fable takes delegated slices; Andy lands his own topic branches | steps 0–4 have integrated candidates per the ledger's September 7–9 sections; no landing of steps 5 or 6 is recorded anywhere found, so treat them as open | [`COLLABORATIVE_WORKSPACE_PLAN.md`](COLLABORATIVE_WORKSPACE_PLAN.md) |
 | Founded-session fixes: Discard deletes, project filing | Andy | landed on `main` 2026-09-11 | ledger § "Fixed 2026-09-11 —" (two items) |
@@ -99,9 +99,14 @@ Rules, each with where it is written down.
    `bee packs status --project <coordinate> --role lead`.
 2. Rebuild the installed Mac bundle from `main` when Andy's two fixes need
    live use: `scripts/app-from.sh <sha>`. Brian's call.
-3. Astra reviews and lands `work/native-steering-fable` (ledger item 110),
-   then rebuilds the bundle and exercises a steer in a real Claude session
-   with a unique marker; the six smoke failures of item 111 need an owner.
+3. Astra reviews and lands `work/native-steering-fable` (ledger item 110 and
+   the two history notes), then rebuilds the bundle and exercises, in a real
+   Claude session: a steer with a unique marker, an explicit Queue next, and
+   a delivery-unknown answer recovered with Copy to draft. The six smoke
+   failures of item 111 still need an owner, as do two findings in
+   [`history/2026-09-12-steering-experience.md`](history/2026-09-12-steering-experience.md):
+   the 250% panel-fit defect (F1) and three smoke specs that fail since the
+   rebase onto `9aebb1262`, before any steering-experience change (F3).
 4. When Brian resumes automatic context: the hook-marker experiment exactly as
    the ledger's September 10 section specifies it.
 5. Plan steps 5 and 6.
