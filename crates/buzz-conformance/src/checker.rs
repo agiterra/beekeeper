@@ -328,6 +328,7 @@ mod tests {
         for reason in [
             SanitizedReason::Restricted,
             SanitizedReason::Invalid,
+            SanitizedReason::Conflict,
             SanitizedReason::ServerError,
         ] {
             let trace = vec![step(TraceAction::SanitizedError { reason }, c)];

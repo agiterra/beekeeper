@@ -14,14 +14,22 @@ import { relayClient } from "@/shared/api/relayClient";
 import { signRelayEvent } from "@/shared/api/tauri";
 import type { RelayEvent } from "@/shared/api/types";
 import { KIND_PROJECT_PACK_SOURCE } from "@/shared/constants/kinds";
+import { hasDuplicateJsonKeys } from "@/shared/coordination/sessionCoordinationStrictJson";
 
 import type { ProjectMember } from "./projectContainerModel";
 import type { ProjectContainer } from "../hooks";
 import type { Repository } from "@/features/projects/projectModels";
 
 const SCHEMA = "buzz-project-pack-source/v1";
+const CONDITIONAL_SCHEMA = "buzz-project-pack-source/v2";
+const EVENT_ID = /^[0-9a-f]{64}$/;
 const MAX_NOTE_BYTES = 512;
 const encoder = new TextEncoder();
+
+/** Signed publication intent; decoding does not prove relay enforcement. */
+export type PackSourceExpectation =
+  | { kind: "unconditional" }
+  | { kind: "expected"; sourceId: string | null };
 
 /** One project's pack source, exactly as the newest signed 30624 states it. */
 export type ProjectPackSource = {
@@ -39,6 +47,8 @@ export type ProjectPackSource = {
   path: string;
   /** Optional free-text note, ≤512 bytes. */
   note: string | null;
+  /** v1 is unconditional; v2 requires the named head or no live source. */
+  expectation: PackSourceExpectation;
 };
 
 /** React Query key for one project's newest pack-source head. */
@@ -71,18 +81,19 @@ export function parseProjectPackSourceEvent(
   event: RelayEvent,
 ): ProjectPackSource | null {
   if (event.kind !== KIND_PROJECT_PACK_SOURCE) return null;
-  const repo = tagValue(event.tags, "repo");
-  if (repo === null || !REPO_COORD.test(repo)) return null;
-  const ref = tagValue(event.tags, "ref");
-  const sha = tagValue(event.tags, "sha");
+  let repo = tagValue(event.tags, "repo");
+  if (repo === null) return null;
+  let ref = tagValue(event.tags, "ref");
+  let sha = tagValue(event.tags, "sha");
   // Exactly one of ref/sha — the wire's own rule.
   if ((ref === null) === (sha === null)) return null;
-  if (sha !== null && !SHA_40.test(sha)) return null;
-  const path = tagValue(event.tags, "path") ?? "personas/roles";
+  let path = tagValue(event.tags, "path") ?? "personas/roles";
   if (path.length === 0 || path.length > 512) return null;
 
   let note: string | null = null;
+  let expectation: PackSourceExpectation = { kind: "unconditional" };
   if (event.content.trim().length > 0) {
+    if (hasDuplicateJsonKeys(event.content)) return null;
     let parsed: unknown;
     try {
       parsed = JSON.parse(event.content);
@@ -92,23 +103,99 @@ export function parseProjectPackSourceEvent(
     if (
       typeof parsed !== "object" ||
       parsed === null ||
-      Array.isArray(parsed) ||
-      (parsed as Record<string, unknown>).schema !== SCHEMA
+      Array.isArray(parsed)
     ) {
       return null;
     }
     const record = parsed as Record<string, unknown>;
+    if (record.schema === CONDITIONAL_SCHEMA) {
+      sha = sha?.trim().toLowerCase() ?? null;
+      const repoMatch = repo.match(/^30617:([0-9a-fA-F]{64}):([\s\S]+)$/u);
+      if (
+        !repoMatch ||
+        [...repoMatch[2]].length > 64 ||
+        /\p{Cc}/u.test(repoMatch[2])
+      )
+        return null;
+      repo = `30617:${repoMatch[1].toLowerCase()}:${repoMatch[2]}`;
+      path = path.trim().replace(/\/+$/, "");
+      ref = ref?.trim() ?? null;
+      if (
+        !path ||
+        encoder.encode(path).length > 200 ||
+        path.startsWith("/") ||
+        path.startsWith("~") ||
+        /[\\:]|\p{Cc}/u.test(path) ||
+        path.split("/").some((segment) => ["", ".", ".."].includes(segment)) ||
+        (ref !== null &&
+          (encoder.encode(ref).length > 200 ||
+            !ref.startsWith("refs/") ||
+            ref.endsWith("/") ||
+            ref.includes("//") ||
+            ref.includes("..") ||
+            ref.endsWith(".lock") ||
+            /[\s~^:?*[\\]|\p{Cc}/u.test(ref)))
+      )
+        return null;
+      const project = tagValue(event.tags, "d");
+      const projectMatch = project?.match(/^30621:[0-9a-f]{64}:(.+)$/u);
+      const tagNames = new Set<string>();
+      if (
+        !projectMatch ||
+        [...projectMatch[1]].length > 64 ||
+        /\p{Cc}/u.test(projectMatch[1]) ||
+        event.tags.some(([name, value, ...extra]) => {
+          if (
+            value === undefined ||
+            extra.length > 0 ||
+            !["d", "repo", "ref", "sha", "path"].includes(name) ||
+            tagNames.has(name)
+          )
+            return true;
+          tagNames.add(name);
+          return false;
+        })
+      )
+        return null;
+      if (
+        encoder.encode(event.content).length > 2048 ||
+        !Object.hasOwn(record, "expectedSourceId") ||
+        Object.keys(record).some(
+          (key) => !["schema", "expectedSourceId", "note"].includes(key),
+        ) ||
+        (record.expectedSourceId !== null &&
+          (typeof record.expectedSourceId !== "string" ||
+            !EVENT_ID.test(record.expectedSourceId)))
+      ) {
+        return null;
+      }
+      expectation = { kind: "expected", sourceId: record.expectedSourceId };
+    } else if (
+      record.schema !== SCHEMA ||
+      Object.keys(record).some((key) => !["schema", "note"].includes(key))
+    ) {
+      return null;
+    }
     const rawNote = record.note;
     if (rawNote !== undefined) {
       if (
         typeof rawNote !== "string" ||
-        encoder.encode(rawNote).length > MAX_NOTE_BYTES
+        encoder.encode(rawNote).length > MAX_NOTE_BYTES ||
+        (record.schema === CONDITIONAL_SCHEMA &&
+          (rawNote.trim().length === 0 ||
+            [...rawNote].some(
+              (char) => /\p{Cc}/u.test(char) && char !== "\n" && char !== "\t",
+            )))
       ) {
         return null;
       }
       note = rawNote.length > 0 ? rawNote : null;
     }
   }
+
+  if (sha !== null && !SHA_40.test(sha)) return null;
+  if (expectation.kind === "unconditional" && !REPO_COORD.test(repo))
+    return null;
 
   return {
     eventId: event.id,
@@ -119,10 +206,11 @@ export function parseProjectPackSourceEvent(
     sha,
     path,
     note,
+    expectation,
   };
 }
 
-/** The newest (by `created_at`) valid pack source among a set of 30624 events. */
+/** Select by timestamp descending, then event ID ascending across all authors. */
 export function newestProjectPackSource(
   events: readonly RelayEvent[],
 ): ProjectPackSource | null {
@@ -130,7 +218,11 @@ export function newestProjectPackSource(
   for (const event of events) {
     const parsed = parseProjectPackSourceEvent(event);
     if (parsed === null) continue;
-    if (newest === null || parsed.createdAt > newest.createdAt) {
+    if (
+      newest === null ||
+      parsed.createdAt > newest.createdAt ||
+      (parsed.createdAt === newest.createdAt && parsed.eventId < newest.eventId)
+    ) {
       newest = parsed;
     }
   }

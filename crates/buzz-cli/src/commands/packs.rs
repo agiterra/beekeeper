@@ -23,8 +23,8 @@ use serde_json::{json, Value};
 
 use buzz_core::kind::{KIND_GIT_REPO_ANNOUNCEMENT, KIND_PROJECT_PACK_SOURCE};
 use buzz_core::project_pack_source::{
-    build_project_pack_source, PackPin, DEFAULT_PACK_PATH, PACK_SOURCE_WORD_CHECKOUT,
-    PACK_SOURCE_WORD_REPOSITORY, PACK_SOURCE_WORD_SHIPPED,
+    build_conditional_project_pack_source, build_project_pack_source, PackPin, DEFAULT_PACK_PATH,
+    PACK_SOURCE_WORD_CHECKOUT, PACK_SOURCE_WORD_REPOSITORY, PACK_SOURCE_WORD_SHIPPED,
 };
 use buzz_sdk::build_delete_addressable;
 
@@ -65,8 +65,8 @@ impl PackSourcePin<'_> {
 ///
 /// # Errors
 /// [`CliError::Usage`] for a malformed coordinate, pin, path or note (exit 1);
-/// the relay's own refusal otherwise — a non-founder gets HTTP 403 and exit 3
-/// with the sentence naming what was searched.
+/// the relay's own refusal otherwise — missing publication authority gets
+/// HTTP 403 and exit 3.
 pub async fn cmd_set_source(
     client: &BuzzClient,
     project: &str,
@@ -75,9 +75,57 @@ pub async fn cmd_set_source(
     path: Option<&str>,
     note: Option<&str>,
 ) -> Result<(), CliError> {
+    cmd_set_source_conditionally(
+        client,
+        project,
+        repo,
+        pin,
+        path,
+        note,
+        PackSourceCondition::Unconditional,
+    )
+    .await
+}
+
+/// Whether publication must compare the current project source atomically.
+#[derive(Clone, Copy)]
+pub enum PackSourceCondition<'a> {
+    /// Preserve legacy unconditional v1 publication.
+    Unconditional,
+    /// Require that no live source exists.
+    IfUnset,
+    /// Require the exact live source event ID.
+    Expected(&'a str),
+}
+
+/// Publish one signed source with an optional relay-enforced condition.
+///
+/// # Errors
+/// Invalid input is [`CliError::Usage`]; a named source conflict is
+/// [`CliError::Conflict`] (exit 5). Auth and transport refusals remain distinct.
+/// A conflict never signs or submits a replacement event.
+pub async fn cmd_set_source_conditionally(
+    client: &BuzzClient,
+    project: &str,
+    repo: &str,
+    pin: &PackSourcePin<'_>,
+    path: Option<&str>,
+    note: Option<&str>,
+    condition: PackSourceCondition<'_>,
+) -> Result<(), CliError> {
     let pin = pin.resolve()?;
-    let draft =
-        build_project_pack_source(project, repo, &pin, path, note).map_err(CliError::Usage)?;
+    let draft = match condition {
+        PackSourceCondition::Unconditional => {
+            build_project_pack_source(project, repo, &pin, path, note)
+        }
+        PackSourceCondition::IfUnset => {
+            build_conditional_project_pack_source(project, repo, &pin, path, note, None)
+        }
+        PackSourceCondition::Expected(id) => {
+            build_conditional_project_pack_source(project, repo, &pin, path, note, Some(id))
+        }
+    }
+    .map_err(CliError::Usage)?;
 
     let tags: Vec<Tag> = draft
         .tags
@@ -90,9 +138,23 @@ pub async fn cmd_set_source(
     let builder =
         EventBuilder::new(Kind::Custom(KIND_PROJECT_PACK_SOURCE as u16), draft.content).tags(tags);
     let event = client.sign_event(builder)?;
-    let resp = client.submit_event(event).await?;
+    let resp = client
+        .submit_event(event)
+        .await
+        .map_err(pack_source_error)?;
     crate::client::print_create_response(&resp, "project", &draft.d_tag);
     Ok(())
+}
+
+fn pack_source_error(error: CliError) -> CliError {
+    match error {
+        CliError::Relay { status: 409, body }
+            if body.starts_with("conflict: PACK_SOURCE_CONFLICT:") =>
+        {
+            CliError::Conflict(body.strip_prefix("conflict: ").unwrap_or(&body).to_owned())
+        }
+        other => other,
+    }
 }
 
 /// `bee packs get-source` — the newest kind:30624 for a project, decoded.
@@ -643,3 +705,7 @@ fn normalize_project(value: &str) -> Result<String, CliError> {
 #[cfg(test)]
 #[path = "packs_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "packs_source_tests.rs"]
+mod source_tests;

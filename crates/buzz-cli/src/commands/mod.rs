@@ -15,6 +15,7 @@ pub mod moderation;
 pub mod notes;
 pub mod pack;
 pub mod packs;
+pub mod packs_cli;
 pub mod patches;
 pub mod pr;
 pub mod projects;

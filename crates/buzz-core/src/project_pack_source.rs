@@ -60,8 +60,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::kind::{event_kind_u32, normalize_project_coordinate, KIND_PROJECT_PACK_SOURCE};
 
-/// The content schema string every kind:30624 record carries.
+/// The unconditional v1 content schema for kind:30624.
 pub const PROJECT_PACK_SOURCE_SCHEMA: &str = "buzz-project-pack-source/v1";
+
+/// The conditional v2 schema; its expected source must be enforced at storage.
+pub const PROJECT_PACK_SOURCE_CONDITIONAL_SCHEMA: &str = "buzz-project-pack-source/v2";
 
 /// The path a record omitting `path` means: `personas/roles`.
 pub const DEFAULT_PACK_PATH: &str = "personas/roles";
@@ -154,6 +157,15 @@ impl PackPin {
     }
 }
 
+/// The signed publication condition, not proof that a relay enforced it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PackSourceExpectation {
+    /// Legacy v1 publication has no expected-source condition.
+    Unconditional,
+    /// Require no live source (`None`), or exactly the named live event ID.
+    Expected(Option<String>),
+}
+
 /// A decoded kind:30624 record — where one project's packs live.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectPackSource {
@@ -162,6 +174,7 @@ pub struct ProjectPackSource {
     pin: PackPin,
     path: String,
     note: Option<String>,
+    expectation: PackSourceExpectation,
 }
 
 impl ProjectPackSource {
@@ -189,6 +202,11 @@ impl ProjectPackSource {
     /// The operator note, when the author wrote one.
     pub fn note(&self) -> Option<&str> {
         self.note.as_deref()
+    }
+
+    /// The signed condition storage must compare against the effective project head.
+    pub fn expectation(&self) -> &PackSourceExpectation {
+        &self.expectation
     }
 
     /// The path inside the repository holding `role`'s pack.
@@ -240,6 +258,17 @@ pub struct ProjectPackSourceContent {
     /// An operator note, at most [`MAX_PACK_SOURCE_NOTE_BYTES`] bytes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+}
+
+/// The v2 wire body. Presence is checked before deserialization so `null`
+/// cannot be confused with a missing `expectedSourceId`.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct ConditionalProjectPackSourceContent {
+    schema: String,
+    expected_source_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    note: Option<String>,
 }
 
 /// Normalize a repository coordinate to `30617:<lowercase-hex>:<dtag>`.
@@ -335,6 +364,53 @@ pub fn build_project_pack_source(
     })
 }
 
+/// Build a v2 source requiring no live source, or the exact expected event ID.
+///
+/// Reuses the v1 builder's validated tags. This encodes a condition; the relay
+/// must compare and store atomically before claiming it was enforced.
+///
+/// # Errors
+/// The v1 builder's validation errors, or an expected ID other than 64 lowercase
+/// hex characters. IDs are never trimmed or case-normalized.
+pub fn build_conditional_project_pack_source(
+    project: &str,
+    repo: &str,
+    pin: &PackPin,
+    path: Option<&str>,
+    note: Option<&str>,
+    expected_source_id: Option<&str>,
+) -> Result<ProjectPackSourceDraft, String> {
+    if let Some(id) = expected_source_id {
+        validate_expected_source_id(id)?;
+    }
+    let mut draft = build_project_pack_source(project, repo, pin, path, note)?;
+    draft.content = serde_json::to_string(&ConditionalProjectPackSourceContent {
+        schema: PROJECT_PACK_SOURCE_CONDITIONAL_SCHEMA.to_string(),
+        expected_source_id: expected_source_id.map(str::to_string),
+        note: note.map(validate_note).transpose()?,
+    })
+    .map_err(|error| format!("pack source content could not be encoded: {error}"))?;
+    if draft.content.len() > MAX_PACK_SOURCE_CONTENT_BYTES {
+        return Err(format!(
+            "pack source content exceeds {MAX_PACK_SOURCE_CONTENT_BYTES} bytes"
+        ));
+    }
+    Ok(draft)
+}
+
+fn validate_expected_source_id(value: &str) -> Result<(), String> {
+    if value.len() != 64
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(
+            "pack source expectedSourceId must be null or 64 lowercase hex characters".into(),
+        );
+    }
+    Ok(())
+}
+
 /// Decode and fully validate a signed kind:30624.
 ///
 /// This is the relay's ingest validator and every client's reader — one
@@ -352,6 +428,7 @@ pub fn decode_project_pack_source(event: &nostr::Event) -> Result<ProjectPackSou
     }
 
     let mut project: Option<String> = None;
+    let mut project_tag_is_canonical = false;
     let mut repo: Option<String> = None;
     let mut pin: Option<PackPin> = None;
     let mut path: Option<String> = None;
@@ -373,6 +450,7 @@ pub fn decode_project_pack_source(event: &nostr::Event) -> Result<ProjectPackSou
                 project = Some(normalize_project_coordinate(value).ok_or_else(|| {
                     "pack source d must be a project coordinate 30621:<64-hex>:<slug>".to_string()
                 })?);
+                project_tag_is_canonical = project.as_deref() == Some(value.as_str());
             }
             PACK_SOURCE_REPO_TAG => {
                 if repo.is_some() {
@@ -428,17 +506,38 @@ pub fn decode_project_pack_source(event: &nostr::Event) -> Result<ProjectPackSou
     if object.get("note").is_some_and(serde_json::Value::is_null) {
         return Err("pack source content note must not be null".to_string());
     }
-    let content: ProjectPackSourceContent = serde_json::from_str(&event.content)
-        .map_err(|error| format!("pack source content is not this schema: {error}"))?;
-    if content.schema != PROJECT_PACK_SOURCE_SCHEMA {
-        return Err(format!(
-            "pack source content schema must be {PROJECT_PACK_SOURCE_SCHEMA:?}"
-        ));
-    }
-    let note = match content.note {
-        None => None,
-        Some(value) => Some(validate_note(&value)?),
+    let (note, expectation) = match object.get("schema").and_then(serde_json::Value::as_str) {
+        Some(PROJECT_PACK_SOURCE_SCHEMA) => {
+            let content: ProjectPackSourceContent = serde_json::from_str(&event.content)
+                .map_err(|error| format!("pack source content is not this schema: {error}"))?;
+            (content.note, PackSourceExpectation::Unconditional)
+        }
+        Some(PROJECT_PACK_SOURCE_CONDITIONAL_SCHEMA) => {
+            if !project_tag_is_canonical {
+                return Err("pack source v2 d must equal the normalized project coordinate".into());
+            }
+            if !object.contains_key("expectedSourceId") {
+                return Err(
+                    "pack source v2 requires expectedSourceId (null for initial creation)".into(),
+                );
+            }
+            let content: ConditionalProjectPackSourceContent = serde_json::from_str(&event.content)
+                .map_err(|error| format!("pack source content is not this schema: {error}"))?;
+            if let Some(id) = &content.expected_source_id {
+                validate_expected_source_id(id)?;
+            }
+            (
+                content.note,
+                PackSourceExpectation::Expected(content.expected_source_id),
+            )
+        }
+        _ => {
+            return Err(format!(
+                "pack source content schema must be {PROJECT_PACK_SOURCE_SCHEMA:?} or {PROJECT_PACK_SOURCE_CONDITIONAL_SCHEMA:?}"
+            ));
+        }
     };
+    let note = note.as_deref().map(validate_note).transpose()?;
 
     Ok(ProjectPackSource {
         project,
@@ -446,6 +545,7 @@ pub fn decode_project_pack_source(event: &nostr::Event) -> Result<ProjectPackSou
         pin,
         path,
         note,
+        expectation,
     })
 }
 

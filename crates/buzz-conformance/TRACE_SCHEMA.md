@@ -95,9 +95,9 @@ exact spec line it grounds in.
 ### Error seam
 
 - **`sanitized_error { reason }`** where `reason ∈ { restricted,
-  invalid, server_error }`. spec: `Inv_SanitizedErrors`, M6 mutation
-  (line 778). The alphabet is **closed**: if `IngestError` ever grows a
-  fourth variant, `sanitized_reason_for` (in
+  invalid, conflict, server_error }`. spec: `Inv_SanitizedErrors`, M6 mutation
+  (line 778). The alphabet is **closed**: if `IngestError` ever grows another
+  variant, `sanitized_reason_for` (in
   `crates/buzz-relay/src/conformance/mod.rs`) goes non-exhaustive and
   CI catches it.
 
@@ -124,7 +124,7 @@ normalized away the violation. The checker assumes you *did not*.
    it cannot fail closed on `Inv_ReadConfinement`.
 
 3. **`SanitizedReason` is a closed alphabet of three.** The relay's
-   `IngestError` variants map 1:1 onto it. A fourth variant is a CI
+   `IngestError` variants map 1:1 onto it. An additional variant is a CI
    failure, not a silent bucket.
 
 ## Where the emitter lives

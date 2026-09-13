@@ -23,7 +23,7 @@ pub enum CliError {
     Key(String),
 
     /// Relay accepted the event but reported it as superseded by a newer
-    /// head — used by `bee mem` set/rm to surface NIP-33 LWW conflicts.
+    /// head, or refused a conditional source write — exit 5 for write conflicts.
     #[error("conflict: {0}")]
     Conflict(String),
 
@@ -112,7 +112,7 @@ pub fn is_retryable_error(e: &CliError) -> bool {
 
 /// Map CliError to process exit code.
 /// 0=success (not an error), 1=user/not-found, 2=network/relay, 3=auth,
-/// 4=other, 5=write conflict (NIP-33 dominated head).
+/// 4=other, 5=write conflict (NIP-33 head or source condition).
 pub fn exit_code(e: &CliError) -> i32 {
     match e {
         CliError::Usage(_) => 1,

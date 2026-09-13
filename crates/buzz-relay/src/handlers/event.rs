@@ -24,7 +24,7 @@ use crate::connection::{AuthState, ConnectionState};
 use crate::protocol::RelayMessage;
 use crate::state::AppState;
 
-use super::ingest::{reject_with_transport, IngestAuth, IngestError};
+use super::ingest::{reject_with_transport, IngestAuth};
 
 /// Increment the rejection counter with a bounded reason label.
 fn reject(reason: &'static str) {
@@ -1245,11 +1245,7 @@ pub async fn handle_event(event: Event, conn: Arc<ConnectionState>, state: Arc<A
         }
         Err(e) => {
             // Sanitize internal errors — don't leak DB/system details over WS.
-            let (msg, reason) = match &e {
-                IngestError::Rejected(m) => (m.clone(), "invalid"),
-                IngestError::AuthFailed(m) => (m.clone(), "auth"),
-                IngestError::Internal(_) => ("error: internal server error".to_string(), "error"),
-            };
+            let (_, msg, reason) = e.response();
             reject(reason);
             conn.send(RelayMessage::ok(&event_id_hex, false, &msg));
         }

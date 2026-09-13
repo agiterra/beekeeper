@@ -12088,6 +12088,19 @@ isolation; `just test-git-push-gate` includes it. Existing backlink-only
 founders need creator endorsement before another source update. No deployed
 fix is claimed. See [publication contract](PROJECT_TEAM_SETUP_IMPL.md).
 
+113. **Pack-source publication lacked a conditional update across project
+Owners (2026-09-12).** Kind 30624 used per-author NIP-33 replacement while
+readers chose a project source across authors. A local expected-source read
+could therefore be invalidated before publishing. The local candidate adds a
+required v2 expectation, one community/project transaction lock shared by v1
+writers and source deletions, retained-ID replay reconciliation and a named
+conflict response. `buzz-db/src/project_pack_source.rs` implements comparison
+inside the write transaction; scratch-Postgres races and real relay-ingestion
+tests pass. No production behavior change is claimed. Host snapshot publication
+still needs its durable journal and an isolated Git candidate ref; this source
+transaction alone cannot protect an earlier update of an adopted Git branch.
+Evidence and limits: [conditional publication checkpoint](history/2026-09-12-project-team-publication.md).
+
 ## 2a. Direction settled 2026-08-18
 
 Three independent answers to "what should a new execution get on its first

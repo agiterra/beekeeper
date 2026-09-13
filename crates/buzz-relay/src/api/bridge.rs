@@ -975,21 +975,14 @@ async fn submit_event_authed(
                 response: api_error(StatusCode::BAD_REQUEST, &msg),
             }
         }
-        Err(IngestError::AuthFailed(msg)) => {
-            crate::handlers::ingest::reject_with_transport("http", "auth");
-            let e = api_error(StatusCode::FORBIDDEN, &msg);
-            SubmitOutcome::Err {
-                status: e.0,
-                response: e,
-            }
-        }
-        Err(IngestError::Internal(msg)) => {
-            crate::handlers::ingest::reject_with_transport("http", "error");
-            let e = internal_error(&msg);
-            SubmitOutcome::Err {
-                status: e.0,
-                response: e,
-            }
+        Err(error) => {
+            let (status, message, reason) = error.response();
+            crate::handlers::ingest::reject_with_transport("http", reason);
+            let response = match &error {
+                IngestError::Internal(detail) => internal_error(detail),
+                _ => api_error(status, &message),
+            };
+            SubmitOutcome::Err { status, response }
         }
     }
 }

@@ -205,6 +205,7 @@ pub fn check_step(
         // closed set (trivially true by construction).
         TraceAction::SanitizedError { reason } => match reason {
             SanitizedReason::Restricted
+            | SanitizedReason::Conflict
             | SanitizedReason::Invalid
             | SanitizedReason::ServerError => Ok(()),
         },

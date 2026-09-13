@@ -45,6 +45,10 @@ pub enum DbError {
     #[error("invalid data: {0}")]
     InvalidData(String),
 
+    /// A conditional project pack source no longer extends the effective head.
+    #[error("pack-source-conflict: {0}")]
+    PackSourceConflict(String),
+
     /// A serving write admitted before the lifecycle transition is still live.
     /// This is an ordinary retryable drain condition, not a safety violation.
     #[error(

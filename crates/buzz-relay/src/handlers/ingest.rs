@@ -294,16 +294,7 @@ pub struct IngestResult {
     pub message: String,
 }
 
-/// Ingestion error — the caller maps this to their transport's error format.
-#[derive(Debug)]
-pub enum IngestError {
-    /// Client error (bad event) — WS: OK false, HTTP: 400.
-    Rejected(String),
-    /// Auth/scope error — WS: OK false, HTTP: 401/403.
-    AuthFailed(String),
-    /// Server error — WS: OK false, HTTP: 500.
-    Internal(String),
-}
+pub use super::ingest_error::IngestError;
 
 /// Map the durable community write-fence lookup onto the ingest error taxonomy.
 ///
@@ -4776,7 +4767,7 @@ async fn ingest_event_inner(
             .db
             .replace_parameterized_event(tenant.community(), &event, &d_tag, channel_id)
             .await
-            .map_err(|e| IngestError::Internal(format!("error: {e}")))?
+            .map_err(super::ingest_error::parameterized_write_error)?
     } else if kind_u32 == KIND_CODING_SESSION_GENESIS {
         // Genesis is a regular event, but storing it also decides a question no
         // pure validator can: whether this pubkey is the founder of this

@@ -2428,84 +2428,7 @@ pub enum PackCmd {
     },
 }
 
-/// Where a project's persona packs live — the kind:30624 record and what it
-/// means on this machine.
-///
-/// Packs are trees of text, so they live in a git repository and the wire
-/// carries the pointer. `set-source` is founder-only at the relay: a
-/// non-founder's publish is refused with the sentence naming what was
-/// searched, not silently ignored.
-#[derive(Subcommand)]
-pub enum PacksCmd {
-    /// Publish the kind:30624 saying which repository holds this project's packs
-    #[command(
-        after_help = "Examples:\n  bee packs set-source --project 30621:<owner-hex>:agiterra --repo 30617:<owner-hex>:agiterra-packs --ref refs/heads/main\n  bee packs set-source --project 30621:<owner-hex>:agiterra --repo 30617:<owner-hex>:agiterra-packs --sha <40-hex> --path packs/roles\n\nExactly one of --ref and --sha: two pins would let two hosts stage two different trees from one signed record."
-    )]
-    SetSource {
-        /// Project coordinate `30621:<owner-hex>:<slug>`
-        #[arg(long)]
-        project: String,
-        /// Packs repository coordinate `30617:<owner-hex>:<id>`
-        #[arg(long)]
-        repo: String,
-        /// Stage the tip of this ref, e.g. `refs/heads/main`
-        #[arg(long = "ref", conflicts_with = "sha")]
-        ref_name: Option<String>,
-        /// Stage exactly this commit (40 hex)
-        #[arg(long)]
-        sha: Option<String>,
-        /// Directory holding one directory per role (default: personas/roles)
-        #[arg(long)]
-        path: Option<String>,
-        /// An operator note, at most 512 bytes
-        #[arg(long)]
-        note: Option<String>,
-    },
-    /// Announce a packs repository for a project, seed it, and point the
-    /// project at the commit that landed
-    #[command(
-        after_help = "Three steps in one, the same three the desktop app's \"Create packs repository\" performs:\n  1. announce 30617 `<slug>-packs` under your key, inside the project\n  2. seed it from the role packs on disk with one signed commit, pushed to refs/heads/main\n  3. publish the 30624 pinned to the sha that actually landed\n\nA failure at any step stops the sequence and prints what already landed — nothing ever points at a repository with no packs in it. Requires the git credential helper (`just install-git-credentials`)."
-    )]
-    Init {
-        /// Project coordinate `30621:<owner-hex>:<slug>`
-        #[arg(long)]
-        project: String,
-        /// Repository id to announce (default: `<project-slug>-packs`)
-        #[arg(long)]
-        repo_id: Option<String>,
-        /// Role packs to seed from (default: the nearest personas/roles)
-        #[arg(long)]
-        from: Option<PathBuf>,
-        /// Directory inside the repository to write them to (default: personas/roles)
-        #[arg(long)]
-        path: Option<String>,
-        /// Print the plan and touch nothing
-        #[arg(long)]
-        dry_run: bool,
-    },
-    /// Read a project's newest pack source, exactly as the relay served it
-    GetSource {
-        /// Project coordinate `30621:<owner-hex>:<slug>`
-        #[arg(long)]
-        project: String,
-    },
-    /// What this machine would stage: repository, commit, and role directories found
-    #[command(
-        after_help = "Reads the wire, then this disk. `cache_present: null` means this machine has never fetched these packs — a different fact from a role the repository does not carry."
-    )]
-    Status {
-        /// Project coordinate `30621:<owner-hex>:<slug>`
-        #[arg(long)]
-        project: String,
-        /// The seat role whose pack to report. The seat's role picks the
-        /// pack; an actor's home role is never consulted.
-        #[arg(long)]
-        role: Option<String>,
-        /// Override the packs cache directory this machine reads
-        #[arg(long)]
-        packs_dir: Option<PathBuf>,
-    },
-}
+pub use commands::packs_cli::PacksCmd;
 
 /// Terminal git access to the relay's own git hosting.
 ///
@@ -4876,64 +4799,7 @@ async fn run(cli: Cli) -> Result<(), CliError> {
         Cmd::Terminals(sub) => commands::terminals::dispatch(sub, &client).await,
         Cmd::Pulse(sub) => commands::pulse::dispatch(sub, &client, &cli.format).await,
         Cmd::Events(sub) => commands::events::dispatch(sub, &client, &cli.format).await,
-        Cmd::Packs(sub) => match sub {
-            PacksCmd::SetSource {
-                project,
-                repo,
-                ref_name,
-                sha,
-                path,
-                note,
-            } => {
-                commands::packs::cmd_set_source(
-                    &client,
-                    &project,
-                    &repo,
-                    &commands::packs::PackSourcePin {
-                        ref_name: ref_name.as_deref(),
-                        sha: sha.as_deref(),
-                    },
-                    path.as_deref(),
-                    note.as_deref(),
-                )
-                .await
-            }
-            PacksCmd::Init {
-                project,
-                repo_id,
-                from,
-                path,
-                dry_run,
-            } => {
-                commands::packs::cmd_init(
-                    &client,
-                    &commands::packs::PackInitRequest {
-                        project: &project,
-                        repo_id: repo_id.as_deref(),
-                        from: from.as_deref(),
-                        path: path.as_deref(),
-                        dry_run,
-                    },
-                )
-                .await
-            }
-            PacksCmd::GetSource { project } => {
-                commands::packs::cmd_get_source(&client, &project).await
-            }
-            PacksCmd::Status {
-                project,
-                role,
-                packs_dir,
-            } => {
-                commands::packs::cmd_status(
-                    &client,
-                    &project,
-                    role.as_deref(),
-                    packs_dir.as_deref(),
-                )
-                .await
-            }
-        },
+        Cmd::Packs(sub) => commands::packs_cli::dispatch(sub, &client).await,
         Cmd::Pack(_) => unreachable!("handled above"),
         Cmd::Git(_) => unreachable!("handled above"),
         Cmd::Session(_) => unreachable!("handled above"),

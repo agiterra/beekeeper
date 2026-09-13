@@ -323,3 +323,7 @@ fn project_coordinate_owner(coordinate: &str) -> Option<String> {
 #[cfg(test)]
 #[path = "pack_source_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "pack_source_conditional_tests.rs"]
+mod conditional_tests;

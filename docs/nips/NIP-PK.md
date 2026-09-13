@@ -89,6 +89,56 @@ absent** — an explicit `null` is refused naming the key, matching the
 `routing`/`beeStamp` discipline on kind 44223: a null in a producer's output
 means the producer invented a shape. Content is capped at 2048 bytes.
 
+### Conditional publication (v2)
+
+A conditional source uses the same kind and validated tags with a versioned
+content body. The v2 `d` tag must exactly equal the normalized project
+coordinate (`30621:<lowercase-owner-hex>:<slug>`); noncanonical aliases are
+refused. V1 retains its legacy normalization and exact-query behavior; this
+extension does not regroup historical raw aliases.
+
+```json
+{
+  "schema": "buzz-project-pack-source/v2",
+  "expectedSourceId": null,
+  "note": "initial checked snapshot"
+}
+```
+
+`expectedSourceId` is **required**. Explicit `null` requests initial creation
+when no effective live source exists. A string requests replacement of exactly
+that event ID and must be 64 lowercase hexadecimal characters. Missing,
+uppercase, padded, incorrectly typed or otherwise malformed values are refused;
+unknown content fields are refused. The v1 note rules and 2048-byte content
+ceiling remain. An expected ID is the signed source event's ID, not a Git SHA.
+
+V1 remains an unconditional write with its existing bytes and behavior. Adding
+`expectedSourceId` to v1 is invalid. A strict v1 relay refuses the v2 body and
+version; it must never ignore the condition and admit an unconditional write.
+Readers distinguish unconditional v1, expected absence, and expected event ID.
+Reading or building this shape does **not** establish atomic enforcement.
+
+A relay implementing conditional publication must serialize **all** source
+writes, including v1 writes and source deletions, under the same transaction
+lock for the community and normalized project coordinate. Under that lock it
+resolves the effective live source across authors by `created_at` descending,
+then event ID ascending, compares the expectation, and atomically stores the
+successor. The conditional successor must outrank the expected head under that
+same ordering. A mismatch is a named source conflict (HTTP 409, WebSocket
+conflict refusal, CLI exit 5), distinct from an authorization refusal.
+
+An exact stored-event retry reconciles the original admission without reviving
+that event after supersession or deletion. An uncertain response requires
+checking both the stored event ID and effective head; it does not justify
+signing a replacement with a newer timestamp. Legacy writes can still change
+the source after a conditional transaction; the condition provides atomic
+comparison and update, not permanent exclusivity.
+
+The source condition does not guard a Git branch changed before publication.
+Push a checked candidate to an isolated ref and verify its commit before
+conditionally adopting that immutable revision. Changing an already adopted
+moving ref requires its own expected Git-head protection.
+
 ## Who may write one
 
 A pack source decides which prompt bytes every seat on a project runs, so the

@@ -1527,8 +1527,7 @@ mod tests {
     fn rejection_message(result: Result<(), IngestError>) -> String {
         match result {
             Err(IngestError::Rejected(message)) => message,
-            Err(IngestError::AuthFailed(message)) => panic!("unexpected auth failure: {message}"),
-            Err(IngestError::Internal(message)) => panic!("unexpected internal failure: {message}"),
+            Err(other) => panic!("unexpected refusal: {other:?}"),
             Ok(()) => panic!("expected revision validation to fail"),
         }
     }

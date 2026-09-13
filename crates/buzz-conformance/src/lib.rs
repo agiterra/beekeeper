@@ -135,6 +135,8 @@ pub enum SanitizedReason {
     Restricted,
     /// Malformed event — spec "invalid".
     Invalid,
+    /// Conditional state comparison failed — spec "conflict".
+    Conflict,
     /// Server fault — spec "server_error".
     ServerError,
 }

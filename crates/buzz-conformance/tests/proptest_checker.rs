@@ -90,6 +90,7 @@ fn arb_reason() -> impl Strategy<Value = SanitizedReason> {
     prop_oneof![
         Just(SanitizedReason::Restricted),
         Just(SanitizedReason::Invalid),
+        Just(SanitizedReason::Conflict),
         Just(SanitizedReason::ServerError),
     ]
 }

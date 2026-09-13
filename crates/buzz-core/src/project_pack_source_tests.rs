@@ -305,3 +305,167 @@ fn shared_pack_source_conformance_vectors_match_this_decoder() {
         );
     }
 }
+
+#[test]
+fn v1_builder_bytes_and_unconditional_decode_are_unchanged() {
+    for note in [None, Some("checked candidate")] {
+        let draft = build_project_pack_source(
+            &project(),
+            &repo(),
+            &PackPin::Sha("a".repeat(40)),
+            None,
+            note,
+        )
+        .expect("v1 draft");
+        let expected = match note {
+            None => r#"{"schema":"buzz-project-pack-source/v1"}"#,
+            Some(_) => r#"{"schema":"buzz-project-pack-source/v1","note":"checked candidate"}"#,
+        };
+        assert_eq!(draft.content, expected);
+        assert_eq!(
+            decode_project_pack_source(&signed_draft(&draft))
+                .expect("v1 source")
+                .expectation(),
+            &PackSourceExpectation::Unconditional,
+        );
+    }
+}
+
+#[test]
+fn conditional_builder_preserves_tags_and_distinguishes_null_from_an_expected_id() {
+    let pin = PackPin::Sha("a".repeat(40));
+    let legacy = build_project_pack_source(
+        &project(),
+        &repo(),
+        &pin,
+        Some("packs/roles"),
+        Some("candidate"),
+    )
+    .expect("v1 draft");
+    for expected_id in [None, Some(OWNER)] {
+        let draft = build_conditional_project_pack_source(
+            &project(),
+            &repo(),
+            &pin,
+            Some("packs/roles"),
+            Some("candidate"),
+            expected_id,
+        )
+        .expect("v2 draft");
+        assert_eq!(draft.tags, legacy.tags);
+        let content: serde_json::Value = serde_json::from_str(&draft.content).expect("JSON");
+        assert_eq!(content["schema"], PROJECT_PACK_SOURCE_CONDITIONAL_SCHEMA);
+        assert!(content
+            .as_object()
+            .expect("object")
+            .contains_key("expectedSourceId"));
+        assert_eq!(content["expectedSourceId"], json!(expected_id));
+        let decoded = decode_project_pack_source(&signed_draft(&draft)).expect("v2 source");
+        assert_eq!(
+            decoded.expectation(),
+            &PackSourceExpectation::Expected(expected_id.map(str::to_string))
+        );
+        assert_eq!(decoded.note(), Some("candidate"));
+        assert!(
+            serde_json::from_str::<ProjectPackSourceContent>(&draft.content).is_err(),
+            "the old v1 deny_unknown_fields body must refuse v2 rather than lose the condition"
+        );
+    }
+}
+
+#[test]
+fn v2_refuses_missing_or_malformed_conditions_and_wrong_schema_fields() {
+    let draft = build_project_pack_source(
+        &project(),
+        &repo(),
+        &PackPin::Sha("a".repeat(40)),
+        None,
+        None,
+    )
+    .expect("valid tags");
+    let schema = PROJECT_PACK_SOURCE_CONDITIONAL_SCHEMA;
+    let mut invalid = vec![
+        json!({"schema": schema}),
+        json!({"schema": schema, "expectedSourceId": null, "extra": true}),
+        json!({"schema": schema, "expectedSourceId": null, "note": null}),
+        json!({"schema": PROJECT_PACK_SOURCE_SCHEMA, "expectedSourceId": null}),
+        json!({"schema": "buzz-project-pack-source/v3", "expectedSourceId": null}),
+    ];
+    for id in [
+        json!(""),
+        json!("a".repeat(63)),
+        json!("a".repeat(65)),
+        json!("A".repeat(64)),
+        json!("g".repeat(64)),
+        json!(format!(" {OWNER}")),
+        json!(1),
+        json!(false),
+        json!([]),
+        json!({}),
+    ] {
+        invalid.push(json!({"schema": schema, "expectedSourceId": id}));
+    }
+    for content in invalid {
+        assert!(
+            decode_project_pack_source(&sign(draft.tags.clone(), &content.to_string())).is_err(),
+            "must refuse {content}"
+        );
+    }
+    let repeated =
+        format!(r#"{{"schema":"{schema}","expectedSourceId":null,"expectedSourceId":"{OWNER}"}}"#);
+    assert!(decode_project_pack_source(&sign(draft.tags, &repeated)).is_err());
+}
+
+#[test]
+fn conditional_builder_never_normalizes_an_expected_id_or_bypasses_tag_validation() {
+    for id in [
+        "".to_string(),
+        "A".repeat(64),
+        format!(" {OWNER}"),
+        "g".repeat(64),
+    ] {
+        let error = build_conditional_project_pack_source(
+            &project(),
+            &repo(),
+            &PackPin::Sha("a".repeat(40)),
+            None,
+            None,
+            Some(&id),
+        )
+        .expect_err("invalid ID");
+        assert!(error.contains("expectedSourceId"), "{error}");
+    }
+    assert!(build_conditional_project_pack_source(
+        &project(),
+        &repo(),
+        &PackPin::Sha("a".repeat(40)),
+        Some("../escape"),
+        None,
+        None,
+    )
+    .is_err());
+}
+
+#[test]
+fn v2_requires_a_canonical_project_tag_while_v1_keeps_legacy_normalization() {
+    let draft = build_project_pack_source(
+        &project(),
+        &repo(),
+        &PackPin::Sha("a".repeat(40)),
+        None,
+        None,
+    )
+    .expect("valid draft");
+    let mut tags = draft.tags;
+    tags[0][1] = format!("30621:{}:agiterra", OWNER.to_uppercase());
+    let legacy =
+        decode_project_pack_source(&sign(tags.clone(), &draft.content)).expect("legacy alias");
+    assert_eq!(legacy.project(), project());
+    let conditional = json!({
+        "schema": PROJECT_PACK_SOURCE_CONDITIONAL_SCHEMA,
+        "expectedSourceId": null,
+    });
+    let error =
+        decode_project_pack_source(&sign(tags, &conditional.to_string())).expect_err("v2 alias");
+    assert!(error.contains("normalized project coordinate"), "{error}");
+}
