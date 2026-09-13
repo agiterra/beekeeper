@@ -98,20 +98,30 @@ export function subscribeRedactionResolution(
   onResolved: (resolved: ReadonlyMap<string, ResolvedRedaction>) => void,
   resolver: RedactionResolver = resolveCodingSessionRedactions,
 ): () => void {
-  // A remount — pop-out, channel switch, community-scoped rebuild — answers
-  // from the module cache without a second IPC round trip.
+  // What the cache already holds is delivered at once — a remount, a pop-out,
+  // a channel switch-and-back pay no second IPC round trip for it. But a
+  // cache hit on *some* digests is not an answer for the rest: a transcript
+  // being streamed grows a marker at a time, and answering the whole scope
+  // from the first marker's cache entry left every later marker an
+  // unresolved pill until a restart emptied the cache (Andy, 2026-09-12: the
+  // values showed only after restarting the app). So the lookup is for the
+  // digests the cache does not hold, and the two halves are merged on
+  // landing.
   const cached = readCached(scope);
-  if (cached) {
-    onResolved(cached);
-    return () => {};
-  }
-  const scopeKey = scopeCacheKey(scope);
+  if (cached) onResolved(cached);
+  const missing = scope.digests.filter(
+    (digest) =>
+      !resolvedByKey.has(cacheKey(scope.signerPubkey, scope.sessionId, digest)),
+  );
+  if (missing.length === 0) return () => {};
+  const missingScope: RedactionLookupScope = { ...scope, digests: missing };
+  const scopeKey = scopeCacheKey(missingScope);
   if (emptyScopes.has(scopeKey)) return () => {};
 
   let lookup = pendingLookups.get(scopeKey);
   if (!lookup) {
     lookup = resolver({
-      digests: scope.digests,
+      digests: missing,
       providerPubkey: scope.signerPubkey,
       sessionId: scope.sessionId,
     })
@@ -138,7 +148,10 @@ export function subscribeRedactionResolution(
   let cancelled = false;
   lookup
     .then((resolved) => {
-      if (!cancelled && resolved) onResolved(resolved);
+      if (cancelled || !resolved) return;
+      // Everything known for the scope, not only what this lookup fetched:
+      // the subscriber replaces its map rather than merging.
+      onResolved(readCached(scope) ?? resolved);
     })
     .catch((error) => {
       // A vault this machine cannot read is a machine that cannot answer,

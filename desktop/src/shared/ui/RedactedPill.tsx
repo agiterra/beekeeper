@@ -150,6 +150,10 @@ export function RedactedPill({
   );
 }
 
+/** What the amber eye means; the tooltip says it, and so does the screen reader. */
+export const REVEALED_REDACTION_LABEL =
+  "Redacted for other viewers — only you see this value";
+
 function RevealedRedaction({
   className,
   interactive,
@@ -161,16 +165,22 @@ function RevealedRedaction({
   marker: RedactionMarker;
   resolved: ResolvedRedaction;
 }) {
+  // The icon alone, so a path with three redactions still reads as a path
+  // (Andy, 2026-09-13: the words "polluted the text"); the sentence moved
+  // into the tooltip and the accessible name. Still amber, still inline: it
+  // remains the only signal that this view is privileged.
   const badge = (
     <span
+      aria-label={REVEALED_REDACTION_LABEL}
       className={cn(
-        "ml-1 inline-flex select-none items-baseline gap-1 rounded-sm px-1 py-px align-baseline",
-        "bg-amber-500/10 font-medium text-2xs text-amber-700 dark:text-amber-400",
+        "ml-0.5 inline-flex select-none items-baseline rounded-sm px-0.5 py-px align-baseline",
+        "bg-amber-500/10 text-amber-700 dark:text-amber-400",
       )}
       data-redaction-revealed-badge=""
+      role="img"
+      title={interactive ? undefined : REVEALED_REDACTION_LABEL}
     >
       <EyeOff aria-hidden className="size-3 self-center" />
-      redacted for other viewers
     </span>
   );
 

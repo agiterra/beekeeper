@@ -149,3 +149,75 @@ test("distinct scopes resolve independently", async () => {
   );
   assert.deepEqual(plaintexts.sort(), ["/Users/alice/one", "cursor-9"]);
 });
+
+test("a marker arriving after an earlier one resolved is looked up, not answered from the partial cache", async () => {
+  resetRedactionDictionary();
+  // The first marker of a streaming transcript resolves…
+  const first = deferredResolver({
+    [DIGEST]: { plaintext: "/Users/alice/checkout", class: "host-path" },
+  });
+  const heardFirst = [];
+  subscribeRedactionResolution(
+    scope(),
+    (map) => heardFirst.push(map),
+    first.resolver,
+  );
+  first.release();
+  await settled();
+  assert.equal(
+    heardFirst.at(-1).get(DIGEST).plaintext,
+    "/Users/alice/checkout",
+  );
+
+  // …then a second marker lands. Before the fix the cache hit on the first
+  // digest answered the whole scope and the second was never asked for.
+  const second = deferredResolver({
+    [OTHER_DIGEST]: { plaintext: "/Users/alice/other", class: "host-path" },
+  });
+  const heard = [];
+  subscribeRedactionResolution(
+    scope({ digests: [DIGEST, OTHER_DIGEST] }),
+    (map) => heard.push(map),
+    second.resolver,
+  );
+  // The known half is delivered at once…
+  assert.equal(heard.length, 1);
+  assert.equal(heard[0].get(DIGEST).plaintext, "/Users/alice/checkout");
+  assert.equal(heard[0].has(OTHER_DIGEST), false);
+  // …and only the missing digest goes over IPC.
+  assert.deepEqual(
+    second.calls.map((call) => call.digests),
+    [[OTHER_DIGEST]],
+  );
+  second.release();
+  await settled();
+  const last = heard.at(-1);
+  assert.equal(last.get(DIGEST).plaintext, "/Users/alice/checkout");
+  assert.equal(last.get(OTHER_DIGEST).plaintext, "/Users/alice/other");
+});
+
+test("a digest the vault had nothing for is asked again once a new marker widens the scope", async () => {
+  resetRedactionDictionary();
+  const empty = deferredResolver({});
+  subscribeRedactionResolution(scope(), () => {}, empty.resolver);
+  empty.release();
+  await settled();
+  // The vault has caught up by the time the next marker arrives.
+  const later = deferredResolver({
+    [DIGEST]: { plaintext: "/Users/alice/checkout", class: "host-path" },
+    [OTHER_DIGEST]: { plaintext: "/Users/alice/other", class: "host-path" },
+  });
+  const heard = [];
+  subscribeRedactionResolution(
+    scope({ digests: [DIGEST, OTHER_DIGEST] }),
+    (map) => heard.push(map),
+    later.resolver,
+  );
+  assert.deepEqual(
+    later.calls.map((call) => call.digests.sort()),
+    [[DIGEST, OTHER_DIGEST]],
+  );
+  later.release();
+  await settled();
+  assert.equal(heard.at(-1).size, 2);
+});

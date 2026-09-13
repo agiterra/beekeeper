@@ -11625,6 +11625,36 @@ follow-up); (3) the founded screen naming the project rather than its
 `coding-sessions/lib/codingSessionTeamDeliveryStatus.ts`) — a one-line
 `\u0000` fix each, plus the hygiene test's allowlist.
 
+### Fixed 2026-09-13 — the revealed-redaction badge is an icon, and a streaming transcript resolves every marker, not only its first (`fix/redaction-pill`)
+
+**Andy, 2026-09-13, from a live session on hive:** the amber "redacted for
+other viewers" words after every recovered path "pollute the text" — a shell
+line with three host paths read as prose with three sentences in it; and
+"I didn't see the redacted data until I restarted the app. When it was
+streaming from the agent, it was getting redacted."
+
+**Badge.** `RevealedRedaction` (`shared/ui/RedactedPill.tsx`) now renders
+the amber eye alone; the sentence is the tooltip and the accessible name
+(`REVEALED_REDACTION_LABEL`, `role="img"`, `title` in non-interactive
+renders). Still amber, still inline: it remains the one signal that the view
+is privileged. The elision e2e spec asserts the label, not the text.
+
+**Streaming.** A real client bug, found by reading
+`useRedactionDictionary.ts` and confirmed by the vault on disk having every
+value at the time (`session-provider/<pubkey>/redactions/d01b6385….jsonl`,
+written 2026-09-12 11:xx–12:28, live): `subscribeRedactionResolution`
+short-circuited on a cache hit for *any* digest of the scope — so once the
+transcript's first marker resolved, every later marker (a new scope, its
+digests a superset) was answered from that one cached entry and never sent
+over IPC. A restart emptied the module cache, the whole set was asked once,
+and everything revealed. The lookup is now for the digests the cache does
+not hold, the known half is delivered at once, and the two halves are merged
+on landing; a scope the vault answered empty is re-asked when a later marker
+widens it. Tests: `useRedactionDictionary.test.mjs` (+2: the second marker is
+asked for on its own; an empty answer is not permanent once the scope grows).
+Not a vault race: the provider writes the vault before it signs
+(`lib.rs` `record_redactions` ahead of `sign_with_keys`).
+
 ### Fixed 2026-09-11 — a founded session files under its project, not under General
 
 **Andy, live on the dev app, 2026-09-11:** every new session appeared under

@@ -342,9 +342,14 @@ test("on the machine that redacted it, the operator sees the value and a badge",
   await expect(revealed.first()).toContainText(
     "/Users/andy/.config/git/credentials",
   );
+  // The badge is the amber eye alone; its sentence is the accessible name
+  // (and the tooltip), not text that breaks up the path.
   await expect(
     revealed.first().locator("[data-redaction-revealed-badge]"),
-  ).toContainText("redacted for other viewers");
+  ).toHaveAttribute("aria-label", /Redacted for other viewers/);
+  await expect(
+    revealed.first().locator("[data-redaction-revealed-badge]"),
+  ).toHaveText("");
 
   // A path written in backticks reveals too, badge and all. Before the `code`
   // component read the marker this was the one place the operator could not
@@ -356,7 +361,7 @@ test("on the machine that redacted it, the operator sees the value and a badge",
   await expect(revealedInCode).toBeVisible();
   await expect(
     revealedInCode.locator("[data-redaction-revealed-badge]"),
-  ).toContainText("redacted for other viewers");
+  ).toHaveAttribute("aria-label", /Redacted for other viewers/);
 
   // The credential was redacted identically and never recorded, so even here
   // it stays a pill. This is the leak direction, in the UI.
