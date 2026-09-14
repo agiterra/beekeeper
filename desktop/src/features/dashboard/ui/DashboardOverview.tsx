@@ -17,6 +17,7 @@ import {
   type DashboardTab,
   dashboardTabSearch,
 } from "@/features/dashboard/lib/dashboardTabs";
+import { RelayHealthCard } from "@/features/dashboard/ui/RelayHealthCard";
 import { resolveUserLabel } from "@/features/profile/lib/identity";
 import { useUsersBatchQuery } from "@/features/profile/hooks";
 import { useGlobalNotesQuery } from "@/features/pulse/hooks";
@@ -29,7 +30,8 @@ import { Skeleton } from "@/shared/ui/skeleton";
 const PULSE_PREVIEW_COUNT = 3;
 
 /**
- * One card per surface the Dashboard absorbed, each a link to its tab.
+ * One card per surface the Dashboard absorbed, each a link to its tab, and
+ * the relay's own machine (`RelayHealthCard`), which has no tab.
  *
  * Every number here is one the tab itself already shows, read through the
  * same hook — nothing is re-derived, so the card and the tab cannot disagree.
@@ -52,6 +54,7 @@ export function DashboardOverview({
         <AgentsCard />
         {showAgentProgress ? <AgentProgressCard /> : null}
         {showPulse ? <PulseCard /> : null}
+        <RelayHealthCard />
       </div>
     </div>
   );

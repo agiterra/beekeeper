@@ -48,6 +48,7 @@ pub mod state;
 pub mod storage_sweep;
 /// Subscription registry with (channel, kind) fan-out index.
 pub mod subscription;
+pub mod system_health;
 /// OpenTelemetry tracing initialisation (tracer provider + OTLP exporter).
 pub mod telemetry;
 /// Row-zero host binding: resolve the request community from the connection host.

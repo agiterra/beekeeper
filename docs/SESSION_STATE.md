@@ -11625,6 +11625,69 @@ follow-up); (3) the founded screen naming the project rather than its
 `coding-sessions/lib/codingSessionTeamDeliveryStatus.ts`) — a one-line
 `\u0000` fix each, plus the hygiene test's allowlist.
 
+### Built 2026-09-14 — the Dashboard shows the relay's machine: CPU, memory and disk (`feat/relay-health`)
+
+**Andy, 2026-09-14:** "Can we add some relay server health to the Dashboard,
+RAM, CPU and Disk space usage to start?"
+
+**Relay.** `crates/buzz-relay/src/system_health.rs`: a sampling thread
+(`spawn_sampler`, started in `main.rs` right after `AppState`) refreshes
+`sysinfo` every `SAMPLE_INTERVAL` (10 s) and publishes one
+`SystemHealthSnapshot`: host name/OS/uptime and relay uptime; CPU as
+machine percent over the interval, the relay process's own percent (of one
+core, as `top` counts it), core count and the host load average; memory as
+machine total/used/available, swap, the relay's RSS, and a `container`
+block only when a cgroup limit below the machine total applies
+(`container_memory`); disks as `statvfs` of the git data path (canonicalized,
+so a dev `./repos` names its real place) and `/`, merged into one row when
+they are one storage (`dedupe_disks`: same filesystem id and size, or the
+same size and the same free space in one sample — APFS volumes in one
+container, an overlay root over its host disk). What it cannot see is
+stated in the module doc: Postgres, Redis and MinIO volumes live in other
+containers.
+`GET /health/system` (`api/system_health.rs`) runs the bridge chain — host
+tenant, NIP-98 GET, admission, replay, membership — then
+`may_read_system_health`: owner or admin, or anyone on an open relay with no
+steward yet (the kind:9033 rule). Others get 403 with a sentence; a relay
+whose sampler has no sample yet answers 503, never an invented one. The body
+is the snapshot plus `age_seconds`. Deps: `sysinfo` 0.38 (`system` only),
+`nix` 0.31 `fs` on unix.
+
+**Desktop.** `get_relay_system_health` (`commands/relay_system_health.rs`,
+an authenticated GET through `get_relay_json`, body passed through untyped).
+`features/dashboard/lib/relaySystemHealth.ts` validates the document whole
+(`parseRelaySystemHealth`: a missing figure rejects it, nothing prints as 0),
+formats bytes in binary units, and builds the sentences; every sentence
+names its subject ("12% of 4 cores · relay process 3%", "5.5 GiB of 16 GiB
+in use (34%) · relay process 120 MiB", "git data, root · 40 GiB free of 100
+GiB (60% used)", "sampled 12 s ago", "(stale)" past three intervals).
+`features/dashboard/hooks.ts` polls every 10 s while the overview is mounted;
+`shouldReadRelaySystemHealth` asks for stewards and for an identity with no
+roster row (an open relay), never for a plain member; a 403 or 404 stops the
+polling. `RelayHealthCard` (in `DashboardOverview`, no tab) renders nothing
+for a member or a 403, and words for every other failure, including "predates
+the health endpoint" for a 404.
+
+**Tests.** Relay: 11 (`system_health` dedupe/container/age/wire shape plus
+one real sample of the test machine; the role rule and the response). Desktop:
+`relaySystemHealth.test.mjs` (7); e2e `dashboard-relay-health.spec.ts` (4:
+owner figures, rostered member sees no card, 403 hides / 404 says so,
+container limit + stale age) with the mock command and
+`MOCK_RELAY_SYSTEM_HEALTH` in `e2eBridge.ts`.
+
+**Live run, 2026-09-14, this Mac.** Relay from the worktree on `:3000`
+(open, no steward): `GET /health/system` unauthenticated → 401 `missing
+Nostr auth`; with the dev `X-Pubkey` header → 200, age 7 s of a 10 s
+interval, 18 cores at 8% (relay process 1.4%), 49.3 of 64 GiB in use, RSS
+37.5 MiB, no container block, and **one** disk row labelled `git data, root`
+(the two APFS volumes share the pool; before the merge rule was widened they
+were two rows with identical numbers) naming the canonical repos path and
+`/`, 146 GiB free of 1858. The card itself is not yet seen in a running app:
+hive shows it once the relay redeploys, and until then the installed app's
+card says the relay predates the endpoint, which is true. Disk on hive will
+be the relay container's view of the docker host filesystem; the database's
+own volume is not measured.
+
 ### Fixed 2026-09-14 — a Solo session's goal is one line: summarized by the naming model when there is one, clamped with a chevron regardless (`fix/goal-summary`)
 
 **Andy, 2026-09-14:** for a new Solo session the goal was the whole initial

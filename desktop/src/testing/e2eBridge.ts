@@ -610,6 +610,16 @@ type E2eConfig = {
 
     /** NIP-11 `software_commit_count` the mock relay discloses. */
     relayBuildCommitCount?: number | null;
+    /**
+     * What `get_relay_system_health` answers (the relay's `GET /health/system`
+     * body, snake_case). Absent → a fixed plausible machine
+     * (`MOCK_RELAY_SYSTEM_HEALTH`); `null` → the command throws
+     * `relaySystemHealthError`, or a 404 when that is unset, the way a relay
+     * predating the endpoint answers.
+     */
+    relaySystemHealth?: Record<string, unknown> | null;
+    /** The error string `get_relay_system_health` throws when `relaySystemHealth` is `null`. */
+    relaySystemHealthError?: string;
     /** NIP-11 `software` — the repository URL the mock relay names. */
     relaySoftware?: string | null;
     /**
@@ -1740,6 +1750,48 @@ const REACTION_TARGET_CONTENT = "React to me with a custom emoji";
 // REACTION_TARGET_EVENT_ID.
 const SYSTEM_REACTION_TARGET_EVENT_ID = "e".repeat(64);
 const E2E_IDENTITY_OVERRIDE_STORAGE_KEY = "buzz:e2e-identity-override.v1";
+const MOCK_GIB = 1024 ** 3;
+
+/**
+ * The machine the mock relay reports for `get_relay_system_health`: the
+ * relay's `GET /health/system` shape (`crates/buzz-relay/src/system_health.rs`),
+ * with figures a spec can assert on after the Dashboard formats them.
+ */
+export const MOCK_RELAY_SYSTEM_HEALTH: Record<string, unknown> = {
+  sampled_at: "2026-09-14T20:00:00Z",
+  age_seconds: 3,
+  interval_seconds: 10,
+  host: {
+    name: "mock-relay",
+    os: "Linux 6.8",
+    uptime_seconds: 86_400,
+    relay_uptime_seconds: 3_600,
+  },
+  cpu: {
+    cores: 4,
+    machine_percent: 12.3,
+    process_percent: 3.2,
+    load_average: { one: 0.52, five: 0.4, fifteen: 0.31 },
+  },
+  memory: {
+    machine_total_bytes: 16 * MOCK_GIB,
+    machine_used_bytes: 5.5 * MOCK_GIB,
+    machine_available_bytes: 10.5 * MOCK_GIB,
+    swap_total_bytes: 0,
+    swap_used_bytes: 0,
+    process_rss_bytes: 120 * 1024 * 1024,
+    container: null,
+  },
+  disks: [
+    {
+      labels: ["git data", "root"],
+      paths: ["/data/git", "/"],
+      total_bytes: 100 * MOCK_GIB,
+      available_bytes: 40 * MOCK_GIB,
+    },
+  ],
+};
+
 /** Stands in for `tauri.conf.json`'s version, which no mock IPC call can read. */
 const MOCK_APP_VERSION = "0.0.0-e2e";
 const DEFAULT_MOCK_IDENTITY = {
@@ -14678,6 +14730,16 @@ export function maybeInstallE2eTauriMocks() {
         return activeConfig?.mock?.relaySelf ?? null;
       case "get_relay_build_commit":
         return activeConfig?.mock?.relayBuildCommit ?? null;
+      case "get_relay_system_health": {
+        const configured = activeConfig?.mock?.relaySystemHealth;
+        if (configured === null) {
+          throw new Error(
+            activeConfig?.mock?.relaySystemHealthError ??
+              "relay returned 404 Not Found",
+          );
+        }
+        return configured ?? MOCK_RELAY_SYSTEM_HEALTH;
+      }
       case "get_relay_build_identity":
         return {
           commit: activeConfig?.mock?.relayBuildCommit ?? null,

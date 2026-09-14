@@ -455,6 +455,11 @@ async fn main() -> anyhow::Result<()> {
     );
     let state = Arc::new(app_state);
 
+    // Machine health for `GET /health/system`: a sampling thread, started
+    // before the listener so the first request after boot already has a
+    // sample to answer with (the endpoint says 503 until it does).
+    buzz_relay::system_health::spawn_sampler(state.config.git_repo_path.clone(), state.started_at);
+
     // Inter-relay mesh (BUZZ_MESH seam). `boot_mesh` returns None when the
     // kill switch is off — nothing is bound, published, or spawned, so the
     // relay behaves byte-identically to a build without the mesh. When

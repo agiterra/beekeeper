@@ -37,7 +37,8 @@ on 2026-09-09, with `just ci` and `just test` green on that exact commit
 | Collaborative workspace plan, ordered steps 0–6 | Astra finalizes and lands `main`; Fable takes delegated slices; Andy lands his own topic branches | steps 0–4 have integrated candidates per the ledger's September 7–9 sections; no landing of steps 5 or 6 is recorded anywhere found, so treat them as open | [`COLLABORATIVE_WORKSPACE_PLAN.md`](COLLABORATIVE_WORKSPACE_PLAN.md) |
 | Founded-session fixes: Discard deletes, project filing | Andy | landed on `main` 2026-09-11 | ledger § "Fixed 2026-09-11 —" (two items) |
 | Revealed-redaction badge as an icon; a streaming transcript resolves every marker | Andy | landed 2026-09-13 as `343ea8bd9`, included in current main | ledger § "Fixed 2026-09-13 — the revealed-redaction badge is an icon" |
-| A Solo session's goal is one line: summarized by the naming model, clamped with a chevron | Andy | landing 2026-09-14 on `fix/goal-summary` | ledger § "Fixed 2026-09-14 — a Solo session's goal is one line" |
+| A Solo session's goal is one line: summarized by the naming model, clamped with a chevron | Andy | landed 2026-09-14 as `3fde2db15` | ledger § "Fixed 2026-09-14 — a Solo session's goal is one line" |
+| The Dashboard shows the relay's machine (CPU, memory, disk) from `GET /health/system`, stewards only | Andy | landing 2026-09-14 on `feat/relay-health`; hive shows it once the relay redeploys | ledger § "Built 2026-09-14 — the Dashboard shows the relay's machine" |
 | Delegated agent-directory visibility follow-up | unassigned | "can resume separately on main" (Astra, 2026-09-09) | ledger § "September 9 main published" |
 | This map, the ledger split and its size gate | Fable | landed 2026-09-11 (`f80781969`); lead pack landed on `agiterra-packs` (`5f4ae76fa`) | `AGENTS.md` top block; `scripts/check-current-state-size.mjs` |
 

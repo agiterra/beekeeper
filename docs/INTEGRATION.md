@@ -628,6 +628,22 @@ could reasonably have grepped `/health`'s body directly. `/_status` (a
 separate, pre-existing endpoint) continues to carry the fuller
 `source_sha`/`id`/`url` build object as JSON.
 
+**`GET /health/system`** is the one health path that is not a probe: the
+relay's own machine — CPU, memory and disk — for the people who run it. It
+is NIP-98 authenticated like `POST /query`, bound to the request host's
+community, and answered only for an `owner` or `admin` on the roster (or
+anyone, on an open relay with no steward yet — the kind:9033 rule); everyone
+else gets 403. The body is the latest sample from a ten-second sampler plus
+`age_seconds`, so a reader can tell a live figure from a stale one; before
+the first sample it answers 503 rather than a guess. The figures are what
+the relay *process* can see: in a container the CPU and memory totals are
+the host's unless a cgroup limit applies (then a `memory.container` block
+names the limit), the load average is always the host's, and `disks` are
+`statvfs` of the git data path and `/` — a database volume in another
+container is not measured. The desktop's Dashboard "Relay machine" card is
+the consumer (`crates/buzz-relay/src/system_health.rs`,
+`desktop/src/features/dashboard/lib/relaySystemHealth.ts`).
+
 **Reading it from the CLI:**
 
 ```bash

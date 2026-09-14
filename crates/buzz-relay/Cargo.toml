@@ -66,6 +66,9 @@ buzz-workflow = { workspace = true, features = ["reqwest"] }
 buzz-media = { workspace = true }
 s3 = { version = "0.37", package = "rust-s3", default-features = false, features = ["tokio-rustls-tls", "fail-on-err", "tags"] }
 tempfile = "3"
+# Machine health for `GET /health/system`: CPU and memory only; disks are
+# measured with statvfs on the paths the relay actually writes to.
+sysinfo = { version = "0.38", default-features = false, features = ["system"] }
 bytes = "1"
 infer = "0.19"
 serde_yaml      = { workspace = true }
@@ -100,3 +103,6 @@ tokio-tungstenite = { workspace = true }
 futures = "0.3"
 flate2 = "1.1.9"
 opentelemetry_sdk = { workspace = true, features = ["testing"] }
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.31", default-features = false, features = ["fs"] }

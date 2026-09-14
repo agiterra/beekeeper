@@ -414,6 +414,14 @@ type MockBridgeOptions = {
    * (owner-path branch of the gate).
    */
   oaOwnerIsMe?: boolean;
+  /**
+   * What `get_relay_system_health` answers (the relay's `GET /health/system`
+   * body). Absent → the bridge's fixed plausible machine; `null` → the
+   * command throws `relaySystemHealthError` (default: a 404, as a relay
+   * predating the endpoint answers).
+   */
+  relaySystemHealth?: Record<string, unknown> | null;
+  relaySystemHealthError?: string;
   /** Whether the mock relay advertises NIP-43 membership support. Defaults to false. */
   relayRequiresMembership?: boolean;
   /** Delay EOSE for membership snapshots after delivering the event. */

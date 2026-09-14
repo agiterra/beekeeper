@@ -68,6 +68,11 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/health", get(health_handler))
         .route("/_liveness", get(liveness_handler))
         .route("/_readiness", get(readiness_handler))
+        // Machine health for the community's stewards (NIP-98 auth)
+        .route(
+            api::system_health::SYSTEM_HEALTH_PATH,
+            get(api::system_health::get_system_health),
+        )
         // Nostr HTTP bridge (NIP-98 auth)
         .route("/events", post(api::bridge::submit_event))
         .route("/query", post(api::bridge::query_events))
