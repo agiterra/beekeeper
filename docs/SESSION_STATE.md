@@ -12235,6 +12235,19 @@ Evidence and limits: [conditional publication checkpoint](history/2026-09-12-pro
      browser-shaped JSON. Evidence and follow-up UX observations:
      [IPC correction report](history/2026-09-13-project-team-publication-ipc.md).
 
+126. **Project setup walkthrough exposed mismatched access and identity views (2026-09-13).**
+     Brian could start Loom in Tank Loop's project transport but the composer
+     required explicit channel membership, unlike the relay's project-owner
+     and collaborator rule. Installed project agents were also hidden until
+     they had held a seat; the lead picker mixed unrelated identities, and
+     setup progress mixed saved drafts with active project roles. The fixes
+     preserve session authority, identity keys, saved groups and Solo access.
+     Opus's read-only live evidence, regression checks and outstanding limits:
+     [Tank Loop walkthrough](history/2026-09-13-tank-loop-walkthrough.md).
+     Integration additionally addresses the existing publication-read journal
+     race; reading a status must not overwrite a concurrent installation or
+     lead reservation. Existing Tank Loop packs are not republished by this fix.
+
 ## 2a. Direction settled 2026-08-18
 
 Three independent answers to "what should a new execution get on its first

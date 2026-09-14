@@ -196,9 +196,41 @@ Nothing was installed. After Astra integrates and installs:
 - Tank Loop's already-published and installed packs keep their old text,
   including Loom's historical budget guidance. This branch does not publish a
   replacement; changing Tank Loop's roles is a project decision.
-- The setup dialog's existing publication reads still reconcile unlocked
-  (finding 8).
+- The setup dialog's unlocked publication reads (finding 8) are corrected by
+  the integration follow-up below.
 - Duplicate project session channels can still accumulate between setup and
   the launcher (finding 1, hypothesis).
 - A per-session viewer invitee and an unresolved-roster composer state are
   covered by unit tests, not by the browser spec.
+
+## Astra integration review
+
+The relay main fetch still resolved to `5463b08f5` at integration start; no
+intervening main change was present. Root inspected the saved final gate and
+browser logs: 9,433 desktop tests passed, the final walkthrough/founded setup
+run passed 10 cases, and the updated expectation rerun passed 20 cases. These
+are Opus's runs, not a second execution by Astra. The commits carry DCO
+signoffs; Git reports no cryptographic commit signature on these two commits.
+
+A bounded independent review checked the client access rule against the relay.
+The pre-existing unlocked publication-read save is closed during integration:
+both handlers share a production helper holding the publication mutex before
+the live-source read through reconciliation and save. Active scope is verified
+before saving. A controlled-future regression exercises that actual helper
+against a concurrent activation writer. No Tank Loop journal, pack, agent or session is edited
+for this regression test.
+
+The independent access review confirmed the resolver matches the relay's
+transport/project rule and preserves the separate session control grant. It
+identified a freshness limitation: the roster query caches data without live
+refresh in this hook, so a role change from another client may leave stale
+controls visible until refetch. The 30-second `staleTime` is not a polling
+interval or a maximum delay. The relay still checks and rejects unauthorized
+writes. Root records this as a UI follow-up, not an authorization bypass; no
+claim of immediate cross-client permission updates is made.
+
+Integration verification: `cargo test --manifest-path
+desktop/src-tauri/Cargo.toml reconciled_read_ -- --nocapture` passed both
+production-helper tests (serialized concurrent writer and context-refusal
+no-write). Native formatting and the file-size gate passed. No full smoke
+rerun was requested or performed for this follow-up.

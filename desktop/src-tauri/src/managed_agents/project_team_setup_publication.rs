@@ -53,9 +53,13 @@ mod git;
 pub(crate) mod installed_roles;
 #[path = "project_team_setup_publication_peek.rs"]
 pub(crate) mod peek;
+#[path = "project_team_setup_publication_read.rs"]
+mod read;
 #[cfg(test)]
 #[path = "project_team_setup_publication_tests.rs"]
 mod tests;
+
+use read::reconciled_publication_read;
 
 const JOURNAL_LIMIT: u64 = 96 * 1024;
 static PUBLICATION_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
@@ -846,12 +850,12 @@ pub async fn project_team_setup_get_publication_options(
 ) -> Result<ProjectTeamSetupPublicationOptions, SetupError> {
     let (root, scope) = context(&app, &state, &project_ref, &expected_relay_url)?;
     let draft = bound_draft(&root, &scope, &setup_id)?;
-    let source = current_source(&state, &draft.project_ref).await?;
-    if let Some(mut journal) = load_journal(&draft)? {
-        if journal.source_event.is_some() {
-            reconcile_source_observation(&mut journal, source.clone())?;
-            save_journal(&draft, &journal)?;
-        }
+    let (source, journal) =
+        reconciled_publication_read(&draft, current_source(&state, &draft.project_ref), || {
+            verify_context(&state, &scope)
+        })
+        .await?;
+    if let Some(journal) = journal {
         verify_context(&state, &scope)?;
         return Ok(ProjectTeamSetupPublicationOptions {
             current_source_event_id: source.as_ref().map(|source| source.event_id.clone()),
@@ -943,17 +947,12 @@ pub async fn project_team_setup_get_publication(
 ) -> Result<Option<ProjectTeamSetupPublication>, SetupError> {
     let (root, scope) = context(&app, &state, &project_ref, &expected_relay_url)?;
     let draft = bound_draft(&root, &scope, &setup_id)?;
-    let source = current_source(&state, &draft.project_ref).await?;
-    let publication = match load_journal(&draft)? {
-        Some(mut journal) => {
-            if journal.source_event.is_some() {
-                reconcile_source_observation(&mut journal, source)?;
-                save_journal(&draft, &journal)?;
-            }
-            Some(project(&journal))
-        }
-        None => None,
-    };
+    let (_source, journal) =
+        reconciled_publication_read(&draft, current_source(&state, &draft.project_ref), || {
+            verify_context(&state, &scope)
+        })
+        .await?;
+    let publication = journal.as_ref().map(project);
     verify_context(&state, &scope)?;
     Ok(publication)
 }

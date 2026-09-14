@@ -161,6 +161,98 @@ fn candidate_uses_owned_snapshot_bytes_and_conditional_source_pins_its_commit() 
     ));
 }
 
+#[tokio::test]
+async fn reconciled_read_holds_the_journal_lock_through_live_source_observation() {
+    let temp = tempfile::tempdir().expect("temp");
+    let draft = draft(temp.path());
+    let owner = nostr::Keys::generate();
+    let mut journal = installed_journal(&draft, &"c".repeat(40), &[], None);
+    journal.source_event = Some(source_event(&journal, &owner).expect("source event"));
+    save_journal(&draft, &journal).expect("journal");
+
+    let reader_draft = draft.clone();
+    let (source_started, source_started_rx) = tokio::sync::oneshot::channel();
+    let source_release = std::sync::Arc::new(tokio::sync::Notify::new());
+    let reader_release = source_release.clone();
+    let reader = tokio::spawn(async move {
+        reconciled_publication_read(
+            &reader_draft,
+            async move {
+                let _ = source_started.send(());
+                reader_release.notified().await;
+                Ok(None)
+            },
+            || Ok(()),
+        )
+        .await
+        .expect("reconciled read")
+    });
+    source_started_rx.await.expect("source observation started");
+
+    let writer_draft = draft.clone();
+    let (writer_started, writer_started_rx) = tokio::sync::oneshot::channel();
+    let (writer_finished, mut writer_finished_rx) = tokio::sync::oneshot::channel();
+    let writer = tokio::spawn(async move {
+        let _ = writer_started.send(());
+        let _writer_guard = PUBLICATION_LOCK.lock().await;
+        let mut latest = load_journal(&writer_draft)
+            .expect("load latest")
+            .expect("journal");
+        latest.lead = Some(ready_lead(
+            &uuid::Uuid::new_v4().to_string(),
+            &"d".repeat(64),
+        ));
+        save_journal(&writer_draft, &latest).expect("save activation");
+        let _ = writer_finished.send(());
+    });
+    writer_started_rx.await.expect("writer started");
+    tokio::task::yield_now().await;
+    assert!(
+        writer_finished_rx.try_recv().is_err(),
+        "activation writer must wait for the reconciling read"
+    );
+
+    source_release.notify_one();
+    let (source, reconciled) = reader.await.expect("reader joined");
+    assert!(source.is_none());
+    assert_eq!(
+        reconciled.expect("journal").status,
+        PublicationStatus::SourceUnknown
+    );
+    writer.await.expect("writer joined");
+
+    let final_journal = load_journal(&draft).expect("load final").expect("journal");
+    assert_eq!(final_journal.status, PublicationStatus::SourceUnknown);
+    assert!(
+        final_journal.lead.is_some(),
+        "later writer must not be lost"
+    );
+}
+
+#[tokio::test]
+async fn reconciled_read_context_refusal_leaves_the_journal_unchanged() {
+    let temp = tempfile::tempdir().expect("temp");
+    let draft = draft(temp.path());
+    let owner = nostr::Keys::generate();
+    let mut journal = installed_journal(&draft, &"c".repeat(40), &[], None);
+    journal.source_event = Some(source_event(&journal, &owner).expect("source event"));
+    save_journal(&draft, &journal).expect("journal");
+    let path = journal_path(&draft).expect("journal path");
+    let before = std::fs::read(&path).expect("journal bytes");
+
+    let error = match reconciled_publication_read(&draft, async { Ok(None) }, || {
+        Err(SetupError::new("scope_changed", "context changed"))
+    })
+    .await
+    {
+        Err(error) => error,
+        Ok(_) => panic!("context refusal"),
+    };
+
+    assert_eq!(error.code, "scope_changed");
+    assert_eq!(std::fs::read(path).expect("journal bytes"), before);
+}
+
 /// An adopted journal whose installation recorded `roles`, bound to `draft`.
 pub(super) fn installed_journal(
     draft: &ProjectTeamSetupDraft,
