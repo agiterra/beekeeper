@@ -49,6 +49,45 @@ const NAMING_MAX_TOKENS: u32 = 1024;
 /// it looks like a bug in the field it lands in.
 const NAMING_SYSTEM_PROMPT: &str = "You name coding sessions. Given the first message a person sent to a coding agent, reply with a title of one to four words describing the task. Reply with the title alone — no quotes, no punctuation at the end, no explanation. Use sentence case.";
 
+/// Longest goal worth showing on one line above a transcript.
+const MAX_GENERATED_GOAL_CHARS: usize = 200;
+
+/// The goal instruction: one sentence, in more detail than the name, so the
+/// line above the transcript reminds the person what the session is for
+/// without repeating the whole first message the transcript already shows.
+const GOAL_SYSTEM_PROMPT: &str = "You summarize coding sessions. Given the first message a person sent to a coding agent, reply with one sentence of at most twenty words stating what the session is for. Reply with the sentence alone — no quotes, no heading, no explanation.";
+
+/// Which of the two short answers a request is for. Same providers, same
+/// keys, same transport; only the instruction and the cleaner differ.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NamingTask {
+    Name,
+    Goal,
+}
+
+impl NamingTask {
+    fn system_prompt(self) -> &'static str {
+        match self {
+            NamingTask::Name => NAMING_SYSTEM_PROMPT,
+            NamingTask::Goal => GOAL_SYSTEM_PROMPT,
+        }
+    }
+
+    fn clean(self, raw: &str) -> Option<String> {
+        match self {
+            NamingTask::Name => clean_generated_name(raw),
+            NamingTask::Goal => clean_generated_goal(raw),
+        }
+    }
+
+    fn empty_answer(self) -> &'static str {
+        match self {
+            NamingTask::Name => "the model answered with no name",
+            NamingTask::Goal => "the model answered with no goal",
+        }
+    }
+}
+
 fn keyring_name() -> &'static str {
     "coding-session-naming"
 }
@@ -283,6 +322,32 @@ pub fn clean_generated_name(raw: &str) -> Option<String> {
     Some(name)
 }
 
+/// Reduce a model's reply to one line that can be a session goal.
+///
+/// Like [`clean_generated_name`] but a sentence keeps its full stop: the goal
+/// is prose, and a period is how a line reads as finished rather than cut.
+pub fn clean_generated_goal(raw: &str) -> Option<String> {
+    let first_line = raw.trim().lines().find(|line| !line.trim().is_empty())?;
+    let mut goal = first_line.trim().to_string();
+    for prefix in ["Goal:", "goal:", "Summary:", "summary:"] {
+        if let Some(rest) = goal.strip_prefix(prefix) {
+            goal = rest.trim().to_string();
+        }
+    }
+    goal = goal
+        .trim_matches(|c: char| c == '"' || c == '\'' || c == '`' || c == '*')
+        .trim()
+        .to_string();
+    if goal.is_empty() {
+        return None;
+    }
+    if goal.chars().count() > MAX_GENERATED_GOAL_CHARS {
+        goal = goal.chars().take(MAX_GENERATED_GOAL_CHARS).collect();
+        goal = goal.trim().to_string();
+    }
+    Some(goal)
+}
+
 #[derive(Deserialize)]
 struct AnthropicResponse {
     #[serde(default)]
@@ -331,6 +396,7 @@ async fn http_failure(label: &str, response: reqwest::Response) -> String {
 
 async fn name_via_anthropic(
     client: &reqwest::Client,
+    task: NamingTask,
     model: &str,
     api_key: &str,
     first_message: &str,
@@ -346,7 +412,7 @@ async fn name_via_anthropic(
             // models thinking is on by default, and turning it off is the
             // documented way to get stray tags in the visible text.
             "output_config": { "effort": "low" },
-            "system": NAMING_SYSTEM_PROMPT,
+            "system": task.system_prompt(),
             "messages": [{ "role": "user", "content": first_message }],
         }))
         .send()
@@ -366,11 +432,13 @@ async fn name_via_anthropic(
         .map(|block| block.text.as_str())
         .collect::<Vec<_>>()
         .join("");
-    clean_generated_name(&text).ok_or_else(|| "the model answered with no name".to_string())
+    task.clean(&text)
+        .ok_or_else(|| task.empty_answer().to_string())
 }
 
 async fn name_via_openai_compatible(
     client: &reqwest::Client,
+    task: NamingTask,
     base_url: &str,
     model: &str,
     api_key: Option<&str>,
@@ -388,7 +456,7 @@ async fn name_via_openai_compatible(
             "model": model,
             "stream": false,
             "messages": [
-                { "role": "system", "content": NAMING_SYSTEM_PROMPT },
+                { "role": "system", "content": task.system_prompt() },
                 { "role": "user", "content": first_message },
             ],
         }))
@@ -407,7 +475,8 @@ async fn name_via_openai_compatible(
         .first()
         .map(|choice| choice.message.content.as_str())
         .unwrap_or_default();
-    clean_generated_name(text).ok_or_else(|| "the model answered with no name".to_string())
+    task.clean(text)
+        .ok_or_else(|| task.empty_answer().to_string())
 }
 
 /// Run one naming request against an explicit configuration.
@@ -416,6 +485,26 @@ async fn name_via_openai_compatible(
 /// *in its fields* rather than what was last saved — the two differ exactly
 /// when someone is fixing a URL, which is when a test is worth having.
 async fn name_with(
+    provider: CodingSessionNamingProvider,
+    base_url: &str,
+    model: &str,
+    api_key: Option<&str>,
+    first_message: &str,
+) -> Result<String, String> {
+    answer_with(
+        NamingTask::Name,
+        provider,
+        base_url,
+        model,
+        api_key,
+        first_message,
+    )
+    .await
+}
+
+/// One request for either short answer against an explicit configuration.
+async fn answer_with(
+    task: NamingTask,
     provider: CodingSessionNamingProvider,
     base_url: &str,
     model: &str,
@@ -435,11 +524,11 @@ async fn name_with(
             let Some(api_key) = api_key else {
                 return Err("the Anthropic API needs an API key".to_string());
             };
-            name_via_anthropic(&client, model, api_key, first_message).await
+            name_via_anthropic(&client, task, model, api_key, first_message).await
         }
         CodingSessionNamingProvider::OpenAiCompatible => {
             validate_base_url(base_url)?;
-            name_via_openai_compatible(&client, base_url, model, api_key, first_message).await
+            name_via_openai_compatible(&client, task, base_url, model, api_key, first_message).await
         }
     }
 }
@@ -503,6 +592,33 @@ pub struct CodingSessionNamingTest {
 /// `api_key` is the same three-state value [`set_coding_session_naming_settings`]
 /// takes: `None` means "use the stored key", so a test of an unchanged
 /// configuration does not require re-typing it.
+/// Ask the configured model for a one-line goal for this first message.
+///
+/// The same model, key and transport as the namer — a person who set up one
+/// summarizer has set up both. A Solo session's goal used to be the whole
+/// first message, which the transcript already shows in full; this is the
+/// one line that stands above it (Andy, 2026-09-14).
+#[tauri::command]
+pub async fn generate_coding_session_goal(
+    app: AppHandle,
+    first_message: String,
+) -> Result<String, String> {
+    let first_message = first_message.trim().to_string();
+    if first_message.is_empty() {
+        return Err("there is no first message to summarize".to_string());
+    }
+    let record = load_record(&app)?;
+    answer_with(
+        NamingTask::Goal,
+        record.provider,
+        &record.base_url,
+        &record.model,
+        stored_api_key(&record).as_deref(),
+        &first_message,
+    )
+    .await
+}
+
 #[tauri::command]
 pub async fn test_coding_session_naming(
     app: AppHandle,

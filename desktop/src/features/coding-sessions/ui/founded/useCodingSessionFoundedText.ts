@@ -11,6 +11,7 @@ import {
 } from "../../lib/codingSessionName";
 import { useNewCodingSessionDraft } from "../../lib/newCodingSessionDraft";
 import { useNewCodingSessionPromptRecall } from "../../lib/newCodingSessionPromptHistory";
+import { codingSessionAutoGoalSentence } from "../../lib/codingSessionAutoGoal";
 import { codingSessionAutoNameSentence } from "../../lib/codingSessionAutoName";
 import { useNewCodingSessionTitleSuggestion } from "../useNewCodingSessionTitleSuggestion";
 import type { CodingSessionFoundedGoal } from "./CodingSessionFoundedWorkspace";
@@ -361,6 +362,8 @@ export function useCodingSessionFoundedText(input: {
     suggestion: suggestionAllowed ? naming.status : null,
     /** What a blank Name means at Start, per this computer's namer. */
     autoNameSentence: codingSessionAutoNameSentence(naming.settings),
+    /** What a Solo Start does to the goal, per this computer's namer. */
+    autoGoalSentence: codingSessionAutoGoalSentence(naming.settings),
     /** Ask the namer now — the prompt's blur; a no-op while suppressed. */
     requestSuggestionNow: naming.requestNow,
     prompt,

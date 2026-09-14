@@ -79,3 +79,17 @@ test("U-T6: a viewer who cannot publish the goal gets no control at all", () => 
   );
   assert.equal(renderInspectorVariant(null, "b".repeat(64)), "");
 });
+
+test("the workspace goal is one line by default; a multi-line goal offers a chevron", () => {
+  const oneLine = render({ content: "Fix the reconnect bug." });
+  assert.match(oneLine, /line-clamp-1/);
+  assert.match(oneLine, /data-goal-expanded="false"/);
+  assert.doesNotMatch(oneLine, /whitespace-pre-wrap/);
+  // A static render cannot measure overflow, so only a goal with a line
+  // break is known to need the chevron before the browser measures.
+  assert.doesNotMatch(oneLine, /coding-session-goal-expand/);
+  const multi = render({ content: "Line one.\nLine two, the detail." });
+  assert.match(multi, /line-clamp-1/);
+  assert.match(multi, /coding-session-goal-expand/);
+  assert.match(multi, /aria-label="Show the whole goal"/);
+});

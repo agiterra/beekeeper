@@ -163,6 +163,10 @@ async function press({
       calls.push(["autoName", input]);
       return { kind: "published", name: "Generated" };
     },
+    autoGoal: async (input) => {
+      calls.push(["autoGoal", input]);
+      return { kind: "published", goal: "One line." };
+    },
   };
   const navigations = [];
   const mounted = renderHook(() =>
@@ -196,6 +200,7 @@ test("Solo: flush first, then the worktree, then one create joined to the umbrel
     "remember",
     "clearDraft",
     "autoName",
+    "autoGoal",
   ]);
   const [, worktree] = run.calls[1];
   assert.deepEqual(worktree, {
@@ -436,4 +441,20 @@ test("an unnamed worktree with the toggle on is refused on press, before any cut
   });
   assert.deepEqual(names, ["attempted"]);
   assert.equal(names.includes("worktree"), false);
+});
+
+test("Solo summarizes the goal after the create; Team leaves the lead's mission as written", async () => {
+  const solo = await press({ name: "Typed" });
+  assert.ok(solo.names.indexOf("autoGoal") > solo.names.indexOf("submit"));
+  assert.equal(
+    solo.names.includes("autoName"),
+    false,
+    "a typed name is not renamed",
+  );
+  const team = await press({
+    name: "",
+    setup: { mode: "team", lead: FABLE, policySet: true },
+  });
+  assert.equal(team.names.includes("autoGoal"), false);
+  assert.equal(team.names.includes("autoName"), true);
 });

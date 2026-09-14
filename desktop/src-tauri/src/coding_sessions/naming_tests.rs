@@ -134,6 +134,7 @@ async fn an_openai_compatible_endpoint_names_a_session() {
 
     let name = name_via_openai_compatible(
         &client,
+        NamingTask::Name,
         &base_url,
         "llama3.2",
         None,
@@ -162,6 +163,7 @@ async fn a_keyed_endpoint_gets_a_bearer_token() {
 
     let name = name_via_openai_compatible(
         &client,
+        NamingTask::Name,
         &base_url,
         "gpt-x",
         Some("sk-test-key"),
@@ -180,9 +182,10 @@ async fn an_endpoint_that_answers_with_no_name_is_an_error_not_an_empty_title() 
     let (base_url, _) = stub_openai_server("   ").await;
     let client = reqwest::Client::new();
 
-    let failure = name_via_openai_compatible(&client, &base_url, "m", None, "something")
-        .await
-        .expect_err("no name");
+    let failure =
+        name_via_openai_compatible(&client, NamingTask::Name, &base_url, "m", None, "something")
+            .await
+            .expect_err("no name");
     assert!(failure.contains("no name"), "{failure}");
 }
 
@@ -193,10 +196,16 @@ async fn an_unreachable_endpoint_says_where_it_could_not_reach() {
         .build()
         .expect("client");
     // Port 1 on loopback: nothing listens, and the refusal is immediate.
-    let failure =
-        name_via_openai_compatible(&client, "http://127.0.0.1:1/v1", "m", None, "something")
-            .await
-            .expect_err("unreachable");
+    let failure = name_via_openai_compatible(
+        &client,
+        NamingTask::Name,
+        "http://127.0.0.1:1/v1",
+        "m",
+        None,
+        "something",
+    )
+    .await
+    .expect_err("unreachable");
     assert!(failure.contains("127.0.0.1:1"), "{failure}");
 }
 
@@ -268,4 +277,18 @@ fn the_provider_names_survive_a_round_trip() {
             serde_json::from_str(&serialized).expect("deserialize");
         assert_eq!(parsed, provider);
     }
+}
+
+#[test]
+fn a_generated_goal_keeps_its_sentence_and_loses_its_wrapping() {
+    assert_eq!(
+        clean_generated_goal("Goal: \"Move the create dialog onto the founded page.\"\nMore."),
+        Some("Move the create dialog onto the founded page.".to_string())
+    );
+    assert_eq!(clean_generated_goal("  \n  "), None);
+    let long = "x".repeat(400);
+    assert_eq!(
+        clean_generated_goal(&long).map(|goal| goal.chars().count()),
+        Some(200)
+    );
 }

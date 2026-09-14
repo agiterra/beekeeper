@@ -8,6 +8,11 @@ import {
   type CodingSessionAutoNameOutcome,
   autoNameCodingSession,
 } from "../../lib/codingSessionAutoName";
+import {
+  type CodingSessionAutoGoalInput,
+  type CodingSessionAutoGoalOutcome,
+  autoSummarizeCodingSessionGoal,
+} from "../../lib/codingSessionAutoGoal";
 import { codingSessionCrewLeadDestination } from "../../lib/codingSessionCrewLaunch";
 import { clearCodingSessionFoundedDraft } from "../../lib/codingSessionFoundedDraft";
 import { codingSessionLaunchBlockersBySurface } from "../../lib/codingSessionLaunchForm";
@@ -26,6 +31,10 @@ export type CodingSessionFoundedStartDeps = {
   autoName: (
     input: CodingSessionAutoNameInput,
   ) => Promise<CodingSessionAutoNameOutcome>;
+  /** Solo only: the goal becomes one line once the create is accepted. */
+  autoGoal: (
+    input: CodingSessionAutoGoalInput,
+  ) => Promise<CodingSessionAutoGoalOutcome>;
 };
 
 /**
@@ -45,10 +54,26 @@ export async function autoNameCodingSessionAfterStart(
   return outcome;
 }
 
+/**
+ * Summarize a Solo session's goal after Start, quietly. The full prompt
+ * stays the goal on every path but success, and the transcript carries it
+ * as the first message regardless, so a refusal needs no toast.
+ */
+export async function autoSummarizeCodingSessionGoalAfterStart(
+  input: CodingSessionAutoGoalInput,
+): Promise<CodingSessionAutoGoalOutcome> {
+  const outcome = await autoSummarizeCodingSessionGoal(input);
+  if (outcome.kind === "failed") {
+    console.warn("coding-session goal summary failed", outcome.reason);
+  }
+  return outcome;
+}
+
 const DEFAULT_START_DEPS: CodingSessionFoundedStartDeps = {
   createWorktree: createCodingSessionWorktree,
   clearFoundedDraft: clearCodingSessionFoundedDraft,
   autoName: autoNameCodingSessionAfterStart,
+  autoGoal: autoSummarizeCodingSessionGoalAfterStart,
 };
 
 /** The slice of the setup card's state that pressing Start reads. */
@@ -206,6 +231,17 @@ export function useCodingSessionFoundedStart(input: {
         firstMessage: prompt,
       });
     };
+    // Solo only: the goal above the transcript becomes one line. A Team
+    // session's goal is the lead's mission, left exactly as written.
+    const goalAfterStart = () => {
+      if (setup.mode !== "solo") return;
+      void deps.autoGoal({
+        channelId,
+        sessionRef,
+        founderPubkey,
+        firstMessage: prompt,
+      });
+    };
     void (async () => {
       try {
         // Both fields first. A refusal is the relay's words and a stop.
@@ -263,6 +299,7 @@ export function useCodingSessionFoundedStart(input: {
           setup.text.remember();
           deps.clearFoundedDraft(sessionRef);
           nameAfterStart();
+          goalAfterStart();
           return;
         }
         const lead = setup.lead;

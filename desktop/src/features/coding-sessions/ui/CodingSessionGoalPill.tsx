@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Pencil, Target } from "lucide-react";
+import { ChevronDown, ChevronUp, Pencil, Target } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -52,6 +52,27 @@ export function CodingSessionGoalPill({
 }) {
   const measure = useCodingSessionMeasure(workspaceExpanded);
   const [open, setOpen] = React.useState(false);
+  // One line by default: the goal is a reminder above the transcript, and a
+  // long one (a Solo session's whole first message, before it is
+  // summarized) was the largest object on the screen (Andy, 2026-09-14).
+  // The chevron shows only when there is more than the line holds.
+  const [goalExpanded, setGoalExpanded] = React.useState(false);
+  const goalTextRef = React.useRef<HTMLSpanElement>(null);
+  const [goalOverflows, setGoalOverflows] = React.useState(false);
+  React.useEffect(() => {
+    const element = goalTextRef.current;
+    if (!element) return;
+    const measureOverflow = () => {
+      if (goalExpanded) return;
+      setGoalOverflows(element.scrollHeight > element.clientHeight + 1);
+    };
+    measureOverflow();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measureOverflow);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [goalExpanded]);
+  const goalMultiline = goal?.content.includes("\n") ?? false;
   const [draft, setDraft] = React.useState(goal?.content ?? "");
   const [saving, setSaving] = React.useState(false);
   const canEdit =
@@ -196,11 +217,37 @@ export function CodingSessionGoalPill({
             <p className="min-w-0 flex-1 text-foreground">
               <span className="font-medium">Goal:</span>{" "}
               <span
-                className={compact ? "line-clamp-2" : "whitespace-pre-wrap"}
+                className={
+                  compact
+                    ? "line-clamp-2"
+                    : goalExpanded
+                      ? "whitespace-pre-wrap"
+                      : "line-clamp-1"
+                }
+                data-goal-expanded={
+                  compact ? undefined : goalExpanded ? "true" : "false"
+                }
+                ref={goalTextRef}
               >
                 {goal?.content ?? "Add a goal for this session"}
               </span>
             </p>
+            {!compact && (goalOverflows || goalMultiline || goalExpanded) ? (
+              <Button
+                aria-expanded={goalExpanded}
+                aria-label={
+                  goalExpanded ? "Collapse the goal" : "Show the whole goal"
+                }
+                className="shrink-0"
+                data-testid="coding-session-goal-expand"
+                onClick={() => setGoalExpanded((current) => !current)}
+                size="icon-xs"
+                type="button"
+                variant="ghost"
+              >
+                {goalExpanded ? <ChevronUp /> : <ChevronDown />}
+              </Button>
+            ) : null}
             {canEdit ? (
               <Button
                 aria-label={goal ? "Edit session goal" : "Add session goal"}

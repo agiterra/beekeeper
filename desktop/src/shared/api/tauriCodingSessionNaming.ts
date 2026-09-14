@@ -68,6 +68,17 @@ export async function generateCodingSessionName(
   return invokeTauri<string>("generate_coding_session_name", { firstMessage });
 }
 
+/**
+ * Ask the configured model for a one-line goal for this first message — the
+ * same model and key as the namer. Rejects when no model is configured or
+ * the endpoint refuses, so the caller can say why the goal stayed as typed.
+ */
+export async function generateCodingSessionGoal(
+  firstMessage: string,
+): Promise<string> {
+  return invokeTauri<string>("generate_coding_session_goal", { firstMessage });
+}
+
 export type CodingSessionNamingTest = {
   /** The sample that was sent — never anything the person wrote. */
   sent: string;

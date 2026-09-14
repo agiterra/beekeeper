@@ -11625,6 +11625,40 @@ follow-up); (3) the founded screen naming the project rather than its
 `coding-sessions/lib/codingSessionTeamDeliveryStatus.ts`) — a one-line
 `\u0000` fix each, plus the hygiene test's allowlist.
 
+### Fixed 2026-09-14 — a Solo session's goal is one line: summarized by the naming model when there is one, clamped with a chevron regardless (`fix/goal-summary`)
+
+**Andy, 2026-09-14:** for a new Solo session the goal was the whole initial
+prompt — redundant (the transcript shows it as the first message) and, for a
+long prompt, the largest object on the screen. "For solo sessions, the
+primary purpose of the goal is to remind the user the purpose of the
+session, perhaps in a bit more detail than the session name's short
+summary."
+
+**Summary.** The naming backend (`desktop/src-tauri/src/coding_sessions/naming.rs`)
+gains a second task on the same provider, key and transport: `NamingTask::Goal`,
+`GOAL_SYSTEM_PROMPT` (one sentence, at most twenty words), `clean_generated_goal`
+(keeps the full stop, 200-char cap), and the command `generate_coding_session_goal`
+(`handlers.rs`, TS `generateCodingSessionGoal`). `lib/codingSessionAutoGoal.ts`
+runs it from `useCodingSessionFoundedStart` after a **Solo** create is
+accepted (`goalAfterStart`; a Team session's goal is the lead's mission and
+stays as written): no namer → nothing; a prompt that already fits one line
+(`MAX_ONE_LINE_GOAL_CHARS` 140, no line break) → nothing; otherwise the
+summary is published as a newer 44227 **only if the goal on the wire is
+still the prompt this Start sent** — a goal typed meanwhile wins, and a
+missing goal (the pre-Start publish refused) is not filled in. Empty answer,
+model refusal, relay refusal: stated outcomes, the full prompt stays the
+goal. The prompt field says so in Solo when a namer is set
+(`coding-session-founded-goal-auto`).
+
+**Display.** `CodingSessionGoalPill` (workspace variant) shows the goal on
+one line (`line-clamp-1`) with a chevron (`coding-session-goal-expand`) when
+it overflows — measured with a `ResizeObserver` — or carries a line break;
+expanded it is the old pre-wrap. The catalog variant keeps `line-clamp-2`;
+the inspector variant is unchanged.
+
+Tests: Rust naming (28, +1 cleaner); `codingSessionAutoGoal.test.mjs` (5);
+Start hook (+1: Solo summarizes after the create, Team does not); pill (+1).
+
 ### Fixed 2026-09-13 — the revealed-redaction badge is an icon, and a streaming transcript resolves every marker, not only its first (`fix/redaction-pill`)
 
 **Andy, 2026-09-13, from a live session on hive:** the amber "redacted for

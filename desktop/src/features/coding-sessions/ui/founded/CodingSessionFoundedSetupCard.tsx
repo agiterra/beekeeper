@@ -148,6 +148,14 @@ export function CodingSessionFoundedSetupCard({
             {text.promptError}
           </FieldError>
         ) : null}
+        {!team && text.autoGoalSentence ? (
+          <p
+            className="text-2xs text-muted-foreground"
+            data-testid="coding-session-founded-goal-auto"
+          >
+            {text.autoGoalSentence}
+          </p>
+        ) : null}
         {text.busySentence ? (
           <p
             className="text-2xs text-muted-foreground"
