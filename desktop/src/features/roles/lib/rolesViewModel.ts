@@ -12,7 +12,11 @@
  * that fact onto its chip; a seat with no `packRef` has no sha.
  */
 import type { ProjectCodingSessionShelfEntry } from "@/features/projects-container/lib/projectCodingSessionShelf";
-import type { ProjectContainer } from "@/features/projects-container/lib/projectContainerModel";
+import {
+  normalizeProjectRef,
+  type ProjectContainer,
+} from "@/features/projects-container/lib/projectContainerModel";
+import type { CodingSessionCatalogRecord } from "@/features/coding-sessions/lib/codingSessionTypes";
 import type {
   ManagedAgent,
   RelayAgent,
@@ -101,6 +105,17 @@ export type BuildRolesViewInput = {
   projectId?: string;
   projectChannelIds?: readonly string[];
   relayAgents?: readonly RelayAgent[];
+  /**
+   * Raw execution records before the umbrella fold. A worker seated inside
+   * another agent's session is an execution of that umbrella, not a shelf row,
+   * so without these it never counts as a participant.
+   */
+  executions?: readonly {
+    session: Pick<
+      CodingSessionCatalogRecord,
+      "agentRef" | "role" | "projectRef"
+    >;
+  }[];
 };
 
 function homeRoleOf(agent: ManagedAgent): string | null {
@@ -180,6 +195,13 @@ function projectRoleAgents(
   relayAgents: readonly RelayAgent[],
   entries: readonly ProjectCodingSessionShelfEntry[],
   channelIds: readonly string[],
+  executions: readonly {
+    session: Pick<
+      CodingSessionCatalogRecord,
+      "agentRef" | "role" | "projectRef"
+    >;
+  }[],
+  projectAddress: string | null,
 ): Map<string, RoleAgentChip[]> {
   const localByKey = new Map(
     agents.map((agent) => [agent.pubkey.toLowerCase(), agent]),
@@ -204,6 +226,21 @@ function projectRoleAgents(
     if (!key) continue;
     participantKeys.add(key);
     addRole(key, entry.session.role);
+  }
+  const wantedRef = projectAddress
+    ? (normalizeProjectRef(projectAddress) ?? projectAddress)
+    : null;
+  for (const { session } of executions) {
+    const key = session.agentRef?.toLowerCase();
+    if (!key || !wantedRef || !session.projectRef) continue;
+    if (
+      (normalizeProjectRef(session.projectRef) ?? session.projectRef) !==
+      wantedRef
+    ) {
+      continue;
+    }
+    participantKeys.add(key);
+    addRole(key, session.role);
   }
   for (const [key, agent] of relayByKey) {
     if (agent.channelIds.some((channelId) => channels.has(channelId))) {
@@ -265,6 +302,8 @@ export function buildRolesView(input: BuildRolesViewInput): RolesView {
         relayAgents,
         shelfEntries,
         input.projectChannelIds ?? [],
+        input.executions ?? [],
+        projects[0]?.address ?? null,
       )
     : new Map<string, RoleAgentChip[]>();
   if (!scoped) {

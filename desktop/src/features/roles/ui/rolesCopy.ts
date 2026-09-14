@@ -64,9 +64,11 @@ export const PROJECT_PACKS_MISSING = "This project is not readable here.";
 /** The button that opens the pack installer, moved here from the Agents tab. */
 export const INSTALL_ROLES_BUTTON_LABEL = "Install roles";
 
-export const AGENTS_BY_PROJECT_TITLE = "Sessions by project";
+/** Where the sessions list went: the Agents tab says who holds each role, and where. */
+export const ROLES_AGENTS_POINTER =
+  "Which agents hold these roles, in which sessions, and what they were assigned:";
 
-export const UNPLACED_TITLE = "Unplaced";
+export const ROLES_AGENTS_POINTER_LINK = "Agents";
 
 export const ROLE_SKILLS_TITLE = "Skills";
 
@@ -194,11 +196,6 @@ export function shaText(sha: string | null): string {
 
 function isCommitSha(sha: string | null): sha is string {
   return sha !== null && /^[0-9a-f]{40}$/i.test(sha);
-}
-
-/** `3 sessions` / `1 session` / `0 sessions` — rows are sessions, with or without an agent. */
-export function projectSeatCount(count: number): string {
-  return `${count} ${count === 1 ? "session" : "sessions"}`;
 }
 
 /** What the source line and the card's availability line call each rung. */

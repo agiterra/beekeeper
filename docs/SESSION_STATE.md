@@ -12345,6 +12345,22 @@ Evidence and limits: [conditional publication checkpoint](history/2026-09-12-pro
      race; reading a status must not overwrite a concurrent installation or
      lead reservation. Existing Tank Loop packs are not republished by this fix.
 
+127. **Workers seated inside a lead's session were invisible on the project page (2026-09-14).**
+     Brian could not tell why Bob was working in Tank Loop. The Roles page
+     (`rolesViewModel.ts` `projectRoleAgents`) and Contributors
+     (`useProjectContributors.ts`) read only the umbrella shelf
+     (`ProjectCodingSessionShelfEntry`, one row per `sessionRef`), whose
+     `session.agentRef` is the representative execution's. Bob, Gordan and Ira
+     are executions of Loom's umbrella, so Builder read "No agents yet" beside
+     "1 report" from Bob (the report count reads raw catalog entries). The
+     Dashboard directory's `seatProjectIds` has the same shape and is not
+     corrected here. No new record was needed: installations (setup journal),
+     per-execution 44223 metadata and declared-work 44244 assignments answer
+     who is in a project and why. The grant-seat signer is not on the accepted
+     chain projection and `session.hire.requestedBy` is an unverified claim, so
+     "assigned by" is the only attribution the page states. Spec and
+     correction: [`PROJECT_AGENTS_TAB_SPEC.md`](PROJECT_AGENTS_TAB_SPEC.md).
+
 ## 2a. Direction settled 2026-08-18
 
 Three independent answers to "what should a new execution get on its first

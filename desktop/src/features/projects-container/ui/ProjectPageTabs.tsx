@@ -5,9 +5,9 @@ import { PROJECT_TAB_TRIGGER_CLASS } from "@/features/projects/ui/ProjectWorkspa
 import { cn } from "@/shared/lib/cn";
 
 /** The project page's tab vocabulary. Overview/Pulse are the URL `tab` search
- * param on `/projects/$projectId`; the Roles (`packs`) and Contributors tabs
- * are their own paths. */
-export type ProjectPageTab = "overview" | "pulse" | "packs" | "contributors";
+ * param on `/projects/$projectId`; the Agents and Roles (`packs`) tabs are
+ * their own paths. */
+export type ProjectPageTab = "overview" | "pulse" | "agents" | "packs";
 
 export function parseProjectPageTab(value: unknown): ProjectPageTab {
   return value === "pulse" ? "pulse" : "overview";
@@ -15,36 +15,29 @@ export function parseProjectPageTab(value: unknown): ProjectPageTab {
 
 type SearchTab = { id: "overview" | "pulse"; label: string };
 type PathTab = {
-  id: "packs" | "contributors";
+  id: "agents" | "packs";
   label: string;
-  // A plain `string`, not the router's literal path union: this file lands
-  // before `app/routes/projects.$projectId.contributors.tsx` does (Lane U3
-  // creates it), so the generated route registry does not know that path
-  // yet. `Link` still resolves and types `params` correctly at runtime once
-  // the route exists; only the literal-path narrowing is given up here.
-  to: string;
+  to: "/projects/$projectId/agents" | "/projects/$projectId/packs";
 };
 
 const PATH_TABS: readonly PathTab[] = [
-  // The tab reads "Roles" — the page answers "what is this role for, who
-  // can take it, which version is here". Its id, path and testid stay
+  // Agents first: who is working here and why is the question a reader
+  // asks most. It replaced Contributors, whose path now redirects here.
+  { id: "agents", label: "Agents", to: "/projects/$projectId/agents" },
+  // The tab reads "Roles" — the page answers "what is this role for, which
+  // version of its instructions is here". Its id, path and testid stay
   // `packs` so routes, links and existing selectors keep working.
   { id: "packs", label: "Roles", to: "/projects/$projectId/packs" },
-  {
-    id: "contributors",
-    label: "Contributors",
-    to: "/projects/$projectId/contributors",
-  },
 ];
 
 /**
  * Route-driven tabs under the project header: Overview and Pulse are search-
- * param links on `/projects/$projectId` (unchanged); Packs and Contributors
+ * param links on `/projects/$projectId` (unchanged); Agents and Roles
  * are real paths, because each names the project in its own URL rather than
  * asking a Dashboard-style picker which one.
  *
  * The strip renders for any real project — not only when Pulse is on, since
- * Packs and Contributors have nothing to do with that feature gate. The one
+ * Agents and Roles have nothing to do with that feature gate. The one
  * project with no coordinate to link into (the local General placeholder,
  * before a real `general` head is published) gets no tab strip at all.
  */

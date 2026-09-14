@@ -12,14 +12,12 @@ import {
   AGE_UNKNOWN,
   AGENT_CHIP_NO_PACK_TITLE,
   AGENT_CHIP_SHARED_HOME_TITLE,
-  AGENTS_BY_PROJECT_TITLE,
   checkoutAnsweredSentence,
   formatAge,
   INSTALL_ROLES_BUTTON_LABEL,
   PACKS_SOURCE_MIXED,
   packsSourceSentence,
   PROJECT_PACKS_MISSING,
-  projectSeatCount,
   PROVENANCE_LABEL_COMMISSIONED,
   PROVENANCE_LABEL_DISPUTED,
   PROVENANCE_LABEL_PROOF_UNAVAILABLE,
@@ -79,7 +77,7 @@ import {
   SHA_UNKNOWN,
   shaText,
   SHARED_SKILL_MARK,
-  UNPLACED_TITLE,
+  ROLES_AGENTS_POINTER,
 } from "@/features/roles/ui/rolesCopy";
 
 /** Words the usability spec bans from the header, the source line and the cards. */
@@ -97,10 +95,8 @@ test("the empty states are the usability spec's exact words", () => {
   // A session is what an agent opened; the card no longer calls it a seat.
   assert.equal(ROLE_SEATS_TITLE, "Sessions");
   assert.equal(ROLE_SEATS_EMPTY, "No open sessions.");
-  assert.equal(AGENTS_BY_PROJECT_TITLE, "Sessions by project");
   assert.equal(ROLE_REPORTS_TITLE, "Reported by agents");
   assert.equal(ROLE_REPORTS_EMPTY, "No reports yet.");
-  assert.equal(UNPLACED_TITLE, "Unplaced");
   assert.equal(SHA_UNKNOWN, "version unknown");
   assert.equal(SHARED_SKILL_MARK, "(shared)");
   assert.equal(
@@ -146,7 +142,7 @@ test("the primary copy carries none of the protocol vocabulary", () => {
     ROLES_SCOPE_TITLE,
     AGENT_SHARED_TITLE,
     AGENT_CHIP_PACK_UNKNOWN_TITLE,
-    AGENTS_BY_PROJECT_TITLE,
+    ROLES_AGENTS_POINTER,
     ROLES_UNCERTAINTY_NONE,
     PACKS_SOURCE_MIXED,
     packsSourceSentence("Beekeeper", 0, {
@@ -203,12 +199,6 @@ test("shaText shortens a commit the way the seat pack line does, and never inven
   assert.equal(shaText("a".repeat(40)), "aaaaaaaa");
   assert.equal(shaText("0.4.2-block"), "0.4.2-block");
   assert.equal(shaText(null), "version unknown");
-});
-
-test("projectSeatCount pluralizes", () => {
-  assert.equal(projectSeatCount(0), "0 sessions");
-  assert.equal(projectSeatCount(1), "1 session");
-  assert.equal(projectSeatCount(2), "2 sessions");
 });
 
 test("rolesErrorSentence attributes the backend's words", () => {

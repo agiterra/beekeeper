@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { Info } from "lucide-react";
 import { toast } from "sonner";
 
@@ -19,7 +19,6 @@ import {
   summarizeRoleReports,
   summarizeRolesUncertainty,
 } from "../lib/roleVersionSummary";
-import { AgentsByProject } from "./AgentsByProject";
 import { RoleCard } from "./RoleCard";
 import { ProjectTeamSetupWorkbench } from "./ProjectTeamSetupWorkbench";
 import { RolePackSnapshots } from "./RolePackSnapshots";
@@ -28,6 +27,8 @@ import { RolesSummaryStrip } from "./RolesSummaryStrip";
 import {
   PROJECT_PACKS_MISSING,
   ROLES_EMPTY,
+  ROLES_AGENTS_POINTER,
+  ROLES_AGENTS_POINTER_LINK,
   ROLES_LOADING,
   ROLES_UNCERTAINTY_NONE,
   rolesErrorSentence,
@@ -261,11 +262,19 @@ export function ProjectPacksScreen({ projectId }: { projectId: string }) {
             </div>
           )}
         </section>
-        <AgentsByProject
-          byProject={view.byProject}
-          onOpenSeat={onOpenSeat}
-          unplaced={view.unplaced}
-        />
+        <p
+          className="text-xs text-muted-foreground"
+          data-testid="roles-agents-pointer"
+        >
+          {ROLES_AGENTS_POINTER}{" "}
+          <Link
+            className="underline underline-offset-2"
+            params={{ projectId: project.id }}
+            to="/projects/$projectId/agents"
+          >
+            {ROLES_AGENTS_POINTER_LINK}
+          </Link>
+        </p>
         <p
           className="flex items-center gap-2 text-xs text-muted-foreground"
           data-testid="roles-uncertainty-summary"

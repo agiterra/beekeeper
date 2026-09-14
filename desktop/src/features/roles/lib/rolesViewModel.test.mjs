@@ -535,3 +535,47 @@ test("remote pack availability stays unknown regardless of this computer's avail
     "present",
   );
 });
+
+test("a worker seated inside another agent's umbrella counts under its role, only in its own project", () => {
+  const owner = "6".repeat(64);
+  const address = `30621:${owner}:tank-loop`;
+  const execution = (overrides) => ({
+    session: {
+      agentRef: REVIEWER_PUBKEY,
+      role: "builder",
+      projectRef: address,
+      ...overrides,
+    },
+  });
+  const projects = [
+    project({ address }),
+    project({ id: "proj-2", address: `30621:${owner}:other` }),
+  ];
+  const agents = [
+    agent({ pubkey: REVIEWER_PUBKEY, name: "Bob", homeRole: "builder" }),
+  ];
+
+  const view = projectView({
+    agents,
+    projects,
+    // The umbrella row names only the lead; the worker is an execution of it.
+    shelfEntries: [entry()],
+    executions: [execution({})],
+  });
+  const builder = view.roles.find((row) => row.role === "builder");
+  assert.deepEqual(
+    builder.agents.map((chip) => chip.name),
+    ["Bob"],
+  );
+
+  const elsewhere = projectView({
+    agents,
+    projects,
+    shelfEntries: [entry()],
+    executions: [execution({ projectRef: `30621:${owner}:other` })],
+  });
+  assert.equal(
+    elsewhere.roles.find((row) => row.role === "builder"),
+    undefined,
+  );
+});

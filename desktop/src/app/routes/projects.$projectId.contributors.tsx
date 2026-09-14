@@ -1,32 +1,15 @@
-import * as React from "react";
-import { createFileRoute } from "@tanstack/react-router";
-
-import { usePreviewFeatureWarning } from "@/shared/features";
-import { ViewLoadingFallback } from "@/shared/ui/ViewLoadingFallback";
-
-const ProjectContributorsScreen = React.lazy(async () => {
-  const module = await import(
-    "@/features/contributors/ui/ProjectContributorsScreen"
-  );
-  return { default: module.ProjectContributorsScreen };
-});
+import { createFileRoute, redirect } from "@tanstack/react-router";
 
 /**
- * The project's Contributors tab (§C) — seat history for this project alone:
- * every agent that holds or held a seat here, and when it was last observed.
- * Not a list of who is available; no consent state (Eligible, Offered)
- * renders anywhere on this route.
+ * The Contributors tab became the Agents tab; its seat history is the Agents
+ * tab's "Previously here" section. The path stays so existing links resolve.
  */
 export const Route = createFileRoute("/projects/$projectId/contributors")({
-  component: ProjectContributorsRouteComponent,
+  beforeLoad: ({ params }) => {
+    throw redirect({
+      to: "/projects/$projectId/agents",
+      params: { projectId: params.projectId },
+      replace: true,
+    });
+  },
 });
-
-function ProjectContributorsRouteComponent() {
-  usePreviewFeatureWarning("projects");
-  const { projectId } = Route.useParams();
-  return (
-    <React.Suspense fallback={<ViewLoadingFallback kind="projects" />}>
-      <ProjectContributorsScreen projectId={projectId} />
-    </React.Suspense>
-  );
-}

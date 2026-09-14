@@ -276,11 +276,13 @@ export function useProjectPacksView(projectId: string): ProjectPacksViewState {
         projectId: project?.id ?? "",
         projectChannelIds,
         shelfEntries,
+        executions: executionCatalog.entries,
         projects,
         nowSeconds,
       }),
     [
       agents,
+      executionCatalog.entries,
       relayAgentsQuery.data,
       project?.id,
       projectChannelIds,
