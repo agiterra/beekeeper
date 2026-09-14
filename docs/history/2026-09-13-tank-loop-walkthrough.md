@@ -234,3 +234,26 @@ desktop/src-tauri/Cargo.toml reconciled_read_ -- --nocapture` passed both
 production-helper tests (serialized concurrent writer and context-refusal
 no-write). Native formatting and the file-size gate passed. No full smoke
 rerun was requested or performed for this follow-up.
+
+Landing: the normal pre-push floor completed successfully in 322.34 seconds;
+relay main advanced from `5463b08f5` to `566e31075`, including Opus's two
+commits and the publication-read correction. Log:
+`../review-2026-09-13-tank-loop-walkthrough/integration-push.log`.
+
+## Installed and handed back
+
+Relay and GitHub mirror `main` both resolved to
+`566e310757664f30e68a79549cd84a0c42f1abbb`; the live checkout advanced
+fast-forward and its pre-existing untracked steering handoff was preserved.
+`Beekeeper Dev.app` was rebuilt incrementally and relaunched. Bundled CLI:
+`bee 0.1.0 (566e3107)`, built `2026-09-14T02:14:26Z`. Independent deep/strict
+code-signature verification passed, and desktop and session-provider processes
+were observed running. The installer worker's final report failed after it had
+installed; root's fallback repeated the warm incremental build before that was
+recognized. Both used the same landed revision. Build evidence:
+`../review-2026-09-13-tank-loop-walkthrough/app-from-566e31075.log`.
+
+No explicit session control commands or live role publication were issued.
+Installed-app UI acceptance remains Brian's next check: reopen Project State
+Planning and confirm Can control, then inspect project agents and Loom's
+preselection. Existing Tank Loop roles retain their published content.
