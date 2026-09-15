@@ -12361,6 +12361,23 @@ Evidence and limits: [conditional publication checkpoint](history/2026-09-12-pro
      "assigned by" is the only attribution the page states. Spec and
      correction: [`PROJECT_AGENTS_TAB_SPEC.md`](PROJECT_AGENTS_TAB_SPEC.md).
 
+128. **A project's lead hired other projects' agents by name order (2026-09-14).**
+     The founder's desktop answered `session.hire` by filtering every managed
+     agent on the computer by home role and breaking ties by name
+     (`codingSessionHirePolicy.ts` `chooseIdentity`, base `95a2f6f58`), so
+     Tank Loop's lead seated Bob, Gordan and Ira (`team_id 8bec5451…`) over
+     Tank Loop's Builder, Runner and Verifier (`team_id f54498d1…`): "Bob" <
+     "Builder". No record hiring read carried project membership, staging gave
+     the borrowed identities Tank Loop's pack by seat role, and the lead had no
+     discovery tool. Corrected by a durable agent project association
+     (`project_ref`, published as a 30177 digest), project-scoped hiring with
+     `HIRE_NO_PROJECT_AGENT` and no fallback, native new-selection checks,
+     `bee projects agents`, and association-driven Agents, picker and setup
+     UI. A live run on a disposable relay proved discovery, hire, staged pack
+     marker, assignment and report; Tank Loop itself was not touched.
+     [Report](history/2026-09-14-project-agent-hiring.md),
+     [`PROJECT_AGENT_HIRING_IMPL.md`](PROJECT_AGENT_HIRING_IMPL.md).
+
 ## 2a. Direction settled 2026-08-18
 
 Three independent answers to "what should a new execution get on its first

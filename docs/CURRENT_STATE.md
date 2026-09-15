@@ -32,7 +32,7 @@ on 2026-09-09, with `just ci` and `just test` green on that exact commit
 | --- | --- | --- | --- |
 | Project team setup and neutral baseline | Astra integrates Terra/Sol work | 2026-09-13: first-project checked snapshot → publication → local installation → lead handoff landed as `1820d238d`. Nine native tests, twelve UI tests, typecheck and one fresh browser flow pass. Mac bundle installed. Brian completed Tank Loop authoring, host validation and snapshot save; Publish exposed a native JSON naming mismatch, corrected in `b2e4c35c2` with failing-before/passing-after native decoder tests; corrected Mac bundle installed and relaunched. Tank Loop publication and six-role installation subsequently succeeded; Loom ran with the adopted pack. The client then incorrectly blocked Brian on channel membership; walkthrough corrections landed and are installed at `566e31075`. Existing-source maintenance deliberately refuses without provenance | [`PROJECT_TEAM_ACTIVATION_SLICE.md`](PROJECT_TEAM_ACTIVATION_SLICE.md), [activation evidence](history/2026-09-13-project-team-activation.md), [`PROJECT_TEAM_SETUP_IMPL.md`](PROJECT_TEAM_SETUP_IMPL.md) |
 | Tank Loop setup walkthrough fixes | Opus built; Astra reviews and integrates | 2026-09-13: landed on both remotes at `566e31075`; Mac bundle installed and relaunched, signature verified. Live UI acceptance remains pending. Founder view-only was a client false negative for a project owner in a project transport (confirmed live); fixed to mirror the relay's write rule. Installed project agents, lead picker, rename, saved-group demotion, setup stages and role-pack reconciliation guidance addressed. Integration closes the unlocked publication-read journal race; live roster refresh remains a separate UI follow-up | [walkthrough report](history/2026-09-13-tank-loop-walkthrough.md), [`TANK_LOOP_WALKTHROUGH_IMPL.md`](TANK_LOOP_WALKTHROUGH_IMPL.md) |
-| Project Agents tab (who works here and why); replaces Contributors | Opus built on `work/project-agents-opus`; Astra reviews and integrates | 2026-09-14: candidate, not landed. Tabs Overview · Pulse · Agents · Roles; `/contributors` redirects. Rows come from installations, per-execution metadata and signed assignments, never a home role; Roles cards now count workers seated in a lead's session (ledger 127). Desktop unit tests, typecheck and `pnpm check` pass; live Tank Loop check owed | [`PROJECT_AGENTS_TAB_SPEC.md`](PROJECT_AGENTS_TAB_SPEC.md), ledger 127 |
+| Project agents: association-scoped hiring, discovery and Agents/picker/setup UI (includes the Agents tab) | Opus built on `work/project-agent-hiring-opus` (`b2ab6c73b`, `d742c199f`, `639d68a0c` on `2cce920db`); Astra reviews and integrates | 2026-09-14: candidate, not landed, not installed. Root cause of Tank Loop hiring Bob/Gordan/Ira confirmed (host picked any same-role agent by name, ledger 128). Full gates green on `d742c199f`; browser 27/27; live run on a disposable relay proved discovery → hire → staged pack → assignment → report and both bypass refusals. Tank Loop/Loom untouched: installed-app check owed | [`PROJECT_AGENT_HIRING_IMPL.md`](PROJECT_AGENT_HIRING_IMPL.md), [report](history/2026-09-14-project-agent-hiring.md), ledger 127–128 |
 | Native mid-turn steering for Claude sessions | Fable/Opus; landed by Astra | 2026-09-13: static checks and fresh E2E build passed; selected browser matrix was 44 passed/1 failed, only dense history. Isolated dense repeat also failed (336/450; matrix 286/450), so diagnosis remains open. Brian accepted landing with that limitation; final CI completed successfully; [recovered evidence](history/2026-09-13-final-ci-recovery.md) records every recipe leg. Push completed as `e12495c63`; Mac installation completed at `1820d238d`; installed UI acceptance remains pending | [startup evidence](history/2026-09-13-startup-smoke-corrections.md), [integration evidence](history/2026-09-12-steering-integration.md), `NATIVE_STEERING_IMPL.md` |
 | Automatic project context beside ordinary agent work | paused by Brian on 2026-09-10 | findings saved; next step is proving a harmless marker reaches a fresh Claude session through a hook | ledger § "September 10 — automatic project context: findings saved, work paused" |
 | Collaborative workspace plan, ordered steps 0–6 | Astra finalizes and lands `main`; Fable takes delegated slices; Andy lands his own topic branches | steps 0–4 have integrated candidates per the ledger's September 7–9 sections; no landing of steps 5 or 6 is recorded anywhere found, so treat them as open | [`COLLABORATIVE_WORKSPACE_PLAN.md`](COLLABORATIVE_WORKSPACE_PLAN.md) |
@@ -116,13 +116,18 @@ separates publication, installation and provider-confirmed lead startup.
    agents, Loom's default selection and setup progress. Existing-source pack
    maintenance and automatic setup completion remain deferred. Tank Loop's
    already-published role text is unchanged.
-3. Diagnose the accepted dense-history limitation after landing: the selected
+3. Project agents slice (ledger 128): review and land
+   `work/project-agent-hiring-opus`, then install and confirm on Tank Loop
+   that backfill associates its six agents, Bob/Gordan/Ira read as borrowed or
+   previous, and Loom's next builder hire seats Tank Loop's Builder. Beekeeper
+   project sessions need explicit Associate before hires succeed.
+4. Diagnose the accepted dense-history limitation after landing: the selected
    matrix was 44 passed/1 failed (286/450 rows), and its isolated repeat reached
    336/450. No repeated full smoke marathon is required for the activation slice.
-4. The lead pack is already published in `agiterra-packs` at `5f4ae76fa`.
+5. The lead pack is already published in `agiterra-packs` at `5f4ae76fa`.
    Running seats retain their staged revision; use `bee packs status` to inspect
    a project's source before claiming that a live seat has the new instructions.
-5. When Brian resumes automatic context, run the hook-marker experiment in the
+6. When Brian resumes automatic context, run the hook-marker experiment in the
    ledger's September 10 section. Collaborative workspace plan steps 5 and 6
    remain separate.
 
