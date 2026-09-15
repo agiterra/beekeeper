@@ -30,6 +30,8 @@ function row(overrides = {}) {
     avatarUrl: null,
     section: "borrowed",
     isProjectAgent: false,
+    claimAuthority: null,
+    carriedFromAnotherComputer: false,
     state: "working",
     location: { kind: "here" },
     primaryRole: "builder",
@@ -116,7 +118,14 @@ function projectAgent(overrides = {}) {
   });
 }
 
-const EMPTY = { projectAgents: [], borrowed: [], previous: [] };
+const EMPTY = {
+  projectAgents: [],
+  unverified: [],
+  borrowed: [],
+  available: [],
+  previous: [],
+  readiness: [],
+};
 const ALLOWED = { kind: "allowed" };
 
 const READY_SCOPE = {
@@ -175,6 +184,7 @@ function between(html, startTestId, endTestId) {
 test("the three sections render under their headings, and empty sections are omitted", async () => {
   const html = await render({
     model: {
+      ...EMPTY,
       projectAgents: [
         projectAgent(),
         projectAgent({
@@ -191,7 +201,6 @@ test("the three sections render under their headings, and empty sections are omi
         }),
       ],
       borrowed: [row()],
-      previous: [],
     },
   });
 
@@ -236,6 +245,7 @@ test("state is said in words for every state", async () => {
     available: "Available",
     "not-associated": "Not associated yet",
     elsewhere: "On another computer",
+    carried: "Associated from another computer",
     "not-running": "Not running",
     historical: "Historical",
   };

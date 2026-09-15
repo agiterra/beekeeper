@@ -124,10 +124,8 @@ pub struct AgentSnapshotImportResult {
 
 /// Resolve the behavioral defaults for an incoming agent snapshot.
 ///
-/// This is the single authoritative selection path for all import-time
-/// allowlist and behavioral decisions. It is extracted as a pure, testable
-/// function so that unit tests exercise the exact production logic rather
-/// than a reconstruction of it.
+/// The single authoritative import-time allowlist/behavior selection, kept
+/// pure so unit tests exercise the exact production logic.
 ///
 /// # UI contract
 ///
@@ -632,6 +630,8 @@ pub async fn confirm_agent_snapshot_import(
             persona_name_in_team: None,
             home_role: None,
             project_ref: None,
+            project_public: None,
+            carried_project_digest: None,
             created_at: now.clone(),
             updated_at: now.clone(),
             last_started_at: None,

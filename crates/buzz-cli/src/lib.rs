@@ -1940,7 +1940,8 @@ pub enum ProjectsCmd {
         #[arg(long)]
         owner: Option<String>,
     },
-    /// List a project's agents as `[{pubkey, name, role, owner, owner_role}]`.
+    /// List a public project's agents as
+    /// `[{pubkey, name, role, owner, owner_role, verified}]`.
     ///
     /// This lists the project's agents as published by their owners: each
     /// agent's owner-signed kind:30177 claims the project, and a claim counts
@@ -1948,14 +1949,28 @@ pub enum ProjectsCmd {
     /// collaborator (viewers' claims are ignored). Only the newest publication
     /// of each agent is read. `role` is the agent's primary role, or null.
     ///
+    /// `verified: true` on every row means the owner's project authority was
+    /// checked against the signed roster (the relay's kind:39010 projection,
+    /// or the head's bootstrap `p` tags when none exists). Unverified claims
+    /// are never printed, in any format.
+    ///
+    /// Only public projects publish agent associations. For a private project
+    /// this identity can read, it prints `[]` and says so on stderr. A project
+    /// this identity cannot read (a private project hides its roster from
+    /// identities not on it) is a not-found error with nothing on stdout.
+    /// Inside a lead seat of a private project, use the agent list in the
+    /// session's first message instead.
+    ///
     /// A hire is answered by the session founder's computer, which seats only
-    /// agents it holds that belong to this project, chosen by role. An agent
-    /// owned by someone else runs on their computer. An agent whose owner's
-    /// app has not published its association does not appear.
+    /// agents it holds that belong to this project, chosen by role, from its
+    /// own records; this list does not change that. An agent owned by someone
+    /// else runs on their computer. An agent whose owner's app has not
+    /// published its association does not appear.
     ///
     /// The project is SLUG (with --owner, as `members`) or --project
     /// <coordinate>; with neither, `BUZZ_PULSE_PROJECT` names it, which a
-    /// project seat's provider sets. `--format compact` drops `owner_role`.
+    /// project seat's provider sets. `--format compact` drops `owner_role`
+    /// and keeps `verified`.
     #[command(
         after_help = "Examples:\n  bee projects agents\n  bee projects agents my-project --owner <hex>\n  bee --format compact projects agents --project 30621:<owner-hex>:<slug>"
     )]
@@ -3130,8 +3145,9 @@ pub enum SessionsCmd {
     /// by role among the agents it holds that belong to the session's project.
     /// A projectless session uses only agents that belong to no project. An
     /// agent of another project with the same role is never seated in its
-    /// place. Run `bee projects agents` to see which agents a project has
-    /// before hiring. That create's signed provider
+    /// place. Run `bee projects agents` to see which agents a public project
+    /// has before hiring; a private project does not publish its agents, so
+    /// use the agent list in the session's first message. That create's signed provider
     /// receipt and metadata are this hire's execution proof. The hiring CLI
     /// then uses its own signer key to append an accepted NIP-CSAT `grant-seat`
     /// for the exact actor-role pair; the provider never grants authority.
@@ -3210,7 +3226,7 @@ pub enum SessionsCmd {
     /// no answer at all, and a request that gets no answer is a crash with
     /// better manners.
     #[command(
-        after_help = "Examples:\n  bee projects agents\n  bee sessions hire --channel <uuid> --session-ref <uuid> --role builder --brief ./briefs/lane-c.md\n  bee sessions hire --channel <uuid> --session-ref <uuid> --role architect --model <id> --content 'Read §3 and report' --no-wait\n\n`bee projects agents` lists the session project's agents by role; the host\nseats only those, and a hire refused HIRE_NO_PROJECT_AGENT names the remedy.\n\nA relay that predates session.hire refuses the request as malformed; the\ncommand says so in those words rather than blaming the request.\n\nRule:\n  coding-session lifecycle command action.brief exceeds 12272 bytes (got <n>): a hire's brief becomes the seat's first turn behind the host's 16-byte \"[From the lead] \" prefix, so its ceiling is the initial-turn ceiling minus that prefix\n\nRecipe:\n  bee sessions hire --channel <uuid> --session-ref <uuid> --role builder --brief <path>"
+        after_help = "Examples:\n  bee projects agents\n  bee sessions hire --channel <uuid> --session-ref <uuid> --role builder --brief ./briefs/lane-c.md\n  bee sessions hire --channel <uuid> --session-ref <uuid> --role architect --model <id> --content 'Read §3 and report' --no-wait\n\n`bee projects agents` lists a public session project's agents by role; for a\nprivate project use the agent list in the session's first message. The host\nseats only the project's agents, and a hire refused HIRE_NO_PROJECT_AGENT names\nthe remedy.\n\nA relay that predates session.hire refuses the request as malformed; the\ncommand says so in those words rather than blaming the request.\n\nRule:\n  coding-session lifecycle command action.brief exceeds 12272 bytes (got <n>): a hire's brief becomes the seat's first turn behind the host's 16-byte \"[From the lead] \" prefix, so its ceiling is the initial-turn ceiling minus that prefix\n\nRecipe:\n  bee sessions hire --channel <uuid> --session-ref <uuid> --role builder --brief <path>"
     )]
     Hire {
         /// Channel UUID the umbrella lives in

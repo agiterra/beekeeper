@@ -266,7 +266,7 @@ test("a failed re-check of the saved version is its own blocked stage until the 
   );
   assert.equal(
     projectTeamSetupStage(adopted(activation("installed", "started"))).next,
-    "Setup complete. Loom leads Tank Loop. Give Loom a task in its session; it lists the team with `bee projects agents` and hires only these agents.",
+    "Setup complete. Loom leads Tank Loop. Give Loom a task in its session; its first message lists these agents, and it hires only them.",
   );
 });
 

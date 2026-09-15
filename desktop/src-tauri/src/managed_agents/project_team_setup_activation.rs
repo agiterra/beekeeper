@@ -15,6 +15,7 @@ mod projection;
 #[path = "project_team_setup_activation_test_helpers.rs"]
 mod test_helpers;
 pub(super) use projection::activation;
+use projection::observed_activation;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -294,125 +295,6 @@ async fn require_current_adopted_source(
         ));
     }
     Ok(())
-}
-
-/// Read a provider receipt without changing the saved request. Reopen can
-/// report an observed start while a retry still reuses the exact signed bytes.
-pub(super) async fn observed_activation(
-    state: &AppState,
-    draft: &ProjectTeamSetupDraft,
-    journal: &PublicationJournal,
-    keys: &nostr::Keys,
-) -> ProjectTeamActivation {
-    let mut result = activation(journal);
-    let Some(lead) = journal.lead.as_ref() else {
-        return result;
-    };
-    let (Some(command_id), Some(provider_pubkey), Some(instance_id), Some(driver)) = (
-        lead.create_command_id.as_deref(),
-        lead.provider_pubkey.as_deref(),
-        lead.provider_host_instance_id.as_deref(),
-        lead.driver.as_deref(),
-    ) else {
-        return result;
-    };
-    let events = crate::relay::query_relay_at_with_keys(
-        state,
-        &crate::relay::relay_http_base_url(&draft.relay_url),
-        &[json!({
-            "kinds": [KIND_CODING_SESSION_LIFECYCLE_RECEIPT],
-            "authors": [provider_pubkey],
-            "#h": [lead.channel_id],
-            "#csl-command": [command_id],
-            "limit": 32,
-        })],
-        keys,
-        None,
-    )
-    .await;
-    let events = match events {
-        Ok(events) if events.len() < 32 => events,
-        Ok(_) => {
-            result.lead.status = ProjectTeamLeadStatus::Unknown;
-            result.lead.message = Some(
-                "The lead receipt query reached its safety bound; its outcome remains unknown."
-                    .to_string(),
-            );
-            return result;
-        }
-        Err(error) => {
-            result.lead.status = ProjectTeamLeadStatus::Unknown;
-            result.lead.message = Some(format!("Lead receipt reconciliation failed: {error}"));
-            return result;
-        }
-    };
-    let Ok(channel) = uuid::Uuid::parse_str(&lead.channel_id) else {
-        return result;
-    };
-    let mut receipt = None;
-    for event in events {
-        if event.kind.as_u16() != KIND_CODING_SESSION_LIFECYCLE_RECEIPT as u16
-            || event.pubkey.to_hex() != provider_pubkey
-            || event.verify().is_err()
-        {
-            continue;
-        }
-        let Ok(decoded) = decode_coding_session_lifecycle_receipt(&event.content) else {
-            continue;
-        };
-        if decoded.command_id != command_id {
-            continue;
-        }
-        let Ok(expected) = buzz_sdk_pkg::builders::build_coding_session_lifecycle_receipt(
-            channel,
-            command_id,
-            &event.content,
-        ) else {
-            continue;
-        };
-        let Ok(expected_pubkey) = nostr::PublicKey::from_hex(provider_pubkey) else {
-            continue;
-        };
-        if event.tags != expected.build(expected_pubkey).tags
-            || decoded
-                .session
-                .as_ref()
-                .is_some_and(|target| target.instance_id != instance_id || target.driver != driver)
-        {
-            continue;
-        }
-        if receipt.replace(decoded).is_some() {
-            result.lead.status = ProjectTeamLeadStatus::Unknown;
-            result.lead.message = Some(
-                "The provider returned contradictory outcomes for this lead request.".to_string(),
-            );
-            return result;
-        }
-    }
-    if let Some(receipt) = receipt {
-        match receipt.status {
-            ReceiptStatus::Created => {
-                result.lead.status = ProjectTeamLeadStatus::Started;
-                result.lead.message = receipt
-                    .error
-                    .map(|error| format!("{}: {}", error.code, error.message));
-            }
-            ReceiptStatus::CreatedWithFailedInitialTurn | ReceiptStatus::Failed => {
-                result.lead.status = ProjectTeamLeadStatus::Unknown;
-                result.lead.message = receipt
-                    .error
-                    .map(|error| format!("{}: {}", error.code, error.message))
-                    .or_else(|| {
-                        Some(
-                            "The exact lead request completed without a usable initial turn."
-                                .to_string(),
-                        )
-                    });
-            }
-            _ => {}
-        }
-    }
-    result
 }
 
 pub(super) fn install_adopted_roles(
@@ -709,10 +591,14 @@ pub async fn project_team_setup_install_adopted_roles(
         save_journal(&draft, &updated)?;
         journal = updated;
     }
-    // Journals installed by an earlier build gain their association here too.
+    // Journals installed by an earlier build gain their association here too,
+    // then every newly associated agent's project visibility is read off-path.
     let owner = scope.owner.clone();
     let _ = tokio::task::spawn_blocking(move || {
-        association::backfill_project_agents_logged(&app, &owner)
+        association::backfill_project_agents_logged(&app, &owner);
+        crate::managed_agents::project_association_authority::spawn_project_visibility_verification(
+            app,
+        );
     })
     .await;
     verify_context(&state, &scope)?;
@@ -873,7 +759,14 @@ pub async fn project_team_setup_start_lead(
                 provider_authority_pubkey: provider_record.provider_pubkey.clone(),
                 model: Some(model.clone()),
                 title: Some("Project lead".to_string()),
-                initial_turn: Some(projection::lead_initial_turn(&source)),
+                initial_turn: Some(projection::lead_initial_turn(
+                    &source,
+                    &projection::local_project_agents(
+                        &draft.project_ref,
+                        &installed.roles,
+                        &agents,
+                    ),
+                )),
                 actor: Some(lead.lead_pubkey.clone()),
                 role: Some("lead".to_string()),
                 hire_ref: None,

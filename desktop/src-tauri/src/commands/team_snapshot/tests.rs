@@ -201,6 +201,8 @@ fn team_export_with_instance_and_memory_level_uses_supplied_entries() {
         max_turn_duration_seconds: None,
         home_role: None,
         project_ref: None,
+        project_public: None,
+        carried_project_digest: None,
         parallelism: crate::managed_agents::DEFAULT_AGENT_PARALLELISM,
         system_prompt: None,
         model: None,

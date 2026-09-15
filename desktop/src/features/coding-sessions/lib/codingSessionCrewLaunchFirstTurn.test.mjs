@@ -65,7 +65,7 @@ test("a project Team Start lists the project's agents here as hireable by role",
   assert.doesNotMatch(text, /- lead: Fable/);
   assert.match(
     text,
-    /List this project's agents any time with `bee projects agents`\. Hire by role with `bee sessions hire`; this computer seats only this project's agents\./,
+    /`bee projects agents` lists agents published for public projects; a private project publishes none, so this computer's agents for this project are the ones listed here\. Hire by role with `bee sessions hire`; this computer seats only this project's agents\./,
   );
   assert.match(text, /bee sessions hire --channel <uuid>/);
 });

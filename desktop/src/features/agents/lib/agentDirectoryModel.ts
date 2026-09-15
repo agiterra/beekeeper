@@ -108,6 +108,11 @@ export type AgentDirectoryRow = {
   project: AgentDirectoryProjectAssociation | null;
   /** A managed record here answered the association question. */
   projectKnown: boolean;
+  /**
+   * The record here names no project but carries a `project_digest` its
+   * owner published from another computer. Not membership on this one.
+   */
+  carriedFromAnotherComputer?: boolean;
   /** Every project this agent holds or held a seat in — not membership. */
   seatProjectIds: ReadonlySet<string>;
   /**
@@ -355,6 +360,10 @@ export function buildAgentDirectory(
       currentSeat,
       project,
       projectKnown: managed !== null,
+      carriedFromAnotherComputer:
+        managed !== null &&
+        project === null &&
+        (managed.carriedProjectDigest ?? "").trim() !== "",
       seatProjectIds,
       installedProjects,
       installedProjectIds,

@@ -34,8 +34,11 @@ import {
   assignmentByText,
   assignmentStatusText,
   BADGE_BORROWED,
+  BADGE_NOT_ASSOCIATED_HERE,
   BADGE_PREVIOUS,
   BADGE_PROJECT_AGENT,
+  BADGE_UNVERIFIED,
+  carriedAssociationText,
   countText,
   DETAILS_HEADING,
   elsewhereText,
@@ -53,6 +56,7 @@ import {
   sessionInstructionsText,
   sessionStatusText,
   stateText,
+  unverifiedClaimText,
   VIEW_INSTRUCTIONS,
 } from "./projectAgentsCopy";
 
@@ -214,7 +218,9 @@ function AssignmentItem({
 
 function sectionBadges(row: ProjectAgentRowModel): string[] {
   if (row.section === "project") return [BADGE_PROJECT_AGENT];
+  if (row.section === "unverified") return [BADGE_UNVERIFIED];
   if (row.section === "borrowed") return [BADGE_BORROWED];
+  if (row.section === "available") return [BADGE_NOT_ASSOCIATED_HERE];
   return [
     BADGE_PREVIOUS,
     row.isProjectAgent ? BADGE_PROJECT_AGENT : BADGE_BORROWED,
@@ -238,6 +244,48 @@ function LocationText({ row }: { row: ProjectAgentRowModel }) {
     );
   }
   return <span className="shrink-0">{LOCATION_UNKNOWN}</span>;
+}
+
+/** Why a row that is not a project agent here is not one, in words. */
+function MembershipNote({
+  projectName,
+  row,
+}: {
+  projectName: string;
+  row: ProjectAgentRowModel;
+}) {
+  if (row.isProjectAgent) return null;
+  if (row.section === "unverified") {
+    const owner =
+      row.location.kind === "elsewhere" ? row.location.ownerName : "its owner";
+    return (
+      <p
+        className="break-words text-xs text-amber-700 dark:text-amber-400"
+        data-testid="project-agent-unverified"
+        role="note"
+      >
+        {unverifiedClaimText(projectName, owner)}
+      </p>
+    );
+  }
+  if (row.carriedFromAnotherComputer) {
+    return (
+      <p
+        className="break-words text-xs text-muted-foreground"
+        data-testid="project-agent-carried"
+      >
+        {carriedAssociationText(projectName)}
+      </p>
+    );
+  }
+  return (
+    <p
+      className="break-words text-xs text-muted-foreground"
+      data-testid="project-agent-not-member"
+    >
+      {notProjectAgentText(projectName, row.otherProject)}
+    </p>
+  );
 }
 
 /** One agent identity in a project, with its sessions and assignments beneath. */
@@ -345,14 +393,7 @@ export function ProjectAgentRow({
               {ASSOCIATION_MISSING_WARNING}
             </p>
           ) : null}
-          {row.isProjectAgent ? null : (
-            <p
-              className="break-words text-xs text-muted-foreground"
-              data-testid="project-agent-not-member"
-            >
-              {notProjectAgentText(projectName, row.otherProject)}
-            </p>
-          )}
+          <MembershipNote projectName={projectName} row={row} />
           <p className="break-words text-xs text-muted-foreground">
             {lastSeenText(row.lastSeenSeconds)}
             {row.primaryRole || row.seatedRoles.length > 0 ? (

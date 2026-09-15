@@ -315,17 +315,30 @@ test("the directory row names the project by association and offers Rename to ev
       installedProjects: [],
       installedProjectIds: new Set(),
     }),
+    directoryRow({
+      pubkey: "4".repeat(64),
+      name: "Traveller",
+      project: null,
+      carriedFromAnotherComputer: true,
+      installedProjects: [],
+      installedProjectIds: new Set(),
+    }),
   ]);
 
   assert.deepEqual(
     screen.getAllByTestId("agent-row-project").map((node) => node.textContent),
-    ["Tank Loop · lead", "No project", "Project not known on this computer"],
+    [
+      "Tank Loop · lead",
+      "No project",
+      "Project not known on this computer",
+      "Associated from another computer (not on this one)",
+    ],
   );
   const renameButtons = screen.getAllByTestId("agent-row-rename");
   assert.equal(
     renameButtons.length,
-    2,
-    "Loom and Solo, not the wire-only agent",
+    3,
+    "Loom, Solo and Traveller, not the wire-only agent",
   );
   assert.equal(
     renameButtons[0].closest("[data-testid='agent-row']"),

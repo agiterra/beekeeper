@@ -88,6 +88,8 @@ export type ProjectAgentsState = {
   readErrors: string[];
   /** Whether the viewer may associate an agent with this project. */
   associateAccess: ProjectAgentAssociateAccess;
+  /** The project is private: other computers' agents are not published or read. */
+  isPrivate: boolean;
 };
 
 /**
@@ -193,6 +195,7 @@ export function useProjectAgents(projectId: string): ProjectAgentsState {
         avatarUrl: agent.avatarUrl,
         homeRole: agent.homeRole,
         projectRef: agent.projectRef ?? null,
+        carriedProjectDigest: agent.carriedProjectDigest ?? null,
       })),
     [agentsQuery.data],
   );
@@ -249,11 +252,14 @@ export function useProjectAgents(projectId: string): ProjectAgentsState {
         installations,
         localAgents,
         publishedAgents: published.agents,
+        projectPrivate: published.isPrivate,
+        localAgentsRead: agentsQuery.isSuccess,
         otherNames,
         projectNames,
         nowSeconds,
       }),
     [
+      agentsQuery.isSuccess,
       declaredSessions,
       executionCatalog.entries,
       installations,
@@ -263,6 +269,7 @@ export function useProjectAgents(projectId: string): ProjectAgentsState {
       projectNames,
       projectRef,
       published.agents,
+      published.isPrivate,
       umbrellas,
     ],
   );
@@ -370,5 +377,6 @@ export function useProjectAgents(projectId: string): ProjectAgentsState {
     assignments,
     readErrors,
     associateAccess,
+    isPrivate: published.isPrivate,
   };
 }

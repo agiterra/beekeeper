@@ -73,6 +73,19 @@ test("a row names its project by association, and a seat reads as seated-in", ()
   );
   assert.equal(agentProjectText(null, "builder", true), "No project");
   assert.equal(
+    agentProjectText(null, "builder", true, true),
+    "Associated from another computer (not on this one)",
+  );
+  // An association here outranks a carried digest; a wire-only row stays unknown.
+  assert.equal(
+    agentProjectText({ projectName: "Tank Loop" }, "builder", true, true),
+    "Tank Loop · builder",
+  );
+  assert.equal(
+    agentProjectText(null, null, false, true),
+    "Project not known on this computer",
+  );
+  assert.equal(
     agentProjectText(null, null, false),
     "Project not known on this computer",
   );

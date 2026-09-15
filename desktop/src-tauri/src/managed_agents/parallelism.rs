@@ -96,6 +96,8 @@ mod tests {
             persona_name_in_team: None,
             home_role: None,
             project_ref: None,
+            project_public: None,
+            carried_project_digest: None,
             env_vars: std::collections::BTreeMap::new(),
             created_at: String::new(),
             updated_at: String::new(),

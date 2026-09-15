@@ -450,9 +450,9 @@ test("with every agent associated and the lead started, setup is complete with o
   const next = view.getByTestId("project-team-setup-roster-next");
   assert.equal(
     next.textContent,
-    "Setup complete. Loom leads Tank Loop. Give Loom a task in its session; it lists the team with bee projects agents and hires only these agents.",
+    "Setup complete. Loom leads Tank Loop. Give Loom a task in its session; its first message lists these agents, and it hires only them.",
   );
-  assert.equal(next.querySelector("code").textContent, "bee projects agents");
+  assert.equal(next.querySelector("code"), null);
   const roster = view.getByTestId("project-team-setup-roster");
   assert.deepEqual(
     [...roster.querySelectorAll("button")]

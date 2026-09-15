@@ -135,6 +135,8 @@ export function installationsErrorText(message: string): string {
 }
 
 export const AGENT_NO_PROJECT = "No project";
+export const AGENT_PROJECT_CARRIED =
+  "Associated from another computer (not on this one)";
 export const AGENT_PROJECT_UNKNOWN = "Project not known on this computer";
 export const AGENT_PROJECT_NOT_LISTED = "A project not listed here";
 
@@ -142,15 +144,21 @@ export const AGENT_PROJECT_NOT_LISTED = "A project not listed here";
  * `Tank Loop · builder` — the project this agent belongs to and its primary
  * role; `No project` when its record names none. A wire-only agent's record
  * is on another computer, so its project is said to be unknown rather than
- * none.
+ * none. A record that names none here but carries an association its owner
+ * published from another computer says so: that is not membership here.
  */
 export function agentProjectText(
   project: Pick<AgentDirectoryProjectAssociation, "projectName"> | null,
   homeRole: string | null,
   projectKnown: boolean,
+  carriedFromAnotherComputer = false,
 ): string {
   if (!projectKnown) return AGENT_PROJECT_UNKNOWN;
-  if (!project) return AGENT_NO_PROJECT;
+  if (!project) {
+    return carriedFromAnotherComputer
+      ? AGENT_PROJECT_CARRIED
+      : AGENT_NO_PROJECT;
+  }
   const name = project.projectName ?? AGENT_PROJECT_NOT_LISTED;
   return homeRole ? `${name} · ${homeRole}` : name;
 }

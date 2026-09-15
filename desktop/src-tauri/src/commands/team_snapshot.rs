@@ -605,6 +605,8 @@ pub async fn confirm_team_snapshot_import(
             persona_name_in_team: None,
             home_role: member.definition.home_role.clone(),
             project_ref: None,
+            project_public: None,
+            carried_project_digest: None,
             created_at: now.clone(),
             updated_at: now.clone(),
             last_started_at: None,

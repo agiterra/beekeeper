@@ -6,15 +6,16 @@ import type { ProjectContainer } from "@/features/projects-container/hooks";
 import { useProjectRosterQuery } from "@/features/projects-container/lib/projectMembers";
 import { relayClient } from "@/shared/api/relayClient";
 import { KIND_MANAGED_AGENT } from "@/shared/constants/kinds";
-import type { PublishedAgentAssociation } from "@/shared/lib/projectAgentAssociation";
 
 import {
   acceptPublishedProjectAgents,
   PUBLISHED_PROJECT_AGENTS_READ_LIMIT,
+  type PublishedProjectAgent,
   projectAgentAuthorizedAuthors,
+  readsPublishedProjectAgents,
 } from "./publishedProjectAgents";
 
-const NO_AGENTS: readonly PublishedAgentAssociation[] = [];
+const NO_AGENTS: readonly PublishedProjectAgent[] = [];
 
 function errorSentence(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -29,18 +30,26 @@ export function publishedProjectAgentsQueryKey(
   relayUrl: string | null,
   projectRef: string | null,
   authors: readonly string[],
+  rosterVerified: boolean,
 ) {
   return [
     "project-published-agents",
     relayUrl ?? "",
     projectRef ?? "",
     authors.join(","),
+    rosterVerified ? "verified" : "unverified",
   ] as const;
 }
 
 export type PublishedProjectAgentsState = {
-  /** Accepted associations naming this project, from authorized authors. */
-  agents: readonly PublishedAgentAssociation[];
+  /**
+   * Accepted associations naming this project, from authorized authors, each
+   * with whether its author's authority was verified. Always empty for a
+   * private project, which is never read.
+   */
+  agents: readonly PublishedProjectAgent[];
+  /** The project is private: nothing is published for it, nothing was read. */
+  isPrivate: boolean;
   /** The authors whose claims were read: creator, roster owners, collaborators. */
   authorizedAuthors: readonly string[];
   isLoading: boolean;
@@ -75,9 +84,14 @@ export function usePublishedProjectAgents(
     [project?.owner, roster],
   );
   const projectRef = project?.address ?? null;
+  // Only a roster that was actually read verifies a collaborator's authority;
+  // the head's member list after a failed read is a fallback, not a proof.
+  const rosterVerified = rosterQuery.isSuccess;
+  const reads = readsPublishedProjectAgents(project);
 
   const query = useQuery({
     enabled:
+      reads &&
       projectRef !== null &&
       relayUrl !== null &&
       rosterReady &&
@@ -86,6 +100,7 @@ export function usePublishedProjectAgents(
       relayUrl,
       projectRef,
       authorizedAuthors,
+      rosterVerified,
     ),
     queryFn: async () => {
       const events = await relayClient.fetchEventsCoalesced({
@@ -99,6 +114,7 @@ export function usePublishedProjectAgents(
           events,
           projectRef,
           authorizedAuthors,
+          rosterVerified,
         }),
       };
     },
@@ -110,9 +126,9 @@ export function usePublishedProjectAgents(
     : null;
   const notices = React.useMemo(() => {
     const list: string[] = [];
-    if (rosterError) {
+    if (rosterError && reads) {
       list.push(
-        `Project members could not be read, so agents associated by collaborators may be missing: ${rosterError}`,
+        `Project members could not be read, so agents published by anyone other than its creator are listed as project authority not verified: ${rosterError}`,
       );
     }
     if (query.isError) {
@@ -126,12 +142,13 @@ export function usePublishedProjectAgents(
       );
     }
     return list;
-  }, [query.data?.read, query.error, query.isError, rosterError]);
+  }, [query.data?.read, query.error, query.isError, reads, rosterError]);
 
   return {
-    agents: query.data?.agents ?? NO_AGENTS,
+    agents: reads ? (query.data?.agents ?? NO_AGENTS) : NO_AGENTS,
+    isPrivate: project !== null && !reads,
     authorizedAuthors,
-    isLoading: !rosterReady || query.isLoading,
+    isLoading: !rosterReady || (reads && query.isLoading),
     notices,
     roster,
     rosterLoading: !rosterReady,

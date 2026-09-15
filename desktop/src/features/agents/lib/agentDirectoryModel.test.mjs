@@ -427,6 +427,31 @@ test("an association with a project this viewer does not list keeps its ref but 
   assert.deepEqual(pubkeysUnder(rows, hidden), [LEAD_PUBKEY]);
 });
 
+test("a carried digest from another computer is not membership here, and is said so", () => {
+  const rows = directory({
+    agents: [
+      managedAgent({
+        homeRole: "builder",
+        carriedProjectDigest: "a".repeat(64),
+      }),
+      managedAgent({
+        pubkey: WIRE_PUBKEY,
+        name: "Associated",
+        projectRef: TANK_LOOP.address,
+        carriedProjectDigest: "a".repeat(64),
+      }),
+    ],
+  });
+  const carried = rows.find((row) => row.pubkey === LEAD_PUBKEY);
+  assert.equal(carried.project, null);
+  assert.equal(carried.carriedFromAnotherComputer, true);
+  assert.deepEqual(pubkeysUnder(rows, TANK_LOOP.id), [WIRE_PUBKEY]);
+  const associated = rows.find((row) => row.pubkey === WIRE_PUBKEY);
+  assert.equal(associated.carriedFromAnotherComputer, false);
+  const plain = directory({ agents: [managedAgent({ homeRole: "builder" })] });
+  assert.equal(plain[0].carriedFromAnotherComputer, false);
+});
+
 test("a wire-only agent's project is unknown here, not none", () => {
   const rows = directory({ agents: [], relayAgents: [relayAgent()] });
   assert.equal(rows[0].project, null);

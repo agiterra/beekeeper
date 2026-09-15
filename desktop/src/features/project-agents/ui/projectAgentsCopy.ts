@@ -2,6 +2,7 @@ import { formatAge } from "@/features/roles/ui/rolesCopy";
 
 import type {
   ProjectAgentAssignment,
+  ProjectAgentsReadinessLine,
   ProjectAgentRelationship,
   ProjectAgentState,
   ProjectAgentSession,
@@ -34,6 +35,12 @@ export const SECTION_PROJECT_HINT =
 export const SECTION_BORROWED = "Borrowed participants";
 export const SECTION_BORROWED_HINT =
   "Seated or assigned in a session that is still open, without being this project's agents.";
+export const SECTION_UNVERIFIED = "Project authority not verified";
+export const SECTION_UNVERIFIED_HINT =
+  "Published as this project's agents, but its members could not be read to confirm the publisher may associate agents. Not counted as project agents.";
+export const SECTION_AVAILABLE = "Available to associate";
+export const SECTION_AVAILABLE_HINT =
+  "On this computer and published as this project's agents from another of your computers. Not project agents here until associated.";
 export const SECTION_PREVIOUS = "Previously here";
 export const SECTION_PREVIOUS_HINT =
   "Every session they appeared in is closed. Their work stays attributed to them.";
@@ -41,6 +48,12 @@ export const SECTION_PREVIOUS_HINT =
 export const BADGE_PROJECT_AGENT = "Project agent";
 export const BADGE_BORROWED = "Borrowed";
 export const BADGE_PREVIOUS = "Previously here";
+export const BADGE_UNVERIFIED = "Project authority not verified";
+export const BADGE_NOT_ASSOCIATED_HERE = "Not associated here";
+
+/** Said under Project agents for a private project, whose agents are never published. */
+export const PROJECT_PRIVATE_NOTE =
+  "This project is private, so agents on other computers are not published. Only this computer's agents are listed.";
 
 export const ON_THIS_COMPUTER = "On this computer";
 export const LOCATION_UNKNOWN = "Not on this computer";
@@ -67,6 +80,7 @@ const STATE_WORDS: Record<ProjectAgentState, string> = {
   available: "Available",
   "not-associated": "Not associated yet",
   elsewhere: "On another computer",
+  carried: "Associated from another computer",
   "not-running": "Not running",
   historical: "Historical",
 };
@@ -84,6 +98,45 @@ export function primaryRoleText(role: string | null): string {
 /** `Owned by Andy · can't run on this computer`. */
 export function elsewhereText(ownerName: string): string {
   return `Owned by ${ownerName} · can't run on this computer`;
+}
+
+/**
+ * A published claim whose author's project authority was not verified.
+ * `Published as a Tank Loop agent by Andy. Tank Loop's members could not be
+ * read, so Andy's authority to associate agents is not verified.`
+ */
+export function unverifiedClaimText(
+  projectName: string,
+  ownerName: string,
+): string {
+  return `Published as a ${projectName} agent by ${ownerName}. ${projectName}'s members could not be read, so ${ownerName}'s authority to associate agents is not verified.`;
+}
+
+/** A local agent carrying this project's digest from another computer. */
+export function carriedAssociationText(projectName: string): string {
+  return `Published as a ${projectName} agent from another of your computers. Associate it here to let this computer hire it.`;
+}
+
+/** `Bob`, `Bob and Ira`, `Bob, Gordan and Ira`. */
+export function namesText(names: readonly string[]): string {
+  if (names.length <= 1) return names[0] ?? "";
+  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
+
+/**
+ * One role's hiring-readiness line. Names come from the evidence and are
+ * never offered as a choice.
+ */
+export function readinessText(
+  line: ProjectAgentsReadinessLine,
+  projectName: string,
+): string {
+  const { role } = line;
+  const head = `No ${role} agent belongs to ${projectName} on this computer.`;
+  const tail = `A lead's ${role} hires will be refused until you associate an agent.`;
+  if (line.workers.length === 0) return `${head} ${tail}`;
+  const names = namesText(line.workers.map((worker) => worker.name));
+  return `${head} Past ${role} work here was done by ${names} (not associated). ${tail}`;
 }
 
 /** Said on a project row the lead cannot hire. */

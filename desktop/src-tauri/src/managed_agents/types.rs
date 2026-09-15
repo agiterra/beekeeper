@@ -135,6 +135,8 @@ impl AgentDefinition {
             // `save_personas` rewrites from.
             home_role: None,
             project_ref: None,
+            project_public: None,
+            carried_project_digest: None,
             created_at: self.created_at,
             updated_at: self.updated_at,
             last_started_at: None,
@@ -355,6 +357,14 @@ pub struct ManagedAgentRecord {
     /// association is recorded. Hiring for a project seats only its agents.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_ref: Option<String>,
+    /// Signed head read as public/private; `None` unread. The 30177 digest is
+    /// published only for `Some(true)`, never for a private project.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_public: Option<bool>,
+    /// A digest this owner published from another computer, carried so this
+    /// one never withdraws it. Not membership (hiring reads `project_ref`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub carried_project_digest: Option<String>,
     pub created_at: String,
     pub updated_at: String,
     pub last_started_at: Option<String>,
@@ -523,6 +533,9 @@ pub struct ManagedAgentSummary {
     pub home_role: Option<String>,
     /// Mirror of `ManagedAgentRecord.project_ref`.
     pub project_ref: Option<String>,
+    /// Mirrors of `ManagedAgentRecord.project_public` / `carried_project_digest`.
+    pub project_public: Option<bool>,
+    pub carried_project_digest: Option<String>,
     /// Whether this computer can stage a role pack for this agent — exactly
     /// `resolve_seat_pack(record, &teams).is_some()`. `false` means a seat on
     /// this agent runs on its persona prompt alone.

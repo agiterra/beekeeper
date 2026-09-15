@@ -354,6 +354,7 @@ test("a published association from an authorized author is a project agent on an
         homeRole: "runner",
         projectDigest: projectAgentDigest(PROJECT),
         createdAt: NOW - 100,
+        authority: "verified",
       },
       {
         // A claim for a different project's digest never lands here.
@@ -480,6 +481,7 @@ test("a viewer's or stranger's claim is ignored; a newer claim supersedes an old
   const accepted = acceptPublishedProjectAgents({
     projectRef: PROJECT,
     authorizedAuthors: authors,
+    rosterVerified: true,
     events: [
       wire(COLLAB, REMOTE, PROJECT, 100),
       wire(VIEWER, "8".repeat(64), PROJECT, 100),

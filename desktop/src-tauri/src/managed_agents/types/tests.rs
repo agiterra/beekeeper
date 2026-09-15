@@ -725,6 +725,8 @@ fn summary_fixture(
         team_id: None,
         home_role: None,
         project_ref: None,
+        project_public: None,
+        carried_project_digest: None,
         has_role_pack: false,
         relay_url: String::new(),
         acp_command: "buzz-acp".into(),

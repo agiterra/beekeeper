@@ -261,6 +261,8 @@ fn record_with(
         persona_name_in_team: None,
         home_role: None,
         project_ref: None,
+        project_public: None,
+        carried_project_digest: None,
         env_vars: std::collections::BTreeMap::new(),
         created_at: String::new(),
         updated_at: String::new(),
@@ -290,8 +292,6 @@ fn record_with(
 
 #[test]
 fn record_agent_command_own_runtime_wins_over_persona() {
-    // A record with its own materialized runtime never consults the
-    // persona list — the unified-model resolution.
     let personas = vec![persona_with_runtime("p1", Some("goose"))];
     let record = record_with(Some("claude"), Some("p1"), None);
     assert_eq!(record_agent_command(&record, &personas), "claude-agent-acp");

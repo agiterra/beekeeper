@@ -95,7 +95,12 @@ export function AgentDirectoryDetail({
             data-testid="agent-detail-project"
             title={row.project?.projectRef ?? undefined}
           >
-            {agentProjectText(row.project, row.homeRole, row.projectKnown)}
+            {agentProjectText(
+              row.project,
+              row.homeRole,
+              row.projectKnown,
+              row.carriedFromAnotherComputer ?? false,
+            )}
           </span>
         </div>
         <div className="flex justify-between gap-3">

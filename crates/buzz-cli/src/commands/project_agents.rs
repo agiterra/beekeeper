@@ -2,16 +2,18 @@
 //!
 //! An agent belongs to a project when its owner's computer records the
 //! association and publishes it on the agent's owner-signed kind:30177 as
-//! `project_digest` ([`buzz_core::project_agent_association`]). The digest
-//! rides instead of the coordinate because a kind:30177 is readable by every
-//! relay member and a project may be private.
+//! `project_digest` ([`buzz_core::project_agent_association`]), a compact
+//! equality key for the coordinate. Associations are published only for
+//! projects whose head is public; a private project publishes none, so this
+//! command lists no agents for one (see [`cmd_agents`]).
 //!
 //! That publication is a *claim by its author*, and the relay does not check
 //! it. This command counts a claim only when its author is the project's
 //! creator or a roster owner or collaborator — never a viewer, never a
 //! stranger — reads only the newest event at each `(author, d)` address, so a
 //! withdrawn association stays withdrawn, and lists each agent once, by the
-//! newest claim any authorized author made for it.
+//! newest claim any authorized author made for it. Every printed row carries
+//! `verified: true`: an unverified claim is never printed.
 //!
 //! What this list is **not**: the set of agents a hire can seat. A hire is
 //! answered by the session founder's computer, which seats only agents *it*
@@ -21,8 +23,8 @@
 use std::collections::BTreeMap;
 
 use buzz_core::kind::{
-    normalize_project_coordinate, KIND_MANAGED_AGENT, KIND_PROJECT, PROJECT_ROLE_COLLABORATOR,
-    PROJECT_ROLE_OWNER,
+    normalize_project_coordinate, KIND_MANAGED_AGENT, KIND_PROJECT, PROJECT_ACCESS_PRIVATE,
+    PROJECT_ACCESS_TAG, PROJECT_ROLE_COLLABORATOR, PROJECT_ROLE_OWNER,
 };
 use buzz_core::project_agent_association::{
     project_agent_digest, PROJECT_AGENT_DIGEST_CONTENT_KEY, PROJECT_AGENT_ROLE_CONTENT_KEY,
@@ -53,9 +55,17 @@ pub struct ProjectAgentRow {
     /// The pubkey that signed the claim: the agent's owner, on whose computer
     /// the agent runs.
     pub owner: String,
-    /// The owner's role on this project (`owner` or `collaborator`).
+    /// The owner's role on this project (`owner` or `collaborator`), as the
+    /// signed roster states it.
     pub owner_role: String,
 }
+
+/// The `verified` value every printed row carries: the claim's author was
+/// checked against the project's signed roster (the relay-signed kind:39010
+/// projection, or the head's bootstrap `p` tags when no projection exists)
+/// and holds owner or collaborator authority. There is no `false`: a claim
+/// that cannot be verified is not printed at all.
+pub const ROW_VERIFIED: bool = true;
 
 /// Resolve which project `bee projects agents` reads, as a normalized
 /// `30621:<owner-hex>:<slug>` coordinate.
@@ -215,37 +225,9 @@ pub fn fold_project_agents(
     roster: Vec<(String, String)>,
     events: &[Value],
 ) -> Vec<ProjectAgentRow> {
-    fold_claims(coordinate, &authorized_authors(coordinate, roster), events)
-}
-
-/// The `owner_role` printed for a claim accepted only because its author is
-/// the owner that attested this identity, when the project itself is not
-/// readable here. Project authority is **not** verified for such a row.
-pub const ATTESTING_OWNER_ROLE: &str = "attesting-owner";
-
-/// The fold for an identity that cannot read the project (a private project
-/// withholds its head and roster from a seat that is not on the roster):
-/// only claims published by `attesting_owner`, the owner in this identity's
-/// NIP-OA auth tag — the person whose computer answers this seat's hires —
-/// each labelled [`ATTESTING_OWNER_ROLE`]. Same ordering and digest rule as
-/// [`fold_project_agents`].
-pub fn fold_attesting_owner_agents(
-    coordinate: &str,
-    attesting_owner: &str,
-    events: &[Value],
-) -> Vec<ProjectAgentRow> {
-    let authorities = BTreeMap::from([(
-        attesting_owner.to_ascii_lowercase(),
-        ATTESTING_OWNER_ROLE.to_string(),
-    )]);
-    fold_claims(coordinate, &authorities, events)
-}
-
-fn fold_claims(
-    coordinate: &str,
-    authorities: &BTreeMap<String, String>,
-    events: &[Value],
-) -> Vec<ProjectAgentRow> {
+    // The signed roster is the only authority source: there is no fallback
+    // that accepts a claim whose author's project role was not read here.
+    let authorities = authorized_authors(coordinate, roster);
     let Some(digest) = project_agent_digest(coordinate) else {
         return Vec::new();
     };
@@ -318,7 +300,9 @@ fn newer_than(candidate: &Value, current: &Value) -> bool {
 }
 
 /// One printed row for `format`: the full row as JSON, or the reduced
-/// `{pubkey, name, role, owner}` for `--format compact`.
+/// `{pubkey, name, role, owner, verified}` for `--format compact`. Both carry
+/// `verified` ([`ROW_VERIFIED`]), so a caller reading either format never has
+/// to infer that a row's authority was checked.
 fn render_row(row: &ProjectAgentRow, format: &crate::OutputFormat) -> Value {
     match format {
         crate::OutputFormat::Json => serde_json::json!({
@@ -327,18 +311,82 @@ fn render_row(row: &ProjectAgentRow, format: &crate::OutputFormat) -> Value {
             "role": row.role,
             "owner": row.owner,
             "owner_role": row.owner_role,
+            "verified": ROW_VERIFIED,
         }),
         crate::OutputFormat::Compact => serde_json::json!({
             "pubkey": row.pubkey,
             "name": row.name,
             "role": row.role,
             "owner": row.owner,
+            "verified": ROW_VERIFIED,
         }),
     }
 }
 
+/// The not-found message for a project this identity cannot read. `reason`
+/// is the underlying lookup's own message.
+///
+/// No rows are printed in that case — not even the claims of the owner that
+/// attested this identity — because without the signed roster no claim's
+/// authority can be verified. The message says where the answer is instead.
+pub fn unreadable_project_message(reason: &str, coordinate: &str) -> String {
+    format!(
+        "{reason}: {coordinate} is not readable by this identity (a private project hides \
+         its head and roster from identities not on it). Private projects do not publish \
+         their agents, so none are listed. Inside a lead seat, the session's first message \
+         lists the project's agents on the hosting computer. Hires are unaffected: the host \
+         seats by its own records"
+    )
+}
+
+/// Whether a kind:30621 head (as relay JSON) is private: it carries
+/// `["buzz-access","private"]`. Fails closed like
+/// [`buzz_core::kind::is_private_project_event`]: any `buzz-access` tag whose
+/// value is `private` counts, whatever else the tag list holds.
+pub fn head_is_private(head: &Value) -> bool {
+    head.get("tags")
+        .and_then(Value::as_array)
+        .is_some_and(|tags| {
+            tags.iter().filter_map(Value::as_array).any(|tag| {
+                tag.first().and_then(Value::as_str) == Some(PROJECT_ACCESS_TAG)
+                    && tag.get(1).and_then(Value::as_str) == Some(PROJECT_ACCESS_PRIVATE)
+            })
+        })
+}
+
+/// The newest kind:30621 head at `coordinate` this identity can read, or
+/// `None` when the relay returns none (absent, or private and withheld).
+async fn read_project_head(
+    client: &BuzzClient,
+    coordinate: &str,
+) -> Result<Option<Value>, CliError> {
+    let mut parts = coordinate.splitn(3, ':');
+    let (Some(_), Some(creator), Some(slug)) = (parts.next(), parts.next(), parts.next()) else {
+        return Ok(None);
+    };
+    let raw = client
+        .query(&serde_json::json!({
+            "kinds": [KIND_PROJECT],
+            "authors": [creator],
+            "#d": [slug],
+            "limit": 1,
+        }))
+        .await?;
+    let heads: Vec<Value> = serde_json::from_str(&raw)
+        .map_err(|e| CliError::Other(format!("failed to parse relay response: {e}")))?;
+    Ok(heads
+        .into_iter()
+        .max_by_key(|head| head.get("created_at").and_then(Value::as_u64)))
+}
+
 /// `bee projects agents` — print the project's agents as published by their
 /// owners.
+///
+/// Reads the project head first. No readable head is a not-found error
+/// ([`unreadable_project_message`]) with nothing on stdout. A readable private
+/// head prints `[]` with a stderr note, because private projects do not
+/// publish agent associations. Otherwise the signed roster decides whose
+/// kind:30177 claims count ([`fold_project_agents`]).
 pub async fn cmd_agents(
     client: &BuzzClient,
     slug: Option<&str>,
@@ -351,36 +399,35 @@ pub async fn cmd_agents(
     let coordinate =
         resolve_project_coordinate(slug, owner, project, env_project.as_deref(), &caller)?;
 
-    // Only a verified NIP-OA owner may widen what this identity reads: an
-    // unverified second slot of an `auth` tag is not an attestation.
-    let attesting_owner = client.verified_auth_tag_owner_hex().ok().flatten();
+    let Some(head) = read_project_head(client, &coordinate).await? else {
+        return Err(CliError::NotFound(unreadable_project_message(
+            "project not found",
+            &coordinate,
+        )));
+    };
+    if head_is_private(&head) {
+        eprintln!(
+            "{coordinate} is a private project: private projects do not publish agent \
+             associations, so none are listed. Inside a lead seat, the session's first \
+             message lists the project's agents on the hosting computer"
+        );
+        println!("[]");
+        return Ok(());
+    }
+
     let roster = match project_roster(client, &coordinate).await {
-        Ok(roster) => Some(roster),
-        // A private project withholds its head and roster from an identity
-        // that is not on the roster — a seat's own key usually is not. Fall
-        // back to what this seat's attesting owner published, and say that
-        // project authority could not be checked from here.
-        Err(CliError::NotFound(reason)) => match &attesting_owner {
-            Some(_) => {
-                eprintln!(
-                    "{reason}: this identity cannot read {coordinate} (a private project hides \
-                     its roster from identities not on it), so only agents published by the \
-                     owner that attested this identity are listed, and their project authority \
-                     is not verified here"
-                );
-                None
-            }
-            None => return Err(CliError::NotFound(reason)),
-        },
+        Ok(roster) => roster,
+        Err(CliError::NotFound(reason)) => {
+            return Err(CliError::NotFound(unreadable_project_message(
+                &reason,
+                &coordinate,
+            )))
+        }
         Err(error) => return Err(error),
     };
-    let authors: Vec<String> = match (&roster, &attesting_owner) {
-        (Some(roster), _) => authorized_authors(&coordinate, roster.clone())
-            .into_keys()
-            .collect(),
-        (None, Some(owner)) => vec![owner.to_ascii_lowercase()],
-        (None, None) => Vec::new(),
-    };
+    let authors: Vec<String> = authorized_authors(&coordinate, roster.clone())
+        .into_keys()
+        .collect();
     let events = if authors.is_empty() {
         Vec::new()
     } else {
@@ -392,11 +439,7 @@ pub async fn cmd_agents(
             .await?
     };
 
-    let rows = match (roster, attesting_owner) {
-        (Some(roster), _) => fold_project_agents(&coordinate, roster, &events),
-        (None, Some(owner)) => fold_attesting_owner_agents(&coordinate, &owner, &events),
-        (None, None) => Vec::new(),
-    };
+    let rows = fold_project_agents(&coordinate, roster, &events);
     if rows.is_empty() {
         eprintln!(
             "no agents are published for {coordinate}: an agent appears here once its owner's \
@@ -498,12 +541,16 @@ mod tests {
     }
 
     #[test]
-    fn an_unreadable_project_lists_only_the_attesting_owners_claims_marked_unverified() {
+    fn without_a_roster_no_claim_is_accepted_not_even_the_attesting_owners() {
+        // The removed fallback accepted an unreadable project's claims from
+        // the seat's attesting owner. With no roster read, the only authority
+        // left is the coordinate's creator; any other author's claim —
+        // including an owner that attested this identity — yields no row.
         let project = coordinate();
-        let owner = hex('a');
+        let attesting_owner = hex('a');
         let events = vec![
             agent_event(
-                &owner,
+                &attesting_owner,
                 &hex('1'),
                 10,
                 content("Zephyr", Some("builder"), &project),
@@ -515,10 +562,46 @@ mod tests {
                 content("Stranger", Some("builder"), &project),
             ),
         ];
-        let rows = fold_attesting_owner_agents(&project, &owner.to_ascii_uppercase(), &events);
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].name, "Zephyr");
-        assert_eq!(rows[0].owner_role, ATTESTING_OWNER_ROLE);
+        assert!(fold_project_agents(&project, Vec::new(), &events).is_empty());
+        assert!(fold_project_agents(&project, roster(), &events).is_empty());
+    }
+
+    #[test]
+    fn the_unreadable_project_message_says_why_and_where_to_look() {
+        let project = coordinate();
+        let message = unreadable_project_message("project \"alpha\" not found", &project);
+        for part in [
+            "project \"alpha\" not found",
+            project.as_str(),
+            "not readable by this identity",
+            "a private project hides its head and roster from identities not on it",
+            "Private projects do not publish their agents",
+            "the session's first message lists the project's agents on the hosting computer",
+            "Hires are unaffected: the host seats by its own records",
+        ] {
+            assert!(message.contains(part), "{message:?} omits {part:?}");
+        }
+    }
+
+    #[test]
+    fn a_head_is_private_only_when_it_says_so() {
+        let head = |tags: Value| json!({ "kind": KIND_PROJECT, "tags": tags });
+        assert!(head_is_private(&head(json!([
+            ["d", "alpha"],
+            ["buzz-access", "private"]
+        ]))));
+        // Fails closed on shapes ingest would reject.
+        assert!(head_is_private(&head(json!([
+            ["buzz-access", "public"],
+            ["buzz-access", "private", "extra"]
+        ]))));
+        assert!(!head_is_private(&head(json!([
+            ["d", "alpha"],
+            ["buzz-access", "public"]
+        ]))));
+        assert!(!head_is_private(&head(json!([["d", "alpha"]]))));
+        assert!(!head_is_private(&head(json!([["private", "buzz-access"]]))));
+        assert!(!head_is_private(&json!({ "kind": KIND_PROJECT })));
     }
 
     #[test]
@@ -777,7 +860,7 @@ mod tests {
     }
 
     #[test]
-    fn compact_rows_drop_only_the_owner_role() {
+    fn every_format_carries_verified_and_compact_drops_only_the_owner_role() {
         let row = ProjectAgentRow {
             pubkey: hex('a'),
             name: "Ada".into(),
@@ -786,11 +869,27 @@ mod tests {
             owner_role: "owner".into(),
         };
         let full = render_row(&row, &crate::OutputFormat::Json);
-        assert_eq!(full["owner_role"], "owner");
+        assert_eq!(
+            full,
+            json!({
+                "pubkey": hex('a'),
+                "name": "Ada",
+                "role": "builder",
+                "owner": hex('1'),
+                "owner_role": "owner",
+                "verified": true,
+            })
+        );
         let compact = render_row(&row, &crate::OutputFormat::Compact);
         assert_eq!(
             compact,
-            json!({ "pubkey": hex('a'), "name": "Ada", "role": "builder", "owner": hex('1') })
+            json!({
+                "pubkey": hex('a'),
+                "name": "Ada",
+                "role": "builder",
+                "owner": hex('1'),
+                "verified": true,
+            })
         );
     }
 }

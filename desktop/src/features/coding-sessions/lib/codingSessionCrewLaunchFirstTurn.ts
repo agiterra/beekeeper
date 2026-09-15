@@ -105,9 +105,10 @@ function rosterFirstTurnText(input: {
   if (roster.projectRef !== null) {
     const name = roster.projectName?.trim() || "this project";
     const discovery =
-      "List this project's agents any time with `bee projects agents`. " +
-      "Hire by role with `bee sessions hire`; this computer seats only this " +
-      "project's agents.";
+      "`bee projects agents` lists agents published for public projects; a " +
+      "private project publishes none, so this computer's agents for this " +
+      "project are the ones listed here. Hire by role with `bee sessions " +
+      "hire`; this computer seats only this project's agents.";
     if (lines.length === 0) {
       return [
         goal,

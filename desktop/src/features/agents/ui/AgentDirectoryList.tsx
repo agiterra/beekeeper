@@ -224,7 +224,12 @@ function AgentDirectoryRowButton({
         data-project-ref={row.project?.projectRef ?? undefined}
         data-testid={AGENT_ROW_PROJECT_TESTID}
       >
-        {agentProjectText(row.project, row.homeRole, row.projectKnown)}
+        {agentProjectText(
+          row.project,
+          row.homeRole,
+          row.projectKnown,
+          row.carriedFromAnotherComputer ?? false,
+        )}
       </span>
       {unassociatedText ? (
         <span

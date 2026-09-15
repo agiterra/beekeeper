@@ -104,7 +104,7 @@ fn lead_first_message_asks_to_reconcile_earlier_staffing_instructions() {
         commit: "b".repeat(40),
         pack_path: "personas/roles".to_string(),
     };
-    let turn = projection::lead_initial_turn(&source);
+    let turn = projection::lead_initial_turn(&source, &[]);
     assert!(turn.starts_with("You are the project lead."));
     assert!(turn.contains(&source.repo_ref) && turn.contains(&source.commit));
     assert!(turn.contains(
@@ -119,9 +119,96 @@ fn lead_first_message_names_project_agent_discovery_and_hiring() {
         commit: "b".repeat(40),
         pack_path: "personas/roles".to_string(),
     };
-    let turn = projection::lead_initial_turn(&source);
+    let turn = projection::lead_initial_turn(&source, &[]);
     assert!(turn.contains("`bee projects agents`"));
     assert!(turn.contains("your seat's project is the default"));
     assert!(turn.contains("`bee sessions hire`"));
     assert!(turn.contains("seats only agents that belong to this project"));
+}
+
+fn project_agent_record(
+    pubkey: &str,
+    name: &str,
+    home_role: &str,
+    project_ref: Option<&str>,
+) -> ManagedAgentRecord {
+    let mut record: ManagedAgentRecord = serde_json::from_value(json!({
+        "pubkey": pubkey,
+        "name": name,
+        "relay_url": "wss://relay.example",
+        "acp_command": "buzz-acp",
+        "agent_command": "goose",
+        "agent_args": [],
+        "mcp_command": "",
+        "turn_timeout_seconds": 320,
+        "system_prompt": null,
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:00Z",
+        "last_started_at": null,
+        "last_stopped_at": null,
+        "last_exit_code": null,
+        "last_error": null
+    }))
+    .expect("record fixture");
+    record.home_role = Some(home_role.to_string());
+    record.project_ref = project_ref.map(str::to_owned);
+    record
+}
+
+fn installed_role(role: &str, agent_pubkey: &str) -> ProjectTeamInstalledRole {
+    ProjectTeamInstalledRole {
+        role: role.to_string(),
+        agent_pubkey: agent_pubkey.to_string(),
+        pack_ref: packs_cache::PackRef {
+            repo: format!("30617:{}:packs", "a".repeat(64)),
+            sha: "b".repeat(40),
+            role: role.to_string(),
+            path: format!("personas/roles/{role}"),
+        },
+    }
+}
+
+#[test]
+fn lead_first_message_lists_this_projects_agents_on_the_hosting_computer() {
+    let project = format!("30621:{}:tank-loop", "c".repeat(64));
+    let other = format!("30621:{}:other", "c".repeat(64));
+    let (lead, builder, verifier) = ("1".repeat(64), "2".repeat(64), "3".repeat(64));
+    let (bob, stray, missing) = ("4".repeat(64), "5".repeat(64), "6".repeat(64));
+    let agents = vec![
+        project_agent_record(&lead, "Loom", "lead", Some(&project)),
+        project_agent_record(&builder, "Builder", "builder", Some(&project)),
+        // Associated by hand on the Agents tab, not by installation.
+        project_agent_record(&verifier, "Vera", "verifier", Some(&project)),
+        // Another project's builder and an unassociated runner are not listed.
+        project_agent_record(&bob, "Bob", "builder", Some(&other)),
+        project_agent_record(&stray, "Stray", "runner", None),
+    ];
+    let installed = vec![
+        installed_role("lead", &lead),
+        installed_role("builder", &builder),
+        installed_role("runner", &stray),
+        installed_role("designer", &missing),
+    ];
+    let listed = projection::local_project_agents(&project, &installed, &agents);
+    assert_eq!(
+        listed
+            .iter()
+            .map(|agent| agent.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["Builder", "Loom", "Vera"]
+    );
+    let source = ProjectTeamActivationSource {
+        repo_ref: format!("30617:{}:packs", "a".repeat(64)),
+        commit: "b".repeat(40),
+        pack_path: "personas/roles".to_string(),
+    };
+    let turn = projection::lead_initial_turn(&source, &listed);
+    assert!(turn.contains(
+        "- builder: Builder (22222222)\n- lead: Loom (11111111)\n- verifier: Vera (33333333)"
+    ));
+    assert!(!turn.contains("Bob") && !turn.contains("Stray"));
+    assert!(turn.contains(
+        "`bee projects agents` lists agents published for public projects; this project's agents on the hosting computer are listed above."
+    ));
+    assert!(projection::lead_initial_turn(&source, &[]).contains("- none"));
 }

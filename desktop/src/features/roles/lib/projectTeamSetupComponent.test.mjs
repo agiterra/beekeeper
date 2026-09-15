@@ -506,7 +506,7 @@ test("publication, adopted-source installation, and lead handoff each use one sc
   );
   assert.equal(
     view.getByTestId("project-team-setup-roster-next").textContent,
-    "Setup complete. Loom leads Tank Loop. Give Loom a task in its session; it lists the team with bee projects agents and hires only these agents.",
+    "Setup complete. Loom leads Tank Loop. Give Loom a task in its session; its first message lists these agents, and it hires only them.",
   );
   assert.match(
     view.getByTestId("project-team-setup-lead-session-details").textContent,

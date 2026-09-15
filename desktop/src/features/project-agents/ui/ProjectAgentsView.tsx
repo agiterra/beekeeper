@@ -19,12 +19,18 @@ import {
   PROJECT_AGENTS_LOADING,
   PROJECT_AGENTS_SUBTITLE,
   PROJECT_AGENTS_TITLE,
+  PROJECT_PRIVATE_NOTE,
+  readinessText,
+  SECTION_AVAILABLE,
+  SECTION_AVAILABLE_HINT,
   SECTION_BORROWED,
   SECTION_BORROWED_HINT,
   SECTION_PREVIOUS,
   SECTION_PREVIOUS_HINT,
   SECTION_PROJECT,
   SECTION_PROJECT_HINT,
+  SECTION_UNVERIFIED,
+  SECTION_UNVERIFIED_HINT,
 } from "./projectAgentsCopy";
 
 type RowContext = {
@@ -38,17 +44,20 @@ type RowContext = {
 function Section({
   context,
   hint,
+  note,
   rows,
   testId,
   title,
 }: {
   context: RowContext;
   hint: string;
+  /** A sentence said under the heading; the section renders for it even when empty. */
+  note?: { text: string; testId: string } | null;
   rows: readonly ProjectAgentRowModel[];
   testId: string;
   title: string;
 }) {
-  if (rows.length === 0) return null;
+  if (rows.length === 0 && !note) return null;
   return (
     <section className="flex min-w-0 flex-col gap-2" data-testid={testId}>
       <header className="flex min-w-0 flex-col gap-0.5">
@@ -58,7 +67,15 @@ function Section({
             {countText(rows.length, "agent")}
           </span>
         </h3>
-        <p className="text-2xs text-muted-foreground">{hint}</p>
+        <p className="break-words text-2xs text-muted-foreground">{hint}</p>
+        {note ? (
+          <p
+            className="break-words text-xs text-muted-foreground"
+            data-testid={note.testId}
+          >
+            {note.text}
+          </p>
+        ) : null}
       </header>
       <ul className="grid min-w-0 gap-3 lg:grid-cols-2">
         {rows.map((row) => (
@@ -78,6 +95,38 @@ function Section({
 }
 
 /**
+ * Roles with work in this project and no agent on this computer associated
+ * in that role: the lead's hires for them will be refused. Names come from
+ * the evidence and are never offered as a choice.
+ */
+function ReadinessNotice({
+  lines,
+  projectName,
+}: {
+  lines: ProjectAgentsModel["readiness"];
+  projectName: string;
+}) {
+  if (lines.length === 0) return null;
+  return (
+    <div
+      className="flex min-w-0 flex-col gap-1 rounded-md border border-amber-500/40 px-3 py-2"
+      data-testid="project-agents-readiness"
+      role="note"
+    >
+      {lines.map((line) => (
+        <p
+          className="break-words text-xs text-amber-700 dark:text-amber-400"
+          data-testid={`project-agents-readiness-${line.role}`}
+          key={line.role}
+        >
+          {readinessText(line, projectName)}
+        </p>
+      ))}
+    </div>
+  );
+}
+
+/**
  * The project Agents tab body, presentational: the hook's answer in, markup
  * out, so a unit test can render every section from a fixture.
  */
@@ -85,6 +134,7 @@ export function ProjectAgentsView({
   assignments,
   associateAccess,
   isLoading,
+  isPrivate = false,
   model,
   notices,
   onOpenSession,
@@ -105,6 +155,8 @@ export function ProjectAgentsView({
   /** Whether the viewer may associate an agent with this project. */
   associateAccess: ProjectAgentAssociateAccess;
   isLoading: boolean;
+  /** The project is private: other computers' agents are neither published nor read. */
+  isPrivate?: boolean;
   model: ProjectAgentsModel;
   /** Read limits and failures, each in its own words. */
   notices: readonly string[];
@@ -115,7 +167,11 @@ export function ProjectAgentsView({
   projectRef: string;
 }) {
   const total =
-    model.projectAgents.length + model.borrowed.length + model.previous.length;
+    model.projectAgents.length +
+    model.unverified.length +
+    model.borrowed.length +
+    model.available.length +
+    model.previous.length;
   const scope = assignmentScopeText(assignments);
   const context = React.useMemo<RowContext>(
     () => ({
@@ -137,6 +193,10 @@ export function ProjectAgentsView({
           {PROJECT_AGENTS_SUBTITLE}
         </p>
       </header>
+
+      {isLoading ? null : (
+        <ReadinessNotice lines={model.readiness} projectName={projectName} />
+      )}
 
       {notices.map((notice) => (
         <p
@@ -162,9 +222,21 @@ export function ProjectAgentsView({
       <Section
         context={context}
         hint={SECTION_PROJECT_HINT}
+        note={
+          isPrivate
+            ? { text: PROJECT_PRIVATE_NOTE, testId: "project-agents-private" }
+            : null
+        }
         rows={model.projectAgents}
         testId="project-agents-members"
         title={SECTION_PROJECT}
+      />
+      <Section
+        context={context}
+        hint={SECTION_UNVERIFIED_HINT}
+        rows={model.unverified}
+        testId="project-agents-unverified"
+        title={SECTION_UNVERIFIED}
       />
       <Section
         context={context}
@@ -172,6 +244,13 @@ export function ProjectAgentsView({
         rows={model.borrowed}
         testId="project-agents-borrowed"
         title={SECTION_BORROWED}
+      />
+      <Section
+        context={context}
+        hint={SECTION_AVAILABLE_HINT}
+        rows={model.available}
+        testId="project-agents-available"
+        title={SECTION_AVAILABLE}
       />
       <Section
         context={context}
@@ -198,7 +277,7 @@ export function ProjectAgentsView({
             ) : null}
           </p>
         ) : null}
-        <p>{ASSOCIATION_SCOPE_NOTE}</p>
+        {isPrivate ? null : <p>{ASSOCIATION_SCOPE_NOTE}</p>}
         <p>{HIRER_NOTE}</p>
       </footer>
     </div>

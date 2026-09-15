@@ -44,6 +44,8 @@ fn record(
         persona_name_in_team: None,
         home_role: None,
         project_ref: None,
+        project_public: None,
+        carried_project_digest: None,
         created_at: "now".to_string(),
         updated_at: "now".to_string(),
         last_started_at: None,

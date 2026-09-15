@@ -231,7 +231,7 @@ pub async fn flush_pending_events(
 ) -> Result<u32, String> {
     let relay_url = crate::relay::relay_ws_url_with_override(state);
     let owner_keys = state.signing_keys()?;
-    flush_pending_events_at(db_path, state, &relay_url, &owner_keys).await
+    flush_pending_events_at(db_path, state, &relay_url, &owner_keys, None).await
 }
 
 /// Resolve and flush only the currently active `(relay, owner)` scope.
@@ -244,7 +244,15 @@ pub async fn flush_active_pending_events(
     state: &AppState,
 ) -> Result<u32, String> {
     let scope = crate::managed_agents::retention::active_retention_scope(app, state)?;
-    flush_pending_events_at(&scope.db_path, state, &scope.relay_url, &scope.owner_keys).await
+    let carry = crate::managed_agents::project_association_carry::app_carry_hook(app.clone());
+    flush_pending_events_at(
+        &scope.db_path,
+        state,
+        &scope.relay_url,
+        &scope.owner_keys,
+        Some(&carry),
+    )
+    .await
 }
 
 pub fn active_pending_event(
@@ -262,11 +270,17 @@ pub fn active_pending_event(
     )
 }
 
+/// With `carry`, a pending kind:30177 without a `project_digest` is first
+/// checked against the relay head at its address so this computer never
+/// withdraws another computer's project association (see
+/// [`crate::managed_agents::project_association_carry::guard_managed_agent_withdrawal`]).
+/// `None` publishes every row as retained.
 pub(crate) async fn flush_pending_events_at(
     db_path: &std::path::Path,
     state: &AppState,
     relay_url: &str,
     owner_keys: &nostr::Keys,
+    carry: Option<crate::managed_agents::project_association_carry::CarryHook<'_>>,
 ) -> Result<u32, String> {
     use crate::managed_agents::retention::{
         deferred_behind_failed_tombstone, get_pending_sync, get_retained_event, mark_synced,
@@ -297,11 +311,30 @@ pub(crate) async fn flush_pending_events_at(
             let conn = open_retention_db(db_path)?;
             get_retained_event(&conn, row.kind, &row.pubkey, &row.d_tag)?
         };
-        let Some(current) = current else {
+        let Some(mut current) = current else {
             continue; // deleted out from under us
         };
         if current.created_at != row.created_at || current.content != row.content {
             continue; // superseded by a newer edit; that row publishes itself
+        }
+        if let Some(hook) = carry {
+            use crate::managed_agents::project_association_carry::{
+                guard_managed_agent_withdrawal, FlushGuard,
+            };
+            match guard_managed_agent_withdrawal(
+                &current,
+                state,
+                &relay_api_base,
+                db_path,
+                owner_keys,
+                hook,
+            )
+            .await?
+            {
+                FlushGuard::Proceed => {}
+                FlushGuard::Skip => continue, // stays pending for the next sweep
+                FlushGuard::Replaced(carried) => current = carried,
+            }
         }
 
         let event = nostr::Event::from_json(&current.raw_event)

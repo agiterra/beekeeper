@@ -69,6 +69,8 @@ pub(super) fn fixture(
         persona_name_in_team: None,
         home_role: None,
         project_ref: None,
+        project_public: None,
+        carried_project_digest: None,
         created_at: "now".into(),
         updated_at: "now".into(),
         last_started_at: None,

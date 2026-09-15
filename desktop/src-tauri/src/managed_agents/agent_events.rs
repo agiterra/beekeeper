@@ -23,7 +23,6 @@
 //!   mutate on every start/stop and describe transient process state.
 
 use buzz_core_pkg::kind::KIND_MANAGED_AGENT;
-use buzz_core_pkg::project_agent_association::project_agent_digest;
 use nostr::{EventBuilder, Kind, Tag};
 use serde::{Deserialize, Serialize};
 
@@ -62,10 +61,13 @@ pub struct ManagedAgentEventContent {
     /// role is what a project's lead hires by.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home_role: Option<String>,
-    /// [`project_agent_digest`] of the record's `project_ref`, never the
+    /// `project_agent_digest` of the record's `project_ref`, never the
     /// coordinate itself: this event is readable by every relay member and a
     /// project may be private. A claim by the event's author — readers check
-    /// the author's authority over the project before believing it.
+    /// the author's authority over the project before believing it. Which
+    /// digest, if any, is published is
+    /// [`super::project_association_carry::published_project_digest`]: only a
+    /// verified public project's own, otherwise whatever the record carries.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_digest: Option<String>,
 }
@@ -120,9 +122,10 @@ pub fn agent_event_content(record: &ManagedAgentRecord) -> ManagedAgentEventCont
             .map(str::trim)
             .filter(|role| !role.is_empty())
             .map(str::to_owned),
-        // A malformed coordinate publishes no digest rather than a digest of
-        // a guess (`project_agent_digest` answers `None`).
-        project_digest: record.project_ref.as_deref().and_then(project_agent_digest),
+        // A private project is never announced; an unverified or absent
+        // association republishes only the digest this record carries, so
+        // this computer never withdraws another computer's association.
+        project_digest: super::project_association_carry::published_project_digest(record),
     }
 }
 
@@ -180,6 +183,7 @@ pub fn build_agent_delete(d_tag: &str, owner_pubkey_hex: &str) -> Result<EventBu
 #[cfg(test)]
 mod tests {
     use super::*;
+    use buzz_core_pkg::project_agent_association::project_agent_digest;
     use std::collections::BTreeMap;
 
     fn sample_agent() -> ManagedAgentRecord {
@@ -220,6 +224,8 @@ mod tests {
             persona_name_in_team: None,
             home_role: None,
             project_ref: None,
+            project_public: None,
+            carried_project_digest: None,
             created_at: "2025-01-01T00:00:00Z".to_string(),
             updated_at: "2025-01-01T00:00:00Z".to_string(),
             last_started_at: Some("2025-01-02T00:00:00Z".to_string()),
@@ -493,6 +499,7 @@ mod tests {
         agent.persona_id = None;
         agent.home_role = Some("builder".to_string());
         agent.project_ref = Some(PROJECT.to_string());
+        agent.project_public = Some(true);
         let value = serde_json::to_value(agent_event_content(&agent)).unwrap();
         let mut keys: Vec<&str> = value
             .as_object()
@@ -527,6 +534,7 @@ mod tests {
         let mut agent = sample_agent();
         agent.home_role = Some("builder".to_string());
         agent.project_ref = Some(PROJECT.to_string());
+        agent.project_public = Some(true);
         let event = build_agent_event(&agent)
             .unwrap()
             .sign_with_keys(&nostr::Keys::generate())
@@ -554,6 +562,7 @@ mod tests {
         assert!(!json.contains("project_digest"));
         assert!(!json.contains("home_role"));
         agent.project_ref = Some("30621:not-hex:tank-loop".to_string());
+        agent.project_public = Some(true);
         agent.home_role = Some("  ".to_string());
         let json = serde_json::to_string(&agent_event_content(&agent)).unwrap();
         assert!(!json.contains("project_digest"), "digest of a guess");
@@ -567,6 +576,7 @@ mod tests {
         let agent = sample_agent();
         let mut associated = agent.clone();
         associated.project_ref = Some(PROJECT.to_string());
+        associated.project_public = Some(true);
         assert_ne!(
             agent_event_content(&agent),
             agent_event_content(&associated)
@@ -580,6 +590,45 @@ mod tests {
         let mut roled = agent.clone();
         roled.home_role = Some("verifier".to_string());
         assert_ne!(agent_event_content(&agent), agent_event_content(&roled));
+    }
+
+    /// A private project is never announced: no digest, no coordinate, no
+    /// owner or slug — even when the record carries a digest from elsewhere,
+    /// which the private verdict withdraws on purpose.
+    #[test]
+    fn private_project_publishes_no_digest_and_no_coordinate() {
+        use buzz_core_pkg::project_agent_association::PROJECT_AGENT_DIGEST_CONTENT_KEY;
+        let mut agent = sample_agent();
+        agent.home_role = Some("builder".to_string());
+        agent.project_ref = Some(PROJECT.to_string());
+        agent.project_public = Some(false);
+        agent.carried_project_digest = project_agent_digest(PROJECT);
+        let event = build_agent_event(&agent)
+            .unwrap()
+            .sign_with_keys(&nostr::Keys::generate())
+            .unwrap();
+        let value: serde_json::Value = serde_json::from_str(&event.content).unwrap();
+        assert!(value.get(PROJECT_AGENT_DIGEST_CONTENT_KEY).is_none());
+        assert!(!event
+            .content
+            .contains(&project_agent_digest(PROJECT).unwrap()));
+        let lowered = event.content.to_ascii_lowercase();
+        assert!(!lowered.contains("tank-loop"), "leaked the project slug");
+        assert!(!lowered.contains(&"ab".repeat(32)), "leaked the owner");
+        assert!(!event.content.contains("30621:"), "leaked a coordinate");
+        assert_eq!(value["home_role"], "builder", "the role still publishes");
+    }
+
+    /// An association whose visibility is not yet verified newly publishes
+    /// nothing, and republishes a carried digest rather than withdrawing it.
+    #[test]
+    fn unverified_project_publishes_only_a_carried_digest() {
+        let mut agent = sample_agent();
+        agent.project_ref = Some(PROJECT.to_string());
+        assert_eq!(agent_event_content(&agent).project_digest, None);
+        let carried = "c".repeat(64);
+        agent.carried_project_digest = Some(carried.clone());
+        assert_eq!(agent_event_content(&agent).project_digest, Some(carried));
     }
 
     /// Inbound parsing tolerates the new keys and events that predate them.

@@ -235,8 +235,8 @@ export function projectRosterCompleteSentence(
 ): string {
   const project = projectName?.trim() || "this project";
   if (!leadName)
-    return `Setup complete. The project lead leads ${project}. Give the lead a task in its session; it lists the team with \`bee projects agents\` and hires only these agents.`;
-  return `Setup complete. ${leadName} leads ${project}. Give ${leadName} a task in its session; it lists the team with \`bee projects agents\` and hires only these agents.`;
+    return `Setup complete. The project lead leads ${project}. Give the lead a task in its session; its first message lists these agents, and it hires only them.`;
+  return `Setup complete. ${leadName} leads ${project}. Give ${leadName} a task in its session; its first message lists these agents, and it hires only them.`;
 }
 
 /** The short per-row label for an entry's association. */

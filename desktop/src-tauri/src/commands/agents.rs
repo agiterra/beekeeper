@@ -468,12 +468,10 @@ pub(super) async fn start_local_agent_with_preflight(
 
 pub(crate) use provider_deploy::{deploy_to_provider, ProviderDeployOptions};
 
-// Async so the blocking body (disk reads of agent/persona records, per-agent
-// process-liveness syscalls, and a possible save) runs on Tauri's worker pool
-// via spawn_blocking instead of the main UI thread — it was a beachball on the
-// agents menu mount and after every start/stop/edit refetch. State is re-derived
-// from the owned AppHandle inside the closure because `State<'_, _>` is borrowed
-// and `std::sync::MutexGuard` is not `Send`.
+// Async: the blocking body (record reads, liveness syscalls, a possible save)
+// runs via spawn_blocking, not the UI thread (it beachballed the agents menu).
+// State is re-derived from the owned AppHandle: `State<'_, _>` is borrowed and
+// `std::sync::MutexGuard` is not `Send`.
 #[tauri::command]
 pub async fn list_managed_agents(app: AppHandle) -> Result<Vec<ManagedAgentSummary>, String> {
     use tauri::Manager;
@@ -833,6 +831,8 @@ pub async fn create_managed_agent(
             persona_name_in_team: None,
             home_role: None,
             project_ref: None,
+            project_public: None,
+            carried_project_digest: None,
             env_vars: input.env_vars.clone(),
             created_at: now_iso(),
             updated_at: now_iso(),

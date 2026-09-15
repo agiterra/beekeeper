@@ -430,6 +430,8 @@ fn project_association_re_retains_identity_record() {
 
     let project = format!("30621:{}:tank-loop", "ab".repeat(32));
     record.project_ref = Some(project.clone());
+    // Only a project verified public publishes its digest.
+    record.project_public = Some(true);
     assert!(
         retain_agent_record(&conn, &keys, &record).unwrap(),
         "an association change must re-retain"

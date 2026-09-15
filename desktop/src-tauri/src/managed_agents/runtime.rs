@@ -256,6 +256,8 @@ pub fn build_managed_agent_summary(
         team_id: record.team_id.clone(),
         home_role: record.home_role.clone(),
         project_ref: record.project_ref.clone(),
+        project_public: record.project_public,
+        carried_project_digest: record.carried_project_digest.clone(),
         // Computed against the caller's one `load_teams` — never a per-record
         // disk read. `false` is the honest answer for an agent whose pack this
         // computer cannot read: its seats carry no role skills.

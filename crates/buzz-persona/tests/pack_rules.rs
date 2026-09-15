@@ -236,6 +236,8 @@ fn lead_discovers_project_agents_and_hires_only_within_the_project() {
     let hire = shipped_text("lead/skills/hire/SKILL.md");
     for contract in [
         "`bee projects agents`",
+        "A private project does not publish its agents",
+        "use the agent list in the session's first message",
         "hire by role with `bee sessions hire`",
         "The host seats only agents that belong to the session's project",
         "never another project's agent",

@@ -14,6 +14,14 @@
  * The local record wins for an agent held here: a stale publication cannot
  * put back an agent this computer has not associated.
  *
+ * A publication whose author's authority could not be verified (the roster
+ * read failed) is **not** membership: it is listed under its own heading and
+ * never counted as a project agent. A private project reads no publications.
+ *
+ * A digest this computer *carries* for a local record (published by the same
+ * owner from another computer) is not membership here either: the agent is
+ * offered for explicit association, never counted.
+ *
  * A setup journal is not membership. An agent the journal installed for this
  * project whose record lacks the association is listed under Project agents
  * **with a warning**, because the lead cannot hire it — saying nothing would
@@ -33,7 +41,6 @@ import type { CodingSessionStatus } from "@/features/coding-sessions/lib/codingS
 import {
   normalizeProjectCoordinate,
   projectAgentDigest,
-  type PublishedAgentAssociation,
 } from "@/shared/lib/projectAgentAssociation";
 import { normalizePubkey, truncatePubkey } from "@/shared/lib/pubkey";
 
@@ -47,7 +54,16 @@ import {
   type ProjectAgentsExecutionInput,
   type ProjectAgentsUmbrellaInput,
 } from "./projectAgentsEvidence";
+import {
+  buildProjectAgentsReadiness,
+  type ProjectAgentsReadinessLine,
+} from "./projectAgentsReadiness";
+import type {
+  PublishedProjectAgent,
+  PublishedProjectAgentAuthority,
+} from "./publishedProjectAgents";
 
+export type { ProjectAgentsReadinessLine } from "./projectAgentsReadiness";
 export type {
   ProjectAgentAssignment,
   ProjectAgentOpenTarget,
@@ -67,6 +83,8 @@ export type ProjectAgentsLocalAgentInput = {
   avatarUrl?: string | null;
   homeRole: string | null;
   projectRef?: string | null;
+  /** A digest this owner published for the agent from another computer. */
+  carriedProjectDigest?: string | null;
 };
 
 export type BuildProjectAgentsInput = {
@@ -83,8 +101,20 @@ export type BuildProjectAgentsInput = {
   }[];
   /** Every managed agent record on this computer. */
   localAgents: readonly ProjectAgentsLocalAgentInput[];
-  /** Accepted published associations (authorized authors, this digest). */
-  publishedAgents: readonly PublishedAgentAssociation[];
+  /**
+   * Accepted published associations (authorized authors, this digest). A
+   * claim without `authority: "verified"` is never membership.
+   */
+  publishedAgents: readonly (Omit<PublishedProjectAgent, "authority"> & {
+    authority?: PublishedProjectAgentAuthority;
+  })[];
+  /** The project is private: publications are ignored, whatever was passed. */
+  projectPrivate?: boolean;
+  /**
+   * The managed agent records were read. When `false` the hiring-readiness
+   * lines are withheld: an unread list is not an absent agent.
+   */
+  localAgentsRead?: boolean;
   /** Relay identity and profile names for anyone else. */
   otherNames?: ReadonlyMap<string, string>;
   /** Display names of listed projects, keyed by normalized coordinate. */
@@ -100,10 +130,19 @@ export type ProjectAgentInstallation = {
 /**
  * - `project`: associated with this project (or installed for it and not yet
  *   associated, with `associationMissing`).
+ * - `unverified`: published for this project by an author whose authority
+ *   could not be verified. Not a project agent.
  * - `borrowed`: evidence in an open session, not associated.
+ * - `available`: on this computer, carrying this project's digest from
+ *   another computer, no evidence here. Not a project agent.
  * - `previous`: evidence only in closed sessions, not associated.
  */
-export type ProjectAgentSection = "project" | "borrowed" | "previous";
+export type ProjectAgentSection =
+  | "project"
+  | "unverified"
+  | "borrowed"
+  | "available"
+  | "previous";
 
 /**
  * - `working` — newest open execution is starting, running or waiting for input.
@@ -113,6 +152,8 @@ export type ProjectAgentSection = "project" | "borrowed" | "previous";
  * - `not-associated` — installed here for the project, not associated, no
  *   live execution: the lead cannot hire it.
  * - `elsewhere` — published association, no record here, no live execution.
+ * - `carried` — on this computer, not associated, carrying this project's
+ *   digest published from another computer, no live execution.
  * - `not-running` — borrowed, no live execution.
  * - `historical` — closed sessions only.
  */
@@ -123,6 +164,7 @@ export type ProjectAgentState =
   | "available"
   | "not-associated"
   | "elsewhere"
+  | "carried"
   | "not-running"
   | "historical";
 
@@ -153,6 +195,16 @@ export type ProjectAgentRow = {
   section: ProjectAgentSection;
   /** Whether this identity belongs to the project, whatever its section. */
   isProjectAgent: boolean;
+  /**
+   * How a published claim's author was authorized, or `null` when the row
+   * does not rest on a publication (a local record, or evidence only).
+   */
+  claimAuthority: PublishedProjectAgentAuthority | null;
+  /**
+   * The local record is unassociated but carries this project's digest,
+   * published by the same owner from another computer. Not membership here.
+   */
+  carriedFromAnotherComputer: boolean;
   state: ProjectAgentState;
   location: ProjectAgentLocation;
   /** The agent's home role (local record, then its publication), or `null`. */
@@ -183,8 +235,14 @@ export type ProjectAgentRow = {
 
 export type ProjectAgentsModel = {
   projectAgents: ProjectAgentRow[];
+  /** Published claims whose author's authority was not verified. */
+  unverified: ProjectAgentRow[];
   borrowed: ProjectAgentRow[];
+  /** Local agents carrying this project's digest, with no evidence here. */
+  available: ProjectAgentRow[];
   previous: ProjectAgentRow[];
+  /** Roles with work here and no associated agent on this computer. */
+  readiness: ProjectAgentsReadinessLine[];
 };
 
 function compareStrings(a: string, b: string): number {
@@ -247,15 +305,26 @@ function relationshipOf(
   };
 }
 
-/** Build the three sections of one project's Agents tab. */
+const SECTION_LIST = {
+  project: "projectAgents",
+  unverified: "unverified",
+  borrowed: "borrowed",
+  available: "available",
+  previous: "previous",
+} as const satisfies Record<ProjectAgentSection, keyof ProjectAgentsModel>;
+
+/** Build the sections of one project's Agents tab. */
 export function buildProjectAgents(
   input: BuildProjectAgentsInput,
 ): ProjectAgentsModel {
   const project = normalizeProjectCoordinate(input.projectRef);
   const model: ProjectAgentsModel = {
     projectAgents: [],
+    unverified: [],
     borrowed: [],
+    available: [],
     previous: [],
+    readiness: [],
   };
   if (project === null) return model;
   const digest = projectAgentDigest(project);
@@ -266,7 +335,7 @@ export function buildProjectAgents(
     ),
   );
   const published = new Map(
-    input.publishedAgents
+    (input.projectPrivate ? [] : input.publishedAgents)
       .filter((association) => association.projectDigest === digest)
       .map((association) => [normalizePubkey(association.pubkey), association]),
   );
@@ -304,8 +373,16 @@ export function buildProjectAgents(
   });
 
   const candidates = new Set<string>([...published.keys(), ...evidence.keys()]);
+  const carries = (agent: ProjectAgentsLocalAgentInput | null): boolean =>
+    agent !== null &&
+    digest !== null &&
+    normalizeProjectCoordinate(agent.projectRef) === null &&
+    (agent.carriedProjectDigest ?? "").trim().toLowerCase() === digest;
   for (const [pubkey, agent] of local) {
-    if (normalizeProjectCoordinate(agent.projectRef) === project) {
+    if (
+      normalizeProjectCoordinate(agent.projectRef) === project ||
+      carries(agent)
+    ) {
       candidates.add(pubkey);
     }
   }
@@ -318,8 +395,12 @@ export function buildProjectAgents(
     const installations = installationsByAgent.get(pubkey) ?? [];
     const associationMissing =
       record !== null && recordProject === null && installations.length > 0;
+    const claimAuthority = claim ? (claim.authority ?? "unverified") : null;
     const isProjectAgent =
-      recordProject === project || claim !== null || associationMissing;
+      recordProject === project ||
+      claimAuthority === "verified" ||
+      associationMissing;
+    const carried = carries(record);
 
     const agentEvidence = evidence.get(pubkey);
     const sessions = agentEvidence?.sessions ?? [];
@@ -331,8 +412,10 @@ export function buildProjectAgents(
 
     let section: ProjectAgentSection;
     if (isProjectAgent) section = "project";
+    else if (claim !== null) section = "unverified";
     else if (hasOpen) section = "borrowed";
     else if (hasEvidence) section = "previous";
+    else if (carried) section = "available";
     // An installation whose record belongs to another project, or is gone,
     // with no evidence here: nothing to list.
     else continue;
@@ -343,13 +426,14 @@ export function buildProjectAgents(
     const live = newestOpen ? liveStateOf(newestOpen.status) : null;
     let state: ProjectAgentState;
     if (live) state = live;
-    else if (section === "project") {
+    else if (section === "project" || section === "unverified") {
       state = !record
         ? "elsewhere"
         : associationMissing
           ? "not-associated"
           : "available";
-    } else if (section === "borrowed") state = "not-running";
+    } else if (carried) state = "carried";
+    else if (section === "borrowed") state = "not-running";
     else state = "historical";
 
     const location: ProjectAgentLocation = record
@@ -380,6 +464,8 @@ export function buildProjectAgents(
       avatarUrl: record?.avatarUrl ?? null,
       section,
       isProjectAgent,
+      claimAuthority,
+      carriedFromAnotherComputer: carried,
       state,
       location,
       primaryRole,
@@ -404,9 +490,7 @@ export function buildProjectAgents(
       assignments,
       lastSeenSeconds: ages.length > 0 ? Math.min(...ages) : null,
     };
-    if (section === "project") model.projectAgents.push(row);
-    else if (section === "borrowed") model.borrowed.push(row);
-    else model.previous.push(row);
+    model[SECTION_LIST[section]].push(row);
   }
 
   const byName = (a: ProjectAgentRow, b: ProjectAgentRow) =>
@@ -417,7 +501,19 @@ export function buildProjectAgents(
     return ageA !== ageB ? ageA - ageB : byName(a, b);
   };
   model.projectAgents.sort(byName);
+  model.unverified.sort(byName);
   model.borrowed.sort(byName);
+  model.available.sort(byName);
   model.previous.sort(byFreshness);
+  model.readiness =
+    input.localAgentsRead === false
+      ? []
+      : buildProjectAgentsReadiness([
+          ...model.projectAgents,
+          ...model.unverified,
+          ...model.borrowed,
+          ...model.available,
+          ...model.previous,
+        ]);
   return model;
 }

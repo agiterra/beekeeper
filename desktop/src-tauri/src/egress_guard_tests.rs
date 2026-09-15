@@ -269,6 +269,11 @@ const EVENTS_INVENTORY: &[(&str, usize, usize)] = &[
     ("src/commands/personas/snapshot/import.rs", 2, 1), // boundary 7 + its in-file injection-test fixture URL
     ("src/native_websocket.rs", 0, 2),                  // boundary 8 (WS frames; no events URL)
     // Test-only fixtures — no production egress, no guard:
+    (
+        "src/managed_agents/project_association_carry_tests.rs",
+        1,
+        0,
+    ),
     ("src/relay_admission.rs", 1, 0),
     ("src/archive/mod_tests.rs", 1, 0),
     ("src/managed_agents/persona_events/tests.rs", 1, 0),

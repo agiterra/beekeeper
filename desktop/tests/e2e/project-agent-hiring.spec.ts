@@ -1071,7 +1071,7 @@ for (const blocked of [false, true]) {
     } else {
       await expect(next).toHaveAttribute("data-stage", "lead_started");
       await expect(next).toHaveText(
-        `Setup complete. ${LOOM.name} leads ${TANK.name}. Give ${LOOM.name} a task in its session; it lists the team with bee projects agents and hires only these agents.`,
+        `Setup complete. ${LOOM.name} leads ${TANK.name}. Give ${LOOM.name} a task in its session; its first message lists these agents, and it hires only them.`,
       );
     }
     await waitForAnimations(page);

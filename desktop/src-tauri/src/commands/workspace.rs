@@ -264,6 +264,13 @@ pub async fn apply_workspace(
                 scope.db_path,
             )
             .await?;
+            // The journal backfill above may have associated agents whose
+            // project visibility is unknown. Reading each project head is a
+            // relay round trip, so it runs off the command path and never
+            // delays exposing the community.
+            crate::managed_agents::project_association_authority::spawn_project_visibility_verification(
+                restore_app.clone(),
+            );
         }
         Err(error) => {
             // Scope resolution is a prerequisite for establishing the

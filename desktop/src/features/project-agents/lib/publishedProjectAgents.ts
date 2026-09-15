@@ -11,6 +11,7 @@
  */
 import type { ProjectMember } from "@/features/projects-container/lib/projectContainerModel";
 import {
+  normalizeProjectCoordinate,
   PROJECT_AGENT_ASSOCIATION_AUTHOR_ROLES,
   projectAgentDigest,
   type PublishedAgentAssociation,
@@ -64,6 +65,24 @@ function newer(
 }
 
 /**
+ * Whether the author of an accepted claim was proven to hold project authority.
+ *
+ * - `verified` — the author is the project's creator (named by the coordinate
+ *   itself), or an owner or collaborator on a roster that was read
+ *   successfully (the kind:39010 projection, or the head's `p` tags when no
+ *   projection exists).
+ * - `unverified` — the roster read failed, and the author is authorized only
+ *   by the fallback member list. Such a row is never counted as a project
+ *   agent.
+ */
+export type PublishedProjectAgentAuthority = "verified" | "unverified";
+
+/** An accepted published association, with how its author was authorized. */
+export type PublishedProjectAgent = PublishedAgentAssociation & {
+  authority: PublishedProjectAgentAuthority;
+};
+
+/**
  * The published associations that place an agent in `projectRef`.
  *
  * 1. Events from anyone outside `authorizedAuthors` are dropped.
@@ -72,15 +91,21 @@ function newer(
  *    not.
  * 3. Per agent, the newest current claim across authorized authors decides.
  * 4. It counts only when its digest is this project's.
+ * 5. Its authority is `verified` when `rosterVerified` (the authors came from
+ *    a roster that was read) or the author is the creator; otherwise
+ *    `unverified`.
  */
 export function acceptPublishedProjectAgents(input: {
   events: readonly WireEvent[];
   projectRef: string | null;
   authorizedAuthors: readonly string[];
-}): PublishedAgentAssociation[] {
+  /** The roster behind `authorizedAuthors` was read successfully. */
+  rosterVerified: boolean;
+}): PublishedProjectAgent[] {
   const digest = projectAgentDigest(input.projectRef);
   if (digest === null) return [];
   const authorized = new Set(input.authorizedAuthors.map(normalizePubkey));
+  const creator = normalizeProjectCoordinate(input.projectRef)?.split(":")[1];
 
   type Current = { association: PublishedAgentAssociation; id: string };
   const byAuthorAgent = new Map<string, Current>();
@@ -125,9 +150,30 @@ export function acceptPublishedProjectAgents(input: {
   }
 
   return [...byAgent.values()]
-    .map((current) => current.association)
+    .map(
+      (current): PublishedProjectAgent => ({
+        ...current.association,
+        authority:
+          input.rosterVerified || current.association.ownerPubkey === creator
+            ? "verified"
+            : "unverified",
+      }),
+    )
     .filter((association) => association.projectDigest === digest)
     .sort((a, b) => (a.pubkey < b.pubkey ? -1 : a.pubkey > b.pubkey ? 1 : 0));
+}
+
+/**
+ * Whether other computers' published agents may be read for a project.
+ *
+ * Associations are published only for public projects, so a private project
+ * is never queried: an agent claiming its digest would be a claim no owner
+ * made on purpose, and the query itself would name the project's authors.
+ */
+export function readsPublishedProjectAgents(
+  project: { visibility: "public" | "private" } | null,
+): boolean {
+  return project !== null && project.visibility !== "private";
 }
 
 /** Whether the viewer may associate an agent with this project, and why not. */

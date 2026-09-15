@@ -5,11 +5,15 @@
 //! agent's owner-signed kind:30177 so a lead's CLI and a second computer can
 //! discover the project's agents without reading anybody's disk.
 //!
-//! The kind:30177 is readable by every authenticated member of the relay, and a
-//! project may be private, so the project coordinate itself never rides the
-//! event. The content carries [`project_agent_digest`] instead: a reader who
-//! already knows the coordinate can match it, a reader who does not learns
-//! nothing but that the agent belongs to *some* project.
+//! The content carries [`project_agent_digest`] rather than the coordinate: a
+//! compact, fixed-length equality key that a reader matches against the digest
+//! of the coordinate it is asking about. It is **not** confidentiality. A
+//! project coordinate is `30621:<owner>:<slug>`, and owners and slugs are
+//! guessable, so anyone who can read the kind:30177 can hash candidate
+//! coordinates, identify the project, and correlate the agents that share it.
+//! Associations are therefore published only for projects whose head is
+//! public. A private project's associations are never published; its agents
+//! are known only on the computers that hold them.
 //!
 //! The association is a claim by the event's author. **Readers must check the
 //! author's authority** — the project's creator or a roster owner or
@@ -33,6 +37,10 @@ pub const PROJECT_AGENT_ROLE_CONTENT_KEY: &str = "home_role";
 /// The digest a kind:30177 carries for the project an agent belongs to:
 /// lowercase hex SHA-256 of [`PROJECT_AGENT_DIGEST_DOMAIN`] followed by the
 /// normalized `30621:<lowercase-owner-hex>:<dtag>` coordinate.
+///
+/// An equality key, not a secret: it is deterministic over a public domain
+/// separator and a guessable coordinate, so anyone can compute it for a
+/// candidate project. Publish it only for a public project.
 ///
 /// Surrounding **ASCII** whitespace (space, `\t`, `\n`, form feed, `\r`) is
 /// trimmed first, and nothing else: `str::trim` and JavaScript's

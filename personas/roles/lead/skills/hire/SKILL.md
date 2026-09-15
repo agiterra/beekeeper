@@ -11,7 +11,9 @@ identities, capabilities or a second provider. The initial brief is the task;
 do not send a duplicate start message.
 
 Discover this project's agents with `bee projects agents` before choosing whom
-the work needs, then hire by role with `bee sessions hire`. The host seats only
+the work needs; it lists a public project's agents. A private project does not
+publish its agents, so use the agent list in the session's first message. Then
+hire by role with `bee sessions hire`. The host seats only
 agents that belong to the session's project, never another project's agent
 that shares a role name. A refused hire names its remedy; follow it rather than
 hiring a different role to get around it.

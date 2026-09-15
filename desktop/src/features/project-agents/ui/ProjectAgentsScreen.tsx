@@ -23,6 +23,7 @@ export function ProjectAgentsScreen({ projectId }: { projectId: string }) {
     assignments,
     readErrors,
     associateAccess,
+    isPrivate,
   } = useProjectAgents(projectId);
   const pulseEnabled = useFeatureEnabled("project-pulse");
   const { goCodingSession, goFoundedCodingSession } = useAppNavigation();
@@ -78,6 +79,7 @@ export function ProjectAgentsScreen({ projectId }: { projectId: string }) {
         assignments={assignments}
         associateAccess={associateAccess}
         isLoading={isLoading}
+        isPrivate={isPrivate}
         model={model}
         notices={notices}
         onOpenSession={onOpenSession}

@@ -246,6 +246,17 @@ export type ManagedAgent = {
    */
   projectRef?: string | null;
   /**
+   * Whether the project head was read and found public (`true`) or private
+   * (`false`); `null` while unread. Association is published only for public
+   * projects.
+   */
+  projectPublic?: boolean | null;
+  /**
+   * A `project_digest` this owner published for the agent from another
+   * computer and this computer carries forward. Not membership here.
+   */
+  carriedProjectDigest?: string | null;
+  /**
    * Whether this computer can stage a role pack for it. `false` means a seat
    * on this agent runs on its persona prompt alone — say so, never imply the
    * role's craft is there. `undefined` means the backend never answered, which
