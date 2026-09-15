@@ -59,13 +59,38 @@ because `useCodingSessionFoundedStart.ts` passes only the lead seat.
      `home_role`, and agents already associated with another project. The same
      project is a no-op that returns the agent. It changes no relay ACL,
      channel membership or role.
+     **Authority is enforced natively (review finding 1):** before persisting,
+     the command reads the signed project head. That is the newest 30621 by
+     the coordinate owner with an exact `d`, signature verified; if it can't
+     be read, the command refuses. The signer is authorized if it is the
+     creator. Otherwise it must be an owner or collaborator on the newest
+     39010 signed by the relay's NIP-11 `self` key, or, only when no 39010
+     exists, on the head's bootstrap `p` tags. Anything unreadable or
+     unverified refuses (`project_association_authority.rs`). The head's
+     `buzz-access` tag records `project_public`.
 2. **Shared, for discovery.** The agent's owner-signed kind:30177 content gains
    `home_role` (when set) and `project_digest` =
    `buzz_core::project_agent_association::project_agent_digest(project_ref)`.
-   It is a digest because 30177 is readable by every relay member and projects
-   may be private. The relay needs no change: 30177 has no content validation
-   and old readers drop unknown keys. **Readers accept a claim only from the
-   project's creator or a roster owner or collaborator.**
+   The relay needs no change: 30177 has no content validation and old readers
+   drop unknown keys. **Readers accept a claim only from the project's creator
+   or a roster owner or collaborator.**
+   - **Publication and privacy (review finding 4).** The digest is an equality
+     key, not a secret. Coordinates are guessable, so anyone can hash
+     candidates and correlate agents. A digest is therefore published only
+     when a signed head read found the project public (`project_public ==
+     Some(true)`). A private project's agents are never announced. An
+     unverified project neither publishes nor withdraws, and a best-effort
+     verifier reads heads after event sync and after installation. A private
+     project's roster reaches its lead through the host-built first message
+     instead.
+   - **No withdrawal by a stale host (review finding 3).** A computer that
+     sees this owner's association on the wire (inbound 30177, or the relay
+     head checked just before publishing a digest-less 30177) keeps it as
+     `carried_project_digest` and republishes it. The only intentional
+     withdrawal is a local record that knows the project is private. A failed
+     relay read withholds the digest-less publish rather than risk a
+     withdrawal. A carried digest is not membership; hiring reads only
+     `project_ref`.
 
 ### Why existing records were insufficient
 
@@ -124,7 +149,13 @@ Let `P` be the umbrella's project (`codingSessionHireUmbrellaProjectRef`).
 - **Lead discovery:** `bee projects agents [SLUG --owner HEX | --project
   COORD]`, defaulting to `$BUZZ_PULSE_PROJECT` inside a seat. It reads the
   roster, queries 30177 by authorized authors, matches the digest, and prints
-  `[{pubkey, name, role, owner, owner_role}]`. Help text says hires are
+  `[{pubkey, name, role, owner, owner_role, verified}]`.
+  - `verified` is present in JSON and compact (review finding 2). Unverified
+    claims are never printed.
+  - A private project prints `[]` with a note.
+  - A project this identity cannot read is not-found, with no fallback rows.
+  - Setup's lead first message lists the project's agents on the hosting
+    computer, and Team Start's does too. Help text says hires are
   answered by the session founder's computer, which seats only agents it holds
   that belong to the project. The setup lead's first turn, Team Start's first
   turn, the hire help and the shipped lead `hire` skill all name the command.
@@ -153,7 +184,17 @@ Let `P` be the umbrella's project (`codingSessionHireUmbrellaProjectRef`).
   pubkey-keyed and changes neither role nor association.
 - "Associate with <project>" appears for local unassociated agents that have a
   primary role. For a viewer who cannot write the project it is shown
-  disabled, with the reason next to it, rather than hidden.
+  disabled, with the reason next to it, rather than hidden. Native refuses
+  regardless of the UI.
+- Published claims carry `authority`. A roster read failure leaves
+  non-creator claims under "Project authority not verified", and they are
+  never counted as project agents.
+- A private project shows no published agents and says why.
+- A local agent carrying this project's digest reads "Associated from another
+  computer" and is offered Associate.
+- Hiring readiness: a notice names each role with work evidence in the project
+  but no associated agent, and who did that work. It never preselects or
+  infers.
 - Execution details show the staged `role@sha`, runtime/model and host key.
   Pubkeys stay in details.
 - The lead picker, bench and seat picker for a project session list only that
@@ -198,12 +239,19 @@ both are hot.
   by role, deterministically by staged pack, then provider preference, then
   pubkey; name is never a tie-breaker.
 - **Borrowing** is refused everywhere, not implemented.
-- **A second computer holding the same agent.** If it has no `project_ref`,
+- ~~**A second computer holding the same agent.** If it has no `project_ref`,
   its next republish of kind:30177 drops the digest, and readers keep the
-  newest event. A local record there is not reassociated from the wire.
+  newest event.~~ Superseded by the carried-digest guard (review finding 3).
+  A local record there is still not reassociated from the wire: associating
+  it on that computer is explicit.
 - **The author owns the agent.** A published claim is checked against the
   author's project authority, not against the agent's owner attestation.
   Hiring is unaffected because it reads local records only.
+- **Private-project discovery in the CLI** returns nothing. The lead's first
+  message is the source for a private project's roster.
+- **A carried digest can outlive intent.** No dissociate action exists, so an
+  association published once is carried by every computer of that owner
+  until a record there verifies the project private.
 
 ## Acceptance
 

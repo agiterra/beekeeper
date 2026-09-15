@@ -38,8 +38,10 @@ The lead had no discovery tool:
   - by an explicit "Associate with <project>" action.
 
   Reinstall carries it forward and never moves an agent between projects. The
-  agent's kind:30177 publishes `home_role` and `project_digest` (a digest,
-  because 30177 is readable by every relay member). Readers accept only the
+  agent's kind:30177 publishes `home_role` and `project_digest` (~~a digest,
+  because 30177 is readable by every relay member~~ — the digest gives no
+  confidentiality and is now published only for public projects; see
+  [review](2026-09-14-project-hiring-review.md) finding 4 and ledger 129). Readers accept only the
   project's creator, owners and collaborators. The relay is unchanged: hive
   already carries 30177 for every agent, checked with `bee events query`.
 - **Hiring.**
@@ -50,9 +52,11 @@ The lead had no discovery tool:
   - Native staging re-checks new selections (project and primary role) and
     never borrows another project's installed pack. Resume is unchanged.
 - **Discovery.**
-  - `bee projects agents` defaults to the seat's project. For a private
+  - `bee projects agents` defaults to the seat's project. ~~For a private
     project the seat cannot read, it lists the attesting owner's published
-    agents, labelled unverified.
+    agents, labelled unverified.~~ Removed: compact output dropped the label
+    (review finding 2); the lead's first message now carries a private
+    project's roster (ledger 129).
   - Setup's lead turn, Team Start's turn, the hire help and the shipped lead
     `hire` skill name the command.
 - **UI.**
@@ -105,8 +109,8 @@ minors before landing; all were fixed and tested:
   role.
 - Unknown seat scope, reader parity and whitespace parity (minors).
 - Unhireable agents in the lead roster, and a futile retry remedy (minors).
-- A second device erasing the digest (minor), which is disclosed rather than
-  fixed.
+- ~~A second device erasing the digest (minor), which is disclosed rather than
+  fixed.~~ Reclassified major by Astra's review and fixed (ledger 129).
 
 ## Live end-to-end run (real desktop host, provider and Claude seats)
 
@@ -181,3 +185,36 @@ raw evidence are in `../review-project-agent-hiring-e2e/` (`RUNBOOK.md`,
 - **One-time republish:** every agent with a home role republishes its
   kind:30177 once, because `home_role` is now in the content.
 - **Solo sessions** are unchanged.
+
+## Review corrections (later on 2026-09-14)
+
+Astra's [review](2026-09-14-project-hiring-review.md) of `42929e209` found four
+gaps (ledger 129). All four are closed on the branch in `2379c7cf5`, with focused regression
+evidence for each. No broad marathon was run. Logs are in
+`../review-project-agent-hiring-e2e/gates3/`, untracked.
+
+| Finding | Correction | Regression evidence |
+| --- | --- | --- |
+| 1. Association authority only in React | `project_association_authority.rs`. The native command reads the signed head (newest 30621 by the coordinate owner, exact `d`, verified) and the newest relay-signed 39010, or the head's bootstrap `p` tags when none exists. It admits the creator, owners and collaborators, and fails closed when state is unreadable or unverified. Network reads run outside the store lock, with an identity re-check under it. | 16 `project_association_authority` tests: creator, owner, collaborator; viewer and non-member refused; missing head; wrong-author and wrong-`d` heads; a 39010 not signed by the relay ignored; a 39010 overriding head `p` tags; newest 39010; tampered signatures; unknown relay signer; duplicate viewer row; private tag |
+| 2. Fallback rows lost "unverified" in compact | Attesting-owner fallback removed. Rows carry `verified` in JSON and compact, and unverified claims are never printed. The desktop marks non-creator claims "Project authority not verified" after a roster read failure and never counts them. | `every_format_carries_verified_and_compact_drops_only_the_owner_role`, `without_a_roster_no_claim_is_accepted_not_even_the_attesting_owners`, `the_unreadable_project_message_says_why_and_where_to_look`; desktop published-agents authority tests |
+| 3. A stale host could withdraw the association | `project_association_carry.rs`. An inbound same-owner digest is carried. Before a digest-less 30177 publishes, the relay head is read: a digest there is carried and republished; a failed read withholds the publish. Only a record that knows its project is private withdraws. | Projection, inbound and flush decision tables; four flush tests against a stub relay (carried instead of withdrawn, unreadable head withholds, known-private withdraws, no digest publishes); inbound `carry_tests.rs`; reconcile-once-then-no-op |
+| 4. The digest gave no private-project secrecy | Docs corrected. A digest is published only for heads verified public, with a verifier after event sync and installation. Private projects publish nothing. The CLI prints `[]` or not-found. The Agents tab says so. Setup's and Team Start's lead messages carry the local roster. | `agent_events` tests (a private project publishes no digest, coordinate, owner or slug, even with a carried digest); `a_head_is_private_only_when_it_says_so`; `lead_first_message_lists_this_projects_agents_on_the_hosting_computer`; desktop private-project view test |
+
+Focused gates on the corrected tree:
+
+| Gate | Result |
+| --- | --- |
+| Tauri fmt, clippy `--all-targets` | pass |
+| buzz-cli, buzz-core, buzz-persona fmt and clippy | pass |
+| `cargo test --lib` for the desktop Tauri crate | 3341 passed |
+| `cargo test -p buzz-cli project_agents` | 16 passed |
+| `pack_rules` | pass |
+| `pnpm typecheck`, `pnpm check` | pass |
+| Focused desktop tests: agents, project-agents, roles, lead first turn, hire, association | 2178 passed |
+| File-size and current-state checks | pass |
+| Fresh `pnpm build:e2e`, five affected Playwright specs | 27 passed |
+
+The Beekeeper rollout inventory and steps are in
+[the rollout plan](2026-09-14-project-agent-rollout.md). Not live-checked: the
+native authority command against hive, and carry-forward between two real
+computers. Both need the installed build.

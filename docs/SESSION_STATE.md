@@ -12378,6 +12378,31 @@ Evidence and limits: [conditional publication checkpoint](history/2026-09-12-pro
      [Report](history/2026-09-14-project-agent-hiring.md),
      [`PROJECT_AGENT_HIRING_IMPL.md`](PROJECT_AGENT_HIRING_IMPL.md).
 
+129. **Astra's review found four gaps in the project-agent hiring candidate (2026-09-14).**
+     Reviewing `42929e209`:
+     (1) association authority was checked only in React, while the native
+     command accepted any coordinate;
+     (2) the CLI's private-project fallback lost its unverified marker in
+     compact output;
+     (3) a second computer with an unassociated record could republish
+     kind:30177 without the digest, erasing shared membership;
+     (4) the digest gave no confidentiality for guessable private
+     coordinates.
+     Closed on the same branch:
+     (1) native reads the signed head and relay-signed roster and fails
+     closed;
+     (2) the fallback is removed and rows carry `verified` in every format;
+     (3) same-owner digests are carried forward from inbound events and from
+     a publish-time relay check, and are withdrawn only when a local record
+     knows the project is private;
+     (4) digests are published only for verified-public projects, with a
+     private project's roster in the lead's first message.
+     The rollout inventory and steps require explicit association, never
+     inference from past seats.
+     [Review](history/2026-09-14-project-hiring-review.md),
+     [rollout](history/2026-09-14-project-agent-rollout.md),
+     [`PROJECT_AGENT_HIRING_IMPL.md`](PROJECT_AGENT_HIRING_IMPL.md).
+
 ## 2a. Direction settled 2026-08-18
 
 Three independent answers to "what should a new execution get on its first
