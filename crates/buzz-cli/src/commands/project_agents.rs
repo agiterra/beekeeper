@@ -215,10 +215,40 @@ pub fn fold_project_agents(
     roster: Vec<(String, String)>,
     events: &[Value],
 ) -> Vec<ProjectAgentRow> {
+    fold_claims(coordinate, &authorized_authors(coordinate, roster), events)
+}
+
+/// The `owner_role` printed for a claim accepted only because its author is
+/// the owner that attested this identity, when the project itself is not
+/// readable here. Project authority is **not** verified for such a row.
+pub const ATTESTING_OWNER_ROLE: &str = "attesting-owner";
+
+/// The fold for an identity that cannot read the project (a private project
+/// withholds its head and roster from a seat that is not on the roster):
+/// only claims published by `attesting_owner`, the owner in this identity's
+/// NIP-OA auth tag — the person whose computer answers this seat's hires —
+/// each labelled [`ATTESTING_OWNER_ROLE`]. Same ordering and digest rule as
+/// [`fold_project_agents`].
+pub fn fold_attesting_owner_agents(
+    coordinate: &str,
+    attesting_owner: &str,
+    events: &[Value],
+) -> Vec<ProjectAgentRow> {
+    let authorities = BTreeMap::from([(
+        attesting_owner.to_ascii_lowercase(),
+        ATTESTING_OWNER_ROLE.to_string(),
+    )]);
+    fold_claims(coordinate, &authorities, events)
+}
+
+fn fold_claims(
+    coordinate: &str,
+    authorities: &BTreeMap<String, String>,
+    events: &[Value],
+) -> Vec<ProjectAgentRow> {
     let Some(digest) = project_agent_digest(coordinate) else {
         return Vec::new();
     };
-    let authorities = authorized_authors(coordinate, roster);
 
     let mut by_address: BTreeMap<(String, String), Claim<'_>> = BTreeMap::new();
     for claim in events.iter().filter_map(read_claim) {
@@ -321,10 +351,36 @@ pub async fn cmd_agents(
     let coordinate =
         resolve_project_coordinate(slug, owner, project, env_project.as_deref(), &caller)?;
 
-    let roster = project_roster(client, &coordinate).await?;
-    let authors: Vec<String> = authorized_authors(&coordinate, roster.clone())
-        .into_keys()
-        .collect();
+    // Only a verified NIP-OA owner may widen what this identity reads: an
+    // unverified second slot of an `auth` tag is not an attestation.
+    let attesting_owner = client.verified_auth_tag_owner_hex().ok().flatten();
+    let roster = match project_roster(client, &coordinate).await {
+        Ok(roster) => Some(roster),
+        // A private project withholds its head and roster from an identity
+        // that is not on the roster — a seat's own key usually is not. Fall
+        // back to what this seat's attesting owner published, and say that
+        // project authority could not be checked from here.
+        Err(CliError::NotFound(reason)) => match &attesting_owner {
+            Some(_) => {
+                eprintln!(
+                    "{reason}: this identity cannot read {coordinate} (a private project hides \
+                     its roster from identities not on it), so only agents published by the \
+                     owner that attested this identity are listed, and their project authority \
+                     is not verified here"
+                );
+                None
+            }
+            None => return Err(CliError::NotFound(reason)),
+        },
+        Err(error) => return Err(error),
+    };
+    let authors: Vec<String> = match (&roster, &attesting_owner) {
+        (Some(roster), _) => authorized_authors(&coordinate, roster.clone())
+            .into_keys()
+            .collect(),
+        (None, Some(owner)) => vec![owner.to_ascii_lowercase()],
+        (None, None) => Vec::new(),
+    };
     let events = if authors.is_empty() {
         Vec::new()
     } else {
@@ -336,7 +392,11 @@ pub async fn cmd_agents(
             .await?
     };
 
-    let rows = fold_project_agents(&coordinate, roster, &events);
+    let rows = match (roster, attesting_owner) {
+        (Some(roster), _) => fold_project_agents(&coordinate, roster, &events),
+        (None, Some(owner)) => fold_attesting_owner_agents(&coordinate, &owner, &events),
+        (None, None) => Vec::new(),
+    };
     if rows.is_empty() {
         eprintln!(
             "no agents are published for {coordinate}: an agent appears here once its owner's \
@@ -435,6 +495,30 @@ mod tests {
         );
         assert_eq!(rows[0].owner, hex('c'), "the creator counts as an owner");
         assert_eq!(rows[0].pubkey, hex('a'));
+    }
+
+    #[test]
+    fn an_unreadable_project_lists_only_the_attesting_owners_claims_marked_unverified() {
+        let project = coordinate();
+        let owner = hex('a');
+        let events = vec![
+            agent_event(
+                &owner,
+                &hex('1'),
+                10,
+                content("Zephyr", Some("builder"), &project),
+            ),
+            agent_event(
+                &hex('9'),
+                &hex('2'),
+                10,
+                content("Stranger", Some("builder"), &project),
+            ),
+        ];
+        let rows = fold_attesting_owner_agents(&project, &owner.to_ascii_uppercase(), &events);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].name, "Zephyr");
+        assert_eq!(rows[0].owner_role, ATTESTING_OWNER_ROLE);
     }
 
     #[test]
