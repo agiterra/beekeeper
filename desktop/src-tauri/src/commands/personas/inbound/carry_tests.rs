@@ -1,6 +1,7 @@
-//! Inbound kind:30177 project-digest carry (review 2026-09-14, finding 3):
-//! a same-owner event's digest is carried onto a record that cannot decide
-//! the association itself, and nothing else is changed.
+//! Inbound kind:30177 project-digest carry (review 2026-09-14, finding 3) and
+//! withdrawal (review 2026-09-15): a same-owner event's digest is carried onto
+//! a record that cannot decide the association itself, a same-owner marker
+//! withdraws, and nothing else is changed.
 
 use super::*;
 use crate::managed_agents::agent_events::managed_agent_content_from_event;
@@ -48,9 +49,9 @@ fn inbound(content: serde_json::Value) -> ManagedAgentEventContent {
 /// then the same-owner carry.
 fn apply(agents: &mut [ManagedAgentRecord], content: serde_json::Value, same_owner: bool) -> bool {
     let content = inbound(content);
-    let digest = content.project_digest.clone();
+    let (digest, withdrawn) = (content.project_digest.clone(), content.project_withdrawn);
     apply_inbound_managed_agent(agents, AGENT, content);
-    carry_same_owner_project_digest(agents, AGENT, same_owner, digest.as_deref())
+    carry_same_owner_project_digest(agents, AGENT, same_owner, digest.as_deref(), withdrawn)
 }
 
 fn with_digest(digest: &str) -> serde_json::Value {
@@ -143,4 +144,50 @@ fn an_inbound_digest_for_an_agent_not_held_here_changes_nothing() {
     agents[0].pubkey = "5".repeat(64);
     assert!(!apply(&mut agents, with_digest(&digest()), true));
     assert_eq!(agents[0].carried_project_digest, None);
+}
+
+fn withdrawal() -> serde_json::Value {
+    let mut value = without_digest();
+    value[buzz_core_pkg::project_agent_association::PROJECT_AGENT_WITHDRAWN_CONTENT_KEY] =
+        serde_json::json!(true);
+    value
+}
+
+#[test]
+fn same_owner_marker_withdraws_and_drops_the_carried_digest() {
+    let mut agents = vec![record()];
+    agents[0].carried_project_digest = Some(digest());
+    assert!(apply(&mut agents, withdrawal(), true));
+    assert!(agents[0].project_publication_withdrawn);
+    assert_eq!(agents[0].carried_project_digest, None);
+    let published = crate::managed_agents::agent_events::agent_event_content(&agents[0]);
+    assert_eq!(published.project_digest, None, "never republished");
+    assert!(published.project_withdrawn, "the marker is republished");
+    assert!(
+        !apply(&mut agents, with_digest(&digest()), true),
+        "a later digest from a stale copy is not carried onto a withdrawn record"
+    );
+    assert_eq!(agents[0].carried_project_digest, None);
+}
+
+#[test]
+fn digest_less_marker_less_inbound_never_clears_a_withdrawal() {
+    let mut agents = vec![record()];
+    agents[0].project_publication_withdrawn = true;
+    assert!(!apply(&mut agents, without_digest(), true));
+    assert!(agents[0].project_publication_withdrawn);
+    let mut carrying = vec![record()];
+    carrying[0].carried_project_digest = Some(digest());
+    assert!(!apply(&mut carrying, without_digest(), true));
+    assert_eq!(carrying[0].carried_project_digest, Some(digest()));
+    assert!(!carrying[0].project_publication_withdrawn);
+}
+
+#[test]
+fn another_authors_marker_is_never_honored() {
+    let mut agents = vec![record()];
+    agents[0].carried_project_digest = Some(digest());
+    assert!(!apply(&mut agents, withdrawal(), false));
+    assert!(!agents[0].project_publication_withdrawn);
+    assert_eq!(agents[0].carried_project_digest, Some(digest()));
 }

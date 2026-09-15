@@ -137,6 +137,7 @@ impl AgentDefinition {
             project_ref: None,
             project_public: None,
             carried_project_digest: None,
+            project_publication_withdrawn: false,
             created_at: self.created_at,
             updated_at: self.updated_at,
             last_started_at: None,
@@ -351,20 +352,19 @@ pub struct ManagedAgentRecord {
     /// guessed from a name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home_role: Option<String>,
-    /// The one project this agent belongs to, as a normalized
-    /// `30621:<owner-hex>:<dtag>` coordinate. Set by project setup, the
-    /// journal backfill, or an explicit association; `None` means no
-    /// association is recorded. Hiring for a project seats only its agents.
+    /// The agent's one project (normalized `30621:<owner-hex>:<dtag>`); `None` =
+    /// no association. Hiring for a project seats only its agents.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_ref: Option<String>,
-    /// Signed head read as public/private; `None` unread. The 30177 digest is
-    /// published only for `Some(true)`, never for a private project.
+    /// Newest signed head of `project_ref` read public/private; `None` unread.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_public: Option<bool>,
-    /// A digest this owner published from another computer, carried so this
-    /// one never withdraws it. Not membership (hiring reads `project_ref`).
+    /// Another computer's digest, carried so this one never withdraws it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub carried_project_digest: Option<String>,
+    /// Association withdrawn as private (sticky; `project_association_carry`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub project_publication_withdrawn: bool,
     pub created_at: String,
     pub updated_at: String,
     pub last_started_at: Option<String>,

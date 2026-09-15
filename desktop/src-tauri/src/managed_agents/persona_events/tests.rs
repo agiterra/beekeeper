@@ -40,6 +40,7 @@ pub(super) fn sample_record() -> ManagedAgentRecord {
         project_ref: None,
         project_public: None,
         carried_project_digest: None,
+        project_publication_withdrawn: false,
         created_at: "now".into(),
         updated_at: "now".into(),
         last_started_at: None,

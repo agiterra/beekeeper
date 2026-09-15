@@ -203,6 +203,7 @@ fn team_export_with_instance_and_memory_level_uses_supplied_entries() {
         project_ref: None,
         project_public: None,
         carried_project_digest: None,
+        project_publication_withdrawn: false,
         parallelism: crate::managed_agents::DEFAULT_AGENT_PARALLELISM,
         system_prompt: None,
         model: None,

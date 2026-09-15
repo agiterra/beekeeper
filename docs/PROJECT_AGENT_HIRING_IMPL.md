@@ -91,6 +91,17 @@ because `useCodingSessionFoundedStart.ts` passes only the lead seat.
      relay read withholds the digest-less publish rather than risk a
      withdrawal. A carried digest is not membership; hiring reads only
      `project_ref`.
+   - **Withdrawal provenance (review 2026-09-15).** Visibility is re-read for
+     every associated project on each verifier run, so a public→private change
+     is noticed. A verified-private result publishes `project_withdrawn: true`
+     instead of a digest. That signed, same-owner marker is sticky: an inbound
+     marker, or a relay head carrying one, sets `project_publication_withdrawn`
+     and drops any carried digest. The publish guard reads the relay head
+     before any row whose digest isn't this computer's own verified-public
+     digest, and never publishes a carried digest over a marker. Only this
+     computer's own verified-public result clears the withdrawal. A digest-less
+     record without a marker still never clears anything, which is the
+     stale-host case.
 
 ### Why existing records were insufficient
 
@@ -249,6 +260,17 @@ both are hot.
   Hiring is unaffected because it reads local records only.
 - **Private-project discovery in the CLI** returns nothing. The lead's first
   message is the source for a private project's roster.
+- **The withdrawal marker is visible.** Every agent of a verified-private
+  project publishes `project_withdrawn: true`. It reveals no project identity
+  or digest, only that the association is intentionally unpublished.
+- **A withdrawal can outlive a return to public.** A computer that learned of a
+  withdrawal from another computer, and holds no `project_ref` of its own,
+  stays withdrawn. Its next publish can put the marker back over the owner's
+  new public digest, until the associated computer republishes. This errs
+  toward privacy over discovery.
+- **Private-project roster freshness.** The lead's first message is a
+  point-in-time roster, so agents associated after launch are absent after
+  resume. This is a documented follow-up.
 - **A carried digest can outlive intent.** No dissociate action exists, so an
   association published once is carried by every computer of that owner
   until a record there verifies the project private.

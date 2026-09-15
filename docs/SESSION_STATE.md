@@ -12403,6 +12403,24 @@ Evidence and limits: [conditional publication checkpoint](history/2026-09-12-pro
      [rollout](history/2026-09-14-project-agent-rollout.md),
      [`PROJECT_AGENT_HIRING_IMPL.md`](PROJECT_AGENT_HIRING_IMPL.md).
 
+130. **Public→private did not withdraw a published association (2026-09-15).**
+     Astra's review of `4c835625f` found `project_public` write-once: the
+     verifier only read unknown heads. The carry rule also let a host
+     republish a carried digest after the host that learned the project was
+     private had withdrawn it, because a digest-less 30177 cannot tell a
+     privacy withdrawal from a stale host. Closed:
+     - visibility is re-read for every associated project;
+     - a verified-private result publishes a signed, sticky
+       `project_withdrawn` marker;
+     - inbound markers and relay-head markers set the withdrawal and drop
+       carried digests, and the publish guard never publishes a carried digest
+       over a marker;
+     - stale-host carry is unchanged.
+     Stub-relay tests cover one computer going public→private→public and two
+     computers withdrawing, with the final relay head digest-less.
+     [Review](history/2026-09-15-project-hiring-corrections-review.md),
+     [`PROJECT_AGENT_HIRING_IMPL.md`](PROJECT_AGENT_HIRING_IMPL.md).
+
 ## 2a. Direction settled 2026-08-18
 
 Three independent answers to "what should a new execution get on its first

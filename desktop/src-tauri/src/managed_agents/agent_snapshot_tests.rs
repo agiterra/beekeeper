@@ -56,6 +56,7 @@ fn minimal_record() -> ManagedAgentRecord {
         project_ref: None,
         project_public: None,
         carried_project_digest: None,
+        project_publication_withdrawn: false,
         created_at: "2024-01-01T00:00:00Z".to_string(),
         updated_at: "2024-01-02T00:00:00Z".to_string(),
         last_started_at: Some("2024-01-03T00:00:00Z".to_string()), // MUST NOT appear

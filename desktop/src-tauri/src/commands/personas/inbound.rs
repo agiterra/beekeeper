@@ -259,6 +259,7 @@ fn reconcile_inbound_persona_event_blocking(
                 "managed-agent content was not parsed before retention".to_string()
             })?;
             let inbound_project_digest = managed_agent.project_digest.clone();
+            let inbound_project_withdrawn = managed_agent.project_withdrawn;
             let access_changed = apply_inbound_managed_agent(&mut agents, &d_tag, managed_agent);
             // Persisted by the save below; every later retain projects it.
             carry_same_owner_project_digest(
@@ -266,6 +267,7 @@ fn reconcile_inbound_persona_event_blocking(
                 &d_tag,
                 event.pubkey == scope.owner_keys.public_key(),
                 inbound_project_digest.as_deref(),
+                inbound_project_withdrawn,
             );
             if access_changed {
                 let record = agents
@@ -585,19 +587,20 @@ fn apply_inbound_managed_agent(
     false
 }
 
-/// Carry an inbound kind:30177's `project_digest` onto the local record at
-/// `d_tag`, only when the event's author is this computer's owner
-/// (`author_is_owner`): another author's claim about this owner's agent is
-/// never carried. The rule itself is
+/// Apply an inbound kind:30177's `project_withdrawn` marker or carry its
+/// `project_digest` onto the local record at `d_tag`, only when the event's
+/// author is this computer's owner (`author_is_owner`): another author's claim
+/// about this owner's agent is never honored. The rule itself is
 /// [`crate::managed_agents::project_association_carry::carry_inbound_project_digest`]
-/// — never `project_ref` or `home_role`, never onto a verified project, and a
-/// digest-less event never clears a carried digest. Returns whether a record
-/// changed.
+/// — a marker withdraws and drops any carried digest; a digest is never
+/// carried onto a withdrawn or verified project; an event with neither never
+/// clears anything. Returns whether a record changed.
 fn carry_same_owner_project_digest(
     agents: &mut [ManagedAgentRecord],
     d_tag: &str,
     author_is_owner: bool,
     inbound_digest: Option<&str>,
+    inbound_withdrawn: bool,
 ) -> bool {
     if !author_is_owner {
         return false;
@@ -609,6 +612,7 @@ fn carry_same_owner_project_digest(
             crate::managed_agents::project_association_carry::carry_inbound_project_digest(
                 record,
                 inbound_digest,
+                inbound_withdrawn,
             )
         })
 }

@@ -40,6 +40,7 @@ fn agent(persona_id: &str, name: &str, display_name: Option<&str>) -> ManagedAge
         project_ref: None,
         project_public: None,
         carried_project_digest: None,
+        project_publication_withdrawn: false,
         created_at: String::new(),
         updated_at: String::new(),
         last_started_at: None,

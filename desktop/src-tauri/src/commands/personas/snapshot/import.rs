@@ -632,6 +632,7 @@ pub async fn confirm_agent_snapshot_import(
             project_ref: None,
             project_public: None,
             carried_project_digest: None,
+            project_publication_withdrawn: false,
             created_at: now.clone(),
             updated_at: now.clone(),
             last_started_at: None,
@@ -639,9 +640,8 @@ pub async fn confirm_agent_snapshot_import(
             last_exit_code: None,
             last_error: None,
             last_error_code: None,
-            // Instance-level behavioral defaults agree with the resolved
-            // definition: both come from the single minted struct so they
-            // are always consistent at mint time.
+            // Instance-level behavioral defaults agree with the resolved definition: both come
+            // from the single minted struct so they are always consistent at mint time.
             respond_to: minted.respond_to,
             respond_to_allowlist: minted.respond_to_allowlist.clone(),
             is_builtin: false,

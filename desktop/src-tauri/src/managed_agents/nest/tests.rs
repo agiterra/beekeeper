@@ -483,6 +483,7 @@ fn make_agent(name: &str, persona_id: Option<&str>) -> ManagedAgentRecord {
         project_ref: None,
         project_public: None,
         carried_project_digest: None,
+        project_publication_withdrawn: false,
         created_at: String::new(),
         updated_at: String::new(),
         last_started_at: None,

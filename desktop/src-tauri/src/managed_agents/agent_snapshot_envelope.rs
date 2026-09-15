@@ -385,6 +385,7 @@ mod tests {
             project_ref: None,
             project_public: None,
             carried_project_digest: None,
+            project_publication_withdrawn: false,
             parallelism: 1,
             system_prompt: None,
             model: None,

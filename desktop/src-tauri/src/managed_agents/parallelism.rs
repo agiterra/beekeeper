@@ -98,6 +98,7 @@ mod tests {
             project_ref: None,
             project_public: None,
             carried_project_digest: None,
+            project_publication_withdrawn: false,
             env_vars: std::collections::BTreeMap::new(),
             created_at: String::new(),
             updated_at: String::new(),

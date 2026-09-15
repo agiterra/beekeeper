@@ -97,6 +97,7 @@ fn test_record() -> ManagedAgentRecord {
         project_ref: None,
         project_public: None,
         carried_project_digest: None,
+        project_publication_withdrawn: false,
         created_at: "".to_string(),
         updated_at: "".to_string(),
         last_started_at: None,

@@ -13,7 +13,9 @@
 //! coordinates, identify the project, and correlate the agents that share it.
 //! Associations are therefore published only for projects whose head is
 //! public. A private project's associations are never published; its agents
-//! are known only on the computers that hold them.
+//! are known only on the computers that hold them, and the kind:30177 carries
+//! [`PROJECT_AGENT_WITHDRAWN_CONTENT_KEY`] instead so the withdrawal holds on
+//! every computer.
 //!
 //! The association is a claim by the event's author. **Readers must check the
 //! author's authority** — the project's creator or a roster owner or
@@ -30,6 +32,17 @@ pub const PROJECT_AGENT_DIGEST_DOMAIN: &str = "buzz-project-agent/v1\n";
 
 /// Content key on kind:30177 carrying [`project_agent_digest`].
 pub const PROJECT_AGENT_DIGEST_CONTENT_KEY: &str = "project_digest";
+
+/// Content key on kind:30177 marking the agent's project association as
+/// intentionally unpublished: `true` when the owner's computer verified the
+/// project private, or learned that one did. Serialized only when `true`, and
+/// never together with [`PROJECT_AGENT_DIGEST_CONTENT_KEY`].
+///
+/// It carries no digest, coordinate or project identity. It reveals only that
+/// this agent's association is withheld on purpose, so another computer of
+/// the same owner never republishes a digest it carried from before the
+/// project became private. A reader treats it as "no association published".
+pub const PROJECT_AGENT_WITHDRAWN_CONTENT_KEY: &str = "project_withdrawn";
 
 /// Content key on kind:30177 carrying the agent's primary role slug.
 pub const PROJECT_AGENT_ROLE_CONTENT_KEY: &str = "home_role";

@@ -197,6 +197,7 @@ fn local_agent() -> ManagedAgentRecord {
         project_ref: None,
         project_public: None,
         carried_project_digest: None,
+        project_publication_withdrawn: false,
         created_at: "2025-01-01T00:00:00Z".to_string(),
         updated_at: "2025-01-01T00:00:00Z".to_string(),
         last_started_at: None,
@@ -923,6 +924,7 @@ fn inbound_managed_agent_content(
         respond_to_allowlist: vec![],
         home_role: None,
         project_digest: None,
+        project_withdrawn: false,
     }
 }
 

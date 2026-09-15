@@ -70,6 +70,15 @@ pub struct ManagedAgentEventContent {
     /// verified public project's own, otherwise whatever the record carries.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_digest: Option<String>,
+    /// `true` when this agent's association is intentionally unpublished
+    /// (`PROJECT_AGENT_WITHDRAWN_CONTENT_KEY`): its project was verified
+    /// private here or on another computer of this owner. Carries no digest,
+    /// coordinate or project identity, is never serialized with
+    /// `project_digest`, and stops the owner's other computers republishing a
+    /// digest they carried. See
+    /// [`super::project_association_carry::published_project_withdrawn`].
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub project_withdrawn: bool,
 }
 
 /// Project a `ManagedAgentRecord` onto the content fields published in
@@ -126,6 +135,8 @@ pub fn agent_event_content(record: &ManagedAgentRecord) -> ManagedAgentEventCont
         // association republishes only the digest this record carries, so
         // this computer never withdraws another computer's association.
         project_digest: super::project_association_carry::published_project_digest(record),
+        // A withdrawal is marked, so it is not mistaken for a stale host.
+        project_withdrawn: super::project_association_carry::published_project_withdrawn(record),
     }
 }
 
@@ -226,6 +237,7 @@ mod tests {
             project_ref: None,
             project_public: None,
             carried_project_digest: None,
+            project_publication_withdrawn: false,
             created_at: "2025-01-01T00:00:00Z".to_string(),
             updated_at: "2025-01-01T00:00:00Z".to_string(),
             last_started_at: Some("2025-01-02T00:00:00Z".to_string()),
@@ -560,6 +572,10 @@ mod tests {
         let mut agent = sample_agent();
         let json = serde_json::to_string(&agent_event_content(&agent)).unwrap();
         assert!(!json.contains("project_digest"));
+        assert!(
+            !json.contains("project_withdrawn"),
+            "false is never serialized"
+        );
         assert!(!json.contains("home_role"));
         agent.project_ref = Some("30621:not-hex:tank-loop".to_string());
         agent.project_public = Some(true);
@@ -594,10 +610,12 @@ mod tests {
 
     /// A private project is never announced: no digest, no coordinate, no
     /// owner or slug — even when the record carries a digest from elsewhere,
-    /// which the private verdict withdraws on purpose.
+    /// which the private verdict withdraws on purpose, under the marker key.
     #[test]
     fn private_project_publishes_no_digest_and_no_coordinate() {
-        use buzz_core_pkg::project_agent_association::PROJECT_AGENT_DIGEST_CONTENT_KEY;
+        use buzz_core_pkg::project_agent_association::{
+            PROJECT_AGENT_DIGEST_CONTENT_KEY, PROJECT_AGENT_WITHDRAWN_CONTENT_KEY,
+        };
         let mut agent = sample_agent();
         agent.home_role = Some("builder".to_string());
         agent.project_ref = Some(PROJECT.to_string());
@@ -609,6 +627,7 @@ mod tests {
             .unwrap();
         let value: serde_json::Value = serde_json::from_str(&event.content).unwrap();
         assert!(value.get(PROJECT_AGENT_DIGEST_CONTENT_KEY).is_none());
+        assert_eq!(value[PROJECT_AGENT_WITHDRAWN_CONTENT_KEY], true);
         assert!(!event
             .content
             .contains(&project_agent_digest(PROJECT).unwrap()));
@@ -655,6 +674,13 @@ mod tests {
         }));
         assert_eq!(legacy.home_role, None);
         assert_eq!(legacy.project_digest, None);
+        assert!(!legacy.project_withdrawn);
+        let withdrawn = parse(serde_json::json!({
+            "name": "Agent", "parallelism": 1, "respond_to": "owner-only",
+            (buzz_core_pkg::project_agent_association::PROJECT_AGENT_WITHDRAWN_CONTENT_KEY): true,
+        }));
+        assert!(withdrawn.project_withdrawn, "the marker key parses");
+        assert_eq!(withdrawn.project_digest, None);
     }
 
     #[test]

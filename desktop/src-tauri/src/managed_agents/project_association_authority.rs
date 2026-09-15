@@ -263,12 +263,11 @@ pub(crate) async fn read_association_authority(
     association_authority(&normalized, &active, &heads, &rosters, &signer)
 }
 
-/// The distinct normalized projects of associated agents whose visibility has
-/// not been read yet.
+/// The distinct normalized projects of every associated agent, known
+/// visibility or not: a project can turn private (or public) after it was read.
 pub(crate) fn projects_needing_visibility(records: &[ManagedAgentRecord]) -> Vec<String> {
     records
         .iter()
-        .filter(|record| record.project_public.is_none())
         .filter_map(|record| {
             record
                 .project_ref
@@ -280,18 +279,18 @@ pub(crate) fn projects_needing_visibility(records: &[ManagedAgentRecord]) -> Vec
         .collect()
 }
 
-/// Record each read visibility on the agents of that project still lacking
-/// one, returning the pubkeys changed. A known visibility is never replaced
-/// here, and a project without a result is left unknown.
+/// Record each read visibility on the agents of that project, replacing a
+/// known one the newest verified head contradicts (public→private withdraws,
+/// private→public republishes; see
+/// [`super::project_association_carry::note_verified_visibility`]). Returns
+/// the pubkeys changed. A project without a result keeps its value: an
+/// unreadable head is never a guess.
 pub(crate) fn apply_visibility_results(
     records: &mut [ManagedAgentRecord],
     results: &BTreeMap<String, ProjectVisibility>,
 ) -> Vec<String> {
     let mut changed = Vec::new();
-    for record in records
-        .iter_mut()
-        .filter(|record| record.project_public.is_none())
-    {
+    for record in records.iter_mut() {
         let Some(project) = record
             .project_ref
             .as_deref()
@@ -300,18 +299,23 @@ pub(crate) fn apply_visibility_results(
             continue;
         };
         if let Some(visibility) = results.get(&project) {
-            record.project_public = Some(visibility.is_public());
-            changed.push(record.pubkey.clone());
+            if super::project_association_carry::note_verified_visibility(
+                record,
+                visibility.is_public(),
+            ) {
+                changed.push(record.pubkey.clone());
+            }
         }
     }
     changed
 }
 
-/// Read the verified head of every project whose agents have no recorded
-/// visibility (a journal backfill, a setup installation, an older build) and
-/// record it. Unreadable heads stay unknown, so nothing is announced for
-/// them. Saves under the store lock only when something changed, and queues
-/// a kind:30177 republish for exactly those agents. Returns how many changed.
+/// Read the verified head of every associated agent's project and record it,
+/// so a project that changed visibility since it was read is republished or
+/// withdrawn. Unreadable heads keep the recorded value (unknown stays
+/// unknown, so nothing is announced for it). Saves under the store lock only
+/// when something changed, and queues a kind:30177 republish for exactly
+/// those agents. Returns how many changed.
 pub(crate) async fn verify_project_visibility(app: &AppHandle) -> Result<usize, String> {
     let state = app
         .try_state::<AppState>()

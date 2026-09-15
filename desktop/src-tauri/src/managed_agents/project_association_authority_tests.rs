@@ -315,24 +315,28 @@ fn agent(pubkey: &str, project_ref: Option<&str>, public: Option<bool>) -> Manag
 }
 
 #[test]
-fn only_distinct_projects_with_unknown_visibility_need_verification() {
+fn every_distinct_associated_project_needs_verification() {
     let a = format!("30621:{}:a", "ab".repeat(32));
     let a_upper = format!("30621:{}:a", "AB".repeat(32));
     let b = format!("30621:{}:b", "ab".repeat(32));
     let c = format!("30621:{}:c", "ab".repeat(32));
     let records = vec![
         agent("1", Some(&a), None),
-        agent("2", Some(&a_upper), None),
+        agent("2", Some(&a_upper), Some(false)),
         agent("3", Some(&b), Some(true)),
         agent("4", None, None),
         agent("5", Some("not a coordinate"), None),
         agent("6", Some(&c), None),
     ];
-    assert_eq!(projects_needing_visibility(&records), vec![a, c]);
+    assert_eq!(
+        projects_needing_visibility(&records),
+        vec![a, b, c],
+        "a known visibility is re-read: the project may have changed"
+    );
 }
 
 #[test]
-fn visibility_results_fill_only_unknown_agents_of_read_projects() {
+fn visibility_results_replace_known_values_and_keep_unread_ones() {
     let a = format!("30621:{}:a", "ab".repeat(32));
     let b = format!("30621:{}:b", "ab".repeat(32));
     let unread = format!("30621:{}:unread", "ab".repeat(32));
@@ -341,23 +345,40 @@ fn visibility_results_fill_only_unknown_agents_of_read_projects() {
         agent("2", Some(&b), None),
         agent("3", Some(&a), Some(true)),
         agent("4", Some(&unread), None),
+        agent("5", Some(&b), Some(false)),
+        agent("6", Some(&unread), Some(true)),
     ];
+    records[4].project_publication_withdrawn = true;
+    records[2].carried_project_digest = Some("c".repeat(64));
     let results = BTreeMap::from([
         (a.clone(), ProjectVisibility::Private),
         (b.clone(), ProjectVisibility::Public),
     ]);
     let changed = apply_visibility_results(&mut records, &results);
-    assert_eq!(changed, vec!["1".to_string(), "2".to_string()]);
+    assert_eq!(changed, ["1", "2", "3", "5"].map(str::to_string).to_vec());
     assert_eq!(records[0].project_public, Some(false));
-    assert_eq!(records[1].project_public, Some(true));
-    assert_eq!(
-        records[2].project_public,
-        Some(true),
-        "known visibility is kept"
+    assert!(
+        records[0].project_publication_withdrawn,
+        "private withdraws"
     );
+    assert_eq!(records[1].project_public, Some(true));
+    assert!(!records[1].project_publication_withdrawn);
+    assert_eq!(records[2].project_public, Some(false), "public→private");
+    assert!(records[2].project_publication_withdrawn);
+    assert_eq!(records[2].carried_project_digest, None, "carry dropped");
     assert_eq!(
         records[3].project_public, None,
         "an unread head stays unknown"
+    );
+    assert_eq!(records[4].project_public, Some(true), "private→public");
+    assert!(
+        !records[4].project_publication_withdrawn,
+        "own verified public clears the withdrawal"
+    );
+    assert_eq!(
+        records[5].project_public,
+        Some(true),
+        "an unread head never replaces a known value"
     );
     assert!(apply_visibility_results(&mut records, &results).is_empty());
 }

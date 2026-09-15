@@ -1,28 +1,31 @@
 //! Carrying a published project association forward so a computer that does
-//! not hold it never withdraws it (lane-owned; see PROJECT_AGENT_HIRING_IMPL.md).
+//! not hold it never withdraws it, and withdrawing it everywhere once its
+//! project is private (lane-owned; see PROJECT_AGENT_HIRING_IMPL.md).
 //!
 //! An agent's kind:30177 is one replaceable event per `(owner, agent)`, and
-//! every computer holding the agent publishes it. Before this module, a second
-//! computer whose record had no `project_ref` published a projection with no
-//! `project_digest`, superseding the associated computer's event and removing
-//! the agent from its project for every reader (review 2026-09-14, finding 3).
+//! every computer holding the agent publishes it. A second computer whose
+//! record had no `project_ref` once published a projection with no
+//! `project_digest`, superseding the associated computer's event (review
+//! 2026-09-14, finding 3). Carrying fixed that, but a digest-less event cannot
+//! tell a privacy withdrawal from that stale overwrite, so a carrying computer
+//! could resurrect a withdrawn digest (review 2026-09-15). A withdrawal is
+//! therefore explicit: the owner-signed `project_withdrawn` marker, remembered
+//! as the sticky `project_publication_withdrawn` record flag.
 //!
-//! Three pieces close that:
-//!
-//! - [`published_project_digest`], the projection rule: a verified public
-//!   project publishes its digest, a verified private project publishes none
-//!   (withdrawing any carried digest on purpose), and anything unverified or
-//!   unassociated republishes only what it carries.
-//! - [`carry_inbound_project_digest`]: an inbound same-owner kind:30177 with a
-//!   digest is carried onto a record that cannot itself decide the answer.
-//! - [`guard_managed_agent_withdrawal`], used by the flush loop: a digest-less
-//!   kind:30177 is not published while the relay head at that address carries a
-//!   digest this computer has no authority to withdraw. The digest is carried
-//!   instead and the corrected row publishes in its place.
+//! - [`published_association`], the projection: a verified public project
+//!   publishes its digest; a withdrawn or verified private one publishes the
+//!   marker; anything else republishes only what it carries.
+//! - [`note_verified_visibility`]: the signed head's verdict sets or clears
+//!   the flag. Only this computer's own verified public project clears it.
+//! - [`carry_inbound_project_digest`]: a same-owner inbound marker withdraws;
+//!   a digest is carried onto a record that cannot decide and is not
+//!   withdrawn; an event with neither changes nothing.
+//! - [`guard_managed_agent_withdrawal`], used by the flush loop: a pending
+//!   kind:30177 not backed by this computer's own verified public project is
+//!   checked against the relay head first. A marker there withdraws here; a
+//!   digest there is carried or, when nothing here can decide, withheld.
 //!
 //! A carried digest is never membership: hiring reads only `project_ref`.
-//! Withdrawal of an association needs an explicit dissociation, which does not
-//! exist yet, so a carried digest is never cleared by a digest-less event.
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -44,6 +47,18 @@ pub(crate) fn is_project_digest(value: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
+/// What a kind:30177 says about the agent's project association.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) enum Announced {
+    /// Neither a valid digest nor the marker (or no event at all).
+    #[default]
+    Nothing,
+    /// A well-formed `project_digest`.
+    Digest(String),
+    /// The `project_withdrawn` marker. Wins over a digest in the same event.
+    Withdrawn,
+}
+
 fn recorded_project(record: &ManagedAgentRecord) -> Option<&str> {
     record
         .project_ref
@@ -60,181 +75,270 @@ fn carried_digest(record: &ManagedAgentRecord) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// The digest of the record's own project when a signed head read it public.
+fn own_public_digest(record: &ManagedAgentRecord) -> Option<String> {
+    match (recorded_project(record), record.project_public) {
+        (Some(project), Some(true)) => project_agent_digest(project),
+        _ => None,
+    }
+}
+
 /// Whether the record's own project is known, from a signed head, to be
-/// private. Only this state may withdraw a published digest.
+/// private: this computer is then the withdrawer.
 fn project_known_private(record: &ManagedAgentRecord) -> bool {
     recorded_project(record).is_some() && record.project_public == Some(false)
 }
 
-/// The `project_digest` a record's kind:30177 publishes.
+/// Whether another computer's digest may be carried onto `record`: it is not
+/// withdrawn, and its own project's visibility is not verified either way.
+fn may_carry(record: &ManagedAgentRecord) -> bool {
+    let verified = recorded_project(record).is_some() && record.project_public.is_some();
+    !(record.project_publication_withdrawn || verified)
+}
+
+/// The association a record's kind:30177 publishes, first match wins:
 ///
-/// | `project_ref` | `project_public` | published                         |
-/// | ------------- | ---------------- | --------------------------------- |
-/// | set           | `Some(true)`     | digest of `project_ref`           |
-/// | set           | `Some(false)`    | none — a private project is never announced |
-/// | set           | `None`           | the carried digest, if any        |
-/// | unset         | any              | the carried digest, if any        |
+/// | record                                   | published             |
+/// | ---------------------------------------- | --------------------- |
+/// | `project_ref` verified public            | its digest, no marker |
+/// | `project_publication_withdrawn`          | marker, no digest     |
+/// | `project_ref` verified private           | marker, no digest     |
+/// | carries a well-formed digest             | the carried digest    |
+/// | otherwise                                | nothing               |
 ///
 /// A public `project_ref` that is not a well-formed coordinate has no digest
-/// of its own, so it falls back to the carried one rather than withdrawing.
+/// of its own, so it falls through rather than publishing a guess.
+pub(crate) fn published_association(record: &ManagedAgentRecord) -> Announced {
+    if let Some(digest) = own_public_digest(record) {
+        return Announced::Digest(digest);
+    }
+    if record.project_publication_withdrawn || project_known_private(record) {
+        return Announced::Withdrawn;
+    }
+    carried_digest(record).map_or(Announced::Nothing, Announced::Digest)
+}
+
+/// The `project_digest` a record's kind:30177 publishes
+/// ([`published_association`]).
 pub(crate) fn published_project_digest(record: &ManagedAgentRecord) -> Option<String> {
-    match (recorded_project(record), record.project_public) {
-        (Some(_), Some(false)) => None,
-        (Some(project), Some(true)) => {
-            project_agent_digest(project).or_else(|| carried_digest(record))
-        }
-        (Some(_), None) | (None, _) => carried_digest(record),
+    match published_association(record) {
+        Announced::Digest(digest) => Some(digest),
+        Announced::Nothing | Announced::Withdrawn => None,
     }
 }
 
-/// Carry the `project_digest` of an inbound kind:30177 **authored by this
-/// computer's owner** onto `record`. Returns whether the record changed.
+/// Whether a record's kind:30177 publishes the `project_withdrawn` marker
+/// ([`published_association`]); never together with a digest.
+pub(crate) fn published_project_withdrawn(record: &ManagedAgentRecord) -> bool {
+    published_association(record) == Announced::Withdrawn
+}
+
+/// Withdraw the record's publication: set the sticky flag and drop any carried
+/// digest. Returns whether the record changed.
+pub(crate) fn mark_publication_withdrawn(record: &mut ManagedAgentRecord) -> bool {
+    let changed = !record.project_publication_withdrawn || record.carried_project_digest.is_some();
+    record.project_publication_withdrawn = true;
+    record.carried_project_digest = None;
+    changed
+}
+
+/// Record the newest verified signed head's verdict on the record's own
+/// `project_ref`, replacing a known one. Private withdraws (flag set, carry
+/// dropped); public is the only thing that clears the flag, and lets the own
+/// digest publish again. Returns whether the record changed.
+pub(crate) fn note_verified_visibility(record: &mut ManagedAgentRecord, public: bool) -> bool {
+    let mut changed = record.project_public != Some(public);
+    record.project_public = Some(public);
+    if !public {
+        changed |= mark_publication_withdrawn(record);
+    } else if record.project_publication_withdrawn {
+        record.project_publication_withdrawn = false;
+        changed = true;
+    }
+    changed
+}
+
+/// Apply an inbound kind:30177 **authored by this computer's owner** to
+/// `record`. Returns whether the record changed.
 ///
-/// Carries only onto a record that cannot decide the answer itself: no
-/// `project_ref`, or a `project_ref` whose visibility is not yet verified. A
-/// record whose project is verified (public or private) keeps its own answer.
-/// A missing or malformed inbound digest never clears a carried one. Never
-/// touches `project_ref`, `project_public` or `home_role`.
+/// | inbound                    | record                          | effect                 |
+/// | -------------------------- | ------------------------------- | ---------------------- |
+/// | marker                     | any                             | withdraw, drop carry   |
+/// | valid digest, no marker    | [`may_carry`]                   | carry the digest       |
+/// | valid digest, no marker    | withdrawn or project verified   | unchanged              |
+/// | neither (or malformed)     | any                             | unchanged              |
+///
+/// A digest-less event never clears a carried digest or the flag: that is the
+/// stale-host case. Never touches `project_ref`, `project_public` or
+/// `home_role`.
 pub(crate) fn carry_inbound_project_digest(
     record: &mut ManagedAgentRecord,
     inbound_digest: Option<&str>,
+    inbound_withdrawn: bool,
 ) -> bool {
+    if inbound_withdrawn {
+        return mark_publication_withdrawn(record);
+    }
     let Some(digest) = inbound_digest.filter(|digest| is_project_digest(digest)) else {
         return false;
     };
-    if recorded_project(record).is_some() && record.project_public.is_some() {
-        return false;
-    }
-    if record.carried_project_digest.as_deref() == Some(digest) {
+    if !may_carry(record) || record.carried_project_digest.as_deref() == Some(digest) {
         return false;
     }
     record.carried_project_digest = Some(digest.to_owned());
     true
 }
 
-/// What the flush loop does with a pending digest-less kind:30177 whose relay
-/// head carries `relay_digest`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum WithdrawalGuard {
-    /// Publish the row: nothing is withdrawn, or this computer knows the
-    /// agent's project is private and withdraws on purpose.
-    Publish,
-    /// Do not publish; carry this digest onto the record and republish it.
-    Carry(String),
-    /// Do not publish and change nothing: this computer holds no record that
-    /// could decide, so it must not withdraw blind.
-    Withhold,
-}
-
-/// Decide a pending digest-less kind:30177 against its relay head's digest.
-///
-/// | local record                | relay head digest | decision   |
-/// | --------------------------- | ----------------- | ---------- |
-/// | any                         | none or malformed | `Publish`  |
-/// | project known private       | valid             | `Publish`  |
-/// | present, not known private  | valid             | `Carry`    |
-/// | missing                     | valid             | `Withhold` |
-pub(crate) fn withheld_withdrawal(
-    local: Option<&ManagedAgentRecord>,
-    relay_digest: Option<&str>,
-) -> WithdrawalGuard {
-    let Some(digest) = relay_digest.filter(|digest| is_project_digest(digest)) else {
-        return WithdrawalGuard::Publish;
-    };
-    match local {
-        None => WithdrawalGuard::Withhold,
-        Some(record) if project_known_private(record) => WithdrawalGuard::Publish,
-        Some(_) => WithdrawalGuard::Carry(digest.to_owned()),
-    }
-}
-
-/// What a carry hook did for one agent.
+/// What the flush loop does with a pending kind:30177 after its relay head.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CarryHookOutcome {
     /// Publish the pending row as it is.
     Publish,
-    /// The record now carries the digest and a corrected row was retained;
-    /// the flush publishes the retained head in place of the old row.
-    Carried,
+    /// The record changed or the row was stale, and a corrected row was
+    /// retained; the flush publishes the retained head in its place.
+    Corrected,
     /// Leave the row pending and publish nothing.
     Withhold,
 }
 
-/// Called by the flush loop with `(retention db, owner keys, agent pubkey,
-/// relay digest)`. It runs synchronously, never across an `.await`, and takes
-/// the managed-agent store lock itself.
-pub(crate) type CarryHook<'a> =
-    &'a (dyn Fn(&Path, &nostr::Keys, &str, &str) -> Result<CarryHookOutcome, String> + Send + Sync);
-
-/// Apply [`withheld_withdrawal`] to the agent `agent` in `agents` for
-/// `relay_digest`, carrying the digest when it says so. Returns the decision
-/// and whether a record changed (the caller saves only then).
-pub(crate) fn apply_relay_digest(
+/// Decide a pending row announcing `row` against the relay head announcing
+/// `head`, updating `agent`'s record in `agents`. Returns the decision and
+/// whether a record changed (the caller saves only then).
+///
+/// | local record | relay head | record update             | decision                      |
+/// | ------------ | ---------- | ------------------------- | ----------------------------- |
+/// | missing      | nothing    | —                         | `Publish`                     |
+/// | missing      | digest / marker | —                    | `Withhold`                    |
+/// | present      | marker     | withdraw, drop carry      | then by projection            |
+/// | present      | digest     | carry it if [`may_carry`] | then by projection            |
+/// | present      | nothing    | —                         | then by projection            |
+///
+/// "By projection": `Withhold` when the head has a digest and the record
+/// still projects nothing (never withdraw blind), `Publish` when the row
+/// already equals the projection, otherwise `Corrected`. A withdrawn record
+/// projects the marker, so a carried digest is never published over one.
+pub(crate) fn apply_relay_head(
     agents: &mut [ManagedAgentRecord],
     agent: &str,
-    relay_digest: &str,
-) -> (WithdrawalGuard, bool) {
-    let record = agents.iter_mut().find(|record| record.pubkey == agent);
-    let decision = withheld_withdrawal(record.as_deref(), Some(relay_digest));
-    let changed = match (&decision, record) {
-        (WithdrawalGuard::Carry(digest), Some(record))
-            if record.carried_project_digest.as_deref() != Some(digest.as_str()) =>
+    row: &Announced,
+    head: &Announced,
+) -> (CarryHookOutcome, bool) {
+    let Some(record) = agents.iter_mut().find(|record| record.pubkey == agent) else {
+        let decision = match head {
+            Announced::Nothing => CarryHookOutcome::Publish,
+            Announced::Digest(_) | Announced::Withdrawn => CarryHookOutcome::Withhold,
+        };
+        return (decision, false);
+    };
+    let changed = match head {
+        Announced::Withdrawn => mark_publication_withdrawn(record),
+        Announced::Digest(digest)
+            if may_carry(record)
+                && record.carried_project_digest.as_deref() != Some(digest.as_str()) =>
         {
             record.carried_project_digest = Some(digest.clone());
             true
         }
-        _ => false,
+        Announced::Digest(_) | Announced::Nothing => false,
+    };
+    let projected = published_association(record);
+    let decision = if matches!(head, Announced::Digest(_)) && projected == Announced::Nothing {
+        CarryHookOutcome::Withhold
+    } else if projected == *row {
+        CarryHookOutcome::Publish
+    } else {
+        CarryHookOutcome::Corrected
     };
     (decision, changed)
 }
 
-/// Re-retain `record` after a carry and report what the flush should do: a
-/// projection that now publishes a digest is [`CarryHookOutcome::Carried`];
-/// one that still publishes none (nothing carried could apply) is withheld.
-pub(crate) fn retain_after_carry(
-    conn: &rusqlite::Connection,
-    owner_keys: &nostr::Keys,
-    record: &ManagedAgentRecord,
-) -> Result<CarryHookOutcome, String> {
-    super::reconcile::retain_agent_record(conn, owner_keys, record)?;
-    Ok(if published_project_digest(record).is_some() {
-        CarryHookOutcome::Carried
-    } else {
-        CarryHookOutcome::Withhold
-    })
+/// Whether a pending row announcing `row` is backed by `agent`'s own verified
+/// public project here, so it publishes without reading the relay head.
+pub(crate) fn backed_by_own_public(
+    agents: &[ManagedAgentRecord],
+    agent: &str,
+    row: &Announced,
+) -> bool {
+    let Announced::Digest(digest) = row else {
+        return false;
+    };
+    agents
+        .iter()
+        .find(|record| record.pubkey == agent)
+        .and_then(own_public_digest)
+        .is_some_and(|own| own == *digest)
 }
 
-/// The production carry hook: under the store lock, load this computer's
-/// records, decide, save a carried digest, and re-retain the agent's row.
-pub(crate) fn app_carry_hook(
-    app: tauri::AppHandle,
-) -> impl Fn(&Path, &nostr::Keys, &str, &str) -> Result<CarryHookOutcome, String> + Send + Sync {
-    move |db_path, owner_keys, agent, relay_digest| {
+/// The flush loop's view of this computer's managed-agent store. Both methods
+/// run synchronously, never across an `.await`, and take the store lock.
+pub(crate) trait CarryHook: Send + Sync {
+    /// [`backed_by_own_public`] over this computer's records.
+    fn backed(&self, agent: &str, row: &Announced) -> Result<bool, String>;
+    /// [`apply_relay_head`] over this computer's records, saving a changed
+    /// record and re-retaining the agent's row on `Corrected`.
+    fn reconcile(
+        &self,
+        db_path: &Path,
+        owner_keys: &nostr::Keys,
+        agent: &str,
+        row: &Announced,
+        head: &Announced,
+    ) -> Result<CarryHookOutcome, String>;
+}
+
+/// The production carry hook over the app's managed-agent store.
+pub(crate) struct AppCarryHook(pub(crate) tauri::AppHandle);
+
+impl AppCarryHook {
+    fn with_records<T>(
+        &self,
+        apply: impl FnOnce(&mut Vec<ManagedAgentRecord>) -> Result<T, String>,
+    ) -> Result<T, String> {
         use tauri::Manager;
-        let state = app
+        let state = self
+            .0
             .try_state::<AppState>()
             .ok_or_else(|| "app state is unavailable".to_string())?;
         let _guard = state
             .managed_agents_store_lock
             .lock()
             .map_err(|error| error.to_string())?;
-        let mut agents = super::load_managed_agents(&app)?;
-        let (decision, changed) = apply_relay_digest(&mut agents, agent, relay_digest);
-        match decision {
-            WithdrawalGuard::Publish => Ok(CarryHookOutcome::Publish),
-            WithdrawalGuard::Withhold => Ok(CarryHookOutcome::Withhold),
-            WithdrawalGuard::Carry(_) => {
-                if changed {
-                    super::save_managed_agents(&app, &agents)?;
-                }
+        let mut agents = super::load_managed_agents(&self.0)?;
+        apply(&mut agents)
+    }
+}
+
+impl CarryHook for AppCarryHook {
+    fn backed(&self, agent: &str, row: &Announced) -> Result<bool, String> {
+        self.with_records(|agents| Ok(backed_by_own_public(agents, agent, row)))
+    }
+
+    fn reconcile(
+        &self,
+        db_path: &Path,
+        owner_keys: &nostr::Keys,
+        agent: &str,
+        row: &Announced,
+        head: &Announced,
+    ) -> Result<CarryHookOutcome, String> {
+        self.with_records(|agents| {
+            let (decision, changed) = apply_relay_head(agents, agent, row, head);
+            if changed {
+                super::save_managed_agents(&self.0, agents)?;
+            }
+            if decision == CarryHookOutcome::Corrected {
                 let record = agents
                     .iter()
                     .find(|record| record.pubkey == agent)
                     .ok_or_else(|| format!("agent {agent} disappeared during carry"))?;
-                let conn = open_retention_db(db_path)?;
-                retain_after_carry(&conn, owner_keys, record)
+                super::reconcile::retain_agent_record(
+                    &open_retention_db(db_path)?,
+                    owner_keys,
+                    record,
+                )?;
             }
-        }
+            Ok(decision)
+        })
     }
 }
 
@@ -245,7 +349,7 @@ pub(crate) enum FlushGuard {
     Proceed,
     /// Leave it pending this sweep.
     Skip,
-    /// Publish this retained head instead (the carried correction).
+    /// Publish this retained head instead (the corrected row).
     Replaced(RetainedEvent),
 }
 
@@ -262,7 +366,7 @@ fn log_read_failure_once(agent: &str, error: &str) {
         tracing::warn!(
             agent,
             error,
-            "withholding a kind:30177 without a project digest: the relay head could not be read, so publishing could withdraw another computer's project association"
+            "withholding a kind:30177: the relay head could not be read, so publishing could withdraw another computer's project association or undo a withdrawal"
         );
     }
 }
@@ -273,11 +377,20 @@ fn clear_read_failure(agent: &str) {
     }
 }
 
-fn content_digest(content: &str) -> Option<String> {
-    serde_json::from_str::<super::agent_events::ManagedAgentEventContent>(content)
-        .ok()?
+/// What a kind:30177 content announces; unparseable content announces nothing.
+pub(crate) fn content_announced(content: &str) -> Announced {
+    let Ok(content) =
+        serde_json::from_str::<super::agent_events::ManagedAgentEventContent>(content)
+    else {
+        return Announced::Nothing;
+    };
+    if content.project_withdrawn {
+        return Announced::Withdrawn;
+    }
+    content
         .project_digest
         .filter(|digest| is_project_digest(digest))
+        .map_or(Announced::Nothing, Announced::Digest)
 }
 
 fn d_tag(event: &nostr::Event) -> Option<&str> {
@@ -289,14 +402,14 @@ fn d_tag(event: &nostr::Event) -> Option<&str> {
     })
 }
 
-/// The `project_digest` of the newest signed kind:30177 by `owner` at `agent`
-/// among `events`. Events with a bad signature, another author, kind or d tag
-/// are ignored; ties on `created_at` go to the lowest id, as NIP-01 keeps.
-pub(crate) fn relay_head_digest(
+/// What the newest signed kind:30177 by `owner` at `agent` among `events`
+/// announces. Events with a bad signature, another author, kind or d tag are
+/// ignored; ties on `created_at` go to the lowest id, as NIP-01 keeps.
+pub(crate) fn relay_head(
     events: &[nostr::Event],
     owner: &nostr::PublicKey,
     agent: &str,
-) -> Option<String> {
+) -> Announced {
     events
         .iter()
         .filter(|event| {
@@ -310,34 +423,45 @@ pub(crate) fn relay_head_digest(
                 .cmp(&a.created_at)
                 .then_with(|| a.id.cmp(&b.id))
         })
-        .and_then(|head| content_digest(&head.content))
+        .map_or(Announced::Nothing, |head| content_announced(&head.content))
 }
 
 /// The flush loop's publish-time guard for one pending row.
 ///
-/// Anything but a kind:30177 whose content has no valid `project_digest`
-/// proceeds untouched. For such a row the relay head at
-/// `{kinds:[30177], authors:[owner], #d:[agent]}` is read first:
+/// Anything but a kind:30177, and a kind:30177 whose digest is this
+/// computer's own verified public project's, proceeds untouched. Every other
+/// kind:30177 (digest-less, marked, or carrying another computer's digest)
+/// reads the relay head at `{kinds:[30177], authors:[owner], #d:[agent]}`:
 /// - read failure: skip (fail closed), logged once per agent;
-/// - no head, or a head without a digest: proceed;
-/// - a head with a digest: `hook` decides; a carry publishes the corrected
-///   retained head in place of this row, provided it now carries a digest.
+/// - otherwise `hook` reconciles ([`apply_relay_head`]); a correction
+///   publishes the retained head in place of this row, and a digest is never
+///   published over a relay marker unless it is this computer's own.
 pub(crate) async fn guard_managed_agent_withdrawal(
     current: &RetainedEvent,
     state: &AppState,
     relay_api_base: &str,
     db_path: &Path,
     owner_keys: &nostr::Keys,
-    hook: CarryHook<'_>,
+    hook: &dyn CarryHook,
 ) -> Result<FlushGuard, String> {
-    if current.kind != KIND_MANAGED_AGENT || content_digest(&current.content).is_some() {
+    if current.kind != KIND_MANAGED_AGENT {
         return Ok(FlushGuard::Proceed);
+    }
+    let agent = current.d_tag.as_str();
+    let row = content_announced(&current.content);
+    match hook.backed(agent, &row) {
+        Ok(true) => return Ok(FlushGuard::Proceed),
+        Ok(false) => {}
+        Err(error) => {
+            tracing::warn!(agent, %error, "withholding a kind:30177: the local association could not be read");
+            return Ok(FlushGuard::Skip);
+        }
     }
     let owner = owner_keys.public_key();
     let filter = serde_json::json!({
         "kinds": [KIND_MANAGED_AGENT],
         "authors": [owner.to_hex()],
-        "#d": [current.d_tag],
+        "#d": [agent],
     });
     let events = match crate::relay::query_relay_at_with_keys(
         state,
@@ -350,32 +474,41 @@ pub(crate) async fn guard_managed_agent_withdrawal(
     {
         Ok(events) => events,
         Err(error) => {
-            log_read_failure_once(&current.d_tag, &error);
+            log_read_failure_once(agent, &error);
             return Ok(FlushGuard::Skip);
         }
     };
-    clear_read_failure(&current.d_tag);
-    let Some(relay_digest) = relay_head_digest(&events, &owner, &current.d_tag) else {
-        return Ok(FlushGuard::Proceed);
-    };
-    match hook(db_path, owner_keys, &current.d_tag, &relay_digest) {
+    clear_read_failure(agent);
+    let head = relay_head(&events, &owner, agent);
+    match hook.reconcile(db_path, owner_keys, agent, &row, &head) {
         Ok(CarryHookOutcome::Publish) => Ok(FlushGuard::Proceed),
         Ok(CarryHookOutcome::Withhold) => Ok(FlushGuard::Skip),
-        Ok(CarryHookOutcome::Carried) => {
+        Ok(CarryHookOutcome::Corrected) => {
             let conn = open_retention_db(db_path)?;
-            let head = get_retained_event(&conn, current.kind, &current.pubkey, &current.d_tag)?;
-            Ok(match head {
-                Some(head) if head.pending_sync && content_digest(&head.content).is_some() => {
-                    FlushGuard::Replaced(head)
+            let Some(corrected) = get_retained_event(&conn, current.kind, &current.pubkey, agent)?
+                .filter(|corrected| corrected.pending_sync)
+            else {
+                return Ok(FlushGuard::Skip);
+            };
+            let announced = content_announced(&corrected.content);
+            let safe = match (&head, &announced) {
+                (Announced::Digest(_), Announced::Nothing) => false,
+                (Announced::Withdrawn, Announced::Digest(_)) => {
+                    hook.backed(agent, &announced).unwrap_or(false)
                 }
-                _ => FlushGuard::Skip,
+                _ => true,
+            };
+            Ok(if safe {
+                FlushGuard::Replaced(corrected)
+            } else {
+                FlushGuard::Skip
             })
         }
         Err(error) => {
             tracing::warn!(
-                agent = %current.d_tag,
+                agent,
                 %error,
-                "withholding a kind:30177 without a project digest: carrying the published association failed"
+                "withholding a kind:30177: reconciling the published association failed"
             );
             Ok(FlushGuard::Skip)
         }

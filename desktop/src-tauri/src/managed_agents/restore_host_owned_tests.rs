@@ -46,6 +46,7 @@ fn record(
         project_ref: None,
         project_public: None,
         carried_project_digest: None,
+        project_publication_withdrawn: false,
         created_at: "now".to_string(),
         updated_at: "now".to_string(),
         last_started_at: None,

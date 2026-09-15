@@ -833,6 +833,7 @@ pub async fn create_managed_agent(
             project_ref: None,
             project_public: None,
             carried_project_digest: None,
+            project_publication_withdrawn: false,
             env_vars: input.env_vars.clone(),
             created_at: now_iso(),
             updated_at: now_iso(),
@@ -1020,8 +1021,7 @@ pub async fn stop_managed_agent(
 
         {
             let record = find_managed_agent_mut(&mut records, &pubkey)?;
-            // Remote agents are stopped via !shutdown @mention from the frontend,
-            // not via this backend command. Reject the call.
+            // Remote agents are stopped via !shutdown @mention from the frontend, not here.
             if record.backend != BackendKind::Local {
                 return Err(
                     "remote agents are stopped via !shutdown message, not this command".to_string(),

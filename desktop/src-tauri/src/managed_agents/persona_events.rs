@@ -244,7 +244,7 @@ pub async fn flush_active_pending_events(
     state: &AppState,
 ) -> Result<u32, String> {
     let scope = crate::managed_agents::retention::active_retention_scope(app, state)?;
-    let carry = crate::managed_agents::project_association_carry::app_carry_hook(app.clone());
+    let carry = crate::managed_agents::project_association_carry::AppCarryHook(app.clone());
     flush_pending_events_at(
         &scope.db_path,
         state,
@@ -270,9 +270,10 @@ pub fn active_pending_event(
     )
 }
 
-/// With `carry`, a pending kind:30177 without a `project_digest` is first
-/// checked against the relay head at its address so this computer never
-/// withdraws another computer's project association (see
+/// With `carry`, a pending kind:30177 not backed by this computer's own
+/// verified public project is first checked against the relay head at its
+/// address, so this computer never withdraws another computer's project
+/// association nor republishes a withdrawn one (see
 /// [`crate::managed_agents::project_association_carry::guard_managed_agent_withdrawal`]).
 /// `None` publishes every row as retained.
 pub(crate) async fn flush_pending_events_at(
@@ -280,7 +281,7 @@ pub(crate) async fn flush_pending_events_at(
     state: &AppState,
     relay_url: &str,
     owner_keys: &nostr::Keys,
-    carry: Option<crate::managed_agents::project_association_carry::CarryHook<'_>>,
+    carry: Option<&dyn crate::managed_agents::project_association_carry::CarryHook>,
 ) -> Result<u32, String> {
     use crate::managed_agents::retention::{
         deferred_behind_failed_tombstone, get_pending_sync, get_retained_event, mark_synced,
