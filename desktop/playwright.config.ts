@@ -45,6 +45,8 @@ export default defineConfig({
         "**/l25-provider-project-ref.spec.ts",
         "**/role-packs-project.spec.ts",
         "**/project-agents-tab.spec.ts",
+        // Project agents and hiring: association, borrowed, lead picker, roster.
+        "**/project-agent-hiring.spec.ts",
         "**/coding-session-reachability.spec.ts",
         "**/coding-session-model-picker.spec.ts",
         "**/coding-session-capacity.spec.ts",

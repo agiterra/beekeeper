@@ -309,6 +309,7 @@ fn resolve_effective_agent_env_user_env_wins_over_structured_fields() {
         persona_team_dir: None,
         persona_name_in_team: None,
         home_role: None,
+        project_ref: None,
         created_at: String::new(),
         updated_at: String::new(),
         last_started_at: None,

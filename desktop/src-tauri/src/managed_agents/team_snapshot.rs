@@ -362,6 +362,7 @@ mod tests {
             persona_team_dir: None,
             persona_name_in_team: None,
             home_role: None,
+            project_ref: None,
             created_at: "2024-01-01T00:00:00Z".to_string(),
             updated_at: "2024-01-02T00:00:00Z".to_string(),
             last_started_at: None,

@@ -4,7 +4,7 @@
 
 use super::*;
 use crate::commands::project_git_exec::build_git_auth_config_for_keys;
-use crate::managed_agents::ManagedAgentRecord;
+use crate::managed_agents::{project_agent_association as association, ManagedAgentRecord};
 use nostr::nips::nip44;
 
 #[path = "project_team_setup_activation_channel.rs"]
@@ -497,7 +497,7 @@ pub(super) fn install_adopted_roles(
             })?
             .map_err(|error| error.message)
     };
-    let result = crew_roles::install_role_packs_in_named_team(
+    let mut result = crew_roles::install_role_packs_in_named_team(
         &scan,
         definitions,
         agents,
@@ -509,8 +509,11 @@ pub(super) fn install_adopted_roles(
         &format!("Project team {}", draft.project_ref),
     )
     .map_err(|error| external(error.detail))?;
+    association::associate_installation(&mut result.agents, &draft.project_ref, &result.installed)
+        .map_err(invalid)?;
     save_personas(app, &result.definitions).map_err(external)?;
     save_managed_agents(app, &result.agents).map_err(external)?;
+    association::retain_installed_agents(app, &store, &result.agents, &result.installed);
     let mut next_teams: Vec<_> = teams
         .into_iter()
         .filter(|team| team.id != result.team.id)
@@ -695,9 +698,10 @@ pub async fn project_team_setup_install_adopted_roles(
         }
         verify_context(&state, &scope)?;
         save_journal(&draft, &journal)?;
-        let install_draft = draft.clone();
+        let (install_app, install_draft) = (app.clone(), draft.clone());
         let updated = tokio::task::spawn_blocking(move || {
-            install_adopted_roles(&app, &install_draft, &mut journal, &keys).map(|_| journal)
+            install_adopted_roles(&install_app, &install_draft, &mut journal, &keys)
+                .map(|_| journal)
         })
         .await
         .map_err(|error| external(error.to_string()))??;
@@ -705,6 +709,12 @@ pub async fn project_team_setup_install_adopted_roles(
         save_journal(&draft, &updated)?;
         journal = updated;
     }
+    // Journals installed by an earlier build gain their association here too.
+    let owner = scope.owner.clone();
+    let _ = tokio::task::spawn_blocking(move || {
+        association::backfill_project_agents_logged(&app, &owner)
+    })
+    .await;
     verify_context(&state, &scope)?;
     Ok(activation(&journal))
 }
@@ -933,6 +943,8 @@ pub async fn project_team_setup_start_lead(
         Some("lead".to_string()),
         Some(exact_project_pack_source(&source)),
         None,
+        Some(draft.project_ref.clone()),
+        Some(true),
     )
     .await
     .map_err(external)?;

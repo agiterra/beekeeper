@@ -323,6 +323,32 @@ test("Team: flush, then the launch against the existing umbrella with the prompt
   assert.deepEqual(run.navigations[0][2], { replace: true });
 });
 
+test("Team: the launch carries the project's agents here as the lead's hire roster, not just the lead", async () => {
+  // The bug: Start passed the lead's seat alone, so the first turn always
+  // said nobody else was on this computer, even with Builder and Verifier
+  // installed for this very project.
+  const roster = [
+    { pubkey: AGENT, name: "Fable", role: "lead" },
+    { pubkey: "b".repeat(64), name: "Builder", role: "builder" },
+  ];
+  const run = await press({
+    setup: {
+      mode: "team",
+      lead: FABLE,
+      hireRoster: roster,
+      projectName: "Beekeeper",
+    },
+  });
+  const [, input] = run.calls.find(([name]) => name === "launch");
+  assert.deepEqual(input.hireRoster, {
+    projectRef: "30621:owner:beekeeper",
+    projectName: "Beekeeper",
+    agents: roster,
+  });
+  // Still one seat: the roster is an offer, never a launch list (D14).
+  assert.equal(input.seats.length, 1);
+});
+
 test("Team with no agent picked starts nothing, and says so", async () => {
   const run = await press({
     setup: { mode: "team", lead: { kind: "unset" } },

@@ -400,3 +400,52 @@ fn retain_agent_record_is_noop_when_unchanged() {
         "no pending_sync churn for an unchanged record"
     );
 }
+
+/// Associating an agent with a project changes its published projection, so
+/// the shared engine re-queues its kind:30177 — that is how the association
+/// reaches other computers and a lead's CLI.
+#[test]
+fn project_association_re_retains_identity_record() {
+    let dir = TempDir::new().unwrap();
+    let keys = nostr::Keys::generate();
+    let conn = open_retention_db(&dir.path().join("retention.db")).unwrap();
+    let owner = keys.public_key().to_hex();
+    let pubkey = "7".repeat(64);
+    let mut record = sample_record(&pubkey, "Builder");
+    record.home_role = Some("builder".to_string());
+
+    assert!(retain_agent_record(&conn, &keys, &record).unwrap());
+    let first = get_retained_event(&conn, KIND_MANAGED_AGENT, &owner, &pubkey)
+        .unwrap()
+        .unwrap();
+    mark_synced(
+        &conn,
+        first.kind,
+        &first.pubkey,
+        &first.d_tag,
+        first.created_at,
+        &first.content,
+    )
+    .unwrap();
+
+    let project = format!("30621:{}:tank-loop", "ab".repeat(32));
+    record.project_ref = Some(project.clone());
+    assert!(
+        retain_agent_record(&conn, &keys, &record).unwrap(),
+        "an association change must re-retain"
+    );
+    let row = get_retained_event(&conn, KIND_MANAGED_AGENT, &owner, &pubkey)
+        .unwrap()
+        .unwrap();
+    assert!(
+        row.pending_sync,
+        "an association change must queue a republish"
+    );
+    let digest = buzz_core_pkg::project_agent_association::project_agent_digest(&project).unwrap();
+    assert!(row.content.contains(&digest));
+    assert!(!row.content.contains("tank-loop"));
+    assert!(
+        !retain_agent_record(&conn, &keys, &record).unwrap(),
+        "re-applying the same association is a no-op"
+    );
+}

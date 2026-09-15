@@ -103,6 +103,22 @@ test("a shared agent is counted apart from the ones set up on this computer", ()
   assert.equal(summary.agentsLocal + summary.agentsShared, summary.agents);
 });
 
+test("identities in sessions that are not project agents are counted apart, never as agents", () => {
+  const bob = agent({ pubkey: "b".repeat(64), name: "Bob" });
+  const summary = rolesPageSummary(
+    view({
+      roles: [
+        role({ agents: [agent()], nonProjectAgents: [bob] }),
+        // The same borrowed identity under a second role is one identity.
+        role({ role: "runner", nonProjectAgents: [bob] }),
+      ],
+    }),
+    snapshots(),
+  );
+  assert.equal(summary.agents, 1);
+  assert.equal(summary.nonProjectAgents, 1);
+});
+
 test("a seat filed under both a role and a project is one open session", () => {
   const only = seat();
   const summary = rolesPageSummary(
@@ -170,6 +186,7 @@ test("an empty project counts to zero rather than to nothing", () => {
     agents: 0,
     agentsLocal: 0,
     agentsShared: 0,
+    nonProjectAgents: 0,
     openSessions: 0,
     reports: 0,
     unconfirmed: 0,

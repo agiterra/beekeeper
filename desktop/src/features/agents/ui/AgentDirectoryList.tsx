@@ -32,27 +32,29 @@ import {
   AGENT_FILTER_PROJECT_GROUP_LABEL,
   AGENT_FILTER_PROJECT_TESTID,
   AGENT_FILTER_ROLE_TESTID,
-  AGENT_FILTER_STATUS_INSTALLED_FOR_PROJECT,
   AGENT_FILTER_STATUS_NOT_SEATED,
+  AGENT_FILTER_STATUS_PROJECT_AGENT,
   AGENT_FILTER_STATUS_RUNNING,
   AGENT_FILTER_STATUS_SEATED,
   AGENT_FILTER_STATUS_STOPPED,
   AGENT_FILTER_STATUS_TESTID,
   AGENT_INSTALLED_HERE_NO,
-  AGENT_ROW_INSTALLED_FOR_TESTID,
   AGENT_ROW_LAUNCHES_AS_TESTID,
   AGENT_ROW_NAME_TESTID,
   AGENT_ROW_NOT_INSTALLED_TESTID,
   AGENT_ROW_PACK_TESTID,
+  AGENT_ROW_PROJECT_TESTID,
   AGENT_ROW_ROLE_HISTORY_TESTID,
   AGENT_ROW_SEAT_TESTID,
   AGENT_ROW_TESTID,
+  AGENT_ROW_UNASSOCIATED_TESTID,
   agentDirectoryErrorText,
+  agentProjectText,
   currentSeatText,
   installationsErrorText,
-  installedForText,
   launchesAsText,
   seatNoticeText,
+  unassociatedInstallationText,
 } from "./agentDirectoryCopy";
 import {
   AgentDirectoryRenameButton,
@@ -147,12 +149,12 @@ function AgentDirectoryListSkeleton() {
 }
 
 /**
- * Installed project agents can be renamed from their row. A wire-only agent
- * is not this computer's to rename, and an agent no project installed keeps
- * its existing edit paths.
+ * Any agent with a managed record on this computer can be renamed from its
+ * row (native `update_managed_agent` needs that record). A wire-only agent is
+ * not this computer's to rename.
  */
 function canRenameFromRow(row: AgentDirectoryRow): boolean {
-  return row.isInstalled && row.installedProjects.length > 0;
+  return row.isInstalled;
 }
 
 function AgentDirectoryRowButton({
@@ -173,14 +175,19 @@ function AgentDirectoryRowButton({
   reserveActionSpace: boolean;
 }) {
   const packText = agentRowPackText(row);
-  const matching = installationsForProject(row, projectId);
-  const installedText = installedForText(
+  const matching = installationsForProject(
+    { installedProjects: row.unassociatedInstallations },
+    projectId,
+  );
+  const unassociatedText = unassociatedInstallationText(
     matching.length > 0
       ? [
           ...matching,
-          ...row.installedProjects.filter((entry) => !matching.includes(entry)),
+          ...row.unassociatedInstallations.filter(
+            (entry) => !matching.includes(entry),
+          ),
         ]
-      : row.installedProjects,
+      : row.unassociatedInstallations,
   );
   return (
     <button
@@ -212,12 +219,19 @@ function AgentDirectoryRowButton({
           </span>
         ) : null}
       </div>
-      {installedText ? (
+      <span
+        className="min-w-0 break-words text-sm text-foreground"
+        data-project-ref={row.project?.projectRef ?? undefined}
+        data-testid={AGENT_ROW_PROJECT_TESTID}
+      >
+        {agentProjectText(row.project, row.homeRole, row.projectKnown)}
+      </span>
+      {unassociatedText ? (
         <span
-          className="text-sm text-foreground"
-          data-testid={AGENT_ROW_INSTALLED_FOR_TESTID}
+          className="min-w-0 break-words text-sm text-amber-800 dark:text-amber-400"
+          data-testid={AGENT_ROW_UNASSOCIATED_TESTID}
         >
-          {installedText}
+          {unassociatedText}
         </span>
       ) : null}
       {row.needsRestart ? (
@@ -283,7 +297,7 @@ export function AgentDirectoryList({
   isLoading: boolean;
   error: string | null;
   seatNotice: { message: string; detail: string } | null;
-  /** The setup-journal read failed; installed-for facts are missing. */
+  /** The setup-journal read failed; missing-association warnings are absent. */
   installationsError?: string | null;
 }) {
   const roleOptions = React.useMemo(() => {
@@ -363,8 +377,8 @@ export function AgentDirectoryList({
           <option value="stopped">{AGENT_FILTER_STATUS_STOPPED}</option>
           <option value="seated">{AGENT_FILTER_STATUS_SEATED}</option>
           <option value="not-seated">{AGENT_FILTER_STATUS_NOT_SEATED}</option>
-          <option value="installed-for-project">
-            {AGENT_FILTER_STATUS_INSTALLED_FOR_PROJECT}
+          <option value="project-agent">
+            {AGENT_FILTER_STATUS_PROJECT_AGENT}
           </option>
         </select>
 

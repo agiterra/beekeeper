@@ -2013,6 +2013,15 @@ pub fn hire_refusal_remedy(code: &str) -> Option<&'static str> {
             "ask the operator to install team roles on the Agents screen: this computer holds no \
              identity for that role"
         }
+        // Not a retry and not a different role: the host seats only agents
+        // that belong to the session's project, and a matching role name on
+        // another project's agent is never a substitute (borrowing is refused).
+        "HIRE_NO_PROJECT_AGENT" => {
+            "run `bee projects agents` to see this project's agents; the host seats only agents \
+             that belong to the session's project, so ask the operator to install project roles \
+             or associate an agent on the project's Agents tab; do not hire a different role to \
+             get around it"
+        }
         // Not an install and not a retry: the seat the lead wanted is already
         // sitting in this umbrella, and the reason names it.
         "HIRE_ROLE_BUSY" => {

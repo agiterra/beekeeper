@@ -67,6 +67,8 @@ import {
   ROLES_UNCERTAINTY_NONE,
   rolesErrorSentence,
   rolesScopeText,
+  nonProjectAgentBadge,
+  ROLE_NON_PROJECT_AGENTS_LABEL,
   roleSkillsSummary,
   roleVersionChip,
   roleVersionsSummary,
@@ -87,7 +89,9 @@ const JARGON =
 test("the empty states are the usability spec's exact words", () => {
   assert.equal(ROLES_TITLE, "Roles");
   assert.equal(ROLE_SKILLS_EMPTY, "No skills listed.");
-  assert.equal(ROLE_AGENTS_EMPTY, "No agents yet.");
+  // Absence is scoped to what this computer can see: another computer may
+  // hold this project's agent for the role.
+  assert.equal(ROLE_AGENTS_EMPTY, "No project agents on this computer.");
   assert.equal(
     ROLE_QUIET,
     "No agents, sessions or reports observed for this role.",
@@ -143,6 +147,10 @@ test("the primary copy carries none of the protocol vocabulary", () => {
     AGENT_SHARED_TITLE,
     AGENT_CHIP_PACK_UNKNOWN_TITLE,
     ROLES_AGENTS_POINTER,
+    ROLE_NON_PROJECT_AGENTS_LABEL,
+    nonProjectAgentBadge("not-associated").title,
+    nonProjectAgentBadge("other-project").title,
+    nonProjectAgentBadge("unconfirmed").title,
     ROLES_UNCERTAINTY_NONE,
     PACKS_SOURCE_MIXED,
     packsSourceSentence("Beekeeper", 0, {
@@ -832,7 +840,26 @@ test("the scope line splits the agent count instead of presenting a roster", () 
   assert.equal(rolesScopeText(3, 0), "3 on this computer");
   assert.equal(rolesScopeText(3, 2), "3 on this computer · 2 shared");
   assert.equal(rolesScopeText(0, 1), "0 on this computer · 1 shared");
-  assert.match(ROLES_SCOPE_TITLE, /not a complete roster\.$/);
+  assert.equal(
+    rolesScopeText(2, 0, 1),
+    "2 on this computer · 1 more in sessions, not a project agent",
+  );
+  assert.equal(
+    rolesScopeText(0, 0, 3),
+    "0 on this computer · 3 more in sessions, not project agents",
+  );
+  assert.match(ROLES_SCOPE_TITLE, /^Counted agents are this project's agents/);
+  assert.match(ROLES_SCOPE_TITLE, /Agents tab lists every project agent/);
+  assert.equal(
+    nonProjectAgentBadge("not-associated").text,
+    "not a project agent",
+  );
+  assert.match(
+    nonProjectAgentBadge("not-associated").title,
+    /project lead can't hire it\.$/,
+  );
+  assert.match(nonProjectAgentBadge("other-project").title, /isn't borrowed/);
+  assert.equal(nonProjectAgentBadge("unconfirmed").text, "shared");
   assert.equal(AGENT_SHARED_BADGE, "shared");
   assert.match(AGENT_SHARED_TITLE, /not set up on this computer/);
   assert.match(AGENT_CHIP_PACK_UNKNOWN_TITLE, /not known here\.$/);

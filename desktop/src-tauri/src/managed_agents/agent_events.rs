@@ -23,6 +23,7 @@
 //!   mutate on every start/stop and describe transient process state.
 
 use buzz_core_pkg::kind::KIND_MANAGED_AGENT;
+use buzz_core_pkg::project_agent_association::project_agent_digest;
 use nostr::{EventBuilder, Kind, Tag};
 use serde::{Deserialize, Serialize};
 
@@ -57,6 +58,16 @@ pub struct ManagedAgentEventContent {
     /// public keys, not secrets.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub respond_to_allowlist: Vec<String>,
+    /// The agent's primary role slug, when the record has one. Public: the
+    /// role is what a project's lead hires by.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub home_role: Option<String>,
+    /// [`project_agent_digest`] of the record's `project_ref`, never the
+    /// coordinate itself: this event is readable by every relay member and a
+    /// project may be private. A claim by the event's author — readers check
+    /// the author's authority over the project before believing it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_digest: Option<String>,
 }
 
 /// Project a `ManagedAgentRecord` onto the content fields published in
@@ -103,6 +114,15 @@ pub fn agent_event_content(record: &ManagedAgentRecord) -> ManagedAgentEventCont
         parallelism: record.parallelism,
         respond_to: record.respond_to,
         respond_to_allowlist: record.respond_to_allowlist.clone(),
+        home_role: record
+            .home_role
+            .as_deref()
+            .map(str::trim)
+            .filter(|role| !role.is_empty())
+            .map(str::to_owned),
+        // A malformed coordinate publishes no digest rather than a digest of
+        // a guess (`project_agent_digest` answers `None`).
+        project_digest: record.project_ref.as_deref().and_then(project_agent_digest),
     }
 }
 
@@ -199,6 +219,7 @@ mod tests {
             persona_team_dir: None,
             persona_name_in_team: None,
             home_role: None,
+            project_ref: None,
             created_at: "2025-01-01T00:00:00Z".to_string(),
             updated_at: "2025-01-01T00:00:00Z".to_string(),
             last_started_at: Some("2025-01-02T00:00:00Z".to_string()),
@@ -456,6 +477,135 @@ mod tests {
         assert!(!json.contains("env_vars"));
         assert!(!json.contains("agent_command"));
         assert!(!json.contains("backend"));
+    }
+
+    const PROJECT: &str =
+        "30621:ABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABAB:tank-loop";
+
+    /// The opt-IN allowlist, pinned as a key set: a new projected key must be
+    /// added here deliberately, next to the exclusion test above.
+    #[test]
+    fn projection_keys_are_exactly_the_allowlist() {
+        use buzz_core_pkg::project_agent_association::{
+            PROJECT_AGENT_DIGEST_CONTENT_KEY, PROJECT_AGENT_ROLE_CONTENT_KEY,
+        };
+        let mut agent = sample_agent();
+        agent.persona_id = None;
+        agent.home_role = Some("builder".to_string());
+        agent.project_ref = Some(PROJECT.to_string());
+        let value = serde_json::to_value(agent_event_content(&agent)).unwrap();
+        let mut keys: Vec<&str> = value
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        keys.sort_unstable();
+        let mut allowed = vec![
+            "name",
+            "system_prompt",
+            "model",
+            "provider",
+            "persona_source_version",
+            "parallelism",
+            "respond_to",
+            "respond_to_allowlist",
+            PROJECT_AGENT_ROLE_CONTENT_KEY,
+            PROJECT_AGENT_DIGEST_CONTENT_KEY,
+        ];
+        allowed.sort_unstable();
+        assert_eq!(keys, allowed);
+    }
+
+    /// The project association rides as a digest under the core key names;
+    /// the coordinate — owner and slug — never appears anywhere in content.
+    #[test]
+    fn project_association_publishes_digest_never_the_coordinate() {
+        use buzz_core_pkg::project_agent_association::{
+            PROJECT_AGENT_DIGEST_CONTENT_KEY, PROJECT_AGENT_ROLE_CONTENT_KEY,
+        };
+        let mut agent = sample_agent();
+        agent.home_role = Some("builder".to_string());
+        agent.project_ref = Some(PROJECT.to_string());
+        let event = build_agent_event(&agent)
+            .unwrap()
+            .sign_with_keys(&nostr::Keys::generate())
+            .unwrap();
+        let value: serde_json::Value = serde_json::from_str(&event.content).unwrap();
+        assert_eq!(
+            value[PROJECT_AGENT_DIGEST_CONTENT_KEY],
+            serde_json::json!(project_agent_digest(PROJECT).unwrap())
+        );
+        assert_eq!(value[PROJECT_AGENT_ROLE_CONTENT_KEY], "builder");
+        let lowered = event.content.to_ascii_lowercase();
+        assert!(!lowered.contains("tank-loop"), "leaked the project slug");
+        assert!(
+            !lowered.contains(&"ab".repeat(32)),
+            "leaked the project owner"
+        );
+        assert!(!event.content.contains("30621:"), "leaked a coordinate");
+        assert!(!event.content.contains("project_ref"));
+    }
+
+    #[test]
+    fn unassociated_or_malformed_association_publishes_no_digest() {
+        let mut agent = sample_agent();
+        let json = serde_json::to_string(&agent_event_content(&agent)).unwrap();
+        assert!(!json.contains("project_digest"));
+        assert!(!json.contains("home_role"));
+        agent.project_ref = Some("30621:not-hex:tank-loop".to_string());
+        agent.home_role = Some("  ".to_string());
+        let json = serde_json::to_string(&agent_event_content(&agent)).unwrap();
+        assert!(!json.contains("project_digest"), "digest of a guess");
+        assert!(!json.contains("home_role"), "blank role is no role");
+    }
+
+    /// Retention republishes when content differs, so an association change
+    /// must change the projection.
+    #[test]
+    fn projection_changes_when_association_changes() {
+        let agent = sample_agent();
+        let mut associated = agent.clone();
+        associated.project_ref = Some(PROJECT.to_string());
+        assert_ne!(
+            agent_event_content(&agent),
+            agent_event_content(&associated)
+        );
+        let mut other = associated.clone();
+        other.project_ref = Some(PROJECT.replace("tank-loop", "other"));
+        assert_ne!(
+            agent_event_content(&associated),
+            agent_event_content(&other)
+        );
+        let mut roled = agent.clone();
+        roled.home_role = Some("verifier".to_string());
+        assert_ne!(agent_event_content(&agent), agent_event_content(&roled));
+    }
+
+    /// Inbound parsing tolerates the new keys and events that predate them.
+    #[test]
+    fn from_event_tolerates_association_fields_and_their_absence() {
+        use nostr::{EventBuilder, Keys, Kind, Tag};
+        let parse = |content: serde_json::Value| {
+            let event =
+                EventBuilder::new(Kind::Custom(KIND_MANAGED_AGENT as u16), content.to_string())
+                    .tags(vec![Tag::parse(["d", "agentpubkeyhex"]).unwrap()])
+                    .sign_with_keys(&Keys::generate())
+                    .unwrap();
+            managed_agent_content_from_event(&event).unwrap()
+        };
+        let digest = project_agent_digest(PROJECT).unwrap();
+        let parsed = parse(serde_json::json!({
+            "name": "Agent", "parallelism": 1, "respond_to": "owner-only",
+            "home_role": "builder", "project_digest": digest,
+        }));
+        assert_eq!(parsed.home_role.as_deref(), Some("builder"));
+        assert_eq!(parsed.project_digest.as_deref(), Some(digest.as_str()));
+        let legacy = parse(serde_json::json!({
+            "name": "Agent", "parallelism": 1, "respond_to": "owner-only",
+        }));
+        assert_eq!(legacy.home_role, None);
+        assert_eq!(legacy.project_digest, None);
     }
 
     #[test]

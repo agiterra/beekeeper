@@ -4,9 +4,12 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { installMockBridge } from "../helpers/bridge";
 import type { ProjectTeamSetupDraft } from "../../src/features/roles/lib/projectTeamSetup";
 import type { ProjectTeamSetupLaunch } from "../../src/features/roles/lib/projectTeamSetup";
+import type { MockManagedAgentSeed } from "../../src/testing/e2eBridge";
 
 const OWNER = "a1".repeat(32);
 const PROJECT = `30621:${OWNER}:general`;
+/** The lead identity the mocked installation records. */
+const LEAD_PUBKEY = "f".repeat(64);
 type FixtureWindow = Window & {
   __setupCalls: { command: string; args: Record<string, unknown> }[];
   __setupFailGet: boolean;
@@ -21,7 +24,11 @@ type FixtureWindow = Window & {
   };
 };
 
-async function openRoles(page: Page, failGet = false) {
+async function openRoles(
+  page: Page,
+  failGet = false,
+  managedAgents: MockManagedAgentSeed[] = [],
+) {
   await page.addInitScript(
     ({ owner }) => {
       window.__BUZZ_E2E_EXTRA_PROJECT_EVENTS__ = [
@@ -42,7 +49,7 @@ async function openRoles(page: Page, failGet = false) {
     },
     { owner: OWNER },
   );
-  await installMockBridge(page);
+  await installMockBridge(page, { managedAgents });
   await page.goto("/");
   await expect(page.getByTestId("project-group-general")).toBeVisible();
   await page.getByTestId("project-group-general").hover();
@@ -50,7 +57,7 @@ async function openRoles(page: Page, failGet = false) {
   await page.getByTestId("project-tab-packs").click();
   await expect(page.getByTestId("project-team-setup-open")).toBeVisible();
   await page.evaluate(
-    ({ projectRef, owner, failGet }) => {
+    ({ projectRef, owner, failGet, leadPubkey }) => {
       const w = window as unknown as FixtureWindow;
       const original = w.__TAURI_INTERNALS__.invoke.bind(w.__TAURI_INTERNALS__);
       let draft: ProjectTeamSetupDraft | null = null;
@@ -158,7 +165,7 @@ async function openRoles(page: Page, failGet = false) {
               installedRoles: [
                 {
                   role: "lead",
-                  agentPubkey: "f".repeat(64),
+                  agentPubkey: leadPubkey,
                   packRef: {
                     repo: `30617:${owner}:tankloop-packs-0123456789ab`,
                     sha: "c".repeat(40),
@@ -173,6 +180,7 @@ async function openRoles(page: Page, failGet = false) {
               status: "needs_channel",
               channelId: null,
               sessionRef: null,
+              leadPubkey,
               message:
                 "Create or select this project's session channel before starting its lead.",
             },
@@ -187,6 +195,7 @@ async function openRoles(page: Page, failGet = false) {
               status: "ready",
               channelId: "project-session-channel",
               sessionRef: null,
+              leadPubkey,
               message: "Project session channel recorded for this publication.",
             },
           };
@@ -200,6 +209,7 @@ async function openRoles(page: Page, failGet = false) {
               status: "started",
               channelId: String(args.channelId),
               sessionRef: "lead-session-1",
+              leadPubkey,
               message: "The reserved project lead is running.",
             },
           };
@@ -242,6 +252,7 @@ async function openRoles(page: Page, failGet = false) {
               status: "needs_channel",
               channelId: null,
               sessionRef: null,
+              leadPubkey,
               message: "Install roles before starting the lead.",
             },
           };
@@ -358,7 +369,7 @@ async function openRoles(page: Page, failGet = false) {
         };
       };
     },
-    { projectRef: PROJECT, owner: OWNER, failGet },
+    { projectRef: PROJECT, owner: OWNER, failGet, leadPubkey: LEAD_PUBKEY },
   );
   await page.getByTestId("project-team-setup-open").click();
 }
@@ -586,7 +597,18 @@ test("saving and reopening reverify the same separate copy; failed retry clears 
 test("checked draft publishes, installs the adopted source, and starts one project lead", async ({
   page,
 }) => {
-  await openRoles(page);
+  // Installation records the association on the lead's local record; the
+  // roster reads it back and only then offers to start the lead.
+  await openRoles(page, false, [
+    {
+      pubkey: LEAD_PUBKEY,
+      name: "Loom",
+      status: "stopped",
+      homeRole: "lead",
+      projectRef: PROJECT,
+      hasRolePack: true,
+    },
+  ]);
   const dialog = page.getByTestId("project-team-setup-dialog");
   await dialog
     .getByLabel("What should this project accomplish?")
@@ -616,18 +638,20 @@ test("checked draft publishes, installs the adopted source, and starts one proje
     dialog.getByRole("button", { name: "Install project roles" }),
   ).toBeVisible();
   await dialog.getByRole("button", { name: "Install project roles" }).click();
+  // The roster names the installed lead as this project's agent here.
+  const roster = dialog.getByTestId("project-team-setup-roster");
+  await expect(roster).toContainText("Loom");
+  await expect(roster).toHaveAttribute("data-roster", "ready");
+  // One action prepares the session channel and starts the lead.
   await expect(
-    dialog.getByTestId("project-team-setup-installed-roles"),
-  ).toContainText("lead");
-  await dialog
-    .getByRole("button", { name: "Create project session channel" })
-    .click();
+    dialog.getByRole("button", { name: "Create project session channel" }),
+  ).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Start the project lead" }).click();
+  const next = dialog.getByTestId("project-team-setup-roster-next");
+  await expect(next).toHaveAttribute("data-stage", "lead_started");
+  await expect(next).toContainText("Setup complete. Loom leads General.");
   await expect(
-    dialog.getByRole("button", { name: "Start project lead" }),
-  ).toBeVisible();
-  await dialog.getByRole("button", { name: "Start project lead" }).click();
-  await expect(
-    dialog.getByTestId("project-team-setup-lead-started"),
+    dialog.getByTestId("project-team-setup-lead-session-details"),
   ).toContainText("lead-session-1");
   await page.keyboard.press("Escape");
   await expect(dialog).not.toBeVisible();
@@ -636,10 +660,10 @@ test("checked draft publishes, installs the adopted source, and starts one proje
     dialog.getByTestId("project-team-setup-adopted-source"),
   ).toContainText("c".repeat(40));
   await expect(
-    dialog.getByTestId("project-team-setup-lead-started"),
+    dialog.getByTestId("project-team-setup-lead-session-details"),
   ).toContainText("lead-session-1");
   await expect(
-    dialog.getByRole("button", { name: "Create project session channel" }),
+    dialog.getByRole("button", { name: "Start the project lead" }),
   ).toHaveCount(0);
   const publicationCall = (await setupCalls(page)).find(
     (call) => call.command === "project_team_setup_start_publication",

@@ -229,6 +229,22 @@ fn lead_confirms_figures_and_inspects_before_asking() {
     }
 }
 
+/// The lead discovers its project's agents before hiring, and knows the host
+/// never seats another project's agent in their place.
+#[test]
+fn lead_discovers_project_agents_and_hires_only_within_the_project() {
+    let hire = shipped_text("lead/skills/hire/SKILL.md");
+    for contract in [
+        "`bee projects agents`",
+        "hire by role with `bee sessions hire`",
+        "The host seats only agents that belong to the session's project",
+        "never another project's agent",
+        "A refused hire names its remedy",
+    ] {
+        assert!(hire.contains(contract), "hire skill omits {contract:?}");
+    }
+}
+
 // Word-level scan: role text stays generic, so no agent, person, project or
 // model name may appear. A model name would pin work to one provider, and a
 // fixed reviewer count would make a team mandatory.

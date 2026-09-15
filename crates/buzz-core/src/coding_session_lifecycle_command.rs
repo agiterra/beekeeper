@@ -1065,8 +1065,10 @@ pub const HIRE_REFUSAL_PREFIX: &str = "hire refused: ";
 /// Every refusal code a host may answer a `session.hire` with.
 ///
 /// A refusal names which standing policy stopped the hire, so the lead can
-/// act on it rather than retry blindly. `HIRE_NO_IDENTITY` is the one whose
-/// remedy is the operator's ("install team roles"); `HIRE_ROLE_BUSY` and
+/// act on it rather than retry blindly. `HIRE_NO_IDENTITY` and
+/// `HIRE_NO_PROJECT_AGENT` are the ones whose remedy is the operator's
+/// ("install team roles", or associate an agent with the session's project);
+/// `HIRE_ROLE_BUSY` and
 /// `HIRE_MODEL_NOT_OFFERED` and `HIRE_STALE` are facts about the request the
 /// lead can fix by itself; the rest are policy.
 ///
@@ -1085,6 +1087,12 @@ pub const HIRE_REFUSAL_CODES: &[&str] = &[
     // No installed managed agent holds this home role at all. Only the
     // operator can fix this, by installing the role on this computer.
     "HIRE_NO_IDENTITY",
+    // The session belongs to a project and this computer holds no agent of
+    // that project with this primary role. Agents of the role that belong to
+    // another project (or to none) are never borrowed; the reason gives their
+    // count. Only the operator can fix this, by installing the project's roles
+    // or associating an agent with the project.
+    "HIRE_NO_PROJECT_AGENT",
     // This computer holds the role, and every identity that *is* it is
     // already seated in this umbrella. Nothing is broken and nothing needs
     // installing: the lead addresses the seat the reason names instead.
@@ -2659,6 +2667,19 @@ mod tests {
     fn no_route_is_a_refusal_code_of_its_own() {
         assert!(
             HIRE_REFUSAL_CODES.contains(&"HIRE_NO_ROUTE"),
+            "codes: {HIRE_REFUSAL_CODES:?}"
+        );
+    }
+
+    /// A project session whose host holds no agent of that project for the
+    /// role is refused with its own code, never answered by borrowing an agent
+    /// of another project that happens to hold the same role name, and never
+    /// folded into `HIRE_NO_IDENTITY`, whose remedy ("install team roles")
+    /// would not name the project association that is missing.
+    #[test]
+    fn no_project_agent_is_a_refusal_code_of_its_own() {
+        assert!(
+            HIRE_REFUSAL_CODES.contains(&"HIRE_NO_PROJECT_AGENT"),
             "codes: {HIRE_REFUSAL_CODES:?}"
         );
     }

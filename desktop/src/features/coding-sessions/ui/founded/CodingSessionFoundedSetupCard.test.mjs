@@ -190,6 +190,7 @@ function model(overrides = {}, calls = []) {
 async function mount({
   setup,
   onDiscard = () => {},
+  onOpenProjectAgents = null,
   onStart = () => {},
   projectRef = null,
 } = {}) {
@@ -211,6 +212,7 @@ async function mount({
       React.createElement(CodingSessionFoundedSetupCard, {
         channelId: CHANNEL_ID,
         onDiscard,
+        onOpenProjectAgents,
         onStart,
         projectRef,
         setup,
@@ -657,57 +659,103 @@ test("failed-attempt discard stays unavailable with its guard reason until histo
 
 const LOOM = `1c47d440${"0".repeat(56)}`;
 const KEYSTONE = `3a${"2".repeat(62)}`;
+const TANK_BUILDER = `2b${"1".repeat(62)}`;
+const BOB = `4d${"3".repeat(62)}`;
+const TANK_LOOP = `30621:${"a".repeat(64)}:tank-loop`;
+const BEEKEEPER = `30621:${"a".repeat(64)}:beekeeper`;
 const LOOM_CANDIDATE = {
   pubkey: LOOM,
   name: "Loom",
   role: "lead",
   model: "claude-opus-5",
+  projectRef: TANK_LOOP,
 };
+const TANK_BUILDER_CANDIDATE = {
+  pubkey: TANK_BUILDER,
+  name: "Builder",
+  role: "builder",
+  model: null,
+  projectRef: TANK_LOOP,
+};
+/** Another project's builder: same role name, never Tank Loop's. */
+const BOB_CANDIDATE = {
+  pubkey: BOB,
+  name: "Bob",
+  role: "builder",
+  model: null,
+  projectRef: BEEKEEPER,
+};
+/** A lead in no project. */
 const KEYSTONE_CANDIDATE = {
   pubkey: KEYSTONE,
   name: "Keystone",
   role: "lead",
   model: null,
+  projectRef: null,
 };
+const ALL_CANDIDATES = [
+  KEYSTONE_CANDIDATE,
+  BOB_CANDIDATE,
+  TANK_BUILDER_CANDIDATE,
+  LOOM_CANDIDATE,
+];
 
-/** Build the setup model's picker fields the way the hook does. */
+/** Build the setup model's picker fields the way the candidates hook does. */
 async function projectPickerModel({
-  installedRoles: journal,
+  candidates = ALL_CANDIDATES,
   projectRef,
   lead,
 }) {
-  // `installedRolesForProject` returns nothing without a project address.
-  const installedRoles = projectRef ? journal : [];
   const {
+    codingSessionCandidateExclusionSentence,
+    codingSessionLeadEmptySentence,
+    codingSessionProjectLeadDefault,
     groupCodingSessionCandidates,
-    codingSessionInstalledLeadDefault,
+    partitionCodingSessionCandidates,
     resolveCodingSessionLeadActor,
   } = await import("../../lib/codingSessionLeadCandidateGroups.ts");
-  const candidates = [KEYSTONE_CANDIDATE, LOOM_CANDIDATE];
+  const projectName = projectRef ? "Tank Loop" : null;
+  const { eligible, excluded } = partitionCodingSessionCandidates({
+    candidates,
+    projectRef,
+  });
   const actor = resolveCodingSessionLeadActor({
     selection: lead,
-    installedDefault: codingSessionInstalledLeadDefault({
-      candidates,
-      installedRoles,
+    defaultActor: codingSessionProjectLeadDefault({
+      candidates: eligible,
+      projectRef,
     }),
+    eligible,
   });
-  const picked = candidates.find((c) => c.pubkey === actor) ?? null;
+  const picked = eligible.find((c) => c.pubkey === actor) ?? null;
   const benchGroups = groupCodingSessionCandidates({
-    candidates: candidates.filter((c) => c.pubkey !== actor),
-    installedRoles,
+    candidates: eligible.filter((c) => c.pubkey !== actor),
     projectRef,
-    projectName: "Tank Loop",
+    projectName,
   });
+  const sentence = (surface) =>
+    codingSessionCandidateExclusionSentence({
+      excludedCount: excluded.length,
+      projectRef,
+      projectName,
+      surface,
+    });
   return model({
     mode: "team",
     governed: true,
     candidates,
     leadGroups: groupCodingSessionCandidates({
-      candidates,
-      installedRoles,
+      candidates: eligible,
       projectRef,
-      projectName: "Tank Loop",
+      projectName,
     }),
+    leadEmptySentence: codingSessionLeadEmptySentence({
+      eligibleCount: eligible.length,
+      projectRef,
+      projectName,
+    }),
+    leadExclusionSentence: sentence("lead"),
+    benchExclusionSentence: sentence("bench"),
     lead: picked
       ? {
           kind: "agent",
@@ -728,104 +776,127 @@ async function projectPickerModel({
   });
 }
 
-const TANK_LOOP = `30621:${"a".repeat(64)}:tank-loop`;
-const INSTALLED_LOOM = [{ role: "lead", agentPubkey: LOOM, packRef: {} }];
+const optionTexts = (select) =>
+  [...select.querySelectorAll("option")].map((o) => o.textContent);
 
-test("Who leads: the project's installed roles first, each with role and short pubkey", async () => {
+const benchHeadings = () =>
+  [
+    ...document.querySelectorAll(
+      '[data-testid="new-coding-session-bench-group"]',
+    ),
+  ].map((node) => node.textContent);
+
+test("Who leads: only the project's own agents, each with role and short pubkey; the rest are counted", async () => {
+  let opened = 0;
   const page = await mount({
     setup: await projectPickerModel({
-      installedRoles: INSTALLED_LOOM,
       projectRef: TANK_LOOP,
       lead: { actor: null, explicit: false },
     }),
     projectRef: TANK_LOOP,
+    onOpenProjectAgents: () => opened++,
   });
   const select = page.query("new-coding-session-lead-select");
   const groups = [...select.querySelectorAll("optgroup")];
   assert.deepEqual(
     groups.map((group) => group.label),
-    ["Tank Loop project roles", "Other agents on this computer"],
+    ["Tank Loop agents"],
   );
-  assert.deepEqual(
-    [...groups[0].querySelectorAll("option")].map((o) => o.textContent),
-    ["Loom · lead · 1c47d440…0000"],
-  );
-  assert.deepEqual(
-    [...groups[1].querySelectorAll("option")].map((o) => o.textContent),
-    [`Keystone · lead · ${KEYSTONE.slice(0, 8)}…${KEYSTONE.slice(-4)}`],
-  );
-  // Defaulted to the single installed lead, and the identity line says so.
+  // Bob is a builder too, and Keystone a lead: neither is Tank Loop's.
+  assert.deepEqual(optionTexts(groups[0]), [
+    `Builder · builder · ${TANK_BUILDER.slice(0, 8)}…${TANK_BUILDER.slice(-4)}`,
+    "Loom · lead · 1c47d440…0000",
+  ]);
+  // Defaulted to the project's single lead, and the identity line says so.
   assert.equal(select.value, LOOM);
   assert.match(
     page.query("new-coding-session-lead-identity").textContent,
     /Loom · 1c47d440/,
   );
-  // The bench excludes the lead; with no installed role left to bench it is
-  // one plain list again, not a lone "Other agents" heading.
-  const benchHeadings = () =>
-    [
-      ...document.querySelectorAll(
-        '[data-testid="new-coding-session-bench-group"]',
-      ),
-    ].map((node) => node.textContent);
-  assert.deepEqual(benchHeadings(), []);
-  // Pick Keystone instead: Loom goes to the bench, under the project heading.
-  await page.rerender({
-    setup: await projectPickerModel({
-      installedRoles: INSTALLED_LOOM,
-      projectRef: TANK_LOOP,
-      lead: { actor: KEYSTONE, explicit: true },
-    }),
-  });
-  assert.deepEqual(benchHeadings(), ["Tank Loop project roles"]);
-});
-
-test("Who leads: a pick made before the installed roles arrive is kept", async () => {
-  const page = await mount({
-    setup: await projectPickerModel({
-      installedRoles: [],
-      projectRef: TANK_LOOP,
-      lead: { actor: KEYSTONE, explicit: true },
-    }),
-    projectRef: TANK_LOOP,
-  });
-  assert.equal(page.query("new-coding-session-lead-select").value, KEYSTONE);
-  await page.rerender({
-    setup: await projectPickerModel({
-      installedRoles: INSTALLED_LOOM,
-      projectRef: TANK_LOOP,
-      lead: { actor: KEYSTONE, explicit: true },
-    }),
-  });
-  assert.equal(page.query("new-coding-session-lead-select").value, KEYSTONE);
+  assert.match(
+    page.query("new-coding-session-lead-excluded").textContent,
+    /^2 agents on this computer aren't Tank Loop agents, so they can't lead here\. Associate one on the project's Agents tab\./,
+  );
+  await page.click("new-coding-session-lead-open-agents");
+  assert.equal(opened, 1);
+  // The bench is the same set less the lead, with the same count.
+  assert.deepEqual(benchHeadings(), ["Tank Loop agents"]);
   assert.equal(
-    page.query("new-coding-session-lead-select").querySelectorAll("optgroup")
-      .length,
-    2,
-    "the late result still regroups the options",
+    page.has(`new-coding-session-bench-identity-${TANK_BUILDER}`),
+    true,
+  );
+  assert.equal(page.has(`new-coding-session-bench-identity-${BOB}`), false);
+  assert.match(
+    page.query("new-coding-session-bench-excluded").textContent,
+    /can't be benched here/,
   );
 });
 
-test("Who leads: no project keeps the flat name · role list and no default", async () => {
+test("Who leads: an explicit pick is kept; a pick that is not this project's reads as unset", async () => {
   const page = await mount({
     setup: await projectPickerModel({
-      installedRoles: INSTALLED_LOOM,
+      projectRef: TANK_LOOP,
+      lead: { actor: TANK_BUILDER, explicit: true },
+    }),
+    projectRef: TANK_LOOP,
+  });
+  assert.equal(
+    page.query("new-coding-session-lead-select").value,
+    TANK_BUILDER,
+  );
+  // Keystone was picked while the project was still unread; once it is read,
+  // Keystone is no Tank Loop agent: no lead, not the default either.
+  await page.rerender({
+    setup: await projectPickerModel({
+      projectRef: TANK_LOOP,
+      lead: { actor: KEYSTONE, explicit: true },
+    }),
+  });
+  assert.equal(page.query("new-coding-session-lead-select").value, "");
+  assert.equal(
+    page.query("new-coding-session-lead-identity").textContent,
+    "No lead picked yet",
+  );
+});
+
+test("Who leads: no project lists only agents in no project, flat, with no default", async () => {
+  const page = await mount({
+    setup: await projectPickerModel({
       projectRef: null,
       lead: { actor: null, explicit: false },
     }),
   });
   const select = page.query("new-coding-session-lead-select");
-  // No project means no installed lead to default to: the hook filters the
-  // journal by projectRef before it ever reaches the default.
   assert.equal(select.querySelectorAll("optgroup").length, 0);
-  assert.deepEqual(
-    [...select.querySelectorAll("option")].map((o) => o.textContent),
-    ["Pick an agent…", "Keystone · lead", "Loom · lead"],
-  );
+  assert.deepEqual(optionTexts(select), [
+    "Pick an agent…",
+    `Keystone · lead · ${KEYSTONE.slice(0, 8)}…${KEYSTONE.slice(-4)}`,
+  ]);
   assert.equal(select.value, "");
-  assert.equal(
-    document.querySelector('[data-testid="new-coding-session-bench-group"]'),
-    null,
+  assert.match(
+    page.query("new-coding-session-lead-excluded").textContent,
+    /3 agents on this computer belong to a project, so they can't lead in a session outside one\./,
+  );
+  // No project, no Agents tab to open.
+  assert.equal(page.has("new-coding-session-lead-open-agents"), false);
+  assert.deepEqual(benchHeadings(), []);
+});
+
+test("Who leads: a project with no agent of its own explains, and points at setup", async () => {
+  const page = await mount({
+    setup: await projectPickerModel({
+      candidates: [KEYSTONE_CANDIDATE, BOB_CANDIDATE],
+      projectRef: TANK_LOOP,
+      lead: { actor: null, explicit: false },
+    }),
+    projectRef: TANK_LOOP,
+  });
+  assert.deepEqual(optionTexts(page.query("new-coding-session-lead-select")), [
+    "Pick an agent…",
+  ]);
+  assert.match(
+    page.query("new-coding-session-lead-empty").textContent,
+    /No Tank Loop agent with a role is on this computer.*Agents tab.*Solo/,
   );
 });
 

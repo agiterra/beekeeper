@@ -82,6 +82,7 @@ export type CodingSessionFoundedStartSetup = Pick<
   | "canLaunch"
   | "candidates"
   | "draft"
+  | "hireRoster"
   | "lead"
   | "leadModel"
   | "launch"
@@ -89,6 +90,7 @@ export type CodingSessionFoundedStartSetup = Pick<
   | "mode"
   | "readiness"
   | "policySet"
+  | "projectName"
   | "refreshRuntimeTarget"
   | "selectedTarget"
   | "setIsPreparing"
@@ -144,6 +146,9 @@ export function codingSessionFoundedStartRepoRef(input: {
  * - **Team**: `launchCodingSessionCrew` against the existing umbrella —
  *   policy, one create for the lead, its grants, its first turn. The lead's
  *   worktree is cut by the launch's own step, before the create is signed.
+ *   The first turn names the agents this computer would seat for the
+ *   session's hires — its project's agents, or agents in no project — never
+ *   the launch seats alone, which are only the lead.
  *
  * `rememberWorkspace` and `repoRef` come from the click-time draft on both
  * branches. Both forget the drafts on success only: a refused create keeps
@@ -353,6 +358,11 @@ export function useCodingSessionFoundedStart(input: {
                 ? { name: worktreeName, source: setup.worktreeSource }
                 : null,
             existingUmbrella: { sessionRef, genesisRef },
+            hireRoster: {
+              projectRef,
+              projectName: setup.projectName ?? null,
+              agents: setup.hireRoster ?? [],
+            },
           },
           fresh,
         );

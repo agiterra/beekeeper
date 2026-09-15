@@ -18,6 +18,7 @@ pub mod packs;
 pub mod packs_cli;
 pub mod patches;
 pub mod pr;
+pub mod project_agents;
 pub mod projects;
 pub mod projects_cascade;
 pub mod pulse;

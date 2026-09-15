@@ -53,6 +53,7 @@ fn minimal_record() -> ManagedAgentRecord {
         persona_name_in_team: Some("SENTINEL_NAME_IN_TEAM".to_string()),       // MUST NOT appear
         // The role travels; the pack behind it does not.
         home_role: Some("builder".to_string()),
+        project_ref: None,
         created_at: "2024-01-01T00:00:00Z".to_string(),
         updated_at: "2024-01-02T00:00:00Z".to_string(),
         last_started_at: Some("2024-01-03T00:00:00Z".to_string()), // MUST NOT appear

@@ -20,6 +20,7 @@ import { useGlobalCodingSessionCatalog } from "../useCodingSessionCatalog";
 import { groupCodingSessionCatalog } from "../lib/codingSessionUmbrellaModel";
 import { useCodingSessionProviderCatalog } from "../useCodingSessionProviderCatalog";
 import { resolveCodingSessionHireCatalogSource } from "../lib/codingSessionHireCatalog";
+import { codingSessionHireAgentsFromManaged } from "../lib/codingSessionHireCandidates";
 
 /**
  * The one place `session.hire` is answered.
@@ -45,6 +46,13 @@ export function CodingSessionHireHost() {
   const identityQuery = useIdentityQuery();
   const channelsQuery = useChannelsQuery({ includeSessionTransports: true });
   const managedAgents = useManagedAgentsQuery();
+  // Every agent with its project association: a hire is answered only from
+  // the umbrella's own project's agents, so the association must not be
+  // dropped between the record and the decision.
+  const agents = React.useMemo(
+    () => codingSessionHireAgentsFromManaged(managedAgents.data ?? []),
+    [managedAgents.data],
+  );
   const providerStatus = useQuery({
     queryKey: ["coding-session-provider-status"],
     queryFn: getCodingSessionProviderStatus,
@@ -142,7 +150,7 @@ export function CodingSessionHireHost() {
 
   return (
     <CodingSessionHireRunner
-      agents={managedAgents.data ?? []}
+      agents={agents}
       catalogForHire={catalogForHire}
       channelIds={channelIds}
       checkoutForChannel={checkoutForChannel}

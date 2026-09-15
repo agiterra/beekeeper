@@ -235,6 +235,11 @@ export async function codingSessionPackStatus(input: {
       role: input.role,
       packSource,
       checkout: input.checkout ?? null,
+      // The preview answers for a new seat in this project, so it carries the
+      // same requirement staging will: a non-project agent previews the
+      // refusal it would get, never a pack it will not be seated with.
+      requireProjectRef: input.projectRef,
+      newSelection: true,
     }),
     input.role,
   );

@@ -1,4 +1,6 @@
+import { useNavigate } from "@tanstack/react-router";
 import { CircleAlert, LoaderCircle, Rocket, Trash2 } from "lucide-react";
+import * as React from "react";
 import type { ReactNode } from "react";
 
 import { useAppNavigation } from "@/app/navigation/useAppNavigation";
@@ -53,6 +55,7 @@ import { useCodingSessionFoundedStart } from "./useCodingSessionFoundedStart";
 export function CodingSessionFoundedSetupCard({
   channelId,
   onDiscard,
+  onOpenProjectAgents = null,
   onStart,
   projectRef,
   setup,
@@ -60,6 +63,8 @@ export function CodingSessionFoundedSetupCard({
   channelId: string;
   /** Offered only while the session is founded and nothing is in flight. */
   onDiscard: (() => void) | null;
+  /** Opens the session's project on its Agents tab; null when there is none. */
+  onOpenProjectAgents?: (() => void) | null;
   onStart: () => void;
   projectRef: string | null;
   setup: CodingSessionFoundedSetupModel;
@@ -254,9 +259,12 @@ export function CodingSessionFoundedSetupCard({
           <NewCodingSessionLeadField
             candidates={setup.candidates}
             disabled={locked}
+            emptySentence={setup.leadEmptySentence}
+            exclusionSentence={setup.leadExclusionSentence}
             groups={setup.leadGroups}
             lead={setup.lead}
             onLeadChange={setup.setLeadActor}
+            onOpenProjectAgents={onOpenProjectAgents}
           />
           {setup.attempted && leadBlocker ? (
             <FieldError testId="new-coding-session-blocker-lead">
@@ -305,6 +313,8 @@ export function CodingSessionFoundedSetupCard({
         <NewCodingSessionBenchField
           challengerRate={setup.challengerRate}
           disabled={locked}
+          emptySentence={setup.benchEmptySentence}
+          exclusionSentence={setup.benchExclusionSentence}
           identities={setup.benchIdentityOptions}
           onChallengerRateChange={setup.setChallengerRate}
           onToggleIdentity={setup.toggleBenchIdentity}
@@ -568,6 +578,22 @@ export function CodingSessionFoundedSetupHost({
     goCodingSession,
   });
   const { goChannel } = useAppNavigation();
+  // The project's Agents tab, where an agent is associated with the project —
+  // the one remedy the lead picker's exclusion sentence names.
+  const navigate = useNavigate();
+  const projectId = setup.projectId;
+  const onOpenProjectAgents = React.useMemo(
+    () =>
+      projectId
+        ? () => {
+            void navigate({
+              to: "/projects/$projectId/agents",
+              params: { projectId },
+            } as never);
+          }
+        : null,
+    [navigate, projectId],
+  );
   // Discard deletes. A founded session that never ran has no transcript and
   // nothing worth a closed record: closing it filed an "Untitled session"
   // under Settled for good (Andy, 2026-09-11). The delete is the existing
@@ -594,6 +620,7 @@ export function CodingSessionFoundedSetupHost({
       <CodingSessionFoundedSetupCard
         channelId={channelId}
         onDiscard={onDiscard}
+        onOpenProjectAgents={onOpenProjectAgents}
         onStart={onStart}
         projectRef={projectRef}
         setup={setup}

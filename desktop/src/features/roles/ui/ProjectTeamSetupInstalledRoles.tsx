@@ -1,22 +1,25 @@
 import * as React from "react";
+import { cn } from "@/shared/lib/cn";
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
+import { projectTeamSetupError } from "../lib/projectTeamSetup";
 import {
-  projectTeamSetupError,
-  type ProjectTeamSetupActivation,
-  type ProjectTeamSetupInstalledRole,
-} from "../lib/projectTeamSetup";
-import {
-  agentName,
-  shortPubkey,
-  useProjectTeamSetupAgents,
-} from "./ProjectTeamSetupAgents";
+  projectRosterAssociationLabel,
+  type ProjectRosterEntry,
+} from "../lib/projectRosterReadiness";
+import { agentName, useProjectTeamSetupAgents } from "./ProjectTeamSetupAgents";
 
-const NAME_UNAVAILABLE = "Name not available";
+export const NAME_UNAVAILABLE = "Name not available";
 
-function InstalledRoleRow({ role }: { role: ProjectTeamSetupInstalledRole }) {
+/**
+ * One installed role's agent: current name, role and whether it is this
+ * project's agent on this computer, with rename in place. The pubkey is kept
+ * out of the row (the roster card lists it under details). Rename is offered
+ * only where a local record exists; it changes neither role nor association.
+ */
+export function InstalledRoleRow({ entry }: { entry: ProjectRosterEntry }) {
   const { names, rename } = useProjectTeamSetupAgents();
-  const current = agentName(names, role.agentPubkey);
+  const current = agentName(names, entry.agentPubkey);
   const [editing, setEditing] = React.useState(false);
   const [value, setValue] = React.useState("");
   const [busy, setBusy] = React.useState(false);
@@ -25,12 +28,13 @@ function InstalledRoleRow({ role }: { role: ProjectTeamSetupInstalledRole }) {
     alert: boolean;
   } | null>(null);
   const trimmed = value.trim();
+  const canRename = rename !== null && entry.association !== "missing";
   const save = async () => {
     if (!rename || !trimmed || trimmed === current) return;
     setBusy(true);
     setNote(null);
     try {
-      const result = await rename({ pubkey: role.agentPubkey, name: trimmed });
+      const result = await rename({ pubkey: entry.agentPubkey, name: trimmed });
       setEditing(false);
       if (result.profileSyncError)
         setNote({
@@ -46,21 +50,30 @@ function InstalledRoleRow({ role }: { role: ProjectTeamSetupInstalledRole }) {
       setBusy(false);
     }
   };
+  const associated = entry.association === "associated";
   return (
     <li
-      className="space-y-1 text-sm"
+      className="min-w-0 space-y-1 text-sm"
+      data-association={entry.association}
       data-testid="project-team-setup-installed-role"
     >
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <span className="font-medium">{current ?? NAME_UNAVAILABLE}</span>
-        <span className="text-muted-foreground">· {role.role}</span>
-        <span
-          className="font-mono text-xs text-muted-foreground"
-          title={role.agentPubkey}
-        >
-          · {shortPubkey(role.agentPubkey)}
+      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+        <span className="min-w-0 break-words font-medium">
+          {current ?? entry.name ?? NAME_UNAVAILABLE}
         </span>
-        {rename && !editing ? (
+        <span className="text-muted-foreground">· {entry.role}</span>
+        <span
+          className={cn(
+            "min-w-0 break-words",
+            associated || entry.association === "unknown"
+              ? "text-muted-foreground"
+              : "text-destructive",
+          )}
+          data-testid="project-team-setup-installed-role-association"
+        >
+          · {projectRosterAssociationLabel(entry.association)}
+        </span>
+        {canRename && !editing ? (
           <Button
             onClick={() => {
               setValue(current ?? "");
@@ -77,15 +90,15 @@ function InstalledRoleRow({ role }: { role: ProjectTeamSetupInstalledRole }) {
       </div>
       {editing ? (
         <form
-          className="flex flex-wrap items-center gap-2"
+          className="flex min-w-0 flex-wrap items-center gap-2"
           onSubmit={(event) => {
             event.preventDefault();
             void save();
           }}
         >
           <Input
-            aria-label={`New name for the ${role.role} agent`}
-            className="max-w-xs"
+            aria-label={`New name for the ${entry.role} agent`}
+            className="min-w-0 max-w-xs"
             disabled={busy}
             onChange={(event) => setValue(event.target.value)}
             value={value}
@@ -117,64 +130,5 @@ function InstalledRoleRow({ role }: { role: ProjectTeamSetupInstalledRole }) {
         </p>
       ) : null}
     </li>
-  );
-}
-
-/** Each installed identity with its current name, role and short pubkey. */
-export function ProjectTeamSetupInstalledRoles({
-  roles,
-}: {
-  roles: readonly ProjectTeamSetupInstalledRole[];
-}) {
-  return (
-    <div className="space-y-1" data-testid="project-team-setup-installed-roles">
-      <p className="text-sm font-medium">Roles installed on this computer</p>
-      {roles.length === 0 ? (
-        <p className="text-sm text-muted-foreground">
-          The installation recorded no roles.
-        </p>
-      ) : (
-        <ul className="space-y-1">
-          {roles.map((role) => (
-            <InstalledRoleRow key={role.agentPubkey} role={role} />
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
-
-/** Who the project lead is: name, role, project and short pubkey. */
-export function ProjectTeamSetupLeadIdentity({
-  activation,
-  projectName,
-}: {
-  activation: ProjectTeamSetupActivation;
-  projectName?: string;
-}) {
-  const { names } = useProjectTeamSetupAgents();
-  const pubkey = activation.lead.leadPubkey ?? null;
-  if (!pubkey)
-    return (
-      <p className="text-sm text-muted-foreground">
-        No lead identity is recorded for this installation.
-      </p>
-    );
-  const role =
-    activation.installation.installedRoles.find(
-      (entry) => entry.agentPubkey.toLowerCase() === pubkey.toLowerCase(),
-    )?.role ?? "lead";
-  return (
-    <p className="text-sm" data-testid="project-team-setup-lead-identity">
-      Project lead:{" "}
-      <span className="font-medium">
-        {agentName(names, pubkey) ?? NAME_UNAVAILABLE}
-      </span>{" "}
-      · {role}
-      {projectName ? ` · ${projectName}` : ""} ·{" "}
-      <span className="font-mono text-xs" title={pubkey}>
-        {shortPubkey(pubkey)}
-      </span>
-    </p>
   );
 }

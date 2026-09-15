@@ -49,6 +49,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::app_state::AppState;
 use crate::managed_agents::packs_cache;
+use crate::managed_agents::project_agent_association::{new_seat_refusal, refused_seat_preview};
 use crate::managed_agents::storage::{atomic_write_json_restricted, load_managed_agents};
 use crate::relay::relay_ws_url_with_override;
 use tauri::{AppHandle, State};
@@ -222,7 +223,8 @@ fn persona_declared_role(dir: &Path, persona: &str) -> Option<String> {
 /// 1. The actor's own pack, when the actor's home role is the seat's role
 ///    **and** its persona declares that role.
 /// 2. Any pack installed on this computer whose agent's home role is the
-///    seat's role **and** whose persona declares it — the crew-role installer
+///    seat's role, whose agent has the actor's project association (never
+///    another project's pack), **and** whose persona declares it — the crew-role installer
 ///    mints one agent per role pack, so a machine that has the roles has the
 ///    packs.
 /// 3. The actor's own pack when that pack claims no role at all. A persona
@@ -250,10 +252,23 @@ pub(crate) fn resolve_local_seat_pack(
             return Some(pack);
         }
     }
-    if let Some(pack) = records
-        .iter()
-        .filter(|other| other.home_role.as_deref().map(str::trim) == Some(role))
-        .find_map(|other| resolve_pack_declaring_role(other, teams, role))
+    // Only another agent of the same project association (or another agent of
+    // no project, for an unassociated actor): a seat never stages a different
+    // project's role pack on the strength of a shared role name.
+    let project = record
+        .project_ref
+        .as_deref()
+        .and_then(crate::managed_agents::project_agent_association::normalize_project_ref);
+    if let Some(pack) =
+        records
+            .iter()
+            .filter(|other| other.home_role.as_deref().map(str::trim) == Some(role))
+            .filter(|other| {
+                other.project_ref.as_deref().and_then(
+                    crate::managed_agents::project_agent_association::normalize_project_ref,
+                ) == project
+            })
+            .find_map(|other| resolve_pack_declaring_role(other, teams, role))
     {
         return Some(pack);
     }
@@ -738,8 +753,13 @@ pub(crate) fn installed_seat_pack_ref(
 /// not a hope) but writes no seat and publishes nothing. The hire and launch
 /// dialogs call it to show the pack a seat will run with — and, when the
 /// project's packs cannot be read, the sentence the hire will be refused with,
-/// *before* the operator commits to it.
+/// *before* the operator commits to it. `require_project_ref` (a new
+/// selection's project) answers a [`SEAT_NOT_PROJECT_AGENT`](crate::managed_agents::project_agent_association::SEAT_NOT_PROJECT_AGENT) refusal for an
+/// agent that is not that project's. `new_selection: Some(true)` applies the
+/// full new-seat rule ([`new_seat_refusal`]): a projectless session takes no
+/// project's agent, and the seat role must be the agent's primary role.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri state handles plus the fixed IPC shape.
 pub async fn preview_coding_session_seat_pack(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -747,6 +767,8 @@ pub async fn preview_coding_session_seat_pack(
     role: Option<String>,
     pack_source: Option<ProjectPackSourceInput>,
     checkout: Option<String>,
+    require_project_ref: Option<String>,
+    new_selection: Option<bool>,
 ) -> Result<SeatPackPreview, String> {
     let pubkey = agent_pubkey.trim().to_string();
     let records = {
@@ -760,6 +782,14 @@ pub async fn preview_coding_session_seat_pack(
         .iter()
         .find(|record| record.pubkey == pubkey)
         .ok_or_else(|| format!("agent {pubkey} is not a managed agent on this computer"))?;
+    if let Some(refusal) = new_seat_refusal(
+        record,
+        role.as_deref(),
+        require_project_ref.as_deref(),
+        new_selection,
+    ) {
+        return Ok(refused_seat_preview(role.as_deref(), &refusal));
+    }
     let checkout = checkout
         .as_deref()
         .map(str::trim)
@@ -791,8 +821,12 @@ pub async fn preview_coding_session_seat_pack(
 /// skills come from. **The seat's role picks the pack** — the actor's home
 /// role is never consulted. The returned [`StagedActorSeat`] says whether one
 /// was found, because a seat launched with no pack carries no role skills and
-/// the screen has to be able to say so.
+/// the screen has to be able to say so. A new selection passes its project as
+/// `require_project_ref`; an agent that is not that project's is refused with
+/// [`SEAT_NOT_PROJECT_AGENT`](crate::managed_agents::project_agent_association::SEAT_NOT_PROJECT_AGENT), and passes `new_selection: Some(true)` for the
+/// full new-seat rule ([`new_seat_refusal`]). Resume and restage pass neither.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri state handles plus the fixed IPC shape.
 pub async fn stage_coding_session_actor_seat(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -801,6 +835,8 @@ pub async fn stage_coding_session_actor_seat(
     role: Option<String>,
     pack_source: Option<ProjectPackSourceInput>,
     checkout: Option<String>,
+    require_project_ref: Option<String>,
+    new_selection: Option<bool>,
 ) -> Result<StagedActorSeat, String> {
     let relay_url = relay_ws_url_with_override(&state);
     let Some(path) = actor_seats_file_path(&app, &state)? else {
@@ -825,6 +861,14 @@ pub async fn stage_coding_session_actor_seat(
                 crate::managed_agents::project_team_setup::actor::restage::SCOPED_STAGE_REQUIRED
                     .to_string(),
             );
+        }
+        if let Some(refusal) = new_seat_refusal(
+            record,
+            role.as_deref(),
+            require_project_ref.as_deref(),
+            new_selection,
+        ) {
+            return Err(refusal);
         }
         let plan = plan_seat_pack(
             &app,

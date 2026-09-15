@@ -172,6 +172,30 @@ fn a_seat_stages_the_pack_of_the_role_it_was_seated_with() {
 }
 
 #[test]
+fn a_seat_never_stages_another_projects_pack_for_a_shared_role() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let p1 = format!("30621:{}:p1", "ab".repeat(32));
+    let p2 = format!("30621:{}:p2", "ab".repeat(32));
+    let architect_pack = named_role_pack(tmp.path(), "architect");
+    let builder_pack = named_role_pack(tmp.path(), "builder");
+    let mut p1_builder = installed_role_agent("builder", &builder_pack);
+    p1_builder.project_ref = Some(p1.clone());
+    let mut p2_architect = installed_role_agent("architect", &architect_pack);
+    p2_architect.project_ref = Some(p2);
+    let records = vec![p1_builder.clone(), p2_architect.clone()];
+    assert!(
+        resolve_local_seat_pack(&p1_builder, &records, &[], Some("architect")).is_none(),
+        "P2's architect pack must not be staged into a P1 seat"
+    );
+    p2_architect.project_ref = Some(p1);
+    let records = vec![p1_builder.clone(), p2_architect];
+    assert_eq!(
+        resolve_local_seat_pack(&p1_builder, &records, &[], Some("architect")).map(|(dir, _)| dir),
+        Some(architect_pack),
+    );
+}
+
+#[test]
 fn a_role_this_computer_holds_no_pack_for_stages_no_pack() {
     let tmp = tempfile::tempdir().expect("temp dir");
     let builder_pack = named_role_pack(tmp.path(), "builder");

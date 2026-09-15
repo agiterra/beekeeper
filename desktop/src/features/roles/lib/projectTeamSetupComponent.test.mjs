@@ -370,7 +370,19 @@ test("publication, adopted-source installation, and lead handoff each use one sc
     },
   };
   const { render, waitFor, fireEvent, element } = await harness({
-    agents: { names: new Map([["9".repeat(64), "Loom"]]), rename: null },
+    agents: {
+      names: new Map([["9".repeat(64), "Loom"]]),
+      rename: null,
+      agents: [
+        {
+          pubkey: "9".repeat(64),
+          name: "Loom",
+          homeRole: "lead",
+          projectRef: projectA,
+          status: "stopped",
+        },
+      ],
+    },
   });
   const view = render(element(projectA));
   await waitFor(() =>
@@ -432,32 +444,54 @@ test("publication, adopted-source installation, and lead handoff each use one sc
     assert.ok(view.getByRole("button", { name: "Install project roles" })),
   );
   fireEvent.click(view.getByRole("button", { name: "Install project roles" }));
-  await waitFor(() =>
-    assert.ok(view.getByTestId("project-team-setup-installed-roles")),
-  );
+  await waitFor(() => assert.ok(view.getByTestId("project-team-setup-roster")));
+  const roster = view.getByTestId("project-team-setup-roster");
+  assert.equal(roster.querySelector("h4").textContent, "Tank Loop agents");
   const installedRow = view.getByTestId("project-team-setup-installed-role");
   assert.match(installedRow.textContent, /Loom/);
   assert.match(installedRow.textContent, /· lead/);
-  assert.match(installedRow.textContent, /99999999…9999/);
+  assert.match(installedRow.textContent, /· Project agent/);
+  assert.doesNotMatch(
+    installedRow.textContent,
+    /99999999…9999/,
+    "the pubkey stays under details, not on the row",
+  );
+  assert.match(
+    roster.querySelector("details").textContent,
+    /Loom · lead · 99999999…9999/,
+  );
   await waitFor(() =>
     assert.equal(
       view.getByTestId("project-team-setup-stage-heading").textContent,
       "Start the project lead",
     ),
   );
-  assert.match(
-    view.getByTestId("project-team-setup-lead-identity").textContent,
-    /Project lead: Loom · lead · Tank Loop · 99999999…9999/,
+  // One next action: the channel is prepared as part of starting the lead.
+  assert.equal(
+    view.queryByRole("button", { name: "Create project session channel" }),
+    null,
   );
-  fireEvent.click(
-    view.getByRole("button", { name: "Create project session channel" }),
-  );
+  fireEvent.click(view.getByRole("button", { name: "Start the project lead" }));
   await waitFor(() =>
-    assert.ok(view.getByRole("button", { name: "Start project lead" })),
+    assert.equal(
+      view.getByTestId("project-team-setup-stage-heading").textContent,
+      "Project lead started",
+    ),
   );
   assert.equal(
     calls.filter(({ command }) => command === "create_channel").length,
     0,
+  );
+  assert.deepEqual(
+    calls
+      .filter(({ command }) =>
+        [
+          "project_team_setup_ensure_lead_channel",
+          "project_team_setup_start_lead",
+        ].includes(command),
+      )
+      .map(({ command }) => command),
+    ["project_team_setup_ensure_lead_channel", "project_team_setup_start_lead"],
   );
   assert.deepEqual(
     calls.find(
@@ -470,17 +504,13 @@ test("publication, adopted-source installation, and lead handoff each use one sc
       publicationId: "publication-1",
     },
   );
-  fireEvent.click(view.getByRole("button", { name: "Start project lead" }));
-  await waitFor(() =>
-    assert.ok(view.getByText("The project lead was started in Tank Loop.")),
+  assert.equal(
+    view.getByTestId("project-team-setup-roster-next").textContent,
+    "Setup complete. Loom leads Tank Loop. Give Loom a task in its session; it lists the team with bee projects agents and hires only these agents.",
   );
-  const started = view.getByTestId("project-team-setup-lead-started");
-  assert.match(started.querySelector("details").textContent, /lead-session-1/);
-  await waitFor(() =>
-    assert.equal(
-      view.getByTestId("project-team-setup-stage-heading").textContent,
-      "Project lead started",
-    ),
+  assert.match(
+    view.getByTestId("project-team-setup-lead-session-details").textContent,
+    /lead-session-1/,
   );
   assert.equal(
     view
@@ -667,112 +697,6 @@ test("authoring comes first; check and save appear once authoring is created; th
       setupId: draftA.setupId,
     },
   );
-});
-
-test("installed roles show the agent's current name, role and short pubkey; rename sends only pubkey and name", async () => {
-  const pubkey = "ab".repeat(32);
-  const rawAgent = (name) => ({
-    pubkey,
-    name,
-    persona_id: null,
-    home_role: "lead",
-    relay_url: "wss://example.test",
-    status: "stopped",
-  });
-  let currentName = "Loom";
-  answers.list_managed_agents = () => [rawAgent(currentName)];
-  answers.update_managed_agent = ({ input }) => {
-    currentName = input.name;
-    return { agent: rawAgent(input.name), profile_sync_error: null };
-  };
-  const React = (await import("react")).default;
-  const { QueryClient, QueryClientProvider } = await import(
-    "@tanstack/react-query"
-  );
-  const { useProjectTeamSetupAgentDirectory } = await import(
-    "./useProjectTeamSetupAgentDirectory.ts"
-  );
-  const { ProjectTeamSetupAgentsContext } = await import(
-    "../ui/ProjectTeamSetupAgents.tsx"
-  );
-  const { ProjectTeamSetupInstalledRoles } = await import(
-    "../ui/ProjectTeamSetupInstalledRoles.tsx"
-  );
-  const { render, waitFor, fireEvent } = await import("@testing-library/react");
-  function Connected() {
-    const agents = useProjectTeamSetupAgentDirectory(true);
-    return React.createElement(
-      ProjectTeamSetupAgentsContext.Provider,
-      { value: agents },
-      React.createElement(ProjectTeamSetupInstalledRoles, {
-        roles: [
-          {
-            role: "lead",
-            agentPubkey: pubkey,
-            packRef: { repo: "r", sha: "s", role: "lead", path: "p" },
-          },
-        ],
-      }),
-    );
-  }
-  // Infinite gcTime schedules no five-minute garbage-collection timers that
-  // would otherwise hold this file's process open after its last test.
-  const client = new QueryClient({
-    defaultOptions: {
-      queries: { retry: false, gcTime: Number.POSITIVE_INFINITY },
-      mutations: { gcTime: Number.POSITIVE_INFINITY },
-    },
-  });
-  try {
-    const view = render(
-      React.createElement(
-        QueryClientProvider,
-        { client },
-        React.createElement(Connected),
-      ),
-    );
-    const row = () => view.getByTestId("project-team-setup-installed-role");
-    await waitFor(() => assert.match(row().textContent, /Loom/));
-    assert.match(row().textContent, /· lead/);
-    assert.match(row().textContent, /abababab…abab/);
-    fireEvent.click(view.getByRole("button", { name: "Rename" }));
-    const input = view.getByLabelText("New name for the lead agent");
-    fireEvent.change(input, { target: { value: "   " } });
-    assert.equal(
-      view.getByRole("button", { name: "Save name" }).disabled,
-      true,
-    );
-    fireEvent.change(input, { target: { value: "  Tank Lead  " } });
-    fireEvent.click(view.getByRole("button", { name: "Save name" }));
-    await waitFor(() => assert.match(row().textContent, /Tank Lead/));
-    assert.deepEqual(
-      calls
-        .filter(({ command }) => command === "update_managed_agent")
-        .map(({ args }) => args),
-      [{ input: { pubkey, name: "Tank Lead" } }],
-    );
-    answers.update_managed_agent = () => {
-      throw "Agent is busy";
-    };
-    fireEvent.click(view.getByRole("button", { name: "Rename" }));
-    fireEvent.change(view.getByLabelText("New name for the lead agent"), {
-      target: { value: "Other" },
-    });
-    fireEvent.click(view.getByRole("button", { name: "Save name" }));
-    await waitFor(() =>
-      assert.match(
-        view.getByRole("alert").textContent,
-        /The name couldn't be changed\. Agent is busy/,
-      ),
-    );
-    assert.match(
-      row().textContent,
-      /Tank Lead/,
-      "a failed rename keeps the name",
-    );
-  } finally {
-    client.clear();
-  }
 });
 
 test("the Roles page mount path invokes only read-only commands and describes the last recorded status", async () => {

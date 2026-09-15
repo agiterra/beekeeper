@@ -12,8 +12,9 @@ const ProjectAgentsScreen = React.lazy(async () => {
 });
 
 /**
- * The project's Agents tab: who is working in this project and why —
- * installed for it, seated in its sessions, or given one of its assignments.
+ * The project's Agents tab: the agents associated with this project, with
+ * their primary roles and states, and the borrowed or past participants
+ * seated in its sessions.
  */
 export const Route = createFileRoute("/projects/$projectId/agents")({
   component: ProjectAgentsRouteComponent,

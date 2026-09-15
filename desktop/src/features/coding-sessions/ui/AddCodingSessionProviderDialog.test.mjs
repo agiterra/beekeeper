@@ -45,18 +45,21 @@ after(() => dom.window.close());
 const CHANNEL_ID = "0c8016c8-9483-4426-a4b1-b45c8e21d0a1";
 const ADA = "aa11bb22".repeat(8);
 
-function umbrella() {
+function umbrella(executions = []) {
   return {
     umbrellaKey: "umbrella-1",
     sessionRef: "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
     genesisRef: "d".repeat(64),
     genesisResolution: "governed",
     title: "Advance Buzz live sessions",
-    executions: [],
+    executions,
   };
 }
 
-async function mountJoinForm(agents, { projectRef = null } = {}) {
+async function mountJoinForm(
+  agents,
+  { projectRef = null, executions = [] } = {},
+) {
   const React = (await import("react")).default;
   const { act, cleanup, fireEvent, render, screen } = await import(
     "@testing-library/react"
@@ -81,7 +84,7 @@ async function mountJoinForm(agents, { projectRef = null } = {}) {
           channelName: "engineering",
           onDone() {},
           projectRef,
-          umbrella: umbrella(),
+          umbrella: umbrella(executions),
         }),
       ),
     );
@@ -151,8 +154,9 @@ test("a session already running can take a seated agent", async () => {
 });
 
 test("a half-filled seat is refused in the join dialog, before anything is signed", async () => {
+  // An agent with no primary role: its role box is the person's to fill.
   const { act, cleanup, fireEvent, screen } = await mountJoinForm([
-    { pubkey: ADA, name: "Ada", status: "running", homeRole: "builder" },
+    { pubkey: ADA, name: "Ada", status: "running" },
   ]);
   try {
     await act(async () => {
@@ -369,5 +373,74 @@ test("LANE-L25: a projectRef reaches the join dialog's seat field without distur
     );
   } finally {
     withProject.cleanup();
+  }
+});
+
+test("a project session's seat picker lists only that project's agents, and counts the rest", async () => {
+  const TANK_LOOP = `30621:${"e".repeat(64)}:tank-loop`;
+  const BOB = "bb22cc33".repeat(8);
+  const STRAY = "cc33dd44".repeat(8);
+  const { act, cleanup, fireEvent, screen } = await mountJoinForm(
+    [
+      { pubkey: ADA, name: "Ada", homeRole: "builder", projectRef: TANK_LOOP },
+      {
+        pubkey: BOB,
+        name: "Bob",
+        homeRole: "builder",
+        projectRef: `30621:${"e".repeat(64)}:beekeeper`,
+      },
+      { pubkey: STRAY, name: "Stray", homeRole: "builder", projectRef: null },
+    ],
+    {
+      executions: [
+        {
+          executionKey: "exec-1",
+          signerPubkey: "9".repeat(64),
+          activeGeneration: {
+            projectRef: TANK_LOOP,
+            statusEventId: "1".repeat(64),
+            commandTarget: null,
+            runtime: null,
+          },
+        },
+      ],
+    },
+  );
+  try {
+    assert.match(
+      screen.getByTestId("new-coding-session-seat-scope").textContent,
+      /^2 agents on this computer aren't this project's, so they can't be seated here\./,
+    );
+    await act(async () => {
+      fireEvent.pointerDown(
+        screen.getByTestId("new-coding-session-seat-agent"),
+        { button: 0, pointerType: "mouse" },
+      );
+    });
+    assert.ok(screen.getByTestId(`new-coding-session-seat-agent-${ADA}`));
+    assert.equal(
+      screen.queryByTestId(`new-coding-session-seat-agent-${BOB}`),
+      null,
+    );
+    assert.equal(
+      screen.queryByTestId(`new-coding-session-seat-agent-${STRAY}`),
+      null,
+    );
+  } finally {
+    cleanup();
+  }
+});
+
+test("a session whose project is not known yet lists every agent and says the project is unknown", async () => {
+  const { cleanup, screen } = await mountJoinForm([
+    { pubkey: ADA, name: "Ada", homeRole: "builder", projectRef: null },
+  ]);
+  try {
+    assert.match(
+      screen.getByTestId("new-coding-session-seat-scope").textContent,
+      /project is not known yet/,
+    );
+  } finally {
+    cleanup();
   }
 });

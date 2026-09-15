@@ -964,7 +964,12 @@ bee sessions hire --channel "$CHANNEL_ID" --session-ref "$UMBRELLA" --role build
 #   refused      → the host's policy refused; "code" is one of HIRE_OFF,
 #                  HIRE_ROLE_NOT_ALLOWED, HIRE_LIMIT, HIRE_NO_IDENTITY (this
 #                  computer holds no identity for that role — only its
-#                  operator can fix it), HIRE_ROLE_BUSY (it holds the role and
+#                  operator can fix it), HIRE_NO_PROJECT_AGENT (the session
+#                  has a project and this computer holds no agent of THAT
+#                  project for the role; other projects' agents are counted,
+#                  never borrowed — see `bee projects agents`, then the
+#                  operator installs project roles or associates an agent),
+#                  HIRE_ROLE_BUSY (it holds the role and
 #                  every identity that IS it is already seated in this
 #                  umbrella — brief that seat instead of hiring again),
 #                  HIRE_PROVIDER_NOT_ALLOWED, HIRE_MODEL_NOT_OFFERED (the

@@ -229,7 +229,14 @@ function directoryRow(overrides = {}) {
     roleHistoryLabel: "no seats recorded",
     roleSlugs: ["lead"],
     currentSeat: null,
+    project: {
+      projectRef: `30621:${"c".repeat(64)}:tank-loop`,
+      projectId: `${"c".repeat(64)}:tank-loop`,
+      projectName: "Tank Loop",
+    },
+    projectKnown: true,
     seatProjectIds: new Set(),
+    unassociatedInstallations: [],
     installedProjects: [
       {
         projectRef: `30621:${"c".repeat(64)}:tank-loop`,
@@ -286,27 +293,40 @@ async function mountList(rows) {
   });
 }
 
-test("the directory row names the installation and offers Rename only to installed project agents", async () => {
+test("the directory row names the project by association and offers Rename to every local record", async () => {
   const { act, fireEvent, screen } = await import("@testing-library/react");
   const other = "2".repeat(64);
+  const wire = "3".repeat(64);
   await mountList([
     directoryRow(),
     directoryRow({
       pubkey: other,
       name: "Solo",
+      project: null,
+      installedProjects: [],
+      installedProjectIds: new Set(),
+    }),
+    directoryRow({
+      pubkey: wire,
+      name: "Remote",
+      isInstalled: false,
+      project: null,
+      projectKnown: false,
       installedProjects: [],
       installedProjectIds: new Set(),
     }),
   ]);
 
   assert.deepEqual(
-    screen
-      .getAllByTestId("agent-row-installed-for")
-      .map((node) => node.textContent),
-    ["Installed for Tank Loop · lead"],
+    screen.getAllByTestId("agent-row-project").map((node) => node.textContent),
+    ["Tank Loop · lead", "No project", "Project not known on this computer"],
   );
   const renameButtons = screen.getAllByTestId("agent-row-rename");
-  assert.equal(renameButtons.length, 1);
+  assert.equal(
+    renameButtons.length,
+    2,
+    "Loom and Solo, not the wire-only agent",
+  );
   assert.equal(
     renameButtons[0].closest("[data-testid='agent-row']"),
     null,
@@ -317,4 +337,29 @@ test("the directory row names the installation and offers Rename only to install
     fireEvent.click(renameButtons[0]);
   });
   assert.equal(screen.getByTestId("agent-row-rename-input").value, "Loom");
+});
+
+test("an installed agent without the association carries the warning on its row", async () => {
+  const { screen } = await import("@testing-library/react");
+  const installation = {
+    projectRef: `30621:${"c".repeat(64)}:tank-loop`,
+    projectId: `${"c".repeat(64)}:tank-loop`,
+    projectName: "Tank Loop",
+    role: "lead",
+  };
+  await mountList([
+    directoryRow({
+      project: null,
+      installedProjects: [installation],
+      unassociatedInstallations: [installation],
+    }),
+  ]);
+  assert.equal(
+    screen.getByTestId("agent-row-project").textContent,
+    "No project",
+  );
+  assert.equal(
+    screen.getByTestId("agent-row-unassociated").textContent,
+    "Installed for Tank Loop but not associated yet — the lead can't hire it.",
+  );
 });

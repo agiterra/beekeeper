@@ -807,6 +807,9 @@ fn install_role_packs_for_team(
             carry_over_host_value(&mut record.runtime, previous.runtime.as_deref());
             carry_over_host_value(&mut record.avatar_url, previous.avatar_url.as_deref());
             record.agent_command_override = previous.agent_command_override.clone();
+            // The project association is durable and never moved by a
+            // reinstall; `associate_installation` must see it to refuse one.
+            record.project_ref = previous.project_ref.clone();
         }
         // Re-derive the stored harness from the record we just assembled, so a
         // carried-over runtime or pin is not contradicted by a command line

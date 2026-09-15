@@ -171,3 +171,84 @@ fn listing_without_storage_is_empty_and_creates_nothing() {
         .is_empty());
     assert!(!root.exists());
 }
+
+fn journal_agent(pubkey: &str, home_role: &str) -> crate::managed_agents::ManagedAgentRecord {
+    let mut record: crate::managed_agents::ManagedAgentRecord =
+        serde_json::from_value(serde_json::json!({
+            "pubkey": pubkey, "name": home_role, "relay_url": RELAY,
+            "acp_command": "buzz-acp", "agent_command": "goose", "agent_args": [],
+            "mcp_command": "", "turn_timeout_seconds": 320, "system_prompt": null,
+            "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z",
+            "last_started_at": null, "last_stopped_at": null,
+            "last_exit_code": null, "last_error": null
+        }))
+        .expect("record");
+    record.home_role = Some(home_role.to_string());
+    record
+}
+
+/// The journal backfill reads this owner's installations on this relay and
+/// associates only records that exist, are unassociated and hold the role;
+/// running it twice changes nothing and a conflict is left untouched.
+#[test]
+fn journal_backfill_associates_installed_agents_idempotently() {
+    use crate::managed_agents::project_agent_association::backfill_agents_from_journal_root;
+    let temp = tempfile::tempdir().expect("temp");
+    let root = temp.path().join("project-team-setup");
+    let owner = new_owner();
+    let relay = crate::session_provider::canonical_relay_key(RELAY);
+    let commit = "c".repeat(40);
+    let (lead, builder, verifier, taken) = (
+        "1".repeat(64),
+        "2".repeat(64),
+        "3".repeat(64),
+        "4".repeat(64),
+    );
+    let garden = write_draft(&root, &owner, RELAY, "garden");
+    let roles = [
+        ("lead", lead.as_str()),
+        ("builder", builder.as_str()),
+        ("verifier", verifier.as_str()),
+        ("runner", taken.as_str()),
+        ("designer", &"5".repeat(64)),
+    ];
+    let journal = super::super::tests::installed_journal(&garden, &commit, &roles, None);
+    save_journal(&garden, &journal).expect("journal");
+    // Another owner's journal on the same relay is never read.
+    owner_scoped_installed(&root, &new_owner(), RELAY, "elsewhere", &commit);
+
+    let elsewhere = format!("30621:{}:elsewhere", "f".repeat(64));
+    let mut taken_record = journal_agent(&taken, "runner");
+    taken_record.project_ref = Some(elsewhere.clone());
+    let bob = journal_agent(&"6".repeat(64), "builder");
+    let mut agents = vec![
+        journal_agent(&lead, "lead"),
+        journal_agent(&builder, "builder"),
+        journal_agent(&verifier, "builder"), // home role mismatch
+        taken_record,
+        bob,
+    ];
+
+    let first =
+        backfill_agents_from_journal_root(&root, &owner, &relay, &mut agents).expect("backfill");
+    assert_eq!(first.associated, vec![lead.clone(), builder.clone()]);
+    assert_eq!(first.conflicts.len(), 1);
+    assert_eq!(agents.len(), 5, "missing designer record is not created");
+    assert_eq!(
+        agents[0].project_ref.as_deref(),
+        Some(garden.project_ref.as_str())
+    );
+    assert_eq!(
+        agents[1].project_ref.as_deref(),
+        Some(garden.project_ref.as_str())
+    );
+    assert_eq!(agents[2].project_ref, None, "home role mismatch is ignored");
+    assert_eq!(agents[3].project_ref.as_deref(), Some(elsewhere.as_str()));
+    assert_eq!(agents[4].project_ref, None, "Bob stays unassociated");
+
+    let snapshot = agents.clone();
+    let second =
+        backfill_agents_from_journal_root(&root, &owner, &relay, &mut agents).expect("again");
+    assert!(second.associated.is_empty());
+    assert_eq!(agents, snapshot, "a second backfill is the same result");
+}

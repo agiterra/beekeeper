@@ -14,6 +14,7 @@ import {
 } from "@/features/roles/ui/rolesCopy";
 import type {
   AgentDirectoryInstallation,
+  AgentDirectoryProjectAssociation,
   AgentDirectorySeat,
 } from "@/features/agents/lib/agentDirectoryModel";
 
@@ -55,20 +56,20 @@ export const AGENT_FILTER_STATUS_STOPPED = "Stopped";
 export const AGENT_FILTER_STATUS_SEATED = "Seated now";
 export const AGENT_FILTER_STATUS_NOT_SEATED = "Not seated";
 /**
- * Installed for a project by its setup — a fact about identities on this
- * computer, not about sessions. With a project chosen it narrows to that
- * project's installations; it never means running.
+ * Associated with a project — the agent's record says it belongs there. With
+ * a project chosen it narrows to that project's agents; it never means
+ * running, and a seat never satisfies it.
  */
-export const AGENT_FILTER_STATUS_INSTALLED_FOR_PROJECT =
-  "Installed for a project";
+export const AGENT_FILTER_STATUS_PROJECT_AGENT = "Belongs to a project";
 
 export const AGENT_FILTER_ANY_PROJECT = "Any project";
 /**
- * Under a project, the directory lists agents installed here for it and
- * agents that hold or held a seat in its sessions — two facts, either enough.
+ * Under a project, the directory lists the agents associated with it (plus
+ * any installed for it whose association is still missing, with a warning).
+ * A seat in its sessions does not list an agent there.
  */
 export const AGENT_FILTER_PROJECT_GROUP_LABEL =
-  "installed for it, or holds or held a seat there";
+  "agents associated with it; seats do not count";
 
 export const AGENT_FILTER_INSTALLED_LABEL = "Installed on this computer";
 export const AGENT_FILTER_INSTALLED_HELPER =
@@ -106,9 +107,10 @@ export function launchesAsText(homeRole: string | null): string {
 }
 
 /**
- * `{projectName} · {status} · {age}` for the freshest open seat; `not
- * seated` with none. `seatUnknown` renders `seat unknown` instead, while the
- * seat read is partial (§A States — Partial).
+ * `seated in {projectName} · {status} · {age}` for the freshest open seat;
+ * `not seated` with none. A seat is where an agent is working, not which
+ * project it belongs to. `seatUnknown` renders `seat unknown` instead, while
+ * the seat read is partial (§A States — Partial).
  */
 export function currentSeatText(
   seat: Pick<
@@ -120,7 +122,7 @@ export function currentSeatText(
   if (options?.seatUnknown) return AGENT_SEAT_UNKNOWN;
   if (!seat) return AGENT_NOT_SEATED;
   const project = seat.projectName ?? AGENT_UNPLACED_PROJECT;
-  return `${project} · ${seat.status} · ${formatAge(seat.ageSeconds)}`;
+  return `seated in ${project} · ${seat.status} · ${formatAge(seat.ageSeconds)}`;
 }
 
 export const AGENT_INSTALLED_HERE_NO = "not installed here";
@@ -129,17 +131,36 @@ export const AGENT_INSTALLED_HERE_NO = "not installed here";
 export const AGENT_DIRECTORY_INSTALLATIONS_ERROR_TESTID =
   "agent-directory-installations-error";
 export function installationsErrorText(message: string): string {
-  return `Which projects these agents were installed for could not be read, so none is shown: ${message}`;
+  return `Setup installations on this computer could not be read, so agents installed for a project but not yet associated with it are not flagged: ${message}`;
+}
+
+export const AGENT_NO_PROJECT = "No project";
+export const AGENT_PROJECT_UNKNOWN = "Project not known on this computer";
+export const AGENT_PROJECT_NOT_LISTED = "A project not listed here";
+
+/**
+ * `Tank Loop · builder` — the project this agent belongs to and its primary
+ * role; `No project` when its record names none. A wire-only agent's record
+ * is on another computer, so its project is said to be unknown rather than
+ * none.
+ */
+export function agentProjectText(
+  project: Pick<AgentDirectoryProjectAssociation, "projectName"> | null,
+  homeRole: string | null,
+  projectKnown: boolean,
+): string {
+  if (!projectKnown) return AGENT_PROJECT_UNKNOWN;
+  if (!project) return AGENT_NO_PROJECT;
+  const name = project.projectName ?? AGENT_PROJECT_NOT_LISTED;
+  return homeRole ? `${name} · ${homeRole}` : name;
 }
 
 /**
- * `Installed for Tank Loop · lead` — the project's setup installed this
- * identity on this computer to carry that role. Deliberately not the seat
- * cell's shape (`Tank Loop · running · 5m`): installation is not taking part
- * in a session. A project this viewer cannot list is said so, not named.
- * More than one installation adds `(+N more)`.
+ * `Installed for Tank Loop but not associated yet — the lead can't hire it.`
+ * Said on the row until the record carries the association. More than one
+ * installation adds `(+N more)`.
  */
-export function installedForText(
+export function unassociatedInstallationText(
   installations: readonly Pick<
     AgentDirectoryInstallation,
     "projectName" | "role"
@@ -149,8 +170,8 @@ export function installedForText(
   if (!first) return null;
   const project = first.projectName ?? "a project not listed here";
   const more = installations.length - 1;
-  const base = `Installed for ${project} · ${first.role}`;
-  return more > 0 ? `${base} (+${more} more)` : base;
+  const suffix = more > 0 ? ` (+${more} more)` : "";
+  return `Installed for ${project}${suffix} but not associated yet — the lead can't hire it.`;
 }
 
 /** Detail pane identity section. */
@@ -195,12 +216,14 @@ export const AGENT_ROW_ROLE_HISTORY_TESTID = "agent-row-role-history";
 export const AGENT_ROW_SEAT_TESTID = "agent-row-seat";
 export const AGENT_ROW_PACK_TESTID = "agent-row-pack";
 export const AGENT_ROW_NOT_INSTALLED_TESTID = "agent-row-not-installed";
-export const AGENT_ROW_INSTALLED_FOR_TESTID = "agent-row-installed-for";
+export const AGENT_ROW_PROJECT_TESTID = "agent-row-project";
+export const AGENT_ROW_UNASSOCIATED_TESTID = "agent-row-unassociated";
 
 /**
- * Inline rename on an installed project agent's row. Renaming changes the
- * name only: the same identity (pubkey) and the same role, with its relay
- * profile republished — nothing is minted and no role or instructions move.
+ * Inline rename on any row with a managed record on this computer. Renaming
+ * changes the name only: the same identity (pubkey), the same role and the
+ * same project association, with its relay profile republished — nothing is
+ * minted and no role or instructions move.
  */
 export const AGENT_ROW_RENAME_TESTID = "agent-row-rename";
 export const AGENT_ROW_RENAME_FORM_TESTID = "agent-row-rename-form";
@@ -212,7 +235,7 @@ export const AGENT_ROW_RENAME_LABEL = "Rename";
 export const AGENT_ROW_RENAME_SAVE = "Save name";
 export const AGENT_ROW_RENAME_CANCEL = "Cancel";
 export const AGENT_ROW_RENAME_HINT =
-  "Renames this agent in place — same identity, same role.";
+  "Renames this agent in place — same identity, same role, same project.";
 export const AGENT_ROW_RENAME_EMPTY = "Enter a name.";
 export function renameAriaLabel(name: string): string {
   return `Rename ${name}`;

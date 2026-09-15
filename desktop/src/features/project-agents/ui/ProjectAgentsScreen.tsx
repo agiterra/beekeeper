@@ -10,12 +10,20 @@ import { ProjectAgentsView } from "./ProjectAgentsView";
 import { PROJECT_AGENTS_MISSING } from "./projectAgentsCopy";
 
 /**
- * `/projects/$projectId/agents` — who is working in this project and why.
- * Replaces the Contributors tab; its seat history is the Previously section.
+ * `/projects/$projectId/agents` — who belongs to this project, with what
+ * primary role, doing what; and who else took part. Replaces the Contributors
+ * tab; its seat history is the Previously section.
  */
 export function ProjectAgentsScreen({ projectId }: { projectId: string }) {
-  const { project, model, isLoading, shelfState, assignments, readErrors } =
-    useProjectAgents(projectId);
+  const {
+    project,
+    model,
+    isLoading,
+    shelfState,
+    assignments,
+    readErrors,
+    associateAccess,
+  } = useProjectAgents(projectId);
   const pulseEnabled = useFeatureEnabled("project-pulse");
   const { goCodingSession, goFoundedCodingSession } = useAppNavigation();
 
@@ -53,11 +61,11 @@ export function ProjectAgentsScreen({ projectId }: { projectId: string }) {
 
   return (
     <div
-      className="flex h-full min-h-0 flex-col overflow-y-auto p-4"
+      className="flex h-full min-h-0 min-w-0 flex-col overflow-y-auto p-4"
       data-testid="project-agents-screen"
     >
       <div>
-        <h1 className="text-xl font-semibold text-foreground">
+        <h1 className="break-words text-xl font-semibold text-foreground">
           {project.name}
         </h1>
         <ProjectPageTabs
@@ -68,11 +76,14 @@ export function ProjectAgentsScreen({ projectId }: { projectId: string }) {
       </div>
       <ProjectAgentsView
         assignments={assignments}
+        associateAccess={associateAccess}
         isLoading={isLoading}
         model={model}
         notices={notices}
         onOpenSession={onOpenSession}
         projectId={project.id}
+        projectName={project.name}
+        projectRef={project.address}
       />
     </div>
   );

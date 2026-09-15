@@ -163,6 +163,8 @@ test("custody is staged before the publish, keyed by the exact commandId", async
         agentPubkey: SEAT.actor,
         role: "builder",
         packSource: null,
+        // A create is a new selection: primary role and association rechecked.
+        newSelection: true,
       },
     ],
   ]);
@@ -386,6 +388,9 @@ test("a seated create stages under the seat's role, not the actor's", async () =
     agentPubkey: SEAT.actor,
     role: "architect",
     packSource: null,
+    // The host, not this layer, refuses a role that is not the agent's
+    // primary role; this layer marks the create as a new selection.
+    newSelection: true,
   });
 });
 
@@ -452,6 +457,9 @@ test("finding 84: a seated create resolves the project's 30624 and stages from i
     agentPubkey: SEAT.actor,
     role: "builder",
     packSource: PACK_SOURCE,
+    // A create is a new selection: the host re-checks the association.
+    requireProjectRef: PROJECT_REF,
+    newSelection: true,
   });
 });
 
@@ -604,4 +612,74 @@ test("finding 84: the staging shape of a 30624 is the preview's, field for field
     },
   );
   assert.equal(codingSessionSeatPackSource(null), null);
+});
+
+// ── Project agents: native staging re-checks a new selection's project ─────
+//
+// docs/PROJECT_AGENT_HIRING_IMPL.md: `stage_coding_session_actor_seat`
+// refuses `SEAT_NOT_PROJECT_AGENT` when `requireProjectRef` is set and the
+// agent's recorded project differs. Every new selection (hire, team launch,
+// seat picker) creates through `publishSeatedCodingSessionCreate`, so it is
+// set here; a resume of an existing execution must never send it.
+
+test("a create into a project requires the agent to belong to it; a standalone create does not", async () => {
+  const project = recorder();
+  await publishSeatedCodingSessionCreate({
+    channelId: "channel-1",
+    commandId: "csl-project",
+    seat: SEAT,
+    // Padded and upper-cased: staged as the normalized coordinate the
+    // agent record stores.
+    projectRef: `  30621:${OWNER.toUpperCase()}:beekeeper `,
+    deps: project.deps,
+    publish: async () => "ok",
+  });
+  assert.equal(
+    project.calls.find(([name]) => name === "stageSeat")[1].requireProjectRef,
+    PROJECT_REF,
+  );
+
+  for (const projectRef of [null, "   "]) {
+    const standalone = recorder();
+    await publishSeatedCodingSessionCreate({
+      channelId: "channel-1",
+      commandId: "csl-standalone",
+      seat: SEAT,
+      projectRef,
+      deps: standalone.deps,
+      publish: async () => "ok",
+    });
+    const staged = standalone.calls.find(([name]) => name === "stageSeat")[1];
+    assert.equal("requireProjectRef" in staged, false);
+  }
+});
+
+test("a malformed project coordinate is still required, so the host refuses rather than skipping the check", async () => {
+  const { calls, deps } = recorder();
+  await publishSeatedCodingSessionCreate({
+    channelId: "channel-1",
+    commandId: "csl-malformed",
+    seat: SEAT,
+    projectRef: "30621:owner:beekeeper",
+    deps,
+    publish: async () => "ok",
+  });
+  assert.equal(
+    calls.find(([name]) => name === "stageSeat")[1].requireProjectRef,
+    "30621:owner:beekeeper",
+  );
+});
+
+test("a resume never requires a project, so a historical execution stays resumable", async () => {
+  const { calls, deps } = recorder({ packSource: PACK_SOURCE });
+  await publishSeatedCodingSessionResume({
+    commandId: "csl-resume-project",
+    actorPubkey: SEAT.actor,
+    actorRole: "builder",
+    projectRef: PROJECT_REF,
+    deps,
+    publish: async () => "ok",
+  });
+  const staged = calls.find(([name]) => name === "stageSeat")[1];
+  assert.equal("requireProjectRef" in staged, false);
 });

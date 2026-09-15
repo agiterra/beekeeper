@@ -390,15 +390,20 @@ function relayAgent(overrides = {}) {
   };
 }
 
+const PROJECT_ADDRESS = `30621:${"6".repeat(64)}:tank-loop`;
+const OTHER_ADDRESS = `30621:${"6".repeat(64)}:other`;
+
 function projectView(overrides = {}) {
   return buildRolesView({
     rolePacks: [pack()],
     agents: [],
     relayAgents: [],
     shelfEntries: [],
-    projects: [project(), project({ id: "proj-2" })],
+    projects: [
+      project({ address: PROJECT_ADDRESS }),
+      project({ id: "proj-2", address: OTHER_ADDRESS }),
+    ],
     projectId: "proj-1",
-    projectChannelIds: ["chan-1"],
     nowSeconds: NOW,
     ...overrides,
   });
@@ -424,67 +429,100 @@ test("selected project excludes other-project and unclaimed sessions, local home
   assert.deepEqual(view.unplaced, []);
 });
 
-test("historical scoped sessions retain named remote participants without inventing a local process or pack status", () => {
+test("a role card's agents are the project's associated agents by primary role; nothing else makes one", () => {
   const view = projectView({
-    relayAgents: [relayAgent({ channelIds: [] })],
+    agents: [
+      agent({ name: "Loom", projectRef: PROJECT_ADDRESS }),
+      // Same role name, no association: not this project's agent.
+      agent({ pubkey: REVIEWER_PUBKEY, name: "Bob", homeRole: "lead" }),
+      // Associated elsewhere: not borrowed.
+      agent({
+        pubkey: STRANGER_PUBKEY,
+        name: "Other lead",
+        projectRef: OTHER_ADDRESS,
+      }),
+    ],
+    // Channel membership and a role capability are not association either.
+    relayAgents: [
+      relayAgent({ pubkey: REVIEWER_PUBKEY, channelIds: ["chan-1"] }),
+    ],
+  });
+  const lead = view.roles.find((row) => row.role === "lead");
+  assert.deepEqual(
+    lead.agents.map((chip) => [chip.name, chip.projectAgent]),
+    [["Loom", "project"]],
+  );
+  assert.deepEqual(lead.nonProjectAgents, []);
+  // Owner hex case does not change the project.
+  const upper = projectView({
+    agents: [
+      agent({ projectRef: `30621:${"6".repeat(64).toUpperCase()}:tank-loop` }),
+    ],
+  });
+  assert.equal(upper.roles[0].agents.length, 1);
+});
+
+test("identities in this project's sessions that are not its agents are listed apart and never counted as agents", () => {
+  const key = "ab".repeat(32);
+  const view = projectView({
+    agents: [
+      agent({ pubkey: key.toUpperCase(), name: "Bob", homeRole: "builder" }),
+      agent({
+        pubkey: STRANGER_PUBKEY,
+        name: "Gordan",
+        homeRole: "runner",
+        projectRef: OTHER_ADDRESS,
+      }),
+    ],
+    relayAgents: [
+      relayAgent({ pubkey: key, name: "Shared name" }),
+      relayAgent({ channelIds: [] }),
+    ],
     shelfEntries: [
+      entry({ session: { agentRef: key, role: "builder" } }),
       entry({
+        generationId: "gen-2",
+        session: { agentRef: key.toUpperCase(), role: "builder" },
+      }),
+      entry({
+        generationId: "gen-3",
+        session: { agentRef: STRANGER_PUBKEY, role: "runner" },
+      }),
+      entry({
+        generationId: "gen-4",
         isClosed: true,
         session: { agentRef: REVIEWER_PUBKEY, role: "reviewer" },
       }),
     ],
   });
-  const reviewer = view.roles.find((row) => row.role === "reviewer");
-  assert.equal(reviewer.seats.length, 0);
-  assert.equal(reviewer.agents.length, 1);
-  assert.equal(reviewer.agents[0].name, "Andy's reviewer");
-  assert.equal(reviewer.agents[0].ownerPubkey, "owner-andy");
-  assert.equal(reviewer.agents[0].isManagedHere, false);
-  assert.equal(reviewer.agents[0].status, undefined);
-  assert.equal(reviewer.agents[0].hasRolePack, undefined);
-});
-
-test("local and relay copies join case-insensitively and scoped session roles supplement explicit local home roles", () => {
-  const key = "ab".repeat(32);
-  const view = projectView({
-    agents: [agent({ pubkey: key.toUpperCase(), homeRole: "lead" })],
-    relayAgents: [relayAgent({ pubkey: key, name: "Shared name" })],
-    shelfEntries: [
-      entry({ session: { agentRef: key, role: "runner" } }),
-      entry({
-        generationId: "gen-2",
-        session: { agentRef: key.toUpperCase(), role: "runner" },
-      }),
-    ],
-  });
+  const byRole = Object.fromEntries(view.roles.map((row) => [row.role, row]));
   assert.deepEqual(
     view.roles.map((row) => [row.role, row.agents.length]),
     [
-      ["lead", 1],
-      ["runner", 1],
+      ["builder", 0],
+      ["lead", 0],
+      ["reviewer", 0],
+      ["runner", 0],
     ],
   );
-  const runner = view.roles.find((row) => row.role === "runner");
-  assert.equal(runner.agents[0].pubkey, key);
-  assert.equal(runner.agents[0].name, "Ada");
-  assert.equal(runner.agents[0].isManagedHere, true);
-  assert.equal(runner.agents[0].status, "running");
-  assert.equal(runner.agents[0].ownerPubkey, "owner-andy");
-  assert.equal(runner.seats[0].agentName, "Ada");
-});
-
-test("project channel membership admits local explicit home roles but never invents remote roles", () => {
-  const view = projectView({
-    agents: [agent()],
-    relayAgents: [
-      relayAgent({ pubkey: LEAD_PUBKEY }),
-      relayAgent({ name: "Lead", homeRole: "lead", capabilities: ["lead"] }),
-    ],
-  });
-  assert.deepEqual(
-    view.roles[0].agents.map((chip) => chip.pubkey),
-    [LEAD_PUBKEY],
-  );
+  const bob = byRole.builder.nonProjectAgents;
+  assert.equal(bob.length, 1, "one identity, however many sessions");
+  assert.equal(bob[0].name, "Bob");
+  assert.equal(bob[0].projectAgent, "not-associated");
+  assert.equal(bob[0].isManagedHere, true);
+  assert.equal(bob[0].ownerPubkey, "owner-andy");
+  assert.equal(byRole.builder.seats.length, 2);
+  assert.equal(byRole.builder.seats[0].agentName, "Bob");
+  assert.equal(byRole.runner.nonProjectAgents[0].projectAgent, "other-project");
+  // A closed session on another computer's identity: named, never a local
+  // process or pack status, and its association is not decided here.
+  const reviewer = byRole.reviewer.nonProjectAgents[0];
+  assert.equal(byRole.reviewer.seats.length, 0);
+  assert.equal(reviewer.name, "Andy's reviewer");
+  assert.equal(reviewer.isManagedHere, false);
+  assert.equal(reviewer.projectAgent, "unconfirmed");
+  assert.equal(reviewer.status, undefined);
+  assert.equal(reviewer.hasRolePack, undefined);
 });
 
 test("roleless remote sessions stay roleless, unknown identities keep their session pubkey", () => {
@@ -536,28 +574,27 @@ test("remote pack availability stays unknown regardless of this computer's avail
   );
 });
 
-test("a worker seated inside another agent's umbrella counts under its role, only in its own project", () => {
-  const owner = "6".repeat(64);
-  const address = `30621:${owner}:tank-loop`;
+test("a worker seated inside another agent's umbrella is a session here, not the role's agent, and only in its own project", () => {
   const execution = (overrides) => ({
     session: {
       agentRef: REVIEWER_PUBKEY,
       role: "builder",
-      projectRef: address,
+      projectRef: PROJECT_ADDRESS,
       ...overrides,
     },
   });
-  const projects = [
-    project({ address }),
-    project({ id: "proj-2", address: `30621:${owner}:other` }),
-  ];
   const agents = [
     agent({ pubkey: REVIEWER_PUBKEY, name: "Bob", homeRole: "builder" }),
+    agent({
+      pubkey: STRANGER_PUBKEY,
+      name: "Builder",
+      homeRole: "builder",
+      projectRef: PROJECT_ADDRESS,
+    }),
   ];
 
   const view = projectView({
     agents,
-    projects,
     // The umbrella row names only the lead; the worker is an execution of it.
     shelfEntries: [entry()],
     executions: [execution({})],
@@ -565,17 +602,20 @@ test("a worker seated inside another agent's umbrella counts under its role, onl
   const builder = view.roles.find((row) => row.role === "builder");
   assert.deepEqual(
     builder.agents.map((chip) => chip.name),
-    ["Bob"],
+    ["Builder"],
+  );
+  assert.deepEqual(
+    builder.nonProjectAgents.map((chip) => [chip.name, chip.projectAgent]),
+    [["Bob", "not-associated"]],
   );
 
   const elsewhere = projectView({
     agents,
-    projects,
     shelfEntries: [entry()],
-    executions: [execution({ projectRef: `30621:${owner}:other` })],
+    executions: [execution({ projectRef: OTHER_ADDRESS })],
   });
-  assert.equal(
-    elsewhere.roles.find((row) => row.role === "builder"),
-    undefined,
+  assert.deepEqual(
+    elsewhere.roles.find((row) => row.role === "builder").nonProjectAgents,
+    [],
   );
 });

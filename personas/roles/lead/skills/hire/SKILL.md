@@ -10,6 +10,12 @@ in the brief. Confirm the operation's disposition. Never invent references,
 identities, capabilities or a second provider. The initial brief is the task;
 do not send a duplicate start message.
 
+Discover this project's agents with `bee projects agents` before choosing whom
+the work needs, then hire by role with `bee sessions hire`. The host seats only
+agents that belong to the session's project, never another project's agent
+that shares a role name. A refused hire names its remedy; follow it rather than
+hiring a different role to get around it.
+
 Give parallel workers distinct responsibility and expose dependencies and
 semantic overlap early. Use durable completion delivery instead of repeated
 model turns polling for a result. A failed dispatch gets a visible recovery,

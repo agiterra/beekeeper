@@ -5,7 +5,14 @@ import {
   AgentDirectoryRenameButton,
   AgentDirectoryRenameForm,
 } from "@/features/agents/ui/AgentDirectoryRename";
-import { seatStatusDotClass, StatusDot } from "@/features/roles/ui/roleDots";
+import {
+  DOT_DEPLOYED,
+  DOT_MUTED,
+  DOT_RUNNING,
+  DOT_WAITING,
+  seatStatusDotClass,
+  StatusDot,
+} from "@/features/roles/ui/roleDots";
 import { truncatePubkey } from "@/shared/lib/pubkey";
 import { Button } from "@/shared/ui/button";
 import { UserAvatar } from "@/shared/ui/UserAvatar";
@@ -15,28 +22,58 @@ import type {
   ProjectAgentOpenTarget,
   ProjectAgentRow as ProjectAgentRowModel,
   ProjectAgentSession,
+  ProjectAgentState,
 } from "../lib/projectAgentsModel";
+import type { ProjectAgentAssociateAccess } from "../lib/publishedProjectAgents";
+import { ProjectAgentAssociate } from "./ProjectAgentAssociate";
 import {
   ASSIGNMENT_ACCEPTANCE,
   ASSIGNMENT_BRIEF,
   ASSIGNMENTS_HEADING,
+  ASSOCIATION_MISSING_WARNING,
   assignmentByText,
   assignmentStatusText,
+  BADGE_BORROWED,
+  BADGE_PREVIOUS,
+  BADGE_PROJECT_AGENT,
   countText,
+  DETAILS_HEADING,
+  elsewhereText,
   installationText,
+  LOCATION_UNKNOWN,
   lastSeenText,
+  notProjectAgentText,
   ON_THIS_COMPUTER,
   OPEN_SESSION,
+  primaryRoleText,
   relationshipText,
   SESSIONS_HEADING,
+  seatedRolesText,
   sessionEngineText,
   sessionInstructionsText,
   sessionStatusText,
+  stateText,
   VIEW_INSTRUCTIONS,
 } from "./projectAgentsCopy";
 
 const DETAILS_SUMMARY_CLASS =
   "cursor-pointer text-xs text-muted-foreground marker:text-muted-foreground/60";
+
+const BADGE_CLASS =
+  "shrink-0 rounded-full border border-border px-1.5 py-px text-2xs text-muted-foreground";
+
+function stateDotClass(state: ProjectAgentState): string {
+  switch (state) {
+    case "working":
+      return DOT_RUNNING;
+    case "idle":
+      return DOT_DEPLOYED;
+    case "disconnected":
+      return DOT_WAITING;
+    default:
+      return DOT_MUTED;
+  }
+}
 
 export type OpenProjectAgentSession = (
   target: ProjectAgentOpenTarget,
@@ -56,12 +93,15 @@ function SessionItem({
       data-session-closed={session.sessionClosed ? "true" : "false"}
       data-testid="project-agent-session"
     >
-      <div className="flex min-w-0 items-center gap-1.5">
+      <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
         <StatusDot
           className={seatStatusDotClass(session.status)}
           title={session.status}
         />
-        <span className="truncate text-sm text-foreground">
+        <span
+          className="min-w-0 truncate text-sm text-foreground"
+          title={session.sessionName}
+        >
           {session.sessionName}
         </span>
         {session.role ? (
@@ -80,11 +120,11 @@ function SessionItem({
           {OPEN_SESSION}
         </Button>
       </div>
-      <p className="text-xs text-muted-foreground">
+      <p className="break-words text-xs text-muted-foreground">
         {sessionEngineText(session)} · {sessionStatusText(session)}
       </p>
       <p
-        className="text-xs text-muted-foreground"
+        className="break-words text-xs text-muted-foreground"
         data-pack-differs={session.packDiffersFromInstalled ? "true" : "false"}
         data-testid="project-agent-session-instructions"
         title={
@@ -98,9 +138,9 @@ function SessionItem({
       {session.providerAuthorityPubkey ? (
         <p
           className="truncate font-mono text-2xs text-muted-foreground/80"
-          title="The provider key that signs this session's records — the only machine identity the session carries."
+          title={`${session.providerAuthorityPubkey} — the provider key that signs this session's records, the only machine identity the session carries.`}
         >
-          provider {truncatePubkey(session.providerAuthorityPubkey)}
+          host {truncatePubkey(session.providerAuthorityPubkey)}
         </p>
       ) : null}
     </li>
@@ -172,33 +212,70 @@ function AssignmentItem({
   );
 }
 
+function sectionBadges(row: ProjectAgentRowModel): string[] {
+  if (row.section === "project") return [BADGE_PROJECT_AGENT];
+  if (row.section === "borrowed") return [BADGE_BORROWED];
+  return [
+    BADGE_PREVIOUS,
+    row.isProjectAgent ? BADGE_PROJECT_AGENT : BADGE_BORROWED,
+  ];
+}
+
+function LocationText({ row }: { row: ProjectAgentRowModel }) {
+  const { location } = row;
+  if (location.kind === "here") {
+    return <span className="shrink-0">{ON_THIS_COMPUTER}</span>;
+  }
+  if (location.kind === "elsewhere") {
+    return (
+      <span
+        className="min-w-0 break-words"
+        data-testid="project-agent-owner"
+        title={location.ownerPubkey}
+      >
+        {elsewhereText(location.ownerName)}
+      </span>
+    );
+  }
+  return <span className="shrink-0">{LOCATION_UNKNOWN}</span>;
+}
+
 /** One agent identity in a project, with its sessions and assignments beneath. */
 export function ProjectAgentRow({
+  associateAccess,
   onOpenSession,
   projectId,
+  projectName,
+  projectRef,
   row,
 }: {
+  associateAccess: ProjectAgentAssociateAccess;
   onOpenSession: OpenProjectAgentSession;
   projectId: string;
+  projectName: string;
+  projectRef: string;
   row: ProjectAgentRowModel;
 }) {
   const [isRenaming, setIsRenaming] = React.useState(false);
   const canRename = row.managedHere;
+  const seatedText =
+    row.section === "project" ? null : seatedRolesText(row.seatedRoles);
   return (
     <li
       className="flex min-w-0 flex-col gap-2 rounded-lg border border-border bg-card p-3"
       data-agent-pubkey={row.pubkey}
       data-agent-section={row.section}
+      data-agent-state={row.state}
       data-testid="project-agent-row"
     >
-      <div className="flex min-w-0 items-start gap-2">
+      <div className="flex min-w-0 flex-wrap items-start gap-2">
         <UserAvatar
           avatarUrl={row.avatarUrl}
           displayName={row.name}
           fallbackDelayMs={0}
           size="sm"
         />
-        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <div className="flex min-w-0 flex-1 basis-48 flex-col gap-0.5">
           {isRenaming ? (
             <AgentDirectoryRenameForm
               name={row.name}
@@ -206,44 +283,79 @@ export function ProjectAgentRow({
               pubkey={row.pubkey}
             />
           ) : (
-            <div className="flex min-w-0 items-baseline gap-2">
+            <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
               <span
-                className="truncate text-sm font-medium text-foreground"
+                className="min-w-0 truncate text-sm font-medium text-foreground"
                 data-testid="project-agent-name"
-                title={row.pubkey}
+                title={`${row.name} · ${row.pubkey}`}
               >
                 {row.name}
               </span>
-              {row.managedHere ? (
-                <span className="shrink-0 text-2xs text-muted-foreground">
-                  {ON_THIS_COMPUTER}
+              {sectionBadges(row).map((badge) => (
+                <span
+                  className={BADGE_CLASS}
+                  data-testid="project-agent-badge"
+                  key={badge}
+                >
+                  {badge}
                 </span>
-              ) : null}
+              ))}
             </div>
           )}
-          {row.relationship.kind === "installed" ? null : (
-            // An installed-only row's installation line below already says
-            // everything its relationship sentence would.
+          <p className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-muted-foreground">
+            <span
+              className="shrink-0 text-foreground/90"
+              data-testid="project-agent-role"
+            >
+              {primaryRoleText(row.primaryRole)}
+            </span>
+            <span aria-hidden>·</span>
+            <span
+              className="flex shrink-0 items-center gap-1"
+              data-testid="project-agent-state"
+            >
+              <StatusDot
+                className={stateDotClass(row.state)}
+                title={stateText(row.state)}
+              />
+              {stateText(row.state)}
+            </span>
+            <span aria-hidden>·</span>
+            <LocationText row={row} />
+          </p>
+          {row.relationship ? (
             <p
-              className="text-sm text-foreground/90"
+              className="break-words text-sm text-foreground/90"
               data-testid="project-agent-relationship"
             >
               {relationshipText(row.relationship)}
             </p>
-          )}
-          {row.installations.map((installation) => (
-            <p
-              className="text-xs text-muted-foreground"
-              data-testid="project-agent-installation"
-              key={installation.role}
-              title={`${installation.packRef.repo} ${installation.packRef.path} @ ${installation.packRef.sha}`}
-            >
-              {installationText(installation.role, installation.packRef.sha)}
+          ) : null}
+          {seatedText ? (
+            <p className="break-words text-xs text-muted-foreground">
+              {seatedText}
             </p>
-          ))}
-          <p className="text-xs text-muted-foreground">
+          ) : null}
+          {row.associationMissing ? (
+            <p
+              className="break-words text-xs text-amber-700 dark:text-amber-400"
+              data-testid="project-agent-association-missing"
+              role="note"
+            >
+              {ASSOCIATION_MISSING_WARNING}
+            </p>
+          ) : null}
+          {row.isProjectAgent ? null : (
+            <p
+              className="break-words text-xs text-muted-foreground"
+              data-testid="project-agent-not-member"
+            >
+              {notProjectAgentText(projectName, row.otherProject)}
+            </p>
+          )}
+          <p className="break-words text-xs text-muted-foreground">
             {lastSeenText(row.lastSeenSeconds)}
-            {row.roles.length > 0 ? (
+            {row.primaryRole || row.seatedRoles.length > 0 ? (
               <>
                 {" · "}
                 <Link
@@ -259,17 +371,53 @@ export function ProjectAgentRow({
           </p>
         </div>
         {canRename && !isRenaming ? (
-          <AgentDirectoryRenameButton
-            name={row.name}
-            onClick={() => setIsRenaming(true)}
-          />
+          <div className="shrink-0">
+            <AgentDirectoryRenameButton
+              name={row.name}
+              onClick={() => setIsRenaming(true)}
+            />
+          </div>
         ) : null}
       </div>
+
+      {row.mayAssociate && row.primaryRole ? (
+        <ProjectAgentAssociate
+          access={associateAccess}
+          name={row.name}
+          projectName={projectName}
+          projectRef={projectRef}
+          pubkey={row.pubkey}
+          role={row.primaryRole}
+        />
+      ) : null}
+
+      <details data-testid="project-agent-details">
+        <summary className={DETAILS_SUMMARY_CLASS}>{DETAILS_HEADING}</summary>
+        <div className="mt-1 flex min-w-0 flex-col gap-0.5">
+          <p
+            className="truncate font-mono text-2xs text-muted-foreground"
+            data-testid="project-agent-pubkey"
+            title={row.pubkey}
+          >
+            {row.pubkey}
+          </p>
+          {row.installations.map((installation) => (
+            <p
+              className="break-words text-xs text-muted-foreground"
+              data-testid="project-agent-installation"
+              key={installation.role}
+              title={`${installation.packRef.repo} ${installation.packRef.path} @ ${installation.packRef.sha}`}
+            >
+              {installationText(installation.role, installation.packRef.sha)}
+            </p>
+          ))}
+        </div>
+      </details>
 
       {row.sessions.length > 0 ? (
         <details
           data-testid="project-agent-sessions"
-          open={row.section === "working"}
+          open={row.state === "working"}
         >
           <summary className={DETAILS_SUMMARY_CLASS}>
             {SESSIONS_HEADING} ({countText(row.sessions.length, "session")})

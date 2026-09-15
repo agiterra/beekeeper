@@ -28,13 +28,20 @@ import {
   installedRolesForProject,
   useProjectInstalledRolesQuery,
 } from "@/features/roles/lib/projectInstalledRoles";
+import { useIdentityQuery } from "@/shared/api/hooks";
 import { isSessionTransportChannel } from "@/shared/api/channelTypes";
+import { normalizeProjectCoordinate } from "@/shared/lib/projectAgentAssociation";
 
 import {
   buildProjectAgents,
-  type ProjectAgentsIdentityInput,
+  type ProjectAgentsLocalAgentInput,
   type ProjectAgentsModel,
 } from "./projectAgentsModel";
+import {
+  type ProjectAgentAssociateAccess,
+  projectAgentAssociateAccess,
+} from "./publishedProjectAgents";
+import { usePublishedProjectAgents } from "./usePublishedProjectAgents";
 
 const NO_PROJECT_BUCKETS: ReadonlyMap<string, never[]> = new Map();
 const NO_CHANNEL_IDS: readonly string[] = [];
@@ -77,15 +84,19 @@ export type ProjectAgentsState = {
   isLoading: boolean;
   shelfState: ProjectCodingSessionShelfState;
   assignments: ProjectAgentsAssignmentScope;
-  /** Each identity or installation read that failed, in its own words. */
+  /** Each identity, installation or association read that failed, in its own words. */
   readErrors: string[];
+  /** Whether the viewer may associate an agent with this project. */
+  associateAccess: ProjectAgentAssociateAccess;
 };
 
 /**
- * Compose the project Agents tab: installations from this computer's setup
- * journals, executions from the signed session catalog *before* the umbrella
- * fold, assignments from the declared-work projection, and the umbrella shelf
- * only to name, close and open sessions.
+ * Compose the project Agents tab: association from managed records on this
+ * computer and from published kind:30177 claims by authorized authors;
+ * installations from this computer's setup journals (a warning, never
+ * membership); executions from the signed session catalog *before* the
+ * umbrella fold; assignments from the declared-work projection; and the
+ * umbrella shelf only to name, close and open sessions.
  */
 export function useProjectAgents(projectId: string): ProjectAgentsState {
   const projects = useDisplayProjectContainers();
@@ -174,26 +185,26 @@ export function useProjectAgents(projectId: string): ProjectAgentsState {
   const relayAgentsQuery = useRelayAgentsQuery({
     enabled: projectRef !== null,
   });
-  const identities = React.useMemo<ProjectAgentsIdentityInput[]>(() => {
-    const byKey = new Map<string, ProjectAgentsIdentityInput>();
-    for (const agent of relayAgentsQuery.data ?? []) {
-      byKey.set(agent.pubkey.toLowerCase(), {
-        pubkey: agent.pubkey,
-        name: agent.name || null,
-        avatarUrl: null,
-        managedHere: false,
-      });
-    }
-    for (const agent of agentsQuery.data ?? []) {
-      byKey.set(agent.pubkey.toLowerCase(), {
+  const localAgents = React.useMemo<ProjectAgentsLocalAgentInput[]>(
+    () =>
+      (agentsQuery.data ?? []).map((agent) => ({
         pubkey: agent.pubkey,
         name: agent.name,
         avatarUrl: agent.avatarUrl,
-        managedHere: true,
-      });
+        homeRole: agent.homeRole,
+        projectRef: agent.projectRef ?? null,
+      })),
+    [agentsQuery.data],
+  );
+  const published = usePublishedProjectAgents(project);
+  const projectNames = React.useMemo(() => {
+    const names = new Map<string, string>();
+    for (const candidate of projects) {
+      const ref = normalizeProjectCoordinate(candidate.address);
+      if (ref) names.set(ref, candidate.name);
     }
-    return [...byKey.values()];
-  }, [agentsQuery.data, relayAgentsQuery.data]);
+    return names;
+  }, [projects]);
 
   // Assigners are often people (a founder) or agents known only by profile.
   const signerPubkeys = React.useMemo(() => {
@@ -208,18 +219,24 @@ export function useProjectAgents(projectId: string): ProjectAgentsState {
       if (entry.session.agentRef)
         keys.add(entry.session.agentRef.toLowerCase());
     }
+    for (const association of published.agents) {
+      keys.add(association.ownerPubkey.toLowerCase());
+    }
     return [...keys].sort();
-  }, [declaredSessions, executionCatalog.entries]);
+  }, [declaredSessions, executionCatalog.entries, published.agents]);
   const profiles = useUsersBatchQuery(signerPubkeys).data?.profiles;
   const otherNames = React.useMemo(() => {
     const names = new Map<string, string>();
+    for (const agent of relayAgentsQuery.data ?? []) {
+      if (agent.name) names.set(agent.pubkey.toLowerCase(), agent.name);
+    }
     if (!profiles) return names;
     for (const pubkey of signerPubkeys) {
-      if (!profiles[pubkey]) continue;
+      if (!profiles[pubkey] || names.has(pubkey)) continue;
       names.set(pubkey, resolveUserLabel({ pubkey, profiles }));
     }
     return names;
-  }, [profiles, signerPubkeys]);
+  }, [profiles, relayAgentsQuery.data, signerPubkeys]);
 
   const nowSeconds = useNowSeconds();
   const model = React.useMemo(
@@ -230,18 +247,22 @@ export function useProjectAgents(projectId: string): ProjectAgentsState {
         umbrellas,
         declaredSessions,
         installations,
-        agents: identities,
+        localAgents,
+        publishedAgents: published.agents,
         otherNames,
+        projectNames,
         nowSeconds,
       }),
     [
       declaredSessions,
       executionCatalog.entries,
-      identities,
       installations,
+      localAgents,
       nowSeconds,
       otherNames,
+      projectNames,
       projectRef,
+      published.agents,
       umbrellas,
     ],
   );
@@ -270,8 +291,10 @@ export function useProjectAgents(projectId: string): ProjectAgentsState {
         `Shared agent identities unavailable: ${errorSentence(relayAgentsQuery.error)}`,
       );
     }
+    errors.push(...published.notices);
     return errors;
   }, [
+    published.notices,
     agentsQuery.error,
     agentsQuery.isError,
     channelsQuery.error,
@@ -308,15 +331,44 @@ export function useProjectAgents(projectId: string): ProjectAgentsState {
     ],
   );
 
+  const identityQuery = useIdentityQuery();
+  const associateAccess = React.useMemo(
+    () =>
+      projectAgentAssociateAccess({
+        selfPubkey: identityQuery.data?.pubkey ?? null,
+        creatorPubkey: project?.owner || null,
+        roster: published.roster,
+        projectName: project?.name ?? "this project",
+        rosterLoading: published.rosterLoading,
+        rosterError: published.rosterError,
+        identityError: identityQuery.isError
+          ? errorSentence(identityQuery.error)
+          : null,
+      }),
+    [
+      identityQuery.data?.pubkey,
+      identityQuery.error,
+      identityQuery.isError,
+      project?.name,
+      project?.owner,
+      published.roster,
+      published.rosterError,
+      published.rosterLoading,
+    ],
+  );
+
   return {
     project,
     model,
     isLoading:
       channelsQuery.isPending ||
       executionCatalog.isLoading ||
+      agentsQuery.isPending ||
+      published.isLoading ||
       buckets.state.kind === "loading",
     shelfState: buckets.state,
     assignments,
     readErrors,
+    associateAccess,
   };
 }

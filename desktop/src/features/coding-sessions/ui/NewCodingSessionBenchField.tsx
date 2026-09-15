@@ -10,8 +10,8 @@ export type NewCodingSessionBenchOption = {
   /** Extra fact shown beside the label — a role, a runtime name. */
   detail: string | null;
   /**
-   * The heading this identity sits under — the project's installed roles, or
-   * other agents on this computer. Absent or null: no heading.
+   * The heading this identity sits under — the session's project agents.
+   * Absent or null: no heading.
    */
   group?: string | null;
 };
@@ -30,10 +30,16 @@ export type NewCodingSessionBenchOption = {
  * Identities are shown with the canonical short pubkey beside the name for the
  * same reason the lead is: two identities can share a display name, and the
  * bench is what the lead will pick from without a person in the room.
+ *
+ * Identities follow the lead picker's rule: a project session's own agents,
+ * or, outside a project, agents that belong to none. Whoever was left out is
+ * counted in `exclusionSentence`.
  */
 export function NewCodingSessionBenchField({
   challengerRate,
   disabled = false,
+  emptySentence = null,
+  exclusionSentence = null,
   identities,
   onChallengerRateChange,
   onToggleIdentity,
@@ -45,6 +51,10 @@ export function NewCodingSessionBenchField({
   /** 0–1, or null when the founder set none. */
   challengerRate: number | null;
   disabled?: boolean;
+  /** Said instead of the default when there is nobody to bench. */
+  emptySentence?: string | null;
+  /** How many agents on this computer were left out, and why. */
+  exclusionSentence?: string | null;
   identities: readonly NewCodingSessionBenchOption[];
   onChallengerRateChange: (rate: number | null) => void;
   onToggleIdentity: (value: string, selected: boolean) => void;
@@ -69,8 +79,8 @@ export function NewCodingSessionBenchField({
           className="text-2xs text-muted-foreground"
           data-testid="new-coding-session-bench-empty"
         >
-          No identity on this computer carries a role, so there is nobody to
-          bench. The lead will work alone.
+          {emptySentence ??
+            "No identity on this computer carries a role, so there is nobody to bench. The lead will work alone."}
         </p>
       ) : (
         <ul className="flex flex-col gap-1 rounded-lg border border-border/60 bg-muted/30 px-3 py-2.5">
@@ -97,7 +107,7 @@ export function NewCodingSessionBenchField({
                 }
               />
               <label
-                className="flex min-w-0 items-baseline gap-2"
+                className="flex min-w-0 flex-wrap items-baseline gap-x-2"
                 htmlFor={`bench-identity-${option.value}`}
               >
                 <span className="truncate">{option.label}</span>
@@ -110,6 +120,15 @@ export function NewCodingSessionBenchField({
           ])}
         </ul>
       )}
+
+      {exclusionSentence ? (
+        <p
+          className="text-2xs text-muted-foreground"
+          data-testid="new-coding-session-bench-excluded"
+        >
+          {exclusionSentence}
+        </p>
+      ) : null}
 
       {providers.length === 0 ? null : (
         <ul className="flex flex-wrap gap-3 rounded-lg border border-border/60 bg-muted/30 px-3 py-2.5">

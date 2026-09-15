@@ -43,6 +43,11 @@ export type RolesPageSummary = {
    * always `agents`.
    */
   agentsShared: number;
+  /**
+   * Distinct identities that held a session here but are not this project's
+   * agents on this computer (`RoleRow.nonProjectAgents`). Never in `agents`.
+   */
+  nonProjectAgents: number;
   /** Distinct seats, in any list, whose status is not a finished one. */
   openSessions: number;
   /** Reports this project's channels carried. */
@@ -59,6 +64,7 @@ export function rolesPageSummary(
 ): RolesPageSummary {
   const agents = new Set<string>();
   const shared = new Set<string>();
+  const nonProject = new Set<string>();
   const openSeats = new Set<string>();
   const countSeat = (seat: SeatRow) => {
     if (roleSeatIsOpen(seat.status)) openSeats.add(seat.key);
@@ -69,6 +75,8 @@ export function rolesPageSummary(
       agents.add(agent.pubkey);
       if (agent.isManagedHere === false) shared.add(agent.pubkey);
     }
+    for (const agent of role.nonProjectAgents ?? [])
+      nonProject.add(agent.pubkey);
     for (const seat of role.seats) countSeat(seat);
   }
   for (const row of view.byProject) {
@@ -88,6 +96,7 @@ export function rolesPageSummary(
     agents: agents.size,
     agentsLocal: agents.size - shared.size,
     agentsShared: shared.size,
+    nonProjectAgents: [...nonProject].filter((key) => !agents.has(key)).length,
     openSessions: openSeats.size,
     reports: snapshots.reported.length,
     unconfirmed,

@@ -97,7 +97,7 @@ fn installed_entry(
 
 /// Scan `root` (this app's `project-team-setup` directory) for installations
 /// bound to `owner` (hex) and the canonical `relay` key. Read-only.
-pub(super) fn list_installed_roles(
+pub(crate) fn list_installed_roles(
     root: &Path,
     owner: &str,
     relay: &str,

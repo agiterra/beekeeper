@@ -284,7 +284,66 @@ test("a role with reports but no agents says only that", () => {
     reports: summary(),
   });
   assert.match(html, /data-testid="role-agents-builder-empty"/);
-  assert.match(html, />No agents yet\.</);
+  assert.match(html, />No project agents on this computer\.</);
+});
+
+test("identities that held a session here but are not project agents are listed apart, each badged with why", () => {
+  const html = render({
+    role: role({
+      agents: [agent({ projectAgent: "project" })],
+      nonProjectAgents: [
+        agent({
+          pubkey: "b".repeat(64),
+          name: "Bob",
+          projectAgent: "not-associated",
+        }),
+        agent({
+          pubkey: "c".repeat(64),
+          name: "Gordan",
+          projectAgent: "other-project",
+        }),
+        agent({
+          pubkey: "d".repeat(64),
+          name: "Andy's builder",
+          isManagedHere: false,
+          projectAgent: "unconfirmed",
+        }),
+      ],
+    }),
+  });
+  const [agentsList, rest] = html.split(
+    'data-testid="role-non-project-agents-builder"',
+  );
+  assert.ok(rest, "the non-project line is drawn");
+  assert.match(agentsList, />Ada</);
+  assert.doesNotMatch(agentsList, />Bob<|>Gordan<|>Andy&#x27;s builder</);
+  assert.match(rest, />Also in this project&#x27;s sessions:</);
+  assert.match(
+    rest,
+    /data-agent-project="not-associated"[\s\S]*>not a project agent</,
+  );
+  assert.match(
+    rest,
+    /data-agent-project="other-project"[\s\S]*>another project&#x27;s agent</,
+  );
+  assert.match(rest, /data-agent-project="unconfirmed"[\s\S]*>shared</);
+  assert.match(
+    rest,
+    /Whether it is this project&#x27;s agent is shown on the Agents tab\./,
+  );
+});
+
+test("a role with only a borrowed worker is not quiet and still has no project agents", () => {
+  const html = render({
+    role: role({
+      nonProjectAgents: [
+        agent({ name: "Bob", projectAgent: "not-associated" }),
+      ],
+    }),
+  });
+  assert.doesNotMatch(html, /data-testid="role-quiet-builder"/);
+  assert.match(html, />No project agents on this computer\.</);
+  assert.match(html, />not a project agent</);
 });
 
 // ── Reports: one line on the face, the versions behind a disclosure ──────
@@ -450,7 +509,7 @@ test("a role nothing is using says it once, not three times", () => {
   // Still discloses that there are no reports, for anything reading the state.
   assert.match(html, /data-reports="none"/);
   // And none of the three sentences it replaces.
-  assert.doesNotMatch(html, />No agents yet\.</);
+  assert.doesNotMatch(html, />No project agents on this computer\.</);
   assert.doesNotMatch(html, />No reports yet\.</);
   assert.doesNotMatch(html, /No open sessions\./);
 });

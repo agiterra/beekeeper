@@ -134,6 +134,7 @@ impl AgentDefinition {
             // the crew-role installer mints, never on the persona view that
             // `save_personas` rewrites from.
             home_role: None,
+            project_ref: None,
             created_at: self.created_at,
             updated_at: self.updated_at,
             last_started_at: None,
@@ -348,6 +349,12 @@ pub struct ManagedAgentRecord {
     /// guessed from a name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home_role: Option<String>,
+    /// The one project this agent belongs to, as a normalized
+    /// `30621:<owner-hex>:<dtag>` coordinate. Set by project setup, the
+    /// journal backfill, or an explicit association; `None` means no
+    /// association is recorded. Hiring for a project seats only its agents.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_ref: Option<String>,
     pub created_at: String,
     pub updated_at: String,
     pub last_started_at: Option<String>,
@@ -514,6 +521,8 @@ pub struct ManagedAgentSummary {
     pub team_id: Option<String>,
     /// Mirror of `ManagedAgentRecord.home_role`.
     pub home_role: Option<String>,
+    /// Mirror of `ManagedAgentRecord.project_ref`.
+    pub project_ref: Option<String>,
     /// Whether this computer can stage a role pack for this agent — exactly
     /// `resolve_seat_pack(record, &teams).is_some()`. `false` means a seat on
     /// this agent runs on its persona prompt alone.

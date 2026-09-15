@@ -226,6 +226,7 @@ export function ProjectPacksScreen({ projectId }: { projectId: string }) {
           sourceDetail={sourceDetail}
         />
         <ProjectTeamSetupWorkbench
+          projectId={project.id}
           projectName={project.name}
           projectRef={project.address}
         />

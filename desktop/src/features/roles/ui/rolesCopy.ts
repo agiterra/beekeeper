@@ -96,7 +96,40 @@ export const ROLE_SEATS_TITLE = "Sessions";
 
 export const ROLE_SKILLS_EMPTY = "No skills listed.";
 
-export const ROLE_AGENTS_EMPTY = "No agents yet.";
+/**
+ * A role with no project agent on this computer. Not "no agents": another
+ * computer may hold this project's agent for the role (the Agents tab reads
+ * that), and someone else's agent may have held a session here.
+ */
+export const ROLE_AGENTS_EMPTY = "No project agents on this computer.";
+
+/** The line before identities that held a session here but are not project agents. */
+export const ROLE_NON_PROJECT_AGENTS_LABEL = "Also in this project's sessions:";
+
+/** A non-project chip's badge and title, by why it is not a project agent. */
+export function nonProjectAgentBadge(
+  kind: "not-associated" | "other-project" | "unconfirmed",
+): { text: string; title: string } {
+  switch (kind) {
+    case "not-associated":
+      return {
+        text: "not a project agent",
+        title:
+          "Held a session in this project, but its record on this computer isn't associated with the project. It isn't counted as this role's agent, and the project lead can't hire it.",
+      };
+    case "other-project":
+      return {
+        text: "another project's agent",
+        title:
+          "Belongs to another project. It held a session here, but it isn't borrowed and isn't counted as this role's agent.",
+      };
+    case "unconfirmed":
+      return {
+        text: AGENT_SHARED_BADGE,
+        title: `${AGENT_SHARED_TITLE} Whether it is this project's agent is shown on the Agents tab.`,
+      };
+  }
+}
 
 export const ROLE_SEATS_EMPTY = "No open sessions.";
 
@@ -114,13 +147,21 @@ export const ROLE_QUIET =
  * names both rather than presenting their sum as one roster, and the tooltip
  * says plainly that the seen half is an observation, not a complete list.
  */
-export function rolesScopeText(local: number, shared: number): string {
+export function rolesScopeText(
+  local: number,
+  shared: number,
+  nonProject = 0,
+): string {
   const here = `${local} on this computer`;
-  return shared === 0 ? here : `${here} · ${shared} shared`;
+  const withShared = shared === 0 ? here : `${here} · ${shared} shared`;
+  if (nonProject === 0) return withShared;
+  return `${withShared} · ${nonProject} more in sessions, not ${
+    nonProject === 1 ? "a project agent" : "project agents"
+  }`;
 }
 
 export const ROLES_SCOPE_TITLE =
-  "Local agents are set up on this computer. Shared agents were seen in this project's sessions or channels; this is an observed list, not a complete roster.";
+  "Counted agents are this project's agents on this computer. Others seen in its sessions are not counted. The Agents tab lists every project agent, including ones on other computers.";
 
 /** The badge on an agent this computer does not manage. */
 export const AGENT_SHARED_BADGE = "shared";

@@ -15,7 +15,9 @@ import {
   AGENT_SHARED_TITLE,
   agentStatusWord,
   DISPUTED_WORD,
+  nonProjectAgentBadge,
   ROLE_AGENTS_EMPTY,
+  ROLE_NON_PROJECT_AGENTS_LABEL,
   ROLE_QUIET,
   ROLE_REPORT_VERSION_LIMIT,
   ROLE_REPORTS_EMPTY,
@@ -44,7 +46,11 @@ const DETAILS_SUMMARY_CLASS =
   "cursor-pointer text-xs text-muted-foreground marker:text-muted-foreground/60";
 
 /**
- * A managed agent whose home role is this card's role.
+ * An agent chip. Under `agents`, a project agent whose primary role is this
+ * card's role; under the "Also in this project's sessions" line, an identity
+ * that held a session here and is not this project's agent on this computer,
+ * badged with why (`nonProjectAgentBadge`) so it never reads as the role's
+ * agent.
  *
  * The chip's pack disclosure comes from the *role row*, not the agent's own
  * probe (Fix 2, `roleAgentPackState`): a role whose pack resolved shows its
@@ -74,6 +80,13 @@ function AgentChip({
   roleRefusal: string | null;
 }) {
   const isShared = agent.isManagedHere === false;
+  const nonProject =
+    agent.projectAgent && agent.projectAgent !== "project"
+      ? nonProjectAgentBadge(agent.projectAgent)
+      : null;
+  const badge =
+    nonProject ??
+    (isShared ? { text: AGENT_SHARED_BADGE, title: AGENT_SHARED_TITLE } : null);
   const state = roleAgentPackState({
     roleHasPack,
     roleRefusal,
@@ -105,6 +118,7 @@ function AgentChip({
           "border border-dashed border-border text-muted-foreground",
       )}
       data-agent-pack={state}
+      data-agent-project={agent.projectAgent}
       data-agent-pubkey={agent.pubkey}
       data-agent-scope={isShared ? "shared" : "local"}
       data-testid="role-agent-chip"
@@ -117,12 +131,13 @@ function AgentChip({
         size="sm"
       />
       <span className="truncate">{agent.name}</span>
-      {isShared ? (
+      {badge ? (
         <span
-          className="shrink-0 rounded-full border border-border/70 px-1.5 text-2xs text-muted-foreground"
-          title={AGENT_SHARED_TITLE}
+          className="min-w-0 truncate rounded-full border border-border/70 px-1.5 text-2xs text-muted-foreground"
+          data-testid="role-agent-chip-badge"
+          title={badge.title}
         >
-          {AGENT_SHARED_BADGE}
+          {badge.text}
         </span>
       ) : null}
       {dotClass === null ? null : (
@@ -301,8 +316,12 @@ export function RoleCard({
   });
   const activity = roleActivity(role.seats);
   const hasReports = reports !== null && reports.total > 0;
+  const nonProjectAgents = role.nonProjectAgents ?? [];
   const quiet =
-    role.agents.length === 0 && role.seats.length === 0 && !hasReports;
+    role.agents.length === 0 &&
+    nonProjectAgents.length === 0 &&
+    role.seats.length === 0 &&
+    !hasReports;
   return (
     <article
       className="flex min-w-0 flex-col gap-2 rounded-lg border border-border bg-card p-3"
@@ -404,6 +423,26 @@ export function RoleCard({
               ))
             )}
           </ul>
+          {nonProjectAgents.length > 0 ? (
+            <div
+              className="flex min-w-0 flex-col gap-1"
+              data-testid={`role-non-project-agents-${slug}`}
+            >
+              <p className="text-xs text-muted-foreground">
+                {ROLE_NON_PROJECT_AGENTS_LABEL}
+              </p>
+              <ul className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                {nonProjectAgents.map((agent) => (
+                  <AgentChip
+                    agent={agent}
+                    key={agent.pubkey}
+                    roleHasPack={role.hasPack}
+                    roleRefusal={role.refusal}
+                  />
+                ))}
+              </ul>
+            </div>
+          ) : null}
           <div
             className="flex flex-col gap-1"
             data-reports={hasReports ? "some" : "none"}

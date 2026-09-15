@@ -194,6 +194,7 @@ fn local_agent() -> ManagedAgentRecord {
         persona_team_dir: None,
         persona_name_in_team: None,
         home_role: None,
+        project_ref: None,
         created_at: "2025-01-01T00:00:00Z".to_string(),
         updated_at: "2025-01-01T00:00:00Z".to_string(),
         last_started_at: None,
@@ -372,6 +373,40 @@ fn inbound_definition_less_agent_applies_quad() {
         Some("remote-version".to_string()),
         "all four quad fields must apply on a definition-less sync"
     );
+}
+
+/// A same-owner 30177 never moves an agent between projects or roles: the
+/// association is set only by setup, the journal backfill, or an explicit
+/// local association — never by a relay echo carrying a digest.
+#[test]
+fn inbound_managed_agent_never_touches_project_or_home_role() {
+    use nostr::{EventBuilder, Keys, Kind, Tag};
+    let content = serde_json::json!({
+        "name": "Remote Agent",
+        "persona_id": "persona-remote",
+        "parallelism": 2,
+        "respond_to": "owner-only",
+        "home_role": "verifier",
+        "project_digest": "00".repeat(32),
+        "project_ref": format!("30621:{}:elsewhere", "cd".repeat(32)),
+    });
+    let event = EventBuilder::new(Kind::Custom(30177), content.to_string())
+        .tags(vec![Tag::parse(["d", AGENT_PUBKEY]).unwrap()])
+        .sign_with_keys(&Keys::generate())
+        .unwrap();
+    let content =
+        crate::managed_agents::agent_events::managed_agent_content_from_event(&event).unwrap();
+    let mut local = local_agent();
+    local.home_role = Some("builder".to_string());
+    local.project_ref = Some(format!("30621:{}:tank-loop", "ab".repeat(32)));
+    let mut agents = vec![local.clone()];
+    apply_inbound_managed_agent(&mut agents, AGENT_PUBKEY, content);
+    assert_eq!(
+        agents[0].name, "Remote Agent",
+        "projected fields still apply"
+    );
+    assert_eq!(agents[0].home_role, local.home_role);
+    assert_eq!(agents[0].project_ref, local.project_ref);
 }
 
 #[test]
@@ -884,6 +919,8 @@ fn inbound_managed_agent_content(
         parallelism: 1,
         respond_to: crate::managed_agents::RespondTo::OwnerOnly,
         respond_to_allowlist: vec![],
+        home_role: None,
+        project_digest: None,
     }
 }
 

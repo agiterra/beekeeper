@@ -92,7 +92,14 @@ export type CodingSessionHireAnswerInput = {
     | null;
   authority: CodingSessionHireAuthority;
   policy: CodingSessionHirePolicy;
+  /**
+   * Every managed agent this computer holds, each with its project
+   * association. The decision seats only those that belong to the umbrella's
+   * project (or, for a projectless umbrella, to no project).
+   */
   candidates: readonly CodingSessionHireCandidate[];
+  /** The umbrella project's display name for a refusal, when known. */
+  projectLabel?: string | null;
   availableProviderInstanceRefs: readonly string[];
   /** Pubkey of the provider that will answer the create this host publishes. */
   providerAuthorityPubkey: string;
@@ -165,6 +172,12 @@ export function planCodingSessionHireAnswer(
   }
 
   const liveSeats = listCodingSessionHireLiveSeats(umbrella);
+  // The umbrella's own project when a caller supplies one, else the one its
+  // executions carry — the fold has no project field of its own. One value
+  // for both the decision (who may be seated) and the create (where the seat
+  // is filed), so the two can never name different projects.
+  const projectRef =
+    umbrella.projectRef ?? codingSessionHireUmbrellaProjectRef(umbrella);
   const registry = input.registry ?? {
     kind: "unreadable" as const,
     why: "this host was given no registry source",
@@ -189,6 +202,8 @@ export function planCodingSessionHireAnswer(
       model: request.action.model,
     },
     policy: input.policy,
+    projectRef,
+    ...(input.projectLabel ? { projectLabel: input.projectLabel } : {}),
     candidates: input.candidates,
     liveSeats,
     availableProviderInstanceRefs: input.availableProviderInstanceRefs,
@@ -240,10 +255,7 @@ export function planCodingSessionHireAnswer(
       channelId: request.channelId,
       sessionRef: request.action.sessionRef,
       genesisRef: request.action.genesisRef,
-      // The umbrella's own project when a caller supplies one, else the one
-      // its executions carry — the fold has no project field of its own.
-      projectRef:
-        umbrella.projectRef ?? codingSessionHireUmbrellaProjectRef(umbrella),
+      projectRef,
       // Inherited, so the hired seat lands under the session's own name rather
       // than starting a second one beside it.
       title: umbrella.title.trim().length > 0 ? umbrella.title : null,

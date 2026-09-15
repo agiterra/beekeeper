@@ -4,6 +4,12 @@ import { friendlyAgentLastError } from "./friendlyAgentLastError";
  * here, or discoverable on the wire), joined with its seat history across
  * every project.
  *
+ * **Project membership is association** (`ManagedAgent.projectRef`): the
+ * project filter and the row's project label read it and nothing else. A
+ * seat is a secondary fact ("seated in <project>"), and a setup journal
+ * installation without the association is shown as a warning, not as
+ * membership (`docs/PROJECT_AGENT_HIRING_IMPL.md`).
+ *
  * `roles/lib/seatRows.ts` (owner: U2) already resolves a seat as a channel
  * generation joined against agents and projects; this module never re-derives
  * that join. It only groups seats by agent and folds the group into the
@@ -15,6 +21,7 @@ import { friendlyAgentLastError } from "./friendlyAgentLastError";
 import { resolveAgentCardModelLabel } from "./agentCardModelLabel";
 import { isManagedAgentActive } from "./managedAgentControlActions";
 import type { SeatRow } from "@/features/roles/lib/seatRows";
+import { normalizeProjectCoordinate } from "@/shared/lib/projectAgentAssociation";
 import { normalizePubkey, truncatePubkey } from "@/shared/lib/pubkey";
 import type { ManagedAgent, RelayAgent } from "@/shared/api/types";
 
@@ -38,10 +45,11 @@ export type AgentDirectorySeat = {
 /**
  * One project this agent was installed for, as a setup journal recorded it.
  *
- * Installation is not participation: an agent installed a minute ago holds no
- * seat yet, and one that held a seat was not necessarily installed for that
- * project. The two facts are kept apart on the row (`seatProjectIds` versus
- * `installedProjectIds`) so neither can be read as the other.
+ * Installation is neither participation nor membership: an agent installed a
+ * minute ago holds no seat yet, and until its record carries the association
+ * the lead cannot hire it. The facts are kept apart on the row
+ * (`seatProjectIds`, `installedProjects`, `project`) so none is read as
+ * another.
  */
 export type AgentDirectoryInstallation = {
   /** `30621:<owner>:<d>` — the address the journal recorded, verbatim. */
@@ -51,6 +59,15 @@ export type AgentDirectoryInstallation = {
   /** That project's display name, when it is listed. */
   projectName: string | null;
   role: string;
+};
+
+/** The project a managed record is associated with. */
+export type AgentDirectoryProjectAssociation = {
+  /** Normalized `30621:<owner>:<d>`. */
+  projectRef: string;
+  /** The listed project's `id`, when this viewer lists it. */
+  projectId: string | null;
+  projectName: string | null;
 };
 
 /** The project fields the directory needs to resolve an installation. */
@@ -83,7 +100,15 @@ export type AgentDirectoryRow = {
   roleSlugs: string[];
   /** The freshest open seat, or `null` when this agent holds none right now. */
   currentSeat: AgentDirectorySeat | null;
-  /** Every project this agent holds or held a seat in. */
+  /**
+   * The project this agent belongs to, from its managed record. `null` when
+   * it belongs to none — or, for a wire-only agent, when this computer holds
+   * no record to say (`projectKnown` is then `false`).
+   */
+  project: AgentDirectoryProjectAssociation | null;
+  /** A managed record here answered the association question. */
+  projectKnown: boolean;
+  /** Every project this agent holds or held a seat in — not membership. */
   seatProjectIds: ReadonlySet<string>;
   /**
    * Every project this computer installed this agent for, from the setup
@@ -92,6 +117,11 @@ export type AgentDirectoryRow = {
   installedProjects: AgentDirectoryInstallation[];
   /** `projectId`s of `installedProjects` that resolve to a listed project. */
   installedProjectIds: ReadonlySet<string>;
+  /**
+   * Installations whose agent record carries no association: the lead
+   * cannot hire it for that project yet. Empty once associated.
+   */
+  unassociatedInstallations: AgentDirectoryInstallation[];
   /** Open first, then closed; freshest first within each group. */
   seats: AgentDirectorySeat[];
 };
@@ -219,6 +249,11 @@ export function buildAgentDirectory(
   const relayByPubkey = new Map(
     relayAgents.map((agent) => [normalizePubkey(agent.pubkey), agent] as const),
   );
+  const projectsByAddress = new Map<string, AgentDirectoryProject>();
+  for (const listed of projects) {
+    const ref = normalizeProjectCoordinate(listed.address);
+    if (ref) projectsByAddress.set(ref, listed);
+  }
   const pubkeys = new Set<string>([
     ...managedByPubkey.keys(),
     ...relayByPubkey.keys(),
@@ -287,6 +322,17 @@ export function buildAgentDirectory(
       roleSlugSet.add(installation.role);
     }
 
+    const associatedRef = normalizeProjectCoordinate(managed?.projectRef);
+    let project: AgentDirectoryProjectAssociation | null = null;
+    if (associatedRef) {
+      const listed = projectsByAddress.get(associatedRef) ?? null;
+      project = {
+        projectRef: associatedRef,
+        projectId: listed?.id ?? null,
+        projectName: listed?.name ?? null,
+      };
+    }
+
     rows.push({
       pubkey,
       name,
@@ -307,9 +353,13 @@ export function buildAgentDirectory(
       roleHistoryLabel: roleHistoryText(roleCounts),
       roleSlugs: [...roleSlugSet].sort(),
       currentSeat,
+      project,
+      projectKnown: managed !== null,
       seatProjectIds,
       installedProjects,
       installedProjectIds,
+      unassociatedInstallations:
+        managed !== null && project === null ? installedProjects : [],
       seats: directorySeats,
     });
   }
@@ -323,7 +373,7 @@ export type AgentDirectoryStatusFilter =
   | "stopped"
   | "seated"
   | "not-seated"
-  | "installed-for-project";
+  | "project-agent";
 
 export type AgentDirectoryFilters = {
   role: string | null;
@@ -333,6 +383,15 @@ export type AgentDirectoryFilters = {
   /** "Installed on this computer" — checked by default. */
   installedOnly: boolean;
 };
+
+function projectKeyMatches(
+  association: { projectRef: string; projectId: string | null },
+  projectId: string,
+): boolean {
+  if (association.projectId === projectId) return true;
+  const wanted = normalizeProjectCoordinate(projectId);
+  return wanted !== null && association.projectRef === wanted;
+}
 
 /**
  * The installations of `row` that belong to `projectId`, or every one with
@@ -355,21 +414,35 @@ export function installationsForProject(
   );
 }
 
+/** Whether `row`'s record associates it with `projectId`. */
+export function agentDirectoryRowAssociatedWith(
+  row: Pick<AgentDirectoryRow, "project">,
+  projectId: string,
+): boolean {
+  return row.project !== null && projectKeyMatches(row.project, projectId);
+}
+
 /**
- * True when `row` belongs under `projectId`: it holds or held a seat there,
- * or this computer installed it for that project. Either fact is enough;
- * neither is rewritten into the other.
+ * True when `row` belongs under `projectId`: its record is associated with
+ * that project, or it was installed for that project and its record carries
+ * no association yet (listed with a warning, so the gap is visible where
+ * people look for it). A seat, past or present, never places an agent.
  */
 export function agentDirectoryRowInProject(
   row: Pick<
     AgentDirectoryRow,
-    "seatProjectIds" | "installedProjectIds" | "installedProjects"
+    "project" | "unassociatedInstallations" | "installedProjects"
   >,
   projectId: string,
 ): boolean {
-  if (row.seatProjectIds.has(projectId)) return true;
-  if (row.installedProjectIds.has(projectId)) return true;
-  return installationsForProject(row, projectId).length > 0;
+  if (agentDirectoryRowAssociatedWith(row, projectId)) return true;
+  if (row.unassociatedInstallations.length === 0) return false;
+  return (
+    installationsForProject(
+      { installedProjects: row.unassociatedInstallations },
+      projectId,
+    ).length > 0
+  );
 }
 
 export function agentDirectoryFilter(
@@ -394,8 +467,10 @@ export function agentDirectoryFilter(
         return row.currentSeat !== null;
       case "not-seated":
         return row.currentSeat === null;
-      case "installed-for-project":
-        return installationsForProject(row, filters.projectId).length > 0;
+      case "project-agent":
+        return filters.projectId
+          ? agentDirectoryRowAssociatedWith(row, filters.projectId)
+          : row.project !== null;
       default:
         return true;
     }

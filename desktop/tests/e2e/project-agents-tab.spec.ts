@@ -18,12 +18,15 @@ import { waitForAnimations } from "../helpers/animations";
 import { installMockBridge } from "../helpers/bridge";
 
 /**
- * The project Agents tab (`docs/PROJECT_AGENTS_TAB_SPEC.md`) explains who is
- * working in a project and why. The case that motivated it: a builder seated
- * inside the lead's session is an execution of that umbrella, not a shelf row,
- * and used to be invisible. This drives the real surface with signed 44223
- * metadata for a lead and a worker sharing one `sessionRef`, plus an installed
- * verifier that has never been seated.
+ * The project Agents tab (`docs/PROJECT_AGENTS_TAB_SPEC.md`, corrected by
+ * `docs/PROJECT_AGENT_HIRING_IMPL.md` § UI rules) explains who belongs to a
+ * project and who is working in it. Membership is association
+ * (`ManagedAgent.projectRef`), never a seat: a builder seated inside the
+ * lead's session without the association is a borrowed participant, not a
+ * project agent. This drives the real surface with signed 44223 metadata for
+ * an associated lead and an unassociated worker sharing one `sessionRef`, an
+ * associated verifier that has never been seated, and an agent setup
+ * installed whose record still lacks the association.
  */
 
 const PROJECT_FEATURES = JSON.stringify({ projects: true });
@@ -40,6 +43,8 @@ const BOB = { pubkey: "b3".repeat(32), name: "Bob" };
 const SAGE = { pubkey: "b4".repeat(32), name: "Sage" };
 /** Managed here with a builder home role, but nothing places it in this project. */
 const HOMEBODY = { pubkey: "b5".repeat(32), name: "Homebody" };
+/** Installed for this project by setup; its record never got the association. */
+const KEEL = { pubkey: "b6".repeat(32), name: "Keel" };
 
 const CAPABILITIES = {
   threadTurnStart: true,
@@ -147,14 +152,14 @@ async function openProjectAgentsTab(page: Page) {
       roles: [
         { role: "lead", agentPubkey: LOOM.pubkey, packRef: packRef("lead") },
         {
-          role: "builder",
-          agentPubkey: BOB.pubkey,
-          packRef: packRef("builder"),
-        },
-        {
           role: "verifier",
           agentPubkey: SAGE.pubkey,
           packRef: packRef("verifier"),
+        },
+        {
+          role: "runner",
+          agentPubkey: KEEL.pubkey,
+          packRef: packRef("runner"),
         },
       ],
     },
@@ -167,21 +172,24 @@ async function openProjectAgentsTab(page: Page) {
   const managed = (
     agent: { pubkey: string; name: string },
     homeRole: string,
+    projectRef: string | null,
   ) => ({
     pubkey: agent.pubkey,
     name: agent.name,
     avatarUrl: null,
-    status: "running",
+    status: "running" as const,
     homeRole,
+    projectRef,
     channelIds: [GENERAL_CHANNEL_ID],
     hasRolePack: true,
   });
   await installMockBridge(page, {
     managedAgents: [
-      managed(LOOM, "lead"),
-      managed(BOB, "builder"),
-      managed(SAGE, "verifier"),
-      { ...managed(HOMEBODY, "builder"), channelIds: [] },
+      managed(LOOM, "lead", PROJECT_ADDRESS),
+      managed(BOB, "builder", null),
+      managed(SAGE, "verifier", PROJECT_ADDRESS),
+      managed(KEEL, "runner", null),
+      { ...managed(HOMEBODY, "builder", null), channelIds: [] },
     ],
   });
   await page.setViewportSize({ width: 1280, height: 900 });
@@ -230,7 +238,13 @@ async function seedSeats(page: Page) {
   );
 }
 
-test("the Agents tab explains a worker seated in the lead's session and an installed agent awaiting work", async ({
+function row(page: Page, pubkey: string) {
+  return page.locator(
+    `[data-testid="project-agent-row"][data-agent-pubkey="${pubkey}"]`,
+  );
+}
+
+test("the Agents tab lists associated agents as members and a worker seated without association as borrowed", async ({
   page,
 }) => {
   await openProjectAgentsTab(page);
@@ -240,32 +254,61 @@ test("the Agents tab explains a worker seated in the lead's session and an insta
   await expect(page.getByTestId("project-tab-agents")).toHaveText("Agents");
   await expect(tabs).not.toContainText("Contributors");
 
-  // Before any seat: installed agents wait; the home-role-only agent is absent.
-  const installed = page.getByTestId("project-agents-installed");
-  await expect(installed).toContainText("Sage", { timeout: 15_000 });
-  await expect(installed).toContainText("Installed as Verifier");
-  await expect(page.getByTestId("project-agents-screen")).not.toContainText(
-    HOMEBODY.name,
-  );
+  // Before any seat: the associated agents are members and Available; the
+  // installed-but-unassociated agent is listed with the warning that the lead
+  // can't hire it; home-role-only agents are absent.
+  const members = page.getByTestId("project-agents-members");
+  await expect(members).toContainText("Sage", { timeout: 15_000 });
+  const sage = row(page, SAGE.pubkey);
+  await expect(sage).toHaveAttribute("data-agent-state", "available");
+  await expect(sage.getByTestId("project-agent-role")).toHaveText("Verifier");
+  await expect(sage.getByTestId("project-agent-state")).toHaveText("Available");
+  const keel = row(page, KEEL.pubkey);
+  await expect(keel).toHaveAttribute("data-agent-state", "not-associated");
+  await expect(
+    keel.getByTestId("project-agent-association-missing"),
+  ).toContainText("the lead can't hire it");
+  const screen = page.getByTestId("project-agents-screen");
+  await expect(screen).not.toContainText(HOMEBODY.name);
+  await expect(screen).not.toContainText(BOB.name);
 
   await seedSeats(page);
 
-  const working = page.getByTestId("project-agents-working");
-  await expect(working).toContainText("Bob", { timeout: 15_000 });
-  const bob = working.locator(
+  // Bob holds a running seat in the lead's session, but a seat is not
+  // membership: he is borrowed, and says so.
+  const borrowed = page.getByTestId("project-agents-borrowed");
+  await expect(borrowed).toContainText("Bob", { timeout: 15_000 });
+  const bob = borrowed.locator(
     `[data-testid="project-agent-row"][data-agent-pubkey="${BOB.pubkey}"]`,
+  );
+  await expect(bob).toHaveAttribute("data-agent-state", "working");
+  await expect(bob.getByTestId("project-agent-badge")).toHaveText("Borrowed");
+  await expect(bob.getByTestId("project-agent-not-member")).toContainText(
+    "Not a General agent",
   );
   await expect(bob.getByTestId("project-agent-relationship")).toContainText(
     "Builder in",
   );
   await expect(bob).toContainText("claude-primary · sonnet");
   await expect(bob).toContainText("Instructions builder @ f0132d13");
-  await expect(working).toContainText("Loom");
-  // Sage is still waiting: an install is not participation.
-  await expect(installed).toContainText("Sage");
-  await expect(page.getByTestId("project-agents-screen")).not.toContainText(
-    HOMEBODY.name,
+  await expect(
+    members.locator('[data-testid="project-agent-row"]'),
+  ).toHaveCount(3);
+  await expect(
+    members.locator(`[data-agent-pubkey="${BOB.pubkey}"]`),
+  ).toHaveCount(0);
+
+  // Loom is a member whose newest open execution is idle.
+  const loom = row(page, LOOM.pubkey);
+  await expect(loom).toHaveAttribute("data-agent-state", "idle", {
+    timeout: 15_000,
+  });
+  await expect(loom.getByTestId("project-agent-badge")).toHaveText(
+    "Project agent",
   );
+  // Sage is still Available: an install is not participation.
+  await expect(sage).toHaveAttribute("data-agent-state", "available");
+  await expect(screen).not.toContainText(HOMEBODY.name);
 
   await waitForAnimations(page);
   await page.screenshot({
@@ -273,10 +316,15 @@ test("the Agents tab explains a worker seated in the lead's session and an insta
     fullPage: true,
   });
 
-  // The Roles page now counts the worker seated inside the lead's session.
+  // The Roles page lists the borrowed worker beside the builder role, marked
+  // as not a project agent rather than counted as one.
   await page.getByTestId("project-tab-packs").click();
-  const builderAgents = page.getByTestId("role-agents-builder");
-  await expect(builderAgents).toContainText("Bob", { timeout: 15_000 });
+  const nonProject = page.getByTestId("role-non-project-agents-builder");
+  await expect(nonProject).toContainText("Bob", { timeout: 15_000 });
+  await expect(nonProject).toContainText("not a project agent");
+  await expect(page.getByTestId("role-agents-builder")).not.toContainText(
+    "Bob",
+  );
   await expect(page.getByTestId("roles-agents-pointer")).toBeVisible();
   await waitForAnimations(page);
   await page.getByTestId("role-card-builder").screenshot({

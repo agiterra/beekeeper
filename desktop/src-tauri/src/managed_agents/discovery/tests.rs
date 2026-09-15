@@ -222,8 +222,7 @@ fn effective_agent_command_explicit_override_wins() {
     );
 }
 
-/// Minimal record for `record_agent_command` tests. Only the resolution
-/// inputs (runtime / persona_id / agent_command_override) vary.
+/// Minimal record for `record_agent_command` tests; only runtime / persona_id / override vary.
 fn record_with(
     runtime: Option<&str>,
     persona_id: Option<&str>,
@@ -261,6 +260,7 @@ fn record_with(
         persona_team_dir: None,
         persona_name_in_team: None,
         home_role: None,
+        project_ref: None,
         env_vars: std::collections::BTreeMap::new(),
         created_at: String::new(),
         updated_at: String::new(),

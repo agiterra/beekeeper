@@ -27,6 +27,12 @@ pub fn run_event_sync(
     // disk state.
     migrate_personas_to_events(app, owner_keys, db_path);
     migrate_teams_to_events(app, owner_keys, db_path)?;
+    // Associate setup-installed agents with their projects from this owner's
+    // journals before the agent leg, so the reconcile publishes the digest.
+    crate::managed_agents::project_agent_association::backfill_project_agents_logged(
+        app,
+        &owner_keys.public_key().to_hex(),
+    );
     crate::managed_agents::reconcile::reconcile_agents_to_events(app, owner_keys, db_path);
     Ok(())
 }

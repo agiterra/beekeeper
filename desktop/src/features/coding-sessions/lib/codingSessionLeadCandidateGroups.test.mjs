@@ -3,47 +3,189 @@ import test from "node:test";
 
 import {
   applyCodingSessionInstalledRoles,
+  codingSessionCandidateExclusionSentence,
   codingSessionCandidateOptionLabel,
-  codingSessionInstalledLeadDefault,
+  codingSessionLeadEmptySentence,
+  codingSessionProjectLeadDefault,
   groupCodingSessionCandidates,
+  partitionCodingSessionCandidates,
   resolveCodingSessionLeadActor,
 } from "./codingSessionLeadCandidateGroups.ts";
 
+const OWNER = "a".repeat(64);
+const TANK_LOOP = `30621:${OWNER}:tank-loop`;
+const BEEKEEPER = `30621:${OWNER}:beekeeper`;
+
 const LOOM = `1c47d440${"0".repeat(56)}`;
-const TANK_REVIEWER = `2b${"1".repeat(62)}`;
-const KEYSTONE = `3a${"2".repeat(62)}`;
-const KEYSTONE_TWO = `4d${"3".repeat(62)}`;
-const PROJECT = `30621:${"a".repeat(64)}:tank-loop`;
+const TANK_BUILDER = `2b${"1".repeat(62)}`;
+const BOB = `3a${"2".repeat(62)}`;
+const BEE_LEAD = `4d${"3".repeat(62)}`;
+const STRAY = `5e${"4".repeat(62)}`;
+const ROLELESS = `6f${"5".repeat(62)}`;
 
+/**
+ * Two projects whose agents share role names, plus an agent in no project and
+ * one with no role at all.
+ */
 const CANDIDATES = [
-  { pubkey: KEYSTONE, name: "Keystone", role: "lead", model: null },
-  { pubkey: KEYSTONE_TWO, name: "Keystone", role: "reviewer", model: null },
-  { pubkey: TANK_REVIEWER, name: "Sift", role: "reviewer", model: null },
-  { pubkey: LOOM, name: "Loom", role: "lead", model: "claude-opus-5" },
+  { pubkey: BOB, name: "Bob", role: "builder", projectRef: BEEKEEPER },
+  { pubkey: BEE_LEAD, name: "Keystone", role: "lead", projectRef: BEEKEEPER },
+  {
+    pubkey: TANK_BUILDER,
+    name: "Builder",
+    role: "builder",
+    projectRef: TANK_LOOP,
+  },
+  { pubkey: LOOM, name: "Loom", role: "lead", projectRef: TANK_LOOP },
+  { pubkey: STRAY, name: "Stray", role: "lead", projectRef: null },
+  { pubkey: ROLELESS, name: "Plain", role: null, projectRef: null },
 ];
 
-const INSTALLED = [
-  { role: "lead", agentPubkey: LOOM, packRef: {} },
-  { role: "reviewer", agentPubkey: TANK_REVIEWER, packRef: {} },
-];
+const pubkeys = (groups) =>
+  groups.flatMap((group) => group.candidates.map((c) => c.pubkey));
 
-test("the project's installed roles come first, under a heading naming the project", () => {
-  const groups = groupCodingSessionCandidates({
+test("two projects with the same role names: each picker lists only its own agents", () => {
+  const tank = groupCodingSessionCandidates({
     candidates: CANDIDATES,
-    installedRoles: INSTALLED,
-    projectRef: PROJECT,
+    projectRef: TANK_LOOP,
     projectName: "Tank Loop",
   });
   assert.deepEqual(
-    groups.map((group) => [
-      group.id,
-      group.heading,
-      group.candidates.map((c) => c.pubkey),
-    ]),
-    [
-      ["project", "Tank Loop project roles", [TANK_REVIEWER, LOOM]],
-      ["other", "Other agents on this computer", [KEYSTONE, KEYSTONE_TWO]],
-    ],
+    tank.map((group) => [group.id, group.heading]),
+    [["project", "Tank Loop agents"]],
+  );
+  assert.deepEqual(pubkeys(tank), [TANK_BUILDER, LOOM]);
+
+  const bee = groupCodingSessionCandidates({
+    candidates: CANDIDATES,
+    projectRef: BEEKEEPER,
+    projectName: "Beekeeper",
+  });
+  assert.deepEqual(pubkeys(bee), [BOB, BEE_LEAD]);
+});
+
+test("a project ref differing only in owner-hex case is the same project", () => {
+  const upper = `30621:${OWNER.toUpperCase()}:tank-loop`;
+  assert.deepEqual(
+    pubkeys(
+      groupCodingSessionCandidates({
+        candidates: CANDIDATES,
+        projectRef: upper,
+        projectName: null,
+      }),
+    ),
+    [TANK_BUILDER, LOOM],
+  );
+});
+
+test("renaming an agent changes its label, never its eligibility", () => {
+  const renamed = CANDIDATES.map((c) =>
+    c.pubkey === BOB ? { ...c, name: "Builder" } : c,
+  );
+  for (const projectRef of [TANK_LOOP, BEEKEEPER, null]) {
+    assert.deepEqual(
+      pubkeys(
+        groupCodingSessionCandidates({
+          candidates: renamed,
+          projectRef,
+          projectName: null,
+        }),
+      ),
+      pubkeys(
+        groupCodingSessionCandidates({
+          candidates: CANDIDATES,
+          projectRef,
+          projectName: null,
+        }),
+      ),
+    );
+  }
+});
+
+test("an unassociated agent is not an option for a project, and is counted", () => {
+  const { eligible, excluded } = partitionCodingSessionCandidates({
+    candidates: CANDIDATES,
+    projectRef: TANK_LOOP,
+  });
+  assert.equal(
+    eligible.some((c) => c.pubkey === STRAY),
+    false,
+  );
+  // Bob, Keystone (another project) and Stray (no project); the roleless
+  // agent could lead nowhere, so it is not "excluded here".
+  assert.deepEqual(
+    excluded.map((c) => c.pubkey),
+    [BOB, BEE_LEAD, STRAY],
+  );
+  assert.equal(
+    codingSessionCandidateExclusionSentence({
+      excludedCount: excluded.length,
+      projectRef: TANK_LOOP,
+      projectName: "Tank Loop",
+      surface: "lead",
+    }),
+    "3 agents on this computer aren't Tank Loop agents, so they can't lead here. Associate one on the project's Agents tab.",
+  );
+  assert.equal(
+    codingSessionCandidateExclusionSentence({
+      excludedCount: 1,
+      projectRef: TANK_LOOP,
+      projectName: "Tank Loop",
+      surface: "bench",
+    }),
+    "1 agent on this computer isn't a Tank Loop agent, so it can't be benched here. Associate one on the project's Agents tab.",
+  );
+  assert.equal(
+    codingSessionCandidateExclusionSentence({
+      excludedCount: 0,
+      projectRef: TANK_LOOP,
+      projectName: "Tank Loop",
+      surface: "lead",
+    }),
+    null,
+  );
+});
+
+test("a projectless session lists unassociated agents only, flat", () => {
+  const groups = groupCodingSessionCandidates({
+    candidates: CANDIDATES,
+    projectRef: null,
+    projectName: null,
+  });
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].heading, null);
+  assert.deepEqual(pubkeys(groups), [STRAY]);
+  const { excluded } = partitionCodingSessionCandidates({
+    candidates: CANDIDATES,
+    projectRef: null,
+  });
+  assert.equal(
+    codingSessionCandidateExclusionSentence({
+      excludedCount: excluded.length,
+      projectRef: null,
+      projectName: null,
+      surface: "lead",
+    }),
+    "4 agents on this computer belong to a project, so they can't lead in a session outside one.",
+  );
+});
+
+test("a project with no agent of its own says so; Solo is the way out", () => {
+  const sentence = codingSessionLeadEmptySentence({
+    eligibleCount: 0,
+    projectRef: `30621:${OWNER}:empty`,
+    projectName: "Empty",
+  });
+  assert.match(sentence, /No Empty agent with a role is on this computer/);
+  assert.match(sentence, /Agents tab/);
+  assert.match(sentence, /Solo/);
+  assert.equal(
+    codingSessionLeadEmptySentence({
+      eligibleCount: 2,
+      projectRef: TANK_LOOP,
+      projectName: "Tank Loop",
+    }),
+    null,
   );
 });
 
@@ -52,122 +194,143 @@ test("an option names the agent, its role and its first 8 hex", () => {
     codingSessionCandidateOptionLabel(CANDIDATES[3]),
     "Loom · lead · 1c47d440…0000",
   );
-  // Two agents called Keystone are told apart by the key, not the name.
+  // Two agents called Builder are told apart by the key, not the name.
   assert.notEqual(
-    codingSessionCandidateOptionLabel(CANDIDATES[0]),
-    codingSessionCandidateOptionLabel(CANDIDATES[1]),
+    codingSessionCandidateOptionLabel({ ...CANDIDATES[0], name: "Builder" }),
+    codingSessionCandidateOptionLabel(CANDIDATES[2]),
   );
 });
 
-test("no project, or a project that installed nobody here, keeps one ungrouped list", () => {
-  for (const input of [
-    { installedRoles: INSTALLED, projectRef: null },
-    { installedRoles: [], projectRef: PROJECT },
-  ]) {
-    const groups = groupCodingSessionCandidates({
-      candidates: CANDIDATES,
-      projectName: "Tank Loop",
-      ...input,
-    });
-    assert.equal(groups.length, 1);
-    assert.equal(groups[0].heading, null);
-    assert.deepEqual(
-      groups[0].candidates.map((c) => c.pubkey),
-      CANDIDATES.map((c) => c.pubkey),
-    );
-  }
-});
-
-test("an unnamed project still gets a heading that says whose roles these are", () => {
+test("an unnamed project still gets a heading that says whose agents these are", () => {
   const [project] = groupCodingSessionCandidates({
     candidates: CANDIDATES,
-    installedRoles: INSTALLED,
-    projectRef: PROJECT,
+    projectRef: TANK_LOOP,
     projectName: null,
   });
-  assert.equal(project.heading, "This project's roles");
+  assert.equal(project.heading, "This project's agents");
 });
 
-test("the installed role for this project replaces a home role", () => {
+test("the installed role for this project replaces a home role in the label", () => {
   const applied = applyCodingSessionInstalledRoles(
-    [{ pubkey: TANK_REVIEWER, name: "Sift", role: "worker", model: null }],
-    INSTALLED,
+    [{ pubkey: TANK_BUILDER, name: "Builder", role: "worker" }],
+    [{ role: "builder", agentPubkey: TANK_BUILDER, packRef: {} }],
   );
-  assert.equal(applied[0].role, "reviewer");
+  assert.equal(applied[0].role, "builder");
 });
 
-test("exactly one installed lead that can be seated is the default", () => {
+test("the default lead is the project's single agent whose role is lead", () => {
   assert.equal(
-    codingSessionInstalledLeadDefault({
+    codingSessionProjectLeadDefault({
       candidates: CANDIDATES,
-      installedRoles: INSTALLED,
+      projectRef: TANK_LOOP,
     }),
     LOOM,
   );
-  // Two installed leads: a choice for the person.
   assert.equal(
-    codingSessionInstalledLeadDefault({
+    codingSessionProjectLeadDefault({
       candidates: CANDIDATES,
-      installedRoles: [
-        ...INSTALLED,
-        { role: "lead", agentPubkey: KEYSTONE, packRef: {} },
-      ],
+      projectRef: BEEKEEPER,
     }),
-    null,
+    BEE_LEAD,
   );
-  // A retried install that recorded the same lead twice is still one lead.
+  // Another project's lead, or an unassociated one, is never the default.
   assert.equal(
-    codingSessionInstalledLeadDefault({
-      candidates: CANDIDATES,
-      installedRoles: [...INSTALLED, INSTALLED[0]],
-    }),
-    LOOM,
-  );
-  // Installed, but not an identity on this computer: nothing to seat.
-  assert.equal(
-    codingSessionInstalledLeadDefault({
+    codingSessionProjectLeadDefault({
       candidates: CANDIDATES.filter((c) => c.pubkey !== LOOM),
-      installedRoles: INSTALLED,
+      projectRef: TANK_LOOP,
     }),
     null,
   );
+  // Two leads in the project: a choice for the person.
   assert.equal(
-    codingSessionInstalledLeadDefault({
+    codingSessionProjectLeadDefault({
+      candidates: [
+        ...CANDIDATES,
+        {
+          pubkey: `7a${"6".repeat(62)}`,
+          name: "Loom Two",
+          role: "lead",
+          projectRef: TANK_LOOP,
+        },
+      ],
+      projectRef: TANK_LOOP,
+    }),
+    null,
+  );
+  // A projectless session has no default, even with one unassociated lead.
+  assert.equal(
+    codingSessionProjectLeadDefault({
       candidates: CANDIDATES,
-      installedRoles: [],
+      projectRef: null,
     }),
     null,
   );
 });
 
-test("an explicit pick survives a late installed-roles result; no pick follows the default", () => {
-  // The picker opens before the journals are read: nothing to default to.
+test("an explicit pick survives a late default; no pick follows the default", () => {
+  const eligible = partitionCodingSessionCandidates({
+    candidates: CANDIDATES,
+    projectRef: TANK_LOOP,
+  }).eligible;
   let selection = { actor: null, explicit: false };
   assert.equal(
-    resolveCodingSessionLeadActor({ selection, installedDefault: null }),
+    resolveCodingSessionLeadActor({ selection, defaultActor: null, eligible }),
     null,
   );
-  // The result lands: the single installed lead is preselected.
   assert.equal(
-    resolveCodingSessionLeadActor({ selection, installedDefault: LOOM }),
+    resolveCodingSessionLeadActor({ selection, defaultActor: LOOM, eligible }),
     LOOM,
   );
-  // The person picks Keystone before the result lands...
-  selection = { actor: KEYSTONE, explicit: true };
+  selection = { actor: TANK_BUILDER, explicit: true };
   assert.equal(
-    resolveCodingSessionLeadActor({ selection, installedDefault: null }),
-    KEYSTONE,
-  );
-  // ...and the late result does not take it back.
-  assert.equal(
-    resolveCodingSessionLeadActor({ selection, installedDefault: LOOM }),
-    KEYSTONE,
+    resolveCodingSessionLeadActor({ selection, defaultActor: LOOM, eligible }),
+    TANK_BUILDER,
   );
   // Choosing "Pick an agent…" on purpose is a pick too.
   assert.equal(
     resolveCodingSessionLeadActor({
       selection: { actor: null, explicit: true },
-      installedDefault: LOOM,
+      defaultActor: LOOM,
+      eligible,
+    }),
+    null,
+  );
+});
+
+test("an explicit pick that is not eligible is refused, not seated and not defaulted", () => {
+  // Picked while the channel's project was still unread (projectless list),
+  // then the project resolved: Stray belongs to no project and cannot lead.
+  const projectless = partitionCodingSessionCandidates({
+    candidates: CANDIDATES,
+    projectRef: null,
+  }).eligible;
+  const selection = { actor: STRAY, explicit: true };
+  assert.equal(
+    resolveCodingSessionLeadActor({
+      selection,
+      defaultActor: null,
+      eligible: projectless,
+    }),
+    STRAY,
+  );
+  const tank = partitionCodingSessionCandidates({
+    candidates: CANDIDATES,
+    projectRef: TANK_LOOP,
+  }).eligible;
+  assert.equal(
+    resolveCodingSessionLeadActor({
+      selection,
+      defaultActor: LOOM,
+      eligible: tank,
+    }),
+    null,
+  );
+  // Another project's agent picked by hand (a stale DOM value) is refused too.
+  assert.equal(
+    resolveCodingSessionLeadActor({
+      selection: { actor: BOB, explicit: true },
+      defaultActor: LOOM,
+      eligible: tank,
     }),
     null,
   );

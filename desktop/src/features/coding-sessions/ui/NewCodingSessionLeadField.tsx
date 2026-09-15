@@ -19,6 +19,11 @@ export type NewCodingSessionLeadCandidate = {
   role: string | null;
   model: string | null;
   hasRolePack?: boolean;
+  /**
+   * The project this agent durably belongs to (`ManagedAgent.projectRef`), or
+   * null when none. The only fact that decides whether it may lead here.
+   */
+  projectRef?: string | null;
 };
 
 /**
@@ -33,26 +38,40 @@ export type NewCodingSessionLeadCandidate = {
  * because two managed agents can be called Keystone and this is the screen
  * where picking the wrong one costs a session.
  *
- * With `groups`, a project's installed roles come first under a heading that
- * names the project, and every other agent on this computer follows under its
- * own; each option then carries name, role and short pubkey, because "Loom ·
- * lead" alone does not say which project installed it.
+ * The options are only the agents this session may seat: a project session's
+ * own agents (by `ManagedAgent.projectRef`, never by role name), or, outside a
+ * project, agents that belong to none. Whoever was left out is counted in one
+ * sentence under the field, with the way to change it — never silently
+ * dropped, and never listed as a choice the host would then refuse.
  */
 export function NewCodingSessionLeadField({
   candidates,
   groups,
   disabled = false,
+  emptySentence = null,
+  exclusionSentence = null,
   lead,
   onLeadChange,
+  onOpenProjectAgents = null,
 }: {
+  /** Every candidate the options were drawn from. */
   candidates: readonly NewCodingSessionLeadCandidate[];
   /** Grouped options; absent, the seatable candidates as one flat list. */
   groups?: readonly CodingSessionCandidateGroup<NewCodingSessionLeadCandidate>[];
   disabled?: boolean;
+  /** Said instead of the default when there is nobody to pick. */
+  emptySentence?: string | null;
+  /** How many agents on this computer were left out, and why. */
+  exclusionSentence?: string | null;
   lead: CodingSessionLaunchLead;
   onLeadChange: (actor: string | null) => void;
+  /** Opens the session's project on its Agents tab, when there is one. */
+  onOpenProjectAgents?: (() => void) | null;
 }) {
-  const seatable = candidates.filter((candidate) => candidate.role !== null);
+  const options = groups
+    ? groups.flatMap((group) => group.candidates)
+    : candidates.filter((candidate) => candidate.role !== null);
+  const labelled = groups?.some((group) => group.heading !== null) ?? false;
   return (
     <div className="flex flex-col gap-2" data-testid="new-coding-session-lead">
       <label
@@ -62,7 +81,7 @@ export function NewCodingSessionLeadField({
         Who leads
       </label>
       <select
-        className="h-9 rounded-md border border-input bg-transparent px-3 text-sm disabled:opacity-50"
+        className="h-9 min-w-0 rounded-md border border-input bg-transparent px-3 text-sm disabled:opacity-50"
         data-testid="new-coding-session-lead-select"
         disabled={disabled}
         id="coding-session-lead"
@@ -72,7 +91,7 @@ export function NewCodingSessionLeadField({
         value={lead.kind === "agent" ? lead.actor : ""}
       >
         <option value="">Pick an agent…</option>
-        {groups?.some((group) => group.heading !== null)
+        {labelled && groups
           ? groups.map((group) => (
               <optgroup
                 data-testid={`new-coding-session-lead-group-${group.id}`}
@@ -86,9 +105,9 @@ export function NewCodingSessionLeadField({
                 ))}
               </optgroup>
             ))
-          : seatable.map((candidate) => (
+          : options.map((candidate) => (
               <option key={candidate.pubkey} value={candidate.pubkey}>
-                {candidate.name} · {candidate.role}
+                {codingSessionCandidateOptionLabel(candidate)}
               </option>
             ))}
       </select>
@@ -104,14 +123,54 @@ export function NewCodingSessionLeadField({
             : " · no model of its own"
           : ""}
       </p>
-      {seatable.length === 0 ? (
-        <p className="text-2xs text-muted-foreground">
-          No identity on this computer carries a role, so there is nobody to
-          lead a team. Install role packs from the project's{" "}
-          <code>personas/roles</code>, or switch to Solo.
+      {options.length === 0 ? (
+        <p
+          className="text-2xs text-muted-foreground"
+          data-testid="new-coding-session-lead-empty"
+        >
+          {emptySentence ?? (
+            <>
+              No identity on this computer carries a role, so there is nobody to
+              lead a team. Install role packs from the project's{" "}
+              <code>personas/roles</code>, or switch to Solo.
+            </>
+          )}
+          {onOpenProjectAgents && !exclusionSentence ? (
+            <>
+              {" "}
+              <OpenProjectAgentsButton onClick={onOpenProjectAgents} />
+            </>
+          ) : null}
+        </p>
+      ) : null}
+      {exclusionSentence ? (
+        <p
+          className="text-2xs text-muted-foreground"
+          data-testid="new-coding-session-lead-excluded"
+        >
+          {exclusionSentence}
+          {onOpenProjectAgents ? (
+            <>
+              {" "}
+              <OpenProjectAgentsButton onClick={onOpenProjectAgents} />
+            </>
+          ) : null}
         </p>
       ) : null}
     </div>
+  );
+}
+
+function OpenProjectAgentsButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      className="text-primary underline underline-offset-2"
+      data-testid="new-coding-session-lead-open-agents"
+      onClick={onClick}
+      type="button"
+    >
+      Open the Agents tab
+    </button>
   );
 }
 

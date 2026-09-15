@@ -32,7 +32,9 @@ const ROLE_SUGGESTION_LIST_ID = "coding-session-role-suggestions";
  * The agent list is this computer's managed agents, because those are the
  * only identities whose keys the provider can resolve host-locally (D6). An
  * agent on someone else's machine cannot be seated here, and pretending
- * otherwise would produce a create the provider refuses.
+ * otherwise would produce a create the provider refuses. The caller narrows it
+ * to the agents a seat in this session may hold (its project's, or agents in
+ * no project) and says who was left out in `scopeSentence`.
  *
  * `agents` is deliberately structural ({@link CodingSessionSeatAgent}) rather
  * than the full `ManagedAgent`: the two disclosure lines below read optional
@@ -48,6 +50,8 @@ export function NewCodingSessionAgentSeatField({
   onRoleChange,
   projectRef = null,
   role,
+  roleLocked = false,
+  scopeSentence = null,
 }: {
   /** Pubkey of the seated agent, or null for an unseated execution. */
   actor: string | null;
@@ -65,6 +69,10 @@ export function NewCodingSessionAgentSeatField({
    */
   projectRef?: string | null;
   role: string;
+  /** The chosen agent's primary role fixes the role; the box is read-only. */
+  roleLocked?: boolean;
+  /** Who is not offered and why, or that the session's project is unknown. */
+  scopeSentence?: string | null;
 }) {
   const selected = agents.find((agent) => agent.pubkey === actor) ?? null;
   // Both lines are conditional on the backend having answered: a build with no
@@ -129,11 +137,21 @@ export function NewCodingSessionAgentSeatField({
           ))}
           {agents.length === 0 ? (
             <DropdownMenuItem disabled>
-              This computer manages no agents yet
+              {scopeSentence
+                ? "No agent on this computer can be seated in this session"
+                : "This computer manages no agents yet"}
             </DropdownMenuItem>
           ) : null}
         </DropdownMenuContent>
       </DropdownMenu>
+      {scopeSentence ? (
+        <p
+          className="text-2xs text-muted-foreground"
+          data-testid="new-coding-session-seat-scope"
+        >
+          {scopeSentence}
+        </p>
+      ) : null}
 
       {actor !== null ? (
         <div className="flex flex-col gap-1">
@@ -146,6 +164,7 @@ export function NewCodingSessionAgentSeatField({
           <Input
             data-testid="new-coding-session-seat-role"
             disabled={disabled}
+            readOnly={roleLocked}
             id="coding-session-seat-role"
             list={ROLE_SUGGESTION_LIST_ID}
             maxLength={MAX_CODING_SESSION_ROLE_BYTES}
@@ -158,6 +177,15 @@ export function NewCodingSessionAgentSeatField({
               <option key={suggestion} value={suggestion} />
             ))}
           </datalist>
+          {roleLocked ? (
+            <p
+              className="text-2xs text-muted-foreground"
+              data-testid="new-coding-session-seat-role-locked"
+            >
+              A new seat takes the agent's primary role, so this agent is seated
+              as {role}.
+            </p>
+          ) : null}
           {roleNotice ? (
             <p
               className={

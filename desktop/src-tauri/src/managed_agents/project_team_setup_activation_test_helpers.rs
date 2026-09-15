@@ -111,3 +111,17 @@ fn lead_first_message_asks_to_reconcile_earlier_staffing_instructions() {
         "Before depending on existing project instructions, reconcile any that name specific agents, reviewers, budgets or staffing arrangements from an earlier setup: keep the underlying product, security, testing and independent-review requirements, map them to available roles, and ask the owner once when the mapping is unclear. Inspect tools, configuration and repository state yourself before asking a person."
     ));
 }
+
+#[test]
+fn lead_first_message_names_project_agent_discovery_and_hiring() {
+    let source = ProjectTeamActivationSource {
+        repo_ref: format!("30617:{}:packs", "a".repeat(64)),
+        commit: "b".repeat(40),
+        pack_path: "personas/roles".to_string(),
+    };
+    let turn = projection::lead_initial_turn(&source);
+    assert!(turn.contains("`bee projects agents`"));
+    assert!(turn.contains("your seat's project is the default"));
+    assert!(turn.contains("`bee sessions hire`"));
+    assert!(turn.contains("seats only agents that belong to this project"));
+}

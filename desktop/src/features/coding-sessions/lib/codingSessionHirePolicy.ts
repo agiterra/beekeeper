@@ -21,6 +21,10 @@
  * event.
  */
 
+import {
+  agentMaySeatInProject,
+  normalizeProjectCoordinate,
+} from "@/shared/lib/projectAgentAssociation";
 import { truncatePubkey } from "@/shared/lib/pubkey";
 import {
   codingSessionHireModelOf,
@@ -67,23 +71,41 @@ export const CODING_SESSION_HIRE_MAX_SEATS_CEILING = 32;
 export const CODING_SESSION_HIRE_POLICY_STORAGE_KEY =
   "buzz.codingSessions.hirePolicy.v1";
 
-/** The refusal codes the contract defines. Nothing else is published. */
-export type CodingSessionHireRefusalCode =
-  | "HIRE_OFF"
-  | "HIRE_ROLE_NOT_ALLOWED"
-  | "HIRE_LIMIT"
-  | "HIRE_NO_IDENTITY"
-  | "HIRE_ROLE_BUSY"
-  | "HIRE_PROVIDER_NOT_ALLOWED"
-  | "HIRE_MODEL_NOT_OFFERED"
-  | "HIRE_STALE"
+/**
+ * The refusal codes the contract defines. Nothing else is published.
+ *
+ * Must equal buzz-core's `HIRE_REFUSAL_CODES`
+ * (`crates/buzz-core/src/coding_session_lifecycle_command.rs`); a parity test
+ * reads that file.
+ */
+export const CODING_SESSION_HIRE_REFUSAL_CODES = [
+  "HIRE_OFF",
+  "HIRE_ROLE_NOT_ALLOWED",
+  "HIRE_LIMIT",
+  /**
+   * A **projectless** session asked for a role no agent on this computer holds
+   * at all. A session in a project is answered `HIRE_NO_PROJECT_AGENT`
+   * instead, because its remedy is the project's, not the computer's.
+   */
+  "HIRE_NO_IDENTITY",
+  /**
+   * The session's project has no eligible agent for the role on this computer
+   * (or, for a projectless session, every agent holding the role belongs to a
+   * project). Never answered by seating another project's agent: borrowing is
+   * not supported.
+   */
+  "HIRE_NO_PROJECT_AGENT",
+  "HIRE_ROLE_BUSY",
+  "HIRE_PROVIDER_NOT_ALLOWED",
+  "HIRE_MODEL_NOT_OFFERED",
+  "HIRE_STALE",
   /**
    * The hire asked to be routed and nothing could be routed to it — no
    * registry this host can read, no live catalog, or no execution target that
    * clears the class's gates. Never a quietly weakened requirement: spec §7
    * step 12.
    */
-  | "HIRE_NO_ROUTE"
+  "HIRE_NO_ROUTE",
   /**
    * This host could not read the hire's own shape, and says which key.
    *
@@ -95,7 +117,31 @@ export type CodingSessionHireRefusalCode =
    * lead waited fifteen minutes on a computer that had already read and
    * discarded its request (ledger draft 97).
    */
-  | "HIRE_MALFORMED";
+  "HIRE_MALFORMED",
+] as const;
+
+export type CodingSessionHireRefusalCode =
+  (typeof CODING_SESSION_HIRE_REFUSAL_CODES)[number];
+
+/**
+ * Persona-id prefix of a project team setup actor. Such an agent authors a
+ * project's team and is restaged only through its scoped bootstrap
+ * (`project_team_setup_actor_restage.rs is_setup_actor`), so a hire never
+ * seats one, whatever its home role says.
+ */
+export const CODING_SESSION_HIRE_SETUP_ACTOR_PERSONA_PREFIX =
+  "project-team-setup:";
+
+/** Whether this candidate is a project team setup actor. */
+export function isCodingSessionHireSetupActor(candidate: {
+  personaId?: string | null;
+}): boolean {
+  return (
+    candidate.personaId?.startsWith(
+      CODING_SESSION_HIRE_SETUP_ACTOR_PERSONA_PREFIX,
+    ) === true
+  );
+}
 
 /** A managed agent this computer could seat, as the decision needs it. */
 export type CodingSessionHireCandidate = {
@@ -105,6 +151,18 @@ export type CodingSessionHireCandidate = {
   name: string;
   /** The role this identity *is*. D12: seat role is home role, always. */
   homeRole: string | null;
+  /**
+   * The project this agent durably belongs to (`ManagedAgent.projectRef`), or
+   * null when it belongs to none. The only evidence of project membership a
+   * hire reads — see `@/shared/lib/projectAgentAssociation`.
+   */
+  projectRef: string | null;
+  /**
+   * The record's persona id, read only to recognise a project team setup
+   * actor ({@link isCodingSessionHireSetupActor}). Absent means not known to
+   * be one.
+   */
+  personaId?: string | null;
   /**
    * Whether this computer holds the role pack behind it. `false` means the
    * seat would run on its persona prompt alone; `undefined` means the backend
@@ -189,6 +247,15 @@ export type CodingSessionHireDecisionInput = {
     model: string | null;
   };
   policy: CodingSessionHirePolicy;
+  /**
+   * The project of the umbrella the hire names
+   * (`codingSessionHireUmbrellaProjectRef`), or null for a projectless
+   * session. It scopes who may be seated: see {@link decideCodingSessionHire}.
+   * A runtime `undefined` is read as null.
+   */
+  projectRef: string | null;
+  /** The project's display name for a refusal sentence, when known. */
+  projectLabel?: string | null;
   /** Every managed agent this computer holds. */
   candidates: readonly CodingSessionHireCandidate[];
   /** Seats already live in the umbrella the hire names. */
@@ -244,16 +311,27 @@ export type CodingSessionHireDecisionInput = {
  * backend that never answered, so it subtracts nothing.
  *
  * Sorted, so the settings panel and the refusal sentence read the same order.
+ *
+ * Deliberately **computer-wide**, not scoped to the hire's project: this is
+ * the operator's device-level list. A role only another project's agents hold
+ * therefore passes this gate and is refused `HIRE_NO_PROJECT_AGENT` by the
+ * identity step, which names the project and the remedy — rather than
+ * `HIRE_ROLE_NOT_ALLOWED`, which would blame the operator's policy for a
+ * missing project agent. Setup actors never count: they are never hired.
  */
 export function codingSessionHireAllowedRoles(
   policy: CodingSessionHirePolicy,
-  candidates: readonly CodingSessionHireCandidate[],
+  candidates: readonly Pick<
+    CodingSessionHireCandidate,
+    "homeRole" | "hasRolePack" | "personaId"
+  >[],
 ): string[] {
   if (policy.allowedRoles !== null) return [...policy.allowedRoles];
   const roles = new Set<string>();
   for (const candidate of candidates) {
     const role = candidate.homeRole?.trim();
     if (!role || candidate.hasRolePack === false) continue;
+    if (isCodingSessionHireSetupActor(candidate)) continue;
     roles.add(role);
   }
   return [...roles].sort();
@@ -273,6 +351,15 @@ export function codingSessionHireAllowedRoles(
  * catalog a model is checked against is that runtime's. Choosing the runtime
  * first is what seated an OpenAI model id on the Claude adapter on
  * 2026-08-28 (item 88(i)).
+ *
+ * **Who may be seated is scoped by the umbrella's project** (2026-09-14):
+ * Tank Loop's lead was seated the Beekeeper crew because any agent on this
+ * computer with a matching home role was eligible and the name broke the tie.
+ * Now an eligible identity belongs to the umbrella's project
+ * (`agentMaySeatInProject`), holds the role as its home role, is not live in
+ * the umbrella and is not a setup actor. A projectless umbrella seats only
+ * unassociated agents. No refusal ever falls back to another agent — see
+ * {@link describeIdentityRefusal} for the codes.
  */
 export function decideCodingSessionHire(
   input: CodingSessionHireDecisionInput,
@@ -313,11 +400,12 @@ export function decideCodingSessionHire(
 
   // Identity before runtime, because the identity decides the runtime: a
   // codex identity does not run on the Claude adapter whatever the hire said.
-  const identity = chooseIdentity(role, input);
+  const pool = codingSessionHireIdentityPool(role, input);
+  const identity = chooseIdentity(pool, input);
   if (identity === null) {
-    // Busy and absent are two codes, not one sentence: see
-    // describeIdentityRefusal.
-    return { ok: false, ...describeIdentityRefusal(role, input) };
+    // Busy, absent from the project, and absent from the computer are three
+    // codes, not one sentence: see describeIdentityRefusal.
+    return { ok: false, ...describeIdentityRefusal(role, pool, input) };
   }
 
   const provider = chooseProvider(input, identity);
@@ -578,45 +666,160 @@ function describeProviderRefusal(
 }
 
 /**
- * Why no identity took the seat — busy here, or not installed at all.
+ * The identities a hire for `role` is answered from, before liveness.
  *
- * Two different facts with two different remedies, and until 2026-08-28 they
- * shared one sentence: a lead whose only builder was seated *and idle* was
- * told to "install team roles", which was both wrong and unactionable (item
- * 88(h)). The busy sentence names the seat and the one thing that works —
- * addressing the seat that already exists. It never invents an identity.
+ * - `holders` — every non-setup agent on this computer whose home role is
+ *   `role`, whatever project it belongs to. Counted, never named, in a
+ *   refusal: another project's agent names are not this session's to read.
+ * - `project` — the holders that may be seated in this umbrella's project.
  *
- * They now carry two codes as well (item 89). A lead acts on the code before
- * it reads the prose, so a busy role answered `HIRE_NO_IDENTITY` still
- * pointed every code-driven reader — the `bee sessions hire` remedy table
- * included — at the operator's install remedy for a role this computer holds.
+ * Fail closed on unreadable coordinates: an umbrella whose project reference
+ * is present but not a well-formed `30621:<owner>:<dtag>` matches no agent
+ * (it must never collapse to "projectless" and open the seat to unassociated
+ * agents), and an agent whose own `projectRef` is present but unreadable
+ * belongs to no project a session can prove, so it is never eligible.
+ */
+type CodingSessionHireIdentityPool = {
+  holders: CodingSessionHireCandidate[];
+  project: CodingSessionHireCandidate[];
+  scope: CodingSessionHireProjectScope;
+};
+
+type CodingSessionHireProjectScope =
+  | { kind: "project"; projectRef: string; label: string }
+  | { kind: "projectless" }
+  | { kind: "unreadable"; raw: string };
+
+function codingSessionHireProjectScope(
+  input: Pick<CodingSessionHireDecisionInput, "projectRef" | "projectLabel">,
+): CodingSessionHireProjectScope {
+  const raw = input.projectRef?.trim() ?? "";
+  if (raw.length === 0) return { kind: "projectless" };
+  const projectRef = normalizeProjectCoordinate(raw);
+  if (projectRef === null) return { kind: "unreadable", raw };
+  const label = input.projectLabel?.trim();
+  return {
+    kind: "project",
+    projectRef,
+    label: label ? label : `project ${projectRef}`,
+  };
+}
+
+function codingSessionHireIdentityPool(
+  role: string,
+  input: CodingSessionHireDecisionInput,
+): CodingSessionHireIdentityPool {
+  const scope = codingSessionHireProjectScope(input);
+  const holders = input.candidates.filter(
+    (candidate) =>
+      candidate.homeRole?.trim() === role &&
+      !isCodingSessionHireSetupActor(candidate),
+  );
+  const project = holders.filter((candidate) => {
+    const own = candidate.projectRef?.trim() ?? "";
+    if (own.length > 0 && normalizeProjectCoordinate(own) === null) {
+      return false;
+    }
+    if (scope.kind === "unreadable") return false;
+    return agentMaySeatInProject(
+      candidate,
+      scope.kind === "project" ? scope.projectRef : null,
+    );
+  });
+  return { holders, project, scope };
+}
+
+/**
+ * Why no identity took the seat — busy here, not this project's, or not on
+ * this computer at all.
+ *
+ * Busy and absent were one sentence until 2026-08-28: a lead whose only
+ * builder was seated *and idle* was told to "install team roles", which was
+ * both wrong and unactionable (item 88(h)). They now carry two codes (item
+ * 89), because a lead acts on the code before it reads the prose.
+ *
+ * Since 2026-09-14 absence is scoped by the umbrella's project:
+ *
+ * - **`HIRE_ROLE_BUSY`** — every agent that may take this seat *in this
+ *   project* is already live in the umbrella. Only project-eligible identities
+ *   count; a borrowed or unassociated agent sitting in the umbrella never
+ *   makes a role "busy".
+ * - **`HIRE_NO_PROJECT_AGENT`** — a session in a project with no eligible
+ *   agent for the role here, however many agents of other projects hold it
+ *   (counted, never named). And a projectless session where every holder of
+ *   the role belongs to a project.
+ * - **`HIRE_NO_IDENTITY`** — kept only for a projectless session and a role
+ *   no agent on this computer holds at all, whose remedy is still the
+ *   computer's operator installing the role.
+ *
+ * No branch ever falls back to another agent.
  */
 function describeIdentityRefusal(
   role: string,
+  pool: CodingSessionHireIdentityPool,
   input: CodingSessionHireDecisionInput,
 ): { code: CodingSessionHireRefusalCode; reason: string } {
-  const seated = input.liveSeats.filter((seat) => {
-    const actor = seat.actor.trim().toLowerCase();
-    return input.candidates.some(
-      (candidate) =>
-        candidate.homeRole?.trim() === role &&
-        candidate.pubkey.trim().toLowerCase() === actor,
+  if (pool.project.length > 0) {
+    const eligible = new Set(
+      pool.project.map((candidate) => candidate.pubkey.trim().toLowerCase()),
     );
-  });
-  if (seated.length === 0) {
+    const seated = input.liveSeats.filter((seat) =>
+      eligible.has(seat.actor.trim().toLowerCase()),
+    );
+    // The projectless sentence is the one leads have read since item 89.
+    const who =
+      pool.scope.kind === "project"
+        ? `every ${role} agent of ${pool.scope.label} on this computer is`
+        : `every ${role} identity this computer holds is`;
     return {
-      code: "HIRE_NO_IDENTITY",
+      code: "HIRE_ROLE_BUSY",
       reason:
-        `this computer holds no ${role} identity. Install team roles on the ` +
-        "Agents screen, then ask again.",
+        `${who} already seated in this session: ` +
+        `${seated.map(describeLiveSeat).join(", ")}. Send your brief to ` +
+        `that seat instead of hiring: bee sessions send --to ${role}`,
+    };
+  }
+  if (pool.scope.kind === "projectless") {
+    if (pool.holders.length === 0) {
+      return {
+        code: "HIRE_NO_IDENTITY",
+        reason:
+          `this computer holds no ${role} identity. Install team roles on the ` +
+          "Agents screen, then ask again.",
+      };
+    }
+    return {
+      code: "HIRE_NO_PROJECT_AGENT",
+      reason:
+        `this session has no project, and every ${role} agent on this ` +
+        "computer belongs to a project. Start the work in that project's session.",
+    };
+  }
+  const others = pool.holders.length;
+  const borrowing =
+    others === 0
+      ? " Borrowing another project's agent is not supported."
+      : ` ${others} other agent${others === 1 ? "" : "s"} here ` +
+        `${others === 1 ? "has" : "have"} that role but ` +
+        `${others === 1 ? "does" : "do"} not belong to this project, and ` +
+        "borrowing is not supported.";
+  const remedy =
+    ` Install the project's roles or associate a ${role} agent on the ` +
+    "project's Agents tab, then ask again.";
+  if (pool.scope.kind === "unreadable") {
+    return {
+      code: "HIRE_NO_PROJECT_AGENT",
+      reason:
+        `this session's project reference "${pool.scope.raw}" is not a ` +
+        `well-formed project coordinate, so no ${role} agent on this computer ` +
+        `can be shown to belong to it.${borrowing}`,
     };
   }
   return {
-    code: "HIRE_ROLE_BUSY",
+    code: "HIRE_NO_PROJECT_AGENT",
     reason:
-      `every ${role} identity this computer holds is already seated in this ` +
-      `session: ${seated.map(describeLiveSeat).join(", ")}. Send your brief to ` +
-      `that seat instead of hiring: bee sessions send --to ${role}`,
+      `${pool.scope.label} has no ${role} agent on this computer.` +
+      `${borrowing}${remedy}`,
   };
 }
 
@@ -628,38 +831,42 @@ function describeLiveSeat(seat: CodingSessionHireLiveSeat): string {
 }
 
 /**
- * The identity that takes the seat.
+ * The identity that takes the seat, from the project-scoped pool.
  *
  * Only an identity whose *home* role is the hired role, because D12 fixes seat
  * role to home role — a builder seated as an architect would carry the builder
- * pack and be briefed as one. An identity already live in this umbrella is
- * skipped rather than re-seated: two executions of one identity in one session
- * are two processes signing as the same agent, and nothing downstream can tell
- * their turns apart.
+ * pack and be briefed as one, and a builder seated as a verifier would review
+ * its own work. An identity already live in this umbrella is skipped rather
+ * than re-seated: two executions of one identity in one session are two
+ * processes signing as the same agent, and nothing downstream can tell their
+ * turns apart.
  *
  * Deterministic: a staged pack beats an unstaged one, then a caller's runtime
- * preference, then name, then pubkey — so the same request answered twice
- * picks the same identity.
+ * preference, then pubkey — so the same request answered twice picks the same
+ * identity. The display name is deliberately **not** a tie-break: it is the
+ * one field a person edits, and a rename must not change who is hired
+ * (acceptance B). A name tie-break is what let "Bob" < "Builder" decide Tank
+ * Loop's hire before selection was scoped by project.
  */
 function chooseIdentity(
-  role: string,
+  pool: CodingSessionHireIdentityPool,
   input: CodingSessionHireDecisionInput,
 ): CodingSessionHireCandidate | null {
   const live = new Set(
     input.liveSeats.map((seat) => seat.actor.trim().toLowerCase()),
   );
-  const eligible = input.candidates.filter(
-    (candidate) =>
-      candidate.homeRole?.trim() === role &&
-      !live.has(candidate.pubkey.trim().toLowerCase()),
+  const eligible = pool.project.filter(
+    (candidate) => !live.has(candidate.pubkey.trim().toLowerCase()),
   );
   eligible.sort(
     (left, right) =>
       packRank(left) - packRank(right) ||
       providerPreferenceRank(left, input) -
         providerPreferenceRank(right, input) ||
-      left.name.localeCompare(right.name) ||
-      left.pubkey.localeCompare(right.pubkey),
+      left.pubkey
+        .trim()
+        .toLowerCase()
+        .localeCompare(right.pubkey.trim().toLowerCase()),
   );
   return eligible[0] ?? null;
 }

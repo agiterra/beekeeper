@@ -1,5 +1,6 @@
 import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "@tanstack/react-router";
 import { useCommunities } from "@/features/communities/useCommunities";
 import {
   Dialog,
@@ -29,10 +30,13 @@ const ProjectTeamSetupAuthoring = React.lazy(() =>
 
 /** Project-scoped entry point; merely opening it changes no project setup. */
 export function ProjectTeamSetupWorkbench({
+  projectId,
   projectRef,
   projectName,
   onStartAuthoring,
 }: {
+  /** The route id, for the roster's link to the project's Agents tab. */
+  projectId?: string;
   projectRef: string;
   projectName: string;
   onStartAuthoring?: StartProjectTeamAuthoring;
@@ -52,14 +56,47 @@ export function ProjectTeamSetupWorkbench({
     relayUrl,
     !unavailable,
   );
-  const agents = useProjectTeamSetupAgentDirectory(open);
-  const onOpenChange = (next: boolean) => {
-    setOpen(next);
+  const close = React.useCallback(() => {
+    setOpen(false);
     // The dialog may have prepared, saved, published or installed; re-read.
-    if (!next)
-      void queryClient.invalidateQueries({
-        queryKey: projectTeamSetupSummaryQueryKey(projectRef, relayUrl),
-      });
+    void queryClient.invalidateQueries({
+      queryKey: projectTeamSetupSummaryQueryKey(projectRef, relayUrl),
+    });
+  }, [projectRef, queryClient, relayUrl]);
+  const directory = useProjectTeamSetupAgentDirectory(open);
+  const navigate = useNavigate();
+  const agents = React.useMemo(
+    () => ({
+      ...directory,
+      openAgentsTab: projectId
+        ? () => {
+            close();
+            void navigate({
+              to: "/projects/$projectId/agents",
+              params: { projectId },
+            });
+          }
+        : null,
+      openLeadSession: ({
+        channelId,
+        sessionRef,
+      }: {
+        channelId: string;
+        sessionRef: string;
+      }) => {
+        close();
+        // The founded route hands off to the lead's execution once one exists.
+        void navigate({
+          to: "/coding-sessions/$channelId/founded/$sessionRef",
+          params: { channelId, sessionRef },
+        });
+      },
+    }),
+    [close, directory, navigate, projectId],
+  );
+  const onOpenChange = (next: boolean) => {
+    if (next) setOpen(true);
+    else close();
   };
   return (
     <div>

@@ -3,54 +3,129 @@ import { formatAge } from "@/features/roles/ui/rolesCopy";
 import type {
   ProjectAgentAssignment,
   ProjectAgentRelationship,
+  ProjectAgentState,
   ProjectAgentSession,
 } from "../lib/projectAgentsModel";
 
 /**
  * Every sentence the project Agents tab shows, as values a test can assert.
  *
- * The page answers "who is working here and why" only from records it read:
- * an installation on this computer, a signed execution, a signed assignment.
- * Where one of those reads is limited, the limit is said on the page.
+ * The page answers "who belongs to this project, with what primary role,
+ * doing what" from association (a managed record here, or an authorized
+ * publication) and shows everyone else who took part as a participant, never
+ * as a member. Where a read is limited, the limit is said on the page.
  */
 
 export const PROJECT_AGENTS_TITLE = "Agents";
 
 export const PROJECT_AGENTS_SUBTITLE =
-  "Who is working in this project and why: agents installed for it, seated in its sessions, or given one of its assignments.";
+  "Who belongs to this project, with what primary role, and what they are doing. Seats and past work do not make an agent a member.";
 
 export const PROJECT_AGENTS_MISSING = "This project is not readable here.";
 
 export const PROJECT_AGENTS_LOADING = "Reading this project's agents…";
 
 export const PROJECT_AGENTS_EMPTY =
-  "No agent is installed for this project, seated in its sessions, or assigned its work.";
+  "No agent is associated with this project, and nobody has worked in its sessions.";
 
-export const SECTION_WORKING = "Working here";
-export const SECTION_WORKING_HINT =
-  "In a session that is still open. Idle agents stay here until the session closes.";
-export const SECTION_INSTALLED = "Installed, waiting for a first assignment";
-export const SECTION_INSTALLED_HINT =
-  "Installed for this project on this computer. No session or assignment names them yet.";
+export const SECTION_PROJECT = "Project agents";
+export const SECTION_PROJECT_HINT =
+  "Associated with this project. The lead hires only these, each in its primary role.";
+export const SECTION_BORROWED = "Borrowed participants";
+export const SECTION_BORROWED_HINT =
+  "Seated or assigned in a session that is still open, without being this project's agents.";
 export const SECTION_PREVIOUS = "Previously here";
 export const SECTION_PREVIOUS_HINT =
-  "Every session they appeared in is closed.";
+  "Every session they appeared in is closed. Their work stays attributed to them.";
+
+export const BADGE_PROJECT_AGENT = "Project agent";
+export const BADGE_BORROWED = "Borrowed";
+export const BADGE_PREVIOUS = "Previously here";
 
 export const ON_THIS_COMPUTER = "On this computer";
+export const LOCATION_UNKNOWN = "Not on this computer";
 
 export const SESSIONS_HEADING = "Sessions";
 export const ASSIGNMENTS_HEADING = "Assignments";
+export const DETAILS_HEADING = "Details";
 export const OPEN_SESSION = "Open session";
 export const VIEW_INSTRUCTIONS = "Role instructions";
 export const ASSIGNMENT_BRIEF = "Brief";
 export const ASSIGNMENT_ACCEPTANCE = "Acceptance steps";
 
 /** Each read's limit, said once under the list. */
-export const INSTALLATIONS_SCOPE_NOTE =
-  "Installations are recorded on the computer that installed them; installs made on another computer are not listed here.";
+export const ASSOCIATION_SCOPE_NOTE =
+  "Agents on other computers are listed when their owner is this project's creator, owner or collaborator and has published the association.";
 
 export const HIRER_NOTE =
   '"Assigned by" comes from a signed assignment. Who granted a seat is not shown: that record is not available to this page.';
+
+const STATE_WORDS: Record<ProjectAgentState, string> = {
+  working: "Working",
+  idle: "Idle",
+  disconnected: "Disconnected",
+  available: "Available",
+  "not-associated": "Not associated yet",
+  elsewhere: "On another computer",
+  "not-running": "Not running",
+  historical: "Historical",
+};
+
+/** The row's state as a word — never colour alone. */
+export function stateText(state: ProjectAgentState): string {
+  return STATE_WORDS[state];
+}
+
+/** `Builder`, or `No primary role`. */
+export function primaryRoleText(role: string | null): string {
+  return role ? titleCaseRole(role) : "No primary role";
+}
+
+/** `Owned by Andy · can't run on this computer`. */
+export function elsewhereText(ownerName: string): string {
+  return `Owned by ${ownerName} · can't run on this computer`;
+}
+
+/** Said on a project row the lead cannot hire. */
+export const ASSOCIATION_MISSING_WARNING =
+  "Installed for this project but not associated yet — the lead can't hire it. Reopen setup or associate it.";
+
+/**
+ * What a borrowed or previous participant is not. An agent with no
+ * association and one that belongs to another project are different facts.
+ */
+export function notProjectAgentText(
+  projectName: string,
+  otherProject: { name: string | null } | null,
+): string {
+  if (otherProject) {
+    const other = otherProject.name ?? "another project";
+    return `Not a ${projectName} agent — belongs to ${other}. New hires use this project's agents only.`;
+  }
+  return `Not a ${projectName} agent — seated here without project association. New hires use this project's agents only.`;
+}
+
+export function associateLabel(projectName: string): string {
+  return `Associate with ${projectName}`;
+}
+
+export function associateConfirmText(
+  name: string,
+  projectName: string,
+  role: string,
+): string {
+  return `${name} becomes a permanent ${projectName} ${titleCaseRole(role)} agent. Its history stays attributed to ${name}. This does not change project access.`;
+}
+
+export const ASSOCIATE_CONFIRM = "Associate";
+export const ASSOCIATE_CANCEL = "Cancel";
+export const ASSOCIATE_PENDING = "Associating…";
+
+/** `Seated as Builder, Verifier`. */
+export function seatedRolesText(roles: readonly string[]): string | null {
+  if (roles.length === 0) return null;
+  return `Seated as ${roles.map(titleCaseRole).join(", ")}`;
+}
 
 export function titleCaseRole(role: string): string {
   return role
@@ -64,14 +139,12 @@ export function titleCaseRole(role: string): string {
  * The row's lead sentence.
  *
  * `Builder in Loom session · assigned by Loom`; without an assignment,
- * `Builder in Loom session`; installed only, `Installed as Builder`.
+ * `Builder in Loom session`.
  */
 export function relationshipText(
   relationship: ProjectAgentRelationship,
 ): string {
   switch (relationship.kind) {
-    case "installed":
-      return `Installed as ${titleCaseRole(relationship.role)}`;
     case "assigned":
       return `Assigned as ${titleCaseRole(relationship.role)} in ${relationship.sessionName} · by ${relationship.assignerName}`;
     case "seated": {

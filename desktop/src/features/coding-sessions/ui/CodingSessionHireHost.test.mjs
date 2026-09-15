@@ -49,6 +49,16 @@ const OPERATOR_PUBKEY = getPublicKey(OPERATOR_SECRET);
 const PROVIDER_PUBKEY = "9".repeat(64);
 const ADA_PUBKEY = "d".repeat(64);
 const HIRE_CREATED_AT = 1_700_000_000;
+const PROJECT_REF = `30621:${"3d3b7169".padEnd(64, "0")}:beekeeper`;
+/** Ada, as an agent of {@link PROJECT_REF}: hiring there seats only its own. */
+const PROJECT_ADA = {
+  pubkey: ADA_PUBKEY,
+  name: "Ada",
+  homeRole: "builder",
+  projectRef: PROJECT_REF,
+  hasRolePack: true,
+  model: "opus[1m]",
+};
 
 const LEAD_TARGET = {
   driver: "claude",
@@ -152,6 +162,7 @@ async function harness({
       pubkey: ADA_PUBKEY,
       name: "Ada",
       homeRole: "builder",
+      projectRef: null,
       hasRolePack: true,
       model: "opus[1m]",
     },
@@ -538,6 +549,7 @@ test("a codex identity is seated on codex, with its own model", async () => {
 
 test("the hired seat's create carries the umbrella's project", async () => {
   const host = await harness({
+    agents: [PROJECT_ADA],
     umbrellas: [
       {
         ...UMBRELLA,
@@ -547,7 +559,7 @@ test("the hired seat's create carries the umbrella's project", async () => {
               agentRef: LEAD_PUBKEY,
               role: "lead",
               status: "running",
-              projectRef: "30621:owner:beekeeper",
+              projectRef: PROJECT_REF,
             },
           },
         ],
@@ -558,15 +570,12 @@ test("the hired seat's create carries the umbrella's project", async () => {
 
   const [create] = host.of(44221);
   assert.ok(create, "no seated create was published");
-  assert.equal(
-    JSON.parse(create.content).action.projectRef,
-    "30621:owner:beekeeper",
-  );
+  assert.equal(JSON.parse(create.content).action.projectRef, PROJECT_REF);
   host.teardown();
 });
 
 test("a routed hire reads its own project and records the signed channel catalog revision", async () => {
-  const projectRef = "30621:owner:beekeeper";
+  const projectRef = PROJECT_REF;
   const catalogReads = [];
   const registryReads = [];
   const registryText = readFileSync(
@@ -574,6 +583,7 @@ test("a routed hire reads its own project and records the signed channel catalog
     "utf8",
   );
   const host = await harness({
+    agents: [PROJECT_ADA],
     umbrellas: [
       {
         ...UMBRELLA,

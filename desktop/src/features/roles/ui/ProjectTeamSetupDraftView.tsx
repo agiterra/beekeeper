@@ -23,6 +23,10 @@ import {
   ProjectTeamSetupPublication,
   type ProjectTeamSetupPublicationProgress,
 } from "./ProjectTeamSetupPublication";
+import {
+  ProjectTeamSetupSentence,
+  useProjectTeamSetupRoster,
+} from "./ProjectTeamSetupRoster";
 import { ProjectTeamSetupStepper } from "./ProjectTeamSetupStepper";
 import { ProjectTeamSetupTechnicalDetails } from "./ProjectTeamSetupTechnicalDetails";
 
@@ -134,6 +138,10 @@ export function ProjectTeamSetupDraftView({
       setBusy(false);
     }
   };
+  const roster = useProjectTeamSetupRoster(
+    draft.projectRef,
+    progress?.activation,
+  );
   const stage = projectTeamSetupStage({
     authoringLaunch: authoring ? launch : null,
     validation,
@@ -151,6 +159,8 @@ export function ProjectTeamSetupDraftView({
       : null,
     publicationBlocked: snapshot ? (progress?.blocked ?? null) : null,
     activation: progress?.activation,
+    roster: roster ?? undefined,
+    projectName,
   });
   const showValidation =
     !authoring ||
@@ -170,11 +180,11 @@ export function ProjectTeamSetupDraftView({
         </h3>
         <ProjectTeamSetupStepper stage={stage} />
         <p
-          className="text-sm"
+          className="break-words text-sm"
           data-state={stage.state}
           data-testid="project-team-setup-next-action"
         >
-          {stage.next}
+          <ProjectTeamSetupSentence text={stage.next} />
         </p>
         <p
           className="text-sm text-muted-foreground"

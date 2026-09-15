@@ -5,7 +5,10 @@ import { useManagedAgentsQuery } from "@/features/agents/hooks";
 import { MAX_CODING_SESSION_LIFECYCLE_INITIAL_TURN_BYTES } from "@/features/coding-sessions/lib/codingSessionLifecycleCommand";
 import { formatCodingSessionExecutionLabel } from "@/features/coding-sessions/lib/codingSessionLabels";
 import { codingSessionSeatStagedFromLine } from "@/features/coding-sessions/lib/codingSessionPackRef";
-import { useCodingSessionSeatDraft } from "@/features/coding-sessions/lib/useCodingSessionSeatDraft";
+import {
+  resolveCodingSessionSeatProjectScope,
+  useCodingSessionSeatDraft,
+} from "@/features/coding-sessions/lib/useCodingSessionSeatDraft";
 import type { CodingSessionUmbrellaRecord } from "@/features/coding-sessions/lib/codingSessionTypes";
 import {
   canStartFreshNewCodingSessionCreate,
@@ -240,7 +243,17 @@ export function AddCodingSessionProviderForm({
     () => managedAgentsQuery.data ?? [],
     [managedAgentsQuery.data],
   );
-  const seatDraft = useCodingSessionSeatDraft(managedAgents);
+  // Which agents a seat here may hold: the project this join will sign (the
+  // umbrella's inherited one), or agents in no project when the session has
+  // none. Unknown until an execution reports, and the field says so.
+  const seatScope = React.useMemo(
+    () =>
+      resolveCodingSessionSeatProjectScope({
+        executions: umbrella.executions,
+      }),
+    [umbrella.executions],
+  );
+  const seatDraft = useCodingSessionSeatDraft(managedAgents, seatScope);
   // What custody actually staged for the seat, once it has. `null` means it
   // has not run here, and is never shown as "no pack".
   const stagedSeatLabel = signedSeat
@@ -416,13 +429,15 @@ export function AddCodingSessionProviderForm({
 
       <NewCodingSessionAgentSeatField
         actor={seatDraft.actor}
-        agents={managedAgents}
+        agents={seatDraft.agents}
         disabled={transaction !== null}
         error={seatDraft.error}
+        scopeSentence={seatDraft.scopeSentence}
         onActorChange={seatDraft.onActorChange}
         onRoleChange={seatDraft.onRoleChange}
         projectRef={projectRef}
         role={seatDraft.role}
+        roleLocked={seatDraft.roleLocked}
       />
 
       {seated ? (

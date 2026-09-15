@@ -43,9 +43,18 @@ import { buildCodingSessionTranscriptGenerationId } from "./codingSessionTranscr
 import {
   checkCodingSessionCrewFamilies,
   checkCodingSessionCrewSeatModels,
-  codingSessionCrewRosterText,
   type ResolvedCodingSessionCrewSeat,
 } from "./codingSessionCrew";
+import {
+  type CodingSessionCrewHireRoster,
+  codingSessionCrewLeadFirstTurnText,
+} from "./codingSessionCrewLaunchFirstTurn";
+
+export {
+  type CodingSessionCrewHireRoster,
+  type CodingSessionCrewHireRosterAgent,
+  codingSessionCrewLeadFirstTurnText,
+} from "./codingSessionCrewLaunchFirstTurn";
 
 /** Where the launch is, one row per signed step. */
 export type CodingSessionCrewLaunchStep = {
@@ -331,6 +340,11 @@ export type CodingSessionCrewLaunchInput = {
    * costs nothing, never handed a second channel.
    */
   existingUmbrella?: { sessionRef: string; genesisRef: string } | null;
+  /**
+   * The agents on this computer the lead may hire for this session, stated in
+   * its first turn. Absent, the first turn offers the launch's other seats.
+   */
+  hireRoster?: CodingSessionCrewHireRoster | null;
 };
 
 /** Step ids, so a caller can talk about a failure without matching prose. */
@@ -525,43 +539,6 @@ export function codingSessionCrewLeadDestination(input: {
       lead.target,
     ),
   };
-}
-
-/**
- * The lead's first turn: the goal, then the team it may hire — labelled as an
- * offer, with the verb that takes it up.
- *
- * The distinction is the whole point. A roster that reads like a seated team
- * has the lead addressing three agents that do not exist, waiting for reports
- * that cannot come; naming it as hireable, with the command, is what turns the
- * same list into work it can actually start.
- */
-export function codingSessionCrewLeadFirstTurnText(input: {
-  goal: string;
-  lead: ResolvedCodingSessionCrewSeat;
-  hireable: ReadonlyArray<ResolvedCodingSessionCrewSeat>;
-}): string {
-  const goal = input.goal.trim();
-  if (input.hireable.length === 0) {
-    return `${goal}\n\nYou are seated. Nobody else is — this team has no other roles on this computer.`;
-  }
-  const roster = codingSessionCrewRosterText({
-    seats: input.hireable,
-    primaryPersonaId: input.lead.personaId,
-  });
-  return [
-    goal,
-    "",
-    "You are seated. Nobody else is: the roster below is who you may hire, " +
-      "one at a time, once you know what the work is.",
-    "",
-    roster,
-    "",
-    "Hire with:",
-    "  bee sessions hire --channel <uuid> --session-ref <uuid> --role <role> --brief <file>",
-    "A hired seat's first turn IS the brief — do not send a second start " +
-      "message. End your turn after hiring.",
-  ].join("\n");
 }
 
 export async function launchCodingSessionCrew(
@@ -924,6 +901,7 @@ export async function launchCodingSessionCrew(
         goal: input.goal,
         lead,
         hireable,
+        roster: input.hireRoster ?? null,
       }),
     });
   } catch (error) {

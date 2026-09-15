@@ -2810,6 +2810,33 @@ fn a_busy_role_and_an_absent_one_carry_different_remedies() {
     assert_ne!(busy, absent);
 }
 
+/// A project session with no agent of that project for the role is its own
+/// refusal, and its remedy names discovery and the operator's fix — never a
+/// workaround through another role, and never "install team roles" alone,
+/// which would not fix a missing project association.
+#[test]
+fn no_project_agent_remedy_names_discovery_and_forbids_a_workaround() {
+    let remedy =
+        hire_refusal_remedy("HIRE_NO_PROJECT_AGENT").expect("HIRE_NO_PROJECT_AGENT has a remedy");
+    for contract in [
+        "bee projects agents",
+        "belong to the session's project",
+        "install project roles",
+        "Agents tab",
+        "do not hire a different role",
+    ] {
+        assert!(
+            remedy.contains(contract),
+            "remedy omits {contract:?}: {remedy}"
+        );
+    }
+    assert_ne!(
+        Some(remedy),
+        hire_refusal_remedy("HIRE_NO_IDENTITY"),
+        "two different facts carry two remedies"
+    );
+}
+
 /// A refused hire prints the host's own sentence *and* what to do next.
 #[test]
 fn a_refused_hire_report_carries_the_remedy_for_its_code() {

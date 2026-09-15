@@ -10,6 +10,12 @@
  * pack is listed under a row that says so; a seat whose agent is not managed
  * here keeps its pubkey and may use a shared identity name; an agent whose pack is missing carries
  * that fact onto its chip; a seat with no `packRef` has no sha.
+ *
+ * Inside a project, a role card's agents are that project's agents: local
+ * records associated with the project (`ManagedAgent.projectRef`) whose
+ * primary role is the card's role. An identity that merely held a session
+ * here — a borrowed worker, another computer's agent — is listed apart as
+ * `nonProjectAgents` and never counted as the role's agent.
  */
 import type { ProjectCodingSessionShelfEntry } from "@/features/projects-container/lib/projectCodingSessionShelf";
 import {
@@ -17,6 +23,10 @@ import {
   type ProjectContainer,
 } from "@/features/projects-container/lib/projectContainerModel";
 import type { CodingSessionCatalogRecord } from "@/features/coding-sessions/lib/codingSessionTypes";
+import {
+  agentProjectRelation,
+  sameProjectRef,
+} from "@/shared/lib/projectAgentAssociation";
 import type {
   ManagedAgent,
   RelayAgent,
@@ -54,6 +64,14 @@ export type RoleAgentChip = {
   /** Whether this computer manages this agent record. */
   isManagedHere?: boolean;
   ownerPubkey?: string | null;
+  /**
+   * Inside a project: `project` for this project's agent on this computer;
+   * `not-associated` / `other-project` for a local record that is not;
+   * `unconfirmed` for an identity this computer has no record of (its
+   * association is published, and the Agents tab reads it). Absent outside
+   * a project.
+   */
+  projectAgent?: "project" | "not-associated" | "other-project" | "unconfirmed";
 };
 
 /** One role card. */
@@ -74,7 +92,13 @@ export type RoleRow = {
   packRef: RolePackRef | null;
   skills: RolePackSkill[];
   refusal: string | null;
+  /** Inside a project: this project's agents whose primary role this is. */
   agents: RoleAgentChip[];
+  /**
+   * Inside a project: identities that held a session in this role here but
+   * are not this project's agents on this computer. Never counted as agents.
+   */
+  nonProjectAgents?: RoleAgentChip[];
   seats: SeatRow[];
 };
 
@@ -103,7 +127,6 @@ export type BuildRolesViewInput = {
   nowSeconds: number;
   /** When present, project boundaries apply to every row and participant. */
   projectId?: string;
-  projectChannelIds?: readonly string[];
   relayAgents?: readonly RelayAgent[];
   /**
    * Raw execution records before the umbrella fold. A worker seated inside
@@ -153,6 +176,7 @@ function roleRow(
   slug: string,
   pack: RolePackSummary | null,
   agents: RoleAgentChip[],
+  nonProjectAgents: RoleAgentChip[],
   seats: SeatRow[],
 ): RoleRow {
   if (!pack) {
@@ -169,6 +193,7 @@ function roleRow(
       skills: [],
       refusal: null,
       agents,
+      nonProjectAgents,
       seats,
     };
   }
@@ -185,76 +210,96 @@ function roleRow(
     skills: pack.skills,
     refusal: pack.refusal,
     agents,
+    nonProjectAgents,
     seats,
   };
 }
 
-/** Project participation is a scoped session or membership in a project channel. */
+type ExecutionInput = NonNullable<BuildRolesViewInput["executions"]>[number];
+
+type ProjectRoleAgents = {
+  agents: Map<string, RoleAgentChip[]>;
+  nonProjectAgents: Map<string, RoleAgentChip[]>;
+};
+
+function pushChip(
+  byRole: Map<string, RoleAgentChip[]>,
+  role: string,
+  chip: RoleAgentChip,
+) {
+  const chips = byRole.get(role) ?? [];
+  if (chips.some((existing) => existing.pubkey === chip.pubkey)) return;
+  chips.push(chip);
+  byRole.set(role, chips);
+}
+
+/**
+ * A project's role agents are its associated local agents, by primary role.
+ * Everyone else who held a session in the project (shelf rows, and workers
+ * seated inside another agent's umbrella) is listed apart under the session's
+ * role: seen here, not this project's agent. Channel membership, a matching
+ * role name or an installed pack never makes an agent a project agent.
+ */
 function projectRoleAgents(
   agents: readonly ManagedAgent[],
   relayAgents: readonly RelayAgent[],
   entries: readonly ProjectCodingSessionShelfEntry[],
-  channelIds: readonly string[],
-  executions: readonly {
-    session: Pick<
-      CodingSessionCatalogRecord,
-      "agentRef" | "role" | "projectRef"
-    >;
-  }[],
+  executions: readonly ExecutionInput[],
   projectAddress: string | null,
-): Map<string, RoleAgentChip[]> {
-  const localByKey = new Map(
-    agents.map((agent) => [agent.pubkey.toLowerCase(), agent]),
-  );
+): ProjectRoleAgents {
   const relayByKey = new Map(
     relayAgents.map((agent) => [agent.pubkey.toLowerCase(), agent]),
   );
-  const channels = new Set(channelIds);
-  const participantKeys = new Set<string>();
-  const rolesByKey = new Map<string, Set<string>>();
-  const addRole = (pubkey: string, role: string | null | undefined) => {
-    const slug = role?.trim();
-    if (!slug) return;
-    const roles = rolesByKey.get(pubkey) ?? new Set<string>();
-    roles.add(slug);
-    rolesByKey.set(pubkey, roles);
+  const localByKey = new Map(
+    agents.map((agent) => [agent.pubkey.toLowerCase(), agent]),
+  );
+  const result: ProjectRoleAgents = {
+    agents: new Map(),
+    nonProjectAgents: new Map(),
   };
-  // Closed sessions still establish historical participation, but buildSeatRows
-  // below excludes them from open seats. No role comes from a name/capability.
-  for (const entry of entries) {
-    const key = entry.session.agentRef?.toLowerCase();
-    if (!key) continue;
-    participantKeys.add(key);
-    addRole(key, entry.session.role);
+  const projectKeys = new Set<string>();
+  for (const agent of agents) {
+    const role = homeRoleOf(agent);
+    if (!role || !sameProjectRef(agent.projectRef, projectAddress)) continue;
+    const key = agent.pubkey.toLowerCase();
+    projectKeys.add(key);
+    pushChip(result.agents, role, {
+      ...agentChip(agent, relayByKey.get(key)?.ownerPubkey),
+      projectAgent: "project",
+    });
   }
+  const sightings: { agentRef: string | null | undefined; role: unknown }[] =
+    entries.map((entry) => entry.session);
   const wantedRef = projectAddress
     ? (normalizeProjectRef(projectAddress) ?? projectAddress)
     : null;
   for (const { session } of executions) {
-    const key = session.agentRef?.toLowerCase();
-    if (!key || !wantedRef || !session.projectRef) continue;
+    if (!wantedRef || !session.projectRef) continue;
     if (
       (normalizeProjectRef(session.projectRef) ?? session.projectRef) !==
       wantedRef
     ) {
       continue;
     }
-    participantKeys.add(key);
-    addRole(key, session.role);
+    sightings.push(session);
   }
-  for (const [key, agent] of relayByKey) {
-    if (agent.channelIds.some((channelId) => channels.has(channelId))) {
-      participantKeys.add(key);
-    }
-  }
-  const byRole = new Map<string, RoleAgentChip[]>();
-  for (const key of participantKeys) {
+  // Closed sessions still count as having been here; buildSeatRows below
+  // keeps them out of the open seats.
+  for (const sighting of sightings) {
+    const key = sighting.agentRef?.toLowerCase();
+    const role = typeof sighting.role === "string" ? sighting.role.trim() : "";
+    if (!key || !role || projectKeys.has(key)) continue;
     const local = localByKey.get(key);
     const relay = relayByKey.get(key);
     if (!local && !relay) continue; // Unknown identities remain on session rows.
-    if (local) addRole(key, homeRoleOf(local));
     const chip: RoleAgentChip = local
-      ? agentChip(local, relay?.ownerPubkey)
+      ? {
+          ...agentChip(local, relay?.ownerPubkey),
+          projectAgent:
+            agentProjectRelation(local, projectAddress) === "other-project"
+              ? "other-project"
+              : "not-associated",
+        }
       : {
           pubkey: key,
           name: relay?.name ?? key,
@@ -266,14 +311,11 @@ function projectRoleAgents(
           model: null,
           isManagedHere: false,
           ownerPubkey: relay?.ownerPubkey,
+          projectAgent: "unconfirmed",
         };
-    for (const role of rolesByKey.get(key) ?? []) {
-      const chips = byRole.get(role) ?? [];
-      chips.push(chip);
-      byRole.set(role, chips);
-    }
+    pushChip(result.nonProjectAgents, role, chip);
   }
-  return byRole;
+  return result;
 }
 
 /** Join packs, agents, shelf and projects into the three lists the tab draws. */
@@ -296,16 +338,19 @@ export function buildRolesView(input: BuildRolesViewInput): RolesView {
     projects,
     nowSeconds,
   });
-  const agentsByRole = scoped
+  const scopedAgents = scoped
     ? projectRoleAgents(
         agents,
         relayAgents,
         shelfEntries,
-        input.projectChannelIds ?? [],
         input.executions ?? [],
         projects[0]?.address ?? null,
       )
-    : new Map<string, RoleAgentChip[]>();
+    : null;
+  const agentsByRole =
+    scopedAgents?.agents ?? new Map<string, RoleAgentChip[]>();
+  const nonProjectByRole =
+    scopedAgents?.nonProjectAgents ?? new Map<string, RoleAgentChip[]>();
   if (!scoped) {
     for (const agent of agents) {
       const role = homeRoleOf(agent);
@@ -316,7 +361,11 @@ export function buildRolesView(input: BuildRolesViewInput): RolesView {
     }
   }
   const packsByRole = new Map(rolePacks.map((pack) => [pack.role, pack]));
-  const slugs = new Set([...packsByRole.keys(), ...agentsByRole.keys()]);
+  const slugs = new Set([
+    ...packsByRole.keys(),
+    ...agentsByRole.keys(),
+    ...nonProjectByRole.keys(),
+  ]);
   for (const seat of seats) {
     if (seat.role) slugs.add(seat.role);
   }
@@ -325,6 +374,7 @@ export function buildRolesView(input: BuildRolesViewInput): RolesView {
       slug,
       packsByRole.get(slug) ?? null,
       (agentsByRole.get(slug) ?? []).sort(compareChips),
+      (nonProjectByRole.get(slug) ?? []).sort(compareChips),
       seats.filter((seat) => seat.role === slug),
     ),
   );

@@ -18,11 +18,9 @@ import {
   startProjectTeamSetupLead,
   startProjectTeamSetupPublication,
 } from "../lib/projectTeamSetupApi";
+import { useProjectTeamSetupAgents } from "./ProjectTeamSetupAgents";
 import { ProjectTeamSetupFailureNotice } from "./ProjectTeamSetupFailureNotice";
-import {
-  ProjectTeamSetupInstalledRoles,
-  ProjectTeamSetupLeadIdentity,
-} from "./ProjectTeamSetupInstalledRoles";
+import { ProjectTeamSetupRoster } from "./ProjectTeamSetupRoster";
 
 /**
  * What this card has observed, lifted so the draft view can derive one stage
@@ -107,6 +105,7 @@ export function ProjectTeamSetupPublication({
   const [error, setError] = React.useState<ProjectTeamSetupFailure | null>(
     null,
   );
+  const { refreshAgents } = useProjectTeamSetupAgents();
 
   React.useEffect(() => {
     let cancelled = false;
@@ -229,14 +228,35 @@ export function ProjectTeamSetupPublication({
       setError(projectTeamSetupFailure(failure));
     } finally {
       setBusy(false);
+      // Installation records each agent's project association on its local
+      // record; re-read so the roster reflects what the host wrote.
+      refreshAgents?.();
     }
   };
 
-  const startLead = async (channelId = activation?.lead.channelId) => {
-    if (!publication || !channelId) return;
+  /**
+   * The one "Start the project lead" action: when no session channel is
+   * recorded yet it is prepared first (same saved request), then the lead
+   * handoff runs on the channel the host returned.
+   */
+  const startLead = async () => {
+    if (!publication || !activation) return;
     setBusy(true);
     setError(null);
     try {
+      let current = activation;
+      if (current.lead.status === "needs_channel" || !current.lead.channelId) {
+        current = await ensureProjectTeamSetupLeadChannel(
+          activationScope(draft, publication.publicationId),
+        );
+        setActivation(current);
+      }
+      const channelId = current.lead.channelId;
+      if (
+        !channelId ||
+        (current.lead.status !== "ready" && current.lead.status !== "unknown")
+      )
+        return;
       setActivation(
         await startProjectTeamSetupLead({
           ...activationScope(draft, publication.publicationId),
@@ -367,8 +387,17 @@ export function ProjectTeamSetupPublication({
           ) : null}
           {activation.source &&
           activation.installation.status === "installed" ? (
-            <ProjectTeamSetupInstalledRoles
-              roles={activation.installation.installedRoles}
+            <ProjectTeamSetupRoster
+              actions={{
+                busy,
+                creatingChannel,
+                onRetryInstall: () => void install(),
+                onStartLead: () => void startLead(),
+                onRetryChannel: () => void createSessionChannel(),
+              }}
+              activation={activation}
+              projectName={projectName}
+              projectRef={draft.projectRef}
             />
           ) : activation.source ? (
             <Button
@@ -382,77 +411,6 @@ export function ProjectTeamSetupPublication({
                   ? "Retry installation"
                   : "Install project roles"}
             </Button>
-          ) : null}
-          {activation.source &&
-          activation.installation.status === "installed" ? (
-            <div
-              className="space-y-2"
-              data-testid="project-team-setup-lead-handoff"
-            >
-              <ProjectTeamSetupLeadIdentity
-                activation={activation}
-                projectName={projectName}
-              />
-              {activation.lead.status === "needs_channel" ||
-              (activation.lead.status === "unknown" &&
-                !activation.lead.sessionRef) ? (
-                <Button
-                  disabled={creatingChannel || busy}
-                  onClick={() => void createSessionChannel()}
-                  type="button"
-                  variant="outline"
-                >
-                  {creatingChannel
-                    ? "Preparing project session channel…"
-                    : activation.lead.channelId
-                      ? "Retry session-channel setup"
-                      : "Create project session channel"}
-                </Button>
-              ) : activation.lead.status === "started" ? (
-                <div
-                  className="space-y-1 text-sm"
-                  data-testid="project-team-setup-lead-started"
-                >
-                  <p>
-                    The project lead was started
-                    {projectName ? ` in ${projectName}` : ""}.
-                  </p>
-                  <details className="text-muted-foreground">
-                    <summary className="cursor-pointer">
-                      Session details
-                    </summary>
-                    <p className="break-all">
-                      Channel {activation.lead.channelId}
-                    </p>
-                    <p className="break-all">
-                      Session {activation.lead.sessionRef}
-                    </p>
-                  </details>
-                </div>
-              ) : activation.lead.status === "starting" ? (
-                <p className="text-sm text-muted-foreground" role="status">
-                  Project lead handoff is in progress. Reopen this setup to
-                  check the recorded outcome.
-                </p>
-              ) : activation.lead.status === "refused" ? (
-                <p className="text-sm text-destructive">
-                  The project lead couldn't start. See Technical details for the
-                  reason.
-                </p>
-              ) : (
-                <Button
-                  disabled={busy || !activation.lead.channelId}
-                  onClick={() => void startLead()}
-                  type="button"
-                >
-                  {busy
-                    ? "Starting lead…"
-                    : activation.lead.status === "unknown"
-                      ? "Retry lead handoff"
-                      : "Start project lead"}
-                </Button>
-              )}
-            </div>
           ) : null}
         </section>
       ) : null}

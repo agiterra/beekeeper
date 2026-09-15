@@ -11,6 +11,7 @@ function summary(overrides = {}) {
     agents: 3,
     agentsLocal: 3,
     agentsShared: 0,
+    nonProjectAgents: 0,
     openSessions: 2,
     reports: 7,
     unconfirmed: 0,
@@ -68,12 +69,20 @@ test("the scope line splits the agent count and never claims a roster", () => {
   assert.match(local, />3 on this computer</);
   assert.match(
     local,
-    /title="Local agents are set up on this computer\. Shared agents were seen/,
+    /title="Counted agents are this project&#x27;s agents on this computer\./,
   );
-  assert.match(local, /not a complete roster\./);
+  assert.match(local, /Agents tab lists every project agent/);
 
   const mixed = render({ agents: 5, agentsLocal: 3, agentsShared: 2 });
   assert.match(mixed, />3 on this computer · 2 shared</);
+
+  // A borrowed worker is named beside the count, never added to it.
+  const borrowed = render({ nonProjectAgents: 1 });
+  assert.match(borrowed, /tabular-nums[^>]*>3</);
+  assert.match(
+    borrowed,
+    />3 on this computer · 1 more in sessions, not a project agent</,
+  );
 });
 
 test("unconfirmed and disputed reports appear only when there are some", () => {

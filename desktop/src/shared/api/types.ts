@@ -239,6 +239,13 @@ export type ManagedAgent = {
   /** The role this agent is, from its pack persona. `null` when it has none. */
   homeRole: string | null;
   /**
+   * The project this agent durably belongs to, `30621:<owner>:<dtag>`, or
+   * `null` when it belongs to none. The only local evidence of project
+   * membership: a matching role, an installed pack or a past seat is not.
+   * See `shared/lib/projectAgentAssociation.ts`.
+   */
+  projectRef?: string | null;
+  /**
    * Whether this computer can stage a role pack for it. `false` means a seat
    * on this agent runs on its persona prompt alone — say so, never imply the
    * role's craft is there. `undefined` means the backend never answered, which

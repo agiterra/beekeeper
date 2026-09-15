@@ -48,10 +48,10 @@ function Tile({
  * contradiction the page must not let a reader walk past, so it gets the
  * warning icon *and* the word.
  *
- * The scope line under the agent count is the honest boundary: some of these
- * agents are set up on this computer and some were only seen in this
- * project's sessions and channels. The line splits the count rather than
- * letting the sum read as a roster.
+ * The scope line under the agent count is the honest boundary: the count is
+ * this project's agents on this computer, and identities that only held a
+ * session here are named beside it as not project agents rather than added
+ * to it.
  */
 export function RolesSummaryStrip({ summary }: { summary: RolesPageSummary }) {
   return (
@@ -74,7 +74,11 @@ export function RolesSummaryStrip({ summary }: { summary: RolesPageSummary }) {
           data-testid="roles-scope"
           title={ROLES_SCOPE_TITLE}
         >
-          {rolesScopeText(summary.agentsLocal, summary.agentsShared)}
+          {rolesScopeText(
+            summary.agentsLocal,
+            summary.agentsShared,
+            summary.nonProjectAgents,
+          )}
         </p>
       </Tile>
       <Tile

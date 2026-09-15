@@ -32,6 +32,7 @@ import type {
   CodingSessionSeatPackRef,
 } from "./codingSessionActorSeatCustody";
 import type { ProjectPackSource } from "@/features/projects-container/lib/projectPackSource";
+import { normalizeProjectCoordinate } from "@/shared/lib/projectAgentAssociation";
 
 /**
  * Read the project's newest kind:30624, or `null` when it publishes none.
@@ -83,6 +84,22 @@ export type CodingSessionSeatCustody = {
      * nothing was handed nothing on purpose.
      */
     packSource?: CodingSessionProjectPackSource | null;
+    /**
+     * The project the agent must belong to, native defense in depth: when set,
+     * the host refuses to stage an agent whose recorded `project_ref` differs
+     * (`SEAT_NOT_PROJECT_AGENT`). Present only on a **new selection** — a
+     * create (hire, team launch, seat picker) into a project. A resume of an
+     * existing execution never sends it, so historical executions stay
+     * resumable and attributed to whoever ran them.
+     */
+    requireProjectRef?: string | null;
+    /**
+     * True on a **new selection** (hire, team launch, seat picker). The host
+     * then also requires the seat's role to be the agent's primary role, and
+     * a projectless create to take only an agent of no project. Absent on a
+     * resume, which continues an execution that already exists.
+     */
+    newSelection?: boolean;
   }) => Promise<CodingSessionSeatStaged | undefined>;
   /** Drop the custody entry again. Best effort; never fails the publish. */
   clearSeat: (commandId: string) => Promise<void>;
@@ -147,6 +164,20 @@ export function codingSessionSeatPackSource(
 }
 
 /**
+ * The `requireProjectRef` a create into `projectRef` stages with: the
+ * normalized coordinate (what the agent record stores), the trimmed text when
+ * it does not normalize (so the host refuses rather than skipping the check),
+ * or null for a projectless create.
+ */
+export function codingSessionSeatRequiredProjectRef(
+  projectRef: string | null | undefined,
+): string | null {
+  const trimmed = projectRef?.trim();
+  if (!trimmed) return null;
+  return normalizeProjectCoordinate(trimmed) ?? trimmed;
+}
+
+/**
  * Stage a seat's key material, publish, and take the entry back if nothing
  * went out.
  *
@@ -167,6 +198,10 @@ async function publishWithStagedSeat<T>(input: {
    * copy, as it always did.
    */
   projectRef?: string | null;
+  /** See `CodingSessionSeatCustody.stageSeat`; omitted when null. */
+  requireProjectRef?: string | null;
+  /** See `CodingSessionSeatCustody.stageSeat`; omitted when not true. */
+  newSelection?: boolean;
   publish: () => Promise<T>;
   deps: CodingSessionSeatCustody;
   onSeatStaged?: CodingSessionSeatStagedReporter;
@@ -180,6 +215,10 @@ async function publishWithStagedSeat<T>(input: {
     agentPubkey: input.actorPubkey,
     role: input.actorRole ?? null,
     packSource,
+    ...(input.requireProjectRef
+      ? { requireProjectRef: input.requireProjectRef }
+      : {}),
+    ...(input.newSelection === true ? { newSelection: true } : {}),
   });
   if (staged) {
     input.onSeatStaged?.({
@@ -301,6 +340,12 @@ export async function publishSeatedCodingSessionCreate<T>(input: {
     // The seat's own role, not the actor's home role: this is the whole fix.
     actorRole: input.seat.role,
     projectRef: input.projectRef,
+    // A create is a new selection, so the host re-checks that the chosen
+    // agent belongs to the project it is filed under. Every new-selection
+    // path (hire, team launch, seat picker) comes through here; a resume
+    // does not (`publishSeatedCodingSessionResume`).
+    requireProjectRef: codingSessionSeatRequiredProjectRef(input.projectRef),
+    newSelection: true,
     publish: input.publish,
     deps: input.deps,
     ...(input.onSeatStaged ? { onSeatStaged: input.onSeatStaged } : {}),

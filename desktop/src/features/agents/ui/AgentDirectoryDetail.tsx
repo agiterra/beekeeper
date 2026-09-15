@@ -21,6 +21,7 @@ import {
   AGENT_DETAIL_STOP_TESTID,
   AGENT_DETAIL_TESTID,
   OFFERS_ELIGIBILITY_FOOTNOTE,
+  agentProjectText,
   launchesAsText,
   seatDetailPackShaText,
   seatDetailStatusText,
@@ -86,6 +87,16 @@ export function AgentDirectoryDetail({
         <div className="flex justify-between gap-3">
           <span className="text-muted-foreground">Model</span>
           <span>{row.modelLabel}</span>
+        </div>
+        <div className="flex justify-between gap-3">
+          <span className="shrink-0 text-muted-foreground">Project</span>
+          <span
+            className="min-w-0 break-words text-right"
+            data-testid="agent-detail-project"
+            title={row.project?.projectRef ?? undefined}
+          >
+            {agentProjectText(row.project, row.homeRole, row.projectKnown)}
+          </span>
         </div>
         <div className="flex justify-between gap-3">
           <span className="text-muted-foreground">Launches as</span>

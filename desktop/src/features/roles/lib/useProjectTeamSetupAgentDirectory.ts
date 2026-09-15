@@ -6,8 +6,9 @@ import {
 import type { ProjectTeamSetupAgents } from "../ui/ProjectTeamSetupAgents";
 
 /**
- * Managed agent names and in-place rename for installed-role rows. Rename
- * sends only `{pubkey, name}`: same identity, role untouched.
+ * Managed agent names, records (for project association) and in-place rename
+ * for installed-role rows. Rename sends only `{pubkey, name}`: same identity,
+ * role and association untouched.
  */
 export function useProjectTeamSetupAgentDirectory(
   enabled: boolean,
@@ -26,6 +27,8 @@ export function useProjectTeamSetupAgentDirectory(
         : null,
     [agents.data],
   );
+  const { refetch } = agents;
+  const records = agents.data ?? (agents.isError ? "unreadable" : null);
   return React.useMemo(
     () => ({
       names,
@@ -33,7 +36,11 @@ export function useProjectTeamSetupAgentDirectory(
         const result = await mutateAsync({ pubkey, name });
         return { profileSyncError: result.profileSyncError };
       },
+      agents: records,
+      refreshAgents: () => {
+        void refetch();
+      },
     }),
-    [names, mutateAsync],
+    [names, mutateAsync, records, refetch],
   );
 }

@@ -70,6 +70,7 @@ fn record(
         persona_team_dir: None,
         persona_name_in_team: None,
         home_role: None,
+        project_ref: None,
         created_at: "".to_string(),
         updated_at: "".to_string(),
         last_started_at: None,

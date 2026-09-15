@@ -1940,6 +1940,36 @@ pub enum ProjectsCmd {
         #[arg(long)]
         owner: Option<String>,
     },
+    /// List a project's agents as `[{pubkey, name, role, owner, owner_role}]`.
+    ///
+    /// This lists the project's agents as published by their owners: each
+    /// agent's owner-signed kind:30177 claims the project, and a claim counts
+    /// only when its author is the project's creator or a roster owner or
+    /// collaborator (viewers' claims are ignored). Only the newest publication
+    /// of each agent is read. `role` is the agent's primary role, or null.
+    ///
+    /// A hire is answered by the session founder's computer, which seats only
+    /// agents it holds that belong to this project, chosen by role. An agent
+    /// owned by someone else runs on their computer. An agent whose owner's
+    /// app has not published its association does not appear.
+    ///
+    /// The project is SLUG (with --owner, as `members`) or --project
+    /// <coordinate>; with neither, `BUZZ_PULSE_PROJECT` names it, which a
+    /// project seat's provider sets. `--format compact` drops `owner_role`.
+    #[command(
+        after_help = "Examples:\n  bee projects agents\n  bee projects agents my-project --owner <hex>\n  bee --format compact projects agents --project 30621:<owner-hex>:<slug>"
+    )]
+    Agents {
+        /// Project slug. Defaults to the project `BUZZ_PULSE_PROJECT` names.
+        #[arg(conflicts_with = "project")]
+        slug: Option<String>,
+        /// Project owner pubkey (64-char hex). Defaults to the current identity.
+        #[arg(long, requires = "slug")]
+        owner: Option<String>,
+        /// Project coordinate `30621:<owner-hex>:<slug>`, instead of SLUG.
+        #[arg(long)]
+        project: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -3094,7 +3124,14 @@ pub enum SessionsCmd {
     /// applies its own standing policy — hiring on/off, allowed roles, a
     /// maximum number of live seats, allowed providers — chooses an installed
     /// identity whose home role matches, cuts that seat its own worktree, and
-    /// publishes an ordinary seated create. That create's signed provider
+    /// publishes an ordinary seated create.
+    ///
+    /// The hire names a role, never an identity: the host chooses the identity
+    /// by role among the agents it holds that belong to the session's project.
+    /// A projectless session uses only agents that belong to no project. An
+    /// agent of another project with the same role is never seated in its
+    /// place. Run `bee projects agents` to see which agents a project has
+    /// before hiring. That create's signed provider
     /// receipt and metadata are this hire's execution proof. The hiring CLI
     /// then uses its own signer key to append an accepted NIP-CSAT `grant-seat`
     /// for the exact actor-role pair; the provider never grants authority.
@@ -3142,7 +3179,7 @@ pub enum SessionsCmd {
     /// hire and carries no `routing` at all.
     ///
     /// A refusal's `code` is one of HIRE_OFF, HIRE_ROLE_NOT_ALLOWED,
-    /// HIRE_LIMIT, HIRE_NO_IDENTITY, HIRE_ROLE_BUSY,
+    /// HIRE_LIMIT, HIRE_NO_IDENTITY, HIRE_NO_PROJECT_AGENT, HIRE_ROLE_BUSY,
     /// HIRE_PROVIDER_NOT_ALLOWED, HIRE_MODEL_NOT_OFFERED, HIRE_NO_ROUTE,
     /// HIRE_MALFORMED or
     /// HIRE_STALE, and
@@ -3151,7 +3188,13 @@ pub enum SessionsCmd {
     /// no identity for that role and only its operator can fix it; the second
     /// means it holds the role and every identity that is it is already
     /// seated in this umbrella, so the way forward is to brief the seat the
-    /// reason names rather than to hire again. Model ids are the provider
+    /// reason names rather than to hire again. HIRE_NO_PROJECT_AGENT means the
+    /// host holds no agent of the session's project with that role; the reason
+    /// counts the agents of that role it holds that are not this project's,
+    /// and none of them is borrowed. Check `bee projects agents`, then ask the
+    /// operator to install the project's roles or associate an agent on the
+    /// project's Agents tab — hiring a different role does not get around it.
+    /// Model ids are the provider
     /// catalog's own ids — read
     /// them from `bee sessions status` (the `model` a live seat runs) or the
     /// runtime's kind:44222 catalog. There are no aliases or translations in
@@ -3167,7 +3210,7 @@ pub enum SessionsCmd {
     /// no answer at all, and a request that gets no answer is a crash with
     /// better manners.
     #[command(
-        after_help = "Examples:\n  bee sessions hire --channel <uuid> --session-ref <uuid> --role builder --brief ./briefs/lane-c.md\n  bee sessions hire --channel <uuid> --session-ref <uuid> --role architect --model <id> --content 'Read §3 and report' --no-wait\n\nA relay that predates session.hire refuses the request as malformed; the\ncommand says so in those words rather than blaming the request.\n\nRule:\n  coding-session lifecycle command action.brief exceeds 12272 bytes (got <n>): a hire's brief becomes the seat's first turn behind the host's 16-byte \"[From the lead] \" prefix, so its ceiling is the initial-turn ceiling minus that prefix\n\nRecipe:\n  bee sessions hire --channel <uuid> --session-ref <uuid> --role builder --brief <path>"
+        after_help = "Examples:\n  bee projects agents\n  bee sessions hire --channel <uuid> --session-ref <uuid> --role builder --brief ./briefs/lane-c.md\n  bee sessions hire --channel <uuid> --session-ref <uuid> --role architect --model <id> --content 'Read §3 and report' --no-wait\n\n`bee projects agents` lists the session project's agents by role; the host\nseats only those, and a hire refused HIRE_NO_PROJECT_AGENT names the remedy.\n\nA relay that predates session.hire refuses the request as malformed; the\ncommand says so in those words rather than blaming the request.\n\nRule:\n  coding-session lifecycle command action.brief exceeds 12272 bytes (got <n>): a hire's brief becomes the seat's first turn behind the host's 16-byte \"[From the lead] \" prefix, so its ceiling is the initial-turn ceiling minus that prefix\n\nRecipe:\n  bee sessions hire --channel <uuid> --session-ref <uuid> --role builder --brief <path>"
     )]
     Hire {
         /// Channel UUID the umbrella lives in
@@ -4787,7 +4830,7 @@ async fn run(cli: Cli) -> Result<(), CliError> {
         Cmd::Social(sub) => commands::social::dispatch(sub, &client).await,
         Cmd::Notes(sub) => commands::notes::dispatch(sub, &client).await,
         Cmd::Repos(sub) => commands::repos::dispatch(sub, &client).await,
-        Cmd::Projects(sub) => commands::projects::dispatch(sub, &client).await,
+        Cmd::Projects(sub) => commands::projects::dispatch(sub, &client, &cli.format).await,
         Cmd::Patches(sub) => commands::patches::dispatch(sub, &client).await,
         Cmd::Issues(sub) => commands::issues::dispatch(sub, &client).await,
         Cmd::Pr(sub) => commands::pr::dispatch(sub, &client).await,
@@ -5654,6 +5697,7 @@ mod tests {
             vec![
                 "add-member",
                 "add-repo",
+                "agents",
                 "create",
                 "delete",
                 "get",
@@ -5796,7 +5840,7 @@ mod tests {
             ("pack", 2),
             ("patches", 4),
             ("pr", 5),
-            ("projects", 11),
+            ("projects", 12),
             // 4 on the base tree, plus L9's `missions` and `prune-wip`.
             ("pulse", 6),
             ("reactions", 3),
@@ -6237,6 +6281,41 @@ mod tests {
             assert!(
                 Cli::try_parse_from(["buzz", "pulse", command]).is_ok(),
                 "pulse {command} must parse without --project"
+            );
+        }
+    }
+
+    /// `projects agents` names its project three ways, one at a time: nothing
+    /// (the seat's `BUZZ_PULSE_PROJECT` decides at runtime), SLUG with an
+    /// optional --owner, or --project. Mixing SLUG and --project, or --owner
+    /// without a SLUG, is refused before any I/O.
+    #[test]
+    fn projects_agents_names_its_project_one_way_at_a_time() {
+        let owner = "a".repeat(64);
+        let coordinate = format!("30621:{owner}:alpha");
+        for argv in [
+            vec!["buzz", "projects", "agents"],
+            vec!["buzz", "projects", "agents", "alpha"],
+            vec!["buzz", "projects", "agents", "alpha", "--owner", &owner],
+            vec!["buzz", "projects", "agents", "--project", &coordinate],
+            vec!["buzz", "--format", "compact", "projects", "agents"],
+        ] {
+            assert!(Cli::try_parse_from(&argv).is_ok(), "{argv:?} must parse");
+        }
+        for argv in [
+            vec![
+                "buzz",
+                "projects",
+                "agents",
+                "alpha",
+                "--project",
+                &coordinate,
+            ],
+            vec!["buzz", "projects", "agents", "--owner", &owner],
+        ] {
+            assert!(
+                Cli::try_parse_from(&argv).is_err(),
+                "{argv:?} must not parse"
             );
         }
     }

@@ -51,44 +51,62 @@ test("the surface's two evidenced facts are unchanged by this addition", () => {
 
 import {
   AGENT_FILTER_PROJECT_GROUP_LABEL,
-  AGENT_FILTER_STATUS_INSTALLED_FOR_PROJECT,
+  AGENT_FILTER_STATUS_PROJECT_AGENT,
   AGENT_FILTER_STATUS_RUNNING,
   AGENTS_PROJECT_ROLES_DESCRIPTION,
   SAVED_AGENT_GROUPS_DESCRIPTION,
   SAVED_AGENT_GROUPS_TITLE,
-  installedForText,
+  agentProjectText,
   renameFailedText,
+  unassociatedInstallationText,
 } from "@/features/agents/ui/agentDirectoryCopy";
 import { INSTALL_CREW_ROLES_BODY } from "@/features/agents/ui/installCrewRolesCopy";
 
-test("an installation reads as installed-for, never in the seat cell's shape", () => {
+test("a row names its project by association, and a seat reads as seated-in", () => {
   assert.equal(
-    installedForText([{ projectName: "Tank Loop", role: "lead" }]),
-    "Installed for Tank Loop · lead",
+    agentProjectText({ projectName: "Tank Loop" }, "builder", true),
+    "Tank Loop · builder",
   );
   assert.equal(
-    installedForText([
-      { projectName: "Tank Loop", role: "lead" },
-      { projectName: "Attic", role: "builder" },
-    ]),
-    "Installed for Tank Loop · lead (+1 more)",
+    agentProjectText({ projectName: null }, "builder", true),
+    "A project not listed here · builder",
+  );
+  assert.equal(agentProjectText(null, "builder", true), "No project");
+  assert.equal(
+    agentProjectText(null, null, false),
+    "Project not known on this computer",
   );
   assert.equal(
-    installedForText([{ projectName: null, role: "verifier" }]),
-    "Installed for a project not listed here · verifier",
+    currentSeatText({
+      projectName: "Tank Loop",
+      status: "running",
+      ageSeconds: 300,
+    }),
+    "seated in Tank Loop · running · 5m",
   );
-  assert.equal(installedForText([]), null);
 });
 
-test("the project filter names both facts it matches, and Running keeps its word", () => {
+test("an installation without association is a warning, never membership", () => {
+  assert.equal(
+    unassociatedInstallationText([{ projectName: "Tank Loop", role: "lead" }]),
+    "Installed for Tank Loop but not associated yet — the lead can't hire it.",
+  );
+  assert.equal(
+    unassociatedInstallationText([
+      { projectName: "Tank Loop", role: "lead" },
+      { projectName: null, role: "builder" },
+    ]),
+    "Installed for Tank Loop (+1 more) but not associated yet — the lead can't hire it.",
+  );
+  assert.equal(unassociatedInstallationText([]), null);
+});
+
+test("the project filter says seats do not count, and Running keeps its word", () => {
   assert.equal(
     AGENT_FILTER_PROJECT_GROUP_LABEL,
-    "installed for it, or holds or held a seat there",
+    "agents associated with it; seats do not count",
   );
-  assert.equal(
-    AGENT_FILTER_STATUS_INSTALLED_FOR_PROJECT,
-    "Installed for a project",
-  );
+  assert.equal(AGENT_FILTER_STATUS_PROJECT_AGENT, "Belongs to a project");
   assert.equal(AGENT_FILTER_STATUS_RUNNING, "Running");
 });
 

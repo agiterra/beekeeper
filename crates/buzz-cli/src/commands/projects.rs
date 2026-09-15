@@ -722,7 +722,7 @@ fn parse_project_role(role: &str) -> Result<&'static str, CliError> {
 
 /// Validate a member pubkey: exactly 64 lowercase hex characters (the relay
 /// gate compares byte-exact, so uppercase would silently never match).
-fn validate_member_pubkey(pubkey: &str) -> Result<(), CliError> {
+pub(crate) fn validate_member_pubkey(pubkey: &str) -> Result<(), CliError> {
     if pubkey.len() != 64
         || !pubkey
             .bytes()
@@ -845,7 +845,10 @@ fn roster_from_event_json(event: &serde_json::Value) -> Vec<(String, String)> {
 /// pubkey is dropped rather than printed twice — a projection cannot
 /// legitimately contain one, and if a hand-rolled event does, the implicit
 /// Owner is the truth.
-fn roster_with_creator(creator_hex: &str, roster: Vec<(String, String)>) -> Vec<(String, String)> {
+pub(crate) fn roster_with_creator(
+    creator_hex: &str,
+    roster: Vec<(String, String)>,
+) -> Vec<(String, String)> {
     let creator = creator_hex.to_ascii_lowercase();
     let mut out = vec![(creator.clone(), PROJECT_ROLE_OWNER.to_string())];
     out.extend(
@@ -919,7 +922,30 @@ pub async fn cmd_members(
     owner: Option<&str>,
 ) -> Result<(), CliError> {
     let coordinate = membership_coordinate(client, slug, owner)?;
+    let output: Vec<serde_json::Value> = project_roster(client, &coordinate)
+        .await?
+        .iter()
+        .map(|(pubkey, role)| serde_json::json!({ "pubkey": pubkey, "role": role }))
+        .collect();
+    println!("{}", serde_json::Value::Array(output));
+    Ok(())
+}
 
+/// The roster of the project at `coordinate` as `(pubkey, role)` pairs, the
+/// creator first as its implicit Owner — exactly what `bee projects members`
+/// prints.
+///
+/// Reads the latest relay-signed kind:39010 projection; when none exists (the
+/// roster is still head-sourced) falls back to the head's own `p` tags, where
+/// a role-less invite is a legacy collaborator. `NotFound` when neither a
+/// projection nor a head exists: an unreadable project is never reported as
+/// a roster of one.
+pub(crate) async fn project_roster(
+    client: &BuzzClient,
+    coordinate: &str,
+) -> Result<Vec<(String, String)>, CliError> {
+    let creator = coordinate_creator(coordinate).to_ascii_lowercase();
+    let slug = coordinate.splitn(3, ':').nth(2).unwrap_or_default();
     let filter = serde_json::json!({
         "kinds": [KIND_PROJECT_MEMBERS],
         "#d": [coordinate],
@@ -936,7 +962,7 @@ pub async fn cmd_members(
         Some(projection) => roster_from_event_json(projection),
         None => {
             // Head-sourced roster: no membership op has been accepted yet.
-            let head = fetch_project(client, slug, owner)
+            let head = fetch_project(client, slug, Some(&creator))
                 .await?
                 .ok_or_else(|| CliError::NotFound(format!("project {slug:?} not found")))?;
             let head_json = serde_json::json!({
@@ -945,21 +971,14 @@ pub async fn cmd_members(
             roster_from_event_json(&head_json)
         }
     };
-
-    let output: Vec<serde_json::Value> =
-        roster_with_creator(coordinate_creator(&coordinate), roster)
-            .iter()
-            .map(|(pubkey, role)| serde_json::json!({ "pubkey": pubkey, "role": role }))
-            .collect();
-    println!("{}", serde_json::Value::Array(output));
-    Ok(())
+    Ok(roster_with_creator(&creator, roster))
 }
 
 // ── Validation helpers ────────────────────────────────────────────────────────
 
 /// Validate a project slug: non-empty, ≤1024 bytes, verbatim.
 /// Does NOT impose the Buzz repo-ID grammar — project slugs are more permissive.
-fn validate_project_slug(slug: &str) -> Result<(), CliError> {
+pub(crate) fn validate_project_slug(slug: &str) -> Result<(), CliError> {
     if slug.is_empty() {
         return Err(CliError::Usage("project slug must not be empty".into()));
     }
@@ -984,7 +1003,11 @@ fn validate_visibility(vis: &str) -> Result<(), CliError> {
 
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
-pub async fn dispatch(cmd: crate::ProjectsCmd, client: &BuzzClient) -> Result<(), CliError> {
+pub async fn dispatch(
+    cmd: crate::ProjectsCmd,
+    client: &BuzzClient,
+    format: &crate::OutputFormat,
+) -> Result<(), CliError> {
     use crate::ProjectsCmd;
     match cmd {
         ProjectsCmd::Create {
@@ -1065,6 +1088,20 @@ pub async fn dispatch(cmd: crate::ProjectsCmd, client: &BuzzClient) -> Result<()
             owner,
         } => cmd_put_member(client, &slug, &pubkey, role.as_str(), owner.as_deref()).await,
         ProjectsCmd::Members { slug, owner } => cmd_members(client, &slug, owner.as_deref()).await,
+        ProjectsCmd::Agents {
+            slug,
+            owner,
+            project,
+        } => {
+            crate::commands::project_agents::cmd_agents(
+                client,
+                slug.as_deref(),
+                owner.as_deref(),
+                project.as_deref(),
+                format,
+            )
+            .await
+        }
     }
 }
 

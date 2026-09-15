@@ -221,7 +221,7 @@ test("the Roles tab explains what a role is in plain language, and Technical det
   await expect(scope).toHaveText("0 on this computer");
   await expect(scope).toHaveAttribute(
     "title",
-    "Local agents are set up on this computer. Shared agents were seen in this project's sessions or channels; this is an observed list, not a complete roster.",
+    "Counted agents are this project's agents on this computer. Others seen in its sessions are not counted. The Agents tab lists every project agent, including ones on other computers.",
   );
 
   // Cards: no origin badge or bare version in the header, just name + slug.
@@ -715,6 +715,9 @@ async function openRankedProjectRolesTab(page: Page, trustedRelay = false) {
         avatarUrl: null,
         status: "running",
         homeRole: "lead",
+        // Membership is association: a lead home role alone would list Nova
+        // as "not a project agent", never on the lead card.
+        projectRef: RANKED_PROJECT_ADDRESS,
         // The mock projects this membership into shared agent discovery.
         channelIds: [GENERAL_CHANNEL_ID],
         hasRolePack: true,

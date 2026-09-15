@@ -37,6 +37,7 @@ fn agent(persona_id: &str, name: &str, display_name: Option<&str>) -> ManagedAge
         persona_team_dir: None,
         persona_name_in_team: None,
         home_role: None,
+        project_ref: None,
         created_at: String::new(),
         updated_at: String::new(),
         last_started_at: None,

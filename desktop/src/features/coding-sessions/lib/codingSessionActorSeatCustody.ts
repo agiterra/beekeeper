@@ -129,6 +129,17 @@ export async function stageCodingSessionActorSeat(input: {
    * or uses it as a git remote.
    */
   checkout?: string | null;
+  /**
+   * When set, the host refuses (`SEAT_NOT_PROJECT_AGENT`) unless the agent's
+   * recorded `project_ref` equals it. New selections pass the project they
+   * create into; a resume of an existing execution passes nothing.
+   */
+  requireProjectRef?: string | null;
+  /**
+   * A new selection: the host also requires the role to be the agent's
+   * primary role, and a projectless create to take an agent of no project.
+   */
+  newSelection?: boolean;
 }): Promise<StagedCodingSessionActorSeat> {
   const staged = await invokeTauri<StagedCodingSessionActorSeat | null>(
     "stage_coding_session_actor_seat",
@@ -138,6 +149,8 @@ export async function stageCodingSessionActorSeat(input: {
       role: input.role ?? null,
       packSource: input.packSource ?? null,
       checkout: input.checkout ?? null,
+      requireProjectRef: input.requireProjectRef ?? null,
+      newSelection: input.newSelection === true,
     },
   );
   return {
@@ -160,6 +173,10 @@ export async function previewCodingSessionSeatPack(input: {
   role?: string | null;
   packSource?: CodingSessionProjectPackSource | null;
   checkout?: string | null;
+  /** Same check as {@link stageCodingSessionActorSeat}'s `requireProjectRef`. */
+  requireProjectRef?: string | null;
+  /** Same as {@link stageCodingSessionActorSeat}'s `newSelection`. */
+  newSelection?: boolean;
 }): Promise<CodingSessionSeatPackPreview | null> {
   const preview = await invokeTauri<CodingSessionSeatPackPreview | null>(
     "preview_coding_session_seat_pack",
@@ -168,6 +185,8 @@ export async function previewCodingSessionSeatPack(input: {
       role: input.role ?? null,
       packSource: input.packSource ?? null,
       checkout: input.checkout ?? null,
+      requireProjectRef: input.requireProjectRef ?? null,
+      newSelection: input.newSelection === true,
     },
   );
   return preview ?? null;

@@ -157,6 +157,16 @@ async function harness({
   umbrellas = [UMBRELLA],
   /** The project's 30624 the host's reader answers with, by project ref. */
   packSources = new Map(),
+  agents = [
+    {
+      pubkey: ADA_PUBKEY,
+      name: "Ada",
+      homeRole: "builder",
+      projectRef: null,
+      hasRolePack: true,
+      model: "opus[1m]",
+    },
+  ],
 } = {}) {
   ipcCalls.length = 0;
   /** Every custody and pack-source call this host made, in order. */
@@ -248,15 +258,7 @@ async function harness({
 
   const mounted = renderHook(() =>
     useCodingSessionHire({
-      agents: [
-        {
-          pubkey: ADA_PUBKEY,
-          name: "Ada",
-          homeRole: "builder",
-          hasRolePack: true,
-          model: "opus[1m]",
-        },
-      ],
+      agents,
       channelIds: [CHANNEL_ID],
       modelCatalogs: new Map([["claude-primary", CLAUDE_CATALOG]]),
       checkoutForChannel: () => "/Users/brian/Projects/beekeeper",
@@ -849,6 +851,17 @@ test("finding 84: a hire stages the seat from the umbrella's project pack source
       },
     ],
     packSources: new Map([[PROJECT_REF, PACK_SOURCE]]),
+    // Ada belongs to the umbrella's project; hiring seats nobody else.
+    agents: [
+      {
+        pubkey: ADA_PUBKEY,
+        name: "Ada",
+        homeRole: "builder",
+        projectRef: PROJECT_REF,
+        hasRolePack: true,
+        model: "opus[1m]",
+      },
+    ],
   });
   await host.deliver(await signedHire());
 
@@ -863,6 +876,8 @@ test("finding 84: a hire stages the seat from the umbrella's project pack source
   assert.equal(staged.agentPubkey, ADA_PUBKEY);
   assert.equal(staged.role, "builder");
   assert.deepEqual(staged.packSource, PACK_SOURCE);
+  // A hire is a new selection: native staging re-checks the association.
+  assert.equal(staged.requireProjectRef, PROJECT_REF);
 
   // And the outcome says which repository commit the seat was staged from,
   // so the seat card is not left to guess.
@@ -887,8 +902,106 @@ test("finding 84: a hire into an umbrella with no project stages with no source,
     "no project, so no 30624 to read",
   );
   assert.equal(host.staging[0][1].packSource, null);
+  assert.equal(
+    "requireProjectRef" in host.staging[0][1],
+    false,
+    "a projectless hire has no project to require",
+  );
   const [outcome] = host.outcomes();
   assert.equal(outcome.state, "seated");
   assert.equal(outcome.packRef, null);
+  host.teardown();
+});
+
+/**
+ * Acceptance A, through the mounted hook: Tank Loop's lead hired Bob because
+ * any builder on this computer was eligible and "Bob" < "Builder". The hire
+ * now seats the umbrella's own project's builder, and stages it with the
+ * project the native side re-checks.
+ */
+test("a hire into a project seats that project's builder, never another project's that sorts first", async () => {
+  const OWNER = "3d3b7169".padEnd(64, "0");
+  const TANK_LOOP = `30621:${OWNER}:tank-loop`;
+  const BEEKEEPER = `30621:${OWNER}:beekeeper`;
+  const BUILDER_PUBKEY = "e".repeat(64);
+  const host = await harness({
+    umbrellas: [
+      {
+        ...UMBRELLA,
+        executions: [
+          {
+            activeGeneration: {
+              agentRef: LEAD_PUBKEY,
+              role: "lead",
+              status: "running",
+              projectRef: TANK_LOOP,
+            },
+          },
+        ],
+      },
+    ],
+    agents: [
+      {
+        pubkey: ADA_PUBKEY,
+        name: "Bob",
+        homeRole: "builder",
+        projectRef: BEEKEEPER,
+        hasRolePack: true,
+        model: "opus[1m]",
+      },
+      {
+        pubkey: "c".repeat(64),
+        name: "Aaron",
+        homeRole: "builder",
+        projectRef: null,
+        hasRolePack: true,
+        model: "opus[1m]",
+      },
+      {
+        pubkey: BUILDER_PUBKEY,
+        name: "Builder",
+        homeRole: "builder",
+        projectRef: TANK_LOOP,
+        hasRolePack: true,
+        model: "opus[1m]",
+      },
+    ],
+  });
+  await host.deliver(await signedHire());
+
+  const [, staged] = host.staging.find(([name]) => name === "stageSeat");
+  assert.equal(staged.agentPubkey, BUILDER_PUBKEY);
+  assert.equal(staged.requireProjectRef, TANK_LOOP);
+  const [outcome] = host.outcomes();
+  assert.equal(outcome.state, "seated");
+  assert.equal(outcome.seatActor, BUILDER_PUBKEY);
+  host.teardown();
+});
+
+test("a hire into a project with no builder of its own is refused, and nothing is staged", async () => {
+  const OWNER = "3d3b7169".padEnd(64, "0");
+  const host = await harness({
+    umbrellas: [
+      {
+        ...UMBRELLA,
+        executions: [
+          {
+            activeGeneration: {
+              agentRef: LEAD_PUBKEY,
+              role: "lead",
+              status: "running",
+              projectRef: `30621:${OWNER}:tank-loop`,
+            },
+          },
+        ],
+      },
+    ],
+  });
+  await host.deliver(await signedHire());
+
+  assert.equal(host.staging.length, 0, "no agent was staged");
+  const [outcome] = host.outcomes();
+  assert.equal(outcome.state, "refused");
+  assert.equal(outcome.detail, "HIRE_NO_PROJECT_AGENT");
   host.teardown();
 });

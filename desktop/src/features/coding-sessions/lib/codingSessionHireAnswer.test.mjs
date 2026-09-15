@@ -17,6 +17,9 @@ const LEAD = "1".repeat(64);
 const STRANGER = "2".repeat(64);
 const ADA = "d".repeat(64);
 const PROVIDER = "9".repeat(64);
+const OWNER = "3d3b7169".padEnd(64, "0");
+/** The umbrella's project. Candidates carry it: hiring is project-scoped. */
+const PROJECT_REF = `30621:${OWNER}:beekeeper`;
 
 const REQUEST = {
   eventId: "e".repeat(64),
@@ -39,7 +42,7 @@ const UMBRELLA = {
   sessionRef: SESSION_REF,
   genesisRef: GENESIS_REF,
   title: "Agent Teams",
-  projectRef: "30621:owner:beekeeper",
+  projectRef: PROJECT_REF,
   executions: [
     {
       activeGeneration: { agentRef: LEAD, role: "lead", status: "running" },
@@ -54,7 +57,13 @@ function answer(overrides = {}) {
     authority: { founderPubkey: FOUNDER, grantedOperators: [LEAD] },
     policy: DEFAULT_CODING_SESSION_HIRE_POLICY,
     candidates: [
-      { pubkey: ADA, name: "Ada", homeRole: "builder", hasRolePack: true },
+      {
+        pubkey: ADA,
+        name: "Ada",
+        homeRole: "builder",
+        projectRef: PROJECT_REF,
+        hasRolePack: true,
+      },
     ],
     availableProviderInstanceRefs: ["claude-primary"],
     providerAuthorityPubkey: PROVIDER,
@@ -77,7 +86,7 @@ test("a granted lead's hire produces a seat carrying the brief as its first turn
     "[From the lead] Take the badge lane. Red test first.",
   );
   assert.equal(result.plan.title, "Agent Teams");
-  assert.equal(result.plan.projectRef, "30621:owner:beekeeper");
+  assert.equal(result.plan.projectRef, PROJECT_REF);
   assert.equal(result.plan.providerAuthorityPubkey, PROVIDER);
   assert.equal(result.plan.worktreeName, "agent-teams-builder-1");
 });
@@ -236,18 +245,28 @@ test("the hire inherits the project from the umbrella's own executions", () => {
             agentRef: LEAD,
             role: "lead",
             status: "running",
-            projectRef: "30621:owner:beekeeper",
+            projectRef: PROJECT_REF,
           },
         },
       ],
     },
   });
   assert.equal(result.kind, "seat");
-  assert.equal(result.plan.projectRef, "30621:owner:beekeeper");
+  assert.equal(result.plan.projectRef, PROJECT_REF);
 });
 
 test("an umbrella in no project seats a hire with no project, never a guess", () => {
   const result = answer({
+    // A projectless umbrella seats only an agent that belongs to no project.
+    candidates: [
+      {
+        pubkey: ADA,
+        name: "Ada",
+        homeRole: "builder",
+        projectRef: null,
+        hasRolePack: true,
+      },
+    ],
     umbrella: {
       sessionRef: SESSION_REF,
       genesisRef: GENESIS_REF,
@@ -354,6 +373,7 @@ test("a routed verifier automatically prefers an eligible identity from another 
         pubkey: "3".repeat(64),
         name: "A Claude verifier",
         homeRole: "verifier",
+        projectRef: PROJECT_REF,
         hasRolePack: true,
         runtime: "claude",
       },
@@ -361,6 +381,7 @@ test("a routed verifier automatically prefers an eligible identity from another 
         pubkey: "4".repeat(64),
         name: "Z Codex verifier",
         homeRole: "verifier",
+        projectRef: PROJECT_REF,
         hasRolePack: true,
         runtime: "codex",
       },
@@ -418,6 +439,7 @@ test("a routed verifier discloses when this host has no eligible cross-vendor id
         pubkey: "3".repeat(64),
         name: "Claude verifier",
         homeRole: "verifier",
+        projectRef: PROJECT_REF,
         hasRolePack: true,
         runtime: "claude",
       },
@@ -475,6 +497,7 @@ test("a routed hire is not refused for the identity's own stale model", () => {
       pubkey: ADA,
       name: "Ada",
       homeRole: "builder",
+      projectRef: PROJECT_REF,
       hasRolePack: true,
       model: "claude-sonnet-5",
     },

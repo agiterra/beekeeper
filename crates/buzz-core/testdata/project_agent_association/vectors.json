@@ -1,0 +1,42 @@
+[
+  {
+    "coordinate": "30621:6cbdf4451d3989c10c20d13240c665a9e11e3959a95488382193481692b68df2:tank-loop",
+    "digest": "1f0a0bc9a60385d267b57c1899ca21d7f1026ff8fbd0d09fa07c6d545b434d23"
+  },
+  {
+    "coordinate": "30621:6CBDF4451D3989C10C20D13240C665A9E11E3959A95488382193481692B68DF2:tank-loop",
+    "digest": "1f0a0bc9a60385d267b57c1899ca21d7f1026ff8fbd0d09fa07c6d545b434d23"
+  },
+  {
+    "coordinate": "  30621:abababababababababababababababababababababababababababababababab:other-project  ",
+    "digest": "24b8a7b57d3a4039e8c860d57064905e77f8d910a2c52a48298c4876d6208345"
+  },
+  {
+    "coordinate": "30621:abababababababababababababababababababababababababababababababab:Ünïcode slug",
+    "digest": "44957c695e69469734a05cd83063d1ca11733f62ad47aa48332ff2ab0bb53b8a"
+  },
+  {
+    "coordinate": "30178:abababababababababababababababababababababababababababababababab:tank-loop",
+    "digest": null
+  },
+  {
+    "coordinate": "30621:ababababab:tank-loop",
+    "digest": null
+  },
+  {
+    "coordinate": "30621:abababababababababababababababababababababababababababababababab:",
+    "digest": null
+  },
+  {
+    "coordinate": "30621:abababababababababababababababababababababababababababababababab:tank-loop﻿",
+    "digest": "e26fe5daa6c2ab592859d9019254bca2330ee0182125f3bf77882bd1f3300003"
+  },
+  {
+    "coordinate": "30621:abababababababababababababababababababababababababababababababab:tank-loop",
+    "digest": null
+  },
+  {
+    "coordinate": "\t30621:abababababababababababababababababababababababababababababababab:tank-loop\r\n",
+    "digest": "62ad3047c5ec9958d23310e91a56c603787decaa604ff30335823999cd8742dd"
+  }
+]

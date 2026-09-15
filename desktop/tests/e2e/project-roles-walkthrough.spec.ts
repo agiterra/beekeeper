@@ -39,12 +39,14 @@ import { openDashboardTab } from "../helpers/dashboard";
  * The Tank Loop setup walkthrough (docs/TANK_LOOP_WALKTHROUGH_IMPL.md,
  * Acceptance), driven through the surfaces a person reaches:
  *
- * 1. An agent a project's setup installed — stopped, never seated — is listed
- *    under that project's filter with its installed role, and renames in
- *    place without its pubkey changing.
- * 2. "Who leads" on a founded page in that project puts the project's
- *    installed roles first, preselects the one installed lead, and keeps a
- *    different choice; Solo needs no lead.
+ * 1. An agent associated with a project (`ManagedAgent.projectRef`, which
+ *    setup records on install) — stopped, never seated — is listed under that
+ *    project's filter with its project and primary role, and renames in place
+ *    without its pubkey or association changing.
+ * 2. "Who leads" on a founded page in that project offers only that project's
+ *    agents, counts the ones left out, preselects the one project lead, and
+ *    keeps an explicit choice; Solo needs no lead
+ *    (`docs/PROJECT_AGENT_HIRING_IMPL.md` § UI rules).
  * 3. A session in a project transport channel the viewer is not a member of
  *    stays steerable for a project owner, and read-only for a viewer.
  *
@@ -282,15 +284,17 @@ async function bootWalkthrough(
       },
     ],
     managedAgents: [
-      // Installed by Tank Loop's setup a minute ago: stopped, no seat ever.
+      // Installed and associated by Tank Loop's setup a minute ago: stopped,
+      // no seat ever.
       {
         pubkey: LOOM.pubkey,
         name: LOOM.name,
         status: "stopped",
         homeRole: "lead",
+        projectRef: PROJECT_REF,
         hasRolePack: true,
       },
-      // An agent on this computer that no project installed.
+      // An agent on this computer that belongs to no project.
       {
         pubkey: KEYSTONE.pubkey,
         name: KEYSTONE.name,
@@ -313,7 +317,7 @@ async function recordedCalls(page: Page, command: string) {
   );
 }
 
-test("an installed, never-seated agent is listed under its project and renames in place", async ({
+test("an associated, never-seated agent is listed under its project and renames in place", async ({
   page,
 }) => {
   await bootWalkthrough(page, { channelInProject: false });
@@ -328,11 +332,13 @@ test("an installed, never-seated agent is listed under its project and renames i
     .and(page.locator(`[data-pubkey="${LOOM.pubkey}"]`));
   await expect(loomRow).toBeVisible();
   await expect(loomRow.getByTestId("agent-row-name")).toHaveText(LOOM.name);
-  await expect(loomRow.getByTestId("agent-row-installed-for")).toHaveText(
-    `Installed for ${PROJECT_NAME} · lead`,
-  );
-  // The project filter admits it by installation alone: the agent that no
-  // project installed and that holds no seat is filtered out.
+  const loomProject = loomRow.getByTestId("agent-row-project");
+  await expect(loomProject).toHaveText(`${PROJECT_NAME} · lead`);
+  await expect(loomProject).toHaveAttribute("data-project-ref", PROJECT_REF);
+  // Associated, so no missing-association warning.
+  await expect(loomRow.getByTestId("agent-row-unassociated")).toHaveCount(0);
+  // The project filter admits it by association alone: the agent that
+  // belongs to no project and holds no seat is filtered out.
   await expect(
     page
       .getByTestId("agent-row")
@@ -360,8 +366,9 @@ test("an installed, never-seated agent is listed under its project and renames i
   await expect(renamedRow.getByTestId("agent-row-name")).toHaveText(
     "Tank Lead",
   );
-  await expect(renamedRow.getByTestId("agent-row-installed-for")).toHaveText(
-    `Installed for ${PROJECT_NAME} · lead`,
+  // A rename changes neither the project nor the primary role.
+  await expect(renamedRow.getByTestId("agent-row-project")).toHaveText(
+    `${PROJECT_NAME} · lead`,
   );
   const updates = await recordedCalls(page, "update_managed_agent");
   expect(updates).toHaveLength(1);
@@ -390,7 +397,7 @@ async function foundSession(page: Page) {
   ).toHaveCount(0, { timeout: 30_000 });
 }
 
-test("Who leads puts the project's installed lead first and preselects it; Solo needs no lead", async ({
+test("Who leads offers only the project's agents, counts the rest and preselects the lead; Solo needs no lead", async ({
   page,
 }) => {
   test.setTimeout(120_000);
@@ -401,51 +408,46 @@ test("Who leads puts the project's installed lead first and preselects it; Solo 
   const leadSelect = page.getByTestId("new-coding-session-lead-select");
   await expect(leadSelect).toBeVisible();
 
+  // One group, the project's own agents. Keystone is on this computer with a
+  // role, but belongs to no project, so it is not an option at all.
   const projectGroup = page.getByTestId(
     "new-coding-session-lead-group-project",
   );
-  const otherGroup = page.getByTestId("new-coding-session-lead-group-other");
-  await expect(projectGroup).toHaveAttribute(
-    "label",
-    `${PROJECT_NAME} project roles`,
-  );
-  await expect(otherGroup).toHaveAttribute(
-    "label",
-    "Other agents on this computer",
-  );
+  await expect(projectGroup).toHaveAttribute("label", `${PROJECT_NAME} agents`);
   await expect(projectGroup.locator("option")).toHaveText([
     `${LOOM.name} · lead · ${LOOM.pubkey.slice(0, 8)}…${LOOM.pubkey.slice(-4)}`,
   ]);
-  await expect(otherGroup.locator("option")).toHaveText([
-    `${KEYSTONE.name} · builder · ${KEYSTONE.pubkey.slice(0, 8)}…${KEYSTONE.pubkey.slice(-4)}`,
-  ]);
-  // The project group comes before the rest.
   expect(
     await leadSelect
       .locator("optgroup")
       .evaluateAll((groups) => groups.map((group) => group.dataset.testid)),
-  ).toEqual([
-    "new-coding-session-lead-group-project",
-    "new-coding-session-lead-group-other",
-  ]);
+  ).toEqual(["new-coding-session-lead-group-project"]);
+  await expect(
+    leadSelect.locator(`option[value="${KEYSTONE.pubkey}"]`),
+  ).toHaveCount(0);
+  // …and the one left out is counted, never silently dropped.
+  await expect(
+    page.getByTestId("new-coding-session-lead-excluded"),
+  ).toContainText(
+    `1 agent on this computer isn't a ${PROJECT_NAME} agent, so it can't lead here.`,
+  );
 
-  // The single installed lead is the default, named with its short pubkey.
+  // The single project lead is the default, named with its short pubkey.
   await expect(leadSelect).toHaveValue(LOOM.pubkey);
   await expect(
     page.getByTestId("new-coding-session-lead-identity"),
   ).toContainText(LOOM.name);
 
-  // A different choice sticks.
-  await leadSelect.selectOption(KEYSTONE.pubkey);
-  await expect(leadSelect).toHaveValue(KEYSTONE.pubkey);
-  await expect(
-    page.getByTestId("new-coding-session-lead-identity"),
-  ).toContainText(KEYSTONE.name);
+  // An explicit choice — here, nobody — sticks over the default.
+  await leadSelect.selectOption("");
+  await expect(leadSelect).toHaveValue("");
   await page
     .getByTestId("coding-session-founded-prompt")
     .fill("Keep Tank Loop reliable.");
   await page.getByTestId("coding-session-founded-prompt").blur();
-  await expect(leadSelect).toHaveValue(KEYSTONE.pubkey);
+  await expect(leadSelect).toHaveValue("");
+  await leadSelect.selectOption(LOOM.pubkey);
+  await expect(leadSelect).toHaveValue(LOOM.pubkey);
   await waitForAnimations(page);
   await page.screenshot({
     path: `${SHOTS}/02-who-leads.png`,

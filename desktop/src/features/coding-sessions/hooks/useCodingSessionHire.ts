@@ -43,6 +43,10 @@ import {
 } from "../lib/codingSessionHireSeat";
 import type { CodingSessionHireCatalogSource } from "../lib/codingSessionHireCatalog";
 import {
+  codingSessionHireCandidatesOf,
+  type CodingSessionHireAgent,
+} from "../lib/codingSessionHireCandidates";
+import {
   classifyCodingSessionHireEvent,
   codingSessionHireRequesterStanding,
   type CodingSessionHireClassification,
@@ -181,22 +185,7 @@ export type CodingSessionHireOutcome = {
   hostPubkey: string | null;
 };
 
-/** A managed agent, narrowed to what seating one needs. */
-export type CodingSessionHireAgent = {
-  pubkey: string;
-  name: string;
-  homeRole: string | null;
-  hasRolePack?: boolean;
-  model: string | null;
-  /**
-   * The runtime the record pins (`claude`, `codex`, `goose`), or null when it
-   * inherits one. This decides the seat's runtime — see
-   * `codingSessionHirePolicy.chooseProvider`.
-   */
-  runtime?: string | null;
-  /** The record's inference provider, read only as a fallback for `runtime`. */
-  provider?: string | null;
-};
+export type { CodingSessionHireAgent } from "../lib/codingSessionHireCandidates";
 
 type HirePublisher = {
   publishEvent: (
@@ -657,17 +646,8 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
           grantedOperators,
         },
         policy: current.policy,
-        candidates: current.input.agents.map((agent) => ({
-          pubkey: agent.pubkey,
-          name: agent.name,
-          homeRole: agent.homeRole,
-          ...(agent.hasRolePack === undefined
-            ? {}
-            : { hasRolePack: agent.hasRolePack }),
-          model: agent.model,
-          runtime: agent.runtime ?? null,
-          provider: agent.provider ?? null,
-        })),
+        // Each with its project: the decision seats only the umbrella's own.
+        candidates: codingSessionHireCandidatesOf(current.input.agents),
         availableProviderInstanceRefs: current.input.runtimes
           .filter((runtime) => runtime.authState === "ready")
           .map((runtime) => runtime.instanceRef),

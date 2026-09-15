@@ -3,6 +3,11 @@ import type {
   ProjectTeamSetupLaunch,
   ProjectTeamSetupPublication,
 } from "./projectTeamSetup";
+import {
+  projectRosterBlockedSentence,
+  projectRosterCompleteSentence,
+  type ProjectRosterReadiness,
+} from "./projectRosterReadiness";
 
 /** The five steps a user walks through, in order. */
 export const PROJECT_TEAM_SETUP_STEPS = [
@@ -58,6 +63,9 @@ export type ProjectTeamSetupStageId =
   | "start_lead"
   | "lead_uncertain"
   | "lead_refused"
+  | "roster_checking"
+  | "roster_uncertain"
+  | "roster_blocked"
   | "lead_started";
 
 export type ProjectTeamSetupStage = {
@@ -99,6 +107,14 @@ export type ProjectTeamSetupStageInput = {
     installation: Pick<ProjectTeamSetupActivation["installation"], "status">;
     lead: Pick<ProjectTeamSetupActivation["lead"], "status" | "sessionRef">;
   } | null;
+  /**
+   * Whether the installed agents are this project's agents on this computer
+   * (`projectRosterReadiness`). `undefined` reads as still checking: an
+   * installation is never ready or complete on an unread roster.
+   */
+  roster?: Pick<ProjectRosterReadiness, "status" | "blocked" | "leadName">;
+  /** For the completion sentence; "this project" when absent. */
+  projectName?: string;
 };
 
 function stage(
@@ -111,17 +127,75 @@ function stage(
   return { id, step, state, title, next };
 }
 
+/**
+ * The roster gate after installation: `null` when every installed agent is
+ * this project's agent here, otherwise the stage that says why the lead
+ * can't hire them. It outranks "ready" and "started", never a lead failure.
+ */
+function rosterStage(
+  roster: ProjectTeamSetupStageInput["roster"],
+  leadStarted: boolean,
+): ProjectTeamSetupStage | null {
+  const step = leadStarted ? "start_lead" : "install";
+  switch (roster?.status) {
+    case "ready":
+      return null;
+    case undefined:
+    case "checking":
+      return stage(
+        "roster_checking",
+        step,
+        "checking",
+        "Checking project agents",
+        "Checking that the installed agents belong to this project on this computer…",
+      );
+    case "unreadable":
+      return stage(
+        "roster_uncertain",
+        step,
+        "uncertain",
+        "Project agents not confirmed",
+        "This computer couldn't read its agents, so it isn't confirmed the lead can hire them. Check again.",
+      );
+    case "empty":
+      return stage(
+        "roster_uncertain",
+        step,
+        "uncertain",
+        "No project agents recorded",
+        "The installation recorded no agents, so the lead has nobody to hire. Retry installation (safe, keeps identities).",
+      );
+    case "blocked":
+      return stage(
+        "roster_blocked",
+        step,
+        "blocked",
+        leadStarted
+          ? "The lead can't hire every project agent"
+          : "Project agents aren't associated",
+        projectRosterBlockedSentence(roster, leadStarted),
+      );
+  }
+}
+
 function activationStage(
   activation: NonNullable<ProjectTeamSetupStageInput["activation"]>,
+  input: ProjectTeamSetupStageInput,
 ): ProjectTeamSetupStage {
   const { installation, lead } = activation;
   if (installation.status === "installed" && lead.status === "started")
-    return stage(
-      "lead_started",
-      "start_lead",
-      "done",
-      "Project lead started",
-      "The project lead was started. Setup is complete.",
+    return (
+      rosterStage(input.roster, true) ??
+      stage(
+        "lead_started",
+        "start_lead",
+        "done",
+        "Project lead started",
+        projectRosterCompleteSentence(
+          input.roster?.leadName ?? null,
+          input.projectName,
+        ),
+      )
     );
   if (!activation.source)
     return stage(
@@ -157,20 +231,26 @@ function activationStage(
     );
   switch (lead.status) {
     case "needs_channel":
-      return stage(
-        "start_lead",
-        "start_lead",
-        "todo",
-        "Start the project lead",
-        "Create the project session channel, then start the project lead.",
+      return (
+        rosterStage(input.roster, false) ??
+        stage(
+          "start_lead",
+          "start_lead",
+          "todo",
+          "Start the project lead",
+          "Every installed agent is this project's agent. Start the project lead; its project session channel is created first.",
+        )
       );
     case "ready":
-      return stage(
-        "start_lead",
-        "start_lead",
-        "todo",
-        "Start the project lead",
-        "Start the project lead.",
+      return (
+        rosterStage(input.roster, false) ??
+        stage(
+          "start_lead",
+          "start_lead",
+          "todo",
+          "Start the project lead",
+          "Every installed agent is this project's agent. Start the project lead.",
+        )
       );
     case "starting":
       return stage(
@@ -233,7 +313,7 @@ function publicationStage(
           "Installation status unavailable",
           "This computer couldn't read the installation record. Reopen setup to check again.",
         );
-      return activationStage(input.activation);
+      return activationStage(input.activation, input);
     case "checking":
     case "candidate_prepared":
     case "pushed":

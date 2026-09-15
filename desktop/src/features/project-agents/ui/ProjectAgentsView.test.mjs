@@ -13,6 +13,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { ProjectAgentsView } from "./ProjectAgentsView.tsx";
 import {
+  associateConfirmText,
   assignmentScopeText,
   relationshipText,
   sessionInstructionsText,
@@ -20,20 +21,29 @@ import {
 
 const SHA = "f0132d13".padEnd(40, "0");
 
+const PROJECT_REF = `30621:${"6".repeat(64)}:tank-loop`;
+
 function row(overrides = {}) {
   return {
     pubkey: "2".repeat(64),
     name: "Bob",
     avatarUrl: null,
+    section: "borrowed",
+    isProjectAgent: false,
+    state: "working",
+    location: { kind: "here" },
+    primaryRole: "builder",
+    seatedRoles: ["builder"],
     managedHere: true,
-    section: "working",
+    associationMissing: false,
+    otherProject: null,
+    mayAssociate: true,
     relationship: {
       kind: "seated",
       role: "builder",
       sessionName: "Project team setup",
       assignerName: "Loom",
     },
-    roles: ["builder"],
     installations: [],
     sessions: [
       {
@@ -50,7 +60,7 @@ function row(overrides = {}) {
         provider: "claude-primary",
         runtime: "claude",
         model: "sonnet",
-        status: "idle",
+        status: "running",
         ageSeconds: 3 * 3_600,
         packRef: {
           repo: "30617:x:packs",
@@ -90,6 +100,25 @@ function row(overrides = {}) {
   };
 }
 
+function projectAgent(overrides = {}) {
+  return row({
+    pubkey: "4".repeat(64),
+    name: "Builder",
+    section: "project",
+    isProjectAgent: true,
+    state: "available",
+    mayAssociate: false,
+    relationship: null,
+    sessions: [],
+    assignments: [],
+    lastSeenSeconds: null,
+    ...overrides,
+  });
+}
+
+const EMPTY = { projectAgents: [], borrowed: [], previous: [] };
+const ALLOWED = { kind: "allowed" };
+
 const READY_SCOPE = {
   kind: "ready",
   scannedSessions: 3,
@@ -105,10 +134,13 @@ async function render(props) {
     component: () =>
       React.createElement(ProjectAgentsView, {
         assignments: READY_SCOPE,
+        associateAccess: ALLOWED,
         isLoading: false,
         notices: [],
         onOpenSession: () => {},
         projectId: "p1",
+        projectName: "Tank Loop",
+        projectRef: PROJECT_REF,
         ...props,
       }),
   });
@@ -131,66 +163,206 @@ async function render(props) {
   );
 }
 
-test("the three sections render with their agents, and empty sections are omitted", async () => {
+function between(html, startTestId, endTestId) {
+  const start = html.indexOf(`data-testid="${startTestId}"`);
+  const end = endTestId
+    ? html.indexOf(`data-testid="${endTestId}"`)
+    : html.length;
+  assert.ok(start >= 0, `${startTestId} rendered`);
+  return html.slice(start, end < 0 ? html.length : end);
+}
+
+test("the three sections render under their headings, and empty sections are omitted", async () => {
   const html = await render({
     model: {
-      working: [row()],
-      installed: [
-        row({
-          pubkey: "4".repeat(64),
-          name: "Sage",
-          section: "installed",
-          relationship: { kind: "installed", role: "verifier" },
-          sessions: [],
-          assignments: [],
-          installations: [
-            {
-              role: "verifier",
-              packRef: {
-                repo: "30617:x:packs",
-                sha: SHA,
-                role: "verifier",
-                path: "personas/roles/verifier",
-              },
-            },
-          ],
-          lastSeenSeconds: null,
+      projectAgents: [
+        projectAgent(),
+        projectAgent({
+          pubkey: "7".repeat(64),
+          name: "Andy's Runner",
+          primaryRole: "runner",
+          state: "elsewhere",
+          managedHere: false,
+          location: {
+            kind: "elsewhere",
+            ownerPubkey: "a".repeat(64),
+            ownerName: "Andy",
+          },
         }),
       ],
+      borrowed: [row()],
       previous: [],
     },
   });
 
-  assert.match(html, /data-testid="project-agents-working"/);
-  assert.match(html, /data-testid="project-agents-installed"/);
+  assert.match(html, />Project agents <span/);
+  assert.match(html, />Borrowed participants <span/);
   assert.doesNotMatch(html, /data-testid="project-agents-previous"/);
-  assert.match(html, /Builder in Project team setup · assigned by Loom/);
-  assert.match(html, /Installed as Verifier · instructions f0132d13/);
-  // The installation line is the whole sentence; it is not said twice.
-  assert.equal(html.split("Installed as Verifier").length - 1, 1);
-  assert.match(html, /claude-primary · sonnet · idle \(3h\)/);
-  assert.match(html, /Instructions builder @ f0132d13/);
-  assert.match(html, /Set up local development/);
-  assert.match(html, /settled · approve-with-notes · 2 reports/);
+  assert.doesNotMatch(html, /Working here|Installed, waiting/);
+
+  const members = between(
+    html,
+    "project-agents-members",
+    "project-agents-borrowed",
+  );
+  assert.match(members, /Project agent/);
+  assert.match(members, /Available/);
+  assert.match(members, /On another computer/);
+  assert.match(members, /Owned by Andy · can&#x27;t run on this computer/);
+  assert.doesNotMatch(members, /Not a Tank Loop agent/);
+
+  const borrowed = between(html, "project-agents-borrowed");
+  assert.match(borrowed, />Borrowed</);
+  assert.match(borrowed, />Working</);
+  assert.match(
+    borrowed,
+    /Not a Tank Loop agent — seated here without project association\. New hires use this project&#x27;s agents only\./,
+  );
+  assert.match(borrowed, /Builder in Project team setup · assigned by Loom/);
+  assert.match(borrowed, /claude-primary · sonnet · running \(3h\)/);
+  assert.match(borrowed, /Instructions builder @ f0132d13/);
+  assert.match(borrowed, /host 99999999…9999/);
+  assert.match(borrowed, /settled · approve-with-notes · 2 reports/);
   assert.match(html, /href="\/projects\/p1\/packs"/);
-  // A managed identity can be renamed in place; the rename control is there.
+  // A managed identity can be renamed in place.
   assert.match(html, /Rename/);
 });
 
-test("an identity not managed here offers no rename", async () => {
+test("state is said in words for every state", async () => {
+  const states = {
+    working: "Working",
+    idle: "Idle",
+    disconnected: "Disconnected",
+    available: "Available",
+    "not-associated": "Not associated yet",
+    elsewhere: "On another computer",
+    "not-running": "Not running",
+    historical: "Historical",
+  };
+  for (const [state, word] of Object.entries(states)) {
+    const html = await render({
+      model: { ...EMPTY, projectAgents: [projectAgent({ state })] },
+    });
+    assert.match(
+      html,
+      new RegExp(`data-testid="project-agent-state"[^>]*>.*?${word}</span>`),
+      state,
+    );
+  }
+});
+
+test("a previous participant keeps its borrowed label beside Previously here", async () => {
   const html = await render({
     model: {
-      working: [row({ managedHere: false })],
-      installed: [],
-      previous: [],
+      ...EMPTY,
+      previous: [
+        row({
+          name: "Ira",
+          section: "previous",
+          state: "historical",
+          otherProject: { ref: "x", name: "Attic" },
+          mayAssociate: false,
+        }),
+      ],
+    },
+  });
+  const previous = between(html, "project-agents-previous");
+  assert.match(previous, />Previously here</);
+  assert.match(previous, />Borrowed</);
+  assert.match(previous, /Not a Tank Loop agent — belongs to Attic\./);
+  assert.doesNotMatch(previous, /Associate with/);
+});
+
+test("installed but unassociated: the warning is on the project row, with Associate", async () => {
+  const html = await render({
+    model: {
+      ...EMPTY,
+      projectAgents: [
+        projectAgent({
+          associationMissing: true,
+          state: "not-associated",
+          mayAssociate: true,
+        }),
+      ],
+    },
+  });
+  assert.match(
+    html,
+    /Installed for this project but not associated yet — the lead can&#x27;t hire it\. Reopen setup or associate it\./,
+  );
+  assert.match(html, /Associate with Tank Loop/);
+});
+
+test("Associate is enabled for a project writer and disabled with its reason otherwise", async () => {
+  const model = { ...EMPTY, borrowed: [row()] };
+  const allowed = await render({ model });
+  const button = allowed.match(
+    /<button[^>]*data-testid="project-agent-associate-button"[^>]*>/,
+  )[0];
+  assert.doesNotMatch(button, / disabled=""/);
+
+  const denied = await render({
+    model,
+    associateAccess: {
+      kind: "denied",
+      reason:
+        "Only Tank Loop's owners and collaborators can associate agents with it.",
+    },
+  });
+  const deniedButton = denied.match(
+    /<button[^>]*data-testid="project-agent-associate-button"[^>]*>/,
+  )[0];
+  assert.match(deniedButton, / disabled=""/);
+  assert.match(
+    denied,
+    /data-testid="project-agent-associate-denied"[^>]*>Only Tank Loop&#x27;s owners and collaborators/,
+  );
+
+  const notOffered = await render({
+    model: { ...EMPTY, borrowed: [row({ mayAssociate: false })] },
+  });
+  assert.doesNotMatch(notOffered, /project-agent-associate-button/);
+});
+
+test("an identity not managed here offers no rename and says where it is", async () => {
+  const html = await render({
+    model: {
+      ...EMPTY,
+      borrowed: [
+        row({
+          managedHere: false,
+          mayAssociate: false,
+          location: { kind: "unknown" },
+        }),
+      ],
     },
   });
   assert.doesNotMatch(html, /Rename/);
   assert.doesNotMatch(html, /On this computer/);
+  assert.match(html, /Not on this computer/);
+});
+
+test("rows wrap and truncate so a narrow window stays usable", async () => {
+  const html = await render({
+    model: { ...EMPTY, borrowed: [row()] },
+  });
+  const rowTag = html.match(/<li[^>]*data-testid="project-agent-row"[^>]*>/)[0];
+  assert.match(rowTag, /min-w-0/);
+  assert.match(html, /class="flex min-w-0 flex-wrap items-start gap-2"/);
+  assert.match(
+    html,
+    /class="min-w-0 truncate text-sm font-medium text-foreground" data-testid="project-agent-name" title="Bob · 2{64}"/,
+  );
+  assert.match(
+    html,
+    /class="truncate font-mono text-2xs text-muted-foreground" data-testid="project-agent-pubkey" title="2{64}"/,
+  );
+  // rem tokens only: no arbitrary pixel text.
+  assert.doesNotMatch(html, /text-\[\d+px\]/);
 });
 
 test("empty and loading are different sentences", async () => {
-  const empty = { working: [], installed: [], previous: [] };
+  const empty = EMPTY;
   assert.match(
     await render({ model: empty }),
     /data-testid="project-agents-empty"/,
@@ -203,7 +375,7 @@ test("empty and loading are different sentences", async () => {
 
 test("an assignment read that covered only part of the sessions says so, with a way to read more", async () => {
   const html = await render({
-    model: { working: [row()], installed: [], previous: [] },
+    model: { ...EMPTY, borrowed: [row()] },
     assignments: {
       ...READY_SCOPE,
       scannedSessions: 8,
@@ -215,7 +387,11 @@ test("an assignment read that covered only part of the sessions says so, with a 
   assert.match(html, /data-testid="project-agents-read-more"/);
 });
 
-test("copy: relationship sentences and instruction lines", () => {
+test("copy: relationship sentences, association confirmation and instruction lines", () => {
+  assert.equal(
+    associateConfirmText("Bob", "Tank Loop", "builder"),
+    "Bob becomes a permanent Tank Loop Builder agent. Its history stays attributed to Bob. This does not change project access.",
+  );
   assert.equal(
     relationshipText({
       kind: "seated",

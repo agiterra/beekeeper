@@ -1,7 +1,10 @@
+import * as React from "react";
+
 import type {
   ProjectAgentRow as ProjectAgentRowModel,
   ProjectAgentsModel,
 } from "../lib/projectAgentsModel";
+import type { ProjectAgentAssociateAccess } from "../lib/publishedProjectAgents";
 import type { ProjectAgentsAssignmentScope } from "../lib/useProjectAgents";
 import {
   type OpenProjectAgentSession,
@@ -10,40 +13,46 @@ import {
 import {
   assignmentScopeText,
   countText,
+  ASSOCIATION_SCOPE_NOTE,
   HIRER_NOTE,
-  INSTALLATIONS_SCOPE_NOTE,
   PROJECT_AGENTS_EMPTY,
   PROJECT_AGENTS_LOADING,
   PROJECT_AGENTS_SUBTITLE,
   PROJECT_AGENTS_TITLE,
-  SECTION_INSTALLED,
-  SECTION_INSTALLED_HINT,
+  SECTION_BORROWED,
+  SECTION_BORROWED_HINT,
   SECTION_PREVIOUS,
   SECTION_PREVIOUS_HINT,
-  SECTION_WORKING,
-  SECTION_WORKING_HINT,
+  SECTION_PROJECT,
+  SECTION_PROJECT_HINT,
 } from "./projectAgentsCopy";
 
+type RowContext = {
+  associateAccess: ProjectAgentAssociateAccess;
+  onOpenSession: OpenProjectAgentSession;
+  projectId: string;
+  projectName: string;
+  projectRef: string;
+};
+
 function Section({
+  context,
   hint,
-  onOpenSession,
-  projectId,
   rows,
   testId,
   title,
 }: {
+  context: RowContext;
   hint: string;
-  onOpenSession: OpenProjectAgentSession;
-  projectId: string;
   rows: readonly ProjectAgentRowModel[];
   testId: string;
   title: string;
 }) {
   if (rows.length === 0) return null;
   return (
-    <section className="flex flex-col gap-2" data-testid={testId}>
-      <header className="flex flex-col gap-0.5">
-        <h3 className="text-sm font-medium text-foreground">
+    <section className="flex min-w-0 flex-col gap-2" data-testid={testId}>
+      <header className="flex min-w-0 flex-col gap-0.5">
+        <h3 className="break-words text-sm font-medium text-foreground">
           {title}{" "}
           <span className="text-xs font-normal tabular-nums text-muted-foreground">
             {countText(rows.length, "agent")}
@@ -51,12 +60,15 @@ function Section({
         </h3>
         <p className="text-2xs text-muted-foreground">{hint}</p>
       </header>
-      <ul className="grid gap-3 lg:grid-cols-2">
+      <ul className="grid min-w-0 gap-3 lg:grid-cols-2">
         {rows.map((row) => (
           <ProjectAgentRow
+            associateAccess={context.associateAccess}
             key={row.pubkey}
-            onOpenSession={onOpenSession}
-            projectId={projectId}
+            onOpenSession={context.onOpenSession}
+            projectId={context.projectId}
+            projectName={context.projectName}
+            projectRef={context.projectRef}
             row={row}
           />
         ))}
@@ -71,11 +83,14 @@ function Section({
  */
 export function ProjectAgentsView({
   assignments,
+  associateAccess,
   isLoading,
   model,
   notices,
   onOpenSession,
   projectId,
+  projectName,
+  projectRef,
 }: {
   assignments: Pick<
     ProjectAgentsAssignmentScope,
@@ -87,19 +102,34 @@ export function ProjectAgentsView({
     | "isFetchingMore"
     | "fetchMore"
   >;
+  /** Whether the viewer may associate an agent with this project. */
+  associateAccess: ProjectAgentAssociateAccess;
   isLoading: boolean;
   model: ProjectAgentsModel;
   /** Read limits and failures, each in its own words. */
   notices: readonly string[];
   onOpenSession: OpenProjectAgentSession;
   projectId: string;
+  projectName: string;
+  /** The project's own address, `30621:<owner>:<d>`. */
+  projectRef: string;
 }) {
   const total =
-    model.working.length + model.installed.length + model.previous.length;
+    model.projectAgents.length + model.borrowed.length + model.previous.length;
   const scope = assignmentScopeText(assignments);
+  const context = React.useMemo<RowContext>(
+    () => ({
+      associateAccess,
+      onOpenSession,
+      projectId,
+      projectName,
+      projectRef,
+    }),
+    [associateAccess, onOpenSession, projectId, projectName, projectRef],
+  );
   return (
-    <div className="flex flex-col gap-5" data-testid="project-agents">
-      <header className="flex flex-col gap-1">
+    <div className="flex min-w-0 flex-col gap-5" data-testid="project-agents">
+      <header className="flex min-w-0 flex-col gap-1">
         <h2 className="text-base font-medium text-foreground">
           {PROJECT_AGENTS_TITLE}
         </h2>
@@ -110,7 +140,7 @@ export function ProjectAgentsView({
 
       {notices.map((notice) => (
         <p
-          className="text-xs text-amber-600 dark:text-amber-400"
+          className="break-words text-xs text-amber-600 dark:text-amber-400"
           data-testid="project-agents-notice"
           key={notice}
         >
@@ -130,31 +160,28 @@ export function ProjectAgentsView({
       ) : null}
 
       <Section
-        hint={SECTION_WORKING_HINT}
-        onOpenSession={onOpenSession}
-        projectId={projectId}
-        rows={model.working}
-        testId="project-agents-working"
-        title={SECTION_WORKING}
+        context={context}
+        hint={SECTION_PROJECT_HINT}
+        rows={model.projectAgents}
+        testId="project-agents-members"
+        title={SECTION_PROJECT}
       />
       <Section
-        hint={SECTION_INSTALLED_HINT}
-        onOpenSession={onOpenSession}
-        projectId={projectId}
-        rows={model.installed}
-        testId="project-agents-installed"
-        title={SECTION_INSTALLED}
+        context={context}
+        hint={SECTION_BORROWED_HINT}
+        rows={model.borrowed}
+        testId="project-agents-borrowed"
+        title={SECTION_BORROWED}
       />
       <Section
+        context={context}
         hint={SECTION_PREVIOUS_HINT}
-        onOpenSession={onOpenSession}
-        projectId={projectId}
         rows={model.previous}
         testId="project-agents-previous"
         title={SECTION_PREVIOUS}
       />
 
-      <footer className="flex flex-col gap-1 text-2xs text-muted-foreground">
+      <footer className="flex min-w-0 flex-col gap-1 break-words text-2xs text-muted-foreground">
         {scope ? (
           <p data-testid="project-agents-assignment-scope">
             {scope}{" "}
@@ -171,7 +198,7 @@ export function ProjectAgentsView({
             ) : null}
           </p>
         ) : null}
-        <p>{INSTALLATIONS_SCOPE_NOTE}</p>
+        <p>{ASSOCIATION_SCOPE_NOTE}</p>
         <p>{HIRER_NOTE}</p>
       </footer>
     </div>

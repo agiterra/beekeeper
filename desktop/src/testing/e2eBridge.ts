@@ -15,6 +15,10 @@ import {
   type MockFilter,
 } from "./e2eBridgeSessionFacts.ts";
 import { handleMockProjectTeamSetupCommand } from "./e2eBridgeProjectTeamSetup.ts";
+import {
+  associateMockManagedAgent,
+  MOCK_PROJECT_AGENT_KINDS,
+} from "./e2eBridgeProjectAgents.ts";
 import { relayClient } from "@/shared/api/relayClient";
 import {
   mockChannelHistoryPage,
@@ -161,6 +165,8 @@ export type MockManagedAgentSeed = {
   envVars?: Record<string, string>;
   /** The role this agent is, from its pack persona. */
   homeRole?: string | null;
+  /** The project this agent belongs to, `30621:<owner>:<d>`; `null` = none. */
+  projectRef?: string | null;
   /** Whether this computer holds the pack behind that role. */
   hasRolePack?: boolean;
   /** Its pack exists and the shared home refuses it (finding 68). */
@@ -1103,6 +1109,8 @@ type RawManagedAgent = {
   runtime: string | null;
   /** The role this agent is, from its pack persona. */
   home_role?: string | null;
+  /** The project this agent belongs to (`30621:<owner>:<d>`), or `null`. */
+  project_ref?: string | null;
   /** Whether this computer holds the pack behind that role. */
   has_role_pack?: boolean;
   /** Its pack exists and the shared home refuses it (finding 68). */
@@ -2063,6 +2071,7 @@ function cloneManagedAgent(agent: MockManagedAgent): RawManagedAgent {
     persona_id: agent.persona_id,
     runtime: agent.runtime ?? null,
     home_role: agent.home_role ?? null,
+    project_ref: agent.project_ref ?? null,
     has_role_pack: agent.has_role_pack ?? false,
     pack_refused_shared_home: agent.pack_refused_shared_home ?? false,
     relay_url: agent.relay_url,
@@ -2621,6 +2630,7 @@ function buildSeededManagedAgent(seed: MockManagedAgentSeed): MockManagedAgent {
     // must mirror the wire shape, not omit the key.
     runtime: seed.runtime ?? null,
     home_role: seed.homeRole ?? null,
+    project_ref: seed.projectRef ?? null,
     has_role_pack: seed.hasRolePack ?? false,
     // The default a current build mints: its own nest, nothing refused.
     pack_refused_shared_home: seed.packRefusedSharedHome ?? false,
@@ -10810,7 +10820,10 @@ function sendToMockSocket(
     // kind:5 with `#h` and stay on the channel path, and Inbox hydration
     // looks deletions up by `#e` over message ids — both stay general).
     if (
-      filter.kinds?.some((kind) => MOCK_PROJECT_KINDS.has(kind)) ||
+      filter.kinds?.some(
+        (kind) =>
+          MOCK_PROJECT_KINDS.has(kind) || MOCK_PROJECT_AGENT_KINDS.has(kind),
+      ) ||
       (filter.kinds?.includes(1) && (filter["#a"] || filter["#e"])) ||
       (filter.kinds?.includes(KIND_DELETION) && !filter["#h"] && !filter["#e"])
     ) {
@@ -14256,6 +14269,15 @@ export function maybeInstallE2eTauriMocks() {
           command,
           payload as Record<string, unknown> | null,
         )?.value;
+      case "associate_managed_agent_with_project": {
+        const { pubkey, projectRef } = payload as {
+          pubkey: string;
+          projectRef: unknown;
+        };
+        const agent = getMockManagedAgent(pubkey);
+        associateMockManagedAgent(agent, projectRef);
+        return cloneManagedAgent(agent);
+      }
       case "update_managed_agent":
         return handleUpdateManagedAgent(
           payload as Parameters<typeof handleUpdateManagedAgent>[0],
