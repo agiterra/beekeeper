@@ -9,6 +9,7 @@ use super::*;
 fn prunable() -> SeatWorktreeFacts {
     SeatWorktreeFacts {
         session_settled: true,
+        session_deleted: false,
         execution_live: false,
         tip_on_relay: true,
         dirty_files: 0,
@@ -69,6 +70,7 @@ fn the_hot_checkout_is_protected_under_every_other_input() {
                     for recorded in [false, true] {
                         let facts = SeatWorktreeFacts {
                             session_settled: settled,
+                            session_deleted: false,
                             execution_live: live,
                             tip_on_relay: pushed,
                             dirty_files: dirty,
@@ -211,6 +213,94 @@ fn build_output_is_not_reclaimable_while_an_execution_runs_or_a_session_is_open(
     }));
     assert!(!build_output_reclaimable(&SeatWorktreeFacts {
         is_protected: true,
+        ..prunable()
+    }));
+}
+
+/// A deleted session: no closure survives a whole-session deletion, so
+/// `session_settled` is false and `session_deleted` carries the fact instead.
+fn deleted() -> SeatWorktreeFacts {
+    SeatWorktreeFacts {
+        session_settled: false,
+        session_deleted: true,
+        ..prunable()
+    }
+}
+
+#[test]
+fn a_deleted_session_settles_its_trees_exactly_as_a_closure_does() {
+    // Ledger 135(f): before this, a deleted session's trees read `not-settled`
+    // for ever, so neither the host's reaper nor the bundle cleanup ever ran.
+    assert_eq!(
+        classify_seat_worktree(&deleted()),
+        SeatWorktreeDisposition::Prunable
+    );
+    assert!(build_output_reclaimable(&deleted()));
+}
+
+#[test]
+fn a_deleted_session_buys_no_exemption_from_any_protection() {
+    assert_eq!(
+        classify_seat_worktree(&SeatWorktreeFacts {
+            dirty_files: 3,
+            ..deleted()
+        }),
+        SeatWorktreeDisposition::Held { dirty_files: 3 },
+        "uncommitted work outranks a deletion exactly as it outranks a closure"
+    );
+    assert_eq!(
+        classify_seat_worktree(&SeatWorktreeFacts {
+            is_protected: true,
+            ..deleted()
+        }),
+        SeatWorktreeDisposition::Protected
+    );
+    assert_eq!(
+        classify_seat_worktree(&SeatWorktreeFacts {
+            execution_live: true,
+            ..deleted()
+        }),
+        SeatWorktreeDisposition::ExecutionLive
+    );
+    assert_eq!(
+        classify_seat_worktree(&SeatWorktreeFacts {
+            recorded: false,
+            ..deleted()
+        }),
+        SeatWorktreeDisposition::Unrecorded
+    );
+    assert_eq!(
+        classify_seat_worktree(&SeatWorktreeFacts {
+            tip_on_relay: false,
+            ..deleted()
+        }),
+        SeatWorktreeDisposition::TipNotOnRelay
+    );
+    assert_eq!(
+        classify_seat_worktree(&SeatWorktreeFacts {
+            settled_for_secs: Some(0),
+            ..deleted()
+        }),
+        SeatWorktreeDisposition::WithinGrace {
+            remaining_secs: SEAT_WORKTREE_GRACE_SECS
+        },
+        "the grace window runs from the deletion, not from nothing"
+    );
+}
+
+#[test]
+fn a_session_that_is_neither_closed_nor_deleted_is_still_not_settled() {
+    assert_eq!(
+        classify_seat_worktree(&SeatWorktreeFacts {
+            session_settled: false,
+            session_deleted: false,
+            ..prunable()
+        }),
+        SeatWorktreeDisposition::NotSettled
+    );
+    assert!(!build_output_reclaimable(&SeatWorktreeFacts {
+        session_settled: false,
+        session_deleted: false,
         ..prunable()
     }));
 }

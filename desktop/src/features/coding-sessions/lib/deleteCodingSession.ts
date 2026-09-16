@@ -1,5 +1,9 @@
 import { relayClient } from "@/shared/api/relayClient";
 import { signRelayEvent } from "@/shared/api/tauri";
+import {
+  closeCodingSessionSeatWorktree,
+  listCodingSessionSeatWorktrees,
+} from "@/shared/api/tauriCodingSessionWorktrees";
 import type { RelayEvent } from "@/shared/api/types";
 import {
   KIND_CODING_SESSION_CLOSURE,
@@ -157,6 +161,60 @@ export function sessionOwnedEventIds(
 }
 
 /**
+ * Let this host dispose of the seat worktrees a deleted session leaves behind.
+ *
+ * A deletion is not a closure, and until now nothing treated it as an ending:
+ * after `bee sessions delete` on `cc5cb114` both executions read `released`,
+ * but every seat tree still answered "the session is not closed, so nothing is
+ * removed", so neither the reaper nor the seat-bundle cleanup ever ran and
+ * four directories and three bundles were removed by hand (ledger 135(f)).
+ *
+ * The rules do not change: the host decides with the same shared predicate a
+ * close uses, so a tree holding uncommitted work is kept exactly as it is kept
+ * everywhere else, and the grace window runs from this moment. Best effort and
+ * never surfaced as an error — the tombstones are already published, and a
+ * directory this machine could not tidy must not read as the deletion having
+ * failed.
+ */
+async function disposeOfDeletedSessionWorktrees(
+  sessionRef: string,
+): Promise<void> {
+  let rows: Awaited<ReturnType<typeof listCodingSessionSeatWorktrees>>;
+  try {
+    rows = await listCodingSessionSeatWorktrees([
+      {
+        sessionRef,
+        // No closure survives the deletion, so this is false and the fact
+        // that ends the session is the deletion itself.
+        sessionSettled: false,
+        sessionDeleted: true,
+        // The relay dropped the session's events; nothing here claims to have
+        // observed an execution still running.
+        executionLive: false,
+        // This path fetches no kind 30618, so it has not established where the
+        // branch stands on the relay. `null`, never `false`.
+        tipOnRelay: null,
+        settledForSecs: 0,
+      },
+    ]);
+  } catch {
+    // An older host, or the mock bridge: it has no disposition to offer.
+    return;
+  }
+  await Promise.allSettled(
+    rows.map((row) =>
+      closeCodingSessionSeatWorktree({
+        sessionRef: row.sessionRef,
+        seatLabel: row.seatLabel,
+        executionLive: false,
+        settledForSecs: 0,
+        sessionDeleted: true,
+      }),
+    ),
+  );
+}
+
+/**
  * Delete one coding session outright.
  *
  * ## Why this is one event over a whole chain
@@ -177,10 +235,12 @@ export function sessionOwnedEventIds(
  *
  * ## Stopping first
  *
- * This publishes tombstones and nothing else. An execution still running on
- * its host is stopped by a lifecycle command or by the session's closure,
- * not by this — the caller sequences that, and reports honestly when the
- * host was not listening.
+ * This publishes tombstones, and then lets *this* host dispose of the seat
+ * worktrees it recorded for the session, under the same predicate a close
+ * uses. An execution still running on its host is stopped by a lifecycle
+ * command or by the session's closure, not by this — the caller sequences
+ * that, and reports honestly when the host was not listening. A worktree on
+ * another machine is that machine's to dispose of.
  */
 export async function deleteCodingSession({
   channelId,
@@ -208,12 +268,22 @@ export async function deleteCodingSession({
   const event = await signRelayEvent({
     kind: KIND_DELETION,
     content: `Delete session ${sessionRef}`,
-    tags: ids.map((id) => ["e", id]),
+    // The tombstone is the only thing left on the relay once the session is
+    // gone, so it carries the session's reference in a *single-letter*, and
+    // therefore indexable, tag. Without it "was this session deleted?" has no
+    // answer at all and `bee sessions worktree status` goes on calling a
+    // deleted session "not closed" (ledger 135(f)). `d` does not make a kind:5
+    // addressable — kind 5 is regular — and the relay's deletion gate reads
+    // only `e` and `a`.
+    tags: [...ids.map((id) => ["e", id]), ["d", sessionRef]],
   });
   await relayClient.publishEvent(
     event,
     "Timed out deleting the session.",
     "Failed to delete the session.",
   );
+  // Only after the relay accepted it: a deletion that was refused leaves the
+  // session alive, and its trees with it.
+  await disposeOfDeletedSessionWorktrees(sessionRef);
   return { deleted: ids.length };
 }

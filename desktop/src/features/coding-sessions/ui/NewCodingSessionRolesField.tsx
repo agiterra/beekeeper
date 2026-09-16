@@ -19,6 +19,11 @@ export function NewCodingSessionRolesField(props: {
   teamReadiness: ReturnType<typeof useProjectTeamReadiness>;
   launchRoles: readonly string[];
   runtimeTarget: NewCodingSessionTarget | null;
+  /** The repository folder this form already holds, for the one-click record. */
+  candidateCheckout?: string | null;
+  projectRef?: string | null;
+  projectLabel?: string | null;
+  onCheckoutRecorded?: () => void;
 }) {
   const { teamReadiness } = props;
   return (
@@ -59,6 +64,10 @@ export function NewCodingSessionRolesField(props: {
           scanning={teamReadiness.isScanning}
           selectedRoles={props.launchRoles}
           runtimeTarget={props.runtimeTarget}
+          candidateCheckout={props.candidateCheckout}
+          projectRef={props.projectRef}
+          projectLabel={props.projectLabel}
+          onCheckoutRecorded={props.onCheckoutRecorded}
         />
       ) : null}
     </>

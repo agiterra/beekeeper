@@ -169,7 +169,7 @@ fn a_clean_pushed_tree_past_its_grace_window_is_prunable() {
         tip,
         detail,
         ..
-    } = close_disposition(&layout.repo, &tree, false, PAST_GRACE, &auth());
+    } = close_disposition(&layout.repo, &tree, false, PAST_GRACE, false, &auth());
     assert_eq!(disposition, SeatWorktreeDisposition::Prunable);
     assert_eq!(tip, Some(true));
     assert!(detail.ends_with("clean, will be removed"), "{detail}");
@@ -192,7 +192,7 @@ fn a_dirty_tree_is_refused_with_the_count_of_what_it_holds() {
         tip,
         detail,
         ..
-    } = close_disposition(&layout.repo, &tree, false, PAST_GRACE, &auth());
+    } = close_disposition(&layout.repo, &tree, false, PAST_GRACE, false, &auth());
     assert_eq!(
         disposition,
         SeatWorktreeDisposition::Held { dirty_files: 1 }
@@ -216,7 +216,7 @@ fn an_unpushed_tree_is_refused_with_the_relay_sentence() {
         tip,
         detail,
         ..
-    } = close_disposition(&layout.repo, &tree, false, PAST_GRACE, &auth());
+    } = close_disposition(&layout.repo, &tree, false, PAST_GRACE, false, &auth());
     assert_eq!(disposition, SeatWorktreeDisposition::TipNotOnRelay);
     assert_eq!(tip, Some(false));
     assert!(
@@ -243,7 +243,7 @@ fn a_tree_closed_just_now_is_kept_for_its_grace_window() {
         disposition,
         detail,
         ..
-    } = close_disposition(&layout.repo, &tree, false, Some(0), &auth());
+    } = close_disposition(&layout.repo, &tree, false, Some(0), false, &auth());
     assert!(
         matches!(disposition, SeatWorktreeDisposition::WithinGrace { .. }),
         "{disposition:?}"
@@ -264,7 +264,7 @@ fn a_live_execution_outranks_every_other_reason() {
         disposition,
         detail,
         ..
-    } = close_disposition(&layout.repo, &tree, true, PAST_GRACE, &auth());
+    } = close_disposition(&layout.repo, &tree, true, PAST_GRACE, false, &auth());
     assert_eq!(disposition, SeatWorktreeDisposition::ExecutionLive);
     assert!(
         detail.ends_with("an execution is still running here"),
@@ -283,7 +283,14 @@ fn the_repositorys_own_checkout_is_protected() {
         tip,
         detail,
         ..
-    } = close_disposition(&layout.repo, &layout.repo, false, PAST_GRACE, &auth());
+    } = close_disposition(
+        &layout.repo,
+        &layout.repo,
+        false,
+        PAST_GRACE,
+        false,
+        &auth(),
+    );
     assert_eq!(disposition, SeatWorktreeDisposition::Protected);
     assert_eq!(tip, None);
     assert!(detail.ends_with("protected, never removed"), "{detail}");

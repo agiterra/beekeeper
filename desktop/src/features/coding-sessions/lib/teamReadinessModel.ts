@@ -275,3 +275,133 @@ export function teamReadinessPrepareScope(input: {
           : `${others.length} other packs were refreshed and are not part of this launch.`,
   };
 }
+
+/**
+ * What a readiness blocker means, in the words a person acts on.
+ *
+ * ## Why this file exists
+ *
+ * The readiness panel used to print `CODE · summary. Remedy: …`, one line per
+ * fact. Every line was true, and the screen was still unusable: ledger 135(c)
+ * has a founding form blocked on `ROLE_PACKS_MISSING` ("Restore
+ * personas/roles") and `REGISTRY_UNREADABLE` (`team/model-registry.yaml`) for
+ * a project whose seats were going to be staged from a repository on the
+ * relay and would never read either path. The operator's way out was to untick
+ * "Use roles". A control that reads like a diagnosis of the wrong thing is a
+ * control people learn to switch off.
+ *
+ * So each code a person can actually hit gets a heading and a sentence saying
+ * what it means and what to do. The code and the host's own sentence are still
+ * shown underneath — this narrows nothing and hides nothing; the host remains
+ * the authority on the fact, and this file is the authority on nothing but
+ * the English.
+ *
+ * A code with no entry here renders exactly as before. A missing translation
+ * must never swallow a fact.
+ */
+
+export type TeamReadinessBlockerCopy = {
+  /** The short line a person scans. Sentence case, no trailing period. */
+  title: string;
+  /** What to do about it, in one sentence. */
+  action: string;
+};
+
+const COPY: Record<string, TeamReadinessBlockerCopy> = {
+  CHECKOUT_NOT_RECORDED: {
+    title: "This computer does not know where this project's code lives",
+    action:
+      "Agents get their own worktree cut from that folder, so a session cannot start without it. Pick the folder below, or set it in Project settings → This computer.",
+  },
+  CHECKOUT_UNAVAILABLE: {
+    title: "The recorded folder is not there any more",
+    action:
+      "It was moved, renamed, or is on a disk that is not mounted. Point this project at where the checkout is now.",
+  },
+  CHECKOUT_STORE_UNREADABLE: {
+    title: "This computer's record of project folders could not be read",
+    action: "Choose this project's folder again to rewrite the record.",
+  },
+  ROLE_PACKS_MISSING: {
+    title: "Nothing says what this project's roles are",
+    action:
+      "Roles come from a packs repository the project names, or from a personas/roles folder in the checkout. This project has neither, so there is no prompt to seat an agent with.",
+  },
+  ROLE_PACKS_SOURCE_UNAVAILABLE: {
+    title: "This project's packs repository could not be read",
+    action:
+      "Every seat is staged from it, so a hire would be refused for the same reason. Check the repository and the commit the project names under Project settings → Roles.",
+  },
+  ROLE_PACKS_EMPTY: {
+    title: "The role-pack folder holds no usable roles",
+    action:
+      "Each role is a directory with a persona that declares it. Add at least one, then scan again.",
+  },
+  ROLE_PACKS_UNREADABLE: {
+    title: "The role-pack folder could not be read",
+    action: "Check the folder's permissions and contents, then scan again.",
+  },
+  SELECTED_ROLE_UNAVAILABLE: {
+    title: "This session asks for a role nothing can supply",
+    action:
+      "Either pick a role that exists for this project, or add that role to wherever this project's packs come from.",
+  },
+  SELECTED_ROLE_NOT_INSTALLED: {
+    title: "A role this session names has no agent on this computer yet",
+    action: "Use Prepare below to create it and confirm its name.",
+  },
+  SELECTED_ROLE_WRONG_PROJECT: {
+    title: "A role this session names is installed from another project",
+    action:
+      "Use Prepare below to install this project's own pack for it, so the agent runs this project's prompt.",
+  },
+  SELECTED_ROLE_PACK_DIRTY: {
+    title: "A role's installed prompt no longer matches its pack",
+    action:
+      "Someone edited the pack after the agent was installed. Use Prepare below to refresh it.",
+  },
+  SELECTED_ROLE_PACK_STATE_UNKNOWN: {
+    title: "A role's installed prompt cannot be traced to a pack",
+    action:
+      "Nothing records which version it came from. Use Prepare below to reinstall it from the pack.",
+  },
+  SELECTED_ROLE_KEY_UNVERIFIED: {
+    title: "A role's signing key has not been checked on this computer",
+    action:
+      "Use Prepare below to start that identity, which is what proves the key can be read.",
+  },
+  REGISTRY_UNREADABLE: {
+    title: "This project pins no provider or model targets",
+    action:
+      "team/model-registry.yaml is what says which provider and model a project routes to. Without it each role pack's own runtime and model is used.",
+  },
+  REGISTRY_INVALID: {
+    title: "This project's model registry could not be understood",
+    action: "Repair team/model-registry.yaml as a version 1 registry.",
+  },
+  PROVIDER_NOT_RUNNING: {
+    title: "No coding-session provider is running on this computer",
+    action: "Use Prepare below to provision and start one.",
+  },
+  PROVIDER_IN_BACKOFF: {
+    title: "The provider is supervised but has no live process",
+    action: "Wait for it to recover, or restart it from Settings.",
+  },
+  RUNTIME_UNAVAILABLE: {
+    title: "No coding runtime is installed and signed in here",
+    action:
+      "Install and authenticate at least one runtime (Claude Code or Codex), then re-read this panel.",
+  },
+};
+
+/** The plain-language copy for a readiness code, or `null` when it has none. */
+export function teamReadinessBlockerCopy(
+  code: string,
+): TeamReadinessBlockerCopy | null {
+  return COPY[code] ?? null;
+}
+
+/** Every code this file translates, for the test that keeps it honest. */
+export function translatedTeamReadinessCodes(): string[] {
+  return Object.keys(COPY).sort();
+}

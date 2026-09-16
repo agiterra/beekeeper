@@ -88,9 +88,21 @@ fn settled(session_ref: &str) -> CodingSessionWorktreeSessionFacts {
     CodingSessionWorktreeSessionFacts {
         session_ref: session_ref.to_string(),
         session_settled: true,
+        session_deleted: false,
         execution_live: false,
         tip_on_relay: Some(true),
         settled_for_secs: Some(buzz_core_pkg::worktree_lifecycle::SEAT_WORKTREE_GRACE_SECS + 1),
+    }
+}
+
+/// The facts as they stand after an accepted whole-session deletion: the
+/// closures went with the genesis, so nothing folds to `closed` and
+/// `session_deleted` is the only thing that ends the session.
+fn deleted(session_ref: &str) -> CodingSessionWorktreeSessionFacts {
+    CodingSessionWorktreeSessionFacts {
+        session_settled: false,
+        session_deleted: true,
+        ..settled(session_ref)
     }
 }
 
@@ -322,6 +334,83 @@ fn ignored_build_output_never_makes_a_tree_look_dirty() {
         row.reclaimable_bytes.unwrap_or(0) > 0,
         "the build output is measured, not guessed"
     );
+}
+
+#[test]
+fn a_deleted_session_disposes_of_its_trees_and_never_reads_not_closed() {
+    // Ledger 135(f): after `bee sessions delete` on cc5cb114 every seat tree
+    // still answered "the session is not closed, so nothing is removed", so
+    // the reaper and the seat-bundle cleanup never ran on any of them.
+    let layout = layout();
+    let tree = add_worktree(&layout, "lane-deleted");
+    let row = build_row(
+        &format!("{SESSION}/builder-1"),
+        &seat_record(&layout.repo, &tree, "lane-deleted"),
+        &deleted(SESSION),
+    );
+    assert_eq!(row.disposition, "prunable");
+    assert!(row.session_deleted);
+    assert!(row.reclaimable_now);
+    assert!(
+        !row.detail.contains("is not closed"),
+        "a deleted session is not an open one: {}",
+        row.detail
+    );
+    assert_eq!(
+        row.detail,
+        format!(
+            "{}: clean, will be removed (the session was deleted, not closed)",
+            row.path
+        )
+    );
+}
+
+#[test]
+fn a_deleted_session_still_holds_a_tree_that_carries_uncommitted_work() {
+    let layout = layout();
+    let tree = add_worktree(&layout, "lane-deleted-dirty");
+    std::fs::write(tree.join("a.txt"), b"1").expect("write");
+    let row = build_row(
+        &format!("{SESSION}/builder-1"),
+        &seat_record(&layout.repo, &tree, "lane-deleted-dirty"),
+        &deleted(SESSION),
+    );
+    assert_eq!(row.disposition, "held");
+    assert_eq!(
+        row.detail,
+        "held: 1 uncommitted files (the session was deleted, not closed)"
+    );
+}
+
+#[test]
+fn a_session_neither_closed_nor_deleted_is_still_not_settled() {
+    let layout = layout();
+    let tree = add_worktree(&layout, "lane-open");
+    let row = build_row(
+        &format!("{SESSION}/builder-1"),
+        &seat_record(&layout.repo, &tree, "lane-open"),
+        &CodingSessionWorktreeSessionFacts {
+            session_settled: false,
+            session_deleted: false,
+            settled_for_secs: None,
+            ..settled(SESSION)
+        },
+    );
+    assert_eq!(row.disposition, "not-settled");
+    assert!(!row.session_deleted);
+    assert!(row.detail.contains("the session is not closed"));
+    assert!(!row.reclaimable_now);
+}
+
+#[test]
+fn an_older_caller_that_names_no_deletion_reads_as_not_deleted() {
+    // The wire field is `#[serde(default)]`; a payload from a build that
+    // predates it must never be read as a deletion this host was not told about.
+    let facts: CodingSessionWorktreeSessionFacts = serde_json::from_str(
+        r#"{"sessionRef":"11111111-1111-4111-8111-111111111111","sessionSettled":true,"executionLive":false}"#,
+    )
+    .expect("an older caller's payload still deserializes");
+    assert!(!facts.session_deleted);
 }
 
 #[test]

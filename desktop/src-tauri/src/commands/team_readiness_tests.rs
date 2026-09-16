@@ -1,10 +1,10 @@
+use super::auth_facts::append_agent_auth_facts;
 use super::*;
 use std::cell::Cell;
 use std::fs;
 
 use crate::coding_sessions::workdir_store::load_workdir_store_readonly_from;
 use crate::coding_sessions::workdir_store::CodingSessionWorkdirStore;
-use crate::managed_agents::crew_roles::DiscoveredRolePack;
 use crate::managed_agents::storage_readiness::load_managed_agent_readiness_metadata_from;
 use crate::session_provider::runtimes::runtime_readiness_metadata;
 use crate::session_provider::store::load_provider_readiness_store_from;
@@ -27,7 +27,7 @@ fn signed_auth_tag(conditions: &str) -> (String, String, String) {
 }
 
 #[derive(Default)]
-struct CountingHost {
+pub(super) struct CountingHost {
     owner: Cell<usize>,
     workdirs: Cell<usize>,
     agents: Cell<usize>,
@@ -89,7 +89,13 @@ impl ReadinessHost for CountingHost {
 #[test]
 fn real_gather_graph_uses_only_injected_metadata_inventory() {
     let host = CountingHost::default();
-    let response = gather(&host, PROJECT_REF.into(), None, Some(true));
+    let response = gather(
+        &host,
+        PROJECT_REF.into(),
+        None,
+        Some(true),
+        &ProjectPackSourceProbe::NotProbed,
+    );
     assert_eq!(response.host_class, TeamReadinessHostClass::Cold);
     assert_eq!(host.owner.get(), 1);
     assert_eq!(host.workdirs.get(), 1);
@@ -364,74 +370,6 @@ fn only_selected_roles_gate_first_launch() {
         "Choose an available role.",
     ));
     assert!(!finish(PROJECT_REF.into(), selected).ready_for_first_session);
-}
-
-#[test]
-fn selected_role_pack_state_distinguishes_dirty_and_wrong_project() {
-    let pack = DiscoveredRolePack {
-        dir: PathBuf::from("/project/personas/roles/builder"),
-        persona_name: "builder".into(),
-        display_name: "Builder".into(),
-        role: "builder".into(),
-        system_prompt: "Build carefully".into(),
-        runtime: Some("codex".into()),
-        model: None,
-        provider: None,
-        avatar_url: None,
-    };
-    let mut row = ManagedAgentReadinessMetadata {
-        pubkey: "a".repeat(64),
-        name: "Bob".into(),
-        home_role: Some("builder".into()),
-        persona_team_dir: Some(pack.dir.clone()),
-        persona_name_in_team: Some(pack.persona_name.clone()),
-        persona_source_version: None,
-        auth_tag_present: true,
-        auth_tag_owner: None,
-        auth_tag_invalid: false,
-        auth_tag_owner_mismatch: false,
-    };
-    assert_eq!(
-        selected_role_pack_state(&[row.clone()], &pack),
-        SelectedRolePackState::SourceUnknown
-    );
-    row.persona_source_version = Some("b".repeat(64));
-    assert_eq!(
-        selected_role_pack_state(&[row.clone()], &pack),
-        SelectedRolePackState::Dirty
-    );
-    row.persona_source_version = Some(role_pack_source_version(&pack, &row.name));
-    assert_eq!(
-        selected_role_pack_state(&[row.clone()], &pack),
-        SelectedRolePackState::Current
-    );
-    row.persona_team_dir = Some(PathBuf::from("/other/personas/roles/builder"));
-    assert_eq!(
-        selected_role_pack_state(&[row], &pack),
-        SelectedRolePackState::WrongProject
-    );
-}
-
-fn catalog_content(revision: u64, project_ref: &str, model: &str) -> String {
-    let catalog = buzz_core_pkg::coding_session_catalog::Catalog {
-        schema: buzz_core_pkg::coding_session_catalog::CATALOG_SCHEMA.into(),
-        revision,
-        providers: vec![buzz_core_pkg::coding_session_catalog::CatalogProvider {
-            provider_instance_ref: "codex-primary".into(),
-            driver: "codex-agent-acp".into(),
-            runtime: "codex".into(),
-            default_model: model.into(),
-            allowed_models: vec![model.into()],
-            capabilities: buzz_core_pkg::coding_session_payload::Capabilities::v1_baseline(),
-            models: Vec::new(),
-        }],
-        projects: vec![buzz_core_pkg::coding_session_catalog::CatalogProject {
-            project_ref: project_ref.into(),
-            repo_ref: None,
-            providers: vec!["codex-primary".into()],
-        }],
-    };
-    buzz_core_pkg::coding_session_catalog::to_canonical_json(&catalog).expect("canonical catalog")
 }
 
 #[test]
@@ -952,4 +890,26 @@ fn readonly_provider_inventory_rejects_malformed_metadata() {
         fs::write(&path, payload).expect("seed malformed metadata");
         assert!(load_provider_readiness_store_from(&path, None).is_err());
     }
+}
+
+fn catalog_content(revision: u64, project_ref: &str, model: &str) -> String {
+    let catalog = buzz_core_pkg::coding_session_catalog::Catalog {
+        schema: buzz_core_pkg::coding_session_catalog::CATALOG_SCHEMA.into(),
+        revision,
+        providers: vec![buzz_core_pkg::coding_session_catalog::CatalogProvider {
+            provider_instance_ref: "codex-primary".into(),
+            driver: "codex-agent-acp".into(),
+            runtime: "codex".into(),
+            default_model: model.into(),
+            allowed_models: vec![model.into()],
+            capabilities: buzz_core_pkg::coding_session_payload::Capabilities::v1_baseline(),
+            models: Vec::new(),
+        }],
+        projects: vec![buzz_core_pkg::coding_session_catalog::CatalogProject {
+            project_ref: project_ref.into(),
+            repo_ref: None,
+            providers: vec!["codex-primary".into()],
+        }],
+    };
+    buzz_core_pkg::coding_session_catalog::to_canonical_json(&catalog).expect("canonical catalog")
 }

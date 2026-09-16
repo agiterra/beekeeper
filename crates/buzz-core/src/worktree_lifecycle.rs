@@ -14,6 +14,13 @@
 //!
 //! * `session_settled` — a 44230 closure revision whose action is `closed` or
 //!   `archived`. Until that exists the session is still someone's live work.
+//! * `session_deleted` — an accepted whole-session deletion (kind 5 over the
+//!   session's genesis and its chain). A deletion is not a closure — no 44230
+//!   survives it, because the deletion removes them too — but it settles the
+//!   session's work just as finally, and the host that held its trees must
+//!   dispose of them under the same rules. Before this fact existed a deleted
+//!   session's trees read `not-settled` for ever and no reaper ever ran over
+//!   them (ledger 135(f)).
 //! * `execution_live` — a provider execution is still running in the tree.
 //! * `tip_on_relay` — the branch tip is named by, or is an ancestor of, a ref
 //!   in a **relay-signed kind 30618** for that repository. Because 30618 is
@@ -54,6 +61,13 @@ pub const SEAT_WORKTREE_GRACE_SECS: u64 = 7 * 24 * 60 * 60;
 pub struct SeatWorktreeFacts {
     /// A 44230 revision for this session folds to `closed` or `archived`.
     pub session_settled: bool,
+    /// An accepted whole-session deletion removed this session from the relay.
+    ///
+    /// Settles the session exactly as a closure does, and *only* that: every
+    /// protection below still applies in full, so a deleted session holding
+    /// uncommitted work is still [`SeatWorktreeDisposition::Held`] and is
+    /// still removed by a person rather than by a sweep.
+    pub session_deleted: bool,
     /// A provider execution is still running against this tree.
     pub execution_live: bool,
     /// The branch tip is named by, or an ancestor of, a ref in a relay-signed
@@ -65,10 +79,12 @@ pub struct SeatWorktreeFacts {
     pub recorded: bool,
     /// The tree is one nothing may ever remove.
     pub is_protected: bool,
-    /// Seconds elapsed since the closure revision settled the session.
+    /// Seconds elapsed since the closure revision — or the deletion — settled
+    /// the session.
     ///
-    /// `None` when the session is not settled, or when the closure carries no
-    /// timestamp the caller trusts — which holds the tree, never releases it.
+    /// `None` when the session is neither settled nor deleted, or when the
+    /// event carries no timestamp the caller trusts — which holds the tree,
+    /// never releases it.
     pub settled_for_secs: Option<u64>,
 }
 
@@ -83,7 +99,8 @@ pub enum SeatWorktreeDisposition {
         /// How many `git status --porcelain` lines the tree reports.
         dirty_files: u32,
     },
-    /// The session has no `closed` or `archived` closure revision.
+    /// The session has neither a `closed`/`archived` closure revision nor an
+    /// accepted whole-session deletion.
     NotSettled,
     /// Settled and clean, but the branch tip is not on the relay right now.
     TipNotOnRelay,
@@ -135,7 +152,9 @@ impl SeatWorktreeDisposition {
 ///    and a clean tree. The hot checkout is never a candidate.
 /// 2. `execution_live` — an agent is writing in there right now.
 /// 3. `!recorded` — the host cannot own what it never recorded cutting.
-/// 4. `!session_settled` — the work is not finished.
+/// 4. `!session_settled && !session_deleted` — the work is not finished. A
+///    deletion settles the session here and nowhere else: it buys no exemption
+///    from any check below it.
 /// 5. `dirty_files > 0` — [`SeatWorktreeDisposition::Held`], which outranks
 ///    every remaining reason because it is the one a person must see.
 /// 6. `!tip_on_relay` — clean, but nothing off this disk holds the commits.
@@ -150,7 +169,7 @@ pub fn classify_seat_worktree(facts: &SeatWorktreeFacts) -> SeatWorktreeDisposit
     if !facts.recorded {
         return SeatWorktreeDisposition::Unrecorded;
     }
-    if !facts.session_settled {
+    if !facts.session_settled && !facts.session_deleted {
         return SeatWorktreeDisposition::NotSettled;
     }
     if facts.dirty_files > 0 {
@@ -179,8 +198,8 @@ pub fn classify_seat_worktree(facts: &SeatWorktreeFacts) -> SeatWorktreeDisposit
 /// Whether `target/` and `desktop/node_modules` may be reclaimed now.
 ///
 /// Build output is rebuildable, so it is removable the moment the session
-/// settles — independently of [`SeatWorktreeDisposition::Held`], of the grace
-/// window, and of whether anything was pushed. No commit can be lost in
+/// settles or is deleted — independently of [`SeatWorktreeDisposition::Held`],
+/// of the grace window, and of whether anything was pushed. No commit can be lost in
 /// either directory: both are ignored by git, which is exactly why they never
 /// appear in `dirty_files`.
 ///
@@ -188,7 +207,7 @@ pub fn classify_seat_worktree(facts: &SeatWorktreeFacts) -> SeatWorktreeDisposit
 /// breaks the build rather than losing work, but breaking it is not this
 /// module's to do.
 pub fn build_output_reclaimable(facts: &SeatWorktreeFacts) -> bool {
-    facts.session_settled && !facts.execution_live && !facts.is_protected
+    (facts.session_settled || facts.session_deleted) && !facts.execution_live && !facts.is_protected
 }
 
 /// The names of the build directories [`build_output_reclaimable`] covers.

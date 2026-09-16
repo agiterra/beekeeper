@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { CircleAlert, LoaderCircle, Rocket, Trash2 } from "lucide-react";
 import * as React from "react";
@@ -30,6 +31,7 @@ import {
 } from "../NewCodingSessionProviderPicker";
 import { NewCodingSessionReadiness } from "../NewCodingSessionReadiness";
 import { NewCodingSessionRolesField } from "../NewCodingSessionRolesField";
+import { TEAM_READINESS_QUERY_KEY } from "../../lib/useProjectTeamReadiness";
 import { CodingSessionFoundedModeSwitch } from "./CodingSessionFoundedModeSwitch";
 import { CodingSessionFoundedWhereField } from "./CodingSessionFoundedWhereField";
 import type { CodingSessionFoundedGoal } from "./CodingSessionFoundedWorkspace";
@@ -57,6 +59,7 @@ export function CodingSessionFoundedSetupCard({
   onDiscard,
   onOpenProjectAgents = null,
   onStart,
+  projectLabel = null,
   projectRef,
   setup,
 }: {
@@ -66,10 +69,16 @@ export function CodingSessionFoundedSetupCard({
   /** Opens the session's project on its Agents tab; null when there is none. */
   onOpenProjectAgents?: (() => void) | null;
   onStart: () => void;
+  /**
+   * The project's own name, for the one-click "Use this folder as <name>'s
+   * checkout". Null falls back to "this project" rather than inventing one.
+   */
+  projectLabel?: string | null;
   projectRef: string | null;
   setup: CodingSessionFoundedSetupModel;
 }) {
   const { text } = setup;
+  const queryClient = useQueryClient();
   const team = setup.mode === "team";
   const locked = setup.interactionLocked;
   const workdirEditable =
@@ -335,9 +344,17 @@ export function CodingSessionFoundedSetupCard({
 
       {team && projectRef ? (
         <NewCodingSessionRolesField
+          candidateCheckout={setup.workdir}
           disabled={locked}
           launchRoles={setup.launchRoles}
+          onCheckoutRecorded={() =>
+            void queryClient.invalidateQueries({
+              queryKey: [TEAM_READINESS_QUERY_KEY],
+            })
+          }
           onUseRolesChange={setup.setUseRoles}
+          projectLabel={projectLabel}
+          projectRef={projectRef}
           runtimeTarget={setup.selectedTarget}
           teamReadiness={setup.teamReadiness}
           useRoles={setup.useRoles}

@@ -10,13 +10,9 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use sha2::{Digest as _, Sha256};
 use tauri::AppHandle;
 
 use crate::app_state::KEYCHAIN_UNAVAILABLE;
-use crate::managed_agents::crew_roles::{
-    project_role_packs_dir, role_pack_source_version, scan_role_packs,
-};
 use crate::managed_agents::ManagedAgentReadinessMetadata;
 use crate::session_provider::runtimes::StrictRuntimeDiagnostic;
 use crate::session_provider::supervisor::CodingSessionProviderProcessState;
@@ -27,12 +23,16 @@ mod git_probe;
 use git_probe::{checkout_source, embedded_source};
 #[cfg(test)]
 use git_probe::{parse_embedded_source, validate_dirty};
+#[path = "team_readiness_packs.rs"]
+mod packs;
+use packs::{collect_team, probe_project_pack_source, ProjectPackSourceProbe};
+
 #[path = "team_readiness_host.rs"]
 mod host;
 use host::{AppReadinessHost, ReadinessHost};
 #[path = "team_readiness_auth_facts.rs"]
 mod auth_facts;
-use auth_facts::{append_agent_auth_facts, append_provider_auth_fact};
+use auth_facts::append_provider_auth_fact;
 
 #[path = "team_readiness_wire.rs"]
 mod wire;
@@ -310,8 +310,11 @@ fn collect_checkout(
         gathered.facts.push(TeamReadinessFact::blocked(
             "project",
             "CHECKOUT_NOT_RECORDED",
-            "No checkout is recorded for this project",
-            "Choose a checkout for this project.",
+            "This computer has no repository folder recorded for this project, so a \
+             session here would have nothing to cut its worktrees from",
+            "Point this project at the folder its repository is checked out in — the \
+             founding form offers the folder it already has, and Project settings → This \
+             computer sets it directly.",
         ));
         return None;
     };
@@ -375,232 +378,6 @@ fn identity_projection(
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SelectedRolePackState {
-    Current,
-    Dirty,
-    SourceUnknown,
-    WrongProject,
-    Missing,
-}
-
-fn selected_role_pack_state(
-    metadata: &[ManagedAgentReadinessMetadata],
-    pack: &crate::managed_agents::crew_roles::DiscoveredRolePack,
-) -> SelectedRolePackState {
-    if let Some(row) = metadata.iter().find(|row| {
-        row.persona_team_dir.as_deref() == Some(pack.dir.as_path())
-            && row.persona_name_in_team.as_deref() == Some(pack.persona_name.as_str())
-    }) {
-        return match row.persona_source_version.as_deref() {
-            Some(source) if source == role_pack_source_version(pack, &row.name) => {
-                SelectedRolePackState::Current
-            }
-            Some(_) => SelectedRolePackState::Dirty,
-            None => SelectedRolePackState::SourceUnknown,
-        };
-    }
-    if metadata.iter().any(|row| {
-        row.home_role.as_deref() == Some(pack.role.as_str())
-            && (row.persona_team_dir.as_deref() != Some(pack.dir.as_path())
-                || row.persona_name_in_team.as_deref() != Some(pack.persona_name.as_str()))
-    }) {
-        SelectedRolePackState::WrongProject
-    } else {
-        SelectedRolePackState::Missing
-    }
-}
-
-fn collect_team(host: &impl ReadinessHost, checkout: Option<&Path>, gathered: &mut Gathered) {
-    let metadata = match host.agents(gathered.owner_pubkey.as_deref()) {
-        Ok(rows) => rows,
-        Err(error) => {
-            let mut fact = TeamReadinessFact::local(
-                "team",
-                "AGENT_METADATA_UNREADABLE",
-                if gathered.team.selected_roles.is_empty() {
-                    TeamReadinessFactState::Limited
-                } else {
-                    TeamReadinessFactState::Unknown
-                },
-                error,
-            );
-            fact.remedy = Some("Repair the managed-agent metadata store.".into());
-            gathered.facts.push(fact);
-            Vec::new()
-        }
-    };
-    append_agent_auth_facts(&metadata, gathered);
-    let live = host.live_agent_pubkeys().unwrap_or_default();
-    gathered.team.identities = metadata
-        .iter()
-        .map(|row| identity_projection(row, &live))
-        .collect();
-    let Some(checkout) = checkout else {
-        return;
-    };
-    let directory = project_role_packs_dir(checkout);
-    if !directory.is_dir() {
-        let mut fact = TeamReadinessFact::local(
-            "team",
-            "ROLE_PACKS_MISSING",
-            if gathered.team.selected_roles.is_empty() {
-                TeamReadinessFactState::Limited
-            } else {
-                TeamReadinessFactState::Blocked
-            },
-            "The project exposes no role-pack directory",
-        );
-        fact.remedy = Some("Restore personas/roles.".into());
-        gathered.facts.push(fact);
-        return;
-    }
-    let scan = match scan_role_packs(&directory) {
-        Ok(scan) => scan,
-        Err(error) => {
-            let mut fact = TeamReadinessFact::local(
-                "team",
-                "ROLE_PACKS_UNREADABLE",
-                if gathered.team.selected_roles.is_empty() {
-                    TeamReadinessFactState::Limited
-                } else {
-                    TeamReadinessFactState::Unknown
-                },
-                error,
-            );
-            fact.remedy = Some("Repair the role-pack directory.".into());
-            gathered.facts.push(fact);
-            return;
-        }
-    };
-    let mut hasher = Sha256::new();
-    let mut wrong_project_roles = HashSet::new();
-    for pack in scan.packs {
-        hasher.update(pack.role.as_bytes());
-        hasher.update([0]);
-        hasher.update(pack.persona_name.as_bytes());
-        hasher.update([0]);
-        hasher.update(pack.display_name.as_bytes());
-        hasher.update([0]);
-        hasher.update(pack.system_prompt.as_bytes());
-        hasher.update([0]);
-        for value in [
-            pack.runtime.as_deref(),
-            pack.model.as_deref(),
-            pack.provider.as_deref(),
-        ] {
-            hasher.update(value.unwrap_or("").as_bytes());
-            hasher.update([0]);
-        }
-        hasher.update(pack.avatar_url.as_deref().unwrap_or("").as_bytes());
-        hasher.update([0]);
-        let installed = metadata.iter().find(|row| {
-            row.persona_team_dir.as_deref() == Some(pack.dir.as_path())
-                && row.persona_name_in_team.as_deref() == Some(pack.persona_name.as_str())
-        });
-        if gathered.team.selected_roles.contains(&pack.role) {
-            match selected_role_pack_state(&metadata, &pack) {
-                SelectedRolePackState::Current | SelectedRolePackState::Missing => {}
-                SelectedRolePackState::Dirty => gathered.facts.push(TeamReadinessFact::blocked(
-                    "team",
-                    "SELECTED_ROLE_PACK_DIRTY",
-                    format!(
-                        "Selected role {} differs from its installed source",
-                        pack.role
-                    ),
-                    "Use Prepare to refresh the selected role.",
-                )),
-                SelectedRolePackState::SourceUnknown => {
-                    gathered.facts.push(TeamReadinessFact::unknown(
-                        "team",
-                        "SELECTED_ROLE_PACK_STATE_UNKNOWN",
-                        format!("Selected role {} has no source digest", pack.role),
-                        "Use Prepare to refresh the selected role.",
-                    ))
-                }
-                SelectedRolePackState::WrongProject => {
-                    wrong_project_roles.insert(pack.role.clone());
-                }
-            }
-        }
-        gathered.team.packs.push(TeamReadinessRolePack {
-            role: pack.role.clone(),
-            persona_name: pack.persona_name,
-            path: pack.dir.display().to_string(),
-            installed_pubkey: installed.map(|row| row.pubkey.clone()),
-        });
-        gathered.team.available_roles.push(pack.role);
-    }
-    gathered.team.available_roles.sort();
-    gathered.team.available_roles.dedup();
-    if gathered.team.packs.is_empty() {
-        let mut fact = TeamReadinessFact::local(
-            "team",
-            "ROLE_PACKS_EMPTY",
-            if gathered.team.selected_roles.is_empty() {
-                TeamReadinessFactState::Limited
-            } else {
-                TeamReadinessFactState::Blocked
-            },
-            "The role-pack directory contains no usable roles",
-        );
-        fact.remedy = Some("Add at least one role-bearing pack.".into());
-        gathered.facts.push(fact);
-    } else {
-        gathered.team.packs_digest = Some(hex::encode(hasher.finalize()));
-        gathered.team.packs_revision = gathered.source.checkout_commit.clone();
-        gathered.facts.push(TeamReadinessFact::local(
-            "team",
-            "ROLE_PACKS_READY",
-            TeamReadinessFactState::Ready,
-            "Project role packs are readable",
-        ));
-    }
-    for role in &gathered.team.selected_roles {
-        let Some(pack) = gathered.team.packs.iter().find(|pack| &pack.role == role) else {
-            gathered.facts.push(TeamReadinessFact::blocked(
-                "team",
-                "SELECTED_ROLE_UNAVAILABLE",
-                format!("Selected role {role} has no project pack"),
-                "Choose an available role.",
-            ));
-            continue;
-        };
-        let Some(pubkey) = pack.installed_pubkey.as_deref() else {
-            if wrong_project_roles.contains(role) {
-                gathered.facts.push(TeamReadinessFact::blocked(
-                    "team",
-                    "SELECTED_ROLE_WRONG_PROJECT",
-                    format!("Selected role {role} is installed from another project"),
-                    "Use Prepare to install this project's role pack.",
-                ));
-                continue;
-            }
-            gathered.facts.push(TeamReadinessFact::blocked(
-                "team",
-                "SELECTED_ROLE_NOT_INSTALLED",
-                format!("Selected role {role} has no installed identity"),
-                "Use Prepare to install the selected role.",
-            ));
-            continue;
-        };
-        if gathered
-            .team
-            .identities
-            .iter()
-            .find(|row| row.pubkey == pubkey)
-            .is_none_or(|row| row.key_state != TeamReadinessKeyState::LiveProcess)
-        {
-            gathered.facts.push(TeamReadinessFact::unknown(
-                "team",
-                "SELECTED_ROLE_KEY_UNVERIFIED",
-                format!("Selected role {role} key accessibility is unverified"),
-                "Use Prepare to start and re-check the selected identity.",
-            ));
-        }
-    }
-}
-
 fn registry_targets(text: &str) -> Result<Vec<(String, String)>, String> {
     buzz_core_pkg::coding_session_routing::parse_registry(text)
         .map_err(|error| error.to_string())
@@ -619,6 +396,7 @@ fn registry_targets(text: &str) -> Result<Vec<(String, String)>, String> {
 fn collect_runtimes_and_registry(
     host: &impl ReadinessHost,
     checkout: Option<&Path>,
+    packs_from_project: bool,
     gathered: &mut Gathered,
 ) {
     gathered.runtimes = host.runtimes();
@@ -637,12 +415,42 @@ fn collect_runtimes_and_registry(
     ) {
         Ok(source) => source.text,
         Err(refusal) => {
-            gathered.facts.push(TeamReadinessFact::blocked(
-                "routing",
-                "REGISTRY_UNREADABLE",
-                format!("{}: {}", refusal.code, refusal.message),
-                "Restore team/model-registry.yaml.",
-            ));
+            // The registry pins which provider and model targets this project
+            // routes to. A project whose roles come from a packs repository
+            // does not need one — every pack names its own runtime and model,
+            // and the hire honours that — so its absence is a limit on what
+            // readiness can say, not a reason to refuse a session
+            // (ledger 135(c), where this blocked a founding form for a
+            // project whose seats were never going to read it).
+            let mut fact = if packs_from_project {
+                TeamReadinessFact::local(
+                    "routing",
+                    "REGISTRY_UNREADABLE",
+                    TeamReadinessFactState::Limited,
+                    format!(
+                        "This project pins no provider or model targets ({}: {}); each \
+                         role pack names its own runtime and model instead",
+                        refusal.code, refusal.message
+                    ),
+                )
+            } else {
+                TeamReadinessFact::local(
+                    "routing",
+                    "REGISTRY_UNREADABLE",
+                    TeamReadinessFactState::Blocked,
+                    format!(
+                        "This project's model registry could not be read, so nothing \
+                         says which provider and model its sessions route to ({}: {})",
+                        refusal.code, refusal.message
+                    ),
+                )
+            };
+            fact.remedy = Some(
+                "Add team/model-registry.yaml to the checkout to pin the provider and \
+                 model targets this project routes to."
+                    .into(),
+            );
+            gathered.facts.push(fact);
             return;
         }
     };
@@ -913,6 +721,7 @@ fn gather(
     project_ref: String,
     selected_roles: Option<Vec<String>>,
     hiring_policy_enabled: Option<bool>,
+    packs: &ProjectPackSourceProbe,
 ) -> TeamReadinessResponse {
     let mut gathered = Gathered {
         source: embedded_source(),
@@ -937,8 +746,13 @@ fn gather(
     }
     collect_identity(host, &mut gathered);
     let checkout = collect_checkout(host, &project_ref, &mut gathered);
-    collect_team(host, checkout.as_deref(), &mut gathered);
-    collect_runtimes_and_registry(host, checkout.as_deref(), &mut gathered);
+    collect_team(host, checkout.as_deref(), packs, &mut gathered);
+    collect_runtimes_and_registry(
+        host,
+        checkout.as_deref(),
+        matches!(packs, ProjectPackSourceProbe::Available { .. }),
+        &mut gathered,
+    );
     collect_provider(host, hiring_policy_enabled, &mut gathered);
     finish(project_ref, gathered)
 }
@@ -947,6 +761,7 @@ fn gather(
 #[tauri::command]
 pub async fn team_readiness(
     app: AppHandle,
+    state: tauri::State<'_, crate::app_state::AppState>,
     project_ref: String,
     selected_roles: Option<Vec<String>>,
     hiring_policy_enabled: Option<bool>,
@@ -954,6 +769,13 @@ pub async fn team_readiness(
     channel_ids: Vec<String>,
 ) -> Result<TeamReadinessResponse, String> {
     let project_ref = project_ref.trim().to_string();
+    // Asked before the local inventory, because it decides whether the
+    // in-checkout `personas/roles` rung is even consulted.
+    let packs = if valid_project_ref(&project_ref) {
+        probe_project_pack_source(&app, &state, &project_ref).await
+    } else {
+        ProjectPackSourceProbe::NotProbed
+    };
     let local_app = app.clone();
     let local_project_ref = project_ref.clone();
     let local = tauri::async_runtime::spawn_blocking(move || {
@@ -962,6 +784,7 @@ pub async fn team_readiness(
             local_project_ref,
             selected_roles,
             hiring_policy_enabled,
+            &packs,
         )
     })
     .await

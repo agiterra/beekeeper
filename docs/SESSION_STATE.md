@@ -12888,6 +12888,89 @@ Evidence and limits: [conditional publication checkpoint](history/2026-09-12-pro
      under `src-tauri` needed a temp-repository test. Not exercised against a
      live hire.
 
+137. **Readiness reads the truth a hire uses, and a deletion disposes of its
+     trees (2026-09-16).** Closes 135(c) and 135(f). Built in
+     `work/readiness-closure-opus`, gates green, not landed and not installed.
+
+     **(c) "Use roles" enforced a layout nothing reads.** The founding form
+     blocked on `ROLE_PACKS_MISSING` and `REGISTRY_UNREADABLE` inside the
+     TankLoop checkout while the seated create staged every pack from the
+     project's kind:30624 source on the relay and never opened that directory
+     — `collect_team` measured `project_role_packs_dir(checkout)`
+     (`desktop/src-tauri/src/commands/team_readiness.rs:442` before this
+     change) against a create that reads
+     `fetchCodingSessionSeatPackSource`
+     (`desktop/src/features/coding-sessions/lib/codingSessionSeatedCreate.ts:209`,
+     `desktop/src-tauri/src/managed_agents/actor_seats.rs:599-617`). Fixed:
+     readiness now asks the relay for the project's newest kind:30624 and
+     answers from the staging code itself —
+     `probe_project_pack_source` (`team_readiness.rs`, using
+     `role_packs_view::fetch_project_pack_source` and
+     `list_project_role_packs_blocking`, `role_packs_view.rs:494`). A project
+     with a source reports `ROLE_PACKS_FROM_PROJECT_SOURCE` naming the
+     repository, the resolved commit and the roles it carries; a role the
+     repository does not carry is still `SELECTED_ROLE_UNAVAILABLE`; a source
+     this computer could not stage is `ROLE_PACKS_SOURCE_UNAVAILABLE`
+     carrying the hire's own refusal sentence verbatim. `personas/roles` in
+     the checkout is now the fallback for a project that names no source, and
+     its `ROLE_PACKS_MISSING` copy says which of the two is missing. The model
+     registry is downgraded to **Limited** for a project whose packs come from
+     a repository, because each pack names its own runtime and model and the
+     hire honours that; for every other project it still blocks, and either
+     way the remedy now says what the file is for
+     (`collect_runtimes_and_registry`). `CHECKOUT_NOT_RECORDED` is still a
+     blocker — a seat's worktree is cut from that folder — but the panel now
+     offers **"Use this folder as <project>'s checkout"** when the founding
+     form already holds a git checkout
+     (`desktop/src/features/coding-sessions/ui/founded/TeamReadinessUseThisFolder.tsx`),
+     which performs exactly the store write Project settings → This computer
+     performs (`setCodingSessionWorkdir`, scope `project`) and re-reads
+     readiness. The button appears only after the host confirms the folder is
+     a checkout; a folder that is not one gets a sentence, and a host that
+     could not answer gets neither — an offer is a claim. The panel's
+     codes-and-remedies list gained a plain-English heading and action per
+     code (`teamReadinessBlockerCopy` in
+     `desktop/src/features/coding-sessions/lib/teamReadinessModel.ts`); the
+     host's own code, summary and remedy are still printed underneath every
+     one, and an untranslated code renders exactly as it did.
+
+     **(f) A deletion is not a closure, and nothing could close from a
+     terminal.** `classify_seat_worktree` had one way for a session's work to
+     be over, and a whole-session deletion takes the 44230 closures with it,
+     so a deleted session read `not-settled` for ever. Fixed in
+     `crates/buzz-core/src/worktree_lifecycle.rs`: `SeatWorktreeFacts` gains
+     `session_deleted`, which settles the session at step 4 of
+     `classify_seat_worktree` **and nowhere else** — a deleted session's dirty
+     tree is still `Held`, an unpushed one still `TipNotOnRelay`, the hot
+     checkout still `Protected`, and the seven-day grace window still runs,
+     from the deletion. `build_output_reclaimable` follows. The sentence says
+     which ending it was: every surface appends "(the session was deleted, not
+     closed)" and the "is not closed" arm is unreachable
+     (`worktree_prune.rs` `worktree_detail`, `sessions/worktree.rs`
+     `WorktreeRow::detail`). The desktop's own delete now runs the host's
+     disposition after an accepted deletion
+     (`deleteCodingSession.ts`, `disposeOfDeletedSessionWorktrees`), so the
+     reaper and the seat-bundle cleanup run where they never did. For the CLI
+     to know a session was deleted at all, both deletion publishers now put
+     `["d", <sessionRef>]` on the kind:5 — a **single-letter**, therefore
+     indexable, tag, because the tombstone is the only thing the relay has
+     left and without a marker on it "was this deleted?" has no answer. A
+     deletion published by an older build stays invisible and its trees keep
+     reading `not-settled`; that is the honest answer, not a gap to paper
+     over. New: **`bee sessions close --channel --session-ref [--action
+     closed|archived|open]`**
+     (`crates/buzz-cli/src/commands/sessions/close.rs`), which publishes the
+     desktop dialog's own event through
+     `buzz_sdk::builders::build_coding_session_closure` from
+     `CodingSessionClosurePayload` — one builder, so the CLI and the app
+     cannot drift into two shapes — after resolving the genesis by the
+     `sessionRef` in its **content**, never by its `csg-session` tag.
+
+     **Not proven live.** Nothing here has run against hive: the readiness
+     probe has not been exercised against a real kind:30624, no deletion has
+     been published with the `d` tag, and `bee sessions close` has not been
+     run against a real session. Gates only.
+
 138. **Fixed 2026-09-16 — the project Agents tab discloses runtime, and
      `bee packs status` names which fact its cache directory rests on
      (135(d), 135(e)).** (d) `ProjectAgentRow.tsx:349-368` showed only role,
@@ -12945,6 +13028,8 @@ Evidence and limits: [conditional publication checkpoint](history/2026-09-12-pro
      scoped out to keep the fix to the three-value contract the brief named;
      `--packs-dir` is the documented workaround for that case.
 ||||||| parent of 150642f30 (A hire cuts from the project's checkout, on the agent's own runtime)
+||||||| parent of fd3fe3bc7 (Readiness reads the truth a hire uses; a deletion disposes of its trees)
+
 
 ## 2a. Direction settled 2026-08-18
 

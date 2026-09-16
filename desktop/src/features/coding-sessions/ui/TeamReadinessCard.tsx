@@ -19,9 +19,11 @@ import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
 import {
   groupTeamReadinessFacts,
+  teamReadinessBlockerCopy,
   teamReadinessLaunchGate,
   teamReadinessPrepareScope,
 } from "../lib/teamReadinessModel";
+import { UseThisFolderButton } from "./founded/TeamReadinessUseThisFolder";
 import type { TeamReadinessPrepareStep } from "../lib/teamReadinessPrepare";
 
 const SECTION_LABELS: Record<Exclude<TeamReadinessState, "ready">, string> = {
@@ -54,6 +56,21 @@ export function TeamReadinessCard(props: {
   prepareWarning: string | null;
   externalBusy: boolean;
   runtimeTarget: NewCodingSessionTarget | null;
+  /**
+   * The repository folder the founding form already has, when it has one.
+   *
+   * Offered as this project's checkout in one click when nothing is recorded
+   * yet. Ledger 135(c): before that, `CHECKOUT_NOT_RECORDED` blocked the form
+   * until the operator found Project settings → This computer → Repository
+   * folder, with the right folder already typed into the form in front of them.
+   */
+  candidateCheckout?: string | null;
+  /** The project this card is about, for the one-click record. */
+  projectRef?: string | null;
+  /** The project's name, for the button's own words. */
+  projectLabel?: string | null;
+  /** Called after the folder is recorded, so readiness is read again. */
+  onCheckoutRecorded?: () => void;
 }) {
   const groups = groupTeamReadinessFacts(props.readiness?.facts ?? []);
   const firstSessionGate = teamReadinessLaunchGate({
@@ -162,7 +179,15 @@ export function TeamReadinessCard(props: {
         ["blocked", "unknown", "awaiting_first_session", "limited"] as const
       ).map((state) =>
         groups[state].length > 0 ? (
-          <FactSection facts={groups[state]} key={state} state={state} />
+          <FactSection
+            candidateCheckout={props.candidateCheckout ?? null}
+            facts={groups[state]}
+            key={state}
+            onCheckoutRecorded={props.onCheckoutRecorded}
+            projectLabel={props.projectLabel ?? null}
+            projectRef={props.projectRef ?? null}
+            state={state}
+          />
         ) : null,
       )}
 
@@ -338,27 +363,72 @@ export function TeamReadinessCard(props: {
   );
 }
 
+/**
+ * One state's facts, each as a sentence a person can act on.
+ *
+ * The code and the host's own summary are still printed under the plain-English
+ * line, never instead of it: this screen narrows nothing and hides nothing, and
+ * a code with no translation renders exactly as it always did.
+ */
 function FactSection({
+  candidateCheckout,
   facts,
+  onCheckoutRecorded,
+  projectLabel,
+  projectRef,
   state,
 }: {
+  candidateCheckout: string | null;
   facts: readonly TeamReadinessFact[];
+  onCheckoutRecorded?: () => void;
+  projectLabel: string | null;
+  projectRef: string | null;
   state: Exclude<TeamReadinessState, "ready">;
 }) {
   return (
     <section aria-label={SECTION_LABELS[state]} data-readiness-state={state}>
       <h4 className="text-xs font-medium">{SECTION_LABELS[state]}</h4>
-      <ul className="mt-1 flex flex-col gap-1">
-        {facts.map((fact) => (
-          <li
-            className="text-2xs text-muted-foreground"
-            key={`${fact.scope}:${fact.code}`}
-          >
-            <span className="font-medium text-foreground">{fact.code}</span> ·{" "}
-            {fact.summary}
-            {fact.remedy ? ` Remedy: ${fact.remedy}` : ""}
-          </li>
-        ))}
+      <ul className="mt-1 flex flex-col gap-2">
+        {facts.map((fact) => {
+          const copy = teamReadinessBlockerCopy(fact.code);
+          return (
+            <li
+              className="flex flex-col gap-0.5"
+              data-readiness-code={fact.code}
+              key={`${fact.scope}:${fact.code}`}
+            >
+              {copy ? (
+                <>
+                  <span className="text-xs font-medium text-foreground">
+                    {copy.title}
+                  </span>
+                  <span className="text-2xs text-muted-foreground">
+                    {copy.action}
+                  </span>
+                </>
+              ) : null}
+              {fact.code === "CHECKOUT_NOT_RECORDED" ? (
+                <UseThisFolderButton
+                  candidate={candidateCheckout}
+                  onRecorded={onCheckoutRecorded}
+                  projectLabel={projectLabel}
+                  projectRef={projectRef}
+                />
+              ) : null}
+              <span
+                className={cn(
+                  "text-muted-foreground",
+                  copy ? "text-3xs" : "text-2xs",
+                )}
+                data-testid="team-readiness-fact-detail"
+              >
+                <span className="font-medium text-foreground">{fact.code}</span>{" "}
+                · {fact.summary}
+                {fact.remedy ? ` Remedy: ${fact.remedy}` : ""}
+              </span>
+            </li>
+          );
+        })}
       </ul>
     </section>
   );

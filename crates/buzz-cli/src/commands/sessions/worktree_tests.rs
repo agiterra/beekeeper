@@ -95,6 +95,7 @@ const SESSION: &str = "11111111-1111-4111-8111-111111111111";
 fn settled_facts() -> SessionFacts {
     SessionFacts {
         settled: true,
+        deleted: false,
         settled_for_secs: Some(buzz_core::worktree_lifecycle::SEAT_WORKTREE_GRACE_SECS + 1),
         execution_live: false,
     }
@@ -184,6 +185,82 @@ fn ignored_build_output_never_makes_a_tree_look_dirty() {
     assert_eq!(row.disposition.token(), "prunable");
     assert!(row.reclaimable_now);
     assert!(row.reclaimable.unwrap_or(0) > 0);
+}
+
+/// Session facts as they stand after `bee sessions delete`: no closure
+/// survives the deletion, so `settled` is false and `deleted` carries it.
+fn deleted_facts() -> SessionFacts {
+    SessionFacts {
+        settled: false,
+        deleted: true,
+        settled_for_secs: Some(buzz_core::worktree_lifecycle::SEAT_WORKTREE_GRACE_SECS + 1),
+        execution_live: false,
+    }
+}
+
+#[test]
+fn a_deleted_session_s_tree_is_disposed_of_and_never_reads_not_closed() {
+    // Ledger 135(f): after `bee sessions delete` on cc5cb114 both seat trees
+    // still answered "the session is not closed, so nothing is removed", so
+    // neither the host's reaper nor the bundle cleanup ever ran and the trees
+    // were removed by hand.
+    let layout = layout();
+    let tree = layout.add("lane-deleted");
+    let row = row_for(
+        &format!("{SESSION}/builder-1"),
+        &record(&layout.repo, &tree, "lane-deleted"),
+        deleted_facts(),
+        Some(true),
+    );
+    assert_eq!(row.disposition.token(), "prunable");
+    assert!(
+        !row.detail().contains("is not closed"),
+        "a deleted session is not an open one: {}",
+        row.detail()
+    );
+    assert!(row.detail().contains("the session was deleted, not closed"));
+    assert_eq!(row.to_json().get("sessionDeleted"), Some(&json!(true)));
+}
+
+#[test]
+fn a_deleted_session_still_holds_a_tree_with_uncommitted_work() {
+    let layout = layout();
+    let tree = layout.add("lane-deleted-dirty");
+    for name in ["a.txt", "b.txt"] {
+        std::fs::write(tree.join(name), b"x").expect("write");
+    }
+    let row = row_for(
+        &format!("{SESSION}/builder-1"),
+        &record(&layout.repo, &tree, "lane-deleted-dirty"),
+        deleted_facts(),
+        Some(true),
+    );
+    assert_eq!(row.disposition.token(), "held");
+    assert!(!row.disposition.is_host_prunable());
+    assert_eq!(
+        row.detail(),
+        "held: 2 uncommitted files (the session was deleted, not closed)"
+    );
+}
+
+#[test]
+fn a_session_that_was_neither_closed_nor_deleted_still_says_not_closed() {
+    let layout = layout();
+    let tree = layout.add("lane-open");
+    let row = row_for(
+        &format!("{SESSION}/builder-1"),
+        &record(&layout.repo, &tree, "lane-open"),
+        SessionFacts {
+            settled: false,
+            deleted: false,
+            settled_for_secs: None,
+            execution_live: false,
+        },
+        Some(true),
+    );
+    assert_eq!(row.disposition.token(), "not-settled");
+    assert!(row.detail().contains("the session is not closed"));
+    assert_eq!(row.to_json().get("sessionDeleted"), Some(&json!(false)));
 }
 
 #[test]

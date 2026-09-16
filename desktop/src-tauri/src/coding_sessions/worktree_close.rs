@@ -46,6 +46,18 @@
 //! Everything else is a refusal carrying the sentence for its disposition:
 //! `held: {N} uncommitted files` for dirty, and the tip-not-on-relay sentence
 //! for unpushed.
+//!
+//! # A deletion is an ending too
+//!
+//! `session_deleted` reaches this path for the same reason `session_settled`
+//! does: an accepted whole-session deletion ends the work, but it takes the
+//! 44230 closures with it, so nothing is left for a later reader to fold.
+//! Ledger 135(f) — after `bee sessions delete` on `cc5cb114` every seat tree
+//! still answered "the session is not closed, so nothing is removed", nothing
+//! here ever ran, and the trees and the bundles were removed by hand. The
+//! deletion buys no exemption from anything: the shared predicate still holds
+//! a dirty tree, still refuses an unpushed one, and still runs the grace
+//! window — from the deletion, because that is when the work stopped.
 
 use std::path::Path;
 
@@ -168,7 +180,11 @@ pub async fn close_coding_session_seat_worktree(
     seat_label: String,
     execution_live: bool,
     settled_for_secs: Option<u64>,
+    session_deleted: Option<bool>,
 ) -> Result<CodingSessionWorktreeCloseOutcome, String> {
+    // Absent means "the caller did not say", which is `false`: this host never
+    // infers that a session it was told nothing about was deleted.
+    let session_deleted = session_deleted.unwrap_or(false);
     let key = seat_worktree_key(&session_ref, &seat_label);
     let entry = {
         let store = load_workdir_store(&app)?;
@@ -191,6 +207,7 @@ pub async fn close_coding_session_seat_worktree(
         &entry.path,
         execution_live,
         settled_for_secs,
+        session_deleted,
         &auth,
     );
     let CloseDecision {
@@ -276,6 +293,7 @@ pub(crate) fn close_disposition(
     path: &Path,
     execution_live: bool,
     settled_for_secs: Option<u64>,
+    session_deleted: bool,
     auth: &GitAuthConfig,
 ) -> CloseDecision {
     let exists = path.is_dir();
@@ -295,8 +313,11 @@ pub(crate) fn close_disposition(
     };
     let facts = SeatWorktreeFacts {
         // Only ever called for a session the caller has already folded to
-        // closed or archived; that is this path's whole precondition.
+        // closed or archived — or one an accepted deletion has ended. That is
+        // this path's whole precondition, and `session_deleted` says which of
+        // the two it was so the sentence can too.
         session_settled: true,
+        session_deleted,
         execution_live,
         tip_on_relay: tip.unwrap_or(false),
         dirty_files,
@@ -305,7 +326,12 @@ pub(crate) fn close_disposition(
         settled_for_secs,
     };
     let disposition = classify_seat_worktree(&facts);
-    let detail = worktree_detail(disposition, &path.to_string_lossy(), tip.is_some());
+    let detail = worktree_detail(
+        disposition,
+        &path.to_string_lossy(),
+        tip.is_some(),
+        session_deleted,
+    );
     CloseDecision {
         disposition,
         tip,

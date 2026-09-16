@@ -53,6 +53,15 @@ pub struct CodingSessionWorktreeSessionFacts {
     pub session_ref: String,
     /// A 44230 revision folds this session to `closed` or `archived`.
     pub session_settled: bool,
+    /// An accepted whole-session deletion removed this session from the relay.
+    ///
+    /// A deletion is not a closure — it takes the closures with it, so nothing
+    /// is left to fold — but it ends the work just as finally, and the trees
+    /// this host cut for it must be disposed of under the same rules. Absent
+    /// in an older caller's payload, which reads as `false`: this host does
+    /// not guess that a session it was told nothing about was deleted.
+    #[serde(default)]
+    pub session_deleted: bool,
     /// An execution is still running for this session.
     pub execution_live: bool,
     /// Whether the branch tip is named by a relay-signed kind 30618 right now.
@@ -98,6 +107,8 @@ pub struct CodingSessionSeatWorktreeRow {
     pub exists: bool,
     /// Whether the caller established the tip's relay state at all.
     pub tip_on_relay_known: bool,
+    /// Whether the caller named this session as deleted.
+    pub session_deleted: bool,
     /// The one sentence a surface shows for this row.
     pub detail: String,
 }
@@ -197,6 +208,23 @@ pub(crate) fn worktree_detail(
     disposition: SeatWorktreeDisposition,
     path: &str,
     tip_on_relay_known: bool,
+    session_deleted: bool,
+) -> String {
+    let sentence = disposition_sentence(disposition, path, tip_on_relay_known);
+    if session_deleted {
+        // A deleted session's tree must never read "the session is not
+        // closed": that arm is unreachable once a deletion settles it, and the
+        // sentence a reader gets has to say which of the two ends this was.
+        // Ledger 135(f) is what saying the wrong one costs.
+        return format!("{sentence} (the session was deleted, not closed)");
+    }
+    sentence
+}
+
+fn disposition_sentence(
+    disposition: SeatWorktreeDisposition,
+    path: &str,
+    tip_on_relay_known: bool,
 ) -> String {
     match disposition {
         SeatWorktreeDisposition::Prunable => format!("{path}: clean, will be removed"),
@@ -242,6 +270,7 @@ pub(crate) fn build_row(
     };
     let facts = SeatWorktreeFacts {
         session_settled: session.session_settled,
+        session_deleted: session.session_deleted,
         execution_live: session.execution_live,
         tip_on_relay: session.tip_on_relay.unwrap_or(false),
         dirty_files,
@@ -256,7 +285,12 @@ pub(crate) fn build_row(
         Some(0)
     };
     let (seat_label, session_ref) = split_key(key, &session.session_ref);
-    let detail = worktree_detail(disposition, &path_text, session.tip_on_relay.is_some());
+    let detail = worktree_detail(
+        disposition,
+        &path_text,
+        session.tip_on_relay.is_some(),
+        session.session_deleted,
+    );
     CodingSessionSeatWorktreeRow {
         key: key.to_string(),
         session_ref,
@@ -276,6 +310,7 @@ pub(crate) fn build_row(
         },
         exists,
         tip_on_relay_known: session.tip_on_relay.is_some(),
+        session_deleted: session.session_deleted,
     }
 }
 

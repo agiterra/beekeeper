@@ -2668,6 +2668,37 @@ pub enum SessionsCmd {
         #[arg(long, value_enum, default_value = "md")]
         format: TranscriptFormat,
     },
+    /// Close, archive or reopen a coding session (kind 44230).
+    ///
+    /// Publishes exactly the closure revision the desktop's closure dialog
+    /// publishes, built by the same SDK builder from the same validated
+    /// payload. Signed by the session's founder, or by an Owner of the
+    /// project the session's channel belongs to.
+    ///
+    /// A closure settles the session's shared state. It is **not** a
+    /// deletion: the identity and transcript remain. It is also the fact the
+    /// host that cut the session's worktrees waits for — until 2026-09-16 the
+    /// only whole-session verb here was `delete`, and a deleted session's
+    /// trees and seat bundles were left for somebody to remove by hand
+    /// (ledger 135(f)).
+    ///
+    /// This publishes a fact and removes no directory. Run
+    /// `bee sessions worktree status --session <ref>` on the machine that
+    /// cut the trees to see what they became.
+    #[command(
+        after_help = "Examples:\n  bee sessions close --channel <uuid> --session-ref <uuid>\n  bee sessions close --channel <uuid> --session-ref <uuid> --action archived\n  bee sessions close --channel <uuid> --session-ref <uuid> --action open\n\nRecipe:\n  bee sessions close --channel <uuid> --session-ref <uuid>"
+    )]
+    Close {
+        /// Channel UUID the session was published into
+        #[arg(long)]
+        channel: String,
+        /// The umbrella session's reference
+        #[arg(long = "session-ref")]
+        session_ref: String,
+        /// closed (default), archived, or open to reopen
+        #[arg(long, default_value = "closed")]
+        action: String,
+    },
     /// Delete a coding session outright (one kind:5 over its whole chain).
     ///
     /// The relay refuses a genesis or a closure deleted on its own — the
@@ -5749,6 +5780,7 @@ mod tests {
                 "audit",
                 "block",
                 "catalog",
+                "close",
                 "complete",
                 "create",
                 "decide",
@@ -5872,7 +5904,7 @@ mod tests {
             // appended here and two of them independently wrote 35 (item 108's
             // exact-count trap); the finalizer set it once, after every lane,
             // and both tests re-run green.
-            ("sessions", 37),
+            ("sessions", 38),
             ("social", 7),
             ("terminals", 6),
             ("upload", 1),

@@ -65,6 +65,10 @@ pub mod audit;
 #[cfg(test)]
 mod audit_tests;
 pub mod catalog;
+// A deletion is not a closure (ledger 135(f)): closing from a terminal needs
+// its own verb, and it is the desktop dialog's event, built by the same SDK
+// builder.
+pub mod close;
 pub mod crew;
 pub mod crew_cmds;
 #[cfg(test)]
@@ -1375,10 +1379,18 @@ async fn cmd_delete_session(
         return Ok(());
     }
 
-    let tags: Vec<Tag> = selected
+    let mut tags: Vec<Tag> = selected
         .iter()
         .map(|(id, _)| Tag::parse(["e", id.as_str()]).map_err(|e| CliError::Other(e.to_string())))
         .collect::<Result<_, _>>()?;
+    // The tombstone is the only thing left on the relay once the session is
+    // gone, so it carries the session's reference in a *single-letter*,
+    // therefore indexable, tag. Without it "was this session deleted?" has no
+    // answer at all, and `bee sessions worktree status` went on calling a
+    // deleted session "not closed" while its trees and seat bundles piled up
+    // (ledger 135(f)). `d` does not make a kind:5 addressable — kind 5 is
+    // regular — and the relay's deletion gate reads only `e` and `a`.
+    tags.push(Tag::parse(["d", session_ref]).map_err(|e| CliError::Other(e.to_string()))?);
     let builder =
         EventBuilder::new(Kind::Custom(5), format!("Delete session {session_ref}")).tags(tags);
     let event = client.sign_event(builder)?;
@@ -2537,6 +2549,19 @@ pub async fn dispatch(
 ) -> Result<(), CliError> {
     use crate::SessionsCmd;
     match cmd {
+        SessionsCmd::Close {
+            channel,
+            session_ref,
+            action,
+        } => {
+            close::cmd_close(
+                client,
+                &channel,
+                &session_ref,
+                close::parse_action(&action)?,
+            )
+            .await
+        }
         SessionsCmd::Delete {
             channel,
             session_ref,

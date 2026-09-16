@@ -228,6 +228,8 @@ export type SeatWorktreeRow = {
   reclaimableNow: boolean;
   graceRemainingSecs: number | null;
   exists: boolean;
+  /** Whether the caller named this session as deleted. */
+  sessionDeleted: boolean;
   /** Whether the relay's current ref state was established at all. */
   tipOnRelayKnown: boolean;
   /** The one sentence a surface shows for this row. */
@@ -238,6 +240,15 @@ export type SeatWorktreeRow = {
 export type SeatWorktreeSessionFacts = {
   sessionRef: string;
   sessionSettled: boolean;
+  /**
+   * An accepted whole-session deletion ended this session.
+   *
+   * A deletion is not a closure — it takes the 44230 closures with it, so
+   * nothing is left to fold — but it ends the work just as finally, and the
+   * host disposes of the trees under exactly the same rules (a dirty tree is
+   * still held). Omitted means "not said", which the host reads as false.
+   */
+  sessionDeleted?: boolean;
   executionLive: boolean;
   /** `null` means unestablished, which never renders as "not pushed". */
   tipOnRelay: boolean | null;
@@ -334,8 +345,14 @@ export async function closeCodingSessionSeatWorktree(input: {
   sessionRef: string;
   seatLabel: string;
   executionLive: boolean;
-  /** Seconds since the closure revision settled the session. */
+  /** Seconds since the closure — or the deletion — ended the session. */
   settledForSecs: number | null;
+  /**
+   * Whether an accepted whole-session deletion ended it, rather than a
+   * closure. Changes no rule; it changes the sentence, and it is why this
+   * path runs at all after a delete (ledger 135(f)).
+   */
+  sessionDeleted?: boolean;
 }): Promise<SeatWorktreeCloseOutcome> {
   return invokeTauri<SeatWorktreeCloseOutcome>(
     "close_coding_session_seat_worktree",
@@ -344,6 +361,7 @@ export async function closeCodingSessionSeatWorktree(input: {
       seatLabel: input.seatLabel,
       executionLive: input.executionLive,
       settledForSecs: input.settledForSecs,
+      sessionDeleted: input.sessionDeleted ?? false,
     },
   );
 }

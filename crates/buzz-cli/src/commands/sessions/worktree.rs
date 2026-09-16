@@ -27,6 +27,9 @@ use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
 use buzz_core::kind::KIND_CODING_SESSION_CLOSURE;
+
+/// Kind 5 — the NIP-09 deletion event a whole-session delete publishes.
+const KIND_DELETION: u32 = 5;
 use buzz_core::worktree_lifecycle::{
     build_output_reclaimable, classify_seat_worktree, render_reclaimable_bytes,
     SeatWorktreeDisposition, SeatWorktreeFacts, RECLAIMABLE_BUILD_DIRS,
@@ -306,6 +309,51 @@ pub fn tip_on_relay(path: &Path, oids: &BTreeSet<String>) -> Option<bool> {
     }))
 }
 
+/// How a session ended, as far as the relay can still say.
+///
+/// Two independent ways for a session's work to be over, and the second one
+/// erases the evidence for the first: a whole-session deletion removes the
+/// 44230 closures along with the genesis, so after one there is no closure
+/// left to fold. Ledger 135(f) is exactly that — `bee sessions worktree
+/// status` answered "the session is not closed, so nothing is removed" for
+/// two trees whose session had been deleted an hour earlier, and no reaper
+/// ever ran over them.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SessionSettlement {
+    /// A 44230 revision folds the session to `closed` or `archived`.
+    pub settled: bool,
+    /// An accepted whole-session deletion named this session.
+    pub deleted: bool,
+    /// Seconds since whichever of the two is newer.
+    pub settled_for_secs: Option<u64>,
+}
+
+/// Whether an accepted whole-session deletion names this session, and when.
+///
+/// The deletion event is a kind:5 carrying `["d", <sessionRef>]` — a
+/// single-letter tag precisely so this query is possible; the tombstone is
+/// the only thing left on the relay once a session is gone, and without an
+/// indexable marker on it "was this deleted?" has no answer at all.
+///
+/// A deletion published by a build older than this tag is invisible here, and
+/// its trees keep reading `not-settled`. That is the honest answer: nothing
+/// on the relay attributes such a tombstone to a session.
+pub async fn session_deletion(
+    client: &BuzzClient,
+    session_ref: &str,
+    now_secs: i64,
+) -> Result<Option<u64>, CliError> {
+    let events = client
+        .query_all(json!({ "kinds": [KIND_DELETION], "#d": [session_ref] }))
+        .await?;
+    let newest = events
+        .iter()
+        .filter_map(|event| event.get("created_at").and_then(Value::as_i64))
+        .max();
+    Ok(newest
+        .map(|created_at| u64::try_from(now_secs.saturating_sub(created_at)).unwrap_or(u64::MAX)))
+}
+
 /// Whether a 44230 revision settles this session, and how long ago.
 pub async fn session_settlement(
     client: &BuzzClient,
@@ -354,6 +402,30 @@ pub async fn session_settlement(
     Ok((true, u64::try_from(elapsed).ok()))
 }
 
+/// Both ends of a session, folded into one answer.
+///
+/// A closure and a deletion can both exist — closed first, deleted later —
+/// and the grace window runs from whichever is newer, because that is the
+/// moment the work last stopped being somebody's live work.
+pub async fn session_end(
+    client: &BuzzClient,
+    session_ref: &str,
+    now_secs: i64,
+) -> Result<SessionSettlement, CliError> {
+    let (settled, closed_for_secs) = session_settlement(client, session_ref, now_secs).await?;
+    let deleted_for_secs = session_deletion(client, session_ref, now_secs).await?;
+    // The *smaller* elapsed time is the newer event.
+    let settled_for_secs = match (closed_for_secs, deleted_for_secs) {
+        (Some(closed), Some(deleted)) => Some(closed.min(deleted)),
+        (value, None) | (None, value) => value,
+    };
+    Ok(SessionSettlement {
+        settled,
+        deleted: deleted_for_secs.is_some(),
+        settled_for_secs,
+    })
+}
+
 /// Everything one row needs, already decided.
 pub struct WorktreeRow {
     /// `<sessionRef>/<seatLabel>`.
@@ -372,6 +444,8 @@ pub struct WorktreeRow {
     pub tip_known: bool,
     /// Whether the directory is still there.
     pub exists: bool,
+    /// Whether an accepted whole-session deletion named this session.
+    pub session_deleted: bool,
 }
 
 impl WorktreeRow {
@@ -400,6 +474,7 @@ impl WorktreeRow {
         object.insert("tipOnRelayKnown".into(), json!(self.tip_known));
         object.insert("tipOnRelayLimit".into(), json!(TIP_ON_RELAY_LIMIT));
         object.insert("exists".into(), json!(self.exists));
+        object.insert("sessionDeleted".into(), json!(self.session_deleted));
         object.insert(
             "graceRemainingSecs".into(),
             match self.disposition {
@@ -412,7 +487,21 @@ impl WorktreeRow {
     }
 
     /// The one sentence a person reads for this row.
+    ///
+    /// A deleted session never reads "the session is not closed": a deletion
+    /// settles the tree, so that arm is unreachable, and every other sentence
+    /// says which of the two ends this was. "Not closed" over a session that
+    /// was deleted is the kind of true-about-the-wrong-thing answer that sent
+    /// ledger 135(f)'s worktrees to be removed by hand.
     pub fn detail(&self) -> String {
+        let sentence = self.disposition_sentence();
+        if self.session_deleted {
+            return format!("{sentence} (the session was deleted, not closed)");
+        }
+        sentence
+    }
+
+    fn disposition_sentence(&self) -> String {
         let path = self.record.path.to_string_lossy();
         match self.disposition {
             SeatWorktreeDisposition::Prunable => format!("{path}: clean, will be removed"),
@@ -448,6 +537,8 @@ impl WorktreeRow {
 pub struct SessionFacts {
     /// A 44230 revision folds the session to `closed` or `archived`.
     pub settled: bool,
+    /// An accepted whole-session deletion named this session.
+    pub deleted: bool,
     /// Seconds since that revision.
     pub settled_for_secs: Option<u64>,
     /// An execution is still running.
@@ -476,6 +567,7 @@ pub fn row_for(
     };
     let seat_facts = SeatWorktreeFacts {
         session_settled: facts.settled,
+        session_deleted: facts.deleted,
         execution_live: facts.execution_live,
         tip_on_relay: tip.unwrap_or(false),
         dirty_files,
@@ -496,6 +588,7 @@ pub fn row_for(
         reclaimable_now: build_output_reclaimable(&seat_facts),
         tip_known: tip.is_some(),
         exists,
+        session_deleted: facts.deleted,
     }
 }
 
@@ -508,7 +601,7 @@ async fn rows_for(
     execution_live: bool,
 ) -> Result<Vec<WorktreeRow>, CliError> {
     let now = chrono::Utc::now().timestamp();
-    let mut settlement: BTreeMap<String, (bool, Option<u64>)> = BTreeMap::new();
+    let mut settlement: BTreeMap<String, SessionSettlement> = BTreeMap::new();
     let mut oids_by_repo: BTreeMap<PathBuf, BTreeSet<String>> = BTreeMap::new();
     let mut rows = Vec::new();
 
@@ -525,10 +618,10 @@ async fn rows_for(
         if !settlement.contains_key(session) {
             settlement.insert(
                 session.to_string(),
-                session_settlement(client, session, now).await?,
+                session_end(client, session, now).await?,
             );
         }
-        let (settled, settled_for_secs) = settlement[session];
+        let end = settlement[session];
         if !oids_by_repo.contains_key(&record.repo_root) {
             let oids = match repo_id_of(&record.repo_root) {
                 Some(repo_id) => relay_ref_oids(client, &repo_id).await?,
@@ -548,8 +641,9 @@ async fn rows_for(
             key,
             record,
             SessionFacts {
-                settled,
-                settled_for_secs,
+                settled: end.settled,
+                deleted: end.deleted,
+                settled_for_secs: end.settled_for_secs,
                 execution_live,
             },
             tip,
