@@ -13286,6 +13286,26 @@ Evidence and limits: [conditional publication checkpoint](history/2026-09-12-pro
      `actions.yml`) the same day, and the spec landed on `main` after he and
      Brian discussed it.
 
+     **Two problems Andy raised after landing, same day, answered in spec
+     § 4.9 and § 4.10.** (1) Worktrees: a seat runs `main`'s roles by default
+     (the 30624 `ref` pin, read from the packs cache, never the seat's tree);
+     a committed change on the seat's branch to a role's inputs overrides
+     that role only, uncommitted edits are disclosed and never in effect, and
+     a running seat whose resolved definition drifts is offered **Restart
+     with current definition** through the existing restage
+     (`desktop/src-tauri/src/managed_agents/actor_seats_restage.rs`) and
+     restore (`crates/buzz-session-provider/src/native_restore.rs`) paths.
+     (2) Seats read the other roles' instructions while searching the
+     repository and get confused. Kept roles in the repository; every seat
+     worktree is cut with `git sparse-checkout set --no-cone '/*'
+     '!/beekeeper/'`, proven on git 2.55.0 in a scratch repo: the seat's
+     tree has no `beekeeper/` files, the hub checkout is untouched, the
+     setting is worktree-local (the seat-hooks command already enables
+     `extensions.worktreeConfig`, `desktop/src-tauri/src/commands/
+     coding_session_seat_hooks.rs:16-30`), and `git show HEAD:beekeeper/…`
+     still answers — so it prevents confusion, not exfiltration. Roles that
+     author roles opt in with `workspace.roles_visible: true`.
+
 
 
 ## 2a. Direction settled 2026-08-18

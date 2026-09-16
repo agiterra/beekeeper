@@ -225,6 +225,7 @@ roles:
     file: roles/project-manager.md      # default: roles/<role>.md
     runtime: claude                     # advisory → PersonaConfig.runtime
     model: anthropic:claude-sonnet-5    # advisory → PersonaConfig.model (D17: the router decides)
+    workspace: { roles_visible: true }  # this role may see beekeeper/ in its worktree (§ 4.10)
   builder: {}
 agents:                         # advisory: the host mints identities (D11)
   - { name: Keystone, role: project-manager, lifetime: persistent }
@@ -406,6 +407,90 @@ with no include lines composes to bytes identical to today (pinned by a test).
 The ladder order is unchanged; the session-checkout rung also learns
 `beekeeper/roles/<role>.md`. `bee packs init` keeps seeding the pack layout;
 `--layout flat` arrives in slice A3.
+
+### 4.9 Worktrees: main's roles by default, a branch may override
+
+A seat runs in a linked worktree the host cuts from the project checkout on
+its own branch (`desktop/src-tauri/src/coding_sessions/worktree.rs:596`,
+`git worktree add -b <branch> <path> <start_point>`). Andy's rule
+(2026-09-16): a worktree runs the roles that are on `main`, unless that
+worktree's branch specifically overrides a role's definition.
+
+- **Default.** A seat's roles come from the project's 30624 pin (§ 4.7,
+  `ref: refs/heads/main`), read from the host's packs cache, never from the
+  seat's working copy. A feature branch therefore runs `main`'s roles even
+  though its tree may carry an older `beekeeper/`.
+- **Override, per role.** Before staging, the host compares the commit the
+  seat's tree is cut from (`start_point`, or the branch tip on restart)
+  against the pinned commit over the files that role's composition reads:
+  `beekeeper/roles/<role>.md`, everything it includes transitively, its
+  `team.yml` entry and its skills. If any differ, the role is composed from
+  the branch commit's bytes (`git show <sha>:beekeeper/…`, never the working
+  copy). `compose.json` says `source.kind: "branch-override"` and
+  `packRef.sha` is that commit — a real commit, possibly unpushed, and the
+  Roles and Agents tabs say "branch-local, not on main". Other roles in the
+  same team stay on `main`'s definitions.
+- **Uncommitted edits are never in effect.** A dirty `beekeeper/` in a
+  worktree is disclosed as "uncommitted role edits in this worktree are not
+  in effect; commit them, then restart", the same stance verification turns
+  take on a dirty tree (ledger 133). There is no way to run bytes the wire
+  cannot name.
+- **A running seat sees its definition change only at a boundary it is
+  given.** For every open seat the host re-resolves the role in its context
+  (main pin, or branch override) and compares the result's digest and commit
+  with the seat's `composeRef.digest` / `packRef.sha`. Where they differ, the
+  seat's card on the Agents tab and in the session shows **Definition
+  changed** with the cause named — "main moved `9a1…` → `c04…` in
+  `roles/builder.md`" or "this branch changed `roles/builder.md`" — and one
+  button, **Restart with current definition**. The click closes the current
+  execution, re-stages the seat through the existing restage path
+  (`desktop/src-tauri/src/managed_agents/actor_seats_restage.rs`) and starts
+  a new execution of the **same identity** through the provider's restore
+  path (`crates/buzz-session-provider/src/native_restore.rs`,
+  `rehydrated_bootstrap` in `crates/buzz-session-provider/src/session.rs:1696`), so it continues from its
+  checkpoint with the new instructions and the transcript shows the
+  boundary. Nothing restarts without the click; a project policy that
+  restarts automatically is not v1 (§ 6). If the host cannot resolve one
+  side (packs cache unreachable), the card says "unknown", not "current".
+
+### 4.10 Seats do not see the roles directory
+
+Observed by Andy (2026-09-16): an instantiated agent that finds the other
+roles' instructions while searching the repository gets confused about its
+own role. With roles in the project repository, every seat's worktree would
+contain all of them. The fix keeps roles in the repository — that is what
+makes § 4.9's branch override and reviewing role changes beside the code
+possible — and removes them from every seat's working copy.
+
+- **Mechanism.** When the host cuts a seat worktree it runs
+  `git sparse-checkout set --no-cone '/*' '!/beekeeper/'` in that worktree.
+  Proven on git 2.55.0: the seat's tree has no `beekeeper/` files, the hub
+  checkout is untouched, and the setting lives in the worktree's own config
+  (`core.sparseCheckout`, written with `--worktree`).
+  `extensions.worktreeConfig` is already enabled for seats by the seat-hooks
+  command (`desktop/src-tauri/src/commands/coding_session_seat_hooks.rs:
+  16-30`), for the same reason: a setting that says "this seat" must not
+  reach the person's own checkout.
+- **The host never composes from a seat's working copy.** Pinned source →
+  packs cache (§ 4.5); branch override → `git show <sha>:beekeeper/…`
+  (§ 4.9). Skills materialize into the seat bundle outside the tree as today
+  (ledger 132, 135). So the exclusion costs the seat nothing it needs.
+- **Opt-in visibility.** `team.yml` `roles.<role>.workspace.roles_visible:
+  true` (default `false`) skips the exclusion for a role whose job is to
+  author or evolve roles — `project-setup`, or a lead maintaining the pack —
+  and the Roles tab discloses which roles can see the directory.
+- **Honest limit.** The exclusion removes the files from the working tree,
+  from file search and from the harness's directory walk. It does not stop
+  a seat that deliberately runs `git show main:beekeeper/roles/lead.md`; the
+  objects are in the repository. It targets accidental confusion, not
+  exfiltration, and changes no authority.
+- **Not affected.** The operator's own checkout, and Solo sessions, which
+  run in the operator's folder and hold no role. Offering Solo sessions the
+  same exclusion is a possible setting, not part of this spec.
+- **Rejected.** An orphan `beekeeper-roles` branch or a sibling packs repo
+  would hide the files but lose the branch override and the review-with-
+  the-code property; telling agents not to read the directory has already
+  failed in practice, which is the observation this section answers.
 
 ## 5. Part C — agent types and project actions
 
@@ -677,10 +762,15 @@ Open, to be settled before the slice that needs them:
 2. ~~File names: `team.yml` or `beekeeper-agents.yml`; `actions.yml` as a
    sibling (A3, C2).~~ Settled 2026-09-16: Andy accepted `team.yml` and
    `actions.yml`.
-3. Whether the session-checkout rung should prefer the session's own branch
-   when that branch edits a role (A2; ties to C6).
+3. ~~Whether the session-checkout rung should prefer the session's own branch
+   when that branch edits a role (A2; ties to C6).~~ Settled 2026-09-16 by
+   § 4.9: `main`'s roles by default, a committed branch change to a role's
+   inputs overrides that role, running seats are offered a restart.
 4. Whether `hire_agent` may open a brand-new umbrella, which needs seat
    custody outside the desktop (after C5).
+5. Whether a project policy may restart a seat automatically when its
+   definition changes, instead of waiting for the click (§ 4.9; after A4).
+6. Whether Solo sessions should get the § 4.10 exclusion as a setting.
 
 ## 7. Phased delivery
 
@@ -701,21 +791,36 @@ C are independent lanes until C3, which needs `team.yml` (A3) for agent names.
   (`locate_role_source`, `stage_composed_pack`, `shipped_templates_dir`),
   `actor_seats.rs:586` (every rung stages), `role_packs_view.rs` (`warnings`),
   `crates/buzz-cli/src/commands/packs.rs` (`compose` block in `status`),
-  `tauri.conf.json:65`. Provider untouched. Tests: scratch-repo flat layout;
-  pack-over-flat precedence; refusal text on a missing template; a running
-  seat's `pack_dir` survives a checkout re-sync. Proof: a repo-resident
-  `beekeeper/roles/builder.md` seats a builder whose 44223 `packRef.path` is
-  `beekeeper/roles/builder`.
+  `tauri.conf.json:65`, `coding_sessions/worktree.rs:596` (sparse exclusion
+  of `beekeeper/` on every seat cut, § 4.10; branch-override detection and
+  `git show`-based composition, § 4.9). Provider untouched. Tests:
+  scratch-repo flat layout; pack-over-flat precedence; refusal text on a
+  missing template; a running seat's `pack_dir` survives a checkout re-sync;
+  a seat worktree has no `beekeeper/` files while the hub keeps them; a
+  branch that changes `roles/builder.md` overrides builder only, and a dirty
+  edit does not. Proof: a repo-resident `beekeeper/roles/builder.md` seats a
+  builder whose 44223 `packRef.path` is `beekeeper/roles/builder`, and
+  `find` in its worktree lists no role file.
 - **A3 — `team.yml` and publication ergonomics.** `crates/buzz-persona/src/
   team.rs`, Roles page reads `team.yml` (advisory hints shown as advisory),
   `packs_repo.rs` / `packs_cli.rs` (`init --layout flat`, `clone-template`),
-  `docs/nips/NIP-PK.md` (`path: beekeeper`, the ref-pin rationale of § 4.7).
-  Tests: schema refusals; an agent naming an unknown role refuses;
-  clone-template round-trips bytes.
+  `docs/nips/NIP-PK.md` (`path: beekeeper`, the ref-pin rationale of § 4.7);
+  `workspace.roles_visible` honoured by the seat cut and disclosed on the
+  Roles tab. Tests: schema refusals; an agent naming an unknown role refuses;
+  clone-template round-trips bytes; a `roles_visible` role's worktree keeps
+  `beekeeper/`.
 - **A4 — wire provenance.** `coding_session_payload.rs` (`composeRef`,
   closed-set amendment and its decode test), the provider's 44223 publisher,
-  `skills.rs:335` (bundle manifest), `pack_revisions.rs` (template-drift row).
-  Tests: key-set shape test extended; a 44223 without `composeRef` decodes.
+  `skills.rs:335` (bundle manifest), `pack_revisions.rs` (template-drift row
+  and the per-seat definition-drift comparison of § 4.9), the Agents tab and
+  session seat card (**Definition changed** + **Restart with current
+  definition**, wired to `actor_seats_restage.rs` and the provider restore
+  path). Tests: key-set shape test extended; a 44223 without `composeRef`
+  decodes; drift reads "unknown" when the cache cannot be synced; the restart
+  publishes a new execution for the same identity and the old one closes.
+  Proof: edit `roles/builder.md` on `main`, watch the running builder's card
+  offer the restart, click it, and read the new instructions in the new
+  execution's briefing.
 - **A5 — shipped roles compose from templates.** The eight "Working contract"
   paragraphs become `![[beekeeper/working-contract@^1.0.0]]`; rung 4 now
   exercises the composer. Test: the composed shipped lead equals today's lead
