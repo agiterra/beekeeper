@@ -10,9 +10,45 @@ use serde_json::Value;
 
 use super::*;
 
-/// Strictly decode and validate signed kind 44244 content.
+/// Strictly decode and validate kind 44244 content **about to be signed**.
+///
+/// This is the **publication** entry point, and the one every signing path
+/// round-trips through: `buzz-sdk`'s `build_coding_session_team_transaction`
+/// and the desktop's native build boundary both call it before returning
+/// bytes to a signer. Every rule is in force here, including the requirement
+/// that a [`ROLES_REQUIRING_VERIFICATION_INPUT`] assignment name the commit it
+/// judges.
+///
+/// To decode a record that is **already signed and on a relay**, call
+/// [`decode_recorded_coding_session_team_transaction`] instead — a reader that
+/// applied the publication rules retroactively would make live history
+/// unreadable. See [`CodingSessionTeamTransactionValidation`].
 pub fn decode_coding_session_team_transaction(
     content: &str,
+) -> Result<CodingSessionTeamTransactionPayload, String> {
+    decode_team_transaction_with(content, CodingSessionTeamTransactionValidation::Publication)
+}
+
+/// Decode kind 44244 content that is **already signed and on a relay**.
+///
+/// The **recorded** entry point, reached by every reader through
+/// [`validate_coding_session_team_transaction_envelope`]. It differs from
+/// [`decode_coding_session_team_transaction`] in exactly one judgement: an
+/// absent `baseSha` on a verification-role assignment is tolerated. Verifier
+/// assignment `0aaf3387` was published to hive on 2026-09-14 without one, and
+/// [`fold_coding_session_team_transactions`] fails whole on a single invalid
+/// envelope, so a strict reader would cost that mission its entire history —
+/// not one row. A *malformed* `baseSha`, and every other rule, is refused here
+/// exactly as strictly as on the publication path.
+pub fn decode_recorded_coding_session_team_transaction(
+    content: &str,
+) -> Result<CodingSessionTeamTransactionPayload, String> {
+    decode_team_transaction_with(content, CodingSessionTeamTransactionValidation::Recorded)
+}
+
+fn decode_team_transaction_with(
+    content: &str,
+    stance: CodingSessionTeamTransactionValidation,
 ) -> Result<CodingSessionTeamTransactionPayload, String> {
     if content.len() > MAX_TEAM_TRANSACTION_CONTENT_BYTES {
         return Err(format!(
@@ -109,18 +145,27 @@ pub fn decode_coding_session_team_transaction(
     // which the Value map above cannot represent.
     let payload: CodingSessionTeamTransactionPayload = serde_json::from_str(content)
         .map_err(|_| "malformed coding-session team-transaction payload".to_owned())?;
-    payload.validate()?;
+    payload.validate_for(stance)?;
     Ok(payload)
 }
 
 /// Validate the exact ordered event envelope and return its decoded payload.
+///
+/// This is the **reader** path: the fold, the relay's ingest arm, Pulse,
+/// verdict admission, the session provider's wake router and the desktop all
+/// arrive here with an event that is already signed. It therefore decodes in
+/// the **recorded** stance, tolerating an absent verification input on a
+/// verification-role assignment and nothing else — see
+/// [`decode_recorded_coding_session_team_transaction`] for the live event that
+/// forces this, and [`decode_coding_session_team_transaction`] for the strict
+/// stance a writer must pass before signing.
 pub fn validate_coding_session_team_transaction_envelope(
     event: &Event,
 ) -> Result<CodingSessionTeamTransactionPayload, String> {
     if event.kind.as_u16() as u32 != KIND_CODING_SESSION_TEAM_TRANSACTION {
         return Err("coding-session team transaction has the wrong event kind".into());
     }
-    let payload = decode_coding_session_team_transaction(&event.content)?;
+    let payload = decode_recorded_coding_session_team_transaction(&event.content)?;
     let tags: Vec<&[String]> = event.tags.iter().map(|tag| tag.as_slice()).collect();
     if tags.len() != 5 || tags.iter().any(|parts| parts.len() != 2) {
         return Err("coding-session team transaction requires exactly five two-field tags".into());

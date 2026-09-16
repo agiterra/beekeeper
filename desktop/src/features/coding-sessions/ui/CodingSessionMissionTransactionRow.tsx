@@ -1,5 +1,6 @@
 import { ArrowRight } from "lucide-react";
 
+import type { CodingSessionAssignmentInputState } from "@/features/coding-sessions/lib/codingSessionAssignmentInputCopy";
 import type { CodingSessionMissionTransactionRow as MissionTransactionRow } from "@/features/coding-sessions/lib/codingSessionMissionTransactionRows";
 import {
   missionRowBodyClass,
@@ -13,6 +14,7 @@ import {
   CodingSessionMissionDeliveryBadge,
   CodingSessionMissionUnseatedBadge,
 } from "./CodingSessionMissionDeliveryBadge";
+import { CodingSessionMissionVerificationInput } from "./CodingSessionMissionVerificationInput";
 
 /**
  * One signed 44244 transaction, in the stream, where it happened.
@@ -22,11 +24,22 @@ import {
  * the handoff rather than two letters and a glyph. Weight comes from the row
  * grammar, not from this component — a refutation and a blocked mission are
  * `attention` because of what they are, not because of how they are styled.
+ *
+ * A verifier's or runner's assignment row also carries {@link
+ * CodingSessionMissionVerificationInput}: what this computer did about the
+ * revision that seat was asked to start from. Absent on every other row, and
+ * absent here too when this computer has nothing to say.
  */
 export function CodingSessionMissionTransactionRow({
+  onRetryVerificationInput,
   row,
+  verificationInput = null,
 }: {
+  /** A person's own click on `Try again`. */
+  onRetryVerificationInput?: () => void;
   row: MissionTransactionRow;
+  /** This host's verification-input reading for this assignment, when it has one. */
+  verificationInput?: CodingSessionAssignmentInputState | null;
 }) {
   const counts = [
     row.fileCount === null
@@ -107,6 +120,12 @@ export function CodingSessionMissionTransactionRow({
           >
             {row.delivery.detail}
           </p>
+        ) : null}
+        {verificationInput ? (
+          <CodingSessionMissionVerificationInput
+            onRetry={onRetryVerificationInput}
+            state={verificationInput}
+          />
         ) : null}
         {row.showSignedSource ? (
           <details className={cn(missionRowMetaClass(), "mt-1")}>

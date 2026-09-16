@@ -10,6 +10,8 @@
 //! module boundary is the point. Anything else that is machine-local and
 //! session-shaped belongs beside them, on the same side of that line.
 
+// NATIVE: establish the revision a seat was hired to work on, in its own tree.
+pub(crate) mod assignment_input;
 pub(crate) mod naming;
 pub(crate) mod workdir_store;
 pub(crate) mod worktree;

@@ -71,7 +71,12 @@ fn assignment(actor: &Keys) -> CodingSessionTeamTransactionPayload {
             objective: "Run the gate".into(),
             brief: "Run the gate and report.".into(),
             branch: None,
-            base_sha: None,
+            // A runner answers *about* a revision, so its assignment must name
+            // the commit it runs against (buzz-core
+            // `ROLES_REQUIRING_VERIFICATION_INPUT`). This fixture predates that
+            // rule; the commit is what the rule requires, not a change to what
+            // these precheck tests are about.
+            base_sha: Some("a".repeat(40)),
             file_ownership: vec!["crates/buzz-cli/src".into()],
             acceptance_steps: vec!["just ci".into()],
         },

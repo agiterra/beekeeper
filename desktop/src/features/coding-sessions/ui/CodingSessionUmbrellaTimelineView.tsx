@@ -1,5 +1,6 @@
 import * as React from "react";
 
+import { useCodingSessionAssignmentInputs } from "@/features/coding-sessions/hooks/useCodingSessionAssignmentInputs";
 import type { CodingSessionLaneMessage } from "@/features/coding-sessions/lib/codingSessionConversationLane";
 import { buildCodingSessionTargetKey } from "@/features/coding-sessions/lib/codingSessionCommand";
 import {
@@ -184,6 +185,37 @@ export function CodingSessionUmbrellaTimelineView({
     missionTransactions,
     resolveMissionActor,
   ]);
+  // Every signed assignment, as the verification-input trigger takes them. The
+  // trigger itself decides which are candidates — role and a named revision —
+  // so nothing here filters, and a session with no verifier costs no host call.
+  const assignmentInputTargets = React.useMemo(
+    () =>
+      (missionTransactions ?? [])
+        .filter((transaction) => transaction.type === "assignment")
+        .map((transaction) => ({
+          assignmentId: transaction.sourceEventId,
+          assigneeActor: transaction.counterpartyPubkey,
+          assigneeRole: transaction.assigneeRole ?? null,
+          baseSha: transaction.baseSha ?? null,
+        })),
+    [missionTransactions],
+  );
+  // The seat label a worktree was recorded under is the seated agent's own
+  // name, which is exactly what this resolver answers (`identity.name` in
+  // `codingSessionHireSeat.ts`). No name, no recorded tree to name — and the
+  // trigger discloses that rather than calling the host.
+  const resolveSeatLabel = React.useCallback(
+    (actor: string) => actorNames?.(actor) ?? null,
+    [actorNames],
+  );
+  const verificationInputs = useCodingSessionAssignmentInputs({
+    assignments: assignmentInputTargets,
+    // Mission is where an assignment row is drawn at all; Conversation renders
+    // none, so it triggers none.
+    enabled: missionDensity !== null,
+    resolveSeatLabel,
+    sessionRef: umbrella.sessionRef,
+  });
   const entries = React.useMemo(() => {
     const chronological = buildUmbrellaTimeline(umbrella, laneMessages);
     return missionDensity
@@ -372,7 +404,16 @@ export function CodingSessionUmbrellaTimelineView({
               key={key}
               ref={(node) => registerBlockNode(key, node)}
             >
-              <CodingSessionMissionTransactionRow row={entry.row} />
+              <CodingSessionMissionTransactionRow
+                onRetryVerificationInput={() =>
+                  verificationInputs.retry(entry.row.meta.sourceEventId)
+                }
+                row={entry.row}
+                verificationInput={
+                  verificationInputs.states.get(entry.row.meta.sourceEventId) ??
+                  null
+                }
+              />
             </div>
           );
         }

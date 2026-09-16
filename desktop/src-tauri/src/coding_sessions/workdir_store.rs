@@ -33,6 +33,9 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
 
 use crate::app_state::AppState;
+use crate::coding_sessions::assignment_input::{
+    CodingSessionAssignmentInputRecord, MAX_ASSIGNMENT_INPUT_RECORDS,
+};
 use crate::managed_agents::atomic_write_json_restricted;
 use crate::relay::relay_ws_url_with_override;
 use crate::session_provider::env::PROJECTS_FILE_NAME;
@@ -216,6 +219,16 @@ pub(crate) struct CodingSessionWorkdirStore {
     /// is what makes a v1 file readable.
     #[serde(default)]
     pub worktrees: BTreeMap<String, CodingSessionSeatWorktree>,
+    /// One attempt per assignment to establish the revision a seat was hired
+    /// to work on, keyed by assignment id.
+    ///
+    /// `#[serde(default)]`, so a file written before this field reads with it
+    /// empty — which is the truth about it: this host established no inputs
+    /// before it could record them. The store version is deliberately *not*
+    /// bumped for it, because an older build reading a newer file must keep
+    /// working, and an absent map and an ignored one say the same thing.
+    #[serde(default)]
+    pub assignment_inputs: BTreeMap<String, CodingSessionAssignmentInputRecord>,
     /// Worktree folders a person chose, keyed by canonical repository root.
     ///
     /// Keyed by the *repository*, not the working directory, which is the
@@ -246,6 +259,7 @@ impl Default for CodingSessionWorkdirStore {
             mru: Vec::new(),
             pending: BTreeMap::new(),
             worktrees: BTreeMap::new(),
+            assignment_inputs: BTreeMap::new(),
             worktree_parents: BTreeMap::new(),
             pruned: BTreeMap::new(),
         }
@@ -676,6 +690,7 @@ pub(crate) fn load_workdir_store_readonly_from(
         || store.pending.len() > MAX_PENDING_HINTS
         || store.worktrees.len() > MAX_SEAT_WORKTREES
         || store.worktree_parents.len() > 4096
+        || store.assignment_inputs.len() > MAX_ASSIGNMENT_INPUT_RECORDS
     {
         return Err("coding-session workdir store exceeds readiness record limits".into());
     }

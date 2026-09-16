@@ -1053,3 +1053,6 @@ fn a_blocked_correction_must_change_its_blockers() {
 
 #[path = "coding_session_team_transaction_terminal_tests.rs"]
 mod terminal_tests;
+
+#[path = "coding_session_team_transaction_verification_input_tests.rs"]
+mod verification_input_tests;

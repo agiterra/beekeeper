@@ -66,6 +66,63 @@ pub const MAX_TEAM_TRANSACTION_DECISION_BLOCKS: usize = 16;
 pub const MAX_TEAM_TRANSACTION_DECISION_CONDITION_BYTES: usize = 512;
 /// Exact wire token naming the founder as the party holding a decision.
 pub const CODING_SESSION_TEAM_DECISION_FOUNDER: &str = "founder";
+/// Roles whose assignment must name the exact revision it concerns.
+///
+/// These roles answer *about* a revision — "does this commit pass its gates",
+/// "what does running this commit produce" — rather than producing one. An
+/// answer is only about the revision it names, so the input must name it:
+/// without `baseSha` the seat resolves its own starting point, and a hired
+/// seat's worktree is cut from the trunk, not from the commit under judgement.
+///
+/// This is the single place the rule names its roles. Other crates read this
+/// constant rather than restating the list; a restated list drifts, and a
+/// drifted list silently stops requiring the input.
+pub const ROLES_REQUIRING_VERIFICATION_INPUT: [&str; 2] = ["verifier", "runner"];
+
+/// Which stance a validation takes toward the verification-input rule.
+///
+/// The rule governs **publication**, not reading. A contract added to a
+/// vocabulary that already has signed events on a relay cannot be applied
+/// retroactively without destroying history: verifier assignment `0aaf3387`,
+/// published to hive on 2026-09-14 with no `baseSha`, is one of 77 kind-44244
+/// events live at the time this rule was written, and
+/// [`fold_coding_session_team_transactions`] returns `Err` — not a per-record
+/// exclusion — on the first envelope that fails validation. Applying the new
+/// rule to reads would therefore not drop that one row; it would make that
+/// whole mission's history refuse to fold.
+///
+/// So the two stances differ in exactly one judgement: whether an absent
+/// `baseSha` is a defect. Every other rule, including the 40/64-hex shape rule
+/// when the field **is** present, is identical in both. Tolerance is for the
+/// absent field, never for a malformed one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CodingSessionTeamTransactionValidation {
+    /// A record about to be signed: every rule in force, including presence.
+    Publication,
+    /// A record already signed and on a relay: tolerant of an absent
+    /// verification input, and of nothing else.
+    Recorded,
+}
+
+/// Whether an assignment in `role` must carry `baseSha`.
+///
+/// Membership of [`ROLES_REQUIRING_VERIFICATION_INPUT`], compared against the
+/// exact wire token in `assigneeRole`.
+#[must_use]
+pub fn role_requires_verification_input(role: &str) -> bool {
+    ROLES_REQUIRING_VERIFICATION_INPUT.contains(&role)
+}
+
+/// Exact refusal for an assignment in a verification role with no `baseSha`.
+///
+/// Formats the role so the refusal names both the missing field and the role
+/// that made it required.
+#[must_use]
+pub fn missing_verification_input_message(role: &str) -> String {
+    format!(
+        "baseSha is required for a {role} assignment: a verification input must name the exact commit to verify"
+    )
+}
 /// Exact refusal for a `mission.blocked` correction that names no blocker.
 pub const TERMINAL_CANNOT_CLEAR_ITSELF: &str =
     "use a note or a decision.answer to clear a blocker; a terminal cannot clear itself";
@@ -173,7 +230,11 @@ pub struct CodingSessionTeamAssignment {
     pub brief: String,
     /// Optional topic branch; the key is still present as JSON null.
     pub branch: Option<String>,
-    /// Optional 40- or 64-hex git base object id.
+    /// 40- or 64-hex git base object id; the key is still present as JSON null.
+    ///
+    /// Optional for most roles and **required** for every role in
+    /// [`ROLES_REQUIRING_VERIFICATION_INPUT`], which cannot answer about a
+    /// revision they do not name.
     pub base_sha: Option<String>,
     /// Exclusive paths or path prefixes owned by this assignment.
     pub file_ownership: Vec<String>,
@@ -500,7 +561,28 @@ pub struct CodingSessionTeamTransactionPayload {
 
 impl CodingSessionTeamTransactionPayload {
     /// Validate field bounds, type/body parity, and reference syntax.
+    ///
+    /// The **publication** stance: every rule in force. This is what a writer
+    /// must pass before signing. To read a record that is already signed, use
+    /// [`Self::validate_recorded`] — see
+    /// [`CodingSessionTeamTransactionValidation`] for why the two differ.
     pub fn validate(&self) -> Result<(), String> {
+        self.validate_for(CodingSessionTeamTransactionValidation::Publication)
+    }
+
+    /// Validate a record that is already signed and on a relay.
+    ///
+    /// The **recorded** stance: identical to [`Self::validate`] except that an
+    /// absent verification input on a
+    /// [`ROLES_REQUIRING_VERIFICATION_INPUT`] assignment is tolerated, because
+    /// records predating that rule were signed without one and history must
+    /// not become unreadable. A *malformed* `baseSha` is refused here exactly
+    /// as it is on the publication path.
+    pub fn validate_recorded(&self) -> Result<(), String> {
+        self.validate_for(CodingSessionTeamTransactionValidation::Recorded)
+    }
+
+    fn validate_for(&self, stance: CodingSessionTeamTransactionValidation) -> Result<(), String> {
         if self.schema != CODING_SESSION_TEAM_TRANSACTION_SCHEMA {
             return Err("unsupported coding-session team-transaction schema".into());
         }
@@ -531,7 +613,7 @@ impl CodingSessionTeamTransactionPayload {
         if let Some(command_id) = &self.delivery_command_id {
             validate_delivery_command_id(command_id)?;
         }
-        self.body.validate()
+        self.body.validate_for(stance)
     }
 
     /// Return all explicit causal event references in the operation body.
@@ -568,9 +650,10 @@ impl CodingSessionTeamTransactionPayload {
 }
 
 impl CodingSessionTeamTransactionBody {
-    fn validate(&self) -> Result<(), String> {
+    fn validate_for(&self, stance: CodingSessionTeamTransactionValidation) -> Result<(), String> {
         match self {
-            Self::Assignment(body) => body.validate(),
+            // The assignment is the only body whose rules differ by stance.
+            Self::Assignment(body) => body.validate_for(stance),
             Self::Report(body) => body.validate(),
             Self::Verdict(body) => body.validate(),
             Self::Acknowledgement(body) => body.validate(),
@@ -654,7 +737,7 @@ impl CodingSessionTeamDecisionAnswer {
 }
 
 impl CodingSessionTeamAssignment {
-    fn validate(&self) -> Result<(), String> {
+    fn validate_for(&self, stance: CodingSessionTeamTransactionValidation) -> Result<(), String> {
         validate_event_id("assigneeActor", &self.assignee_actor)?;
         validate_role(&self.assignee_role)?;
         validate_text(
@@ -664,7 +747,18 @@ impl CodingSessionTeamAssignment {
         )?;
         validate_text("brief", &self.brief, MAX_TEAM_TRANSACTION_LONG_TEXT_BYTES)?;
         validate_optional_text("branch", self.branch.as_deref(), 255)?;
+        // Shape first, then presence, and the two are judged differently. The
+        // shape rule runs in **both** stances: a malformed sha is a defect in
+        // a record however old it is. The presence rule runs only when a
+        // record is about to be signed, because records signed before the rule
+        // existed carry no input and must still be readable.
         validate_optional_git_sha("baseSha", self.base_sha.as_deref())?;
+        if stance == CodingSessionTeamTransactionValidation::Publication
+            && self.base_sha.is_none()
+            && role_requires_verification_input(&self.assignee_role)
+        {
+            return Err(missing_verification_input_message(&self.assignee_role));
+        }
         validate_paths("fileOwnership", &self.file_ownership)?;
         validate_texts("acceptanceSteps", &self.acceptance_steps, true)?;
         Ok(())

@@ -226,6 +226,21 @@ export type CodingSessionMissionTransactionInput = {
    * named none does.
    */
   condition?: string | null;
+  /**
+   * An `assignment` row's signed `assigneeRole`, verbatim; null on every other
+   * type. Optional because the projection that fills it lands with the lane
+   * that owns it, and absent reads as "not known", never as a role.
+   */
+  assigneeRole?: string | null;
+  /**
+   * An `assignment` row's signed `baseSha` — the revision the assignee is to
+   * start from — or null when the assignment named none.
+   *
+   * Required on the wire for a `verifier` or `runner` assignment and optional
+   * for every other role, so `null` here on a verifier row is an older signed
+   * body, never a revision this surface may invent.
+   */
+  baseSha?: string | null;
 };
 
 /** Wire shape of one Rust-fold `unseatedReports` row. */

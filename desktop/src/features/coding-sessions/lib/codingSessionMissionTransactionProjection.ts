@@ -55,6 +55,12 @@ type BlockedBody = {
 type AssignmentBody = {
   assigneeActor: string;
   assigneeRole: string;
+  /**
+   * The revision the assignee starts from. Required on the wire for a
+   * `verifier` or `runner`; optional for every other role, so this stays
+   * optional here and an absent value is never replaced with a guess.
+   */
+  baseSha?: string | null;
   objective: string;
   brief: string;
   fileOwnership: string[];
@@ -456,6 +462,11 @@ function projectTransactions(
         // decision queue reads the class a ruling covers from here (finding
         // 21). Never parsed — nothing derives state from it.
         condition: decisionAnswer ? decisionAnswer.condition : null,
+        // Carried verbatim off the signed assignment body, for the one
+        // consumer that needs them: the host that puts a verifier's or a
+        // runner's revision into its own seat's tree.
+        assigneeRole: assignment ? assignment.assigneeRole : null,
+        baseSha: assignment ? (assignment.baseSha ?? null) : null,
       } satisfies CodingSessionMissionTransactionInput;
     });
   return { rows, truncated };

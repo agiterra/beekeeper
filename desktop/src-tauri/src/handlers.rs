@@ -491,6 +491,8 @@ pub(crate) fn invoke_handler(
         coding_sessions::worktree_prune::prune_coding_session_seat_worktree,
         coding_sessions::worktree_close::close_coding_session_seat_worktree,
         coding_sessions::worktree_prune::reclaim_coding_session_seat_worktree,
+        coding_sessions::assignment_input::coding_session_establish_assignment_input,
+        coding_sessions::assignment_input::coding_session_assignment_input_record,
         coding_sessions::naming::coding_session_naming_settings,
         coding_sessions::naming::set_coding_session_naming_settings,
         coding_sessions::naming::generate_coding_session_name,

@@ -70,6 +70,15 @@ pub(super) fn validate_bounded_event_ids(
     validate_unique(field, values)
 }
 
+/// Validate one lowercase git object id.
+///
+/// Both 40- and 64-hex are accepted, and deliberately so: a sha256 repository
+/// names its objects in 64 hex, so a rule admitting only 40 would refuse
+/// object ids that are entirely valid. Every caller that needs a git object
+/// id — including the roles that must name the revision they judge, see
+/// [`ROLES_REQUIRING_VERIFICATION_INPUT`] — reaches for this one function, so
+/// the accepted shape is stated once and never restated as a hand-rolled hex
+/// check.
 pub(super) fn validate_git_sha(field: &str, value: &str) -> Result<(), String> {
     if !matches!(value.len(), 40 | 64)
         || !value
