@@ -13116,9 +13116,28 @@ Evidence and limits: [conditional publication checkpoint](history/2026-09-12-pro
      comment in `codingSessionHireCheckout.ts:33-46` ("Not yet one of the
      contract codes") is now inaccurate and was left alone — that file
      belongs to another lane's ownership boundary, not this one's. Also
-     untouched: 135(c) (still open per 136).
-||||||| parent of 150642f30 (A hire cuts from the project's checkout, on the agent's own runtime)
-||||||| parent of fd3fe3bc7 (Readiness reads the truth a hire uses; a deletion disposes of its trees)
+     untouched: 135(c) (still open per 136). The file-size ratchet
+     (`just file-size-check`) flagged `types.rs`, `codingSessionHirePolicy.ts`
+     and `shared/api/types.ts` for crossing 1000 lines with the new fields;
+     brought back under the ceiling by shortening this item's own new doc
+     comments and two pre-existing ones on unrelated fields
+     (`needs_restart`, `persona_orphaned` in `types.rs`) that were verbose
+     enough to trim without losing their facts — no meaning dropped, only
+     restated tighter.
+
+     **Also found, not caused, not fixed: `SESSION_STATE.md` carries live
+     diff3 conflict markers.** Two literal `|||||||` lines sit right above
+     this item (search `^\|\|\|\|\|\|\|` in this file) — leftovers of an
+     unresolved three-way merge from commit `9097999e39` (2026-09-16,
+     "A hire cuts from the project's checkout") that a later rebase
+     (`fd3fe3bc7`/`139e83334`, lane 137) duplicated rather than cleaned up,
+     because `git rebase` treats the file's committed bytes as ordinary text
+     with nothing left to flag. Neither this lane nor 137 introduced the
+     original corruption; both inherited and, by rebasing without noticing,
+     propagated it. Left alone here rather than guess-repaired: reconstructing
+     the intended §2/§3 content those markers straddle needs the actual
+     merge history, not a topic-branch lane's judgment call on a
+     shared ledger file outside its task.
 
 
 ## 2a. Direction settled 2026-08-18

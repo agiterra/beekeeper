@@ -125,13 +125,9 @@ export const CODING_SESSION_HIRE_REFUSAL_CODES = [
    */
   "HIRE_MALFORMED",
   /**
-   * This computer has no recorded checkout to cut the seat's worktree from:
-   * the session's project has no repository folder set, and (for a
-   * projectless session) the channel remembers none either. Only the
-   * operator can fix this, in Project settings → This computer → Repository
-   * folder. See {@link HIRE_CHECKOUT_NOT_RECORDED} in
-   * `codingSessionHireCheckout.ts`, which is where the resolution logic
-   * that produces this code actually lives (ledger 135(a), 136).
+   * No recorded checkout to cut the seat's worktree from. Only the operator
+   * can fix this, in Project settings → This computer → Repository folder.
+   * The resolution logic lives in `codingSessionHireCheckout.ts` (135(a), 136).
    */
   "HIRE_CHECKOUT_NOT_RECORDED",
 ] as const;
@@ -508,14 +504,10 @@ export function decideCodingSessionHire(
 /**
  * The exact sentence published back to the requesting seat as a 44220 turn.
  *
- * The parameter type spells out {@link HIRE_CHECKOUT_NOT_RECORDED} alongside
- * {@link CodingSessionHireRefusalCode} rather than relying on the latter
- * alone. As of ledger 139 that code is one of `CODING_SESSION_HIRE_REFUSAL_CODES`
- * (pinned byte-for-byte to buzz-core's `HIRE_REFUSAL_CODES`, which is pinned
- * to `bee`'s remedy table), so the union is redundant but harmless; left in
- * place rather than narrowed, so a caller passing the checkout code by its
- * own export still gets a compile-time check regardless of which of the two
- * lists it was widened against.
+ * The parameter type still spells out {@link HIRE_CHECKOUT_NOT_RECORDED}
+ * alongside {@link CodingSessionHireRefusalCode}; as of ledger 139 that code
+ * is also one of `CODING_SESSION_HIRE_REFUSAL_CODES`, so the union is
+ * redundant but harmless — left as-is rather than narrowed.
  */
 export function formatCodingSessionHireRefusal(refusal: {
   code: CodingSessionHireRefusalCode | typeof HIRE_CHECKOUT_NOT_RECORDED;

@@ -524,25 +524,11 @@ pub struct ManagedAgentSummary {
     pub pubkey: String,
     pub name: String,
     pub persona_id: Option<String>,
-    /// The record's harness/runtime id (mirror of `ManagedAgentRecord.runtime`).
-    /// Lets the UI count agents referencing a harness definition (e.g. in the
-    /// delete-confirmation flow). `None` = inherit from the linked persona.
-    /// This is the raw per-instance pin, not what the agent actually runs on
-    /// — see `effective_runtime` for that.
+    /// Raw runtime pin; `None` inherits from the persona. See `effective_runtime`.
     pub runtime: Option<String>,
-    /// The runtime this agent actually runs on: `runtime` resolved record →
-    /// definition, same shape and naming as `model`/`model_source`. `Some`
-    /// exactly when `resolve_effective_runtime_id` names one — including an
-    /// agent whose `runtime` above is `None` because it inherits its harness
-    /// from its persona (ledger 136(b), 139). Consumers that need "what will
-    /// this agent run on" (hiring, the project Agents tab) must read this
-    /// field, never the raw `runtime` above, which is silently blank for
-    /// every inheriting agent.
+    /// Effective runtime + tier (record → definition), like `model`/`model_source` (ledger 139).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub effective_runtime: Option<String>,
-    /// Which tier `effective_runtime` came from. `None` only when
-    /// `effective_runtime` is also `None` (orphaned instance with no runtime
-    /// on the record either).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub runtime_source: Option<super::effective_config::ConfigSource>,
     pub team_id: Option<String>,
@@ -600,15 +586,12 @@ pub struct ManagedAgentSummary {
     pub persona_out_of_date: bool,
     /// `true` when the agent was created from a persona that no longer exists.
     /// Distinct from out-of-date: there is no current persona to respawn into.
-    /// An orphaned agent also cannot be (re)started — `spawn_agent_child`
-    /// refuses it (see `effective_config::resolve_effective_config`'s
-    /// `OrphanedInstance` arm via `require_resolved`) — so the UI
-    /// should surface that it's stuck, not merely stale.
+    /// An orphaned agent also cannot be (re)started (`OrphanedInstance` via
+    /// `require_resolved`) — the UI should surface that it's stuck, not stale.
     pub persona_orphaned: bool,
-    /// `true` when the running process's spawn config no longer matches
-    /// what a spawn would use today. Derived from `restart_diff` — lit
-    /// exactly when there is something to show. Always `false` for stopped,
-    /// orphaned, or `runtime_pid`-adopted agents.
+    /// `true` when the running spawn config no longer matches what a spawn
+    /// would use today (lit exactly when `restart_diff` is non-empty).
+    /// Always `false` for stopped, orphaned, or `runtime_pid`-adopted agents.
     pub needs_restart: bool,
     /// Fields that drifted since launch, redacted for display.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
