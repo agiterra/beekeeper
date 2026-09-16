@@ -722,6 +722,8 @@ fn summary_fixture(
         pack_refused_shared_home: false,
         persona_id: None,
         runtime: None,
+        effective_runtime: None,
+        runtime_source: None,
         team_id: None,
         home_role: None,
         project_ref: None,

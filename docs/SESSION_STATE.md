@@ -13027,6 +13027,96 @@ Evidence and limits: [conditional publication checkpoint](history/2026-09-12-pro
      `bee` invoked directly from an installed bundle with no seat env var —
      scoped out to keep the fix to the three-value contract the brief named;
      `--packs-dir` is the documented workaround for that case.
+
+139. **`HIRE_CHECKOUT_NOT_RECORDED` joins the contract; `ManagedAgentSummary`
+     discloses the *effective* runtime, not just the raw pin (2026-09-16).**
+     Closes the two gaps 136 and 138 named as "needed from outside" their own
+     lanes.
+
+     **(a) The refusal code.** Item 136 shipped
+     `HIRE_CHECKOUT_NOT_RECORDED` in
+     `desktop/src/features/coding-sessions/lib/codingSessionHireCheckout.ts:49`
+     but disclosed it was in none of the three places that make a code part
+     of the actual contract: buzz-core's `HIRE_REFUSAL_CODES`
+     (`crates/buzz-core/src/coding_session_lifecycle_command.rs:1080`), `bee`'s
+     `hire_refusal_remedy` (`crates/buzz-cli/src/commands/sessions/crew.rs:2002`,
+     pinned by `crew_tests.rs`'s
+     `every_contract_refusal_code_has_a_remedy_this_cli_can_print`), and the
+     desktop's `CODING_SESSION_HIRE_REFUSAL_CODES`
+     (`codingSessionHirePolicy.ts:87`, pinned to buzz-core by
+     `codingSessionHireProjectScope.test.mjs`'s "the desktop's refusal codes
+     are exactly buzz-core's `HIRE_REFUSAL_CODES`"). All three now carry it,
+     with the CLI remedy "set the project's repository folder in Project
+     settings → This computer, then hire again; do not retry unchanged". Both
+     pins pass; `hire refused: HIRE_CHECKOUT_NOT_RECORDED — …` now earns a
+     lead the same generic remedy line every other refusal gets, instead of
+     relying solely on the host's own reason sentence.
+
+     **(b) The effective runtime.** Item 136(b)'s fix taught the *hire path*
+     to reconstruct an agent's effective runtime from `agentCommand` through
+     the ACP catalog, because `ManagedAgentSummary` published `model`
+     effectively (`model_source` naming the tier,
+     `desktop/src-tauri/src/managed_agents/runtime.rs:175`) but `runtime` as
+     the raw per-instance pin (`runtime.rs:256`,
+     `runtime: record.runtime.clone()`), `None` for an agent inheriting its
+     harness from its persona. Item 138(d) hit the same asymmetry from the
+     other side: the project Agents tab's `runtimeText` read that same raw
+     `runtime` and printed "runtime not set" for an inherited runtime. Fix:
+     `EffectiveAgentConfig.runtime` (already resolving record → definition,
+     `desktop/src-tauri/src/managed_agents/effective_config/mod.rs:45`) is now
+     also surfaced on the summary. `summary_effective_runtime`
+     (`desktop/src-tauri/src/managed_agents/runtime/effective_summary.rs`)
+     reads it through `resolve_effective_config` — not the narrower
+     `resolve_effective_runtime_id`, which drops the source tier its own
+     callers never needed — and `ManagedAgentSummary` gained
+     `effective_runtime`/`runtime_source`
+     (`desktop/src-tauri/src/managed_agents/types.rs`), same shape and naming
+     as `model`/`model_source`, without changing what the existing `runtime`
+     field means. Native test: `summary_reports_inherited_runtime_and_
+     definition_source` (`runtime/effective_summary/tests.rs`) — a record
+     with no runtime pin, linked to a persona that names one, reports the
+     persona's runtime and `ConfigSource::Definition`, not `None`.
+
+     Both TS consumers now read the native field first. In
+     `resolveCodingSessionHireAgentRuntime`
+     (`codingSessionHireAgentRuntime.ts`), a non-blank `effectiveRuntime`
+     answers immediately — mapped to source `"record"` for an
+     instance/instance_legacy tier and `"harness"` for a definition tier,
+     reusing the existing two sentences rather than adding a third — and the
+     catalog reconstruction (`agentCommand` → `runtimeIdForCommand`) runs only
+     when a host has not republished the field, so an older bundled `bee`/
+     backend never regresses to "no runtime". `projectAgentsCopy.ts`'s
+     `runtimeText` now takes `effectiveRuntime` instead of `runtime`, plumbed
+     through `ProjectAgentRow`/`ProjectAgentsLocalAgentInput`
+     (`desktop/src/features/project-agents/lib/projectAgentsModel.ts`) and
+     `useProjectAgents.ts:192-198`'s `useManagedAgentsQuery` mapping. The
+     shared wire type gained the field too:
+     `desktop/src/shared/api/types.ts`'s `ManagedAgent.effectiveRuntime`/
+     `.runtimeSource`, decoded in `tauriManagedAgentRecord.ts`'s
+     `fromRawManagedAgent` from `effective_runtime`/`runtime_source`, `null`
+     for an older backend that has not sent them (not a claim that the agent
+     has no runtime).
+
+     **Evidence.** Native: two new cases in `runtime/effective_summary/
+     tests.rs` (inherited via definition, pinned via instance). TS: three new
+     cases in `codingSessionHireAgentRuntime.test.mjs` (native preferred over
+     an unrelated/wrong catalog match, instance tier reports as `"record"`,
+     absent native field falls back to the catalog chain unchanged); the
+     existing `projectAgentsCopy.test.mjs` cases were re-pointed at
+     `effectiveRuntime` (the field `runtimeText` now reads) plus one new case
+     naming ledger 135(d)/139 directly; one new
+     `projectAgentsModel.test.mjs` case showing a row carries `runtime: null`
+     and `effectiveRuntime: "codex"` as two distinct facts, not one collapsed
+     into the other. `cargo test -p buzz-core -p buzz-cli`: 1124 passed.
+     `cargo test --manifest-path desktop/src-tauri/Cargo.toml`: the four
+     `effective_summary` cases pass (full-suite run not separately logged
+     here; see the commit's gate row for the whole crate).
+
+     **Not done, and disclosed rather than silently skipped.** A stale doc
+     comment in `codingSessionHireCheckout.ts:33-46` ("Not yet one of the
+     contract codes") is now inaccurate and was left alone — that file
+     belongs to another lane's ownership boundary, not this one's. Also
+     untouched: 135(c) (still open per 136).
 ||||||| parent of 150642f30 (A hire cuts from the project's checkout, on the agent's own runtime)
 ||||||| parent of fd3fe3bc7 (Readiness reads the truth a hire uses; a deletion disposes of its trees)
 

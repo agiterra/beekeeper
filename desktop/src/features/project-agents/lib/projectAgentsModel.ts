@@ -88,10 +88,19 @@ export type ProjectAgentsLocalAgentInput = {
   /**
    * The record's configured runtime id (e.g. "claude", "codex"), or `null`
    * when it inherits from its persona / is not set. Absent (older callers)
-   * is treated the same as `null` — the card says "runtime not set" rather
-   * than guessing or omitting the fact.
+   * is treated the same as `null`. Raw per-instance pin — `runtimeText` reads
+   * `effectiveRuntime` below, not this field, because this one is blank for
+   * every agent that inherits its harness from its persona (ledger 135(d),
+   * 136(b), 139).
    */
   runtime?: string | null;
+  /**
+   * `ManagedAgent.effectiveRuntime` — the runtime this agent actually runs
+   * on (record → definition), same shape as `model`. `null` for an older
+   * caller that has not republished the field, same as no runtime resolved
+   * (ledger 139).
+   */
+  effectiveRuntime?: string | null;
   /** The record's configured model, or `null` when none is named. */
   model?: string | null;
 };
@@ -219,11 +228,20 @@ export type ProjectAgentRow = {
   /** The agent's home role (local record, then its publication), or `null`. */
   primaryRole: string | null;
   /**
-   * The local record's configured runtime id, or `null` when it has none —
-   * either it is not on this computer, or the record inherits/has no
-   * runtime set. Callers must render "runtime not set", never omit it.
+   * The local record's raw configured runtime id, or `null` — either it is
+   * not on this computer, or the record has no per-instance pin. Never the
+   * field to render: an inherited runtime is `null` here even though the
+   * agent has an effective one. `runtimeText` reads `effectiveRuntime`
+   * below.
    */
   runtime: string | null;
+  /**
+   * The runtime this agent actually runs on: `runtime` resolved record →
+   * definition. `null` when it is not on this computer, or genuinely has no
+   * runtime at any tier. Callers must render "runtime not set" only when
+   * this is `null`, never when the raw `runtime` above is (ledger 139).
+   */
+  effectiveRuntime: string | null;
   /** The local record's configured model, or `null` when none is named. */
   model: string | null;
   /** Distinct roles it was seated or assigned as here, sorted. */
@@ -487,6 +505,7 @@ export function buildProjectAgents(
       location,
       primaryRole,
       runtime: record?.runtime ?? null,
+      effectiveRuntime: record?.effectiveRuntime ?? null,
       model: record?.model ?? null,
       seatedRoles: [...seatedRoles].sort(compareStrings),
       managedHere: record !== null,

@@ -7,6 +7,13 @@ export type RawManagedAgent = {
   persona_id: string | null;
   // Optional: pre-feature fixtures may omit it. The record's harness/runtime id.
   runtime?: string | null;
+  /**
+   * The runtime this agent actually runs on (record → definition), same
+   * shape as `model`/`model_source`. Absent on an older backend — mapped to
+   * `null`, i.e. "the backend never answered", not "no runtime" (ledger 139).
+   */
+  effective_runtime?: string | null;
+  runtime_source?: ManagedAgent["runtimeSource"];
   team_id?: string | null;
   /** Absent on an older backend — mapped to `null`, which is "no home role",
    *  not "no role pack". */
@@ -70,6 +77,8 @@ export function fromRawManagedAgent(agent: RawManagedAgent): ManagedAgent {
     name: agent.name,
     personaId: agent.persona_id,
     runtime: agent.runtime ?? null,
+    effectiveRuntime: agent.effective_runtime ?? null,
+    runtimeSource: agent.runtime_source ?? null,
     teamId: agent.team_id ?? null,
     homeRole: agent.home_role ?? null,
     projectRef: agent.project_ref ?? null,

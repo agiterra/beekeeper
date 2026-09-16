@@ -89,6 +89,50 @@ test("a record that names nothing names nothing", () => {
   );
 });
 
+// --- Ledger 139: the native effective_runtime field ------------------------
+
+test("an inherited harness's native effective_runtime is preferred over the catalog reconstruction", () => {
+  assert.deepEqual(
+    resolveCodingSessionHireAgentRuntime({
+      runtime: null,
+      effectiveRuntime: "Codex",
+      effectiveRuntimeSource: "definition",
+      // A wrong/absent catalog must not matter: the native field answers
+      // before the catalog reconstruction ever runs.
+      agentCommand: "some-unknown-harness",
+      provider: null,
+    }),
+    { runtime: "codex", source: "harness", read: "Codex" },
+  );
+});
+
+test("a native effective_runtime pinned on the instance itself reports as record", () => {
+  assert.deepEqual(
+    resolveCodingSessionHireAgentRuntime({
+      runtime: "codex",
+      effectiveRuntime: "codex",
+      effectiveRuntimeSource: "instance",
+      agentCommand: null,
+      provider: null,
+    }),
+    { runtime: "codex", source: "record", read: "codex" },
+  );
+});
+
+test("a host that has not republished effective_runtime falls back to the catalog chain unchanged", () => {
+  assert.deepEqual(
+    resolveCodingSessionHireAgentRuntime({
+      runtime: null,
+      effectiveRuntime: null,
+      effectiveRuntimeSource: null,
+      agentCommand: "codex-acp",
+      provider: null,
+      runtimeIdForCommand: CATALOG,
+    }),
+    { runtime: "codex", source: "harness", read: "codex-acp" },
+  );
+});
+
 test("each tier has a sentence a person can act on", () => {
   assert.match(
     describeCodingSessionHireRuntimeSource("record", "codex"),

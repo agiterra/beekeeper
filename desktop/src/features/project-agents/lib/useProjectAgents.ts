@@ -197,6 +197,7 @@ export function useProjectAgents(projectId: string): ProjectAgentsState {
         projectRef: agent.projectRef ?? null,
         carriedProjectDigest: agent.carriedProjectDigest ?? null,
         runtime: agent.runtime ?? null,
+        effectiveRuntime: agent.effectiveRuntime ?? null,
         model: agent.model ?? null,
       })),
     [agentsQuery.data],

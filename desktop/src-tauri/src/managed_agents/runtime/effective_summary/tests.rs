@@ -78,3 +78,58 @@ fn summary_reports_definition_model_when_record_has_no_host_pick() {
         Some(crate::managed_agents::effective_config::ConfigSource::Definition)
     );
 }
+
+/// An agent whose record pins no runtime at all inherits the harness from its
+/// linked persona. `summary_effective_runtime` must report that inherited
+/// value — the raw `record.runtime` stays `None` and is a different field
+/// (`ManagedAgentSummary.runtime`); the summary's `effective_runtime` is the
+/// one a hire and the project Agents tab must read (ledger 135(b), 136(b),
+/// 139).
+#[test]
+fn summary_reports_inherited_runtime_and_definition_source() {
+    let mut definition = persona(Some("claude-opus-4-6"), Some("anthropic"));
+    definition.runtime = Some("codex".to_string());
+    let mut record = fixture(RespondTo::Anyone, vec![], Some("tag".into()));
+    record.persona_id = Some(definition.id.clone());
+    record.runtime = None;
+
+    let (runtime, source) = super::summary_effective_runtime(
+        &record,
+        std::slice::from_ref(&definition),
+        &Default::default(),
+    );
+
+    assert_eq!(
+        runtime.as_deref(),
+        Some("codex"),
+        "the effective runtime must be the inherited harness, not absent"
+    );
+    assert_eq!(
+        source,
+        Some(crate::managed_agents::effective_config::ConfigSource::Definition),
+        "the source must name the tier the runtime actually came from"
+    );
+}
+
+/// A record that pins its own runtime wins over the persona's, same as
+/// model/provider (item 90) — and the source says `instance`.
+#[test]
+fn summary_reports_host_pinned_runtime_and_instance_source() {
+    let mut definition = persona(Some("claude-opus-4-6"), Some("anthropic"));
+    definition.runtime = Some("codex".to_string());
+    let mut record = fixture(RespondTo::Anyone, vec![], Some("tag".into()));
+    record.persona_id = Some(definition.id.clone());
+    record.runtime = Some("claude".to_string());
+
+    let (runtime, source) = super::summary_effective_runtime(
+        &record,
+        std::slice::from_ref(&definition),
+        &Default::default(),
+    );
+
+    assert_eq!(runtime.as_deref(), Some("claude"));
+    assert_eq!(
+        source,
+        Some(crate::managed_agents::effective_config::ConfigSource::Instance)
+    );
+}

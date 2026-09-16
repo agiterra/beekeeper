@@ -46,5 +46,37 @@ pub(super) fn summary_effective_fields(
     }
 }
 
+/// The runtime the summary reports: the effective harness/runtime id and the
+/// tier it came from (`runtime_source`), same shape as `model`/`model_source`
+/// above.
+///
+/// Reuses `resolve_effective_config` rather than `resolve_effective_runtime_id`
+/// so the source tier travels with the value — `resolve_effective_runtime_id`
+/// deliberately drops it, since its own callers (spawn, the harness
+/// descriptor) only ever needed the winning id. An orphaned link reports both
+/// as absent; `summary_effective_fields` above already logs that case once,
+/// so this does not log again.
+pub(super) fn summary_effective_runtime(
+    record: &ManagedAgentRecord,
+    personas: &[crate::managed_agents::types::AgentDefinition],
+    global_config: &crate::managed_agents::GlobalAgentConfig,
+) -> (
+    Option<String>,
+    Option<crate::managed_agents::effective_config::ConfigSource>,
+) {
+    match crate::managed_agents::effective_config::resolve_effective_config(
+        record,
+        personas,
+        global_config,
+    ) {
+        crate::managed_agents::effective_config::EffectiveConfigResult::Resolved(cfg) => {
+            (cfg.runtime.value, Some(cfg.runtime.source))
+        }
+        crate::managed_agents::effective_config::EffectiveConfigResult::OrphanedInstance {
+            ..
+        } => (None, None),
+    }
+}
+
 #[cfg(test)]
 mod tests;

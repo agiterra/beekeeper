@@ -98,15 +98,21 @@ export function primaryRoleText(role: string | null): string {
 }
 
 /**
- * `Claude Code`, `Claude Code · opus`, or `runtime not set` when the record
- * carries none — the same runtime display name the dashboard's harness
+ * `Claude Code`, `Claude Code · opus`, or `runtime not set` when the agent
+ * genuinely has none — the same runtime display name the dashboard's harness
  * catalog and coding sessions use, never a bespoke label.
+ *
+ * Reads `effectiveRuntime`, not the raw `runtime`. Before ledger 139 this
+ * read `runtime` alone, so any agent that inherits its harness from its
+ * persona — Kiln, on Codex — printed "runtime not set" on the project Agents
+ * tab even while it ran and hired correctly (ledger 135(d)): the raw field is
+ * blank by design for an inheriting agent, `effectiveRuntime` is not.
  */
 export function runtimeText(
-  agent: Pick<ProjectAgentRow, "runtime" | "model">,
+  agent: Pick<ProjectAgentRow, "effectiveRuntime" | "model">,
 ): string {
-  if (!agent.runtime) return "runtime not set";
-  const label = formatCodingSessionRuntimeLabel(agent.runtime);
+  if (!agent.effectiveRuntime) return "runtime not set";
+  const label = formatCodingSessionRuntimeLabel(agent.effectiveRuntime);
   return agent.model ? `${label} · ${agent.model}` : label;
 }
 

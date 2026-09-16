@@ -527,7 +527,24 @@ pub struct ManagedAgentSummary {
     /// The record's harness/runtime id (mirror of `ManagedAgentRecord.runtime`).
     /// Lets the UI count agents referencing a harness definition (e.g. in the
     /// delete-confirmation flow). `None` = inherit from the linked persona.
+    /// This is the raw per-instance pin, not what the agent actually runs on
+    /// — see `effective_runtime` for that.
     pub runtime: Option<String>,
+    /// The runtime this agent actually runs on: `runtime` resolved record →
+    /// definition, same shape and naming as `model`/`model_source`. `Some`
+    /// exactly when `resolve_effective_runtime_id` names one — including an
+    /// agent whose `runtime` above is `None` because it inherits its harness
+    /// from its persona (ledger 136(b), 139). Consumers that need "what will
+    /// this agent run on" (hiring, the project Agents tab) must read this
+    /// field, never the raw `runtime` above, which is silently blank for
+    /// every inheriting agent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effective_runtime: Option<String>,
+    /// Which tier `effective_runtime` came from. `None` only when
+    /// `effective_runtime` is also `None` (orphaned instance with no runtime
+    /// on the record either).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_source: Option<super::effective_config::ConfigSource>,
     pub team_id: Option<String>,
     /// Mirror of `ManagedAgentRecord.home_role`.
     pub home_role: Option<String>,

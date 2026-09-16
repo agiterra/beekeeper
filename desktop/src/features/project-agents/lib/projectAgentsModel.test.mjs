@@ -294,6 +294,21 @@ test("a project agent's row carries the local record's runtime and model, or nul
   assert.deepEqual([builder.runtime, builder.model], [null, null]);
 });
 
+test("a row carries effectiveRuntime distinctly from the raw runtime pin (ledger 139)", () => {
+  // An agent that inherits its harness from its persona has no raw `runtime`
+  // pin (null), but its `effectiveRuntime` names the harness it actually
+  // runs on. The row must carry both, not collapse one into the other.
+  const inheriting = LOCAL.map((agent) =>
+    agent.pubkey === LOOM
+      ? { ...agent, runtime: null, effectiveRuntime: "codex" }
+      : agent,
+  );
+  const model = build({ localAgents: inheriting });
+  const loom = model.projectAgents.find((row) => row.pubkey === LOOM);
+  assert.equal(loom.runtime, null);
+  assert.equal(loom.effectiveRuntime, "codex");
+});
+
 test("an open session with a stopped execution is not working", () => {
   for (const status of ["stopped", "completed", "failed"]) {
     const model = build({ executions: [execution({ status })] });

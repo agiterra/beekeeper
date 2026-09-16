@@ -1122,6 +1122,13 @@ pub const HIRE_REFUSAL_CODES: &[&str] = &[
     // answer that was never going to come (ledger draft 97). A request that
     // gets no answer is a crash with better manners.
     "HIRE_MALFORMED",
+    // This computer has no recorded checkout to cut the seat's worktree
+    // from: the session's project has no repository folder set, and (for a
+    // projectless session) the channel remembers none either. Only the
+    // operator can fix this, by setting Project settings → This computer →
+    // Repository folder. Named rather than seating an agent with no tree
+    // (ledger 135(a), 136).
+    "HIRE_CHECKOUT_NOT_RECORDED",
 ];
 
 /// The three historical create key sets, oldest first, before the additive

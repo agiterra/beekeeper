@@ -2051,6 +2051,10 @@ pub fn hire_refusal_remedy(code: &str) -> Option<&'static str> {
             "the hire's routing did not parse: <key> — run `bee sessions route` and hire again \
              with the request shape (`bee sessions hire --help`)"
         }
+        "HIRE_CHECKOUT_NOT_RECORDED" => {
+            "set the project's repository folder in Project settings → This computer, then hire \
+             again; do not retry unchanged"
+        }
         _ => return None,
     })
 }

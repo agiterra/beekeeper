@@ -174,6 +174,8 @@ pub fn build_managed_agent_summary(
 
     let (effective_model, effective_provider, effective_prompt, model_source) =
         effective_summary::summary_effective_fields(record, personas, global_config);
+    let (effective_runtime, runtime_source) =
+        effective_summary::summary_effective_runtime(record, personas, global_config);
 
     // Restart badge: the running process stamped the effective spawn config
     // it was launched with; recompute a prospective one from current disk
@@ -253,6 +255,8 @@ pub fn build_managed_agent_summary(
         name: record.name.clone(),
         persona_id: record.persona_id.clone(),
         runtime: record.runtime.clone(),
+        effective_runtime,
+        runtime_source,
         team_id: record.team_id.clone(),
         home_role: record.home_role.clone(),
         project_ref: record.project_ref.clone(),

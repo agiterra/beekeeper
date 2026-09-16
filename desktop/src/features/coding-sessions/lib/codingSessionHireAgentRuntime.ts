@@ -25,6 +25,23 @@
  * catalog to draw "Codex" (`AgentInstanceEditDialog.tsx:206-207`). Reading it
  * through the same catalog here is what makes the hire agree with the screen
  * a person just looked at.
+ *
+ * **Ledger 139: the native fix.** `ManagedAgentSummary` now publishes
+ * `effective_runtime`/`runtime_source` alongside the raw `runtime` above —
+ * the same record → definition resolution this file used to reconstruct by
+ * hand through the ACP catalog (`desktop/src-tauri/src/managed_agents/
+ * runtime/effective_summary.rs`, `summary_effective_runtime`). When a record
+ * carries that field, it is taken as the answer directly and the catalog
+ * reconstruction below never runs — one native resolution beats two client
+ * ones re-deriving the same fact from `agentCommand`. The catalog fallback
+ * chain stays for a record from a host that has not yet republished the new
+ * field (an older bundled `bee`/backend a seat is still running against), so
+ * a hire never regresses to "no runtime" merely because the field is absent.
+ * The native `instance`/`instance_legacy` tier reports as `"record"` and
+ * `definition` reports as `"harness"`, reusing the existing two sentences
+ * (`describeCodingSessionHireRuntimeSource`) rather than adding a third,
+ * because they already say the same two facts: "the record pinned it" or
+ * "the persona's harness names it".
  */
 
 /** Where an agent's runtime was read from. Named in every refusal. */
@@ -45,9 +62,28 @@ export type CodingSessionHireAgentRuntime = {
   read: string | null;
 };
 
+/**
+ * The native `runtime_source` tiers `ManagedAgentSummary` can report
+ * (`ConfigSource`, snake-cased). No `"global"` case — there is no global
+ * tier for runtime, see `EffectiveAgentConfig::runtime`'s doc.
+ */
+export type CodingSessionHireEffectiveRuntimeSource =
+  | "instance"
+  | "definition"
+  | "instance_legacy";
+
 export type ResolveCodingSessionHireAgentRuntimeInput = {
   /** `ManagedAgent.runtime` — the per-instance pin, `null` when inherited. */
   runtime?: string | null;
+  /**
+   * `ManagedAgent.effectiveRuntime` — the host's own record → definition
+   * resolution (ledger 139). Preferred over every fallback below when
+   * non-blank; leave absent/null for a host that has not republished this
+   * field yet, and the catalog fallback chain applies unchanged.
+   */
+  effectiveRuntime?: string | null;
+  /** `ManagedAgent.runtimeSource`, paired with `effectiveRuntime`. */
+  effectiveRuntimeSource?: CodingSessionHireEffectiveRuntimeSource | null;
   /** `ManagedAgent.agentCommand` — the *effective* harness command. */
   agentCommand?: string | null;
   /** `ManagedAgent.provider`. */
@@ -66,6 +102,12 @@ export type ResolveCodingSessionHireAgentRuntimeInput = {
 export function resolveCodingSessionHireAgentRuntime(
   input: ResolveCodingSessionHireAgentRuntimeInput,
 ): CodingSessionHireAgentRuntime {
+  const native = (input.effectiveRuntime ?? "").trim();
+  if (native.length > 0) {
+    const source: CodingSessionHireRuntimeSource =
+      input.effectiveRuntimeSource === "definition" ? "harness" : "record";
+    return { runtime: native.toLowerCase(), source, read: native };
+  }
   const pinned = (input.runtime ?? "").trim();
   if (pinned.length > 0) {
     return { runtime: pinned.toLowerCase(), source: "record", read: pinned };

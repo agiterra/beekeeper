@@ -235,6 +235,23 @@ export type ManagedAgent = {
    * Used to count agents referencing a harness definition (delete confirm).
    */
   runtime: string | null;
+  /**
+   * The runtime this agent actually runs on: `runtime` resolved record →
+   * definition, same shape as `model`/`modelSource`. `null` when the record
+   * carries no runtime at any tier; also `null` (not `false`, there is no
+   * `false`) for a backend that has not republished this field yet — callers
+   * that need to distinguish "no runtime" from "field absent" should fall
+   * back to `runtime`/`agentCommand`-derived resolution in that case rather
+   * than treat `null` as a confirmed absence (ledger 139).
+   */
+  effectiveRuntime: string | null;
+  /**
+   * Which tier `effectiveRuntime` came from. `null` when `effectiveRuntime`
+   * is also `null`. No `"global"` case — there is no global tier for
+   * runtime, see `EffectiveAgentConfig::runtime`'s doc in
+   * `desktop/src-tauri/src/managed_agents/effective_config/mod.rs`.
+   */
+  runtimeSource: "instance" | "definition" | "instance_legacy" | null;
   teamId?: string | null;
   /** The role this agent is, from its pack persona. `null` when it has none. */
   homeRole: string | null;
