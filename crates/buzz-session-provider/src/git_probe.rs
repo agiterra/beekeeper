@@ -121,6 +121,44 @@ pub(crate) async fn probe_for_gate(cwd: &Path) -> Result<GitProbe, String> {
     Ok(probe(cwd).await)
 }
 
+/// Look at `cwd` for a **verification input**: `HEAD` and how many lines
+/// `git status --porcelain` prints.
+///
+/// [`probe`] answers a dirty *flag*, which is the right shape for a metadata
+/// row and the wrong one for a refusal a person has to act on — "your tree is
+/// dirty" and "your tree has three uncommitted changes" cost the same
+/// invocation. The count is the same `status --porcelain` output `dirty`
+/// already parses, counted rather than emptiness-tested.
+///
+/// A directory that is not there refuses by name, as
+/// [`probe_for_gate`] does and for the same reason: the caller must not read
+/// "no commit observed" from a checkout that has moved. Everything else
+/// degrades to `None`, which the caller treats as "unknown", never as "clean".
+pub(crate) async fn probe_verification_input(
+    cwd: &Path,
+) -> Result<crate::verification_input::SeatTree, String> {
+    if !cwd.is_dir() {
+        return Err(format!("cwd missing: {}", cwd.display()));
+    }
+    let head = commit(cwd).await;
+    let dirty_lines = dirty_line_count(cwd).await;
+    Ok(crate::verification_input::SeatTree { head, dirty_lines })
+}
+
+/// How many lines `git status --porcelain` prints in `cwd`.
+///
+/// Untracked files included, for the reason [`dirty`] documents: an agent's
+/// first act is usually to create a file.
+async fn dirty_line_count(cwd: &Path) -> Option<usize> {
+    let stdout = run_git(cwd, &["status", "--porcelain"]).await?;
+    Some(
+        stdout
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .count(),
+    )
+}
+
 /// Current `HEAD` commit object id, or `None` if there is not exactly one.
 ///
 /// Works on a detached `HEAD` (unlike [`branch`]) and fails the same way
@@ -420,6 +458,52 @@ mod tests {
         let dirty = probe_for_gate(dir.path()).await.expect("must observe");
         assert_eq!(dirty.dirty, Some(true));
         assert_eq!(dirty.commit, observed.commit);
+    }
+
+    /// The verification probe answers the same `HEAD` as the gate probe and
+    /// counts the changes rather than flagging them, so a refusal can say how
+    /// many.
+    #[tokio::test]
+    async fn a_verification_probe_counts_the_uncommitted_changes() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        repo(dir.path());
+        let clean = probe_verification_input(dir.path())
+            .await
+            .expect("must observe");
+        assert_eq!(clean.dirty_lines, Some(0));
+        assert_eq!(clean.head.as_deref().map(str::len), Some(40));
+
+        std::fs::write(dir.path().join("a.txt"), "changed").expect("write");
+        std::fs::write(dir.path().join("new.txt"), "new").expect("write");
+        let dirty = probe_verification_input(dir.path())
+            .await
+            .expect("must observe");
+        assert_eq!(dirty.dirty_lines, Some(2));
+        assert_eq!(dirty.head, clean.head);
+    }
+
+    /// A moved or deleted checkout refuses by name. Reading it as "no commit
+    /// observed" would let the refusal blame the assignment for a fact about
+    /// the host.
+    #[tokio::test]
+    async fn a_verification_probe_refuses_a_missing_directory_by_name() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let gone = dir.path().join("relocated-away");
+        let refusal = probe_verification_input(&gone)
+            .await
+            .expect_err("must refuse");
+        assert_eq!(refusal, format!("cwd missing: {}", gone.display()));
+    }
+
+    /// A plain directory is observed and unknown, not refused: nothing moved.
+    /// The caller turns "unknown" into its own refusal, naming the checkout.
+    #[tokio::test]
+    async fn a_verification_probe_of_a_plain_directory_knows_nothing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let observed = probe_verification_input(dir.path())
+            .await
+            .expect("must observe");
+        assert_eq!(observed, crate::verification_input::SeatTree::default());
     }
 
     /// A directory that exists but is not a repository is *not* a refusal:

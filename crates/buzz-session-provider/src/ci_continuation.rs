@@ -575,6 +575,20 @@ impl Provider {
                 Ok(())
             }
             TurnDisposition::Silent => self.settle_silent_delivery(&record),
+            // Only the verification-input fence produces this, and a
+            // continuation's materialized text is never an assignment pointer,
+            // so it is unreachable here in practice. If it ever is reached,
+            // the registration stays pending on purpose: nothing durable was
+            // written for the turn, and marking the continuation terminal
+            // would answer a question the provider has not answered.
+            TurnDisposition::Undecided => {
+                tracing::warn!(
+                    target: "csp::ci",
+                    %command_id,
+                    "a CI continuation's turn could not be decided; the registration stays pending"
+                );
+                Ok(())
+            }
         }
     }
 

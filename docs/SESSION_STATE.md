@@ -12534,6 +12534,103 @@ Evidence and limits: [conditional publication checkpoint](history/2026-09-12-pro
      Runbook for the contrasting-pack live check:
      [seat bundles experiment](history/2026-09-15-seat-bundles-experiment.md).
 
+133. **Nothing checked that a verifier's checkout held the commit its
+     assignment named (2026-09-15).**
+     The wake that starts a verifier or a runner on an assignment is minted by
+     the lead's CLI
+     (`crates/buzz-cli/src/commands/sessions/crew_cmds.rs:265`,
+     `send_team_operation_wake`) as a 44220 carrying a two-key pointer, and the
+     seat's worktree was cut from trunk when the seat was hired
+     (`useCodingSessionHire.ts`, `source: null`). Between those two facts
+     nothing compared `HEAD` with the assignment's `baseSha`:
+     (a) the relay does not validate 44244 content at ingest, so a commit-less
+     or wrong-commit verifier assignment is storable by any publisher;
+     (b) `crates/buzz-session-provider/src/team_wake.rs:247`
+     (`turn_requires_report`) resolves the same assignment — but at turn *end*,
+     and only to decide whether the **lead** is owed a wake;
+     (c) the seat could be asked, and asking the subject is the claim item 26
+     caught being wrong.
+     A verdict is a claim about a particular tree, so a verifier running on the
+     wrong commit publishes a refutation or a pass that nobody can see is
+     about something else.
+     The provider is the only party holding both the seat's working directory
+     and the decision to open the turn, so the fence is there:
+     `crates/buzz-session-provider/src/verification_input.rs` decides and
+     `Provider::verification_input_refusal` in `lib.rs` wires it into
+     `apply_turn_decision`, before anything is written to a runtime. It applies
+     only to a turn whose text is the strict assignment pointer for a seat
+     whose role is `verifier` or `runner`; READY, prose, builder and lead
+     assignments are untouched, and only a turn that resolves a pointer pays
+     for the relay read. `HEAD` and the `git status --porcelain` line count are
+     read by the provider in the seat's `cwd`
+     (`git_probe::probe_verification_input`), never by asking the agent.
+     Refusal codes, pinned by name in the tests:
+     `VERIFICATION_INPUT_UNNAMED` (the assignment carries no `baseSha`),
+     `VERIFICATION_INPUT_NOT_PRESENT` (HEAD is not that object id; both ids are
+     in the message), `VERIFICATION_INPUT_TREE_DIRTY` (with the line count),
+     `VERIFICATION_INPUT_UNOBSERVED` (the checkout could not be read, or is
+     not there) and `VERIFICATION_INPUT_UNVERIFIED` (the assignment resolved
+     to something that is not this seat's assignment).
+     **What may consume a command is split from what may not.** A durable
+     refusal answers a `commandId` for good, which is right for a fact — no
+     `baseSha`, another commit, a dirty or missing tree, a pointer the fold
+     excludes, an envelope that does not validate, a binding that names
+     somebody else — and wrong for "the relay did not answer just now". Wakes
+     already queue minutes behind a busy seat (348s measured, see the delivery
+     item), so a transport failure that spent the assignment would destroy
+     real work under a polite message; unknown is not false. So
+     `relay_query_unavailable`, `relay_identity_unavailable`,
+     `verified_snapshot_unavailable`, `assignment_fold_unavailable` and
+     `assignment_not_query_visible` return `TurnInput::Undecided`: no receipt,
+     no refusal ledger entry, no consumption, and `handle_command_event` skips
+     the watermark write for that disposition so the same command is re-read
+     on a later pass rather than skipped. The wait is bounded by the command's
+     own freshness horizon (`CommandContext::past_horizon`, 86,400s by
+     default), after which `decide_turn` ignores it as `PastHorizon`. The
+     pointer facts stay durable because the partition query is
+     complete-or-error: when it succeeds the fold saw the whole graph, so an
+     exclusion is a fact rather than a slow read. A refusal leaves the
+     seat idle and wakeable — nothing was written to the runtime and no turn
+     was spent — and every remedy names the host's establish step and a new
+     assignment, never a person. It says *re-issue* rather than "wake it
+     again" on purpose: the refusal is recorded durably before it is
+     published, so that `commandId` is answered for good and a redelivery is
+     silently ignored, and an assignment's wake reuses the assignment's own
+     `deliveryCommandId`. Re-waking the same assignment would therefore do
+     nothing, which is the one way this fence could look like a hang — so the
+     remedy it names is proven rather than assumed:
+     `a_re_issued_assignment_is_admitted_after_a_refusal`
+     (`src/tests/verification_input_tests.rs`) drives `decide_turn` and shows
+     a second assignment for the same seat, role and commit is `Start` after
+     the first is refused and recorded, while re-sending the refused wake is
+     ignored. `an_undecided_wake_stays_decidable_under_the_same_command_id`
+     pins the other half: an undecided turn writes nothing to the refusal
+     ledger or the outbox, leaves the command unconsumed, and is `Start` again
+     on the next pass — with a seat whose record cannot bind an assignment as
+     the control, since that *does* answer durably and reach the outbox.
+     Two costs, disclosed rather than hidden:
+     (a) an assignment turn now performs the same verified snapshot fetch the
+     team-wake path does, on the provider's loop, before it opens — bounded to
+     assignment-pointer turns, and a slow relay refuses the turn rather than
+     delaying it indefinitely;
+     (b) the receipt cannot yet carry "this turn was opened against commit X"
+     as a field: the lifecycle receipt's key sets are closed
+     (`crates/buzz-core/src/coding_session_payload.rs`), which is another
+     lane's path today. The established commit is logged with
+     `code = "verification_input_established"` and published through the
+     existing observed-commit refresh (`spawn_git_probe`), so the fact is on
+     the wire in the seat's next 44223 — but not bound to the assignment
+     there. Binding it is owed.
+     `base_sha` is read as the `Option` it is, so this holds for assignments
+     signed before item 131 made it required. Two facts about that older
+     shape, found by rebasing onto 131 and worth having written down: the
+     builder now **refuses to sign** a verifier or runner assignment without
+     one, so a fixture for the old shape has to be re-signed by hand; and the
+     old shape is `"baseSha": null`, not an absent key, because these payloads
+     deny unknown fields and supply no default, so every optional field keeps
+     its key. A genuinely absent key fails the fold, which this fence reports
+     as `assignment_fold_unavailable`.
+
 134. **Seat skill bundles were never removed, so they accumulated (2026-09-16).**
      Follow-up (a) of item 132. A seat's role skills are materialized to
      `<app data dir>/agents/seats/<session id>/`, outside every checkout, so a

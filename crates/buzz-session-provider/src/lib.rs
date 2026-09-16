@@ -61,6 +61,7 @@ pub mod session;
 pub mod state;
 mod team_wake;
 pub mod transcript;
+pub mod verification_input;
 
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::Path;
@@ -892,6 +893,13 @@ pub enum TurnDisposition {
     Interrupt,
     /// Nothing was owed and nothing was done.
     Silent,
+    /// The command could not be decided from facts available now, and nothing
+    /// durable was written for it: no receipt, no refusal, no consumption.
+    ///
+    /// The caller must leave the channel's watermark where it is, so the same
+    /// command is re-read on a later pass rather than skipped. Reached only by
+    /// the verification-input fence (ledger 133).
+    Undecided,
 }
 
 /// One turn command accepted into a mailbox and not yet started.
@@ -1720,14 +1728,22 @@ impl Provider {
                     // the non-44220 path below already applies.
                     return Ok(());
                 }
-                self.on_turn(
-                    channel_id,
-                    created_at,
-                    &operator_pubkey,
-                    &event.id.to_hex(),
-                    &event.content,
-                )
-                .await?;
+                let disposition = self
+                    .on_turn(
+                        channel_id,
+                        created_at,
+                        &operator_pubkey,
+                        &event.id.to_hex(),
+                        &event.content,
+                    )
+                    .await?;
+                if disposition == TurnDisposition::Undecided {
+                    // Nothing was written for this command, so the floor must
+                    // not move past it: `record_watermark` only ever advances,
+                    // and a mark here would make the next subscription skip
+                    // the one command this provider still owes an answer.
+                    return Ok(());
+                }
             }
             KIND_SYSTEM_MESSAGE => {
                 self.on_authority_receipt(channel_id, event, relay).await?;
@@ -4394,7 +4410,7 @@ impl Provider {
         operator_pubkey: &str,
         event_id: &str,
         content: &str,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<TurnDisposition> {
         let projects = ProjectsFile::default();
         // A turn never resolves a working directory or a seat; both empty maps
         // keep the context type honest without touching the disk.
@@ -4406,7 +4422,6 @@ impl Provider {
         );
         self.apply_turn_decision(channel_id, created_at, operator_pubkey, event_id, decision)
             .await
-            .map(|_| ())
     }
 
     /// Carry out one already-made turn decision.
@@ -4428,6 +4443,63 @@ impl Provider {
         registration_event_id: &str,
         decision: TurnDecision,
     ) -> anyhow::Result<TurnDisposition> {
+        // The verification-input fence (ledger 133). Before anything is
+        // written to a runtime: a turn that carries an assignment pointer to a
+        // seat whose role publishes a claim about a commit opens only when the
+        // seat's checkout holds that commit, cleanly. Every other turn passes
+        // through untouched, and the cost is paid only by the turns that
+        // resolve a pointer.
+        if let TurnDecision::Start {
+            command_id,
+            target,
+            text,
+            ..
+        } = &decision
+        {
+            match self
+                .verification_input_outcome(target, command_id, text)
+                .await
+            {
+                verification_input::TurnInput::Open => {}
+                verification_input::TurnInput::Refused(refusal) => {
+                    let receipt = LifecycleReceipt::turn_refused(
+                        command_id,
+                        target,
+                        refusal.code,
+                        &refusal.message,
+                    );
+                    tracing::warn!(
+                        target: "csp::verification_input",
+                        %command_id,
+                        code = refusal.code,
+                        "turn refused before opening: {}",
+                        refusal.message
+                    );
+                    // Durable before the publish, exactly as the other refusal
+                    // arms are: an answer given twice under one command id
+                    // after a restart is a stutter, not a second fact.
+                    self.state.record_refusal(command_id, now_secs())?;
+                    self.enqueue_receipt(channel_id, command_id, &receipt)?;
+                    return Ok(TurnDisposition::Answered(refusal.code.to_owned()));
+                }
+                verification_input::TurnInput::Undecided(reason) => {
+                    // Nothing durable, nothing published. The command keeps
+                    // its identity, so the same wake delivered again — by a
+                    // reconnect re-reading from this channel's unmoved
+                    // watermark, or by the lead re-sending it — is decided
+                    // then. `decide_turn` bounds the wait: past the command
+                    // horizon it is ignored as stale.
+                    tracing::warn!(
+                        target: "csp",
+                        %command_id,
+                        reason,
+                        "leaving an assignment turn undecided rather than spending it on an                          unverified input"
+                    );
+                    return Ok(TurnDisposition::Undecided);
+                }
+            }
+        }
+
         // Resolved by `decide_turn_command`, which is also where the
         // duplicate check read it: the fence that admitted the turn and the
         // fence the turn claims must never be two computations.
@@ -7375,9 +7447,157 @@ impl Provider {
         });
     }
 
-    /// Resolve the commit one watched gate row ran against, then hand the row
-    /// back to the loop.
+    /// Decide whether a turn may open against the input its assignment names.
     ///
+    /// [`verification_input::TurnInput::Open`] means "open the turn": the text
+    /// is not an assignment pointer, or this seat's role does not publish a
+    /// claim about a commit, or the seat's checkout holds exactly the named
+    /// commit with a clean tree. See [`crate::verification_input`] (ledger
+    /// 133) for why the provider is the party that has to ask.
+    ///
+    /// The other two outcomes are split by *what* was missing.
+    /// [`verification_input::TurnInput::Refused`] answers durably, because a
+    /// fact about the assignment or the tree stays true until somebody
+    /// changes it. [`verification_input::TurnInput::Undecided`] publishes
+    /// nothing and consumes nothing: a relay that did not answer this instant
+    /// must not spend an assignment that queued behind a busy seat.
+    async fn verification_input_outcome(
+        &mut self,
+        target: &CodingSessionTarget,
+        command_id: &str,
+        text: &str,
+    ) -> verification_input::TurnInput {
+        use verification_input::TurnInput;
+
+        // Cheapest first, and in this order on purpose: the pointer parse is a
+        // small JSON decode against text this provider already holds, and it
+        // is what keeps ordinary turns off the relay path below.
+        let Some(operation_id) = verification_input::assignment_pointer(text) else {
+            return TurnInput::Open;
+        };
+        let Some(record) = self.state.session(&target.session_id) else {
+            return TurnInput::Open;
+        };
+        if self.target_for(record) != *target {
+            // A command for another generation is not this generation's turn
+            // to fence; the ordinary staleness refusal answers it.
+            return TurnInput::Open;
+        }
+        let Some(role) = record.role.clone() else {
+            return TurnInput::Open;
+        };
+        if !verification_input::role_verifies_a_commit(&role) {
+            return TurnInput::Open;
+        }
+        let recorded_cwd = record.cwd.clone();
+        // A record holding a role holds an actor too
+        // ([`crate::state::SessionRecord::role`]), and a seat inside a team
+        // holds both umbrella refs. If one is somehow absent the assignment
+        // cannot be bound to anybody, which is a fact about this record rather
+        // than a slow read, so it refuses.
+        let (Some(actor), Some(session_ref), Some(genesis_ref)) = (
+            record.actor.clone(),
+            record.session_ref.clone(),
+            record.genesis_ref.clone(),
+        ) else {
+            return verification_input::unresolved("assignment_scope_unresolved");
+        };
+        let scope = team_wake::WakeScope {
+            channel_ref: record.channel_id,
+            session_ref,
+            genesis_ref,
+        };
+        let Some(rest) = self.rest_client.clone() else {
+            return verification_input::unresolved("relay_query_unavailable");
+        };
+        let Some(relay_self) = self.relay_self.clone() else {
+            return verification_input::unresolved("relay_identity_unavailable");
+        };
+        let snapshot = match team_wake::fetch_verified_snapshot(&rest, &relay_self, &scope).await {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                tracing::warn!(
+                    target: "csp::verification_input",
+                    %error,
+                    "assignment facts are unavailable; leaving the turn undecided"
+                );
+                return verification_input::unresolved("verified_snapshot_unavailable");
+            }
+        };
+        let context =
+            team_wake::fold_context(&scope, &snapshot.founder_pubkey, &snapshot.authority);
+        let (assignment_ref, base_sha) = match verification_input::turn_input_requirement(
+            &snapshot.team_events,
+            &context,
+            command_id,
+            &actor,
+            &role,
+            &operation_id,
+        ) {
+            verification_input::InputRequirement::NotRequired => return TurnInput::Open,
+            verification_input::InputRequirement::Unknown(reason) => {
+                return verification_input::unresolved(reason)
+            }
+            verification_input::InputRequirement::Required {
+                assignment_ref,
+                base_sha,
+            } => (assignment_ref, base_sha),
+        };
+        // The host's current answer for this session, not the one the create
+        // recorded: a relocated worktree must refuse by name rather than be
+        // read as an unknown checkout (finding 82). A tree that is not there
+        // is a fact the host can fix, so unlike a relay failure it answers.
+        let resolved = gate_cwd::resolve(
+            self.config.projects_file.as_deref(),
+            &target.session_id,
+            &recorded_cwd,
+        );
+        let tree = match resolved.present() {
+            Some(cwd) => match git_probe::probe_verification_input(cwd).await {
+                Ok(tree) => tree,
+                Err(refusal) => {
+                    tracing::warn!(
+                        target: "csp::verification_input",
+                        session_id = %target.session_id,
+                        "refusing an assignment turn: {refusal}"
+                    );
+                    return TurnInput::Refused(verification_input::checkout_missing(
+                        &assignment_ref,
+                    ));
+                }
+            },
+            None => {
+                if let Some(refusal) = resolved.refusal() {
+                    tracing::warn!(
+                        target: "csp::verification_input",
+                        session_id = %target.session_id,
+                        "refusing an assignment turn: {refusal}"
+                    );
+                }
+                return TurnInput::Refused(verification_input::checkout_missing(&assignment_ref));
+            }
+        };
+        match verification_input::check_seat_tree(&assignment_ref, base_sha.as_deref(), &tree) {
+            Ok(established) => {
+                // Said out loud, and published: the observation refresh below
+                // puts this seat's commit and dirty state into its next 44223,
+                // so "which commit this turn was opened against" is a
+                // provider-observed fact rather than this log line alone.
+                tracing::info!(
+                    target: "csp::verification_input",
+                    session_id = %target.session_id,
+                    %assignment_ref,
+                    commit = %established,
+                    code = "verification_input_established",
+                    "assignment turn opens against its named commit"
+                );
+                self.spawn_git_probe(&target.session_id);
+                TurnInput::Open
+            }
+            Err(refusal) => TurnInput::Refused(refusal),
+        }
+    }
+
     /// Two facts, from the seat's own `cwd` as the provider's own record holds
     /// it: `git rev-parse HEAD` and whether the worktree matched it. **The
     /// agent is never asked** — the whole point of an `observed` row is that
@@ -9210,6 +9430,8 @@ mod tests {
     mod team_wake_driver_tests;
     #[path = "team_wake_pressure_tests.rs"]
     mod team_wake_pressure_tests;
+    #[path = "verification_input_tests.rs"]
+    mod verification_input_tests;
 
     struct CollectingSink {
         events: Mutex<Vec<Event>>,
