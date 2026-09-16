@@ -12725,6 +12725,69 @@ Evidence and limits: [conditional publication checkpoint](history/2026-09-12-pro
      `buzz-core`, so moving it would have added a third copy instead of
      removing one. The desktop imports it from `buzz-persona` directly.
 
+135. **Seat bundles proven live on Claude and Codex; the run exposed five
+     host bugs (2026-09-16 08:50–09:10 EDT).** The contrasting-pack experiment
+     of item 132 was run by Brian with Fable checking the disk, on the
+     installed `1459c1186` bundle, in a Tank Loop team session (channel
+     `6620be79`, session `cc5cb114`) led by Loom. Tank Loop's pack source
+     was re-pointed for the run from `f0132d1` to `fb27ccf` (packs repo
+     branch `setup/8bf82143…`, source event `45630229…`), which adds a skill
+     named `marker-skill` with a different marker word and a one-line
+     `notes.md` to builder (pack A) and verifier (pack B). Results, recorded
+     in [the runbook](history/2026-09-15-seat-bundles-experiment.md):
+     Weft (builder, claude-primary, opus) answered `GOLDFINCH-ALPHA` and pack
+     A's notes line; Kiln (verifier, codex-primary, gpt-5.6-terra) answered
+     `GOLDFINCH-BRAVO` and pack B's notes line; both read the files from
+     `<app data>/agents/seats/<session id>/skills/marker-skill/` by absolute
+     path, as their transcripts show. Both worktrees had an empty
+     `git status --porcelain`, no materialized `marker-skill`, and only the
+     Claude seat carried the write-fence file. After Cmd-Q and relaunch both
+     seats reattached as generation 2 and answered identically; the bundle
+     directories were the same three (lead, builder, verifier), and both
+     manifests kept their first `materializedAt`, so the reattach
+     re-materialized nothing. The in-tree comparison run (step 5 of the
+     runbook) was not performed. Bugs found by doing, none of them in the
+     seat-bundles code:
+     (a) **Hired seats got worktrees of the wrong repository.** Both seats
+     were cut from `/Users/brian/Projects/beekeeper/beekeeper` at Beekeeper's
+     tip `03d697162`, not from TankLoop. The hire host chooses
+     `byChannel[channel] ?? mru[0]`
+     (`desktop/src/features/coding-sessions/ui/CodingSessionHireHost.tsx:113-119`);
+     Tank Loop's transport channel had no `byChannel` entry and the most
+     recently used directory was Beekeeper's. The project's own recorded
+     checkout (`byProject`, set minutes earlier via Project settings → This
+     computer) is never consulted by a hire. Loom diagnosed it from Weft's
+     report and asked the operator to "point the agents at the TankLoop repo";
+     no such control exists for hires.
+     (b) **A hire ignores the agent's configured runtime.** Kiln is set to
+     Codex on the dashboard, but the first hire went to `claude-primary` and
+     was refused `HIRE_MODEL_NOT_OFFERED` because `gpt-5.6-terra` is not a
+     Claude model; Loom recovered by re-hiring with
+     `--provider-instance codex-primary`. The refusal text suggested changing
+     Kiln's model rather than its runtime.
+     (c) **"Use roles" readiness enforces the in-checkout layout.** With the
+     box ticked the founding form blocked on `ROLE_PACKS_MISSING`
+     ("Restore personas/roles") and `REGISTRY_UNREADABLE`
+     (`team/model-registry.yaml`) in the TankLoop checkout
+     (`desktop/src-tauri/src/commands/team_readiness.rs`), while the seated
+     create stages packs from the relay's kind 30624 source regardless of the
+     box (`codingSessionSeatedCreate.ts:209`). Unticking it was the workaround;
+     the packs-on-the-wire design (item near "Packs on the wire") made this
+     check wrong. Before that, `CHECKOUT_NOT_RECORDED` blocked until the
+     project checkout was set in Project settings, a step the setup role
+     should own.
+     (d) **The project Agents tab does not show an agent's runtime**, so the
+     Claude-versus-Codex pairing had to be read from the dashboard.
+     (e) **The bundled `bee packs status` reads the release app's cache**
+     (`…/io.agiterra.beekeeper.app/packs`) and reports `cache_present: false`
+     while the dev app's cache at `…/io.agiterra.beekeeper.app.dev/packs`
+     holds the repository.
+     Also observed: a seat whose identity is seated in two sessions (Weft,
+     still seated in the earlier `2b5dda8e…` session) has its first
+     `bee sessions send` refused until `--session-ref` is given; both seats
+     recovered. Pack source and packs branch are to be reverted to `f0132d1`
+     after the session closes.
+
 ## 2a. Direction settled 2026-08-18
 
 Three independent answers to "what should a new execution get on its first

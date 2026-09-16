@@ -138,30 +138,55 @@ empty (nothing excludes `.agents/` any more — finding 76), no `skills/` under
 the bundle directory, and no notes line, because the in-tree path copies
 `SKILL.md` alone. Then quit, drop the variable, and relaunch normally.
 
-## Results — not yet run
+## Results — run 2026-09-16 08:50–09:10 EDT
 
-Fill in on the day it runs; leave a row's cell as `not observed` rather than
-inferring it.
+Run by Brian in the installed `1459c1186` bundle (the stack landed before the
+run, because `scripts/app-from.sh` installs only landed commits); Fable did
+every disk check. Tank Loop team session `cc5cb114…` in channel `6620be79…`,
+lead Loom. Packs: the project's source was re-pointed from `f0132d1` to
+`fb27ccf` on the packs repo's `setup/8bf82143…` branch, which adds
+`marker-skill` to builder (pack A) and verifier (pack B); both packs were
+declared in the roles' persona files, not kept in `/tmp`. Ledger item 135
+records the run and the five host bugs it found, none in the seat-bundles
+code. The cell "`.agents/` present" is answered for the *materialized* copy:
+both worktrees were cut from the Beekeeper repo (bug 135(a)), which tracks
+its own `.agents/skills/{desktop-screenshot,sprout-cli}`, so a bare `ls`
+shows `.agents` in both; neither held `marker-skill` or any other pack skill.
 
 ### Before restart
 
 | Seat | Runtime | Pack | Marker | Notes line | `git status` empty | `.agents/` present | Bundle path | `packRef` |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| | | A | | | | | | |
-| | | B | | | | | | |
+| Weft, builder, session `b9f25a76…` | claude-primary, opus | A | `GOLDFINCH-ALPHA` | "Pack A note: the kettle is on the third shelf." | yes (0 lines) | no materialized copy (repo's own tracked `.agents` only) | `…/io.agiterra.beekeeper.app.dev/agents/seats/b9f25a76-1826-4c26-8d6e-7c3d652b20bb/` | repo `30617:3d3b7169…:tank-loop-packs-43aa15fa1848`, path `personas/roles/builder`, sha `fb27ccf` |
+| Kiln, verifier, session `50c3ffc1…` | codex-primary, gpt-5.6-terra | B | `GOLDFINCH-BRAVO` | "Pack B note: the kettle is in the cellar." | yes (0 lines) | no materialized copy (repo's own tracked `.agents` only) | `…/io.agiterra.beekeeper.app.dev/agents/seats/50c3ffc1-edaf-40da-9c6e-f58cf03eb31b/` | same repo, path `personas/roles/verifier`, sha `fb27ccf` |
+
+Both seats' transcripts show the read: Weft ran `cat` on the bundle's
+`SKILL.md` and `notes.md` by absolute path; Kiln used its file-read tool on
+the bundle's `notes.md`. Only Weft's tree carried `.claude/settings.local.json`
+(the Claude write fence, git-ignored); Kiln's, on Codex, carried nothing
+provider-written.
 
 ### After provider restart
 
+Cmd-Q, relaunch from `~/Applications`, both seats reattached as generation 2
+("Resumed — reconnected to the provider's native session").
+
 | Seat | Marker | Notes line | Bundle path identical | `git status` empty |
 | --- | --- | --- | --- | --- |
-| | | | | |
-| | | | | |
+| Weft | `GOLDFINCH-ALPHA` | third-shelf line, verbatim | yes; manifest `materializedAt` still `2026-09-16T12:50:44Z`, `SKILL.md` mtime unchanged | yes (0 lines) |
+| Kiln | `GOLDFINCH-BRAVO` | cellar line, verbatim | yes; manifest `materializedAt` still `2026-09-16T12:51:07Z`, `SKILL.md` mtime unchanged | yes (0 lines) |
+
+`agents/seats/` held exactly three directories before and after: the lead's
+`993cfb77…` and the two above. No per-generation copy appeared.
 
 ### `BUZZ_SEAT_SKILLS_IN_TREE=1`
 
+Not run. The pre-change behaviour is documented from code in ledger 132 and
+was not re-measured.
+
 | Seat | Marker | Notes line | `.agents/skills` in tree | `git status` output | Bundle `skills/` exists |
 | --- | --- | --- | --- | --- | --- |
-| | | | | | |
+| not observed | | | | | |
 
 ## Known limits of this check
 
