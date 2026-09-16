@@ -187,11 +187,7 @@ pub struct SeatSkills {
     pub pack_ref: Option<buzz_core::coding_session_payload::PackRef>,
 }
 
-/// The directory under the app's data directory that holds seat bundles.
-pub const SEAT_BUNDLES_DIR: &str = "agents/seats";
-
-/// The skills directory inside one seat's bundle.
-pub const SEAT_BUNDLE_SKILLS_DIR: &str = "skills";
+pub use buzz_core::coding_session_seat_bundle::{SEAT_BUNDLES_DIR, SEAT_BUNDLE_SKILLS_DIR};
 
 /// Restore the pre-bundle behaviour: write the skills into the seat's working
 /// directory under `.agents/skills/`.
@@ -221,33 +217,7 @@ pub const SEAT_SKILLS_IN_TREE_VAR: &str = "BUZZ_SEAT_SKILLS_IN_TREE";
 pub fn seat_bundle_dir(state_dir: &Path, session_id: &str) -> PathBuf {
     let root = crate::agent_fence::app_data_dir_from_state_dir(state_dir)
         .unwrap_or_else(|| state_dir.to_path_buf());
-    root.join(SEAT_BUNDLES_DIR)
-        .join(bundle_directory_name(session_id))
-}
-
-/// A session id as one ordinary directory name.
-///
-/// Session ids this provider mints are UUIDs, and the ones it reads back come
-/// from its own durable records. This maps anything else to a name that is
-/// still one component, because "the bundle is this seat's own" is a claim
-/// about a path, and a path assembled from a string is only as safe as the
-/// string.
-fn bundle_directory_name(session_id: &str) -> String {
-    let mapped: String = session_id
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || matches!(c, '-' | '_') {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    if mapped.is_empty() {
-        "unnamed-session".to_owned()
-    } else {
-        mapped
-    }
+    buzz_core::coding_session_seat_bundle::seat_bundle_dir_in(&root, session_id)
 }
 
 /// Everything needed to bring one session up.
@@ -4337,6 +4307,26 @@ done
     /// A state directory the app-data shape cannot be read from still gets a
     /// per-seat bundle — under the state directory, never the working
     /// directory and never a root two seats share.
+    /// The paths this provider composed before the directory names and the
+    /// sanitizer moved into `buzz-core`, against literals rather than against
+    /// the shared function's own arithmetic. Bundles already exist on disk, so
+    /// a changed path would orphan them silently.
+    #[test]
+    fn the_provider_composes_the_same_path_it_always_did() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state = dir.path().join("app/session-provider/abc123");
+        let app = dir.path().join("app");
+
+        assert_eq!(
+            seat_bundle_dir(&state, "11111111-2222-3333-4444-555555555555"),
+            app.join("agents/seats/11111111-2222-3333-4444-555555555555")
+        );
+        assert_eq!(
+            seat_bundle_dir(&state, "session/with/slashes"),
+            app.join("agents/seats/session_with_slashes")
+        );
+    }
+
     #[test]
     fn an_unshaped_state_dir_falls_back_to_itself() {
         let dir = tempfile::tempdir().expect("tempdir");

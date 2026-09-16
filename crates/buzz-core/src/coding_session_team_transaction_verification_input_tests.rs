@@ -52,6 +52,58 @@ fn assignment_json(role: &str, base_sha: Value) -> String {
     )
 }
 
+/// The same assignment with the `baseSha` key left out altogether.
+fn assignment_json_without_the_key(role: &str) -> String {
+    envelope(
+        "assignment",
+        Value::Null,
+        serde_json::json!({
+            "assigneeActor": id("cd"),
+            "assigneeRole": role,
+            "objective": "Answer about the candidate",
+            "brief": "Run the gates against the named commit and report.",
+            "branch": "work/candidate",
+            "fileOwnership": [],
+            "acceptanceSteps": ["cargo test -p buzz-core"],
+        }),
+    )
+}
+
+/// Tolerance is for `"baseSha": null`, not for a key that is not there.
+///
+/// Worth pinning because the distinction is invisible from the ledger wording
+/// "tolerant of an absent value": the recorded stance relaxes the *rule* about
+/// what a verifier assignment must name, not the *schema* about which keys an
+/// assignment has. Anyone hand-writing an old-shape fixture will reach for the
+/// shorter JSON and get a decode error rather than the tolerance they expected.
+#[test]
+fn a_missing_base_sha_key_is_not_the_same_as_a_null_one() {
+    for role in ROLES_REQUIRING_VERIFICATION_INPUT {
+        // Present-as-null: accepted by the recorded reader, which is what lets
+        // the one already-published assignment keep folding.
+        assert!(
+            decode_recorded_coding_session_team_transaction(&assignment_json(role, Value::Null))
+                .is_ok(),
+            "{role}: an explicit null must still be tolerated"
+        );
+
+        // Absent entirely: refused by both stances, and not with the rule's
+        // sentence — this never reaches the rule.
+        let error =
+            decode_recorded_coding_session_team_transaction(&assignment_json_without_the_key(role))
+                .unwrap_err();
+        assert_ne!(
+            error,
+            missing_verification_input_message(role),
+            "{role}: a missing key must not be reported as the role rule"
+        );
+        assert!(
+            decode_coding_session_team_transaction(&assignment_json_without_the_key(role)).is_err(),
+            "{role}: the publication path refuses it too"
+        );
+    }
+}
+
 #[test]
 fn a_verifier_assignment_without_a_base_sha_is_refused_naming_the_field_and_the_role() {
     let error = assignment_in_role("verifier", None).validate().unwrap_err();

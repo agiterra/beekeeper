@@ -66,6 +66,9 @@ pub mod coding_session_routing;
 /// Runtime descriptors shared by the desktop host and the coding-session
 /// provider sidecar (`BUZZ_CSP_RUNTIMES`).
 pub mod coding_session_runtime;
+/// Where a seat's skill bundle lives: the directory names and the session-id
+/// sanitizer the provider and the desktop host both compose paths from.
+pub mod coding_session_seat_bundle;
 /// NIP-CSTX: signed, append-only team transactions inside a coding session
 /// (44244).
 pub mod coding_session_team_transaction;

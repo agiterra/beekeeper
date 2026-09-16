@@ -22,65 +22,28 @@
 //!   their own answer with its own sentence; none of them reads as "removed".
 
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
 use crate::coding_sessions::workdir_store::load_workdir_store;
 
-/// `<app data dir>/agents/seats` — the root every seat bundle sits under.
+/// The directory layout and the session-id sanitizer, shared with the provider
+/// that creates these bundles.
 ///
-/// Kept byte-for-byte in step with `SEAT_BUNDLES_DIR` in
-/// `crates/buzz-session-provider/src/session.rs`, which is what creates these
-/// directories. Duplicated rather than imported: the desktop does not depend
-/// on the provider crate, the same way `AGENT_NESTS_DIR` is duplicated between
-/// `managed_agents/agent_nest.rs` and the provider's `agent_fence.rs`.
-pub(crate) const SEAT_BUNDLES_DIR: &str = "agents/seats";
-
-/// The skills subdirectory inside one bundle, alongside `manifest.json`.
-///
-/// Kept byte-for-byte in step with `SEAT_BUNDLE_SKILLS_DIR` in the provider's
-/// `session.rs`. Used here only to recognise a directory as a bundle.
-pub(crate) const SEAT_BUNDLE_SKILLS_DIR: &str = "skills";
-
+/// This host locates a bundle by **recomputing** its name, so these must be
+/// the same definitions the creating side used. They are the same ones now,
+/// rather than a copy kept in step by comment.
+pub(crate) use buzz_core_pkg::coding_session_seat_bundle::{
+    bundle_directory_name, seat_bundle_dir_in as seat_bundle_dir,
+    seat_bundles_root_in as seat_bundles_root, SEAT_BUNDLE_SKILLS_DIR,
+};
 /// The manifest one bundle carries, naming the pack it was built from.
-pub(crate) const SEAT_BUNDLE_MANIFEST: &str = "manifest.json";
-
-/// A session id as one ordinary directory name.
 ///
-/// Byte-for-byte the provider's `bundle_directory_name` (`session.rs`). It is
-/// duplicated for the same reason the constants are, and it must stay
-/// identical for a different reason than they must: this host finds a bundle
-/// by recomputing its name, so a sanitizer that disagreed by one character
-/// would look in the wrong place and report the bundle absent.
-pub(crate) fn bundle_directory_name(session_id: &str) -> String {
-    let mapped: String = session_id
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || matches!(c, '-' | '_') {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    if mapped.is_empty() {
-        "unnamed-session".to_owned()
-    } else {
-        mapped
-    }
-}
-
-/// The root every bundle on this host sits under.
-pub(crate) fn seat_bundles_root(app_data_dir: &Path) -> PathBuf {
-    app_data_dir.join(SEAT_BUNDLES_DIR)
-}
-
-/// Where one session's bundle lives, whether or not it exists.
-pub(crate) fn seat_bundle_dir(app_data_dir: &Path, session_id: &str) -> PathBuf {
-    seat_bundles_root(app_data_dir).join(bundle_directory_name(session_id))
-}
+/// Owned by the crate that writes it. Used here only to recognise a directory
+/// as a bundle, never to read one.
+pub(crate) use buzz_persona_pkg::skills::SKILL_BUNDLE_MANIFEST_FILE as SEAT_BUNDLE_MANIFEST;
 
 /// What happened to one seat's bundle, and the sentence that says so.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

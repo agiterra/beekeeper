@@ -12455,6 +12455,17 @@ Evidence and limits: [conditional publication checkpoint](history/2026-09-12-pro
        which every reader reaches through
        `validate_coding_session_team_transaction_envelope` (`decode.rs:162`);
      - a *malformed* `baseSha` is still refused on both paths.
+     "Tolerant of an absent `base_sha`" means tolerant of `"baseSha": null`,
+     **not** of a missing key. These payloads are `deny_unknown_fields` with no
+     `serde(default)`, so a genuinely absent key fails to decode on both
+     stances, and fails before the role rule is ever consulted — the error is a
+     schema error, not the "baseSha is required" sentence. The recorded stance
+     relaxes the rule about what a verifier assignment must *name*, never the
+     schema about which keys an assignment *has*. Anyone hand-writing an
+     old-shape fixture will reach for the shorter JSON and be told something
+     they did not expect; pinned by
+     `a_missing_base_sha_key_is_not_the_same_as_a_null_one`. Item 133 records
+     the same fact from the fence's side.
      The relay does validate 44244 content at ingest
      (`crates/buzz-relay/src/handlers/ingest.rs:4073-4078`) — through that same
      envelope function, which is now the tolerant one. The relay will therefore
@@ -12682,9 +12693,16 @@ Evidence and limits: [conditional publication checkpoint](history/2026-09-12-pro
      had just cleaned up. A seated execution is told where its skills are by
      absolute path in its briefing.
      The two constants **and the sanitizer** are duplicated from
-     `crates/buzz-session-provider/src/session.rs` rather than imported, because
-     the desktop does not depend on the provider crate — the same shape as
-     `AGENT_NESTS_DIR`, duplicated into the provider's `agent_fence.rs:349`.
+     `crates/buzz-session-provider/src/session.rs` rather than imported,
+     ~~because the desktop does not depend on the provider crate~~ — the same
+     shape as `AGENT_NESTS_DIR`, duplicated into the provider's
+     `agent_fence.rs:349`. *Struck 2026-09-16: that reason was wrong. The
+     desktop does depend on `buzz-session-provider`
+     (`desktop/src-tauri/Cargo.toml:116`), so the duplication was never forced
+     by a missing dependency edge. The follow-up below was the right fix for a
+     different reason — `buzz-core` is the lower crate both sides already
+     share, and putting the definitions there means neither host imports the
+     other.*
      That precedent is a doc-comment convention with **no test**, and a true
      cross-crate byte-equal pin is impossible while the creating side is
      unlanded. What is pinned here instead is what a drift would actually
@@ -12698,6 +12716,14 @@ Evidence and limits: [conditional publication checkpoint](history/2026-09-12-pro
      Cargo.toml:20`, `desktop/src-tauri/Cargo.toml:105`), so the two copies
      collapse into one definition and there is nothing left to keep in step.
      This is owed once `work/seat-bundles-opus` and this branch are both in.
+     **Closed** by `buzz-core`'s `coding_session_seat_bundle`: both sides now
+     import the directory names, the sanitizer and the path composition from
+     it, and each keeps one test comparing its own composed path against
+     literals, so a drift cannot be written rather than being caught. The
+     manifest filename deliberately did **not** move — `buzz-persona` owns it
+     (`skills.rs:243`) because it writes it, and that crate does not depend on
+     `buzz-core`, so moving it would have added a third copy instead of
+     removing one. The desktop imports it from `buzz-persona` directly.
 
 ## 2a. Direction settled 2026-08-18
 

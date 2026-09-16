@@ -10,9 +10,8 @@ use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
 use super::{
-    bundle_directory_name, list_orphan_seat_bundles, remove_orphan_seat_bundle, remove_seat_bundle,
-    seat_bundle_dir, seat_bundles_root, SEAT_BUNDLES_DIR, SEAT_BUNDLE_MANIFEST,
-    SEAT_BUNDLE_SKILLS_DIR,
+    list_orphan_seat_bundles, remove_orphan_seat_bundle, remove_seat_bundle, seat_bundle_dir,
+    seat_bundles_root, SEAT_BUNDLE_MANIFEST, SEAT_BUNDLE_SKILLS_DIR,
 };
 
 /// Build a bundle on disk the way the provider writes one.
@@ -35,37 +34,25 @@ fn ids(values: &[&str]) -> BTreeSet<String> {
 }
 
 #[test]
-fn the_bundle_root_is_the_path_the_provider_writes_to() {
-    // The provider composes `<app data dir>/agents/seats/<session id>`. This
-    // host finds a bundle by recomputing that path, so the composition is the
-    // contract, not just the constant.
-    assert_eq!(SEAT_BUNDLES_DIR, "agents/seats");
-    assert_eq!(SEAT_BUNDLE_SKILLS_DIR, "skills");
+fn this_host_composes_the_same_path_it_always_did() {
+    // Against literals, not against the shared function's own arithmetic: this
+    // is what proves moving the definitions into `buzz-core` changed no path,
+    // and so left every bundle already on disk findable.
     let app_data = Path::new("/tmp/app-data");
     assert_eq!(
         seat_bundle_dir(app_data, "11111111-2222-3333-4444-555555555555"),
-        app_data
-            .join("agents/seats")
-            .join("11111111-2222-3333-4444-555555555555")
+        Path::new("/tmp/app-data/agents/seats/11111111-2222-3333-4444-555555555555")
     );
-    assert_eq!(seat_bundles_root(app_data), app_data.join("agents/seats"));
-}
-
-#[test]
-fn a_session_id_becomes_exactly_one_directory_component() {
-    // Byte-for-byte the provider's sanitizer: alphanumeric, `-` and `_` keep
-    // their character, everything else becomes `_`, and an empty result gets a
-    // name of its own. A disagreement here looks in the wrong place.
-    assert_eq!(bundle_directory_name("abc-DEF_123"), "abc-DEF_123");
-    // `../../` is six characters, each mapped to one `_`.
     assert_eq!(
-        bundle_directory_name("../../etc/passwd"),
-        "______etc_passwd"
+        seat_bundle_dir(app_data, "session/with/slashes"),
+        Path::new("/tmp/app-data/agents/seats/session_with_slashes")
     );
-    assert_eq!(bundle_directory_name("a/b"), "a_b");
-    assert_eq!(bundle_directory_name(""), "unnamed-session");
-    assert_eq!(bundle_directory_name("///"), "___");
-    assert!(!bundle_directory_name("../escape").contains('/'));
+    assert_eq!(
+        seat_bundles_root(app_data),
+        Path::new("/tmp/app-data/agents/seats")
+    );
+    assert_eq!(SEAT_BUNDLE_SKILLS_DIR, "skills");
+    assert_eq!(SEAT_BUNDLE_MANIFEST, "manifest.json");
 }
 
 #[test]
