@@ -493,6 +493,8 @@ pub(crate) fn invoke_handler(
         coding_sessions::worktree_prune::reclaim_coding_session_seat_worktree,
         coding_sessions::assignment_input::coding_session_establish_assignment_input,
         coding_sessions::assignment_input::coding_session_assignment_input_record,
+        coding_sessions::seat_bundle::coding_session_list_orphan_seat_bundles,
+        coding_sessions::seat_bundle::coding_session_remove_orphan_seat_bundle,
         coding_sessions::naming::coding_session_naming_settings,
         coding_sessions::naming::set_coding_session_naming_settings,
         coding_sessions::naming::generate_coding_session_name,

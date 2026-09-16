@@ -292,6 +292,28 @@ export type SeatWorktreeCloseOutcome = {
   tipOnRelayKnown: boolean;
   /** The one sentence for what happened — a prune as much as a refusal. */
   detail: string;
+  /**
+   * What happened to the seat's skill bundle, which lives outside every
+   * checkout at `<app data dir>/agents/seats/<session id>`.
+   *
+   * Never inferred from `pruned`: a tree the host removed whose record carried
+   * no session id names no bundle, and that is its own answer rather than a
+   * silent success. `removed` is true only for the `removed` token.
+   */
+  bundle: SeatBundleRemoval;
+};
+
+/** What the host did with one seat's skill bundle, and the sentence for it. */
+export type SeatBundleRemoval = {
+  removed: boolean;
+  /** The bundle path, when the host could name one. */
+  path: string | null;
+  /**
+   * `removed`, `absent`, `unnamed_session`, `session_live`, `tree_held`,
+   * `outside_root`, `unresolved_app_data`, `session_recorded` or `failed`.
+   */
+  token: string;
+  detail: string;
 };
 
 /**
@@ -302,10 +324,11 @@ export type SeatWorktreeCloseOutcome = {
  * sentence for anything it may not remove. Uncommitted work is never removed
  * here — that stays a person's own click.
  *
- * Two things can happen and they are independent: the tree is removed when the
- * predicate says `prunable`, and the rebuildable build output is reclaimed as
+ * Three things can happen and they are independent: the tree is removed when
+ * the predicate says `prunable`; the rebuildable build output is reclaimed as
  * soon as the session is settled and no execution is live, which needs no
- * grace window at all.
+ * grace window at all; and the seat's skill bundle goes with the tree, so a
+ * held tree keeps the skills it was running on.
  */
 export async function closeCodingSessionSeatWorktree(input: {
   sessionRef: string;

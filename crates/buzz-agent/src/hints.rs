@@ -5,6 +5,19 @@ use crate::mcp::truncate_at_boundary;
 
 const MAX_HINTS_BYTES: usize = 128 * 1024;
 pub const MAX_SKILL_BODY_BYTES: usize = 32 * 1024;
+/// In-tree skill directories this agent discovers by scanning its working
+/// directory.
+///
+/// These are for `buzz-agent` run on its own, against a checkout somebody laid
+/// skills out in. **A seated execution does not get its skills this way.** A
+/// seat's role skills are materialized outside every checkout, and the seat is
+/// told where they are by absolute path in its briefing, so that nothing is
+/// written into the tree it is working in and its gate rows do not read dirty.
+///
+/// So this list is deliberately not extended to reach a seat bundle: an agent
+/// that went looking for one would be guessing at a directory the host owns,
+/// and would find a stale one exactly when the host had already cleaned up.
+/// `.agents/skills` stays here for the standalone case only.
 const SKILL_DIRS: &[&str] = &[".agents/skills", ".goose/skills", ".claude/skills"];
 
 fn home_dir() -> Option<PathBuf> {

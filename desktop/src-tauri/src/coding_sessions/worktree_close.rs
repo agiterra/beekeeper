@@ -26,7 +26,7 @@
 //! that holds no relay subscription of its own. Like 30618 it says where refs
 //! stand **now**; neither is a push history.
 //!
-//! # Two removals, two rules
+//! # Three removals, three rules
 //!
 //! * **The tree** goes only when the shared predicate answers `prunable`,
 //!   which includes the seven-day grace window a clean, pushed tree gets from
@@ -37,6 +37,11 @@
 //!   [`build_output_reclaimable`] needs no grace at all — no commit can be
 //!   lost in either directory. That is the part that answers the disk, and it
 //!   is why a close that keeps the tree still frees the gigabytes.
+//! * **The seat's skill bundle** (`<app data dir>/agents/seats/<session id>`)
+//!   goes with the tree, not with the build output: it is what the seat's
+//!   execution is running on, so a held tree — one somebody may still come
+//!   back to — keeps its skills. See [`super::seat_bundle`], which owns every
+//!   rule about which directory may be removed.
 //!
 //! Everything else is a refusal carrying the sentence for its disposition:
 //! `held: {N} uncommitted files` for dirty, and the tip-not-on-relay sentence
@@ -45,13 +50,14 @@
 use std::path::Path;
 
 use serde::Serialize;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 
 use buzz_core_pkg::worktree_lifecycle::{
     build_output_reclaimable, classify_seat_worktree, SeatWorktreeDisposition, SeatWorktreeFacts,
 };
 
 use crate::app_state::AppState;
+use crate::coding_sessions::seat_bundle::{remove_seat_bundle, SeatBundleRemoval};
 use crate::coding_sessions::workdir_store::{load_workdir_store, seat_worktree_key};
 use crate::coding_sessions::worktree::remove_recorded_seat_worktree;
 use crate::coding_sessions::worktree_prune::{
@@ -83,6 +89,12 @@ pub struct CodingSessionWorktreeCloseOutcome {
     /// The one sentence explaining this outcome. Always present, for a prune
     /// as much as for a refusal.
     pub detail: String,
+    /// What happened to the seat's skill bundle, always disclosed.
+    ///
+    /// Never inferred from `pruned`: a removed tree whose record carried no
+    /// session id names no bundle, and that is its own answer rather than a
+    /// silent success.
+    pub bundle: SeatBundleRemoval,
 }
 
 /// Whether the tree's `HEAD` is reachable from a ref the remote holds now.
@@ -208,12 +220,27 @@ pub async fn close_coding_session_seat_worktree(
             reclaimed_bytes,
             tip_on_relay_known: tip.is_some(),
             detail,
+            bundle: SeatBundleRemoval::kept_with_tree(),
         });
     }
 
     // `git worktree remove` runs without `--force` inside here, so git's own
     // refusal is still the last guard under everything decided above.
     remove_recorded_seat_worktree(&app, &state, &session_ref, &seat_label, &detail)?;
+
+    // Only now, and only for a tree this host actually removed. The bundle is
+    // located from the session id on the host's own record: a record without
+    // one names no bundle, which `remove_seat_bundle` discloses rather than
+    // guessing at a directory. A failure to remove it is reported, never
+    // promoted to a failure of the close — the tree is already gone, and
+    // saying the close failed would be the less true of the two answers.
+    let bundle = match app.path().app_data_dir() {
+        Ok(app_data_dir) => {
+            remove_seat_bundle(&app_data_dir, entry.session_id.as_deref(), execution_live)
+        }
+        Err(error) => SeatBundleRemoval::unresolved_app_data(&error.to_string()),
+    };
+
     Ok(CodingSessionWorktreeCloseOutcome {
         key,
         path: path_text,
@@ -222,6 +249,7 @@ pub async fn close_coding_session_seat_worktree(
         reclaimed_bytes,
         tip_on_relay_known: tip.is_some(),
         detail,
+        bundle,
     })
 }
 
