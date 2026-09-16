@@ -13157,6 +13157,93 @@ Evidence and limits: [conditional publication checkpoint](history/2026-09-12-pro
      merge history, not a topic-branch lane's judgment call on a
      shared ledger file outside its task.
 
+140. **Catalog coverage stopped asserting a fact for a registry that was not
+     there, and an Unknown fact stopped gating Start unless it is required
+     for the first session (2026-09-16).** Closes the two contradictions in
+     ledger 137 that Brian hit live on 2026-09-16 12:05 EDT founding a Tank
+     Loop team session with "Use roles" ticked: the panel showed
+     `REGISTRY_UNREADABLE` as Limited ("...each role pack names its own
+     runtime and model instead") beside `CATALOG_TARGETS_UNCOVERED` as
+     Unknown ("No signed provider target covers this project's ready local
+     registry") for the very same absent registry, and the Unknown made the
+     badge read "First session: unknown" with Start disabled and the same
+     sentence repeated in red above the button — for a project whose packs
+     come from the relay, the normal case since packs-on-the-wire (ledger
+     137).
+
+     **Cause (1).** `apply_reached_catalog`
+     (`desktop/src-tauri/src/commands/team_readiness_wire.rs:568`, before
+     this change) computed `covered_targets` by filtering
+     `local.registry.pending_targets` against the signed catalog's targets,
+     then read `covered_targets.is_empty()` as "nothing covers this
+     registry" — true just as validly when `pending_targets` was empty
+     because there was no registry to begin with (absent, unreadable, or an
+     empty version-1 file), which is exactly the case
+     `collect_runtimes_and_registry` (`team_readiness.rs:396`) already
+     downgrades to `REGISTRY_UNREADABLE`=Limited for a project whose packs
+     come from a project source. Fixed: `apply_reached_catalog` now checks
+     `configured.is_empty()` first and, when true, pushes
+     `CATALOG_COVERAGE_NOT_APPLICABLE` (Limited) instead of
+     `CATALOG_TARGETS_UNCOVERED` (Unknown) — coverage for a project-sourced
+     pack is judged per role pack at hire time (ledger 136's
+     `resolveCodingSessionHireAgentRuntime`), not against a registry that
+     never existed. A real registry with a genuinely uncovered target is
+     unaffected: `configured` is non-empty there, so the existing Unknown
+     fact still fires (`team_readiness_tests.rs`'s
+     `trusted_wire_fold_requires_reachability_and_a_covered_target`,
+     unchanged).
+
+     **Cause (2).** `teamReadinessLaunchGate`
+     (`desktop/src/features/coding-sessions/lib/teamReadinessModel.ts:96`,
+     before this change) blocked Start on `readiness.status === "unknown"`
+     or any `unknownCodes` entry, full stop — even though the backend's own
+     `ready_for_first_session` (`team_readiness.rs`'s
+     `response_from_facts`) is computed over `local`-scope facts only,
+     because "first session" means this computer's own inventory, never a
+     fact only the relay can answer (a signed catalog cannot exist before a
+     first session publishes one). The frontend re-derived blocking from the
+     ambiguous top-level `status` string instead of trusting that
+     local/wire split. Fixed: new `teamReadinessRequiredUnknownFact`
+     (`teamReadinessModel.ts`) returns the first Unknown fact with
+     `scope: "local"`; only that blocks. A `wire`-scope Unknown (catalog
+     coverage, trust config) warns — visible under the panel's Unknown
+     grouping, never hidden — but does not disable Start, and
+     `TeamReadinessCard.tsx`'s "First session" badge now reads the same
+     function instead of the raw `status` string, so the badge and the gate
+     cannot disagree. A malformed payload naming a code in `unknownCodes`
+     with no matching fact still fails closed (cannot be scoped).
+
+     **Cause (3), closed by (2) without a separate change.** The red
+     sentence above Start
+     (`desktop/src/features/coding-sessions/ui/NewCodingSessionReadiness.tsx`)
+     only ever renders `readiness.blockers`, and
+     `codingSessionLaunchForm.ts`'s `codingSessionLaunchReadiness` only pushes
+     a `project-readiness` blocker when `projectReadiness.allowed` is false
+     — the exact `{allowed, reason}` `teamReadinessLaunchGate` returns. Once
+     the gate stops returning `allowed: false` for an optional wire Unknown,
+     the red line stops repeating it and nothing else needed to change.
+
+     **Evidence.** Native: `catalog_coverage_is_not_applicable_when_no_local_
+     registry_pins_a_target`, `registry_unreadable_is_limited_when_packs_
+     come_from_a_project_source`, `registry_unreadable_still_blocks_without_
+     a_project_pack_source` (all `team_readiness_tests.rs`); full crate run
+     `cargo test --manifest-path desktop/src-tauri/Cargo.toml`: 3409 passed,
+     0 failed. Desktop: five new cases in `teamReadiness.test.mjs` covering
+     the wire-Unknown-does-not-block, local-Unknown-still-blocks and
+     malformed-payload-fails-closed paths; the pre-existing "wire status
+     Unknown or Blocked cannot be overruled by readyForFirstSession" test
+     asserted the old behavior for both statuses in one loop and is split
+     into a `Blocked`-only case plus the new cases, with a comment naming
+     this item. `pnpm test`: 9615 passed, 0 failed. Gates:
+     `cargo fmt --all --check`, `cargo fmt --manifest-path
+     desktop/src-tauri/Cargo.toml --all --check`, `cargo clippy
+     --manifest-path desktop/src-tauri/Cargo.toml --all-targets -- -D
+     warnings`, `just file-size-check`, `just desktop-check` all green.
+
+     **Not done.** Not exercised against hive or a live founding form —
+     gates and unit/native tests only, same as 137 before it. Built in
+     `work/readiness-catalog-sonnet`, not landed, not installed.
+
 
 ## 2a. Direction settled 2026-08-18
 

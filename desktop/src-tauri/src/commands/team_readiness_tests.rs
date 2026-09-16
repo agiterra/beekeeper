@@ -657,6 +657,85 @@ fn trusted_wire_fold_requires_reachability_and_a_covered_target() {
 }
 
 #[test]
+fn registry_unreadable_is_limited_when_packs_come_from_a_project_source() {
+    // Ledger 137: a project whose roles are staged from a kind:30624 packs
+    // repository never reads team/model-registry.yaml at all, so its
+    // absence is a limit on what readiness can say (each pack names its own
+    // runtime and model), not a reason to refuse the session.
+    let temp = tempfile::tempdir().expect("tempdir");
+    let host = CountingHost::default();
+    let mut gathered = Gathered::default();
+    collect_runtimes_and_registry(&host, Some(temp.path()), true, &mut gathered);
+    let fact = gathered
+        .facts
+        .iter()
+        .find(|fact| fact.code == "REGISTRY_UNREADABLE")
+        .expect("registry fact is present for an absent registry file");
+    assert_eq!(fact.state, TeamReadinessFactState::Limited);
+    assert!(
+        fact.summary
+            .contains("each role pack names its own runtime and model instead"),
+        "{}",
+        fact.summary
+    );
+}
+
+#[test]
+fn registry_unreadable_still_blocks_without_a_project_pack_source() {
+    // The counterpart: a project with no packs repository still routes
+    // every session through team/model-registry.yaml, so its absence stays
+    // a hard blocker, unchanged by ledger 140.
+    let temp = tempfile::tempdir().expect("tempdir");
+    let host = CountingHost::default();
+    let mut gathered = Gathered::default();
+    collect_runtimes_and_registry(&host, Some(temp.path()), false, &mut gathered);
+    let fact = gathered
+        .facts
+        .iter()
+        .find(|fact| fact.code == "REGISTRY_UNREADABLE")
+        .expect("registry fact is present for an absent registry file");
+    assert_eq!(fact.state, TeamReadinessFactState::Blocked);
+}
+
+#[test]
+fn catalog_coverage_is_not_applicable_when_no_local_registry_pins_a_target() {
+    // Ledger 137 left CATALOG_TARGETS_UNCOVERED (Unknown) firing beside
+    // REGISTRY_UNREADABLE (Limited) for a project whose packs come from a
+    // project source and therefore hold no team/model-registry.yaml at all:
+    // the coverage check had no registry to cover, but it computed
+    // `covered_targets.is_empty()` from an equally empty `configured` list
+    // and reported that as "uncovered" anyway. Fixed in ledger 140: an empty
+    // local registry gets Limited coverage-not-applicable instead of a false
+    // Unknown, because coverage for a project-sourced pack is judged per
+    // role pack at hire time, not against a registry that was never there.
+    let mut gathered = local_ready_gathered();
+    gathered.registry = TeamReadinessRegistryCoverage::default();
+    let local = finish(PROJECT_REF.into(), gathered);
+    let response = fold_trusted_team_wire(
+        local,
+        TeamReadinessWireObservation::Reached(TrustedTeamCatalogSnapshot {
+            provenance: vec![wire::TeamReadinessCatalogProvenance {
+                event_id: "d".repeat(64),
+                channel_id: "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10".into(),
+                signer_pubkey: "e".repeat(64),
+                revision: 8,
+            }],
+            targets: vec!["codex-primary:gpt-5.6-luna".into()],
+            invalid_event_count: 0,
+            conflict_count: 0,
+        }),
+    );
+    assert!(!response
+        .unknown_codes
+        .contains(&"CATALOG_TARGETS_UNCOVERED".to_string()));
+    assert!(response
+        .limited_codes
+        .contains(&"CATALOG_COVERAGE_NOT_APPLICABLE".to_string()));
+    assert_eq!(response.registry.covered_targets, Vec::<String>::new());
+    assert_eq!(response.registry.uncovered_targets, Vec::<String>::new());
+}
+
+#[test]
 fn contract_serializes_local_and_wire_planes_without_hidden_defaults() {
     let response = finish(PROJECT_REF.into(), local_ready_gathered());
     let json = serde_json::to_value(response).expect("serialize readiness");

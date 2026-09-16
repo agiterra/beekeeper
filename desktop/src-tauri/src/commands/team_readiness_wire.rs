@@ -577,7 +577,26 @@ fn apply_reached_catalog(local: &mut TeamReadinessResponse, snapshot: TrustedTea
         .cloned()
         .collect();
     local.registry.pending_targets.clear();
-    if local.registry.covered_targets.is_empty() {
+    if configured.is_empty() {
+        // No local registry pinned a provider or model target — absent,
+        // unreadable, or an empty version-1 registry — so there is nothing
+        // here for the signed catalog to cover. Emitting
+        // CATALOG_TARGETS_UNCOVERED anyway asserted a fact this project's own
+        // REGISTRY_UNREADABLE=Limited fact already disclosed does not apply:
+        // a project whose packs come from a project source names its own
+        // runtime and model per role, and coverage for that is judged per
+        // role pack at hire time, not against a registry that does not exist
+        // (ledger 137 left this contradiction standing; ledger 140 closes
+        // it). This is Limited, not Unknown: nothing here is unverifiable,
+        // there is simply nothing local to check coverage against.
+        local.facts.push(wire_fact(
+            "catalog",
+            "CATALOG_COVERAGE_NOT_APPLICABLE",
+            TeamReadinessFactState::Limited,
+            "No local registry pins a provider or model target; each role pack's runtime \
+             and model coverage is judged at hire time instead",
+        ));
+    } else if local.registry.covered_targets.is_empty() {
         local.facts.push(wire_fact(
             "catalog",
             "CATALOG_TARGETS_UNCOVERED",

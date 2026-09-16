@@ -126,28 +126,133 @@ test("a launch that does not use roles is not gated by project readiness", () =>
   );
 });
 
-test("wire status Unknown or Blocked cannot be overruled by readyForFirstSession", () => {
-  for (const status of ["unknown", "blocked"]) {
-    const response = readiness({
-      readyForFirstSession: true,
-      status,
-      provider: {
-        relayUrl: "wss://hive.example",
-        provisioned: true,
-        process: "live",
-      },
-    });
-    assert.equal(
-      teamReadinessLaunchGate({
-        projectRef: response.projectRef,
-        loading: false,
-        error: null,
-        readiness: response,
-      }).allowed,
-      false,
-      status,
-    );
-  }
+// Ledger 140: this test used to loop `["unknown", "blocked"]` and assert
+// both always block regardless of `readyForFirstSession`. That was true for
+// "blocked" but wrong for "unknown" once a real Unknown fact carries a
+// `scope`: `CATALOG_TARGETS_UNCOVERED` is a `wire` fact about *full*
+// readiness (a signed provider catalog does not exist until a first session
+// publishes one), and ledger 137 left it blocking the very first session it
+// cannot yet exist for. The split is now explicit — a `local`-scope Unknown
+// (this computer's own inventory) still blocks; a `wire`-scope Unknown
+// (something only the relay can answer) warns instead. Legacy payloads that
+// report `status: "unknown"`/a code in `unknownCodes` with no matching fact
+// still fail closed, which is the "unknown" half of the original loop with
+// no facts attached — it is retained via the top-level `status` case below.
+test("Blocked status cannot be overruled by readyForFirstSession", () => {
+  const response = readiness({
+    readyForFirstSession: true,
+    status: "blocked",
+    provider: {
+      relayUrl: "wss://hive.example",
+      provisioned: true,
+      process: "live",
+    },
+  });
+  assert.equal(
+    teamReadinessLaunchGate({
+      projectRef: response.projectRef,
+      loading: false,
+      error: null,
+      readiness: response,
+    }).allowed,
+    false,
+  );
+});
+
+test("an unknownCodes entry with no matching fact still fails closed", () => {
+  // A malformed or legacy payload that names a code in `unknownCodes` but
+  // carries no fact for it cannot be scoped local vs. wire, so the gate
+  // refuses to guess it was only ever a wire one.
+  const response = readiness({
+    readyForFirstSession: true,
+    status: "unknown",
+    provider: {
+      relayUrl: "wss://hive.example",
+      provisioned: true,
+      process: "live",
+    },
+    unknownCodes: ["SOME_UNTRANSLATED_CODE"],
+  });
+  assert.equal(
+    teamReadinessLaunchGate({
+      projectRef: response.projectRef,
+      loading: false,
+      error: null,
+      readiness: response,
+    }).allowed,
+    false,
+  );
+});
+
+test("a wire-scope Unknown catalog fact warns but does not block the first session (ledger 137, 140)", () => {
+  const catalogUncovered = {
+    category: "catalog",
+    code: "CATALOG_TARGETS_UNCOVERED",
+    scope: "wire",
+    state: "unknown",
+    summary:
+      "No signed provider target covers this project's ready local registry.",
+    remedy: null,
+  };
+  const response = readiness({
+    readyForFirstSession: true,
+    status: "unknown",
+    provider: {
+      relayUrl: "wss://hive.example",
+      provisioned: true,
+      process: "live",
+    },
+    facts: [catalogUncovered],
+    unknownCodes: ["CATALOG_TARGETS_UNCOVERED"],
+  });
+  assert.equal(
+    teamReadinessLaunchGate({
+      projectRef: response.projectRef,
+      loading: false,
+      error: null,
+      readiness: response,
+    }).allowed,
+    true,
+  );
+});
+
+test("a local-scope Unknown fact still blocks the first session even when the status also carries an optional wire Unknown", () => {
+  const localUnknown = {
+    category: "identity",
+    code: "SELECTED_ROLE_KEY_UNVERIFIED",
+    scope: "local",
+    state: "unknown",
+    summary: "A role's signing key has not been checked on this computer.",
+    remedy: "Use Prepare below to start that identity.",
+  };
+  const catalogUncovered = {
+    category: "catalog",
+    code: "CATALOG_TARGETS_UNCOVERED",
+    scope: "wire",
+    state: "unknown",
+    summary:
+      "No signed provider target covers this project's ready local registry.",
+    remedy: null,
+  };
+  const response = readiness({
+    readyForFirstSession: false,
+    status: "unknown",
+    provider: {
+      relayUrl: "wss://hive.example",
+      provisioned: true,
+      process: "live",
+    },
+    facts: [localUnknown, catalogUncovered],
+    unknownCodes: ["SELECTED_ROLE_KEY_UNVERIFIED", "CATALOG_TARGETS_UNCOVERED"],
+  });
+  const gate = teamReadinessLaunchGate({
+    projectRef: response.projectRef,
+    loading: false,
+    error: null,
+    readiness: response,
+  });
+  assert.equal(gate.allowed, false);
+  assert.match(gate.reason, /signing key has not been checked/);
 });
 
 test("one ready provider permits the first launch while diversity remains visible as Limited", () => {

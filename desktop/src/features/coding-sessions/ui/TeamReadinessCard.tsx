@@ -22,6 +22,7 @@ import {
   teamReadinessBlockerCopy,
   teamReadinessLaunchGate,
   teamReadinessPrepareScope,
+  teamReadinessRequiredUnknownFact,
 } from "../lib/teamReadinessModel";
 import { UseThisFolderButton } from "./founded/TeamReadinessUseThisFolder";
 import type { TeamReadinessPrepareStep } from "../lib/teamReadinessPrepare";
@@ -85,8 +86,18 @@ export function TeamReadinessCard(props: {
     firstReady &&
     props.readiness?.status === "ready" &&
     props.readiness.ready === true;
+  // "Unknown" here means the first session itself is unresolved — a
+  // `local`-scope Unknown fact, this computer's own inventory. A `wire`-scope
+  // Unknown (e.g. catalog coverage, which cannot exist before a first
+  // session publishes one) is a warning on Full readiness, not on this badge
+  // — ledger 137 read it as the same "unknown" and disabled Start for a
+  // project that had never had anything to disable it over; ledger 140 makes
+  // the badge agree with `teamReadinessLaunchGate`, which already computes
+  // the same first-session-required distinction.
+  const requiredUnknown =
+    teamReadinessRequiredUnknownFact(props.readiness ?? null) !== null;
   const firstState =
-    props.loading || props.readError || props.readiness?.status === "unknown"
+    props.loading || props.readError || requiredUnknown
       ? "unknown"
       : firstReady
         ? "ready"

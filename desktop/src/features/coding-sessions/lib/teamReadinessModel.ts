@@ -42,6 +42,34 @@ function firstFactReason(
   return fact ? factReason(fact) : null;
 }
 
+/**
+ * The Unknown fact that is *required* for the first session, or null when
+ * every Unknown fact is a `wire`-scope one.
+ *
+ * Backend readiness already draws this line: `readyForFirstSession` is
+ * computed over `local`-scope facts only (`team_readiness.rs`,
+ * `response_from_facts`), because "first session" means this computer's own
+ * inventory — a recorded checkout, staged role packs, a live local
+ * provider — never a fact this computer can only learn by asking the relay
+ * for a signed catalog, which does not exist until a first session
+ * publishes one. A `wire`-scope Unknown (catalog coverage, trust config) is
+ * about *full* readiness and must warn, not block: ledger 137 left
+ * `CATALOG_TARGETS_UNCOVERED` (Unknown, wire) blocking Start beside
+ * `REGISTRY_UNREADABLE` (Limited, local) for the same absent registry;
+ * ledger 140 makes the local/wire split explicit here instead of reading
+ * the ambiguous top-level `status` string.
+ */
+export function teamReadinessRequiredUnknownFact(
+  readiness: TeamReadinessResponse | null,
+): TeamReadinessFact | null {
+  if (!readiness) return null;
+  return (
+    readiness.facts.find(
+      (fact) => fact.state === "unknown" && fact.scope === "local",
+    ) ?? null
+  );
+}
+
 /** Fail closed for project team launches, while leaving non-project launches alone. */
 export function teamReadinessLaunchGate(input: {
   projectRef: string | null;
@@ -93,16 +121,23 @@ export function teamReadinessLaunchGate(input: {
         "Team Readiness reports a blocking host fact. Resolve it, then re-read readiness.",
     };
   }
-  const unknownFactReason = firstFactReason(input.readiness, "unknown");
-  if (
-    input.readiness.status === "unknown" ||
-    input.readiness.unknownCodes.length > 0 ||
-    unknownFactReason !== null
-  ) {
+  const requiredUnknownFact = teamReadinessRequiredUnknownFact(input.readiness);
+  if (requiredUnknownFact) {
+    return {
+      allowed: false,
+      reason: factReason(requiredUnknownFact),
+    };
+  }
+  // `unknownCodes` naming a code with no matching fact in `facts` is a
+  // malformed or legacy payload this function cannot scope — fail closed
+  // rather than guess it was only ever a `wire` one.
+  const unknownCodesWithNoFact =
+    input.readiness.unknownCodes.length > 0 &&
+    !input.readiness.facts.some((fact) => fact.state === "unknown");
+  if (unknownCodesWithNoFact) {
     return {
       allowed: false,
       reason:
-        unknownFactReason ??
         "Team Readiness contains an unknown host fact. Resolve it, then re-read readiness.",
     };
   }
