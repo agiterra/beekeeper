@@ -12785,8 +12785,20 @@ Evidence and limits: [conditional publication checkpoint](history/2026-09-12-pro
      Also observed: a seat whose identity is seated in two sessions (Weft,
      still seated in the earlier `2b5dda8e…` session) has its first
      `bee sessions send` refused until `--session-ref` is given; both seats
-     recovered. Pack source and packs branch are to be reverted to `f0132d1`
-     after the session closes.
+     recovered.
+     **Cleaned up 09:40 EDT, all as Brian:** the pack source was restored to
+     `f0132d1` (event `85150702…` replacing `45630229…`) and the packs branch
+     carries revert `1463fee`; the session was deleted outright with
+     `bee sessions delete` (kind 5 over 147 events, `17e7653d…`), after
+     which `sessions status` showed both seat executions `released`. (f) A
+     deletion is not a closure: `bee sessions worktree status` still answered
+     "the session is not closed, so nothing is removed" for both seat trees,
+     and no closure can be published from the CLI (kind 44230 comes only from
+     the desktop's closure dialog), so the host's reaper and the new bundle
+     cleanup never ran. Fable removed the two seat worktrees, the lead's
+     worktree and the three bundle directories by hand after confirming each
+     tree was clean with nothing beyond `main`; the host's worktree records
+     for them are now stale and will read as missing.
 
 ## 2a. Direction settled 2026-08-18
 
