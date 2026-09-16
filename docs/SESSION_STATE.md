@@ -12932,7 +12932,11 @@ Evidence and limits: [conditional publication checkpoint](history/2026-09-12-pro
      code (`teamReadinessBlockerCopy` in
      `desktop/src/features/coding-sessions/lib/teamReadinessModel.ts`); the
      host's own code, summary and remedy are still printed underneath every
-     one, and an untranslated code renders exactly as it did.
+     one, and an untranslated code renders exactly as it did. Not wired here:
+     `CodingSessionFoundedWorkspace`/`CodingSessionFoundedSetupHost` never
+     resolved or passed a `projectLabel`, so the button always read "this
+     project"; closed on `work/readiness-project-label-sonnet` (Sonnet),
+     gates green, not landed.
 
      **(f) A deletion is not a closure, and nothing could close from a
      terminal.** `classify_seat_worktree` had one way for a session's work to

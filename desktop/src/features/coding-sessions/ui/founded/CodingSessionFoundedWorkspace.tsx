@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 
 import { useAppNavigation } from "@/app/navigation/useAppNavigation";
 import { useChannelsQuery } from "@/features/channels/hooks";
+import { useProjectsQuery } from "@/features/projects/hooks";
 import { useIdentityQuery } from "@/shared/api/hooks";
 import { Button } from "@/shared/ui/button";
 import { FuzzyLogo } from "@/shared/ui/buzz-logo/FuzzyLogo";
@@ -126,6 +127,19 @@ export function CodingSessionFoundedWorkspace({
     () => channelsQuery.data?.find((entry) => entry.id === channelId) ?? null,
     [channelId, channelsQuery.data],
   );
+  // The project's own name, for the readiness card's "Use this folder as
+  // <name>'s checkout" sentence (ledger 137's disclosed gap). A coordinate
+  // alone is not a name anybody recognizes; null until both the channel and
+  // the project list have resolved, or for a projectless session.
+  const projectsQuery = useProjectsQuery();
+  const projectLabel = React.useMemo(() => {
+    const projectRef = channel?.projectRef?.trim();
+    if (!projectRef) return null;
+    const match = projectsQuery.data?.find(
+      (project) => project.projectAddress?.trim() === projectRef,
+    );
+    return match?.name?.trim() || null;
+  }, [channel?.projectRef, projectsQuery.data]);
   // Until the channel list is read, `channel?.projectRef ?? null` says "no
   // project" about a channel nobody has looked at yet.
   const channelReader: "loading" | "errored" | "resolved" =
@@ -220,6 +234,7 @@ export function CodingSessionFoundedWorkspace({
               replace: true,
             });
           }}
+          projectLabel={projectLabel}
           projectRef={channel?.projectRef ?? null}
           sessionRef={sessionRef}
           starting={starting}

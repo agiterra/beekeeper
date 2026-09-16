@@ -544,6 +544,7 @@ export function CodingSessionFoundedSetupHost({
   nameReadError = null,
   refreshNames,
   onCreated,
+  projectLabel = null,
   projectRef,
   sessionRef,
   starting = false,
@@ -563,6 +564,12 @@ export function CodingSessionFoundedSetupHost({
   /** Retry the name read without replacing the draft. */
   refreshNames?: () => void;
   onCreated: (input: { channelId: string; generationId: string }) => void;
+  /**
+   * The project's own name, forwarded to the card for the one-click "Use
+   * this folder as <name>'s checkout" sentence. Null falls back to "this
+   * project" — for a projectless session, or before the name has resolved.
+   */
+  projectLabel?: string | null;
   projectRef: string | null;
   sessionRef: string;
   /** A receipt-joined create already claims the umbrella; Start is held. */
@@ -639,6 +646,7 @@ export function CodingSessionFoundedSetupHost({
         onDiscard={onDiscard}
         onOpenProjectAgents={onOpenProjectAgents}
         onStart={onStart}
+        projectLabel={projectLabel}
         projectRef={projectRef}
         setup={setup}
       />

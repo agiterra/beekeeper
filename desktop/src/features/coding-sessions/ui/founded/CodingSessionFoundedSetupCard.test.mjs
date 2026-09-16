@@ -11,10 +11,18 @@ const dom = new JSDOM("<!doctype html><html><body></body></html>", {
   url: "http://localhost",
 });
 
+/** Answers keyed by command, opt-in per test; unset command still rejects. */
+let invokeAnswers = {};
+
 const tauriInternals = {
   // The Where field's children ask the host about the folder on mount; an
-  // unanswered host is what the E2E mock bridge also gives them.
-  invoke: () => Promise.reject(new Error("no host in this test")),
+  // unanswered host is what the E2E mock bridge also gives them, unless a
+  // test opts a specific command into `invokeAnswers`.
+  invoke: (command) => {
+    if (command in invokeAnswers)
+      return Promise.resolve(invokeAnswers[command]);
+    return Promise.reject(new Error("no host in this test"));
+  },
   transformCallback: () => Math.random(),
 };
 
@@ -37,6 +45,7 @@ before(() => {
 afterEach(async () => {
   const { cleanup } = await import("@testing-library/react");
   cleanup();
+  invokeAnswers = {};
 });
 
 after(() => dom.window.close());
@@ -192,6 +201,7 @@ async function mount({
   onDiscard = () => {},
   onOpenProjectAgents = null,
   onStart = () => {},
+  projectLabel = null,
   projectRef = null,
 } = {}) {
   const React = (await import("react")).default;
@@ -214,6 +224,7 @@ async function mount({
         onDiscard,
         onOpenProjectAgents,
         onStart,
+        projectLabel,
         projectRef,
         setup,
         ...next,
@@ -922,4 +933,68 @@ test("the mode switch says Team brings in workers as needed, not a fixed team", 
   assert.doesNotMatch(page.text(), /with a bench and a\s+policy/);
   assert.equal(page.has("coding-session-founded-mode-solo"), true);
   assert.equal(page.has("coding-session-founded-mode-team"), true);
+});
+
+// --- Ledger 137: the founder host's project name reaches the sentence. ---
+
+const CHECKOUT_FACT = {
+  code: "CHECKOUT_NOT_RECORDED",
+  scope: "local",
+  state: "blocked",
+  summary: "summary",
+  remedy: "remedy",
+};
+
+/** Just enough of a readiness response to trip CHECKOUT_NOT_RECORDED. */
+const CHECKOUT_BLOCKED_READINESS = {
+  projectRef: TANK_LOOP,
+  ready: false,
+  readyForFirstSession: false,
+  status: "blocked",
+  source: {},
+  provider: { provisioned: false, process: "unknown" },
+  facts: [CHECKOUT_FACT],
+  blockingCodes: ["CHECKOUT_NOT_RECORDED"],
+  unknownCodes: [],
+  awaitingCodes: [],
+};
+
+async function mountCheckoutBlocked(projectLabel) {
+  invokeAnswers = {
+    list_coding_session_worktree_branches: { branches: ["main"] },
+  };
+  const teamReadiness = {
+    ...model().teamReadiness,
+    readiness: CHECKOUT_BLOCKED_READINESS,
+    names: {},
+    scan: null,
+    prepareSteps: [],
+    prepareError: null,
+    prepareWarning: null,
+    beginPrepare: () => {},
+    cancelPrepare: () => {},
+    confirmPrepare: () => {},
+    setName: () => {},
+  };
+  return mount({
+    setup: model({ mode: "team", useRoles: true, teamReadiness }),
+    projectRef: TANK_LOOP,
+    projectLabel,
+  });
+}
+
+test("the founder host's project label reaches the readiness sentence (ledger 137)", async () => {
+  const page = await mountCheckoutBlocked("Tank Loop");
+  const button = page.query("team-readiness-use-this-folder");
+  const text = button?.textContent ?? "";
+  assert.ok(button, "renders once the branch check answers");
+  assert.match(text, /Use this folder as Tank Loop’s checkout/);
+});
+
+test("with no project label yet, the sentence falls back to 'this project'", async () => {
+  const page = await mountCheckoutBlocked(null);
+  const button = page.query("team-readiness-use-this-folder");
+  const text = button?.textContent ?? "";
+  assert.ok(button, "still renders with no label yet");
+  assert.match(text, /Use this folder as this project’s checkout/);
 });
