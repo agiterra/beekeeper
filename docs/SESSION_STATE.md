@@ -12421,6 +12421,50 @@ Evidence and limits: [conditional publication checkpoint](history/2026-09-12-pro
      [Review](history/2026-09-15-project-hiring-corrections-review.md),
      [`PROJECT_AGENT_HIRING_IMPL.md`](PROJECT_AGENT_HIRING_IMPL.md).
 
+132. **A seat's role skills were written into its checkout (2026-09-15).**
+     The provider copied each skill to `.agents/skills/<name>/SKILL.md` in the
+     seat's worktree (`crates/buzz-persona/src/skills.rs`,
+     `crates/buzz-session-provider/src/session.rs:1277` before this change).
+     The persona body already travels in the briefing, and the briefing is what
+     tells the seat where to read the files, so nothing required them to be in
+     the repository. Four costs, each verified in the code:
+     (a) the `.agents/` exclude line went into `info/exclude`, which git shares
+     between a linked worktree and its main checkout, so every hire hid
+     untracked `.agents/` files in the operator's own checkout
+     (`git_exclude.rs`, finding 76 is why the line existed);
+     (b) a skill removed from a pack was never removed from a reused tree —
+     the materializer had no removal path;
+     (c) only `SKILL.md` was copied, so a skill's supporting files never
+     reached the seat;
+     (d) the shared-directory refusal named `.agents/skills` as a reason two
+     seats cannot share a tree (`session.rs` `seated_workdir_refusal`,
+     `lib.rs:2912`), though the git reasons — one index and one HEAD per
+     writer, items 30 and 80 — stand on their own.
+     Skills now materialize into an execution-owned bundle at
+     `<app data>/agents/seats/<session id>/skills/` with a manifest naming the
+     persona, pack directory, `packRef` and skills; the whole skill directory
+     is copied, what the pack dropped is pruned, and the same session id
+     resolves the same bundle across generations. The briefing names absolute
+     paths and says the bundle is the seat's alone and read-only: enforced for
+     Claude's file tools, which the write fence denies under the app data dir,
+     while `Bash` stays unfenced (item 73). (a), (b) and (c) are closed; the
+     Claude fence file remains the one thing written into a seat's tree.
+     `BUZZ_SEAT_SKILLS_IN_TREE=1` restores the old behaviour for one
+     comparison run and is temporary.
+     Left open by this change:
+     (a) nothing removes a bundle when its session closes, so
+     `<app data>/agents/seats/` grows a directory per session. The removal
+     belongs beside the worktree reaper in
+     `desktop/src-tauri/src/coding_sessions/worktree_close.rs`, which another
+     lane owns today — recorded here, not done;
+     (b) `crates/buzz-agent/src/hints.rs:8` still scans `.agents/skills` in
+     the current directory. Seats do not read hints from there, so a seat run
+     after this change finds nothing, which is correct rather than a
+     regression; it is the first place to look if a skill appears "missing"
+     somewhere that is not a seat.
+     Runbook for the contrasting-pack live check:
+     [seat bundles experiment](history/2026-09-15-seat-bundles-experiment.md).
+
 ## 2a. Direction settled 2026-08-18
 
 Three independent answers to "what should a new execution get on its first
