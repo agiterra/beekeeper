@@ -12887,6 +12887,20 @@ Evidence and limits: [conditional publication checkpoint](history/2026-09-12-pro
      `CodingSessionHireHost.test.mjs`. No native code was changed, so nothing
      under `src-tauri` needed a temp-repository test. Not exercised against a
      live hire.
+     **Exercised live 2026-09-16 12:57 EDT** on the installed `7fcc45a04`
+     build, Tank Loop session `c771274b` led by Loom: both hires succeeded on
+     the first attempt, Kiln on `codex-primary` with no retry, and both seats
+     got worktrees of `/Users/brian/Projects/tankloop/tankloop` at the lead's
+     `f3035cd8` (`tankloop-wt-coding-session-builder-1-bf78`,
+     `…-verifier-1-1f75`; remote `agiterra/tankloop`, clean, bundles at the
+     restored `f0132d1` pack). The umbrella showed "Hired a builder —
+     worktree cut from /Users/brian/Projects/tankloop/tankloop (project
+     checkout)" for each seat. Two things seen that are not this item's:
+     Kiln's verifier grant first failed "authority receipt references a
+     missing transition" when both hires went out in the same second, and
+     `bee sessions seat-repair` granted it (the late-receipt case already
+     on record); and Weft still holds a seat in the earlier `2b5dda8e…`
+     session, so its every `bee sessions send` needs `--session-ref`.
 
 137. **Readiness reads the truth a hire uses, and a deletion disposes of its
      trees (2026-09-16).** Closes 135(c) and 135(f). Built in
