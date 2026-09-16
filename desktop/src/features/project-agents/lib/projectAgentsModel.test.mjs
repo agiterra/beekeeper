@@ -281,6 +281,19 @@ test("renaming keeps the grouping: membership is keyed by pubkey, not name", () 
   );
 });
 
+test("a project agent's row carries the local record's runtime and model, or null when unset", () => {
+  const withRuntime = LOCAL.map((agent) =>
+    agent.pubkey === LOOM
+      ? { ...agent, runtime: "claude", model: "opus" }
+      : agent,
+  );
+  const model = build({ localAgents: withRuntime });
+  const loom = model.projectAgents.find((row) => row.pubkey === LOOM);
+  assert.deepEqual([loom.runtime, loom.model], ["claude", "opus"]);
+  const builder = model.projectAgents.find((row) => row.pubkey === BUILDER);
+  assert.deepEqual([builder.runtime, builder.model], [null, null]);
+});
+
 test("an open session with a stopped execution is not working", () => {
   for (const status of ["stopped", "completed", "failed"]) {
     const model = build({ executions: [execution({ status })] });

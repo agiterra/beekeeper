@@ -196,6 +196,8 @@ export function useProjectAgents(projectId: string): ProjectAgentsState {
         homeRole: agent.homeRole,
         projectRef: agent.projectRef ?? null,
         carriedProjectDigest: agent.carriedProjectDigest ?? null,
+        runtime: agent.runtime ?? null,
+        model: agent.model ?? null,
       })),
     [agentsQuery.data],
   );

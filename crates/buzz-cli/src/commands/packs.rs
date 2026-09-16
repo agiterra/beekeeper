@@ -218,7 +218,13 @@ pub async fn cmd_status(
         return Ok(());
     };
 
-    let cache_root = packs_dir.map(Path::to_path_buf).or_else(default_packs_dir);
+    let (cache_root, cache_dir_source) = match packs_dir {
+        Some(dir) => (Some(dir.to_path_buf()), CacheDirSource::Override),
+        None => match default_packs_dir() {
+            Some((dir, source)) => (Some(dir), source),
+            None => (None, CacheDirSource::Default),
+        },
+    };
     let cache_dir = cache_root
         .as_ref()
         .zip(source.cache_dir_name())
@@ -255,6 +261,7 @@ pub async fn cmd_status(
             // means "this machine has never fetched these packs", which is a
             // different fact from "the repository has no such role".
             "cache_dir": cache_dir.as_ref().map(|dir| dir.display().to_string()),
+            "cache_dir_source": cache_dir_source.as_str(),
             "cache_present": cache_dir.as_ref().map(|dir| dir.is_dir()),
             "roles_found": role_dirs,
         })
@@ -662,7 +669,55 @@ fn role_directories(path: &Path) -> Vec<String> {
     names
 }
 
-/// The packs cache this machine's desktop host uses, when it can be derived.
+/// How [`default_packs_dir`] picked the app identifier it used, so a caller
+/// never mistakes a guess for a read fact (finding 135(e)): a dev bundle's
+/// cache lives under a `.dev`-suffixed identifier, and reporting the release
+/// identifier's path as `cache_dir` with no qualifier reads as "the cache is
+/// empty" when it is really "this CLI guessed the wrong app".
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CacheDirSource {
+    /// `--packs-dir` named the cache root outright; nothing was derived.
+    Override,
+    /// `BUZZ_MANAGED_AGENT` named the running app instance. The desktop host
+    /// stamps this on every process it spawns for a seat
+    /// (`desktop/src-tauri/src/managed_agents/runtime/process.rs`,
+    /// `current_instance_id`/`buzz_marker_entry`), so a `bee` invoked from
+    /// inside a seat — or by a caller that exported the same value by hand —
+    /// reads its own host's cache rather than the release default.
+    Env,
+    /// Neither of the above applied. This is a guess at the release
+    /// identifier (`io.agiterra.beekeeper.app`) and is wrong for a dev
+    /// bundle or any other instance identity — say so, never report it as a
+    /// confirmed path.
+    Default,
+}
+
+impl CacheDirSource {
+    fn as_str(self) -> &'static str {
+        match self {
+            CacheDirSource::Override => "override",
+            CacheDirSource::Env => "env",
+            CacheDirSource::Default => "default",
+        }
+    }
+}
+
+/// The app identifier `default_packs_dir` should use, and which fact it came
+/// from. Prefers `BUZZ_MANAGED_AGENT` — a fact the host already provides for
+/// its own spawned processes — over the hard-coded release identifier, which
+/// is only ever a guess.
+fn resolve_app_identifier() -> (String, CacheDirSource) {
+    if let Ok(value) = std::env::var("BUZZ_MANAGED_AGENT") {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            return (trimmed.to_string(), CacheDirSource::Env);
+        }
+    }
+    (APP_IDENTIFIER.to_string(), CacheDirSource::Default)
+}
+
+/// The packs cache this machine's desktop host uses, when it can be derived,
+/// and which fact named the app instance it belongs to.
 ///
 /// Derived from the platform data directory rather than asked of the host: the
 /// CLI runs where no host may be running at all, and a `null` here is honest
@@ -673,24 +728,26 @@ fn role_directories(path: &Path) -> Vec<String> {
 /// its cache under Tauri's `app_data_dir()`, which is
 /// `<platform data dir>/<identifier>` — not the product name. A **dev** build
 /// of the desktop app uses the `.dev` suffixed identifier
-/// (`io.agiterra.beekeeper.app.dev`) and therefore a *different* packs cache;
-/// point `--packs-dir` at it when reading a dev host's cache.
-fn default_packs_dir() -> Option<PathBuf> {
+/// (`io.agiterra.beekeeper.app.dev`) and therefore a *different* packs cache.
+/// When `BUZZ_MANAGED_AGENT` names the running instance (set for every
+/// process the host spawns for a seat) that identifier is used instead of the
+/// release default; otherwise point `--packs-dir` at the dev cache by hand.
+fn default_packs_dir() -> Option<(PathBuf, CacheDirSource)> {
     let home = std::env::var_os("HOME").map(PathBuf::from)?;
+    let (identifier, source) = resolve_app_identifier();
     #[cfg(target_os = "macos")]
-    let base = home
-        .join("Library/Application Support")
-        .join(APP_IDENTIFIER);
+    let base = home.join("Library/Application Support").join(&identifier);
     #[cfg(not(target_os = "macos"))]
     let base = std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| home.join(".local/share"))
-        .join(APP_IDENTIFIER);
-    Some(base.join("packs"))
+        .join(&identifier);
+    Some((base.join("packs"), source))
 }
 
 /// The desktop app's bundle identifier — the directory Tauri's `app_data_dir()`
-/// resolves to, and so the parent of the host's packs cache.
+/// resolves to, and so the parent of the host's packs cache. Used only when
+/// [`resolve_app_identifier`] has no better fact (`CacheDirSource::Default`).
 const APP_IDENTIFIER: &str = "io.agiterra.beekeeper.app";
 
 /// Normalize and validate a project coordinate argument.

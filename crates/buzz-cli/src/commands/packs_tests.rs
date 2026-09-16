@@ -157,6 +157,70 @@ fn seeding_writes_the_packs_under_the_path_and_pushes_one_signed_commit() {
     std::fs::remove_dir_all(&root).ok();
 }
 
+// --- finding 135(e): the packs cache must name which fact resolved it ---
+
+/// Serializes tests that mutate `BUZZ_MANAGED_AGENT` — `std::env::set_var`
+/// races across threads otherwise (this suite runs tests in parallel by
+/// default), and this env var is not touched by any other test in the crate.
+static MANAGED_AGENT_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// No `BUZZ_MANAGED_AGENT`: the identifier is the hard-coded release guess,
+/// and the source is `Default` — never asserted silently as a confirmed path.
+#[test]
+fn no_env_marker_falls_back_to_the_release_identifier_and_says_so() {
+    let _guard = MANAGED_AGENT_ENV_LOCK.lock().unwrap();
+    std::env::remove_var("BUZZ_MANAGED_AGENT");
+    let (identifier, source) = resolve_app_identifier();
+    assert_eq!(identifier, APP_IDENTIFIER);
+    assert_eq!(source, CacheDirSource::Default);
+    assert_eq!(source.as_str(), "default");
+}
+
+/// `BUZZ_MANAGED_AGENT` is the fact the desktop host stamps on every process
+/// it spawns for a seat (`current_instance_id`/`buzz_marker_entry` in
+/// `desktop/src-tauri/src/managed_agents/runtime/process.rs`); a dev bundle's
+/// value must be used verbatim, not folded into the release identifier.
+#[test]
+fn env_marker_names_the_running_instance_and_is_preferred_over_the_guess() {
+    let _guard = MANAGED_AGENT_ENV_LOCK.lock().unwrap();
+    std::env::set_var("BUZZ_MANAGED_AGENT", "io.agiterra.beekeeper.app.dev");
+    let (identifier, source) = resolve_app_identifier();
+    std::env::remove_var("BUZZ_MANAGED_AGENT");
+    assert_eq!(identifier, "io.agiterra.beekeeper.app.dev");
+    assert_eq!(source, CacheDirSource::Env);
+    assert_eq!(source.as_str(), "env");
+}
+
+/// A blank `BUZZ_MANAGED_AGENT` (unset-but-exported, or explicitly cleared to
+/// empty) is not a fact either — treat it the same as absent rather than
+/// deriving a cache path from an empty directory name.
+#[test]
+fn a_blank_env_marker_is_not_treated_as_a_fact() {
+    let _guard = MANAGED_AGENT_ENV_LOCK.lock().unwrap();
+    std::env::set_var("BUZZ_MANAGED_AGENT", "   ");
+    let (identifier, source) = resolve_app_identifier();
+    std::env::remove_var("BUZZ_MANAGED_AGENT");
+    assert_eq!(identifier, APP_IDENTIFIER);
+    assert_eq!(source, CacheDirSource::Default);
+}
+
+/// `default_packs_dir` composes the identifier it resolved into the same
+/// `<platform data dir>/<identifier>/packs` shape the desktop host writes to,
+/// and carries the source forward so `cmd_status` can disclose it.
+#[test]
+fn default_packs_dir_names_the_dev_cache_when_the_env_marker_says_so() {
+    let _guard = MANAGED_AGENT_ENV_LOCK.lock().unwrap();
+    std::env::set_var("BUZZ_MANAGED_AGENT", "io.agiterra.beekeeper.app.dev");
+    let (dir, source) = default_packs_dir().expect("HOME is set in this environment");
+    std::env::remove_var("BUZZ_MANAGED_AGENT");
+    assert_eq!(source, CacheDirSource::Env);
+    let dir_str = dir.display().to_string();
+    assert!(
+        dir_str.contains("io.agiterra.beekeeper.app.dev") && dir_str.ends_with("packs"),
+        "{dir_str}"
+    );
+}
+
 // --- LANE-L31: `bee packs init` rolls back a seed/push that never lands ---
 
 mod rollback {

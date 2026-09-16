@@ -50,6 +50,7 @@ import {
   OPEN_SESSION,
   primaryRoleText,
   relationshipText,
+  runtimeText,
   SESSIONS_HEADING,
   seatedRolesText,
   sessionEngineText,
@@ -356,6 +357,13 @@ export function ProjectAgentRow({
               data-testid="project-agent-role"
             >
               {primaryRoleText(row.primaryRole)}
+            </span>
+            <span aria-hidden>·</span>
+            <span
+              className="shrink-0 text-foreground/90"
+              data-testid="project-agent-runtime"
+            >
+              {runtimeText(row)}
             </span>
             <span aria-hidden>·</span>
             <span

@@ -12800,6 +12800,63 @@ Evidence and limits: [conditional publication checkpoint](history/2026-09-12-pro
      tree was clean with nothing beyond `main`; the host's worktree records
      for them are now stale and will read as missing.
 
+138. **Fixed 2026-09-16 — the project Agents tab discloses runtime, and
+     `bee packs status` names which fact its cache directory rests on
+     (135(d), 135(e)).** (d) `ProjectAgentRow.tsx:349-368` showed only role,
+     state and location for each project agent card, with no way to tell
+     Kiln (codex) from Weft (claude) without leaving the page for the
+     dashboard's Agents tab — exactly what item 135 records the operator
+     having to do. `ProjectAgentsLocalAgentInput` and `ProjectAgentRow`
+     (`desktop/src/features/project-agents/lib/projectAgentsModel.ts`) now
+     carry the local record's `runtime`/`model` (`ManagedAgent.runtime`/
+     `.model`, `desktop/src/shared/api/types.ts:237` and `:283`), plumbed
+     from `useManagedAgentsQuery` in
+     `desktop/src/features/project-agents/lib/useProjectAgents.ts:192-198`.
+     The card (`ProjectAgentRow.tsx`) renders it next to the role via a new
+     `runtimeText` in
+     `desktop/src/features/project-agents/ui/projectAgentsCopy.ts`, which
+     reuses `formatCodingSessionRuntimeLabel`
+     (`desktop/src/features/coding-sessions/lib/codingSessionLabels.ts:11`)
+     — the same runtime display names the coding-session surfaces and the
+     project Agents shelf (`projectCodingSessionShelf.ts:211`) already use,
+     never a bespoke label — and says `"runtime not set"` rather than
+     omitting the fact when the record has none. Tests:
+     `projectAgentsModel.test.mjs` ("a project agent's row carries the local
+     record's runtime and model, or null when unset") and the new
+     `projectAgentsCopy.test.mjs`. Deviation from the brief: the actual card
+     lives in `desktop/src/features/project-agents/**`, not
+     `projects-container/**` — `projects-container` only hosts the tab
+     navigation and an unrelated coding-session shelf; no file under
+     `projects-container/` needed to change for this fix.
+     (e) `default_packs_dir` in `crates/buzz-cli/src/commands/packs.rs`
+     hard-coded `APP_IDENTIFIER = "io.agiterra.beekeeper.app"` (the release
+     bundle id) with no way to say a dev bundle's cache — under
+     `io.agiterra.beekeeper.app.dev` — was the one that actually applied, so
+     `bee packs status` reported the release path as `cache_dir` with no
+     qualifier, indistinguishable from a confirmed empty cache. Desktop
+     stamps `BUZZ_MANAGED_AGENT=<app identifier>` on every process it spawns
+     for a seat (`current_instance_id`/`buzz_marker_entry`,
+     `desktop/src-tauri/src/managed_agents/runtime/process.rs:126-142`) —
+     the same identifier Tauri's `app_data_dir()` keys the packs cache under.
+     `resolve_app_identifier` in `packs.rs` now reads that env var first
+     (`CacheDirSource::Env`) and only falls back to the hard-coded release
+     guess when it is absent or blank (`CacheDirSource::Default`);
+     `--packs-dir` still wins outright (`CacheDirSource::Override`).
+     `cmd_status`'s JSON gained `cache_dir_source: "default" | "env" |
+     "override"` alongside the existing `cache_dir`/`cache_present`, so a
+     caller can tell a guess from a read fact instead of the CLI silently
+     asserting the release path. This does not fix a bare terminal
+     invocation of an installed dev bundle's `bee` with no env var set — that
+     case still reports `"default"` and needs `--packs-dir` by hand, which
+     the surrounding doc comment already told operators to do; what changed
+     is that the CLI now says which case it is in rather than staying quiet.
+     Tests: four new cases in `packs_tests.rs` covering the absent, blank and
+     present env-var paths and the composed cache directory.
+     Not done: a sibling-file (bundled `Info.plist`) identifier read for a
+     `bee` invoked directly from an installed bundle with no seat env var —
+     scoped out to keep the fix to the three-value contract the brief named;
+     `--packs-dir` is the documented workaround for that case.
+
 ## 2a. Direction settled 2026-08-18
 
 Three independent answers to "what should a new execution get on its first

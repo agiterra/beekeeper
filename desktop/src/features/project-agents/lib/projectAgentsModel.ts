@@ -85,6 +85,15 @@ export type ProjectAgentsLocalAgentInput = {
   projectRef?: string | null;
   /** A digest this owner published for the agent from another computer. */
   carriedProjectDigest?: string | null;
+  /**
+   * The record's configured runtime id (e.g. "claude", "codex"), or `null`
+   * when it inherits from its persona / is not set. Absent (older callers)
+   * is treated the same as `null` — the card says "runtime not set" rather
+   * than guessing or omitting the fact.
+   */
+  runtime?: string | null;
+  /** The record's configured model, or `null` when none is named. */
+  model?: string | null;
 };
 
 export type BuildProjectAgentsInput = {
@@ -209,6 +218,14 @@ export type ProjectAgentRow = {
   location: ProjectAgentLocation;
   /** The agent's home role (local record, then its publication), or `null`. */
   primaryRole: string | null;
+  /**
+   * The local record's configured runtime id, or `null` when it has none —
+   * either it is not on this computer, or the record inherits/has no
+   * runtime set. Callers must render "runtime not set", never omit it.
+   */
+  runtime: string | null;
+  /** The local record's configured model, or `null` when none is named. */
+  model: string | null;
   /** Distinct roles it was seated or assigned as here, sorted. */
   seatedRoles: string[];
   /** A managed record for this pubkey exists on this computer. */
@@ -469,6 +486,8 @@ export function buildProjectAgents(
       state,
       location,
       primaryRole,
+      runtime: record?.runtime ?? null,
+      model: record?.model ?? null,
       seatedRoles: [...seatedRoles].sort(compareStrings),
       managedHere: record !== null,
       associationMissing,

@@ -1,9 +1,11 @@
+import { formatCodingSessionRuntimeLabel } from "@/features/coding-sessions/lib/codingSessionLabels";
 import { formatAge } from "@/features/roles/ui/rolesCopy";
 
 import type {
   ProjectAgentAssignment,
   ProjectAgentsReadinessLine,
   ProjectAgentRelationship,
+  ProjectAgentRow,
   ProjectAgentState,
   ProjectAgentSession,
 } from "../lib/projectAgentsModel";
@@ -93,6 +95,19 @@ export function stateText(state: ProjectAgentState): string {
 /** `Builder`, or `No primary role`. */
 export function primaryRoleText(role: string | null): string {
   return role ? titleCaseRole(role) : "No primary role";
+}
+
+/**
+ * `Claude Code`, `Claude Code · opus`, or `runtime not set` when the record
+ * carries none — the same runtime display name the dashboard's harness
+ * catalog and coding sessions use, never a bespoke label.
+ */
+export function runtimeText(
+  agent: Pick<ProjectAgentRow, "runtime" | "model">,
+): string {
+  if (!agent.runtime) return "runtime not set";
+  const label = formatCodingSessionRuntimeLabel(agent.runtime);
+  return agent.model ? `${label} · ${agent.model}` : label;
 }
 
 /** `Owned by Andy · can't run on this computer`. */
