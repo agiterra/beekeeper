@@ -8,6 +8,11 @@
  * hire is scoped by, `projectRef`, cannot be dropped on the way through.
  */
 import type { ManagedAgent } from "@/shared/api/types";
+import {
+  resolveCodingSessionHireAgentRuntime,
+  type CodingSessionHireModelSource,
+  type CodingSessionHireRuntimeSource,
+} from "./codingSessionHireAgentRuntime";
 import type { CodingSessionHireCandidate } from "./codingSessionHirePolicy";
 
 /** A managed agent, narrowed to what seating one needs. */
@@ -29,13 +34,24 @@ export type CodingSessionHireAgent = {
   hasRolePack?: boolean;
   model: string | null;
   /**
-   * The runtime the record pins (`claude`, `codex`, `goose`), or null when it
-   * inherits one. This decides the seat's runtime — see
-   * `codingSessionHirePolicy.chooseProvider`.
+   * The runtime this agent is **effectively** configured for (`claude`,
+   * `codex`, `goose`), or null when nothing on its record names one. This
+   * decides the seat's runtime — see `codingSessionHirePolicy.chooseProvider`.
+   *
+   * Effective, not the raw per-instance pin: an agent that inherits its
+   * harness from its persona pins nothing, and reading the pin alone is what
+   * sent a Codex identity to `claude-primary` (ledger 135(b)). See
+   * {@link resolveCodingSessionHireAgentRuntime}.
    */
   runtime?: string | null;
+  /** Which tier {@link runtime} was read from, for the refusal sentence. */
+  runtimeSource?: CodingSessionHireRuntimeSource | null;
+  /** The raw value that tier held, so a refusal cites what it read. */
+  runtimeRead?: string | null;
   /** The record's inference provider, read only as a fallback for `runtime`. */
   provider?: string | null;
+  /** Which tier the effective {@link CodingSessionHireAgent.model} came from. */
+  modelSource?: CodingSessionHireModelSource | null;
 };
 
 /**
@@ -47,22 +63,43 @@ export type CodingSessionHireAgent = {
  */
 export function codingSessionHireAgentsFromManaged(
   agents: readonly ManagedAgent[],
+  options?: {
+    /**
+     * This computer's ACP catalog as a command → runtime-id lookup. Absent
+     * means none was read, and an agent that inherits its harness then names
+     * no runtime rather than being assigned a guessed one.
+     */
+    runtimeIdForCommand?: (command: string) => string | null;
+  },
 ): CodingSessionHireAgent[] {
-  return agents.map((agent) => ({
-    pubkey: agent.pubkey,
-    name: agent.name,
-    homeRole: agent.homeRole,
-    // `undefined` is an older backend that records no association: no
-    // project, which a project session will never seat.
-    projectRef: agent.projectRef ?? null,
-    personaId: agent.personaId,
-    ...(agent.hasRolePack === undefined
-      ? {}
-      : { hasRolePack: agent.hasRolePack }),
-    model: agent.model,
-    runtime: agent.runtime,
-    provider: agent.provider,
-  }));
+  return agents.map((agent) => {
+    const runtime = resolveCodingSessionHireAgentRuntime({
+      runtime: agent.runtime,
+      agentCommand: agent.agentCommand,
+      provider: agent.provider,
+      ...(options?.runtimeIdForCommand
+        ? { runtimeIdForCommand: options.runtimeIdForCommand }
+        : {}),
+    });
+    return {
+      pubkey: agent.pubkey,
+      name: agent.name,
+      homeRole: agent.homeRole,
+      // `undefined` is an older backend that records no association: no
+      // project, which a project session will never seat.
+      projectRef: agent.projectRef ?? null,
+      personaId: agent.personaId,
+      ...(agent.hasRolePack === undefined
+        ? {}
+        : { hasRolePack: agent.hasRolePack }),
+      model: agent.model,
+      runtime: runtime.runtime,
+      runtimeSource: runtime.source,
+      runtimeRead: runtime.read,
+      provider: agent.provider,
+      modelSource: agent.modelSource,
+    };
+  });
 }
 
 /** Hire agents as the decision's candidates. */
@@ -80,6 +117,9 @@ export function codingSessionHireCandidatesOf(
       : { hasRolePack: agent.hasRolePack }),
     model: agent.model,
     runtime: agent.runtime ?? null,
+    runtimeSource: agent.runtimeSource ?? null,
+    runtimeRead: agent.runtimeRead ?? null,
     provider: agent.provider ?? null,
+    modelSource: agent.modelSource ?? null,
   }));
 }

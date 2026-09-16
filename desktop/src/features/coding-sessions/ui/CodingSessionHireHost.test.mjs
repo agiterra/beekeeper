@@ -168,6 +168,17 @@ async function harness({
     },
   ],
   umbrellas = [UMBRELLA],
+  /**
+   * The host's own checkout rule, by default answering with a project
+   * checkout. Passed as the two store maps rather than a canned answer where
+   * a test is about the rule itself, so the production resolver runs.
+   */
+  checkoutForHire = () => ({
+    kind: "resolved",
+    path: "/Users/brian/Projects/beekeeper",
+    source: "project",
+    passedOver: null,
+  }),
   now = HIRE_CREATED_AT,
   receiptError = null,
   receiptInstanceRef = "claude-primary",
@@ -253,7 +264,7 @@ async function harness({
       ...(catalogForHire === undefined ? {} : { catalogForHire }),
       channelIds: [CHANNEL_ID],
       modelCatalogs,
-      checkoutForChannel: () => "/Users/brian/Projects/beekeeper",
+      checkoutForHire,
       deps,
       operatorPubkey: OPERATOR_PUBKEY,
       policy: policy ?? DEFAULT_CODING_SESSION_HIRE_POLICY,
@@ -308,10 +319,21 @@ test("a hire is answered in order, and the seat it creates is granted", async ()
     "custody",
     "sign:44221",
     "publish:44221",
+    // Where the tree came from, said in the umbrella *after* the seat is
+    // real: a line claiming a worktree for a create that then failed would
+    // be a claim about a seat nobody has (ledger 135(a)).
+    "sign:9",
+    "publish:9",
     "receipt",
     "grant",
     "grant",
   ]);
+  const [cut] = host.of(9);
+  assert.ok(cut, "the umbrella was never told which repository the seat got");
+  assert.equal(
+    cut.content,
+    "Hired a builder — worktree cut from /Users/brian/Projects/beekeeper (project checkout)",
+  );
   assert.deepEqual(host.grants, [
     {
       channelId: CHANNEL_ID,
@@ -450,7 +472,9 @@ test("a grant that fails is said to the lead and to the umbrella, never silently
     "seated, but not granted: provider wake authority: the relay refused the transition — it cannot report until granted",
   );
 
-  const [notice] = host.of(9);
+  const notice = host
+    .of(9)
+    .find((event) => event.content.includes("not granted"));
   assert.ok(notice, "the umbrella was never told");
   assert.match(
     notice.content,
@@ -541,7 +565,9 @@ test("a codex identity is seated on codex, with its own model", async () => {
   assert.equal(action.providerInstanceRef, "codex-primary");
   assert.equal(action.model, "gpt-5.6-sol");
   // The hire named claude-primary; the host overrode it, so it says so.
-  const [notice] = host.of(9);
+  const notice = host
+    .of(9)
+    .find((event) => event.content.includes("codex-primary"));
   assert.ok(notice, "the runtime substitution was never disclosed");
   assert.match(notice.content, /codex-primary/);
   host.teardown();
@@ -802,5 +828,130 @@ test("a malformed hire from a stranger is recorded but never answered", async ()
   assert.equal(host.of(44220).length, 0);
   assert.equal(host.of(9).length, 0);
   assert.equal(readCodingSessionHireOutcomes()[0]?.state, "malformed");
+  host.teardown();
+});
+
+/**
+ * Ledger 135(a): a project session with no recorded repository folder.
+ *
+ * On 2026-09-16 this seated an agent anyway, on a worktree of whatever
+ * directory the person had most recently opened — Beekeeper — while the lead
+ * and the seat both believed they were working in Tank Loop. Nothing is
+ * seated now, and the refusal names the control that fixes it.
+ */
+test("a project hire with no recorded checkout is refused, never seated", async () => {
+  const { resolveCodingSessionHireCheckout } = await import(
+    "../lib/codingSessionHireCheckout.ts"
+  );
+  const host = await harness({
+    agents: [PROJECT_ADA],
+    umbrellas: [
+      {
+        ...UMBRELLA,
+        executions: [
+          {
+            activeGeneration: {
+              agentRef: LEAD_PUBKEY,
+              role: "lead",
+              status: "running",
+              projectRef: PROJECT_REF,
+            },
+          },
+        ],
+      },
+    ],
+    // The production rule, against a store that remembers only the machine's
+    // other repository under this channel — exactly the live shape.
+    checkoutForHire: (input) =>
+      resolveCodingSessionHireCheckout({
+        projectRef: input.projectRef,
+        projectLabel: "Tank Loop",
+        channelId: input.channelId,
+        byProject: {},
+        byChannel: {
+          [CHANNEL_ID]: { path: "/Users/brian/Projects/beekeeper/beekeeper" },
+        },
+      }),
+  });
+  await host.deliver(await signedHire());
+
+  assert.equal(host.of(44221).length, 0, "a seat was created with no tree");
+  assert.equal(host.steps.includes("worktree"), false);
+
+  const [turn] = host.of(44220);
+  assert.ok(turn, "the lead was never told why nothing was hired");
+  const text = JSON.parse(turn.content).action.text;
+  assert.match(text, /^hire refused: HIRE_CHECKOUT_NOT_RECORDED — /);
+  assert.match(text, /Tank Loop/);
+  assert.match(text, /Project settings → This computer → Repository folder/);
+  // The folder that used to be taken is named as passed over, not used.
+  assert.match(text, /\/Users\/brian\/Projects\/beekeeper\/beekeeper/);
+
+  const notice = host
+    .of(9)
+    .find((event) => event.content.includes("HIRE_CHECKOUT_NOT_RECORDED"));
+  assert.ok(notice, "the umbrella never saw the refusal");
+  host.teardown();
+});
+
+/**
+ * Ledger 135(b): Kiln, shown as Codex on the Agents screen, pins no runtime
+ * of its own — it inherits the harness from its persona, so
+ * `ManagedAgent.runtime` is null and only `agentCommand` says `codex-acp`.
+ * The hire used to read the pin alone, find nothing, and seat it on Claude.
+ */
+test("an agent that inherits its harness from its persona is still seated on that runtime", async () => {
+  const { codingSessionHireAgentsFromManaged } = await import(
+    "../lib/codingSessionHireCandidates.ts"
+  );
+  const { codingSessionHireRuntimeIdLookup } = await import(
+    "../lib/codingSessionHireAgentRuntime.ts"
+  );
+  const [kiln] = codingSessionHireAgentsFromManaged(
+    [
+      {
+        pubkey: ADA_PUBKEY,
+        name: "Kiln",
+        homeRole: "designer",
+        projectRef: null,
+        hasRolePack: true,
+        // Effective model from the linked persona; the record's own is empty.
+        model: "gpt-5.6-sol",
+        modelSource: "definition",
+        // The pin. Null is the whole bug: it means "inherit", not "none".
+        runtime: null,
+        provider: null,
+        agentCommand: "codex-acp",
+      },
+    ],
+    {
+      runtimeIdForCommand: codingSessionHireRuntimeIdLookup([
+        { id: "claude", command: "claude-code-acp" },
+        { id: "codex", command: "codex-acp" },
+      ]),
+    },
+  );
+  assert.equal(kiln.runtime, "codex");
+  assert.equal(kiln.runtimeSource, "harness");
+
+  const host = await harness({
+    runtimes: [CLAUDE_RUNTIME, CODEX_RUNTIME],
+    modelCatalogs: new Map([
+      ["claude-primary", CLAUDE_CATALOG],
+      ["codex-primary", ["gpt-5.6-sol"]],
+    ]),
+    agents: [kiln],
+  });
+  // The hire names no provider instance at all — the case the lead hit.
+  await host.deliver(
+    await signedHire({ role: "designer", providerInstanceRef: null }),
+  );
+
+  const [create] = host.of(44221);
+  assert.ok(create, "no seated create was published");
+  const action = JSON.parse(create.content).action;
+  assert.equal(action.providerInstanceRef, "codex-primary");
+  assert.equal(action.model, "gpt-5.6-sol");
+  assert.equal(host.of(44220).length, 0, "the hire was refused");
   host.teardown();
 });

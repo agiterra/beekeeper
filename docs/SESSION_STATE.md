@@ -12800,6 +12800,94 @@ Evidence and limits: [conditional publication checkpoint](history/2026-09-12-pro
      tree was clean with nothing beyond `main`; the host's worktree records
      for them are now stale and will read as missing.
 
+136. **A hire now names the repository it cuts from and the runtime the agent
+     is configured for (2026-09-16).** Fixes 135(a) and 135(b), both found by
+     running the seat-bundles experiment rather than by reading code.
+
+     **(a) The wrong repository.** Cause: the hire host resolved its checkout
+     as `byChannel[channel] ?? mru[0] ?? null`
+     (`desktop/src/features/coding-sessions/ui/CodingSessionHireHost.tsx:109-125`
+     at `fbb903a48`), so Tank Loop's transport channel — which had no
+     `byChannel` entry — fell through to the most recently used directory on
+     the machine, Beekeeper's. The project's own recorded checkout, `byProject`
+     in `desktop/src-tauri/src/coding_sessions/workdir_store.rs:203`, set in
+     Project settings → This computer → Repository folder, was read by no hire
+     path at all. Fix: the rule is one pure function,
+     `resolveCodingSessionHireCheckout`
+     (`desktop/src/features/coding-sessions/lib/codingSessionHireCheckout.ts`),
+     which takes `byProject` and `byChannel` and **does not take `mru`** — the
+     fallback that cut the wrong tree is not a parameter, so no later edit
+     reaches it without changing that signature. Order: the umbrella's project
+     checkout first; the channel's remembered folder only for a session that
+     belongs to no project, because with a project named and no checkout
+     recorded there is nothing to compare the channel's folder against. A
+     channel folder passed over is *named* in the outcome rather than dropped.
+     Nothing recorded is a **refusal**, `HIRE_CHECKOUT_NOT_RECORDED`, carrying
+     the remedy sentence "Set the repository folder for <project> in Project
+     settings → This computer → Repository folder"; a seat is never published
+     without a worktree
+     (`desktop/src/features/coding-sessions/hooks/useCodingSessionHire.ts`,
+     the `resolved.kind === "unrecorded"` arm of `honour`). On success the
+     umbrella gets a line of its own — `Hired a builder — worktree cut from
+     <path> (project checkout)` — published after the create is real, and the
+     outcome carries `checkout: { path, source }`.
+
+     **(b) The ignored runtime.** Cause is an asymmetry inside one record, not
+     the hire's rules: `ManagedAgentSummary` publishes `model` *effectively*
+     (record → persona → global, with `model_source` naming the tier,
+     `desktop/src-tauri/src/managed_agents/runtime.rs:175`) but publishes
+     `runtime` as the raw per-instance pin
+     (`desktop/src-tauri/src/managed_agents/runtime.rs:256`,
+     `runtime: record.runtime.clone()`), which is `None` exactly when an agent
+     inherits its harness from its persona. Kiln inherits. So
+     `chooseProvider` read a runtime from a tier that held none, concluded the
+     identity pinned no runtime, and fell through to this computer's first
+     available one — Claude — while the model it then checked had come from
+     the persona. That is also where the refusal's `gpt-5.6-terra` came from:
+     `identity.model`, i.e. the effective model, quoted as "Kiln's record
+     says" about a record whose own model field is empty. Fix:
+     `resolveCodingSessionHireAgentRuntime`
+     (`desktop/src/features/coding-sessions/lib/codingSessionHireAgentRuntime.ts`)
+     resolves record pin → effective harness command through this computer's
+     ACP catalog → inference provider, which is the same two-pass match the
+     Agents screen uses to draw "Codex"
+     (`desktop/src/features/agents/ui/AgentInstanceEditDialog.tsx:206-207`),
+     so the hire and the screen a person just looked at cannot disagree. The
+     runtime refusal is now **two** refusals with two remedies — running here
+     but disallowed ("Allow codex-primary in Settings → Sessions → Hiring, or
+     change Kiln's runtime on the Agents screen") versus not running here at
+     all ("Install or sign in to codex here, or …") — and both end "Naming a
+     different model does not help: the runtime is the agent's, not the
+     model's"
+     (`desktop/src/features/coding-sessions/lib/codingSessionHirePolicy.ts`,
+     `describeRuntimeNotAllowed` / `describeRuntimeNotRun`). The identity-model
+     refusal now cites the tier it read from
+     (`describeCodingSessionHireModelSource`), so an id inherited from a
+     persona is no longer reported as the record's own.
+
+     **Owed, and outside this lane's files.**
+     `HIRE_CHECKOUT_NOT_RECORDED` is **not** in
+     `buzz_core::coding_session_lifecycle_command::HIRE_REFUSAL_CODES` and has
+     no entry in `bee`'s `hire_refusal_remedy`
+     (`crates/buzz-cli/src/commands/sessions/crew.rs:1999`), because that list
+     and the desktop's `CODING_SESSION_HIRE_REFUSAL_CODES` are pinned to each
+     other by a test and `crates/buzz-cli` belongs to another lane. The code
+     travels in the ordinary `hire refused: <CODE> — <reason>` shape, which
+     `bee` parses structurally and prints whole, and the reason carries the
+     remedy — so nothing a lead needs is missing, but the generic remedy line
+     is absent until the three files are updated together. Also unclosed:
+     135(c), (d) and (e).
+
+     **Evidence.** Desktop unit tests for the resolution order, the
+     no-checkout refusal, the passed-over folder, the inherited-harness
+     runtime pick and both runtime refusals live in
+     `codingSessionHireCheckout.test.mjs`,
+     `codingSessionHireAgentRuntime.test.mjs`,
+     `codingSessionHirePolicy.test.mjs`, `codingSessionHireModel.test.mjs` and
+     `CodingSessionHireHost.test.mjs`. No native code was changed, so nothing
+     under `src-tauri` needed a temp-repository test. Not exercised against a
+     live hire.
+
 138. **Fixed 2026-09-16 — the project Agents tab discloses runtime, and
      `bee packs status` names which fact its cache directory rests on
      (135(d), 135(e)).** (d) `ProjectAgentRow.tsx:349-368` showed only role,
@@ -12856,6 +12944,7 @@ Evidence and limits: [conditional publication checkpoint](history/2026-09-12-pro
      `bee` invoked directly from an installed bundle with no seat env var —
      scoped out to keep the fix to the three-value contract the brief named;
      `--packs-dir` is the documented workaround for that case.
+||||||| parent of 150642f30 (A hire cuts from the project's checkout, on the agent's own runtime)
 
 ## 2a. Direction settled 2026-08-18
 

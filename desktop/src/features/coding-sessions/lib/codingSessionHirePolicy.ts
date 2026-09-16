@@ -27,6 +27,11 @@ import {
 } from "@/shared/lib/projectAgentAssociation";
 import { truncatePubkey } from "@/shared/lib/pubkey";
 import {
+  describeCodingSessionHireRuntimeSource,
+  type CodingSessionHireModelSource,
+  type CodingSessionHireRuntimeSource,
+} from "./codingSessionHireAgentRuntime";
+import {
   codingSessionHireModelOf,
   describeCodingSessionHireIdentityModelRefusal,
   describeCodingSessionHireModelRefusal,
@@ -172,16 +177,39 @@ export type CodingSessionHireCandidate = {
   /** The identity's own model, used when the hire names none. */
   model?: string | null;
   /**
-   * The runtime this identity's own record pins — `claude`, `codex`, `goose`
-   * — or `null` when it inherits one.
+   * Which tier {@link model} came from — `ManagedAgent.modelSource`.
+   *
+   * The effective model is resolved record → persona → global on the host
+   * side, so quoting it as "its record says" can name a field that is empty.
+   * See {@link describeCodingSessionHireModelSource}.
+   */
+  modelSource?: CodingSessionHireModelSource | null;
+  /**
+   * The runtime this identity is **effectively** configured for — `claude`,
+   * `codex`, `goose` — or `null` when nothing on its record names one.
    *
    * This is what decides the seat's runtime, not the umbrella's: on
    * 2026-08-28 a codex identity (`gpt-5.6-sol`) was seated on the
    * claude-agent-acp driver because the host took the umbrella's runtime and
    * passed the identity's model through it, so an OpenAI model id was handed
    * to Claude (item 88(i)).
+   *
+   * **Effective, never the raw per-instance pin.** A record that inherits its
+   * harness from its persona pins nothing here, and on 2026-09-16 that read
+   * as "this identity names no runtime": Kiln, shown as Codex on the Agents
+   * screen, was seated on `claude-primary` and then refused for a model
+   * Claude does not offer (ledger 135(b)). `codingSessionHireCandidates`
+   * resolves record → harness → provider before this is read.
    */
   runtime?: string | null;
+  /**
+   * Which tier {@link runtime} was read from, and the raw value it held.
+   *
+   * Carried so a refusal can cite its evidence instead of asserting "its
+   * record says" about a field that may be empty.
+   */
+  runtimeSource?: CodingSessionHireRuntimeSource | null;
+  runtimeRead?: string | null;
   /**
    * The record's inference provider, when it names one.
    *
@@ -441,6 +469,7 @@ export function decideCodingSessionHire(
           provider.ref,
           identity.name,
           inherited,
+          identity.modelSource ?? null,
         ),
       };
     }
@@ -586,6 +615,15 @@ type CodingSessionHireProviderChoice =
  * An identity naming a runtime this computer does not run is refused rather
  * than re-homed: seating it somewhere else would hand its model id to an
  * adapter that has never heard of it.
+ *
+ * **Two refusals, not one.** "This computer does not run codex" and "the
+ * operator's allowed list excludes the codex this computer is running" are
+ * different facts with different remedies, and until 2026-09-16 they shared
+ * one sentence that told a lead to install something already installed. Each
+ * names the runtime the agent is configured for, where that was read, and the
+ * two ways to change it — never "pick a different model", which is what the
+ * lead was told when this path silently fell through to Claude instead
+ * (ledger 135(b)).
  */
 function chooseProvider(
   input: CodingSessionHireDecisionInput,
@@ -599,23 +637,21 @@ function chooseProvider(
     .trim()
     .toLowerCase();
   if (own.length > 0) {
+    const runs = (ref: string) =>
+      ref.trim().toLowerCase() === own ||
+      input.providerRuntimeSlugs?.get(ref)?.trim().toLowerCase() === own;
     const match = input.availableProviderInstanceRefs.find(
-      (ref) =>
-        permitted(ref) &&
-        (ref.trim().toLowerCase() === own ||
-          input.providerRuntimeSlugs?.get(ref)?.trim().toLowerCase() === own),
+      (ref) => permitted(ref) && runs(ref),
     );
     if (match === undefined) {
+      // Running here but disallowed, versus not running here at all.
+      const running = input.availableProviderInstanceRefs.find(runs);
       return {
         ok: false,
         reason:
-          `${identity.name} runs on ${own}, and this computer seats hires on ` +
-          `${
-            input.availableProviderInstanceRefs.length > 0
-              ? input.availableProviderInstanceRefs.join(", ")
-              : "no runtime at all"
-          }. Install or sign in to ${own} here, or hire a role whose identity ` +
-          "runs on one of those.",
+          running === undefined
+            ? describeRuntimeNotRun(input, identity, own)
+            : describeRuntimeNotAllowed(input, identity, own, running),
       };
     }
     return {
@@ -639,6 +675,57 @@ function chooseProvider(
   return fallback === undefined
     ? { ok: false, reason: describeProviderRefusal(input) }
     : { ok: true, ref: fallback, notice: null };
+}
+
+/** How this host describes what it read an identity's runtime from. */
+function describeRuntimeEvidence(
+  identity: CodingSessionHireCandidate,
+  runtime: string,
+): string {
+  const source = identity.runtimeSource ?? null;
+  if (source === null) {
+    return `${identity.name} is configured for ${runtime}`;
+  }
+  return (
+    `${identity.name} is configured for ${runtime}, ` +
+    `${describeCodingSessionHireRuntimeSource(source, identity.runtimeRead ?? null)}`
+  );
+}
+
+/** The agent is configured for a runtime this computer is not running. */
+function describeRuntimeNotRun(
+  input: CodingSessionHireDecisionInput,
+  identity: CodingSessionHireCandidate,
+  runtime: string,
+): string {
+  return (
+    `${describeRuntimeEvidence(identity, runtime)}, and this computer is ` +
+    `running ${
+      input.availableProviderInstanceRefs.length > 0
+        ? input.availableProviderInstanceRefs.join(", ")
+        : "no runtime at all"
+    }. Install or sign in to ${runtime} here, or change ${identity.name}'s ` +
+    "runtime on the Agents screen. Naming a different model does not help: " +
+    "the runtime is the agent's, not the model's."
+  );
+}
+
+/** The runtime is running here and the operator's list excludes it. */
+function describeRuntimeNotAllowed(
+  input: CodingSessionHireDecisionInput,
+  identity: CodingSessionHireCandidate,
+  runtime: string,
+  running: string,
+): string {
+  const list = input.policy.allowedProviderInstanceRefs;
+  return (
+    `${describeRuntimeEvidence(identity, runtime)}. This computer runs it as ` +
+    `${running}, but this session only seats hires on ${
+      list === null || list.length === 0 ? "no runtime at all" : list.join(", ")
+    }. Allow ${running} in Settings → Sessions → Hiring, or change ` +
+    `${identity.name}'s runtime on the Agents screen. Naming a different ` +
+    "model does not help: the runtime is the agent's, not the model's."
+  );
 }
 
 function describeProviderRefusal(

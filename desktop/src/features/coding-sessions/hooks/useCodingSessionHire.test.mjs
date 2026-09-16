@@ -261,7 +261,12 @@ async function harness({
       agents,
       channelIds: [CHANNEL_ID],
       modelCatalogs: new Map([["claude-primary", CLAUDE_CATALOG]]),
-      checkoutForChannel: () => "/Users/brian/Projects/beekeeper",
+      checkoutForHire: () => ({
+        kind: "resolved",
+        path: "/Users/brian/Projects/beekeeper",
+        source: "project",
+        passedOver: null,
+      }),
       deps,
       operatorPubkey: OPERATOR_PUBKEY,
       policy: DEFAULT_CODING_SESSION_HIRE_POLICY,

@@ -234,7 +234,16 @@ export type CodingSessionHireWipShare = {
   why: string | null;
 };
 
-/** The standing of a hire this host had no working copy to cut a tree from. */
+/**
+ * The standing of a hire this host had no working copy to cut a tree from.
+ *
+ * **Unreachable from the hire path since 2026-09-16, and kept deliberately.**
+ * A hire with no recorded checkout is now *refused*
+ * (`HIRE_CHECKOUT_NOT_RECORDED`, `codingSessionHireCheckout.ts`) rather than
+ * seated without a tree, so no live outcome carries `no-checkout` any more.
+ * The state stays in the type because outcomes recorded before that change
+ * carry it, and a renderer that met one would otherwise have no name for it.
+ */
 export function seatWipShareWithoutCheckout(): CodingSessionHireWipShare {
   return {
     ref: null,

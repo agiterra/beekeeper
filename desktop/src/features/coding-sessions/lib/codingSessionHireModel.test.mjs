@@ -84,11 +84,50 @@ test("an identity's own unoffered model is refused naming the identity", () => {
     "codex-primary",
     "Banksy",
     resolution,
+    "instance",
   );
-  assert.match(reason, /Banksy's record says gpt-5\.6-sol/);
+  assert.match(
+    reason,
+    /Banksy: its own record on this computer names gpt-5\.6-sol/,
+  );
   assert.match(reason, /codex-primary/);
   assert.match(reason, /default, gpt-5\.6-terra/);
   assert.match(reason, /Agents screen/);
+});
+
+// Ledger 135(b): the refusal a lead read on 2026-09-16 said "Kiln's record
+// says gpt-5.6-terra" about a record whose own model field is empty — the id
+// came from the linked persona. A sentence that names the wrong file sends a
+// person to edit a field that is already blank.
+test("a model inherited from a persona is not reported as the record's own", () => {
+  const resolution = resolveCodingSessionHireModel("gpt-5.6-terra", [
+    "default",
+    "opus[1m]",
+  ]);
+  const reason = describeCodingSessionHireIdentityModelRefusal(
+    "claude-primary",
+    "Kiln",
+    resolution,
+    "definition",
+  );
+  assert.match(
+    reason,
+    /Kiln: the persona its record is linked to names gpt-5\.6-terra/,
+  );
+  assert.ok(!/Kiln's record says/.test(reason));
+});
+
+test("a backend that reported no tier claims no file", () => {
+  const resolution = resolveCodingSessionHireModel("gpt-5.6-terra", [
+    "default",
+  ]);
+  const reason = describeCodingSessionHireIdentityModelRefusal(
+    "claude-primary",
+    "Kiln",
+    resolution,
+    null,
+  );
+  assert.match(reason, /the record this computer resolved for it says/);
 });
 
 test("an unread catalog refuses nothing — it is not a claim about the model", () => {

@@ -37,6 +37,11 @@
  * catalog is `default, claude-fable-5[1m], haiku, opus[1m], sonnet`.
  */
 
+import {
+  describeCodingSessionHireModelSource,
+  type CodingSessionHireModelSource,
+} from "./codingSessionHireAgentRuntime";
+
 /** What a host decided about one requested model. */
 export type CodingSessionHireModelResolution =
   /** The catalog offers exactly this id. */
@@ -113,12 +118,19 @@ export function describeCodingSessionHireIdentityModelRefusal(
     CodingSessionHireModelResolution,
     { kind: "not-offered" }
   >,
+  /**
+   * Which tier the id came from — `ManagedAgent.modelSource`. Omitted means
+   * the backend reported none, and the sentence then says what was resolved
+   * without naming a file.
+   */
+  modelSource?: CodingSessionHireModelSource | null,
 ): string {
   return (
-    `${identityName}'s record says ${resolution.requested}, which this ` +
-    `computer's ${providerInstanceRef} runtime does not offer. It offers ` +
-    `${resolution.offered.join(", ")}. Name one of them with --model, or fix ` +
-    `${identityName}'s record on the Agents screen.`
+    `${identityName}: ${describeCodingSessionHireModelSource(modelSource)} ` +
+    `${resolution.requested}, which this computer's ${providerInstanceRef} ` +
+    `runtime does not offer. It offers ${resolution.offered.join(", ")}. ` +
+    `Name one of them with --model, or fix ${identityName}'s model on the ` +
+    "Agents screen."
   );
 }
 

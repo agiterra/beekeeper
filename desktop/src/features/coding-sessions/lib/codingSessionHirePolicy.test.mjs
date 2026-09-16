@@ -396,7 +396,10 @@ test("an identity's vendor model alias is refused, naming the identity and the i
   });
   assert.equal(result.ok, false);
   assert.equal(result.code, "HIRE_MODEL_NOT_OFFERED");
-  assert.match(result.reason, /Ada's record says claude-opus-4-1/);
+  assert.match(
+    result.reason,
+    /Ada: the record this computer resolved for it says claude-opus-4-1/,
+  );
   assert.match(result.reason, /default, opus\[1m\]/);
 });
 
@@ -466,6 +469,80 @@ test("an identity whose runtime this computer does not run is refused, never re-
   assert.match(result.reason, /Banksy/);
   assert.match(result.reason, /codex/);
   assert.match(result.reason, /claude-primary/);
+});
+
+// Ledger 135(b): the first hire of Kiln went to claude-primary and was
+// refused for a model, so the lead was told to change the agent's *model*
+// when the mismatch was its *runtime*. Two facts, two remedies, never one
+// sentence that tells a person to install something already installed.
+test("a runtime this computer runs but the session disallows is its own refusal", () => {
+  const result = decide({
+    request: { role: "designer", providerInstanceRef: null, model: null },
+    policy: {
+      ...DEFAULT_CODING_SESSION_HIRE_POLICY,
+      allowedRoles: ["designer"],
+      allowedProviderInstanceRefs: ["claude-primary"],
+    },
+    candidates: [
+      {
+        pubkey: ADA,
+        name: "Kiln",
+        homeRole: "designer",
+        hasRolePack: true,
+        model: null,
+        runtime: "codex",
+        runtimeSource: "harness",
+        runtimeRead: "codex-acp",
+      },
+    ],
+    availableProviderInstanceRefs: ["claude-primary", "codex-primary"],
+    providerRuntimeSlugs: new Map([
+      ["claude-primary", "claude"],
+      ["codex-primary", "codex"],
+    ]),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.code, "HIRE_PROVIDER_NOT_ALLOWED");
+  // Which runtime, and where this host read it.
+  assert.match(result.reason, /Kiln is configured for codex/);
+  assert.match(result.reason, /harness its record resolves to, codex-acp/);
+  // Both remedies, and neither of them is about a model.
+  assert.match(
+    result.reason,
+    /Allow codex-primary in Settings → Sessions → Hiring/,
+  );
+  assert.match(result.reason, /change Kiln's runtime on the Agents screen/);
+  assert.match(result.reason, /Naming a different model does not help/);
+  // Never the wrong remedy: it is running here, so nothing needs installing.
+  assert.ok(!/Install or sign in/.test(result.reason));
+});
+
+test("a runtime this computer is not running says install, not allow", () => {
+  const result = decide({
+    request: { role: "designer", providerInstanceRef: null, model: null },
+    policy: {
+      ...DEFAULT_CODING_SESSION_HIRE_POLICY,
+      allowedRoles: ["designer"],
+    },
+    candidates: [
+      {
+        pubkey: ADA,
+        name: "Kiln",
+        homeRole: "designer",
+        hasRolePack: true,
+        model: null,
+        runtime: "codex",
+        runtimeSource: "record",
+        runtimeRead: "codex",
+      },
+    ],
+    availableProviderInstanceRefs: ["claude-primary"],
+    providerRuntimeSlugs: new Map([["claude-primary", "claude"]]),
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /Install or sign in to codex here/);
+  assert.match(result.reason, /change Kiln's runtime on the Agents screen/);
+  assert.ok(!/Settings → Sessions → Hiring/.test(result.reason));
 });
 
 test("an identity naming no runtime still takes the hire's, then the host's default", () => {

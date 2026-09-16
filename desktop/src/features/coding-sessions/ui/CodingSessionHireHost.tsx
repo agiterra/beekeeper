@@ -2,7 +2,11 @@ import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { useChannelsQuery } from "@/features/channels/hooks";
-import { useManagedAgentsQuery } from "@/features/agents/hooks";
+import {
+  useAcpRuntimesQuery,
+  useManagedAgentsQuery,
+} from "@/features/agents/hooks";
+import { useProjectsQuery } from "@/features/projects/hooks";
 import { isSessionTransportChannel } from "@/shared/api/channelTypes";
 import { useIdentityQuery } from "@/shared/api/hooks";
 import { getCodingSessionWorkdirState } from "@/shared/api/tauriCodingSessionWorkdirs";
@@ -21,6 +25,8 @@ import { groupCodingSessionCatalog } from "../lib/codingSessionUmbrellaModel";
 import { useCodingSessionProviderCatalog } from "../useCodingSessionProviderCatalog";
 import { resolveCodingSessionHireCatalogSource } from "../lib/codingSessionHireCatalog";
 import { codingSessionHireAgentsFromManaged } from "../lib/codingSessionHireCandidates";
+import { codingSessionHireRuntimeIdLookup } from "../lib/codingSessionHireAgentRuntime";
+import { resolveCodingSessionHireCheckout } from "../lib/codingSessionHireCheckout";
 
 /**
  * The one place `session.hire` is answered.
@@ -46,12 +52,28 @@ export function CodingSessionHireHost() {
   const identityQuery = useIdentityQuery();
   const channelsQuery = useChannelsQuery({ includeSessionTransports: true });
   const managedAgents = useManagedAgentsQuery();
+  // This computer's ACP catalog, read for one reason: `ManagedAgent.runtime`
+  // is the raw per-instance pin and is null for every agent that inherits its
+  // harness from its persona, while `agentCommand` is the *effective* harness
+  // the native resolver produced. Matching the command against this catalog
+  // is exactly what the Agents screen does to draw "Codex"
+  // (`AgentInstanceEditDialog.tsx:206-207`), so the hire and the screen a
+  // person just looked at cannot disagree (ledger 135(b)). Same query key as
+  // the Agents surface, so this costs no extra probe.
+  const acpRuntimes = useAcpRuntimesQuery();
+  const runtimeIdForCommand = React.useMemo(
+    () => codingSessionHireRuntimeIdLookup(acpRuntimes.data ?? []),
+    [acpRuntimes.data],
+  );
   // Every agent with its project association: a hire is answered only from
   // the umbrella's own project's agents, so the association must not be
   // dropped between the record and the decision.
   const agents = React.useMemo(
-    () => codingSessionHireAgentsFromManaged(managedAgents.data ?? []),
-    [managedAgents.data],
+    () =>
+      codingSessionHireAgentsFromManaged(managedAgents.data ?? [], {
+        runtimeIdForCommand,
+      }),
+    [managedAgents.data, runtimeIdForCommand],
   );
   const providerStatus = useQuery({
     queryKey: ["coding-session-provider-status"],
@@ -105,21 +127,34 @@ export function CodingSessionHireHost() {
     [catalog.entries, catalog.creates],
   );
 
+  // Project names, for the refusal that tells a person which project to set a
+  // repository folder for. A coordinate alone ("30621:abc…:tank-loop") is not
+  // a control anybody can find.
+  const projects = useProjectsQuery();
+  const projectLabels = React.useMemo(() => {
+    const labels = new Map<string, string>();
+    for (const project of projects.data ?? []) {
+      const address = project.projectAddress?.trim();
+      const name = project.name?.trim();
+      if (address && name) labels.set(address, name);
+    }
+    return labels;
+  }, [projects.data]);
+
   const workdirState = workdirs.data ?? null;
-  const checkoutForChannel = React.useCallback(
-    (channelId: string) => {
-      if (workdirState === null) return null;
-      // The channel's own directory first, then the most recent one this
-      // computer used. Never a guess beyond that: with nothing remembered the
-      // seat is published without a worktree rather than cut from whatever
-      // happens to be first on disk.
-      return (
-        workdirState.byChannel[channelId]?.path ??
-        workdirState.mru[0]?.path ??
-        null
-      );
-    },
-    [workdirState],
+  const checkoutForHire = React.useCallback(
+    (input: { channelId: string; projectRef: string | null }) =>
+      // `mru` is deliberately not passed: the rule has no use for it, and it
+      // is what cut two Tank Loop seats from the Beekeeper repository on
+      // 2026-09-16 (ledger 135(a)).
+      resolveCodingSessionHireCheckout({
+        projectRef: input.projectRef,
+        projectLabel: projectLabels.get(input.projectRef?.trim() ?? "") ?? null,
+        channelId: input.channelId,
+        byProject: workdirState?.byProject ?? {},
+        byChannel: workdirState?.byChannel ?? {},
+      }),
+    [projectLabels, workdirState],
   );
 
   const targetForActor = React.useCallback(
@@ -153,7 +188,7 @@ export function CodingSessionHireHost() {
       agents={agents}
       catalogForHire={catalogForHire}
       channelIds={channelIds}
-      checkoutForChannel={checkoutForChannel}
+      checkoutForHire={checkoutForHire}
       operatorPubkey={identityQuery.data?.pubkey ?? null}
       registryForProject={readModelRegistry}
       providerAuthorityPubkey={providerStatus.data?.providerPubkey ?? null}

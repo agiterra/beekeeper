@@ -68,8 +68,12 @@ import {
   resetCodingSessionHireOutcomes,
 } from "../lib/codingSessionHireOutcomeStore";
 import {
+  codingSessionHireCheckoutLine,
+  type CodingSessionHireCheckoutResolution,
+  type CodingSessionHireCheckoutSource,
+} from "../lib/codingSessionHireCheckout";
+import {
   armSeatWorktreeForSharing,
-  seatWipShareWithoutCheckout,
   type CodingSessionHireWipShare,
 } from "../lib/codingSessionWorktreeSource";
 import { subscribeToObservedCodingSessionEvents } from "../lib/codingSessionObservedEvents";
@@ -175,6 +179,14 @@ export type CodingSessionHireOutcome = {
    * backend). Absent on outcomes that seated nobody.
    */
   packRef?: CodingSessionSeatPackRef | null;
+  /**
+   * The checkout this host cut the seat's worktree from, and which record
+   * answered — `project` for the project's own recorded folder, `channel` for
+   * a projectless session's remembered one. Absent on outcomes that seated
+   * nobody. Never a guess: a hire with nothing recorded is refused
+   * `HIRE_CHECKOUT_NOT_RECORDED` rather than seated without a tree.
+   */
+  checkout?: { path: string; source: CodingSessionHireCheckoutSource };
   /**
    * The operator whose key signed the seated create — this computer's own.
    *
@@ -330,8 +342,19 @@ export type UseCodingSessionHireInput = {
   ) => Promise<CodingSessionRegistrySource>;
   /** The 44222 revision behind {@link modelCatalogs}, when one was read. */
   catalogRevision?: number | null;
-  /** Where each seat's worktree is cut from, by channel. Host-local. */
-  checkoutForChannel: (channelId: string) => string | null;
+  /**
+   * Where this hire's worktree is cut from — the project's recorded checkout,
+   * this session's remembered folder, or a refusal. Host-local.
+   *
+   * Takes the umbrella's project, not only the channel. Reading the channel
+   * alone (and falling back to the most recently used directory) is what cut
+   * two Tank Loop seats from the Beekeeper repository on 2026-09-16; the rule
+   * now lives in {@link resolveCodingSessionHireCheckout} and is never `mru`.
+   */
+  checkoutForHire: (input: {
+    channelId: string;
+    projectRef: string | null;
+  }) => CodingSessionHireCheckoutResolution;
   /** Targets to answer a requesting seat's refusal turn to, by pubkey. */
   targetForActor: (
     channelId: string,
@@ -684,39 +707,70 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
       }
 
       const plan = answer.plan;
+      // Which repository this seat works in, decided before anything is
+      // signed. A hire with nothing recorded is refused here rather than
+      // seated with no tree: an agent that looks hired and has nowhere to
+      // build is told to work and cannot, and the fallback that used to stand
+      // in for this — the most recently used directory — cut two seats from
+      // the wrong repository on 2026-09-16 (ledger 135(a)).
+      const resolved = current.input.checkoutForHire({
+        channelId: request.channelId,
+        projectRef,
+      });
+      if (resolved.kind === "unrecorded") {
+        await discloseCodingSessionHire(
+          {
+            channelId: request.channelId,
+            sessionRef: request.action.sessionRef,
+            requesterPubkey: request.requesterPubkey,
+            text: `hire refused: ${resolved.code} — ${resolved.reason}`,
+            notice: codingSessionHireRefusalNotice({
+              role: request.action.role,
+              requesterLabel: codingSessionHireRequesterLabel({
+                standing: codingSessionHireRequesterStanding(request),
+                nameFor: (pubkey) =>
+                  current.input.agents.find((agent) => agent.pubkey === pubkey)
+                    ?.name ?? null,
+              }),
+              text: `hire refused: ${resolved.code} — ${resolved.reason}`,
+            }),
+          },
+          current.input,
+          hireDeps,
+        );
+        report(outcomeOf(request, "refused", resolved.code));
+        return;
+      }
+      const checkout = resolved.path;
       // The tree exists before the create is signed, because its path *is* the
       // working directory the create names. A seat is never signed against a
       // directory that does not exist yet — and never against the operator's
       // own checkout (item 80a).
-      const checkout = current.input.checkoutForChannel(request.channelId);
-      let wipShare = seatWipShareWithoutCheckout();
-      if (checkout !== null) {
-        const created = await hireDeps.createWorktree({
-          workdir: checkout,
-          name: plan.worktreeName,
-          source: null,
-          // The hire targets a mission that already exists, so — unlike the
-          // lead's own worktree at launch — both halves of the L11 record's
-          // key are already known. Passing them here is what lets the host
-          // record this worktree durably instead of only staging it as a
-          // one-shot hint the create's own settling never promotes (finding
-          // 60).
-          sessionRef: plan.sessionRef,
-          seatLabel: plan.seatLabel,
-        });
-        await hireDeps.stageCreateHint({
-          commandId: plan.commandId,
-          path: created.path,
-        });
-        // Its commits reach Pulse from a hook in its own worktree, never from
-        // the seat being asked to report. Best-effort — an install that fails
-        // must not cost the hire the seat it just cut — but never silent.
-        wipShare = await armSeatWorktreeForSharing(
-          created,
-          plan,
-          request.eventId,
-        );
-      }
+      const created = await hireDeps.createWorktree({
+        workdir: checkout,
+        name: plan.worktreeName,
+        source: null,
+        // The hire targets a mission that already exists, so — unlike the
+        // lead's own worktree at launch — both halves of the L11 record's
+        // key are already known. Passing them here is what lets the host
+        // record this worktree durably instead of only staging it as a
+        // one-shot hint the create's own settling never promotes (finding
+        // 60).
+        sessionRef: plan.sessionRef,
+        seatLabel: plan.seatLabel,
+      });
+      await hireDeps.stageCreateHint({
+        commandId: plan.commandId,
+        path: created.path,
+      });
+      // Its commits reach Pulse from a hook in its own worktree, never from
+      // the seat being asked to report. Best-effort — an install that fails
+      // must not cost the hire the seat it just cut — but never silent.
+      const wipShare = await armSeatWorktreeForSharing(
+        created,
+        plan,
+        request.eventId,
+      );
       // What staging put on disk for this seat, for the outcome: null until
       // the host answers, and still null when no repository vouched for it.
       let stagedPackRef: CodingSessionSeatPackRef | null = null;
@@ -772,6 +826,23 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
       // model, or both — is said out loud in the umbrella, where both the lead
       // and the person can read it. A substitution nobody is told about is the
       // host quietly running something other than what was asked for.
+      // Where the tree came from, said out loud in the umbrella. A person
+      // reading "Hired a builder" has no way to tell which repository it is
+      // working in, and on 2026-09-16 that silence is what let two seats run
+      // a whole session against the wrong codebase.
+      await publishCodingSessionLaneMessage(
+        {
+          channelId: plan.channelId,
+          sessionRef: plan.sessionRef,
+          content: codingSessionHireCheckoutLine({
+            role: plan.role,
+            path: checkout,
+            source: resolved.source,
+            passedOver: resolved.passedOver,
+          }),
+        },
+        { publisher: hireDeps.publisher, signer: hireDeps.signer },
+      ).catch(() => {});
       for (const notice of [plan.providerNotice, plan.modelNotice]) {
         if (notice === null) continue;
         await publishCodingSessionLaneMessage(
@@ -815,6 +886,7 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
         seatActor: plan.actor,
         hostPubkey: operator,
         wipShare,
+        checkout: { path: checkout, source: resolved.source },
         packRef: stagedPackRef,
         // Compared with the hire's own signer here, because the relay does not
         // (POLICY.md §5). This is what the seat's first turn is attributed to.
