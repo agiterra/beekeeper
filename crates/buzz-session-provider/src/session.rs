@@ -162,17 +162,92 @@ pub struct SeatIdentity {
     pub relay_url: String,
 }
 
-/// Where a seat's role-pack skills are read from, host-locally.
+/// Where a seat's role-pack skills are read from, and where they are written.
 ///
 /// Staged by the launcher in the seat's `actor-seats.json` entry
 /// (`packDir` / `personaId`), never carried by the signed create: a pack path
 /// is machine state in the same way a working directory is.
+///
+/// `bundle_dir` is supplied by the caller rather than derived here. The
+/// provider is the only thing that knows the app's data directory and this
+/// execution's session id, and a guess would be the one kind of mistake this
+/// type exists to prevent: skills written where they are not this seat's own.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SeatSkills {
     /// Absolute path to the persona pack directory.
     pub pack_dir: PathBuf,
     /// The persona within that pack this seat runs as.
     pub persona_id: String,
+    /// This seat's own bundle directory — `skills/` and `manifest.json` live
+    /// under it. See [`seat_bundle_dir`].
+    pub bundle_dir: PathBuf,
+    /// The pack's wire coordinate, when the launcher staged one, recorded in
+    /// the bundle manifest so "which pack ran" can be answered from the
+    /// bundle on disk as well as from the 44223.
+    pub pack_ref: Option<buzz_core::coding_session_payload::PackRef>,
+}
+
+/// The directory under the app's data directory that holds seat bundles.
+pub const SEAT_BUNDLES_DIR: &str = "agents/seats";
+
+/// The skills directory inside one seat's bundle.
+pub const SEAT_BUNDLE_SKILLS_DIR: &str = "skills";
+
+/// Restore the pre-bundle behaviour: write the skills into the seat's working
+/// directory under `.agents/skills/`.
+///
+/// **Temporary, and for one comparison run.** It exists so the bundle can be
+/// measured against what it replaced on the same machine, in the same session,
+/// without reverting the change — not as a supported configuration, and not as
+/// a fallback anything selects on its own. The in-tree write is the behaviour
+/// finding 76 is about: nothing excludes `.agents/` from `git status` any
+/// more, so a seat run this way leaves an untracked directory in its worktree
+/// and its gate rows read dirty. That is part of what the comparison measures.
+/// Delete this switch once the comparison is done.
+pub const SEAT_SKILLS_IN_TREE_VAR: &str = "BUZZ_SEAT_SKILLS_IN_TREE";
+
+/// Where this execution's seat bundle lives.
+///
+/// `<app data dir>/agents/seats/<session id>/`, derived from the provider's
+/// own state directory — never the working directory, and never a root two
+/// seats could share. A reattach of the same execution resolves the same path
+/// because the session id is the same, which is what makes the bundle stable
+/// across generations rather than re-created beside each one.
+///
+/// When the state directory is not shaped `<app data>/session-provider/<pubkey>`
+/// — a test harness, a host that lays its state out differently — the bundle
+/// falls back to `<state dir>/agents/seats/<session id>/`. Still per seat,
+/// still outside every checkout; only the parent differs.
+pub fn seat_bundle_dir(state_dir: &Path, session_id: &str) -> PathBuf {
+    let root = crate::agent_fence::app_data_dir_from_state_dir(state_dir)
+        .unwrap_or_else(|| state_dir.to_path_buf());
+    root.join(SEAT_BUNDLES_DIR)
+        .join(bundle_directory_name(session_id))
+}
+
+/// A session id as one ordinary directory name.
+///
+/// Session ids this provider mints are UUIDs, and the ones it reads back come
+/// from its own durable records. This maps anything else to a name that is
+/// still one component, because "the bundle is this seat's own" is a claim
+/// about a path, and a path assembled from a string is only as safe as the
+/// string.
+fn bundle_directory_name(session_id: &str) -> String {
+    let mapped: String = session_id
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '-' | '_') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if mapped.is_empty() {
+        "unnamed-session".to_owned()
+    } else {
+        mapped
+    }
 }
 
 /// Everything needed to bring one session up.
@@ -1016,11 +1091,58 @@ impl SessionManager {
     }
 }
 
-/// Write a seat's role-pack skills into its working directory.
+/// What a seat's role pack says about itself, read once at create time so
+/// the briefing can carry it. The skills are files the seat can open, named
+/// by absolute path; the prompt is the persona's own body — without it the
+/// seat knows its role's *name* and nothing of its craft (found live
+/// 2026-08-27: a "lead" that could only say it was seated as lead).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SeatRoleBriefing {
+    /// The persona's display name, for the briefing to name the pack.
+    pub display_name: String,
+    /// The persona body — the role's own instructions, verbatim.
+    pub prompt: String,
+    /// Each materialized skill, in name order.
+    pub skills: Vec<SeatSkillFile>,
+    /// The bundle the skills were written into, or `None` when they were
+    /// written into the working directory ([`SEAT_SKILLS_IN_TREE_VAR`]).
+    ///
+    /// The briefing says which, because "outside your working directory" is
+    /// either true or a lie about where the seat's own files are.
+    pub bundle_dir: Option<PathBuf>,
+}
+
+/// One skill the seat can read, and where.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SeatSkillFile {
+    /// The skill's directory name in the pack.
+    pub name: String,
+    /// Absolute path to the `SKILL.md` that was written for this seat.
+    pub path: PathBuf,
+}
+
+/// Write a seat's role-pack skills into the bundle that belongs to it.
 ///
-/// Runs before the adapter is spawned so the child sees `.agents/skills/*`
-/// from its first tool call, and per working directory so two seats of one
-/// crew never share (or overwrite) each other's copy.
+/// Runs before the adapter is spawned so the child can open a `SKILL.md` on
+/// its first tool call, and into `skills.bundle_dir` — the seat's own
+/// directory under the app's data directory, never the checkout it works in.
+/// Two seats of one crew have two bundles because they have two session ids,
+/// and neither can reach the other's.
+///
+/// Writing outside the tree is the point. A seat's working directory is a
+/// checkout it commits and pushes from: files the provider puts there make
+/// `git status` dirty (finding 76), have to be excluded through a file linked
+/// worktrees share with the main checkout, survive as stale craft nobody
+/// removes, and are editable by the seat that is supposed to be reading them.
+/// The bundle has none of those properties, and the briefing names its
+/// absolute paths so the seat does not have to find them.
+///
+/// "Read-only to you" is more than a sentence on a Claude seat: the bundle
+/// lives under the app data directory, which [`crate::agent_fence`]'s write
+/// fence denies the seat's file tools outright. This write runs *before* the
+/// fence is installed, so the directory is there when those rules are
+/// enumerated; on a harness with no fence the briefing sentence is the whole
+/// of it, exactly as it is for every other boundary a seat is held to.
 ///
 /// A failure here fails the create. The alternative — spawn anyway — produces
 /// a seat whose role prompt names craft that is not on disk, which is the
@@ -1028,27 +1150,11 @@ impl SessionManager {
 /// as severe. The code is [`PROVIDER_UNAVAILABLE`] because that is what it is:
 /// this host could not stand the execution up as asked.
 ///
-/// Refuses a `cwd` that is shared rather than per-seat — the operator's home
-/// or the nest. `materialize_skills` overwrites a file whenever the bytes
-/// differ, so a session whose workdir is `$HOME` would silently replace the
-/// human's own `~/.agents/skills/<name>/SKILL.md` with a pack's. The desktop's
-/// managed-agent path refuses exactly this write; one contract with two call
-/// sites must not have two behaviours.
-/// What a seat's role pack says about itself, read once at create time so
-/// the briefing can carry it. The skills are files in the seat's workdir;
-/// the prompt is the persona's own body — without it the seat knows its
-/// role's *name* and nothing of its craft (found live 2026-08-27: a "lead"
-/// that could only say it was seated as lead).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SeatRoleBriefing {
-    /// The persona's display name, for the briefing to name the pack.
-    pub display_name: String,
-    /// The persona body — the role's own instructions, verbatim.
-    pub prompt: String,
-    /// Skill directory names materialized under `.agents/skills/`.
-    pub skills: Vec<String>,
-}
-
+/// Refuses a bundle root that is shared rather than per-seat — the operator's
+/// home or the nest. The materialization overwrites a file whenever the bytes
+/// differ, so a bundle rooted at `$HOME` would silently replace the human's
+/// own files with a pack's. The desktop's managed-agent path refuses exactly
+/// this write; one contract with two call sites must not have two behaviours.
 fn materialize_seat_skills(
     skills: &SeatSkills,
     cwd: &Path,
@@ -1205,11 +1311,13 @@ pub struct LiveWorkdirClaim {
 ///
 /// Item 80(a)/(b), found live: the join dialog defaulted a hired seat's
 /// working directory to the last one used, which was the checkout the app
-/// itself runs from, and three seats landed in it. They shared one git index,
-/// one HEAD, and one `.agents/skills` — so every role's pack materialized into
-/// a single union directory, and no seat had the skills it was hired for. The
-/// desktop now offers each seat its own worktree; this is the rule underneath
-/// it, so a create built by anything else is refused the same way.
+/// itself runs from, and three seats landed in it. They shared one git index
+/// and one HEAD, so each seat's commits, branch switches and stashes landed
+/// under the others. (They shared a materialized `.agents/skills` too, until
+/// each seat's skills moved into a bundle of its own; the git reasons stand on
+/// their own and are why this refusal remains.) The desktop now offers each
+/// seat its own worktree; this is the rule underneath it, so a create built by
+/// anything else is refused the same way.
 ///
 /// `shared_roots` and `live` are parameters so the refusal can be proved
 /// against directories a test owns.
@@ -1238,9 +1346,8 @@ pub fn seated_workdir_refusal(
         code: SEAT_CWD_SHARED,
         message: format!(
             "refusing to seat an agent in {} — {who} already running there. Two executions in one \
-             working directory share a git index, a HEAD, and one .agents/skills, so their role \
-             packs become a union and neither seat has the skills it was hired for. Give this \
-             seat its own worktree.",
+             working directory share a git index and a HEAD, so each one's commits, branch \
+             switches and stashes land under the other. Give this seat its own worktree.",
             cwd.display()
         ),
     })
@@ -1252,15 +1359,39 @@ fn materialize_seat_skills_outside(
     cwd: &Path,
     shared_roots: &[SharedWorkdirRoot],
 ) -> Result<SeatRoleBriefing, CreateFailure> {
-    if shared_workdir_match(cwd, shared_roots).is_some() {
+    materialize_seat_skills_in(skills, cwd, shared_roots, seat_skills_in_tree())
+}
+
+/// [`materialize_seat_skills_outside`], with the destination decided.
+///
+/// `in_tree` is a parameter rather than a read of the environment so the
+/// comparison behaviour can be proved without setting a process-wide variable
+/// — which every other test in this binary would see, exactly as
+/// [`parse_shared_workdirs`] is split out for.
+fn materialize_seat_skills_in(
+    skills: &SeatSkills,
+    cwd: &Path,
+    shared_roots: &[SharedWorkdirRoot],
+    in_tree: bool,
+) -> Result<SeatRoleBriefing, CreateFailure> {
+    // The root the skills actually land in — the bundle, or (for the
+    // comparison run only) the working directory. The shared-root refusal
+    // applies to whichever it is: writing a pack into a directory no single
+    // seat owns is the failure, wherever that directory came from.
+    let root = if in_tree {
+        cwd.to_path_buf()
+    } else {
+        skills.bundle_dir.clone()
+    };
+    if let Some(shared) = shared_workdir_match(&root, shared_roots) {
         return Err(CreateFailure {
             code: PROVIDER_UNAVAILABLE,
             message: format!(
-                "refusing to write the role skills for persona \"{}\" into {} — that directory \
-                 is shared by every agent on this computer (and may be your own home directory). \
-                 A pack's skills belong in one seat's own working directory.",
+                "refusing to write the role skills for persona \"{}\" into {} — {}. A pack's \
+                 skills belong to one seat alone, in a directory nothing else writes to.",
                 skills.persona_id,
-                cwd.display()
+                root.display(),
+                shared.describe()
             ),
         });
     }
@@ -1273,61 +1404,93 @@ fn materialize_seat_skills_outside(
                     skills.persona_id
                 ),
             })?;
-    let written =
-        buzz_persona::skills::materialize_skills(&persona, cwd).map_err(|error| CreateFailure {
-            code: PROVIDER_UNAVAILABLE,
-            message: format!(
-                "could not materialize the role skills for persona \"{}\": {error}",
-                skills.persona_id
-            ),
-        })?;
+    let refuse = |error: buzz_persona::skills::SkillError| CreateFailure {
+        code: PROVIDER_UNAVAILABLE,
+        message: format!(
+            "could not materialize the role skills for persona \"{}\": {error}",
+            skills.persona_id
+        ),
+    };
+    let written = if in_tree {
+        buzz_persona::skills::materialize_skills(&persona, cwd).map_err(refuse)?
+    } else {
+        buzz_persona::skills::materialize_skill_bundle(
+            &persona,
+            &skills.bundle_dir.join(SEAT_BUNDLE_SKILLS_DIR),
+        )
+        .map_err(refuse)?
+    };
     tracing::info!(
         target: "csp::session",
         persona = %skills.persona_id,
         skills = written.len(),
         refreshed = written.iter().filter(|s| s.written).count(),
+        root = %root.display(),
+        in_tree,
         "seat skills materialized"
     );
-    exclude_materialized_pack(cwd);
-    let mut names: Vec<String> = written.iter().map(|skill| skill.name.clone()).collect();
-    names.sort_unstable();
-    names.dedup();
+    let mut files: Vec<SeatSkillFile> = written
+        .iter()
+        .map(|skill| SeatSkillFile {
+            name: skill.name.clone(),
+            path: skill.path.clone(),
+        })
+        .collect();
+    files.sort_by(|left, right| left.name.cmp(&right.name));
+    files.dedup_by(|left, right| left.name == right.name);
+    if !in_tree {
+        write_bundle_manifest(skills, &files);
+    }
     Ok(SeatRoleBriefing {
         display_name: persona.display_name.clone(),
         prompt: persona.system_prompt.trim().to_owned(),
-        skills: names,
+        skills: files,
+        bundle_dir: (!in_tree).then(|| skills.bundle_dir.clone()),
     })
 }
 
-/// Keep the pack just written out of `git status` in `cwd`.
+/// Is the temporary in-tree comparison switch set? See
+/// [`SEAT_SKILLS_IN_TREE_VAR`].
+fn seat_skills_in_tree() -> bool {
+    in_tree_requested(std::env::var_os(SEAT_SKILLS_IN_TREE_VAR).as_deref())
+}
+
+/// The switch's value, as data: exactly `1` turns it on, and anything else —
+/// unset, empty, `true`, `0` — leaves the bundle in force.
+fn in_tree_requested(value: Option<&std::ffi::OsStr>) -> bool {
+    value.is_some_and(|value| value == "1")
+}
+
+/// Record what this bundle holds, beside the skills it holds.
 ///
-/// Finding 76: the gate observer stamps every gate row with `dirty` from
-/// `git status --porcelain`, untracked files included, and the relay refuses
-/// an observed-dirty row — so a seat whose worktree carries an untracked
-/// `.agents/skills/` can never have a push admitted. Runs in the same path as
-/// the write, before the child exists, so the seat's first gate row is already
-/// honest. A working directory that is not a git worktree is left alone.
-///
-/// Not fatal: the skills the seat was briefed on are on disk regardless, and
-/// a seat that cannot be excluded is a seat whose pushes are refused with a
-/// reason, not a seat that lies. The failure is logged so the operator can see
-/// why.
-fn exclude_materialized_pack(cwd: &Path) {
-    use crate::git_exclude::{exclude_materialized_pack, ExcludeOutcome, EXCLUDE_LINE};
-    match exclude_materialized_pack(cwd) {
-        Ok(ExcludeOutcome::Added { exclude_file }) => tracing::info!(
+/// Not fatal, and deliberately so: the manifest answers "which pack is this,
+/// and when did it last change" for a person looking at the directory later.
+/// The seat's craft is on disk either way, and failing a create over a note
+/// about it would refuse a session that is fully able to run.
+fn write_bundle_manifest(skills: &SeatSkills, files: &[SeatSkillFile]) {
+    let pack_ref = match skills.pack_ref.as_ref().map(serde_json::to_value) {
+        Some(Ok(value)) => Some(value),
+        Some(Err(error)) => {
+            tracing::warn!(
+                target: "csp::session",
+                "could not encode the seat's packRef for its bundle manifest: {error}"
+            );
+            None
+        }
+        None => None,
+    };
+    let manifest = buzz_persona::skills::SkillBundleManifest {
+        persona_id: skills.persona_id.clone(),
+        pack_dir: skills.pack_dir.clone(),
+        pack_ref,
+        skills: files.iter().map(|file| file.name.clone()).collect(),
+    };
+    if let Err(error) = buzz_persona::skills::write_bundle_manifest(&skills.bundle_dir, &manifest) {
+        tracing::warn!(
             target: "csp::session",
-            exclude_file = %exclude_file.display(),
-            "added `{EXCLUDE_LINE}` to the worktree's git exclude so the materialized pack \
-             does not read as dirty"
-        ),
-        Ok(ExcludeOutcome::AlreadyExcluded { .. }) | Ok(ExcludeOutcome::NotARepository) => {}
-        Err(error) => tracing::warn!(
-            target: "csp::session",
-            cwd = %cwd.display(),
-            "could not add `{EXCLUDE_LINE}` to the worktree's git exclude — every gate row for \
-             this seat will read dirty: {error}"
-        ),
+            bundle = %skills.bundle_dir.display(),
+            "could not write the seat bundle manifest: {error}"
+        );
     }
 }
 
@@ -1607,10 +1770,21 @@ fn seat_role_briefing(role: &str, pack: &SeatRoleBriefing) -> String {
         pack.display_name, pack.prompt
     );
     if !pack.skills.is_empty() {
-        text.push_str(&format!(
-            "\n\nThe pack's skills are materialized in this working directory under .agents/skills/ ({}); read the SKILL.md of each before acting in this role.",
-            pack.skills.join(", ")
-        ));
+        let named = pack
+            .skills
+            .iter()
+            .map(|skill| format!("{} — {}", skill.name, skill.path.display()))
+            .collect::<Vec<_>>()
+            .join("; ");
+        text.push_str(&match &pack.bundle_dir {
+            Some(bundle) => format!(
+                "\n\nThe pack's skills are materialized outside your working directory, in a skill bundle at {} that belongs to this seat alone and is read-only to you — do not edit it, move it, or copy it into the repository you are working in. Read the SKILL.md of each before acting in this role: {named}.",
+                bundle.display()
+            ),
+            None => format!(
+                "\n\nThe pack's skills are materialized in this working directory and belong to this seat alone; read the SKILL.md of each before acting in this role: {named}."
+            ),
+        });
     }
     text
 }
@@ -3744,6 +3918,12 @@ done
         manager.shutdown("s1");
     }
 
+    /// A seat bundle directory a test owns, in the shape
+    /// [`seat_bundle_dir`] produces: per session, outside every checkout.
+    fn bundle(root: &Path, session_id: &str) -> PathBuf {
+        seat_bundle_dir(&root.join("state"), session_id)
+    }
+
     /// Write a minimal one-persona role pack with one skill, and return its
     /// directory.
     fn role_pack(root: &Path, skill_body: &str) -> std::path::PathBuf {
@@ -3780,7 +3960,8 @@ done
         let workdir = dir.path().join("work");
         std::fs::create_dir_all(&workdir).expect("workdir");
         let dump = dir.path().join("skill-seen");
-        let skill = workdir.join(".agents/skills/brief/SKILL.md");
+        let bundle_dir = bundle(dir.path(), "skill-reading-session");
+        let skill = bundle_dir.join("skills/brief/SKILL.md");
 
         // The child's first act is to read the materialized skill. If the
         // write happened after the spawn, this reads nothing.
@@ -3811,6 +3992,8 @@ done
         create.seat_skills = Some(SeatSkills {
             pack_dir: pack.clone(),
             persona_id: "builder".into(),
+            bundle_dir: bundle_dir.clone(),
+            pack_ref: None,
         });
         manager.create(create).await.expect("create");
 
@@ -3818,6 +4001,10 @@ done
             std::fs::read_to_string(&dump).expect("the agent reported what it saw"),
             "# Brief template",
             "the seat's skill was not readable when its adapter started"
+        );
+        assert!(
+            !workdir.join(".agents").exists(),
+            "a seated create must leave nothing in the checkout"
         );
     }
 
@@ -3849,9 +4036,12 @@ done
             role: "builder".into(),
             relay_url: "wss://relay.test".into(),
         });
+        let bundle_dir = bundle(dir.path(), "briefed-session");
         create.seat_skills = Some(SeatSkills {
             pack_dir: pack.clone(),
             persona_id: "builder".into(),
+            bundle_dir: bundle_dir.clone(),
+            pack_ref: None,
         });
         manager.create(create).await.expect("seated create");
         manager.shutdown("s1");
@@ -3872,10 +4062,32 @@ done
             system_prompt.contains("You build."),
             "the persona body must reach the adapter verbatim: {system_prompt}"
         );
+        let skill = bundle_dir
+            .join("skills/brief/SKILL.md")
+            .canonicalize()
+            .expect("the skill the seat was briefed on");
         assert!(
-            system_prompt.contains(".agents/skills/ (brief)"),
-            "the materialized skill names must be listed: {system_prompt}"
+            system_prompt.contains(&format!("brief — {}", skill.display())),
+            "each skill must be named by absolute path: {system_prompt}"
         );
+        assert!(
+            system_prompt.contains("outside your working directory")
+                && system_prompt.contains("read-only to you"),
+            "the briefing must say where the bundle is and that it is not the \
+             seat's to edit: {system_prompt}"
+        );
+        assert!(
+            !system_prompt.contains(".agents/skills"),
+            "the briefing must not send the seat to a path nothing writes any \
+             more: {system_prompt}"
+        );
+        // The manifest is written beside the skills, not in the checkout.
+        let manifest: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(bundle_dir.join("manifest.json")).expect("manifest"),
+        )
+        .expect("manifest json");
+        assert_eq!(manifest["personaId"], "builder");
+        assert_eq!(manifest["skills"], serde_json::json!(["brief"]));
     }
 
     /// The seat fence is an enforcement on claude-agent-acp, not only a
@@ -3982,15 +4194,18 @@ done
                 .into_owned(),
             &workdir,
         );
+        let bundle_dir = bundle(dir.path(), "failed-spawn-session");
         create.seat_skills = Some(SeatSkills {
             pack_dir: pack,
             persona_id: "builder".into(),
+            bundle_dir: bundle_dir.clone(),
+            pack_ref: None,
         });
 
         let failure = manager.create(create).await.expect_err("the spawn fails");
         assert_eq!(failure.code, PROVIDER_UNAVAILABLE, "{failure:?}");
         assert_eq!(
-            std::fs::read_to_string(workdir.join(".agents/skills/brief/SKILL.md"))
+            std::fs::read_to_string(bundle_dir.join("skills/brief/SKILL.md"))
                 .expect("the skills were written before the spawn was attempted"),
             "# Brief"
         );
@@ -4005,6 +4220,8 @@ done
             &SeatSkills {
                 pack_dir: dir.path().join("no-such-pack"),
                 persona_id: "builder".into(),
+                bundle_dir: bundle(dir.path(), "unreadable-pack-session"),
+                pack_ref: None,
             },
             dir.path(),
         )
@@ -4023,10 +4240,13 @@ done
     fn a_missing_persona_refuses_the_create() {
         let dir = tempfile::tempdir().expect("tempdir");
         let pack = role_pack(dir.path(), "# Brief");
+        let bundle_dir = bundle(dir.path(), "missing-persona-session");
         let failure = materialize_seat_skills(
             &SeatSkills {
                 pack_dir: pack,
                 persona_id: "verifier".into(),
+                bundle_dir: bundle_dir.clone(),
+                pack_ref: None,
             },
             dir.path(),
         )
@@ -4039,45 +4259,127 @@ done
             failure.message
         );
         assert!(
-            !dir.path().join(".agents").exists(),
+            !bundle_dir.join("skills/verifier").exists() && !dir.path().join(".agents").exists(),
             "a refused create wrote skills anyway"
         );
     }
 
-    /// Two seats of one crew, two working directories: each gets its own copy,
-    /// and re-materializing is a no-op rather than a rewrite.
+    /// Two seats of one crew, two bundles: each gets its own copy, and
+    /// re-materializing is a no-op rather than a rewrite.
     #[test]
-    fn each_seat_workdir_gets_its_own_copy() {
+    fn each_seat_gets_its_own_bundle() {
         let dir = tempfile::tempdir().expect("tempdir");
         let pack = role_pack(dir.path(), "# Brief");
         let one = dir.path().join("seat-one");
         let two = dir.path().join("seat-two");
         std::fs::create_dir_all(&one).expect("one");
         std::fs::create_dir_all(&two).expect("two");
-        let skills = SeatSkills {
-            pack_dir: pack,
+        let skills = |session: &str| SeatSkills {
+            pack_dir: pack.clone(),
             persona_id: "builder".into(),
+            bundle_dir: bundle(dir.path(), session),
+            pack_ref: None,
         };
 
-        materialize_seat_skills(&skills, &one).expect("seat one");
-        materialize_seat_skills(&skills, &two).expect("seat two");
-        materialize_seat_skills(&skills, &one).expect("seat one again");
+        materialize_seat_skills(&skills("session-one"), &one).expect("seat one");
+        materialize_seat_skills(&skills("session-two"), &two).expect("seat two");
+        materialize_seat_skills(&skills("session-one"), &one).expect("seat one again");
 
-        for seat in [&one, &two] {
+        for session in ["session-one", "session-two"] {
             assert_eq!(
-                std::fs::read_to_string(seat.join(".agents/skills/brief/SKILL.md"))
+                std::fs::read_to_string(bundle(dir.path(), session).join("skills/brief/SKILL.md"))
                     .expect("skill present"),
                 "# Brief"
             );
         }
+        // One seat editing its copy cannot reach the other's.
+        std::fs::write(
+            bundle(dir.path(), "session-one").join("skills/brief/SKILL.md"),
+            "local edit",
+        )
+        .expect("edit");
+        assert_eq!(
+            std::fs::read_to_string(
+                bundle(dir.path(), "session-two").join("skills/brief/SKILL.md")
+            )
+            .expect("sibling untouched"),
+            "# Brief"
+        );
     }
 
-    /// Finding 76: the pack the provider writes must not make the seat's
-    /// worktree dirty, or the host's own gate observer refuses every push.
-    /// Proved through the real materialization path against a throwaway
-    /// `git init` repository — never a worktree of this one.
+    /// A reattach of the same execution resolves the same bundle: the path is
+    /// a function of the session id, not of the generation or the moment. A
+    /// bundle per generation would leave every previous generation's craft on
+    /// disk forever.
     #[test]
-    fn a_materialized_pack_leaves_a_git_worktree_clean() {
+    fn a_reattach_resolves_the_same_bundle() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state = dir.path().join("app/session-provider/abc123");
+        let session = "11111111-2222-3333-4444-555555555555";
+
+        assert_eq!(
+            seat_bundle_dir(&state, session),
+            seat_bundle_dir(&state, session),
+            "the same session id must resolve the same bundle"
+        );
+        assert_eq!(
+            seat_bundle_dir(&state, session),
+            dir.path().join("app/agents/seats").join(session),
+            "the bundle belongs under the app data directory, beside the nests"
+        );
+        assert_ne!(
+            seat_bundle_dir(&state, session),
+            seat_bundle_dir(&state, "another-session"),
+            "two executions must not share one bundle"
+        );
+    }
+
+    /// A state directory the app-data shape cannot be read from still gets a
+    /// per-seat bundle — under the state directory, never the working
+    /// directory and never a root two seats share.
+    #[test]
+    fn an_unshaped_state_dir_falls_back_to_itself() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state = dir.path().join("somewhere/else");
+
+        assert_eq!(
+            seat_bundle_dir(&state, "session-7"),
+            state.join("agents/seats/session-7")
+        );
+    }
+
+    /// A session id that is not one ordinary path component cannot climb out
+    /// of the seats directory.
+    #[test]
+    fn a_session_id_is_one_directory_name() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state = dir.path().join("app/session-provider/abc123");
+
+        for hostile in ["../../escape", "..", "a/b"] {
+            let resolved = seat_bundle_dir(&state, hostile);
+            assert!(
+                resolved.starts_with(dir.path().join("app/agents/seats")),
+                "{hostile} escaped to {}",
+                resolved.display()
+            );
+            assert_eq!(
+                resolved.components().count(),
+                dir.path().join("app/agents/seats").components().count() + 1,
+                "{hostile} produced more than one directory name"
+            );
+        }
+    }
+
+    /// Finding 76, settled a different way: the provider writes nothing into
+    /// the seat's worktree, so there is nothing to exclude and nothing to read
+    /// dirty. Proved through the real materialization path against a throwaway
+    /// `git init` repository — never a worktree of this one.
+    ///
+    /// The exclude this replaced was itself a cost: `info/exclude` is shared
+    /// by a repository's main checkout and every linked worktree, so one
+    /// seat's `.agents/` line was added to the person's own checkout too.
+    #[test]
+    fn a_seated_create_leaves_nothing_in_the_checkout() {
         let dir = tempfile::tempdir().expect("tempdir");
         let pack = role_pack(dir.path(), "# Brief");
         let workdir = dir.path().join("seat");
@@ -4101,36 +4403,108 @@ done
             String::from_utf8(output.stdout).expect("utf-8")
         };
         git(&["init", "-q", "-b", "seat-branch", "."]);
+        // The verdict must come from this repository, not from the
+        // developer's global ignore file.
+        git(&["config", "core.excludesFile", "/dev/null"]);
         std::fs::write(workdir.join("README"), "seat").expect("write");
         git(&["add", "README"]);
         git(&["commit", "-q", "--no-gpg-sign", "-m", "one"]);
         assert_eq!(git(&["status", "--porcelain"]), "");
 
+        let bundle_dir = bundle(dir.path(), "clean-worktree-session");
         let skills = SeatSkills {
             pack_dir: pack,
             persona_id: "builder".into(),
+            bundle_dir: bundle_dir.clone(),
+            pack_ref: None,
         };
-        materialize_seat_skills(&skills, &workdir).expect("materialize");
+        let briefing = materialize_seat_skills(&skills, &workdir).expect("materialize");
+
         assert_eq!(
-            std::fs::read_to_string(workdir.join(".agents/skills/brief/SKILL.md"))
+            std::fs::read_to_string(bundle_dir.join("skills/brief/SKILL.md"))
                 .expect("skill present"),
             "# Brief"
         );
         assert_eq!(
+            briefing.skills[0].path,
+            bundle_dir
+                .join("skills/brief/SKILL.md")
+                .canonicalize()
+                .expect("the briefing names where the bytes landed")
+        );
+        assert!(
+            !workdir.join(".agents").exists(),
+            "the seat's checkout must hold no materialized pack"
+        );
+        assert_eq!(
             git(&["status", "--porcelain"]),
             "",
-            "the materialized pack reads as dirty"
+            "the seated create dirtied the worktree"
+        );
+        let exclude =
+            std::fs::read_to_string(workdir.join(".git/info/exclude")).unwrap_or_default();
+        assert!(
+            !exclude.contains(".agents/"),
+            "nothing may add `.agents/` to a repository's shared exclude file: {exclude:?}"
         );
 
-        // A second materialization (the seat is re-created in the same tree)
-        // neither rewrites the exclude nor dirties the tree.
+        // A second materialization (the seat is re-created) is a no-op.
         materialize_seat_skills(&skills, &workdir).expect("materialize again");
         assert_eq!(git(&["status", "--porcelain"]), "");
-        let exclude = std::fs::read_to_string(workdir.join(".git/info/exclude")).expect("exclude");
+    }
+
+    /// The temporary comparison switch does what it says: the skills go back
+    /// into the working directory, and the briefing stops claiming they are
+    /// outside it.
+    ///
+    /// The variable itself is read once, in `seat_skills_in_tree`, and parsed
+    /// by `in_tree_requested` — proved below as data, because setting a
+    /// process-wide variable here would be visible to every other test in this
+    /// binary.
+    #[test]
+    fn the_kill_switch_writes_into_the_tree_again() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let pack = role_pack(dir.path(), "# Brief");
+        let workdir = dir.path().join("seat");
+        std::fs::create_dir_all(&workdir).expect("workdir");
+        let bundle_dir = bundle(dir.path(), "in-tree-session");
+        let skills = SeatSkills {
+            pack_dir: pack,
+            persona_id: "builder".into(),
+            bundle_dir: bundle_dir.clone(),
+            pack_ref: None,
+        };
+
+        let briefing =
+            materialize_seat_skills_in(&skills, &workdir, &[], true).expect("in-tree materialize");
+
         assert_eq!(
-            exclude.lines().filter(|line| *line == ".agents/").count(),
-            1
+            std::fs::read_to_string(workdir.join(".agents/skills/brief/SKILL.md"))
+                .expect("the pre-bundle path"),
+            "# Brief"
         );
+        assert!(
+            !bundle_dir.join("skills").exists(),
+            "the comparison run must not also write a bundle"
+        );
+        assert_eq!(briefing.bundle_dir, None);
+        let text = seat_role_briefing("builder", &briefing);
+        assert!(
+            text.contains("materialized in this working directory"),
+            "the briefing must not claim a bundle that was not written: {text}"
+        );
+    }
+
+    /// Only `1` turns the comparison switch on; the bundle is the default in
+    /// every other case, including a plausible-looking one.
+    #[test]
+    fn the_kill_switch_is_off_unless_it_is_exactly_one() {
+        use std::ffi::OsStr;
+        assert!(in_tree_requested(Some(OsStr::new("1"))));
+        assert!(!in_tree_requested(None));
+        for off in ["", "0", "true", "yes", "1 "] {
+            assert!(!in_tree_requested(Some(OsStr::new(off))), "{off:?}");
+        }
     }
 
     /// D6/C: an agent seat's adapter holds *its own* identity and nothing else
@@ -5984,41 +6358,51 @@ mod seat_skill_materialization_tests {
         pack
     }
 
-    fn seat(pack: PathBuf) -> SeatSkills {
+    fn seat(pack: PathBuf, bundle_dir: PathBuf) -> SeatSkills {
         SeatSkills {
             pack_dir: pack,
             persona_id: "builder".into(),
+            bundle_dir,
+            pack_ref: None,
         }
     }
 
     #[test]
-    fn a_shared_workdir_is_refused_rather_than_written_into() {
-        // A seated session whose workdir is the operator's home would have
-        // `materialize_skills` overwrite the human's own
-        // ~/.agents/skills/write-report/SKILL.md, which it rewrites whenever
-        // the bytes differ. The desktop's managed-agent path refuses this
-        // write; the provider must too. The shared roots are stand-ins this
-        // test owns — asserting against a real home is how the desktop's own
-        // guard test went red on a file it never created.
+    fn a_shared_bundle_root_is_refused_rather_than_written_into() {
+        // The refusal follows the write. A bundle rooted at the operator's
+        // home or the nest would have the materialization overwrite the
+        // human's own files, which it rewrites whenever the bytes differ. The
+        // desktop's managed-agent path refuses this write; the provider must
+        // too. The shared roots are stand-ins this test owns — asserting
+        // against a real home is how the desktop's own guard test went red on
+        // a file it never created.
         let tmp = tempfile::tempdir().expect("temp dir");
         let pack = role_pack(tmp.path());
         let home = tmp.path().join("home");
         let nest = home.join(".beekeeper");
         std::fs::create_dir_all(&nest).expect("nest");
+        let cwd = tmp.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("checkout");
         let roots = vec![
             SharedWorkdirRoot::operator(nest.clone()),
             SharedWorkdirRoot::operator(home.clone()),
         ];
         // The human's own skill file, in the shape a seat's pack would clobber.
-        let mine = home.join(".agents/skills/write-report");
+        let mine = home.join("skills/write-report");
         std::fs::create_dir_all(&mine).expect("my skills dir");
         std::fs::write(mine.join("SKILL.md"), "# Mine").expect("my skill");
 
         for shared in [&home, &nest] {
-            let failure = materialize_seat_skills_outside(&seat(pack.clone()), shared, &roots)
-                .expect_err("a shared workdir must be refused");
+            let failure =
+                materialize_seat_skills_outside(&seat(pack.clone(), shared.clone()), &cwd, &roots)
+                    .expect_err("a shared bundle root must be refused");
             assert_eq!(failure.code, PROVIDER_UNAVAILABLE);
             assert!(failure.message.contains("shared"), "{}", failure.message);
+            assert!(
+                failure.message.contains(&shared.display().to_string()),
+                "the refusal must name the directory it refused: {}",
+                failure.message
+            );
         }
         assert_eq!(
             std::fs::read_to_string(mine.join("SKILL.md")).expect("still there"),
@@ -6026,30 +6410,53 @@ mod seat_skill_materialization_tests {
             "the human's own skill file must not be replaced"
         );
         assert!(
-            !nest.join(".agents").exists(),
+            !nest.join("skills/write-report").exists(),
             "nothing may be written into the nest either"
         );
     }
 
+    /// The same refusal under the comparison switch, where the directory
+    /// written into is the working directory again.
     #[test]
-    fn a_seats_own_workdir_still_gets_its_skills() {
+    fn a_shared_workdir_is_refused_under_the_comparison_switch() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let pack = role_pack(tmp.path());
+        let home = tmp.path().join("home");
+        std::fs::create_dir_all(&home).expect("home");
+        let roots = vec![SharedWorkdirRoot::operator(home.clone())];
+
+        let failure =
+            materialize_seat_skills_in(&seat(pack, tmp.path().join("bundle")), &home, &roots, true)
+                .expect_err("a shared workdir must be refused");
+
+        assert_eq!(failure.code, PROVIDER_UNAVAILABLE);
+        assert!(!home.join(".agents").exists(), "it wrote anyway");
+    }
+
+    #[test]
+    fn a_seats_own_bundle_still_gets_its_skills() {
         let tmp = tempfile::tempdir().expect("temp dir");
         let pack = role_pack(tmp.path());
         let home = tmp.path().join("home");
         let cwd = home.join("Projects/checkout");
         std::fs::create_dir_all(&cwd).expect("seat dir");
+        let bundle_dir = seat_bundle_dir(&home.join("app/session-provider/abc"), "session-9");
         let roots = vec![
             SharedWorkdirRoot::operator(home.join(".beekeeper")),
             SharedWorkdirRoot::operator(home),
         ];
 
-        materialize_seat_skills_outside(&seat(pack), &cwd, &roots)
-            .expect("a seat's own directory is not shared");
+        materialize_seat_skills_outside(&seat(pack, bundle_dir.clone()), &cwd, &roots)
+            .expect("a seat's own bundle is not shared");
 
         assert_eq!(
-            std::fs::read_to_string(cwd.join(".agents/skills/write-report/SKILL.md"))
+            std::fs::read_to_string(bundle_dir.join("skills/write-report/SKILL.md"))
                 .expect("materialized"),
             "# Pack report"
+        );
+        assert!(
+            !cwd.join(".agents").exists(),
+            "the seat's checkout must stay clean"
         );
     }
 

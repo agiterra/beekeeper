@@ -273,7 +273,7 @@ impl Provider {
                                 crate::seat_bee::host_seat_bee().map(|(bee, _)| bee),
                                 std::env::var_os("PATH").as_ref(),
                             ),
-                            seat_skills(seat),
+                            seat_skills(seat, &self.config.state_dir, &target.session_id),
                         )
                     }
                     _ => {

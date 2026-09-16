@@ -1247,6 +1247,7 @@ dependencies = [
 name = "buzz-persona"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "serde",
  "serde_json",
  "serde_yaml",

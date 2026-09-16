@@ -2909,9 +2909,9 @@ impl Provider {
         // A hired seat never runs in somebody else's tree. Item 80(a)/(b):
         // three seats joined one umbrella with the working directory the
         // dialog remembered — the checkout the app itself runs from — and
-        // shared a git index, a HEAD, and one `.agents/skills` that ended up
-        // holding every role's pack. Refused before anything is provisioned,
-        // and the staged key goes with the refusal.
+        // shared a git index and a HEAD, so each one's commits and branch
+        // switches landed under the others. Refused before anything is
+        // provisioned, and the staged key goes with the refusal.
         if plan.actor.is_some() {
             let refusal = {
                 let live: Vec<session::LiveWorkdirClaim> = plan
@@ -3004,7 +3004,7 @@ impl Provider {
                         // machine state a signed create must never carry. Its
                         // `packRef` is the opposite kind of fact — the same on
                         // every machine — and is kept for the wire.
-                        let skills = seat_skills(seat);
+                        let skills = seat_skills(seat, &self.config.state_dir, &target.session_id);
                         let pack_ref = seat.pack_ref.clone();
                         (
                             Some(identity),
@@ -4014,7 +4014,7 @@ impl Provider {
                         // A resume re-materializes the pack's skills: the
                         // workdir may have moved on since the create, and the
                         // write is a no-op when it has not.
-                        let skills = seat_skills(seat);
+                        let skills = seat_skills(seat, &self.config.state_dir, &record.session_id);
                         // …and re-states which pack that was, because a resume
                         // may have been staged from a moved ref. The new
                         // generation's 44223 must describe the pack it is
@@ -8996,11 +8996,23 @@ fn turn_cost(usage: &TurnUsage) -> payload::TurnCost {
 ///
 /// `None` when the launcher staged no pack — an actor seat without a role pack
 /// is legal and materializes nothing.
-fn seat_skills(seat: &crate::actor_seats::ActorSeat) -> Option<session::SeatSkills> {
+///
+/// The bundle directory is computed here, from this host's state directory and
+/// the execution's own session id, because those are the two facts the session
+/// layer has no business guessing. The same session id resolves the same
+/// bundle on every later generation, which is why a reattach re-materializes
+/// in place instead of leaving a second copy behind.
+fn seat_skills(
+    seat: &crate::actor_seats::ActorSeat,
+    state_dir: &Path,
+    session_id: &str,
+) -> Option<session::SeatSkills> {
     seat.pack_coordinates()
         .map(|(pack_dir, persona_id)| session::SeatSkills {
             pack_dir: pack_dir.to_path_buf(),
             persona_id: persona_id.to_owned(),
+            bundle_dir: session::seat_bundle_dir(state_dir, session_id),
+            pack_ref: seat.pack_ref.clone(),
         })
 }
 

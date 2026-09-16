@@ -108,19 +108,27 @@ frontmatter stripped before quoting a number here:
 
 ## Materialization
 
-A seated persona's resolved skills are written to that seat's own workdir
-(`<workdir>/.agents/skills/<name>/SKILL.md`), never to a shared directory —
-see contract D8-A and `crates/buzz-persona/src/pack.rs`'s `resolve_skills` for
-the packs' half of that contract (which skill goes to which persona).
+A seated persona's resolved skills are written where only that seat can reach
+them, never to a shared directory — see contract D8-A and
+`crates/buzz-persona/src/pack.rs`'s `resolve_skills` for the packs' half of
+that contract (which skill goes to which persona).
 
 Where that happens today, precisely:
 
 - **Team seats.** The desktop stages the seat's pack coordinates in its
   host-local actor-seat entry (`packDir` / `personaId`, never on the wire) and
-  the provider materializes them into the execution's working directory before
-  the adapter is spawned (`crates/buzz-session-provider/src/session.rs`). A
-  seat whose persona has no pack on this computer is staged without one, and
-  the Team tab says that seat carries no role skills.
+  the provider copies the pack's skill directories — whole, supporting files
+  included — into that execution's **skill bundle** before the adapter is
+  spawned: `<app data dir>/agents/seats/<session id>/skills/<name>/`, with a
+  `manifest.json` beside it naming the persona, the pack directory and the
+  `packRef` (`crates/buzz-session-provider/src/session.rs`,
+  `seat_bundle_dir`). Nothing is written into the seat's checkout, so a seated
+  worktree is clean by `git status` and carries no stale craft; the briefing
+  names each `SKILL.md` by absolute path and says the bundle is read-only to
+  the seat. The same session id resolves the same bundle on a reattach, and a
+  skill the persona no longer claims is pruned from it. A seat whose persona
+  has no pack on this computer is staged without one, and the Team tab says
+  that seat carries no role skills.
 - **Managed agents installed from a role pack.** `install_crew_role_packs`
   (`desktop/src-tauri/src/managed_agents/crew_roles.rs`) writes the record's
   `persona_team_dir` / `persona_name_in_team` link and its `home_role`, so

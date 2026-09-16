@@ -43,13 +43,11 @@
 //! execution that should speak to Buzz gets its **own** identity through
 //! `agent_ref`; it does not borrow the provider's.
 
-use std::io::Write as _;
 use std::path::{Component, Path, PathBuf};
 
 use buzz_acp::acp::EnvFence;
 
 use crate::git_exclude::ExcludeOutcome;
-use crate::git_probe::GIT_REPO_SELECTION_VARS;
 
 /// The namespace Buzz owns end to end.
 ///
@@ -428,7 +426,11 @@ impl WriteFenceLayout {
 
 /// `<app data dir>` from `BUZZ_CSP_STATE_DIR`, or `None` when the directory
 /// is not shaped `<app data dir>/session-provider/<pubkey>`.
-fn app_data_dir_from_state_dir(state_dir: &Path) -> Option<PathBuf> {
+///
+/// Shared with [`crate::session::seat_bundle_dir`]: a seat's nest and a seat's
+/// skill bundle are both app data, and deriving the same root twice from the
+/// same string is how two directories that must agree stop agreeing.
+pub(crate) fn app_data_dir_from_state_dir(state_dir: &Path) -> Option<PathBuf> {
     let provider_root = state_dir.parent()?;
     (provider_root.file_name()? == SESSION_PROVIDER_DIR)
         .then(|| provider_root.parent().map(Path::to_path_buf))
@@ -720,71 +722,16 @@ pub(crate) fn install_write_fence(
 
 /// Keep [`WRITE_FENCE_SETTINGS_FILE`] out of `git status` in `cwd`.
 ///
-/// The twin of [`crate::git_exclude::exclude_materialized_pack`] for a second
-/// line; the git-path resolution is repeated here rather than generalized
-/// there because that module is not part of this change. Fold the two
-/// together when it is.
-pub(crate) fn exclude_write_fence_file(cwd: &Path) -> std::io::Result<ExcludeOutcome> {
-    let Some(exclude_file) = git_exclude_path(cwd) else {
-        return Ok(ExcludeOutcome::NotARepository);
-    };
-    let existing = match std::fs::read_to_string(&exclude_file) {
-        Ok(content) => content,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(error) => return Err(error),
-    };
-    if existing
-        .lines()
-        .any(|line| line.trim() == WRITE_FENCE_EXCLUDE_LINE)
-    {
-        return Ok(ExcludeOutcome::AlreadyExcluded { exclude_file });
-    }
-    if let Some(parent) = exclude_file.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&exclude_file)?;
-    if !existing.is_empty() && !existing.ends_with('\n') {
-        file.write_all(b"\n")?;
-    }
-    file.write_all(WRITE_FENCE_EXCLUDE_LINE.as_bytes())?;
-    file.write_all(b"\n")?;
-    Ok(ExcludeOutcome::Added { exclude_file })
-}
-
-/// `git rev-parse --git-path info/exclude` for `cwd`, or `None` outside a
-/// repository. Repo-selection variables cleared for the reason
-/// [`GIT_REPO_SELECTION_VARS`] documents.
-fn git_exclude_path(cwd: &Path) -> Option<PathBuf> {
-    let mut command = std::process::Command::new("git");
-    for var in GIT_REPO_SELECTION_VARS {
-        command.env_remove(var);
-    }
-    let output = command
-        .arg("-C")
-        .arg(cwd)
-        .args(["rev-parse", "--git-path", "info/exclude"])
-        .stdin(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let printed = String::from_utf8(output.stdout).ok()?;
-    let printed = printed.trim();
-    if printed.is_empty() {
-        return None;
-    }
-    let path = Path::new(printed);
-    Some(if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        cwd.join(path)
-    })
+/// One line through the shared appender in [`crate::git_exclude`], which owns
+/// the `git rev-parse --git-path info/exclude` resolution and the repo-
+/// selection variables that make it answer for the right repository. This was
+/// a second copy of that resolution until the seat's skills moved out of the
+/// worktree and left this as the only caller.
+///
+/// Non-fatal for its caller: a fence that cannot be excluded is a fence that
+/// works and a gate row that reads dirty, not a failed spawn.
+fn exclude_write_fence_file(cwd: &Path) -> std::io::Result<ExcludeOutcome> {
+    crate::git_exclude::append_exclude_line(cwd, WRITE_FENCE_EXCLUDE_LINE)
 }
 
 /// What installing a seat's write fence produced.
@@ -848,6 +795,7 @@ pub(crate) fn install_seat_write_fence(
 mod tests {
     use super::*;
     use crate::actor_seats::ActorSeat;
+    use crate::git_probe::GIT_REPO_SELECTION_VARS;
 
     /// The credentials named in the finding, one assertion each so a
     /// regression names the variable it re-exposed.

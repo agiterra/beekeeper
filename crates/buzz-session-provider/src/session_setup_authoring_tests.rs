@@ -67,7 +67,7 @@ while IFS= read -r line; do
       setup_cwd=$(printf '%s' "$line" | sed -n 's/.*"cwd":"\([^"]*\)".*/\1/p')
       cd "$setup_cwd"
       pwd -P > "$SETUP_TEST_LOG/cwd"
-      cat .agents/skills/setup-project/SKILL.md > "$SETUP_TEST_LOG/skill"
+      cat "$SETUP_TEST_BUNDLE/skills/setup-project/SKILL.md" > "$SETUP_TEST_LOG/skill"
       cat .claude/settings.local.json > "$SETUP_TEST_LOG/fence.json"
       printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"setup-acp-session"}}\n' "$id" ;;
     *'"method":"session/prompt"'*)
@@ -106,6 +106,12 @@ async fn setup_first_turn_reaches_real_child_with_draft_cwd_brief_and_shipped_ro
         .join("../../personas/roles/project-setup")
         .canonicalize()
         .expect("shipped setup role");
+    // The seat's skills live in its own bundle, outside the draft it writes
+    // into — the child reads them by absolute path, as its briefing names them.
+    let bundle_dir = crate::session::seat_bundle_dir(
+        &temp.path().join("app/session-provider/abc"),
+        "setup-session",
+    );
     let agent = testing::fake_agent(temp.path(), "setup-agent", SETUP_AGENT);
     let (tx, mut rx) = mpsc::channel(64);
     let mut manager = SessionManager::new(tx);
@@ -132,6 +138,10 @@ async fn setup_first_turn_reaches_real_child_with_draft_cwd_brief_and_shipped_ro
                     "SETUP_TEST_AGENT_NAME".into(),
                     buzz_acp::acp::CLAUDE_AGENT_ACP_NAME.into(),
                 ),
+                (
+                    "SETUP_TEST_BUNDLE".into(),
+                    bundle_dir.to_string_lossy().into_owned(),
+                ),
             ],
             seat: Some(SeatIdentity {
                 actor_pubkey: "a".repeat(64),
@@ -142,6 +152,8 @@ async fn setup_first_turn_reaches_real_child_with_draft_cwd_brief_and_shipped_ro
             seat_skills: Some(SeatSkills {
                 pack_dir: pack.clone(),
                 persona_id: "project-setup".into(),
+                bundle_dir: bundle_dir.clone(),
+                pack_ref: None,
             }),
             media: None,
             idle_timeout: Duration::from_secs(5),
@@ -205,7 +217,18 @@ async fn setup_first_turn_reaches_real_child_with_draft_cwd_brief_and_shipped_ro
         .expect("Claude system prompt");
     assert!(prompt.contains("seated with the role \"project-setup\""));
     assert!(prompt.contains("Turn the project's intent into useful, versioned working procedures."));
-    assert!(prompt.contains(".agents/skills/ (setup-project)"));
+    assert!(prompt.contains(&format!(
+        "setup-project — {}",
+        bundle_dir
+            .join("skills/setup-project/SKILL.md")
+            .canonicalize()
+            .expect("the skill the seat was briefed on")
+            .display()
+    )));
+    assert!(
+        !draft.join(".agents").exists(),
+        "the setup draft must hold no materialized pack"
+    );
     let turn = requests
         .iter()
         .find(|r| r["method"] == "session/prompt")
