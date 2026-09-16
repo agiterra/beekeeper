@@ -718,12 +718,20 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
         projectRef,
       });
       if (resolved.kind === "unrecorded") {
+        // The same `hire refused: <CODE> — <reason>` shape every other
+        // refusal takes, so `bee sessions hire` recognizes it structurally
+        // and prints the whole reason — including its remedy — even though
+        // the code is not yet in buzz-core's list.
+        const text = formatCodingSessionHireRefusal({
+          code: resolved.code,
+          reason: resolved.reason,
+        });
         await discloseCodingSessionHire(
           {
             channelId: request.channelId,
             sessionRef: request.action.sessionRef,
             requesterPubkey: request.requesterPubkey,
-            text: `hire refused: ${resolved.code} — ${resolved.reason}`,
+            text,
             notice: codingSessionHireRefusalNotice({
               role: request.action.role,
               requesterLabel: codingSessionHireRequesterLabel({
@@ -732,7 +740,7 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
                   current.input.agents.find((agent) => agent.pubkey === pubkey)
                     ?.name ?? null,
               }),
-              text: `hire refused: ${resolved.code} — ${resolved.reason}`,
+              text,
             }),
           },
           current.input,

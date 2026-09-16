@@ -26,6 +26,7 @@ import {
   normalizeProjectCoordinate,
 } from "@/shared/lib/projectAgentAssociation";
 import { truncatePubkey } from "@/shared/lib/pubkey";
+import type { HIRE_CHECKOUT_NOT_RECORDED } from "./codingSessionHireCheckout";
 import {
   describeCodingSessionHireRuntimeSource,
   type CodingSessionHireModelSource,
@@ -494,9 +495,18 @@ export function decideCodingSessionHire(
   };
 }
 
-/** The exact sentence published back to the requesting seat as a 44220 turn. */
+/**
+ * The exact sentence published back to the requesting seat as a 44220 turn.
+ *
+ * Takes {@link HIRE_CHECKOUT_NOT_RECORDED} as well as the contract codes.
+ * That one is not in `CODING_SESSION_HIRE_REFUSAL_CODES` yet — the list is
+ * pinned byte-for-byte to buzz-core's, which is pinned to `bee`'s remedy
+ * table — but it travels in the same shape, which is what `bee` parses.
+ * Widened here rather than by loosening the type to `string`, so a typo is
+ * still a compile error.
+ */
 export function formatCodingSessionHireRefusal(refusal: {
-  code: CodingSessionHireRefusalCode;
+  code: CodingSessionHireRefusalCode | typeof HIRE_CHECKOUT_NOT_RECORDED;
   reason: string;
 }): string {
   return `hire refused: ${refusal.code} — ${refusal.reason}`;
