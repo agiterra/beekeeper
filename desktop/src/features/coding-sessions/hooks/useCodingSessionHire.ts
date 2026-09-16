@@ -15,7 +15,6 @@ import {
 import { fetchCodingSessionSeatPackSource } from "../lib/codingSessionSeatPackSource";
 import {
   createCodingSessionCommandId,
-  publishCodingSessionCommand,
   type CodingSessionCommandTarget,
 } from "../lib/codingSessionCommand";
 import { awaitCodingSessionCreateReceipt } from "../lib/codingSessionCrewReceipt";
@@ -25,7 +24,6 @@ import {
   codingSessionHireNoticeLine,
   codingSessionHireRefusalNotice,
   planCodingSessionHireAnswer,
-  type CodingSessionHireAnswer,
   type CodingSessionHireOutcomeState,
 } from "../lib/codingSessionHireAnswer";
 import {
@@ -39,7 +37,6 @@ import {
   codingSessionHireUmbrellaProjectRef,
   isCodingSessionHireAuthorized,
   selectUnansweredCodingSessionHires,
-  type CodingSessionHireSeatPlan,
 } from "../lib/codingSessionHireSeat";
 import type { CodingSessionHireCatalogSource } from "../lib/codingSessionHireCatalog";
 import {
@@ -58,15 +55,16 @@ import {
   createCodingSessionLifecycleCommandId,
 } from "../lib/codingSessionLifecycleCommand";
 import {
-  codingSessionGrantFailureDetail,
-  codingSessionGrantFailureReason,
-  ensureCodingSessionGrantWithBackoff,
-} from "../lib/codingSessionGrantRetry";
-import {
   publishHireOutcomes,
   readCodingSessionHireOutcomes,
   resetCodingSessionHireOutcomes,
 } from "../lib/codingSessionHireOutcomeStore";
+import { grantSeat } from "../lib/codingSessionHireGrant";
+import {
+  discloseCodingSessionHire,
+  outcomeOf,
+  publishRefusal,
+} from "../lib/codingSessionHireDisclosure";
 import {
   codingSessionHireCheckoutLine,
   type CodingSessionHireCheckoutResolution,
@@ -909,150 +907,4 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
   }, [enabled]);
 
   return { outcomes, policy };
-}
-
-/**
- * Confirm the seat, then grant its provider and actor operator authority.
- *
- * Returns null when both landed, or the reason the seat is ungranted. Never
- * throws: a failure here does not un-create the seat, and swallowing it would
- * be the exact silence this exists to end.
- */
-async function grantSeat(
-  plan: CodingSessionHireSeatPlan,
-  deps: CodingSessionHireDeps,
-): Promise<string | null> {
-  try {
-    await deps.awaitSeatReceipt({
-      channelId: plan.channelId,
-      commandId: plan.commandId,
-      providerAuthorityPubkey: plan.providerAuthorityPubkey,
-    });
-  } catch (error) {
-    return codingSessionGrantFailureReason(error);
-  }
-  const providerFailure = await ensureCodingSessionGrantWithBackoff({
-    grant: () =>
-      deps.ensureOperatorGrant({
-        channelId: plan.channelId,
-        genesisRef: plan.genesisRef,
-        granteePubkey: plan.providerAuthorityPubkey,
-      }),
-    ...(deps.sleep === undefined ? {} : { sleep: deps.sleep }),
-    ...(deps.monotonicNow === undefined ? {} : { now: deps.monotonicNow }),
-  });
-  if (providerFailure !== null) {
-    return `provider wake authority: ${codingSessionGrantFailureDetail(providerFailure)}`;
-  }
-  const actorFailure = await ensureCodingSessionGrantWithBackoff({
-    grant: () =>
-      deps.ensureOperatorGrant({
-        channelId: plan.channelId,
-        genesisRef: plan.genesisRef,
-        granteePubkey: plan.actor,
-      }),
-    ...(deps.sleep === undefined ? {} : { sleep: deps.sleep }),
-    ...(deps.monotonicNow === undefined ? {} : { now: deps.monotonicNow }),
-  });
-  if (actorFailure !== null) {
-    return `seat actor authority: ${codingSessionGrantFailureDetail(actorFailure)}`;
-  }
-  return null;
-}
-
-/**
- * Say one fact twice: privately to the seat that asked, and in the umbrella.
- *
- * To the requester so it can act, and to the umbrella so the person sees it.
- * Neither is allowed to fail the other: a lead that heard nothing would wait
- * out its whole turn budget on an answer that was published and dropped.
- */
-async function discloseCodingSessionHire(
-  disclosure: {
-    channelId: string;
-    sessionRef: string;
-    requesterPubkey: string;
-    /** The 44220 text the requesting seat receives. */
-    text: string;
-    /** The umbrella's own line for the same fact. */
-    notice: string;
-  },
-  input: UseCodingSessionHireInput,
-  deps: CodingSessionHireDeps,
-): Promise<void> {
-  const target = input.targetForActor(
-    disclosure.channelId,
-    disclosure.requesterPubkey,
-  );
-  if (target) {
-    await publishCodingSessionCommand(
-      {
-        channelId: disclosure.channelId,
-        commandId: deps.newTurnCommandId(),
-        target,
-        text: disclosure.text,
-        deliver: "boundary",
-      },
-      { publisher: deps.publisher, signer: deps.signer },
-    ).catch(() => {});
-  }
-  await publishCodingSessionLaneMessage(
-    {
-      channelId: disclosure.channelId,
-      sessionRef: disclosure.sessionRef,
-      content: disclosure.notice,
-    },
-    { publisher: deps.publisher, signer: deps.signer },
-  ).catch(() => {});
-}
-
-async function publishRefusal(
-  request: CodingSessionHireRequest,
-  answer: Extract<CodingSessionHireAnswer, { kind: "refused" }>,
-  input: UseCodingSessionHireInput,
-  deps: CodingSessionHireDeps,
-): Promise<void> {
-  await discloseCodingSessionHire(
-    {
-      channelId: request.channelId,
-      sessionRef: request.action.sessionRef,
-      requesterPubkey: request.requesterPubkey,
-      text: answer.text,
-      notice: codingSessionHireRefusalNotice({
-        role: request.action.role,
-        // Named, not "A seat". The hire carries `requestedBy`, this host
-        // compares it with the signer itself — the relay does not
-        // (POLICY.md 5) — and the three answers are three different
-        // sentences, including the one that says the claim is disputed.
-        requesterLabel: codingSessionHireRequesterLabel({
-          standing: codingSessionHireRequesterStanding(request),
-          nameFor: (pubkey) =>
-            input.agents.find((agent) => agent.pubkey === pubkey)?.name ?? null,
-        }),
-        text: answer.text,
-      }),
-    },
-    input,
-    deps,
-  );
-}
-
-function outcomeOf(
-  request: CodingSessionHireRequest,
-  state: CodingSessionHireOutcome["state"],
-  detail: string | null,
-): CodingSessionHireOutcome {
-  return {
-    commandId: request.commandId,
-    channelId: request.channelId,
-    sessionRef: request.action.sessionRef,
-    role: request.action.role,
-    state,
-    detail,
-    seatCommandId: null,
-    granted: false,
-    seatActor: null,
-    requesterLabel: null,
-    hostPubkey: null,
-  };
 }
