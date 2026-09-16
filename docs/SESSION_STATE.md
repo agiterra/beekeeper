@@ -12420,6 +12420,75 @@ Evidence and limits: [conditional publication checkpoint](history/2026-09-12-pro
      computers withdrawing, with the final relay head digest-less.
      [Review](history/2026-09-15-project-hiring-corrections-review.md),
      [`PROJECT_AGENT_HIRING_IMPL.md`](PROJECT_AGENT_HIRING_IMPL.md).
+131. **A hired verifier began on trunk, not on the revision it verifies
+     (2026-09-15).** A seat's worktree is cut from whatever trunk this host
+     happened to be on. The hire sends `source: null`
+     (`desktop/src/features/coding-sessions/hooks/useCodingSessionHire.ts:697`);
+     a null source becomes `HEAD` at
+     `desktop/src-tauri/src/coding_sessions/worktree.rs:591`, with
+     `default_source` (`worktree.rs:226`) resolving main → master → HEAD. So a
+     verifier answered about the host's trunk while its report read as an
+     answer about the assignment's work. The independence was presentational.
+     The contract now: an assignment whose `assignee_role` is in
+     `ROLES_REQUIRING_VERIFICATION_INPUT`
+     (`crates/buzz-core/src/coding_session_team_transaction.rs:80`) must carry
+     `base_sha` naming the exact commit. `branch` stays optional, and builder
+     assignments are unchanged — a builder is told what to change, not asked a
+     question about a revision. Refusal text: "baseSha is required for a
+     verifier assignment: a verification input must name the exact commit to
+     verify".
+     One already-published event forced two validation stances. A live
+     read-only query of the hive (`bee events query --kinds 44244 --limit 500`,
+     2026-09-15) returned 77 events: 16 assignments (builder 8, verifier 4,
+     runner 2, lead 2), and exactly one verifier assignment carrying no
+     `baseSha` — `0aaf33876f78`, created 2026-09-15T17:48:21Z. Because the fold
+     propagates the first invalid envelope with `?`
+     (`coding_session_team_transaction_fold.rs:378`) rather than excluding that
+     one row, a single strict rule would have failed that whole mission's
+     history. So the paths were split:
+     - publication stays strict — `validate()` and
+       `decode_coding_session_team_transaction`
+       (`coding_session_team_transaction_decode.rs:26`) refuse a new one;
+     - the recorded stance tolerates an **absent** `base_sha` only —
+       `validate_recorded()` (`coding_session_team_transaction.rs:581`) and
+       `decode_recorded_coding_session_team_transaction` (`decode.rs:43`),
+       which every reader reaches through
+       `validate_coding_session_team_transaction_envelope` (`decode.rs:162`);
+     - a *malformed* `baseSha` is still refused on both paths.
+     The relay does validate 44244 content at ingest
+     (`crates/buzz-relay/src/handlers/ingest.rs:4073-4078`) — through that same
+     envelope function, which is now the tolerant one. The relay will therefore
+     accept a verifier assignment naming no commit. That is forced rather than
+     an oversight: ingest cannot distinguish a first publication from a replay
+     or backfill of an already-signed record, so a strict gate there would
+     permanently refuse `0aaf33876f78` and any peer replicating that mission —
+     trading a fold failure for a replication failure. Enforcement rests on
+     conforming publishers at sign time: `buzz-sdk`
+     (`crates/buzz-sdk/src/coding_session_team_transaction.rs:21`) and the
+     desktop native build boundary. A non-conforming publisher can still put
+     one on the wire.
+     Naming the commit is not the same as starting on it, so the host
+     establishes it: `coding_session_establish_assignment_input`
+     (`desktop/src-tauri/src/coding_sessions/assignment_input.rs`) resolves the
+     push remote at run time (never a hard-coded remote name — two guards broke
+     the day the names moved), fetches, verifies the commit exists, and checks
+     it out on the seat's branch, in a tree this host recorded cutting. It
+     refuses with a disclosed reason on a dirty tree, an unknown commit, an
+     unrecorded tree, or no resolvable remote, and it never resets over
+     uncommitted work: a dirty tree is a refusal, not a cleanup.
+     What this is **not** is an ordering guarantee, and the disclosure says so
+     instead of implying a fence. The only path that wakes an assignee seat is
+     the CLI's `send_team_operation_wake`
+     (`crates/buzz-cli/src/commands/sessions/crew_cmds.rs:265`); the desktop
+     wakes only the lead
+     (`desktop/src/features/coding-sessions/hooks/useCodingSessionTeamWake.ts:206`).
+     No desktop step can run before the assignee's turn starts, so the wake
+     copy reads "This is not ordered against the lead's wake, so a turn may
+     have started first." The real fence belongs in the provider's `team_wake`,
+     reading HEAD in the seat's cwd and refusing the turn with a receipt; that
+     is the one place that can tell a new assignment from a replayed one. A
+     CLI-side check was considered and rejected — any other publisher bypasses
+     it. Not built in this slice.
 
 132. **A seat's role skills were written into its checkout (2026-09-15).**
      The provider copied each skill to `.agents/skills/<name>/SKILL.md` in the
