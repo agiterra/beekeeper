@@ -317,6 +317,22 @@ Mechanically:
   `catalogRevision`. If nothing clears every gate the hire is refused
   `HIRE_NO_ROUTE` — requirements are never silently weakened.
 
+**D18. Roles compose from versioned shipped templates; a project's team
+lives in its own repository; actions are relay-triggered and host-executed
+(Andy, 2026-09-16).** Realises D12's "project overlay" and D15's "playbook"
+without a separate overlay resolver: a project role is a markdown file under
+`beekeeper/roles/` that includes versioned templates Beekeeper ships in-tree
+(`personas/templates/<name>/<semver>/`) and shared project files, expanded by
+a pure composer into a staged pack the provider reads unchanged. Every
+supported template version stays in the current commit; `@latest` is the
+newest non-deprecated. Project actions are workflow definitions with
+`run_on_host`, `wake_agent` and `hire_agent` steps; the relay owns triggers
+and the run record, the operator's host executes after approval, and an
+"allow future runs" grant bound to the definition hash lifts the per-run
+approval. Full contract, open questions and slices:
+`docs/PROJECT_TEAMS_AND_ACTIONS_SPEC.md`; survey evidence is ledger 141.
+
+
 ## 4. Slices
 
 Dependency graph: S1 → S2; S1 → S3; S3 → S4; S4 → S5; S5 → S6. S2 and S3

@@ -13244,6 +13244,49 @@ Evidence and limits: [conditional publication checkpoint](history/2026-09-12-pro
      gates and unit/native tests only, same as 137 before it. Built in
      `work/readiness-catalog-sonnet`, not landed, not installed.
 
+141. **Project teams, composable roles and project actions — decisions and
+     the verified gaps behind `docs/PROJECT_TEAMS_AND_ACTIONS_SPEC.md`
+     (2026-09-16, Andy with Fable).** Read-only survey of `main` `92cc7b888`;
+     no product code changed. Decisions Andy took, each a question with
+     alternatives: base role/skill templates ship in this repo with every
+     supported version present in the current commit, a new version only when
+     the text changes between app releases, `@latest` the newest
+     non-deprecated; a project's roles live in the project repository
+     (`beekeeper/roles/*.md` plus a manifest); actions are relay-triggered and
+     host-executed, every run approved by the operator unless an "allow
+     future runs" grant exists; the deliverable is the spec.
+
+     **Gaps, each proven from code, that the spec fills.** (a) No include,
+     overlay or version-range syntax exists in role text: persona frontmatter
+     is a closed key set (`crates/buzz-persona/src/persona.rs:204`), `skills:`
+     holds literal pack-relative paths, and D12's overlay / D15's playbook
+     (`docs/CREW_SESSIONS_PLAN.md:225,249`) are unbuilt. (b) The only
+     per-repository convention is `personas/roles/<role>/` packs
+     (`desktop/src-tauri/src/managed_agents/packs_cache.rs:547`); no
+     `beekeeper/` directory is read anywhere. (c) The workflow engine has no
+     action that runs a command or wakes an agent (`ActionDef`,
+     `crates/buzz-workflow/src/schema.rs:92`), no project scope (30620 is
+     channel-scoped, `crates/buzz-relay/src/handlers/command_executor.rs:714`),
+     no git-push trigger (30618 is inserted with `channel_id = None`,
+     `crates/buzz-relay/src/api/git/transport.rs:2160-2176`), no CI-result
+     trigger (46008 is dropped by `is_workflow_execution_kind`,
+     `crates/buzz-core/src/kind.rs:1655`) and UTC-only schedules
+     (`crates/buzz-workflow/src/lib.rs:765`). (d) Approval resume exists on
+     the relay (`command_executor.rs:1380-1403`) but the engine never produces
+     `WaitingApproval`: `finalize_run` fails the run as
+     `approval_not_supported` (`lib.rs:229-253`, WF-08). (e) A latent
+     instruction-drift hazard: a seat's `pack_dir` points inside the shared
+     packs checkout (`packs_cache.rs:591-600`) and a later hire under a `ref`
+     pin runs `git checkout --force` on it (`packs_cache.rs:447-459`); the
+     spec's staged artifact (§ 4.5) removes it.
+
+     **Kinds proposed and checked free** on `92cc7b888`: 46013–46015,
+     46022–46023, 46032. Open questions are listed in the spec § 6; Andy
+     settled the include sigil (`![[…]]`) and the file names (`team.yml`,
+     `actions.yml`) the same day, and the spec landed on `main` after he and
+     Brian discussed it.
+
+
 
 ## 2a. Direction settled 2026-08-18
 
