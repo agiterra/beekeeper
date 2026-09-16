@@ -12534,6 +12534,74 @@ Evidence and limits: [conditional publication checkpoint](history/2026-09-12-pro
      Runbook for the contrasting-pack live check:
      [seat bundles experiment](history/2026-09-15-seat-bundles-experiment.md).
 
+134. **Seat skill bundles were never removed, so they accumulated (2026-09-16).**
+     Follow-up (a) of item 132. A seat's role skills are materialized to
+     `<app data dir>/agents/seats/<session id>/`, outside every checkout, so a
+     seat run leaves nothing untracked in the tree it works in. Nothing ever
+     removed one. That is the shape of the worktree problem before the
+     close-time reaper (§ "70 trees and 331 GB"), with a smaller constant: a
+     bundle is skills, not a checkout, but one per session forever is still
+     unbounded.
+     Closed on the host side, in
+     `desktop/src-tauri/src/coding_sessions/seat_bundle.rs`:
+     - the bundle goes when the **tree** goes, not when the build output does.
+       Build output needs no grace because no commit can be lost in it; a
+       bundle is what the execution is *running on*, so a held tree — one
+       somebody may still return to — keeps its skills. `SeatBundleRemoval`
+       carries a stable token and one sentence for every outcome, and `removed`
+       is true only for `removed`;
+     - the bundle is located from the session id on this host's own
+       seat-worktree record (`workdir_store.rs:134`, `session_id:
+       Option<String>`). A record without one — an ordinary case, for a tree cut
+       before its genesis was signed — names no bundle and answers
+       `unnamed_session`. Nothing is guessed at from a directory listing;
+     - a live execution keeps its bundle (`session_live`), and a path that is
+       not exactly one component under `agents/seats/` is refused
+       (`outside_root`). The name check is lexical **and**, when the directory
+       exists, canonical, so a symlinked bundle is refused rather than followed
+       out of the root;
+     - a failure to remove the bundle never becomes a failure of the close. The
+       tree really is gone, so reporting the close as failed would be the less
+       true of the two answers.
+     Orphans — bundles whose session record is gone — are **listed and counted
+     before anything is removed**, the way an unrecorded worktree is listed and
+     never adopted. `coding_session_list_orphan_seat_bundles` reports each
+     directory with whether it even looks like a bundle (`skills/` or
+     `manifest.json` inside); a directory that looks like neither is still
+     listed, never claimed to be one. Removal is by name, re-resolved under this
+     host's own root, and re-checked against the records first: a bundle whose
+     session was recorded between the listing and the click is refused
+     (`session_recorded`), not removed from under it.
+     The recorded id is matched through the **same sanitizer** that named the
+     directory. Matching raw ids against sanitized directory names would have
+     orphaned every bundle whose id needed sanitizing — that is a test, not a
+     remark.
+     Follow-up (b) of item 132 is closed as documentation, not code:
+     `crates/buzz-agent/src/hints.rs` still scans `.agents/skills` in the cwd,
+     which is correct for `buzz-agent` run standalone against a checkout
+     somebody laid skills out in. It is deliberately **not** extended to reach a
+     seat bundle: an agent that went looking for one would be guessing at a
+     directory the host owns, and would find a stale one exactly when the host
+     had just cleaned up. A seated execution is told where its skills are by
+     absolute path in its briefing.
+     The two constants **and the sanitizer** are duplicated from
+     `crates/buzz-session-provider/src/session.rs` rather than imported, because
+     the desktop does not depend on the provider crate — the same shape as
+     `AGENT_NESTS_DIR`, duplicated into the provider's `agent_fence.rs:349`.
+     That precedent is a doc-comment convention with **no test**, and a true
+     cross-crate byte-equal pin is impossible while the creating side is
+     unlanded. What is pinned here instead is what a drift would actually
+     break: the composed path, and the sanitizer's behaviour — including that a
+     recorded raw session id matches its own sanitized directory name, since
+     matching raw against sanitized would orphan every bundle whose id needed
+     sanitizing.
+     **Follow-up, for whoever lands second.** Do not add a pin test; remove the
+     duplication. `SEAT_BUNDLES_DIR` and the sanitizer belong in `buzz-core`,
+     which both sides already depend on (`crates/buzz-session-provider/
+     Cargo.toml:20`, `desktop/src-tauri/Cargo.toml:105`), so the two copies
+     collapse into one definition and there is nothing left to keep in step.
+     This is owed once `work/seat-bundles-opus` and this branch are both in.
+
 ## 2a. Direction settled 2026-08-18
 
 Three independent answers to "what should a new execution get on its first
