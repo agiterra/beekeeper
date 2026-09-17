@@ -107,6 +107,10 @@ export type WorkflowHostStep = {
   headSha: string | null;
   dirty: boolean | null;
   artifactRef: string | null;
+  /** For a `wake_agent` step: the agent the brief was delivered to. */
+  routedAgent: string | null;
+  /** For a `wake_agent` step: the kind:44220 command id of that turn. */
+  routedCommandId: string | null;
   exitedAt: string | null;
   createdAt: string;
 };

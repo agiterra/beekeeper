@@ -26,8 +26,10 @@ use crate::kind::{
 
 /// Exact schema named by every host-step payload and its `schema` tag.
 pub const HOST_STEP_SCHEMA: &str = "buzz-host-step/v1";
-/// The only step kind a host executes in C1.
+/// A `run_on_host` step: the host runs a command from its own actions.yml.
 pub const HOST_STEP_KIND_RUN_ON_HOST: &str = "run_on_host";
+/// A `wake_agent` step: the host delivers a brief to an agent's execution.
+pub const HOST_STEP_KIND_WAKE_AGENT: &str = "wake_agent";
 /// Maximum UTF-8 byte length of one captured output tail.
 pub const MAX_HOST_STEP_TAIL_BYTES: usize = 65_536;
 /// Maximum UTF-8 byte length of a workflow step id (the engine's own rule).
@@ -84,8 +86,18 @@ pub struct HostStepRequested {
     pub approval: Option<HostStepApproval>,
     /// The run's trigger context, verbatim, so the host can brief an agent.
     pub trigger_context: serde_json::Value,
+    /// The outputs of the run's earlier steps, keyed by step id — what a
+    /// `wake_agent` brief's `{{steps.<id>.output.*}}` resolves against, and
+    /// how the preceding `run_on_host` result reaches the woken agent. An
+    /// object; empty for a step with nothing before it.
+    #[serde(default = "empty_object")]
+    pub inputs: serde_json::Value,
     /// Unix seconds after which the relay stops accepting a claim.
     pub expires_at: u64,
+}
+
+fn empty_object() -> serde_json::Value {
+    serde_json::Value::Object(serde_json::Map::new())
 }
 
 /// The host's self-description on a claim.
@@ -143,6 +155,23 @@ pub struct HostStepRefusal {
     pub message: String,
 }
 
+/// Where a `wake_agent` step delivered its brief.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct HostStepRouted {
+    /// The agent name the step addressed, as `team.yml` spells it.
+    pub agent: String,
+    /// The role `team.yml` gives that agent.
+    pub role: String,
+    /// The provider session the turn was addressed to.
+    pub session_id: String,
+    /// The umbrella session reference that execution belongs to, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_ref: Option<String>,
+    /// The kind:44220 command id the host minted for the turn.
+    pub command_id: String,
+}
+
 /// Content of a host-signed kind:46023 result.
 ///
 /// Tags: `d` = `<runId>:<stepId>`, `e` = the requested event id, `h` =
@@ -196,6 +225,10 @@ pub struct HostStepResult {
     /// Host-local path of the full logs. Meaningful only on that host.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub artifact_path: Option<String>,
+    /// For a `wake_agent` step: where the brief was delivered. Absent on a
+    /// `run_on_host` result and on a refusal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub routed: Option<HostStepRouted>,
 }
 
 /// Content of the relay-signed kind:46014 echo.
@@ -384,10 +417,15 @@ fn validate_requested(request: &HostStepRequested) -> Result<(), String> {
     )?;
     validate_step_id(&request.step_id)?;
     validate_hex64("host step definition hash", &request.definition_hash)?;
-    if request.step_kind != HOST_STEP_KIND_RUN_ON_HOST {
+    if request.step_kind != HOST_STEP_KIND_RUN_ON_HOST
+        && request.step_kind != HOST_STEP_KIND_WAKE_AGENT
+    {
         return Err(format!(
-            "host step kind must be {HOST_STEP_KIND_RUN_ON_HOST:?}"
+            "host step kind must be {HOST_STEP_KIND_RUN_ON_HOST:?} or {HOST_STEP_KIND_WAKE_AGENT:?}"
         ));
+    }
+    if !request.inputs.is_object() {
+        return Err("host step inputs must be a JSON object".into());
     }
     validate_project(&request.project)?;
     if let Some(approval) = &request.approval {
@@ -490,6 +528,18 @@ fn validate_result(result: &HostStepResult) -> Result<(), String> {
     }
     if let Some(path) = &result.artifact_path {
         validate_nonempty_bounded("host step artifact path", path, MAX_HOST_STEP_TEXT_BYTES)?;
+    }
+    if let Some(routed) = &result.routed {
+        if result.disposition == HostStepDisposition::Refused {
+            return Err("a refused host step cannot also be routed".into());
+        }
+        validate_nonempty_bounded("host step routed agent", &routed.agent, 64)?;
+        validate_nonempty_bounded("host step routed role", &routed.role, 64)?;
+        validate_nonempty_bounded("host step routed session id", &routed.session_id, 128)?;
+        validate_nonempty_bounded("host step routed command id", &routed.command_id, 128)?;
+        if let Some(session_ref) = &routed.session_ref {
+            validate_nonempty_bounded("host step routed session ref", session_ref, 256)?;
+        }
     }
     Ok(())
 }
@@ -603,6 +653,7 @@ mod tests {
                 scope: "run".into(),
             }),
             trigger_context: serde_json::json!({"author": hex64(0x44)}),
+            inputs: serde_json::json!({"build": {"exit_code": 1}}),
             expires_at: 1_800_000_000,
         }
     }
@@ -626,6 +677,7 @@ mod tests {
             stderr_tail: String::new(),
             truncated: false,
             artifact_path: Some("/tmp/actions/run/build".into()),
+            routed: None,
         }
     }
 

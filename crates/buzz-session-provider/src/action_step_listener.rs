@@ -365,6 +365,7 @@ mod tests {
             project: format!("30621:{}:pulse", "11".repeat(32)),
             approval: None,
             trigger_context: serde_json::json!({}),
+            inputs: serde_json::json!({}),
             expires_at,
         }
     }

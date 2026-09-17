@@ -32,7 +32,38 @@ use buzz_core::host_step::{
     build_host_step_claim, build_host_step_result, HostIdentity, HostStepClaim,
     HostStepDisposition, HostStepRefusal, HostStepRequested, HostStepResult, HOST_STEP_SCHEMA,
 };
+use buzz_core::host_step::{HOST_STEP_KIND_RUN_ON_HOST, HOST_STEP_KIND_WAKE_AGENT};
 use buzz_core::kind::{KIND_HOST_STEP_CLAIM, KIND_HOST_STEP_RESULT};
+
+/// What a verified, prepared request will do once claimed.
+enum StepPlan {
+    /// Run a command in the checkout.
+    Command {
+        checkout: PathBuf,
+        prepared: PreparedCommand,
+    },
+    /// Deliver a brief to an open execution on this computer.
+    Wake {
+        agent: String,
+        role: String,
+        session_id: String,
+        session_ref: Option<String>,
+        channel_id: uuid::Uuid,
+        target: buzz_core::coding_session_command::CodingSessionTarget,
+        text: String,
+    },
+}
+
+/// The wake half of a [`StepPlan`], handed to `route_wake` after the claim.
+struct RoutePlan {
+    agent: String,
+    role: String,
+    session_id: String,
+    session_ref: Option<String>,
+    channel_id: uuid::Uuid,
+    target: buzz_core::coding_session_command::CodingSessionTarget,
+    text: String,
+}
 
 /// How many times a claim is published before it is given up as unconfirmed.
 const CLAIM_ATTEMPTS: u32 = 3;
@@ -76,8 +107,22 @@ pub const ARTIFACTS_DIR: &str = "actions";
 pub struct VerifiedStep {
     /// The project's recorded repository folder.
     pub checkout: PathBuf,
-    /// The step with defaults applied.
-    pub spec: ResolvedRunOnHost,
+    /// What the step asks this host to do.
+    pub action: VerifiedAction,
+}
+
+/// The two things a host step can be, recompiled from this host's own file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VerifiedAction {
+    /// `run_on_host`, with defaults applied.
+    Command(ResolvedRunOnHost),
+    /// `wake_agent`: deliver `brief` to the agent `team.yml` calls `agent`.
+    Wake {
+        /// The agent's name in `team.yml`.
+        agent: String,
+        /// The brief template from `actions.yml`.
+        brief: String,
+    },
 }
 
 /// The operation-ledger key one run's step is fenced under.
@@ -166,20 +211,38 @@ pub fn verify_request(
             ),
         )
     })?;
-    if step.id != request.step_id || !matches!(step.action, ActionDef::RunOnHost { .. }) {
-        return Err(refusal(
+    let mismatch = |what: &str| {
+        refusal(
             ACTION_STEP_MISMATCH,
             format!(
-                "step {} of action {:?} is {:?}, not run_on_host step {:?}",
-                request.step_index, request.workflow_name, step.id, request.step_id
+                "step {} of action {:?} is {:?} ({what}), not {} step {:?}",
+                request.step_index,
+                request.workflow_name,
+                step.id,
+                request.step_kind,
+                request.step_id
             ),
-        ));
+        )
+    };
+    if step.id != request.step_id {
+        return Err(mismatch("a different id"));
     }
-    let spec = resolve_run_on_host(&step.action)
-        .map_err(|error| refusal(ACTION_STEP_INVALID, error.to_string()))?;
+    let action = match (&step.action, request.step_kind.as_str()) {
+        (ActionDef::RunOnHost { .. }, HOST_STEP_KIND_RUN_ON_HOST) => VerifiedAction::Command(
+            resolve_run_on_host(&step.action)
+                .map_err(|error| refusal(ACTION_STEP_INVALID, error.to_string()))?,
+        ),
+        (ActionDef::WakeAgent { to, brief }, HOST_STEP_KIND_WAKE_AGENT) => VerifiedAction::Wake {
+            agent: to.agent.clone(),
+            brief: brief.clone(),
+        },
+        (ActionDef::RunOnHost { .. }, _) => return Err(mismatch("run_on_host")),
+        (ActionDef::WakeAgent { .. }, _) => return Err(mismatch("wake_agent")),
+        _ => return Err(mismatch("not a host step")),
+    };
     Ok(VerifiedStep {
         checkout: checkout.clone(),
-        spec,
+        action,
     })
 }
 
@@ -207,6 +270,7 @@ pub fn lost_on_restart_result(record: &ActionStepRecord, claim_event_id: &str) -
         stderr_tail: String::new(),
         truncated: false,
         artifact_path: None,
+        routed: None,
     }
 }
 
@@ -234,6 +298,7 @@ pub fn refused_result(
         stderr_tail: String::new(),
         truncated: false,
         artifact_path: None,
+        routed: None,
     }
 }
 
@@ -289,6 +354,7 @@ pub fn exited_result(
         stderr_tail: outcome.stderr_tail.clone(),
         truncated: outcome.truncated,
         artifact_path: Some(outcome.artifact_path.display().to_string()),
+        routed: None,
     }
 }
 
@@ -480,17 +546,57 @@ impl Provider {
         }
 
         // Verify against this host's own checkout before anything is claimed.
+        // For a command that includes preparing it (directory, env); for a
+        // routed brief it includes resolving the agent to a role and to an
+        // open execution here, so a brief nobody can receive is never claimed.
         let projects = ProjectsFile::load(self.config.projects_file.as_deref());
         let host_env: HashMap<String, String> = std::env::vars().collect();
-        let prepared = match verify_request(&request, &projects.projects).and_then(|verified| {
-            host_command::prepare(&verified.spec, &verified.checkout, &host_env)
-                .map(|prepared| (verified.checkout, prepared))
-                .map_err(|refusal| HostStepRefusal {
-                    code: refusal.code,
-                    message: refusal.message,
-                })
+        let plan = match verify_request(&request, &projects.projects).and_then(|verified| {
+            match verified.action {
+                VerifiedAction::Command(spec) => {
+                    host_command::prepare(&spec, &verified.checkout, &host_env)
+                        .map(|prepared| StepPlan::Command {
+                            checkout: verified.checkout,
+                            prepared,
+                        })
+                        .map_err(|refusal| HostStepRefusal {
+                            code: refusal.code,
+                            message: refusal.message,
+                        })
+                }
+                VerifiedAction::Wake { agent, brief } => {
+                    let role = crate::action_route::resolve_wake_role(&verified.checkout, &agent)?;
+                    let execution = crate::action_route::pick_open_execution(
+                        self.state.sessions(),
+                        &request.project,
+                        &role,
+                    )
+                    .ok_or_else(|| HostStepRefusal {
+                        code: crate::action_route::ROUTE_NO_SESSION.to_owned(),
+                        message: format!(
+                            "no open execution of {agent} ({role}) for this project runs on this \
+                             computer; hire one first"
+                        ),
+                    })?;
+                    let text =
+                        crate::action_route::wake_brief_text(&request, requested_event_id, &brief)
+                            .map_err(|error| HostStepRefusal {
+                                code: crate::action_route::ROUTE_BRIEF_INVALID.to_owned(),
+                                message: error,
+                            })?;
+                    Ok(StepPlan::Wake {
+                        agent,
+                        role,
+                        session_id: execution.session_id.clone(),
+                        session_ref: execution.session_ref.clone(),
+                        channel_id: execution.channel_id,
+                        target: self.target_for(execution),
+                        text,
+                    })
+                }
+            }
         }) {
-            Ok(prepared) => prepared,
+            Ok(plan) => plan,
             Err(refusal) => {
                 tracing::warn!(
                     target: "csp::actions",
@@ -506,8 +612,6 @@ impl Provider {
                 return Ok(());
             }
         };
-        let (checkout, prepared) = prepared;
-
         // The durable fence, written before the claim is published.
         let key = operation_key(&request.run_id, &request.step_id);
         self.state
@@ -608,8 +712,115 @@ impl Provider {
         self.action_steps
             .mark_claimed(requested_event_id, &claim_event_id)?;
 
-        self.spawn_host_step(requested_event_id, checkout, prepared)
-            .await
+        match plan {
+            StepPlan::Command { checkout, prepared } => {
+                self.spawn_host_step(requested_event_id, checkout, prepared)
+                    .await
+            }
+            StepPlan::Wake {
+                agent,
+                role,
+                session_id,
+                session_ref,
+                channel_id,
+                target,
+                text,
+            } => {
+                self.route_wake(
+                    requested_event_id,
+                    &request,
+                    &claim_event_id,
+                    publisher,
+                    RoutePlan {
+                        agent,
+                        role,
+                        session_id,
+                        session_ref,
+                        channel_id,
+                        target,
+                        text,
+                    },
+                )
+                .await
+            }
+        }
+    }
+
+    /// Deliver a claimed `wake_agent` step: publish the turn, leave the
+    /// observed gate row in the woken session, and report the result.
+    async fn route_wake(
+        &mut self,
+        requested_event_id: &str,
+        request: &HostStepRequested,
+        claim_event_id: &str,
+        publisher: &RelayEventPublisher,
+        plan: RoutePlan,
+    ) -> anyhow::Result<()> {
+        let Some(record) = self.action_steps.record(requested_event_id).cloned() else {
+            return Ok(());
+        };
+        let command_id = crate::action_route::route_command_id(&request.run_id, &request.step_id);
+        let event = crate::action_route::build_route_event(
+            &self.config.keys,
+            plan.channel_id,
+            plan.target.clone(),
+            command_id.clone(),
+            plan.text.clone(),
+        )
+        .map_err(|error| anyhow::anyhow!(error))?;
+        match publisher.publish_event_acknowledged(event).await {
+            Ok(()) => {}
+            Err(error) => {
+                let refusal = HostStepRefusal {
+                    code: crate::action_route::ROUTE_REJECTED.to_owned(),
+                    message: format!("the relay did not accept the turn: {error}"),
+                };
+                tracing::warn!(
+                    target: "csp::actions",
+                    %requested_event_id,
+                    "a routed brief was not accepted: {}",
+                    refusal.message
+                );
+                let result =
+                    crate::action_route::route_refused_result(&record, claim_event_id, &refusal);
+                self.report_host_step_result(requested_event_id, result)?;
+                self.action_steps
+                    .mark_refused(requested_event_id, &refusal.code)?;
+                return Ok(());
+            }
+        }
+        // The evidence trail in the woken session: a gate row for the host
+        // step whose result the brief carries (spec § 5.5). Best effort, like
+        // every observed row — a disclosure, not a condition of delivery.
+        if let Err(error) = self.publish_observed_gate_row(
+            &plan.session_id,
+            plan.channel_id,
+            crate::action_route::observed_gate_row(crate::action_route::gate_row_for(request)),
+        ) {
+            tracing::warn!(
+                target: "csp::actions",
+                %requested_event_id,
+                "the routed result's gate row could not be published: {error}"
+            );
+        }
+        let routed = buzz_core::host_step::HostStepRouted {
+            agent: plan.agent,
+            role: plan.role,
+            session_id: plan.session_id,
+            session_ref: plan.session_ref,
+            command_id,
+        };
+        tracing::info!(
+            target: "csp::actions",
+            %requested_event_id,
+            agent = %routed.agent,
+            command_id = %routed.command_id,
+            "delivered a routed brief"
+        );
+        let result = crate::action_route::routed_result(&record, claim_event_id, routed);
+        self.action_steps
+            .mark_exited(requested_event_id, result.clone())?;
+        self.report_host_step_result(requested_event_id, result)
     }
 
     async fn spawn_host_step(
@@ -754,6 +965,7 @@ mod tests {
             project: PROJECT.into(),
             approval: None,
             trigger_context: serde_json::json!({}),
+            inputs: serde_json::json!({}),
             expires_at: u64::MAX,
         }
     }
@@ -770,7 +982,10 @@ mod tests {
         let projects = BTreeMap::from([(PROJECT.to_owned(), checkout.path().to_path_buf())]);
         let verified = verify_request(&request(&real_hash()), &projects).expect("verified");
         assert_eq!(verified.checkout, checkout.path());
-        assert_eq!(verified.spec.command, vec!["true".to_owned()]);
+        match verified.action {
+            VerifiedAction::Command(spec) => assert_eq!(spec.command, vec!["true".to_owned()]),
+            other => panic!("expected a command, got {other:?}"),
+        }
     }
 
     #[test]

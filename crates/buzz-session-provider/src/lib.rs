@@ -29,6 +29,7 @@
 
 #![deny(unsafe_code)]
 
+mod action_route;
 pub mod action_step_listener;
 pub mod action_step_store;
 pub mod action_steps;

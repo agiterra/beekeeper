@@ -393,6 +393,7 @@ mod tests {
             stderr_tail: String::new(),
             truncated: false,
             artifact_path: None,
+            routed: None,
         }
     }
 

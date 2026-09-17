@@ -63,6 +63,8 @@ function hostStep(overrides = {}) {
     headSha: null,
     dirty: null,
     artifactRef: null,
+    routedAgent: null,
+    routedCommandId: null,
     exitedAt: null,
     createdAt: new Date((NOW - 80) * 1_000).toISOString(),
     ...overrides,
@@ -236,4 +238,24 @@ test("a run with no approval or host record shows only its own status", () => {
     describeActionRun(run({ status: "cancelled" }), [], [], clock).tone,
     "muted",
   );
+});
+
+test("a routed wake step reads as routed to the agent with its turn", () => {
+  const routed = describeActionRun(
+    run({ status: "running" }),
+    [],
+    [
+      hostStep({
+        status: "exited",
+        claimedBy: HOST,
+        disposition: "exited",
+        exitCode: 0,
+        routedAgent: "Levain",
+        routedCommandId: `action-route-${"f".repeat(64)}`,
+      }),
+    ],
+    clock,
+  );
+  assert.equal(routed.label, "routed to Levain · turn action-route-ffffffff");
+  assert.equal(routed.tone, "ok");
 });

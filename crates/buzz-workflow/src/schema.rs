@@ -209,6 +209,18 @@ pub enum ActionDef {
         #[serde(default)]
         summary: Option<String>,
     },
+    /// Suspend the run and ask an operator's host to deliver a brief — and
+    /// the preceding host step's result, when there is one — to a persistent
+    /// agent's open execution as a turn. The brief may use `{{trigger.*}}`
+    /// and `{{steps.<id>.output.*}}`; the host resolves them from the
+    /// request. Like `run_on_host`, the text travels only in the project's
+    /// own `actions.yml`.
+    WakeAgent {
+        /// The agent to wake.
+        to: WakeTarget,
+        /// What to tell it.
+        brief: String,
+    },
     /// Suspend the run and ask an operator's host to execute a command in the
     /// project's checkout. Every field is literal: the host never receives
     /// these values over the wire, it recompiles them from the project's own
@@ -236,6 +248,19 @@ pub enum ActionDef {
         capture: Option<HostCapture>,
     },
 }
+
+/// Who a `wake_agent` step addresses: an agent named in the project's
+/// `team.yml`, which the host resolves to a role and then to that agent's
+/// open execution for the project.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WakeTarget {
+    /// The agent's name in `team.yml` `agents`.
+    pub agent: String,
+}
+
+/// Maximum UTF-8 byte length of a `wake_agent` brief.
+pub const WAKE_BRIEF_MAX_BYTES: usize = 4096;
 
 /// Output capture limits for a `run_on_host` step.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -420,6 +445,17 @@ impl WorkflowDef {
             .any(|s| matches!(s.action, ActionDef::RunOnHost { .. }))
     }
 
+    /// True when any step is executed by an operator's host at all: a
+    /// command (`run_on_host`) or a routed brief (`wake_agent`).
+    pub fn has_host_executed_steps(&self) -> bool {
+        self.steps.iter().any(|s| {
+            matches!(
+                s.action,
+                ActionDef::RunOnHost { .. } | ActionDef::WakeAgent { .. }
+            )
+        })
+    }
+
     /// Validate the workflow definition. Returns `Err` with a descriptive message
     /// if any invariant is violated.
     pub fn validate(&self) -> Result<(), WorkflowError> {
@@ -457,9 +493,9 @@ impl WorkflowDef {
                 ));
             }
         }
-        if self.has_host_steps() && self.project.is_none() {
+        if self.has_host_executed_steps() && self.project.is_none() {
             return Err(WorkflowError::InvalidDefinition(
-                "run_on_host steps require a top-level project coordinate".into(),
+                "run_on_host and wake_agent steps require a top-level project coordinate".into(),
             ));
         }
         // The relay hashes a webhook definition after injecting its secret,
@@ -496,6 +532,20 @@ impl WorkflowDef {
 
             if matches!(step.action, ActionDef::RunOnHost { .. }) {
                 resolve_run_on_host(&step.action)?;
+            }
+            if let ActionDef::WakeAgent { to, brief } = &step.action {
+                if to.agent.trim().is_empty() || to.agent.len() > 64 {
+                    return Err(WorkflowError::InvalidDefinition(format!(
+                        "step '{}': wake_agent to.agent must be 1 to 64 bytes",
+                        step.id
+                    )));
+                }
+                if brief.trim().is_empty() || brief.len() > WAKE_BRIEF_MAX_BYTES {
+                    return Err(WorkflowError::InvalidDefinition(format!(
+                        "step '{}': wake_agent brief must be 1 to {WAKE_BRIEF_MAX_BYTES} bytes",
+                        step.id
+                    )));
+                }
             }
 
             if let ActionDef::RecordCiResult {

@@ -24,7 +24,12 @@ use crate::suspend::Suspension;
 use crate::WorkflowEngine;
 
 /// Data extracted from the triggering event, passed to every step.
+///
+/// Container-defaulted on the way in, so a context recorded before a field
+/// existed — or one a host reads off a kind:46013 — still decodes with the
+/// fields it has.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct TriggerContext {
     /// Message content (message_posted trigger).
     pub text: String,
@@ -522,8 +527,9 @@ pub fn resolve_step_templates(
             duration: duration.clone(),
         }),
         // Literal by construction: the host never receives these values, it
-        // recompiles them from the project's own actions.yml.
-        RunOnHost { .. } => Ok(step.action.clone()),
+        // recompiles them from the project's own actions.yml (and resolves a
+        // wake_agent brief's templates itself, from the request's context).
+        RunOnHost { .. } | WakeAgent { .. } => Ok(step.action.clone()),
         RecordCiResult {
             project,
             repository,
@@ -613,6 +619,7 @@ fn resolve_send_message_channel(
 ///
 /// `RequestApproval` returns `StepResult::Suspended` — the caller must
 /// persist state and stop the execution loop.
+#[allow(clippy::too_many_arguments)]
 pub async fn dispatch_action(
     step_id: &str,
     action: &ActionDef,
@@ -620,6 +627,7 @@ pub async fn dispatch_action(
     community_id: CommunityId,
     run_id: Uuid,
     trigger_ctx: &TriggerContext,
+    step_outputs: &HashMap<String, JsonValue>,
 ) -> Result<StepResult, WorkflowError> {
     use ActionDef::*;
 
@@ -786,6 +794,27 @@ pub async fn dispatch_action(
                     }))
                 }
 
+                WakeAgent { to, .. } => {
+                    // A routed brief is not a command, so no approval gate;
+                    // the host is handed the earlier steps' outputs so the
+                    // brief can carry the preceding host step's result.
+                    info!(
+                        run_id = %run_id, step = step_id, agent = %to.agent,
+                        "wake_agent: handing the brief to a host"
+                    );
+                    Ok(StepResult::Suspended(Suspension::HostStep {
+                        step_id: step_id.to_owned(),
+                        step_kind: buzz_core::host_step::HOST_STEP_KIND_WAKE_AGENT.to_owned(),
+                        approval: None,
+                        inputs: serde_json::Value::Object(
+                            step_outputs
+                                .iter()
+                                .map(|(id, output)| (id.clone(), output.clone()))
+                                .collect(),
+                        ),
+                    }))
+                }
+
                 RunOnHost { .. } => {
                     // Validate limits exactly as the host will, so a step the
                     // host would refuse never reaches it.
@@ -829,7 +858,10 @@ pub async fn dispatch_action(
                             );
                             Ok(StepResult::Suspended(Suspension::HostStep {
                                 step_id: step_id.to_owned(),
+                                step_kind: buzz_core::host_step::HOST_STEP_KIND_RUN_ON_HOST
+                                    .to_owned(),
                                 approval: Some(approval),
+                                inputs: serde_json::Value::Object(Default::default()),
                             }))
                         }
                         None => {
@@ -1414,6 +1446,7 @@ async fn execute_steps(
                 community_id,
                 run_id,
                 trigger_ctx,
+                &step_outputs,
             ),
         )
         .await;

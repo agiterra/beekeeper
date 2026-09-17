@@ -894,6 +894,15 @@ C are independent lanes until C3, which needs `team.yml` (A3) for agent names.
   fenced 44220, 44246 row in the target session. Proof: a failing build wakes
   the builder exactly once across a duplicate 46013 delivery and a provider
   restart.
+  *Status 2026-09-17: built (ledger 153). Amendments: `wake_agent` is a host
+  step whose 46013 carries the earlier steps' outputs as `inputs` and no
+  approval gate; the `on_success`/`on_failure` sugar is expanded by the
+  actions-file parser before hashing (`<id>_success`, `<id>_failure`); the
+  agent's name resolves to a role through `team.yml` and to that role's open
+  execution on the routing host — no execution is created and no other host's
+  execution is woken, both refused by name; the turn is a provider-signed
+  44220 with a command id that is a pure function of run and step. The live
+  proof is still owed.*
 - **C4 — autorun grant and revoke.** `scope: action`, hash binding, 46032,
   46015, the inbox checkbox. Proof: editing the action re-arms approval.
 - **C5 — ephemeral hire, agent-managed mode, `ci_result` trigger.** Proof:

@@ -880,6 +880,7 @@ mod tests {
                 stderr_tail: String::new(),
                 truncated: false,
                 artifact_path: None,
+                routed: None,
             };
             let (tags, content) = build_host_step_result(&result).expect("build result");
             signed(keys, KIND_HOST_STEP_RESULT, tags, content)

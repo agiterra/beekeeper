@@ -287,6 +287,20 @@ fn host_step_json(step: &buzz_db::workflow::HostStepRecord) -> Value {
         "head_sha": step.head_sha,
         "dirty": step.dirty,
         "artifact_ref": step.artifact_ref,
+        // Spec § 5.7: where a `wake_agent` step delivered its brief, off the
+        // accepted result; null on a command step and on a refusal.
+        "routed_agent": step
+            .result
+            .as_ref()
+            .and_then(|result| result.get("routed"))
+            .and_then(|routed| routed.get("agent"))
+            .and_then(Value::as_str),
+        "routed_command_id": step
+            .result
+            .as_ref()
+            .and_then(|result| result.get("routed"))
+            .and_then(|routed| routed.get("commandId"))
+            .and_then(Value::as_str),
         "exited_at": step.exited_at,
         "created_at": step.created_at,
     })

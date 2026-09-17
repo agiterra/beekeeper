@@ -12,9 +12,7 @@
 //! [`ExecutionResult`](crate::executor::ExecutionResult) is already durable
 //! when the executor returns it.
 
-use buzz_core::host_step::{
-    HostStepApproval, HostStepRequested, HOST_STEP_KIND_RUN_ON_HOST, HOST_STEP_SCHEMA,
-};
+use buzz_core::host_step::{HostStepApproval, HostStepRequested, HOST_STEP_SCHEMA};
 use buzz_core::tenant::CommunityId;
 use buzz_db::workflow::{
     ApprovalStatus, CreateApprovalParams, CreateHostStepParams, RunStatus, WorkflowRecord,
@@ -58,8 +56,12 @@ pub enum Suspension {
     HostStep {
         /// The step handed to the host.
         step_id: String,
+        /// `run_on_host` or `wake_agent`.
+        step_kind: String,
         /// The approval that released it, when one was required.
         approval: Option<HostStepApproval>,
+        /// The earlier steps' outputs, keyed by step id, for the request.
+        inputs: serde_json::Value,
     },
 }
 
@@ -202,7 +204,12 @@ pub async fn persist_and_publish(
                 })?;
             Ok(())
         }
-        Suspension::HostStep { step_id, approval } => {
+        Suspension::HostStep {
+            step_id,
+            step_kind,
+            approval,
+            inputs,
+        } => {
             let expires_at = Utc::now() + Duration::seconds(HOST_STEP_CLAIM_WINDOW_SECS as i64);
             engine
                 .db
@@ -233,7 +240,9 @@ pub async fn persist_and_publish(
                 &workflow,
                 step_id,
                 step_index,
+                step_kind,
                 approval.clone(),
+                inputs.clone(),
                 &channel_id,
                 expires_at.timestamp().max(0) as u64,
             );
@@ -259,12 +268,15 @@ pub async fn persist_and_publish(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn host_step_request(
     run: &WorkflowRunRecord,
     workflow: &WorkflowRecord,
     step_id: &str,
     step_index: usize,
+    step_kind: &str,
     approval: Option<HostStepApproval>,
+    inputs: serde_json::Value,
     channel_id: &str,
     expires_at: u64,
 ) -> HostStepRequested {
@@ -281,7 +293,7 @@ fn host_step_request(
         step_id: step_id.to_owned(),
         step_index: step_index as u32,
         definition_hash: hex::encode(&workflow.definition_hash),
-        step_kind: HOST_STEP_KIND_RUN_ON_HOST.into(),
+        step_kind: step_kind.to_owned(),
         channel_id: channel_id.to_owned(),
         project: workflow
             .definition
@@ -291,6 +303,11 @@ fn host_step_request(
             .to_owned(),
         approval,
         trigger_context,
+        inputs: if inputs.is_object() {
+            inputs
+        } else {
+            serde_json::Value::Object(Default::default())
+        },
         expires_at,
     }
 }
@@ -332,6 +349,7 @@ pub fn host_step_output(result: &buzz_core::host_step::HostStepResult) -> serde_
         "stderr_tail": result.stderr_tail,
         "truncated": result.truncated,
         "artifact_path": result.artifact_path,
+        "routed": result.routed,
     })
 }
 
@@ -383,6 +401,7 @@ mod tests {
             stderr_tail: String::new(),
             truncated: false,
             artifact_path: None,
+            routed: None,
         };
         let output = host_step_output(&result);
         assert_eq!(output["exit_code"], 1);

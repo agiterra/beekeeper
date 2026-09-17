@@ -67,7 +67,9 @@ pub fn parse_actions_yml(text: &str, project: &str) -> Result<Vec<ActionEntry>, 
             "actions.yml project must use a lowercase canonical owner key".into(),
         ));
     }
-    let file: ActionsFile = serde_yaml::from_str(text)?;
+    let mut document: serde_yaml::Value = serde_yaml::from_str(text)?;
+    expand_wake_brief_sugar(&mut document)?;
+    let file: ActionsFile = serde_yaml::from_value(document)?;
     if file.schema != ACTIONS_SCHEMA {
         return Err(WorkflowError::InvalidDefinition(format!(
             "actions.yml schema must be {ACTIONS_SCHEMA:?} (got {:?})",
@@ -141,6 +143,100 @@ pub fn parse_actions_yml(text: &str, project: &str) -> Result<Vec<ActionEntry>, 
         });
     }
     Ok(entries)
+}
+
+/// Spec § 5.1 mode (2): a `wake_agent` step whose `brief` is
+/// `{on_success, on_failure}` becomes two steps, `<id>_success` and
+/// `<id>_failure`, with opposite `if:` conditions on the nearest preceding
+/// `run_on_host` step's exit code. Expanded before hashing, so the relay's
+/// stored definition and the host's recompilation see the same two steps.
+fn expand_wake_brief_sugar(document: &mut serde_yaml::Value) -> Result<(), WorkflowError> {
+    use serde_yaml::Value;
+    let Some(actions) = document.get_mut("actions").and_then(Value::as_sequence_mut) else {
+        return Ok(());
+    };
+    for action in actions.iter_mut() {
+        let name = action
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned();
+        let Some(steps) = action.get_mut("steps").and_then(Value::as_sequence_mut) else {
+            continue;
+        };
+        let mut expanded: Vec<Value> = Vec::with_capacity(steps.len());
+        let mut last_host_step: Option<String> = None;
+        for step in steps.drain(..) {
+            let action_kind = step.get("action").and_then(Value::as_str).unwrap_or("");
+            if action_kind == "run_on_host" {
+                last_host_step = step.get("id").and_then(Value::as_str).map(str::to_owned);
+            }
+            let is_sugar =
+                action_kind == "wake_agent" && step.get("brief").is_some_and(Value::is_mapping);
+            if !is_sugar {
+                expanded.push(step);
+                continue;
+            }
+            let id = step
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned();
+            let Some(previous) = last_host_step.clone() else {
+                return Err(WorkflowError::InvalidDefinition(format!(
+                    "action {name:?} step {id:?}: brief.on_success/on_failure needs a run_on_host \
+                     step before it"
+                )));
+            };
+            let brief = step
+                .get("brief")
+                .and_then(Value::as_mapping)
+                .cloned()
+                .unwrap_or_default();
+            let on_success = brief.get("on_success").and_then(Value::as_str);
+            let on_failure = brief.get("on_failure").and_then(Value::as_str);
+            let (Some(on_success), Some(on_failure)) = (on_success, on_failure) else {
+                return Err(WorkflowError::InvalidDefinition(format!(
+                    "action {name:?} step {id:?}: brief must be a string or exactly \
+                     {{on_success, on_failure}}"
+                )));
+            };
+            if brief.len() != 2 {
+                return Err(WorkflowError::InvalidDefinition(format!(
+                    "action {name:?} step {id:?}: brief must be a string or exactly \
+                     {{on_success, on_failure}}"
+                )));
+            }
+            if step.get("if").is_some() {
+                return Err(WorkflowError::InvalidDefinition(format!(
+                    "action {name:?} step {id:?}: a brief with on_success/on_failure already \
+                     decides its own `if`"
+                )));
+            }
+            for (suffix, text, condition) in
+                [("success", on_success, "=="), ("failure", on_failure, "!=")]
+            {
+                let mut clone = step.clone();
+                if let Some(map) = clone.as_mapping_mut() {
+                    map.insert(
+                        Value::String("id".into()),
+                        Value::String(format!("{id}_{suffix}")),
+                    );
+                    map.insert(
+                        Value::String("if".into()),
+                        Value::String(format!("steps_{previous}_output_exit_code {condition} 0")),
+                    );
+                    map.insert(
+                        Value::String("brief".into()),
+                        Value::String(text.to_owned()),
+                    );
+                }
+                expanded.push(clone);
+            }
+        }
+        *steps = expanded;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -223,5 +319,38 @@ mod tests {
             entries[0].def.name, "nightly-build",
             "the bound name is trimmed too"
         );
+    }
+
+    /// Spec § 5.1 mode (2): the on_success/on_failure sugar becomes two
+    /// `wake_agent` steps gated on the preceding host step's exit code, and
+    /// the expansion happens before hashing so relay and host agree.
+    #[test]
+    fn a_two_way_brief_expands_into_two_gated_wake_steps() {
+        let text = "schema: buzz-project-actions/v1\nactions:\n  - name: on-push\n    trigger: { on: manual }\n    steps:\n      - id: build\n        action: run_on_host\n        command: [\"cargo\", \"build\"]\n      - id: review\n        action: wake_agent\n        to: { agent: Keystone }\n        brief:\n          on_success: Review the warnings.\n          on_failure: Fix the build.\n";
+        let entries = parse_actions_yml(text, PROJECT).expect("parse");
+        let steps = &entries[0].def.steps;
+        assert_eq!(steps.len(), 3);
+        assert_eq!(steps[1].id, "review_success");
+        assert_eq!(
+            steps[1].if_expr.as_deref(),
+            Some("steps_build_output_exit_code == 0")
+        );
+        assert_eq!(steps[2].id, "review_failure");
+        assert_eq!(
+            steps[2].if_expr.as_deref(),
+            Some("steps_build_output_exit_code != 0")
+        );
+        match &steps[2].action {
+            crate::schema::ActionDef::WakeAgent { to, brief } => {
+                assert_eq!(to.agent, "Keystone");
+                assert_eq!(brief, "Fix the build.");
+            }
+            other => panic!("expected wake_agent, got {other:?}"),
+        }
+        let orphan = text.replace("      - id: build\n        action: run_on_host\n        command: [\"cargo\", \"build\"]\n", "");
+        assert!(parse_actions_yml(&orphan, PROJECT)
+            .unwrap_err()
+            .to_string()
+            .contains("needs a run_on_host"));
     }
 }

@@ -99,6 +99,8 @@ type RawWorkflowHostStep = {
   head_sha: string | null;
   dirty: boolean | null;
   artifact_ref: string | null;
+  routed_agent?: string | null;
+  routed_command_id?: string | null;
   exited_at: string | null;
   created_at: string;
 };
@@ -206,6 +208,8 @@ export function fromRawHostStep(raw: RawWorkflowHostStep): WorkflowHostStep {
     headSha: raw.head_sha ?? null,
     dirty: raw.dirty ?? null,
     artifactRef: raw.artifact_ref ?? null,
+    routedAgent: raw.routed_agent ?? null,
+    routedCommandId: raw.routed_command_id ?? null,
     exitedAt: raw.exited_at ?? null,
     createdAt: raw.created_at,
   };
