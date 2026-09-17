@@ -790,6 +790,8 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
         // The same coordinate the create is signed with (`projectRef` below),
         // so the hired seat's pack is the project's own (finding 84).
         projectRef: plan.projectRef,
+        // The seat's own tree: its branch may override the role (spec § 4.9).
+        worktree: created.path,
         deps: hireDeps.seatDeps,
         onSeatStaged: ({ packRef }) => {
           stagedPackRef = packRef;

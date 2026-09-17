@@ -51,6 +51,7 @@ pub(super) fn preview(
         reason: None,
         warnings: Vec::new(),
         compose_digest: None,
+        source_kind: Some("shipped".to_string()),
     })
 }
 

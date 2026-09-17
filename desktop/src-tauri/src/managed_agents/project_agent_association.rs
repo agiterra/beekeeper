@@ -160,6 +160,7 @@ pub(crate) fn refused_seat_preview(
         reason: None,
         warnings: Vec::new(),
         compose_digest: None,
+        source_kind: None,
     }
 }
 

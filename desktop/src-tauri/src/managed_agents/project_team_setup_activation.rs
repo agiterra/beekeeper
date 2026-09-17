@@ -838,6 +838,8 @@ pub async fn project_team_setup_start_lead(
         None,
         Some(draft.project_ref.clone()),
         Some(true),
+        // A setup seat has no worktree of its own; no § 4.9 override applies.
+        None,
     )
     .await
     .map_err(external)?;

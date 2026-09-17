@@ -140,6 +140,13 @@ export async function stageCodingSessionActorSeat(input: {
    * primary role, and a projectless create to take an agent of no project.
    */
   newSelection?: boolean;
+  /**
+   * The seat's own worktree, when the create runs in one. The host reads
+   * its `HEAD` and, when that branch has a committed change to what this
+   * role's composition reads, seats the agent on the branch's definition
+   * instead of `main`'s (spec § 4.9). Read only; never written to.
+   */
+  worktree?: string | null;
 }): Promise<StagedCodingSessionActorSeat> {
   const staged = await invokeTauri<StagedCodingSessionActorSeat | null>(
     "stage_coding_session_actor_seat",
@@ -151,6 +158,7 @@ export async function stageCodingSessionActorSeat(input: {
       checkout: input.checkout ?? null,
       requireProjectRef: input.requireProjectRef ?? null,
       newSelection: input.newSelection === true,
+      worktree: input.worktree ?? null,
     },
   );
   return {

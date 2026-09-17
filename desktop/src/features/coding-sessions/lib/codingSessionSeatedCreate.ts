@@ -202,6 +202,8 @@ async function publishWithStagedSeat<T>(input: {
   requireProjectRef?: string | null;
   /** See `CodingSessionSeatCustody.stageSeat`; omitted when not true. */
   newSelection?: boolean;
+  /** The seat's own worktree, for the § 4.9 branch override; omitted when unknown. */
+  worktree?: string | null;
   publish: () => Promise<T>;
   deps: CodingSessionSeatCustody;
   onSeatStaged?: CodingSessionSeatStagedReporter;
@@ -219,6 +221,7 @@ async function publishWithStagedSeat<T>(input: {
       ? { requireProjectRef: input.requireProjectRef }
       : {}),
     ...(input.newSelection === true ? { newSelection: true } : {}),
+    ...(input.worktree ? { worktree: input.worktree } : {}),
   });
   if (staged) {
     input.onSeatStaged?.({
@@ -326,6 +329,13 @@ export async function publishSeatedCodingSessionCreate<T>(input: {
   deps: SeatedCodingSessionCreateDeps;
   /** Called with what staging actually put on disk, before the publish. */
   onSeatStaged?: CodingSessionSeatStagedReporter;
+  /**
+   * The directory the seat runs in when it is a worktree the launch cut.
+   * The host decides whether that branch overrides the role (spec § 4.9);
+   * a checkout that is not a worktree of the packs repository changes
+   * nothing.
+   */
+  worktree?: string | null;
 }): Promise<T> {
   if (!input.seat) return input.publish();
 
@@ -346,6 +356,7 @@ export async function publishSeatedCodingSessionCreate<T>(input: {
     // does not (`publishSeatedCodingSessionResume`).
     requireProjectRef: codingSessionSeatRequiredProjectRef(input.projectRef),
     newSelection: true,
+    ...(input.worktree ? { worktree: input.worktree } : {}),
     publish: input.publish,
     deps: input.deps,
     ...(input.onSeatStaged ? { onSeatStaged: input.onSeatStaged } : {}),

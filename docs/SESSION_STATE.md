@@ -13451,6 +13451,56 @@ Evidence and limits: [conditional publication checkpoint](history/2026-09-12-pro
      104 passed; `pnpm typecheck` and biome clean; clippy clean on both
      crates.
 
+145. **A seat's own branch overrides a role only by a committed change to
+     what the role reads; uncommitted edits are disclosed, never in effect
+     (2026-09-17, Andy with Fable).** Spec
+     `docs/PROJECT_TEAMS_AND_ACTIONS_SPEC.md` § 4.9, first half. The
+     definition-drift card and **Restart with current definition** are not
+     built yet.
+
+     **Mechanism.** `desktop/src-tauri/src/managed_agents/packs_cache/
+     branch_override.rs` `branch_role_override`: the seat's worktree must
+     have the project's packs repository as `origin` (compared through
+     `packs_clone_url`, trailing slash and `.git` ignored) or it has no say
+     (`OtherRepository`); its `HEAD` equal to `main`'s pinned commit is
+     `SameCommit`; otherwise the branch commit's `<path>` tree is
+     materialized from git objects (`ls-tree -r -z` then `show <sha>:<file>`
+     through `run_git_bytes`, byte for byte, into `<packs root>/branch/
+     <owner8>-<id>-<sha>/`, marker-idempotent), the role is located and
+     composed there, and the two digests decide: equal is `Unchanged`,
+     different is `Overridden` with `packRef.sha` = the branch commit and
+     `compose.json` `source.kind` = `branch-override`. `git status
+     --porcelain -- <path>` non-empty is reported as `dirty` and surfaces as
+     the warning "uncommitted role edits in this worktree are not in effect;
+     commit them, then restart". A check that cannot run (no origin, no
+     HEAD, a composition refusal) is a warning naming the reason and
+     `main`'s definition stays in effect — never a refusal, never an
+     override by accident. The decision is per role: `Unchanged` when the
+     branch moved files the role does not read.
+
+     **Plumbing.** `seat_pack_plan::plan_seat_pack` takes `worktree`;
+     `stage_coding_session_actor_seat` and `preview_coding_session_seat_pack`
+     gain `worktree: Option<String>`; `SeatPackPreview` gains `source_kind`
+     (`repository` | `branch-override` | `shipped` | `local`). The hire
+     passes the tree it just cut; the team launch passes the lead's. A
+     provider-restart restage passes none — the custody file does not record
+     the seat's worktree — so a restaged seat re-resolves `main`'s
+     definition; disclosed here, to be closed when the drift check lands.
+     The Roles view runs no override (it describes `main`).
+
+     **Evidence.** `cargo test --manifest-path desktop/src-tauri/Cargo.toml
+     managed_agents::` 1378 passed, including three new scratch-repository
+     tests: same commit and an unrelated commit do not override; an
+     uncommitted role edit is `dirty` and `SameCommit`, the same edit
+     committed is `Overridden` with the topic sha, the staged pack resolves
+     to the branch's prompt, `compose.json` says `branch-override`, the
+     materialized tree carries the committed bytes, and a role the branch
+     lacks is `RoleAbsent`; a worktree of another repository is
+     `OtherRepository`. `just desktop-tauri-clippy` clean; desktop node tests
+     for the seated create, hire, crew launch and resume: 75 passed; `pnpm
+     typecheck` clean. No live hire exercised.
+
+
 
 
 

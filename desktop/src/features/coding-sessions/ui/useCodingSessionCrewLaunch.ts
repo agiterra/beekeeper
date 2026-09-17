@@ -389,6 +389,9 @@ export function useCodingSessionCrewLaunch(input: {
               // The same coordinate the create is signed with, so the seat's
               // pack source is the project's own (finding 84).
               projectRef,
+              // The lead's own tree, when the launch cut one: its branch may
+              // override the role (spec § 4.9).
+              worktree: workdir ?? null,
               deps: {
                 ensureMembership: deps.seatDeps.ensureMembership,
                 stageSeat: async (staging) => {

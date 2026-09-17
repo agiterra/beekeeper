@@ -582,6 +582,12 @@ pub struct SeatPackPreview {
     /// was staged or the seat runs an uncomposed pack (a seat with no role).
     #[serde(default)]
     pub compose_digest: Option<String>,
+    /// Where the composed bytes came from, in the composer's vocabulary:
+    /// `repository` (the project's pinned source), `branch-override` (the
+    /// seat's own branch changed this role — spec § 4.9), `shipped`, or
+    /// `local`. `null` when nothing was staged.
+    #[serde(default)]
+    pub source_kind: Option<String>,
 }
 
 // The staging rule itself lives in `seat_pack_plan.rs`; re-exported so every
@@ -645,6 +651,7 @@ pub async fn preview_coding_session_seat_pack(
     checkout: Option<String>,
     require_project_ref: Option<String>,
     new_selection: Option<bool>,
+    worktree: Option<String>,
 ) -> Result<SeatPackPreview, String> {
     let pubkey = agent_pubkey.trim().to_string();
     let records = {
@@ -671,6 +678,11 @@ pub async fn preview_coding_session_seat_pack(
         .map(str::trim)
         .filter(|checkout| !checkout.is_empty())
         .map(Path::new);
+    let worktree = worktree
+        .as_deref()
+        .map(str::trim)
+        .filter(|worktree| !worktree.is_empty())
+        .map(Path::new);
     Ok(plan_seat_pack(
         &app,
         &state,
@@ -679,6 +691,7 @@ pub async fn preview_coding_session_seat_pack(
         role.as_deref(),
         pack_source.map(Into::into),
         checkout,
+        worktree,
     ))
 }
 
@@ -713,6 +726,7 @@ pub async fn stage_coding_session_actor_seat(
     checkout: Option<String>,
     require_project_ref: Option<String>,
     new_selection: Option<bool>,
+    worktree: Option<String>,
 ) -> Result<StagedActorSeat, String> {
     let relay_url = relay_ws_url_with_override(&state);
     let Some(path) = actor_seats_file_path(&app, &state)? else {
@@ -757,6 +771,11 @@ pub async fn stage_coding_session_actor_seat(
                 .as_deref()
                 .map(str::trim)
                 .filter(|checkout| !checkout.is_empty())
+                .map(Path::new),
+            worktree
+                .as_deref()
+                .map(str::trim)
+                .filter(|worktree| !worktree.is_empty())
                 .map(Path::new),
         );
         seat_entry_for_plan(record, &relay_url, plan)?

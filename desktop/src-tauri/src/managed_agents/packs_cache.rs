@@ -837,7 +837,12 @@ pub fn stage_project_role_pack(
 #[cfg(test)]
 mod tests;
 
+mod branch_override;
 mod pack_bytes;
+pub use branch_override::{
+    branch_role_override, BranchOverride, BranchOverrideCheck, BRANCH_OVERRIDE_KIND,
+    UNCOMMITTED_ROLE_EDITS,
+};
 
 #[cfg(test)]
 mod shipped_pack_ref_tests;

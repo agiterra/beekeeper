@@ -24,6 +24,7 @@ use crate::relay::relay_ws_url_with_override;
 /// provider restart re-resolves the pack rather than trusting a stale one)
 /// so no caller can promise or restage a pack the create-time rule would not
 /// pick.
+#[allow(clippy::too_many_arguments)] // Each argument is a fact the rule reads; the restage path passes them all.
 pub(crate) fn plan_seat_pack(
     app: &AppHandle,
     state: &AppState,
@@ -32,6 +33,7 @@ pub(crate) fn plan_seat_pack(
     role: Option<&str>,
     pack_source: Option<packs_cache::ProjectPackSource>,
     checkout: Option<&Path>,
+    worktree: Option<&Path>,
 ) -> SeatPackPreview {
     let role = role
         .map(str::trim)
@@ -59,18 +61,54 @@ pub(crate) fn plan_seat_pack(
             )
         });
         return match staged {
-            Ok(pack) => SeatPackPreview {
-                pack_staged: true,
-                origin: SeatPackOrigin::Project,
-                role: Some(role),
-                pack_dir: Some(pack.dir.to_string_lossy().into_owned()),
-                persona_id: Some(pack.persona),
-                pack_ref: Some(pack.pack_ref),
-                refusal: None,
-                reason: None,
-                warnings: pack.warnings,
-                compose_digest: Some(pack.digest),
-            },
+            Ok(mut pack) => {
+                // Spec § 4.9: `main`'s roles by default; the seat's own branch
+                // overrides this role only by a committed change to what it
+                // reads. A check that cannot run is a warning, not an
+                // override, and never a refusal.
+                let mut source_kind = "repository".to_string();
+                if let Some(worktree) = worktree {
+                    match branch_override_for(app, state, &source, &role, worktree, &pack, &catalog)
+                    {
+                        Ok(check) => {
+                            if check.dirty {
+                                pack.warnings
+                                    .push(packs_cache::UNCOMMITTED_ROLE_EDITS.to_string());
+                            }
+                            if let packs_cache::BranchOverride::Overridden {
+                                sha,
+                                staged,
+                                pack_ref_path,
+                            } = check.decision
+                            {
+                                pack.dir = staged.dir;
+                                pack.persona = staged.persona;
+                                pack.digest = staged.digest;
+                                pack.warnings.extend(staged.warnings);
+                                pack.pack_ref.sha = sha;
+                                pack.pack_ref.path = pack_ref_path;
+                                source_kind = packs_cache::BRANCH_OVERRIDE_KIND.to_string();
+                            }
+                        }
+                        Err(reason) => pack.warnings.push(format!(
+                            "could not check this worktree for a role override, so main's definition is in effect: {reason}"
+                        )),
+                    }
+                }
+                SeatPackPreview {
+                    pack_staged: true,
+                    origin: SeatPackOrigin::Project,
+                    role: Some(role),
+                    pack_dir: Some(pack.dir.to_string_lossy().into_owned()),
+                    persona_id: Some(pack.persona),
+                    pack_ref: Some(pack.pack_ref),
+                    refusal: None,
+                    reason: None,
+                    warnings: pack.warnings,
+                    compose_digest: Some(pack.digest),
+                    source_kind: Some(source_kind),
+                }
+            }
             Err(reason) => refused_plan(Some(role), packs_cache::HIRE_PACK_UNAVAILABLE, reason),
         };
     }
@@ -151,6 +189,7 @@ pub(crate) fn plan_seat_pack(
                     reason: None,
                     warnings: Vec::new(),
                     compose_digest: None,
+                    source_kind: Some("local".to_string()),
                 };
             };
             let (key, provenance) = match (&origin, &pack_ref) {
@@ -188,6 +227,7 @@ pub(crate) fn plan_seat_pack(
             reason: None,
             warnings: Vec::new(),
             compose_digest: None,
+            source_kind: None,
         },
     }
 }
@@ -205,6 +245,7 @@ fn refused_plan(role: Option<String>, refusal: &str, reason: String) -> SeatPack
         reason: Some(reason),
         warnings: Vec::new(),
         compose_digest: None,
+        source_kind: None,
     }
 }
 
@@ -225,6 +266,7 @@ fn stage_local_plan(
     source_key: &str,
     provenance: packs_cache::SourceProvenance,
 ) -> SeatPackPreview {
+    let provenance_kind = provenance.kind.clone();
     let staged = packs_cache::packs_root(app).and_then(|root| {
         packs_cache::stage_composed_pack(&root, source_key, source, catalog, provenance)
     });
@@ -240,6 +282,7 @@ fn stage_local_plan(
             reason: None,
             warnings: staged.warnings,
             compose_digest: Some(staged.digest),
+            source_kind: Some(provenance_kind.to_string()),
         },
         Err(reason) => refused_plan(
             Some(role.to_string()),
@@ -247,4 +290,30 @@ fn stage_local_plan(
             reason,
         ),
     }
+}
+
+/// Run the § 4.9 check for one project-staged seat.
+fn branch_override_for(
+    app: &AppHandle,
+    state: &AppState,
+    source: &packs_cache::ProjectPackSource,
+    role: &str,
+    worktree: &Path,
+    main: &packs_cache::StagedProjectPack,
+    catalog: &packs_cache::TemplateCatalog,
+) -> Result<packs_cache::BranchOverrideCheck, String> {
+    let root = packs_cache::packs_root(app)?;
+    let auth = crate::commands::project_git_exec::build_git_auth_config(state)?;
+    let relay_http = crate::relay::relay_http_base_url(&relay_ws_url_with_override(state));
+    packs_cache::branch_role_override(
+        &root,
+        &relay_http,
+        source,
+        role,
+        worktree,
+        &main.pack_ref.sha,
+        &main.digest,
+        &auth,
+        catalog,
+    )
 }
