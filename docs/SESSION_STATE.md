@@ -13714,6 +13714,29 @@ Evidence and limits: [conditional publication checkpoint](history/2026-09-12-pro
      notifier keeps its read in instance fields instead. Worth a test before
      it is treated as a finding.
 
+     **Revised the same day (2026-09-17, Andy's call): personal vs project
+     lists, and shared pins.** A list is `project` (every member) or
+     `personal` (its author only), fixed by `list.create` and repeated on
+     every op as the `td-vis` tag so the relay withholds a personal op from
+     everyone but its author on every read surface and in fan-out without
+     parsing content (`buzz_core::kind::is_personal_todo_op`, wired into
+     `project_a_scoped_event_hidden_from`, the fan-out branch and the SQL
+     pushdown). Relay-enforced, not encrypted — the same standing as a
+     private project. `list.pinned` (per-field LWW) puts a list in every
+     member's project sidebar; Desktop reads pinned lists for the sidebar
+     through one index hook sharing the tab's cache, the project `+` menu
+     reads New coding session · New terminal · New to-do list, a rule, New
+     channel · New forum, and its "New to-do list" asks Project/Personal.
+     The v1 contract was revised in place because nothing had landed on
+     hive; ops without `td-vis` are ignored and disclosed by the `ignored`
+     counter (the dev relay on :3010 showed `ignored: 8` for the morning's
+     ops). Verified live: `bee todos lists` as the collaborator never sees
+     the owner's personal list; the collaborator's `pin` shows for the
+     owner; the Desktop live gate covers the menu order, a personal list
+     created from the sidebar appearing as a locked pinned row, and a pin
+     arriving live. Mobile (delegated lane, gates re-run: 2100 tests) mirrors
+     it with pinned rows under the project tree's To-do row.
+
 
 
 ## 2a. Direction settled 2026-08-18
