@@ -7,6 +7,7 @@ import type { TodoItem, TodoList } from "../lib/todoFold";
 import type { TodoMutations } from "../lib/todoMutations";
 import type { TodoPerson } from "../lib/todoPeople";
 import type { ProjectTodosState } from "../lib/todoQueries";
+import { CreateTodoListDialog } from "./CreateTodoListDialog";
 import type { TodoRowActions } from "./TodoItemRow";
 import { TodoListPanel } from "./TodoListPanel";
 import { TodoListPicker } from "./TodoListPicker";
@@ -19,6 +20,10 @@ export type ProjectTodosViewProps = {
   personFor: (pubkey: string) => TodoPerson;
   /** Surface a write failure; the view never swallows one. */
   onWriteError: (message: string) => void;
+  /** The list the route names, or null; the view falls back sensibly. */
+  selectedListId?: string | null;
+  /** Called when the person picks a list, so the route can carry it. */
+  onSelectList?: (listId: string | null) => void;
 };
 
 /**
@@ -33,11 +38,26 @@ export function ProjectTodosView({
   mutations,
   personFor,
   onWriteError,
+  selectedListId = null,
+  onSelectList,
 }: ProjectTodosViewProps) {
   const read = state.read;
   const lists: readonly TodoList[] = read?.digest.lists ?? [];
-  const [selectedId, setSelectedId] = React.useState<string | null>(null);
+  const [localSelectedId, setLocalSelectedId] = React.useState<string | null>(
+    null,
+  );
+  // The route wins when it names a list; otherwise the last local pick.
+  const selectedId = selectedListId ?? localSelectedId;
+  const setSelectedId = React.useCallback(
+    (listId: string | null) => {
+      setLocalSelectedId(listId);
+      onSelectList?.(listId);
+    },
+    [onSelectList],
+  );
   const [showArchived, setShowArchived] = React.useState(false);
+  const [creating, setCreating] = React.useState(false);
+  const [createPending, setCreatePending] = React.useState(false);
 
   // Default to the first unarchived list, and follow a list the viewer
   // created; never point at a list that no longer exists.
@@ -141,13 +161,7 @@ export function ProjectTodosView({
           <TodoListPicker
             canEdit={canEdit}
             lists={lists}
-            onCreate={(title) =>
-              run(
-                mutations.createList(title).then((listId) => {
-                  setSelectedId(listId);
-                }),
-              )
-            }
+            onCreate={() => setCreating(true)}
             onRename={(listId, title) =>
               run(mutations.renameList(listId, title))
             }
@@ -155,9 +169,31 @@ export function ProjectTodosView({
             onSetArchived={(listId, archived) =>
               run(mutations.setListArchived(listId, archived))
             }
+            onSetPinned={(listId, pinned) =>
+              run(mutations.setListPinned(listId, pinned))
+            }
             onToggleArchived={() => setShowArchived((value) => !value)}
             selectedId={effectiveSelectedId}
             showArchived={showArchived}
+          />
+          <CreateTodoListDialog
+            isCreating={createPending}
+            onCreate={async (input) => {
+              setCreatePending(true);
+              try {
+                const listId = await mutations.createList(
+                  input.title,
+                  input.visibility,
+                  { pinned: input.pinned },
+                );
+                setSelectedId(listId);
+              } finally {
+                setCreatePending(false);
+              }
+            }}
+            onOpenChange={setCreating}
+            open={creating}
+            projectName={project.name}
           />
           {selected ? (
             <TodoListPanel

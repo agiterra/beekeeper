@@ -59,7 +59,7 @@ test("buildProjectChildren returns [] for empty input", () => {
   assert.deepEqual(buildProjectChildren(emptyInput), []);
 });
 
-test("the sidebar row model is channels and interactive work only", () => {
+test("the sidebar row model is channels, interactive work and pinned to-do lists", () => {
   // Repositories, workflows, agents and Pulse belong to the project page;
   // the type table is the contract that keeps them out of the sidebar.
   assert.deepEqual(Object.keys(PROJECT_CHILD_TYPE_RANK).sort(), [
@@ -68,7 +68,36 @@ test("the sidebar row model is channels and interactive work only", () => {
     "forum",
     "remote-shell",
     "shell",
+    "todo-list",
   ]);
+});
+
+test("a pinned to-do list is a row after the terminals, keyed and labelled by the list", () => {
+  const list = {
+    id: "1".repeat(32),
+    title: "Launch",
+    visibility: "project",
+    archived: false,
+    pinned: true,
+    createdAt: 1,
+    createdBy: "a".repeat(64),
+    updatedAt: 1,
+    open: [],
+    completed: [],
+  };
+  const rows = buildProjectChildren({
+    streamChannels: [makeChannel()],
+    forumChannels: [],
+    shellSessions: [makeShell()],
+    todoLists: [list],
+  });
+  assert.deepEqual(
+    rows.map((row) => row.type),
+    ["channel", "shell", "todo-list"],
+  );
+  const row = rows[2];
+  assert.equal(projectChildKey(row), `todo-list:${list.id}`);
+  assert.equal(projectChildLabel(row), "Launch");
 });
 
 test("buildProjectChildren groups interleaved types by rank order", () => {

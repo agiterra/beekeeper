@@ -60,7 +60,9 @@ function list(overrides = {}) {
   return {
     id: "1".repeat(32),
     title: "Launch",
+    visibility: "project",
     archived: false,
+    pinned: false,
     createdAt: 100,
     createdBy: OWNER,
     updatedAt: 200,
@@ -99,6 +101,7 @@ const MUTATIONS = {
   createList: async () => "x".repeat(32),
   renameList: NOOP,
   setListArchived: NOOP,
+  setListPinned: NOOP,
   addItem: async () => "y".repeat(32),
   setText: NOOP,
   setDone: NOOP,
@@ -202,6 +205,23 @@ test("an archived list is selectable but not editable, and an empty project invi
     state: { kind: "ready", read: read([]), refreshing: false },
   });
   assert.match(empty, /Create a list to get started/);
+});
+
+test("the rail marks personal and pinned lists and offers the pin toggle", () => {
+  const html = render({
+    state: {
+      kind: "ready",
+      read: read([
+        list({ visibility: "personal", pinned: true }),
+        list({ id: "2".repeat(32), title: "Shared" }),
+      ]),
+      refreshing: false,
+    },
+  });
+  assert.match(html, /data-testid="todo-list-personal"/);
+  assert.match(html, /data-testid="todo-list-pinned"/);
+  assert.match(html, /data-testid="todo-list-pin"/);
+  assert.match(html, /aria-label="Unpin from sidebar"/);
 });
 
 test("the overview card summarizes progress honestly", () => {

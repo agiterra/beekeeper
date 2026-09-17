@@ -7,7 +7,13 @@
  * Pure and total: any bag of events in, one digest out, the same digest from
  * every client. No imports outside this directory.
  */
-import { PROJECT_TODO_OP_KIND, decodeTodoOp, type TodoOp } from "./todoOp.ts";
+import {
+  PROJECT_TODO_OP_KIND,
+  decodeTodoOp,
+  isTodoVisibility,
+  type TodoOp,
+  type TodoVisibility,
+} from "./todoOp.ts";
 
 export const PROJECT_TODO_DIGEST_SCHEMA = "buzz-project-todo-digest/v1";
 
@@ -39,7 +45,11 @@ export type TodoItem = {
 export type TodoList = {
   id: string;
   title: string;
+  /** Fixed at creation. */
+  visibility: TodoVisibility;
   archived: boolean;
+  /** Shown in the project sidebar; shared, though a personal list's pin is only ever seen by its owner. */
+  pinned: boolean;
   createdAt: number;
   createdBy: string;
   updatedAt: number;
@@ -73,7 +83,9 @@ function setField<T>(slot: Slot<T>, key: OpKey, value: T): void {
 
 type ListState = {
   title: Slot<string>;
+  visibility: TodoVisibility;
   archived: Slot<boolean>;
+  pinned: Slot<boolean>;
   createdAt: number;
   createdBy: string;
   updatedAt: number;
@@ -110,7 +122,11 @@ function decode(project: string, event: TodoFoldEvent): TodoOp | null {
   const coordinate = aTags[0]?.[1];
   if (typeof coordinate !== "string") return null;
   if (normalizeCoordinate(coordinate) !== project) return null;
-  const op = decodeTodoOp(event.content);
+  const visTags = event.tags.filter((t) => t[0] === "td-vis");
+  if (visTags.length !== 1) return null;
+  const visibility = visTags[0]?.[1];
+  if (!isTodoVisibility(visibility)) return null;
+  const op = decodeTodoOp(event.content, visibility);
   return "error" in op ? null : op;
 }
 
@@ -149,12 +165,36 @@ export function foldProjectTodos(
     }
     lists.set(d.op.listId, {
       title: { key: d.key, value: d.op.title },
+      visibility: d.op.visibility,
       archived: { key: d.key, value: false },
+      pinned: { key: d.key, value: false },
       createdAt: d.key.createdAt,
       createdBy: d.pubkey,
       updatedAt: d.key.createdAt,
     });
   }
+  // Every other op must agree with its list's visibility, and a personal
+  // list takes ops from its creator only. Ops on a list that does not exist
+  // are counted where they are handled below.
+  const admitted: Decoded[] = [];
+  for (const d of ops) {
+    if (d.op.op === "list.create") {
+      admitted.push(d);
+      continue;
+    }
+    const list = lists.get(d.op.listId);
+    if (!list) {
+      admitted.push(d);
+      continue;
+    }
+    const ok =
+      d.op.visibility === list.visibility &&
+      (list.visibility === "project" || d.pubkey === list.createdBy);
+    if (ok) admitted.push(d);
+    else ignored++;
+  }
+  ops.length = 0;
+  ops.push(...admitted);
 
   const itemKey = (listId: string, itemId: string) => `${listId}/${itemId}`;
   const items = new Map<string, ItemState>();
@@ -216,6 +256,11 @@ export function foldProjectTodos(
     }
     if (op.op === "list.archived") {
       setField(list.archived, d.key, op.archived);
+      list.updatedAt = Math.max(list.updatedAt, d.key.createdAt);
+      continue;
+    }
+    if (op.op === "list.pinned") {
+      setField(list.pinned, d.key, op.pinned);
       list.updatedAt = Math.max(list.updatedAt, d.key.createdAt);
       continue;
     }
@@ -292,7 +337,9 @@ export function foldProjectTodos(
     outLists.push({
       id: listId,
       title: state.title.value,
+      visibility: state.visibility,
       archived: state.archived.value,
+      pinned: state.pinned.value,
       createdAt: state.createdAt,
       createdBy: state.createdBy,
       updatedAt: state.updatedAt,

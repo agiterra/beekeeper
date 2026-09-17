@@ -21,10 +21,17 @@ export const PROJECT_TODO_TAG_VERSION = "td1-1";
 export const MAX_PROJECT_TODO_CONTENT_BYTES = 4 * 1024;
 export const MAX_PROJECT_TODO_TEXT_BYTES = 1024;
 
+export type TodoVisibility = "project" | "personal";
+
+export function isTodoVisibility(value: unknown): value is TodoVisibility {
+  return value === "project" || value === "personal";
+}
+
 export type TodoOpKind =
   | "list.create"
   | "list.title"
   | "list.archived"
+  | "list.pinned"
   | "item.add"
   | "item.text"
   | "item.done"
@@ -33,10 +40,21 @@ export type TodoOpKind =
   | "item.rank"
   | "item.remove";
 
-export type TodoOp =
-  | { op: "list.create"; listId: string; title: string }
+/**
+ * One op's content, without the visibility every op also carries as its
+ * `td-vis` tag (see {@link TodoOp}). `list.create` repeats the visibility in
+ * content because it is the op that fixes it.
+ */
+export type TodoOpContent =
+  | {
+      op: "list.create";
+      listId: string;
+      title: string;
+      visibility: TodoVisibility;
+    }
   | { op: "list.title"; listId: string; title: string }
   | { op: "list.archived"; listId: string; archived: boolean }
+  | { op: "list.pinned"; listId: string; pinned: boolean }
   | {
       op: "item.add";
       listId: string;
@@ -56,10 +74,14 @@ export type TodoOp =
   | { op: "item.rank"; listId: string; itemId: string; rank: string }
   | { op: "item.remove"; listId: string; itemId: string };
 
+/** An op with the list's visibility, which rides every event as `td-vis`. */
+export type TodoOp = TodoOpContent & { visibility: TodoVisibility };
+
 const CONTENT_KEYS: Record<TodoOpKind, readonly string[]> = {
-  "list.create": ["schema", "op", "listId", "title"],
+  "list.create": ["schema", "op", "listId", "title", "visibility"],
   "list.title": ["schema", "op", "listId", "title"],
   "list.archived": ["schema", "op", "listId", "archived"],
+  "list.pinned": ["schema", "op", "listId", "pinned"],
   "item.add": ["schema", "op", "listId", "itemId", "text", "rank"],
   "item.text": ["schema", "op", "listId", "itemId", "text"],
   "item.done": ["schema", "op", "listId", "itemId", "done"],
@@ -117,15 +139,21 @@ export function dueDateError(value: string): string | null {
 }
 
 /** The item an op names, or `null` for a list op. */
-export function todoOpItemId(op: TodoOp): string | null {
+export function todoOpItemId(op: TodoOpContent): string | null {
   return "itemId" in op ? op.itemId : null;
 }
 
 /**
- * Strictly decode op content. Returns the op or a reason string; the caller
- * decides whether a reason is an `ignored` count (fold) or an error (compose).
+ * Strictly decode op content for a list of `visibility` (the event's
+ * `td-vis` tag, already read by the caller). Returns the op or a reason; the
+ * caller decides whether a reason is an `ignored` count (fold) or an error
+ * (compose). A `list.create` whose content disagrees with the tag is an
+ * error: the tag is what the relay gates on.
  */
-export function decodeTodoOp(content: string): TodoOp | { error: string } {
+export function decodeTodoOp(
+  content: string,
+  visibility: TodoVisibility,
+): TodoOp | { error: string } {
   if (utf8Length(content) > MAX_PROJECT_TODO_CONTENT_BYTES) {
     return {
       error: `todo op content exceeds ${MAX_PROJECT_TODO_CONTENT_BYTES} bytes`,
@@ -192,18 +220,38 @@ export function decodeTodoOp(content: string): TodoOp | { error: string } {
     typeof v === "object" && v !== null && "error" in v;
 
   switch (kind) {
-    case "list.create":
+    case "list.create": {
+      const title = str("title");
+      if (bad(title)) return title;
+      const err = todoTextError("title", title);
+      if (err) return { error: err };
+      const declared = object.visibility;
+      if (!isTodoVisibility(declared)) {
+        return { error: "todo visibility must be project or personal" };
+      }
+      if (declared !== visibility) {
+        return {
+          error: `todo list.create content visibility ${JSON.stringify(declared)} does not match its td-vis tag ${JSON.stringify(visibility)}`,
+        };
+      }
+      return { op: kind, listId, title, visibility };
+    }
     case "list.title": {
       const title = str("title");
       if (bad(title)) return title;
       const err = todoTextError("title", title);
       if (err) return { error: err };
-      return { op: kind, listId, title };
+      return { op: kind, listId, title, visibility };
     }
     case "list.archived": {
       const archived = bool("archived");
       if (bad(archived)) return archived;
-      return { op: kind, listId, archived };
+      return { op: kind, listId, archived, visibility };
+    }
+    case "list.pinned": {
+      const pinned = bool("pinned");
+      if (bad(pinned)) return pinned;
+      return { op: kind, listId, pinned, visibility };
     }
     case "item.add": {
       const text = str("text");
@@ -214,19 +262,26 @@ export function decodeTodoOp(content: string): TodoOp | { error: string } {
       if (bad(rank)) return rank;
       const rankErr = rankError(rank);
       if (rankErr) return { error: rankErr };
-      return { op: kind, listId, itemId: itemId as string, text, rank };
+      return {
+        op: kind,
+        listId,
+        itemId: itemId as string,
+        text,
+        rank,
+        visibility,
+      };
     }
     case "item.text": {
       const text = str("text");
       if (bad(text)) return text;
       const err = todoTextError("text", text);
       if (err) return { error: err };
-      return { op: kind, listId, itemId: itemId as string, text };
+      return { op: kind, listId, itemId: itemId as string, text, visibility };
     }
     case "item.done": {
       const done = bool("done");
       if (bad(done)) return done;
-      return { op: kind, listId, itemId: itemId as string, done };
+      return { op: kind, listId, itemId: itemId as string, done, visibility };
     }
     case "item.assignee": {
       const assignee = nullableStr("assignee");
@@ -236,7 +291,13 @@ export function decodeTodoOp(content: string): TodoOp | { error: string } {
           error: "todo assignee must be a 64-character lowercase hex pubkey",
         };
       }
-      return { op: kind, listId, itemId: itemId as string, assignee };
+      return {
+        op: kind,
+        listId,
+        itemId: itemId as string,
+        assignee,
+        visibility,
+      };
     }
     case "item.due": {
       const due = nullableStr("due");
@@ -245,22 +306,22 @@ export function decodeTodoOp(content: string): TodoOp | { error: string } {
         const err = dueDateError(due);
         if (err) return { error: err };
       }
-      return { op: kind, listId, itemId: itemId as string, due };
+      return { op: kind, listId, itemId: itemId as string, due, visibility };
     }
     case "item.rank": {
       const rank = str("rank");
       if (bad(rank)) return rank;
       const err = rankError(rank);
       if (err) return { error: err };
-      return { op: kind, listId, itemId: itemId as string, rank };
+      return { op: kind, listId, itemId: itemId as string, rank, visibility };
     }
     case "item.remove":
-      return { op: kind, listId, itemId: itemId as string };
+      return { op: kind, listId, itemId: itemId as string, visibility };
   }
 }
 
 /** Canonical content JSON for `op` (keys in contract order). */
-export function encodeTodoOpContent(op: TodoOp): string {
+export function encodeTodoOpContent(op: TodoOpContent): string {
   const ordered: Record<string, unknown> = { schema: PROJECT_TODO_SCHEMA };
   for (const key of CONTENT_KEYS[op.op]) {
     if (key === "schema") continue;
@@ -269,13 +330,14 @@ export function encodeTodoOpContent(op: TodoOp): string {
   return JSON.stringify(ordered);
 }
 
-/** The tags an op carries: `a`, `td-v`, `td-op`, `td-list`, `[td-item]`. */
+/** The tags an op carries: `a`, `td-v`, `td-op`, `td-list`, `td-vis`, `[td-item]`. */
 export function todoOpTags(coordinate: string, op: TodoOp): string[][] {
   const tags = [
     ["a", coordinate],
     ["td-v", PROJECT_TODO_TAG_VERSION],
     ["td-op", op.op],
     ["td-list", op.listId],
+    ["td-vis", op.visibility],
   ];
   const itemId = todoOpItemId(op);
   if (itemId !== null) tags.push(["td-item", itemId]);

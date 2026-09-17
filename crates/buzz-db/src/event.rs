@@ -843,6 +843,20 @@ pub(crate) async fn query_events_on(
             }
             qb.push("))");
         }
+
+        // NIP-TD personal to-do ops (44248 with `td-vis personal`) are their
+        // author's alone whatever the project's visibility, so they are
+        // excluded for every other reader before ORDER/LIMIT as well.
+        // `project_a_scoped_event_hidden_from` remains the post-filter
+        // authority; this keeps a member's personal lists from starving a
+        // page of the project's shared ones.
+        qb.push(format!(" AND ({col_prefix}kind <> "));
+        qb.push_bind(buzz_core::kind::KIND_PROJECT_TODO_OP as i32);
+        qb.push(format!(" OR {col_prefix}pubkey = "));
+        qb.push_bind(git_gate.reader.clone());
+        qb.push(format!(" OR NOT ({col_prefix}tags @> "));
+        qb.push_bind(serde_json::json!([["td-vis", "personal"]]));
+        qb.push("))");
     }
 
     // Composite ordering for deterministic pagination across ALL callers of

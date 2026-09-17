@@ -356,6 +356,12 @@ pub async fn filter_fanout_by_access(
                 })
                 .collect()
         };
+        // A personal to-do op (NIP-TD `td-vis personal`) is its author's
+        // alone, whatever the project's visibility — the same rule the
+        // stored-read gate applies (`project_a_scoped_event_hidden_from`).
+        if buzz_core::kind::is_personal_todo_op(&stored_event.event) {
+            return author_only(matches);
+        }
         // Ingest rejects a 44240/44248 without exactly one canonical `a`, so
         // a missing coordinate here is a stored event no gate can describe.
         match buzz_core::kind::project_a_scoped_coordinate(&stored_event.event) {

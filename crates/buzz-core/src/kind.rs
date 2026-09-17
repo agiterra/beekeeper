@@ -1338,10 +1338,30 @@ pub fn project_a_scoped_event_hidden_from(
     {
         return false;
     }
+    // A personal to-do op is its author's alone, whatever the project's
+    // visibility: the author check above is the only way through.
+    if is_personal_todo_op(event) {
+        return true;
+    }
     match project_a_scoped_coordinate(event) {
         Some(coord) => hidden_project_coordinates.contains(&coord),
         None => true,
     }
+}
+
+/// The `td-vis` tag value on a to-do op, and `true` when it says `personal`.
+///
+/// Read from the tag, never from content: the relay gates personal ops at
+/// every read chokepoint and in live fan-out without parsing the payload.
+/// A 44248 with no `td-vis` tag cannot be stored (ingest requires it), so
+/// a stored op without one is treated as project-visible rather than
+/// hidden — nothing to protect, and the fold ignores it anyway.
+pub fn is_personal_todo_op(event: &nostr::Event) -> bool {
+    event_kind_u32(event) == KIND_PROJECT_TODO_OP
+        && event.tags.iter().any(|tag| {
+            let parts = tag.as_slice();
+            parts.len() == 2 && parts[0] == "td-vis" && parts[1] == "personal"
+        })
 }
 
 /// The Pulse-only spelling of [`project_a_scoped_event_hidden_from`], kept
@@ -2313,6 +2333,43 @@ mod tests {
             .filter(|k| is_project_a_scoped_kind(*k))
             .collect();
         assert_eq!(matched, PROJECT_A_SCOPED_KINDS.to_vec());
+    }
+
+    #[test]
+    fn personal_todo_op_is_hidden_from_everyone_but_its_author() {
+        let coord = format!("{KIND_PROJECT}:{FOREIGN_HEX}:platform");
+        let personal = make_event_of_kind(
+            KIND_PROJECT_TODO_OP,
+            &[&["a", &coord], &["td-vis", "personal"]],
+        );
+        // Public project (empty hidden set): still hidden from a non-author.
+        let empty = std::collections::HashSet::new();
+        assert!(is_personal_todo_op(&personal));
+        assert!(project_a_scoped_event_hidden_from(
+            &personal,
+            FOREIGN_HEX,
+            &empty
+        ));
+        assert!(!project_a_scoped_event_hidden_from(
+            &personal,
+            &personal.pubkey.to_hex(),
+            &empty
+        ));
+        // A project-visible op in a public project is not hidden.
+        let shared = make_event_of_kind(
+            KIND_PROJECT_TODO_OP,
+            &[&["a", &coord], &["td-vis", "project"]],
+        );
+        assert!(!is_personal_todo_op(&shared));
+        assert!(!project_a_scoped_event_hidden_from(
+            &shared,
+            FOREIGN_HEX,
+            &empty
+        ));
+        // Only a 44248 reads the tag.
+        let pulse =
+            make_event_of_kind(KIND_PULSE_ENTRY, &[&["a", &coord], &["td-vis", "personal"]]);
+        assert!(!is_personal_todo_op(&pulse));
     }
 
     #[test]

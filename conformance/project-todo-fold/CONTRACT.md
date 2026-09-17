@@ -31,9 +31,10 @@ never absent, when cleared.
 
 | `op` | keys | sets |
 |---|---|---|
-| `list.create` | `listId`, `title` | the list into existence |
+| `list.create` | `listId`, `title`, `visibility` (`project` or `personal`) | the list into existence, and who may read it, for good |
 | `list.title` | `listId`, `title` | title |
 | `list.archived` | `listId`, `archived` (bool) | archived, reversible |
+| `list.pinned` | `listId`, `pinned` (bool) | shown in every member's project sidebar, reversible |
 | `item.add` | `listId`, `itemId`, `text`, `rank` | the item into existence |
 | `item.text` | `listId`, `itemId`, `text` | text |
 | `item.done` | `listId`, `itemId`, `done` (bool) | done, and completion |
@@ -45,9 +46,19 @@ never absent, when cleared.
 `schema` is always present. `listId` and `itemId` are 32 lowercase hex.
 Titles and text are non-blank, at most 1024 bytes, free of control characters
 other than newline and tab. Content is at most 4096 bytes. The event's tags
-are `a`, `td-v` (`td1-1`), `td-op`, `td-list`, and `td-item` on item ops;
-`td-op`/`td-list`/`td-item` equal the content's `op`/`listId`/`itemId`. An
-`h` tag is a rejection. Wire validation is `crates/buzz-core/src/project_todo.rs`;
+are `a`, `td-v` (`td1-1`), `td-op`, `td-list`, `td-vis` (`project` or
+`personal`), and `td-item` on item ops; `td-op`/`td-list`/`td-item` equal the
+content's `op`/`listId`/`itemId`, and on a `list.create` `td-vis` equals the
+content's `visibility`. An `h` tag is a rejection.
+
+**Visibility.** A list is `project` — every member of the project reads and
+edits it — or `personal` — only its author does. The choice is fixed by
+`list.create` and repeated on **every** op of the list as `td-vis`, so the
+relay withholds a personal op from every reader but its author (WS `REQ`,
+`/query`, `/count`, live fan-out) without parsing content. A pin on a
+personal list is therefore only ever seen by its owner.
+
+Wire validation is `crates/buzz-core/src/project_todo.rs`;
 the fold's decode is the same rule, and an event that fails it is counted in
 `ignored`, not folded.
 
@@ -55,8 +66,10 @@ the fold's decode is the same rule, and an event that fails it is counted in
 
 1. **Decode.** An event whose kind is not 44248, whose tags do not carry
    exactly one `a` naming this project (compared after normalizing hex
-   case), or whose content fails the op grammar is counted in `ignored` and
-   dropped. Duplicate ids keep the first occurrence and count nothing.
+   case), whose tags do not carry exactly one `td-vis` with a known value,
+   or whose content fails the op grammar for that visibility is counted in
+   `ignored` and dropped. Duplicate ids keep the first occurrence and count
+   nothing.
 2. **Order.** Ops sort by `(created_at, id)` ascending — the string `id`
    compared bytewise. That pair is the only clock; there is no per-author
    sequence and no vector clock.
@@ -64,15 +77,19 @@ the fold's decode is the same rule, and an event that fails it is counted in
    `item.add` per `(listId, itemId)` bring the target into existence with the
    op's values, author and `created_at`. A later create for an existing id is
    counted in `ignored`. An `item.add` naming a list that was never created
-   is counted in `ignored`.
+   is counted in `ignored`. A list's visibility is its create's. Every other
+   op on an existing list must carry the same `td-vis`, and on a `personal`
+   list must be signed by the list's creator; an op failing either is
+   counted in `ignored` (checked before the remove and field rules).
 4. **Remove.** Any `item.remove` on an existing item is terminal, whenever it
    was stamped: the item is dropped from the digest and every other op on it
    is disregarded without being counted. An `item.remove` on an item that
    never existed is counted in `ignored`. There is no un-remove.
 5. **Fields.** Each remaining op sets one field. Per field, the write with
-   the greatest `(created_at, id)` wins. The create op's own values (`title`
-   for a list; `text` and `rank` for an item, plus `done=false`,
-   `assignee=null`, `due=null`) take part with the create's key, so a field
+   the greatest `(created_at, id)` wins. The create op's own values (`title`,
+   `archived=false`, `pinned=false` for a list; `text` and `rank` for an
+   item, plus `done=false`, `assignee=null`, `due=null`) take part with the
+   create's key, so a field
    write stamped before the create loses to it. A field op naming a list or
    item that does not exist is counted in `ignored`.
 6. **Done.** The winning `item.done` decides `done`. If it is `true`,
@@ -96,7 +113,8 @@ the fold's decode is the same rule, and an event that fails it is counted in
   "ignored": 0,
   "lists": [
     {
-      "id": "<32 hex>", "title": "…", "archived": false,
+      "id": "<32 hex>", "title": "…", "visibility": "project",
+      "archived": false, "pinned": false,
       "createdAt": 0, "createdBy": "<64 hex>", "updatedAt": 0,
       "open": [ <item>… ], "completed": [ <item>… ]
     }
@@ -133,6 +151,10 @@ is at most 64 bytes. `between` vectors are `[after, before, expected]`;
 
 Ties in rank (two clients minting the same key concurrently) are legal and
 resolve by item id (rule 8).
+
+The vectors are produced by `generate-fold-vectors.py` beside this file
+from hand-stated expectations; edit the script, rerun it, and make all
+three folds pass.
 
 ## Changing this contract
 

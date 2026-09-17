@@ -4,7 +4,9 @@ import {
   Bot,
   Eye,
   FolderPlus,
+  ListChecks,
   LoaderCircle,
+  Lock,
   RotateCcw,
   Square,
   Terminal,
@@ -62,8 +64,13 @@ export function ProjectChildRowItem({
   onRequestRenameShell,
   onRequestCloseShell,
   onObserveShell,
+  activeTodoListId,
+  onOpenTodoList,
 }: {
   row: ProjectChildRow;
+  /** Id of the to-do list on screen, or null. */
+  activeTodoListId?: string | null;
+  onOpenTodoList?: (listId: string) => void;
   /** Zero-based position of this row for the item hotkey, or null when unreachable. */
   hotkeyIndex?: number | null;
   channelHandlers: ProjectChannelHandlers;
@@ -392,6 +399,37 @@ export function ProjectChildRowItem({
           onRequestRename={onRequestRenameShell}
           onRequestClose={onRequestCloseShell}
         />
+      );
+    }
+    case "todo-list": {
+      if (!onOpenTodoList) return null;
+      const { list } = row;
+      const personal = list.visibility === "personal";
+      return (
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            data-testid={`project-todo-list-row-${list.id.slice(0, 8)}`}
+            isActive={list.id === activeTodoListId}
+            onClick={() => onOpenTodoList(list.id)}
+            title={
+              personal
+                ? "Your personal to-do list — only you can see it"
+                : "Shared to-do list"
+            }
+          >
+            <ListChecks className="size-4 shrink-0" />
+            <span className="truncate">{list.title}</span>
+            {personal ? (
+              <Lock
+                aria-label="Personal"
+                className="ml-auto size-3 shrink-0 text-sidebar-foreground/50"
+                data-hotkey-dim
+                data-testid="project-todo-list-personal"
+              />
+            ) : null}
+            <ItemPositionBadge index={hotkeyIndex ?? null} />
+          </SidebarMenuButton>
+        </SidebarMenuItem>
       );
     }
     case "remote-shell": {

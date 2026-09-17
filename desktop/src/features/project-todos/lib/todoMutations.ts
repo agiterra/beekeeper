@@ -20,6 +20,8 @@ import { rankBetween } from "./fractionalRank";
 import type { TodoItem } from "./todoFold";
 import {
   type TodoOp,
+  type TodoOpContent,
+  type TodoVisibility,
   encodeTodoOpContent,
   newTodoId,
   todoOpItemId,
@@ -101,9 +103,14 @@ export async function publishTodoOp(
 }
 
 export type TodoMutations = {
-  createList: (title: string) => Promise<string>;
+  createList: (
+    title: string,
+    visibility: TodoVisibility,
+    extra?: { pinned?: boolean },
+  ) => Promise<string>;
   renameList: (listId: string, title: string) => Promise<void>;
   setListArchived: (listId: string, archived: boolean) => Promise<void>;
+  setListPinned: (listId: string, pinned: boolean) => Promise<void>;
   addItem: (
     listId: string,
     text: string,
@@ -135,31 +142,55 @@ export function useTodoMutations(coordinate: string | null): TodoMutations {
       }
       return coordinate;
     };
-    const openItems = (listId: string): readonly TodoItem[] => {
-      const read = queryClient.getQueryData<ProjectTodosRead>(
-        projectTodosQueryKey(require()),
-      );
-      return read?.digest.lists.find((list) => list.id === listId)?.open ?? [];
+    const cachedList = (listId: string) =>
+      queryClient
+        .getQueryData<ProjectTodosRead>(projectTodosQueryKey(require()))
+        ?.digest.lists.find((list) => list.id === listId);
+    const openItems = (listId: string): readonly TodoItem[] =>
+      cachedList(listId)?.open ?? [];
+    // Every op repeats its list's visibility as the `td-vis` tag; a list the
+    // cache does not know cannot be written to honestly, so say so.
+    const visibilityOf = (listId: string): TodoVisibility => {
+      const list = cachedList(listId);
+      if (!list) {
+        throw new Error(
+          "This list is not in the current read; refresh and try again.",
+        );
+      }
+      return list.visibility;
     };
     const publish = (op: TodoOp) => publishTodoOp(queryClient, require(), op);
+    const publishOn = (content: TodoOpContent) =>
+      publish({ ...content, visibility: visibilityOf(content.listId) });
     return {
-      createList: async (title) => {
+      createList: async (title, visibility, extra = {}) => {
         const listId = newTodoId();
-        await publish({ op: "list.create", listId, title });
+        await publish({ op: "list.create", listId, title, visibility });
+        if (extra.pinned) {
+          await publish({
+            op: "list.pinned",
+            listId,
+            pinned: true,
+            visibility,
+          });
+        }
         return listId;
       },
       renameList: async (listId, title) => {
-        await publish({ op: "list.title", listId, title });
+        await publishOn({ op: "list.title", listId, title });
       },
       setListArchived: async (listId, archived) => {
-        await publish({ op: "list.archived", listId, archived });
+        await publishOn({ op: "list.archived", listId, archived });
+      },
+      setListPinned: async (listId, pinned) => {
+        await publishOn({ op: "list.pinned", listId, pinned });
       },
       addItem: async (listId, text, extra = {}) => {
         const itemId = newTodoId();
         const rank = rankForIndex(openItems(listId), extra.index ?? null, null);
-        await publish({ op: "item.add", listId, itemId, text, rank });
+        await publishOn({ op: "item.add", listId, itemId, text, rank });
         if (extra.assignee) {
-          await publish({
+          await publishOn({
             op: "item.assignee",
             listId,
             itemId,
@@ -167,28 +198,28 @@ export function useTodoMutations(coordinate: string | null): TodoMutations {
           });
         }
         if (extra.due) {
-          await publish({ op: "item.due", listId, itemId, due: extra.due });
+          await publishOn({ op: "item.due", listId, itemId, due: extra.due });
         }
         return itemId;
       },
       setText: async (listId, itemId, text) => {
-        await publish({ op: "item.text", listId, itemId, text });
+        await publishOn({ op: "item.text", listId, itemId, text });
       },
       setDone: async (listId, itemId, done) => {
-        await publish({ op: "item.done", listId, itemId, done });
+        await publishOn({ op: "item.done", listId, itemId, done });
       },
       setAssignee: async (listId, itemId, assignee) => {
-        await publish({ op: "item.assignee", listId, itemId, assignee });
+        await publishOn({ op: "item.assignee", listId, itemId, assignee });
       },
       setDue: async (listId, itemId, due) => {
-        await publish({ op: "item.due", listId, itemId, due });
+        await publishOn({ op: "item.due", listId, itemId, due });
       },
       moveItem: async (listId, itemId, index) => {
         const rank = rankForIndex(openItems(listId), index, itemId);
-        await publish({ op: "item.rank", listId, itemId, rank });
+        await publishOn({ op: "item.rank", listId, itemId, rank });
       },
       removeItem: async (listId, itemId) => {
-        await publish({ op: "item.remove", listId, itemId });
+        await publishOn({ op: "item.remove", listId, itemId });
       },
     };
   }, [coordinate, queryClient]);

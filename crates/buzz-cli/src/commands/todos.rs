@@ -14,12 +14,13 @@
 
 use buzz_core::fractional_rank::rank_between;
 use buzz_core::kind::KIND_PROJECT_TODO_OP;
-use buzz_core::project_todo::{ProjectTodoOp, ProjectTodoOpValue};
+use buzz_core::project_todo::{ProjectTodoOp, ProjectTodoOpValue, TodoVisibility};
 use buzz_core::project_todo_fold::{
     fold_project_todos, ProjectTodoDigest, TodoFoldEvent, TodoItem, TodoList,
 };
 use nostr::Timestamp;
 use serde_json::{json, Value};
+use std::str::FromStr;
 
 use super::pulse::resolve_project;
 use super::repos::next_replaceable_created_at;
@@ -50,7 +51,15 @@ async fn snapshot(client: &BuzzClient, project: Option<&str>) -> Result<Snapshot
         let Ok(event) = serde_json::from_value::<TodoFoldEvent>(value) else {
             continue;
         };
-        if let Ok(op) = buzz_core::project_todo::decode_project_todo_op(&event.content) {
+        let visibility = event
+            .tags
+            .iter()
+            .find(|t| t.first().map(String::as_str) == Some("td-vis"))
+            .and_then(|t| t.get(1))
+            .and_then(|v| TodoVisibility::from_str(v).ok());
+        if let Some(op) = visibility.and_then(|vis| {
+            buzz_core::project_todo::decode_project_todo_op(&event.content, vis).ok()
+        }) {
             let key = (
                 op.list_id.clone(),
                 op.item_id().unwrap_or_default().to_owned(),
@@ -149,6 +158,14 @@ fn new_id() -> String {
     uuid::Uuid::new_v4().simple().to_string()
 }
 
+/// A list's visibility as the fold reported it. The fold only ever emits the
+/// two wire spellings, so a parse failure is a bug, reported rather than
+/// guessed at.
+fn visibility_of(list: &TodoList) -> Result<TodoVisibility, CliError> {
+    TodoVisibility::from_str(&list.visibility)
+        .map_err(|e| CliError::Other(format!("fold reported an unknown visibility: {e}")))
+}
+
 /// Publish one op, stamped past the latest op on its target — including one
 /// this same command just published, so `add --assignee` lands its assignee
 /// op strictly after its add op and the per-field fold cannot let the add's
@@ -242,14 +259,18 @@ fn list_summary(list: &TodoList, format: &crate::OutputFormat) -> Value {
         crate::OutputFormat::Compact => json!({
             "id": list.id,
             "title": list.title,
+            "visibility": list.visibility,
             "archived": list.archived,
+            "pinned": list.pinned,
             "open": list.open.len(),
             "completed": list.completed.len(),
         }),
         crate::OutputFormat::Json => json!({
             "id": list.id,
             "title": list.title,
+            "visibility": list.visibility,
             "archived": list.archived,
+            "pinned": list.pinned,
             "open": list.open.len(),
             "completed": list.completed.len(),
             "createdAt": list.created_at,
@@ -306,7 +327,9 @@ async fn cmd_show(
         "project": snap.coordinate,
         "id": list.id,
         "title": list.title,
+        "visibility": list.visibility,
         "archived": list.archived,
+        "pinned": list.pinned,
         "open": list.open.iter().map(|i| item_row(i, format)).collect::<Vec<_>>(),
         "completed": list.completed.iter().map(|i| item_row(i, format)).collect::<Vec<_>>(),
     });
@@ -336,13 +359,46 @@ pub async fn dispatch(
         TodosCmd::Show { project, list } => {
             cmd_show(client, project.as_deref(), &list, format).await
         }
-        TodosCmd::CreateList { project, title } => {
+        TodosCmd::CreateList {
+            project,
+            title,
+            personal,
+            pinned,
+        } => {
             let mut snap = snapshot(client, project.as_deref()).await?;
-            let op = ProjectTodoOp {
-                list_id: new_id(),
-                value: ProjectTodoOpValue::ListCreate { title },
+            let visibility = if personal {
+                TodoVisibility::Personal
+            } else {
+                TodoVisibility::Project
             };
-            println!("{}", publish(&mut snap, client, &op).await?);
+            let list_id = new_id();
+            let created = publish(
+                &mut snap,
+                client,
+                &ProjectTodoOp {
+                    list_id: list_id.clone(),
+                    visibility,
+                    value: ProjectTodoOpValue::ListCreate { title, visibility },
+                },
+            )
+            .await?;
+            if pinned {
+                let pin = publish(
+                    &mut snap,
+                    client,
+                    &ProjectTodoOp {
+                        list_id,
+                        visibility,
+                        value: ProjectTodoOpValue::ListPinned { pinned: true },
+                    },
+                )
+                .await?;
+                let mut out = created;
+                out["ops"] = json!([out.clone(), pin]);
+                println!("{out}");
+            } else {
+                println!("{created}");
+            }
             Ok(())
         }
         TodosCmd::RenameList {
@@ -351,9 +407,10 @@ pub async fn dispatch(
             title,
         } => {
             let mut snap = snapshot(client, project.as_deref()).await?;
-            let list_id = resolve_list(&snap.digest, &list)?.id.clone();
+            let target = resolve_list(&snap.digest, &list)?;
             let op = ProjectTodoOp {
-                list_id,
+                list_id: target.id.clone(),
+                visibility: visibility_of(target)?,
                 value: ProjectTodoOpValue::ListTitle { title },
             };
             println!("{}", publish(&mut snap, client, &op).await?);
@@ -365,13 +422,20 @@ pub async fn dispatch(
             undo,
         } => {
             let mut snap = snapshot(client, project.as_deref()).await?;
-            let list_id = resolve_list(&snap.digest, &list)?.id.clone();
+            let target = resolve_list(&snap.digest, &list)?;
             let op = ProjectTodoOp {
-                list_id,
+                list_id: target.id.clone(),
+                visibility: visibility_of(target)?,
                 value: ProjectTodoOpValue::ListArchived { archived: !undo },
             };
             println!("{}", publish(&mut snap, client, &op).await?);
             Ok(())
+        }
+        TodosCmd::Pin { project, list } => {
+            set_pinned(client, project.as_deref(), &list, true).await
+        }
+        TodosCmd::Unpin { project, list } => {
+            set_pinned(client, project.as_deref(), &list, false).await
         }
         TodosCmd::Add {
             project,
@@ -390,6 +454,7 @@ pub async fn dispatch(
             let mut snap = snapshot(client, project.as_deref()).await?;
             let target = resolve_list(&snap.digest, &list)?;
             let list_id = target.id.clone();
+            let visibility = visibility_of(target)?;
             let rank = rank_for_index(&target.open, index, None)?;
             let item_id = new_id();
             let mut published = vec![
@@ -398,6 +463,7 @@ pub async fn dispatch(
                     client,
                     &ProjectTodoOp {
                         list_id: list_id.clone(),
+                        visibility,
                         value: ProjectTodoOpValue::ItemAdd {
                             item_id: item_id.clone(),
                             text,
@@ -414,6 +480,7 @@ pub async fn dispatch(
                         client,
                         &ProjectTodoOp {
                             list_id: list_id.clone(),
+                            visibility,
                             value: ProjectTodoOpValue::ItemAssignee {
                                 item_id: item_id.clone(),
                                 assignee: Some(assignee),
@@ -430,6 +497,7 @@ pub async fn dispatch(
                         client,
                         &ProjectTodoOp {
                             list_id: list_id.clone(),
+                            visibility,
                             value: ProjectTodoOpValue::ItemDue {
                                 item_id: item_id.clone(),
                                 due: Some(due),
@@ -456,6 +524,7 @@ pub async fn dispatch(
             let (list, item) = resolve_item(&snap.digest, &item)?;
             let op = ProjectTodoOp {
                 list_id: list.id.clone(),
+                visibility: visibility_of(list)?,
                 value: ProjectTodoOpValue::ItemText {
                     item_id: item.id.clone(),
                     text,
@@ -478,6 +547,7 @@ pub async fn dispatch(
             let (list, item) = resolve_item(&snap.digest, &item)?;
             let op = ProjectTodoOp {
                 list_id: list.id.clone(),
+                visibility: visibility_of(list)?,
                 value: ProjectTodoOpValue::ItemAssignee {
                     item_id: item.id.clone(),
                     assignee,
@@ -492,6 +562,7 @@ pub async fn dispatch(
             let (list, item) = resolve_item(&snap.digest, &item)?;
             let op = ProjectTodoOp {
                 list_id: list.id.clone(),
+                visibility: visibility_of(list)?,
                 value: ProjectTodoOpValue::ItemDue {
                     item_id: item.id.clone(),
                     due,
@@ -515,6 +586,7 @@ pub async fn dispatch(
             let rank = rank_for_index(&list.open, Some(index), Some(&item.id))?;
             let op = ProjectTodoOp {
                 list_id: list.id.clone(),
+                visibility: visibility_of(list)?,
                 value: ProjectTodoOpValue::ItemRank {
                     item_id: item.id.clone(),
                     rank,
@@ -528,6 +600,7 @@ pub async fn dispatch(
             let (list, item) = resolve_item(&snap.digest, &item)?;
             let op = ProjectTodoOp {
                 list_id: list.id.clone(),
+                visibility: visibility_of(list)?,
                 value: ProjectTodoOpValue::ItemRemove {
                     item_id: item.id.clone(),
                 },
@@ -548,10 +621,28 @@ async fn set_done(
     let (list, item) = resolve_item(&snap.digest, item)?;
     let op = ProjectTodoOp {
         list_id: list.id.clone(),
+        visibility: visibility_of(list)?,
         value: ProjectTodoOpValue::ItemDone {
             item_id: item.id.clone(),
             done,
         },
+    };
+    println!("{}", publish(&mut snap, client, &op).await?);
+    Ok(())
+}
+
+async fn set_pinned(
+    client: &BuzzClient,
+    project: Option<&str>,
+    list: &str,
+    pinned: bool,
+) -> Result<(), CliError> {
+    let mut snap = snapshot(client, project).await?;
+    let target = resolve_list(&snap.digest, list)?;
+    let op = ProjectTodoOp {
+        list_id: target.id.clone(),
+        visibility: visibility_of(target)?,
+        value: ProjectTodoOpValue::ListPinned { pinned },
     };
     println!("{}", publish(&mut snap, client, &op).await?);
     Ok(())
@@ -583,7 +674,9 @@ mod tests {
         TodoList {
             id: id.to_owned(),
             title: title.to_owned(),
+            visibility: "project".to_owned(),
             archived: false,
+            pinned: false,
             created_at: 1,
             created_by: "p".repeat(64),
             updated_at: 1,

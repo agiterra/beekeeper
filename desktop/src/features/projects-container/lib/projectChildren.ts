@@ -1,3 +1,4 @@
+import type { TodoList } from "@/features/project-todos/lib/todoFold";
 import type { RemoteTerminal } from "@/features/builtin-shell/observe/useProjectTerminals";
 import type { Channel } from "@/shared/api/types";
 import type { ShellSessionInfo } from "@/shared/api/tauriShell";
@@ -42,16 +43,17 @@ export function projectAgentRows(
 
 /**
  * One row in a project's sidebar child list; the type picks the icon. The
- * sidebar lists only channels and interactive work (coding sessions and
- * terminals) — repositories, workflows, agents and Pulse live on the project
- * page, not here.
+ * sidebar lists channels, interactive work (coding sessions and terminals)
+ * and the to-do lists members pinned — repositories, workflows, agents and
+ * Pulse live on the project page, not here.
  */
 export type ProjectChildRow =
   | { type: "coding-session"; entry: ProjectCodingSessionShelfEntry }
   | { type: "channel"; channel: Channel }
   | { type: "forum"; channel: Channel }
   | { type: "shell"; session: ShellSessionInfo }
-  | { type: "remote-shell"; terminal: RemoteTerminal };
+  | { type: "remote-shell"; terminal: RemoteTerminal }
+  | { type: "todo-list"; list: TodoList };
 
 /** Fixed display order of the flat list — live coding sessions on top: a
  * session is the only child that changes while you watch it. */
@@ -62,6 +64,7 @@ export const PROJECT_CHILD_TYPE_RANK: Record<ProjectChildRow["type"], number> =
     forum: 2,
     shell: 3,
     "remote-shell": 4,
+    "todo-list": 5,
   };
 
 /** Stable, cross-type-unique React key for a child row. */
@@ -77,6 +80,8 @@ export function projectChildKey(row: ProjectChildRow): string {
       return `shell:${row.session.sessionId}`;
     case "remote-shell":
       return `remote-shell:${row.terminal.ownerPubkey}:${row.terminal.sessionId}`;
+    case "todo-list":
+      return `todo-list:${row.list.id}`;
   }
 }
 
@@ -91,6 +96,8 @@ export function projectChildLabel(row: ProjectChildRow): string {
       return row.session.title;
     case "remote-shell":
       return row.terminal.title;
+    case "todo-list":
+      return row.list.title;
   }
 }
 
@@ -128,6 +135,7 @@ export function buildProjectChildren(input: {
   forumChannels: Channel[];
   shellSessions: ShellSessionInfo[];
   remoteTerminals?: RemoteTerminal[];
+  todoLists?: readonly TodoList[];
 }): ProjectChildRow[] {
   const rows: ProjectChildRow[] = [
     ...(input.codingSessions ?? []).map(
@@ -144,6 +152,9 @@ export function buildProjectChildren(input: {
     ),
     ...(input.remoteTerminals ?? []).map(
       (terminal): ProjectChildRow => ({ type: "remote-shell", terminal }),
+    ),
+    ...(input.todoLists ?? []).map(
+      (list): ProjectChildRow => ({ type: "todo-list", list }),
     ),
   ];
   return rows.sort(compareProjectChildren);

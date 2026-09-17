@@ -63,37 +63,81 @@ test("ops round-trip through content and carry the matching tags", () => {
   const listId = newTodoId();
   const itemId = newTodoId();
   const coordinate = `30621:${"a".repeat(64)}:tank-loop`;
+  const project = "project";
   const ops = [
-    { op: "list.create", listId, title: "Launch" },
-    { op: "list.title", listId, title: "Launch v2" },
-    { op: "list.archived", listId, archived: true },
-    { op: "item.add", listId, itemId, text: "Write the NIP", rank: "a0" },
-    { op: "item.text", listId, itemId, text: "Write\tthe NIP\nwith examples" },
-    { op: "item.done", listId, itemId, done: true },
-    { op: "item.assignee", listId, itemId, assignee: "b".repeat(64) },
-    { op: "item.assignee", listId, itemId, assignee: null },
-    { op: "item.due", listId, itemId, due: "2028-02-29" },
-    { op: "item.due", listId, itemId, due: null },
-    { op: "item.rank", listId, itemId, rank: "a0V" },
-    { op: "item.remove", listId, itemId },
+    { op: "list.create", listId, title: "Launch", visibility: project },
+    { op: "list.title", listId, title: "Launch v2", visibility: project },
+    { op: "list.archived", listId, archived: true, visibility: project },
+    { op: "list.pinned", listId, pinned: true, visibility: project },
+    {
+      op: "list.create",
+      listId,
+      title: "Mine",
+      visibility: "personal",
+    },
+    {
+      op: "item.add",
+      listId,
+      itemId,
+      text: "Write the NIP",
+      rank: "a0",
+      visibility: project,
+    },
+    {
+      op: "item.text",
+      listId,
+      itemId,
+      text: "Write\tthe NIP\nwith examples",
+      visibility: project,
+    },
+    { op: "item.done", listId, itemId, done: true, visibility: project },
+    {
+      op: "item.assignee",
+      listId,
+      itemId,
+      assignee: "b".repeat(64),
+      visibility: project,
+    },
+    {
+      op: "item.assignee",
+      listId,
+      itemId,
+      assignee: null,
+      visibility: "personal",
+    },
+    { op: "item.due", listId, itemId, due: "2028-02-29", visibility: project },
+    { op: "item.due", listId, itemId, due: null, visibility: project },
+    { op: "item.rank", listId, itemId, rank: "a0V", visibility: project },
+    { op: "item.remove", listId, itemId, visibility: project },
   ];
   for (const op of ops) {
     const content = encodeTodoOpContent(op);
-    assert.deepEqual(decodeTodoOp(content), op, content);
-    assert.equal(JSON.parse(content).schema, "buzz-project-todo/v1");
+    const parsed = JSON.parse(content);
+    assert.equal(parsed.schema, "buzz-project-todo/v1");
+    // Only list.create carries visibility in content; every op carries it
+    // as the td-vis tag.
+    assert.equal("visibility" in parsed, op.op === "list.create");
+    assert.deepEqual(decodeTodoOp(content, op.visibility), op, content);
     const tags = todoOpTags(coordinate, op);
-    assert.deepEqual(tags.slice(0, 4), [
+    assert.deepEqual(tags.slice(0, 5), [
       ["a", coordinate],
       ["td-v", "td1-1"],
       ["td-op", op.op],
       ["td-list", listId],
+      ["td-vis", op.visibility],
     ]);
     if (op.op.startsWith("item.")) {
-      assert.deepEqual(tags[4], ["td-item", itemId]);
+      assert.deepEqual(tags[5], ["td-item", itemId]);
     } else {
-      assert.equal(tags.length, 4);
+      assert.equal(tags.length, 5);
     }
   }
+  // A create whose content disagrees with its tag is refused.
+  const personalCreate = encodeTodoOpContent(ops[4]);
+  assert.match(
+    decodeTodoOp(personalCreate, "project").error,
+    /does not match its td-vis tag/,
+  );
 });
 
 test("the content key set is exact and values are validated", () => {
@@ -107,11 +151,12 @@ test("the content key set is exact and values are validated", () => {
     text: "t",
     rank: "a0",
   };
-  const bad = (patch) => decodeTodoOp(JSON.stringify({ ...base, ...patch }));
+  const bad = (patch) =>
+    decodeTodoOp(JSON.stringify({ ...base, ...patch }), "project");
   assert.match(bad({ priority: "high" }).error, /unsupported field "priority"/);
   const { rank: _rank, ...missing } = base;
   assert.match(
-    decodeTodoOp(JSON.stringify(missing)).error,
+    decodeTodoOp(JSON.stringify(missing), "project").error,
     /missing field "rank"/,
   );
   assert.match(bad({ listId: "short" }).error, /listId/);
@@ -128,6 +173,7 @@ test("the content key set is exact and values are validated", () => {
         listId,
         itemId,
       }),
+      "project",
     ).error,
     /missing field "assignee"/,
   );
@@ -140,6 +186,7 @@ test("the content key set is exact and values are validated", () => {
         itemId,
         assignee: "ABC",
       }),
+      "project",
     ).error,
     /assignee/,
   );

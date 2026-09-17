@@ -127,14 +127,38 @@ fn todo_op(
     extra_tags: &[[&str; 2]],
     created_at: Option<u64>,
 ) -> nostr::Event {
+    todo_op_vis(
+        keys,
+        coordinate,
+        content.take(),
+        extra_tags,
+        created_at,
+        "project",
+    )
+}
+
+/// [`todo_op`] for a list of the given visibility (`project` | `personal`):
+/// the `td-vis` tag on every op, and `visibility` in `list.create` content.
+fn todo_op_vis(
+    keys: &Keys,
+    coordinate: &str,
+    mut content: Value,
+    extra_tags: &[[&str; 2]],
+    created_at: Option<u64>,
+    visibility: &str,
+) -> nostr::Event {
     content["schema"] = json!(TODO_SCHEMA);
     let op = content["op"].as_str().unwrap().to_owned();
+    if op == "list.create" && content.get("visibility").is_none() {
+        content["visibility"] = json!(visibility);
+    }
     let list_id = content["listId"].as_str().unwrap().to_owned();
     let mut tags = vec![
         Tag::parse(["a", coordinate]).unwrap(),
         Tag::parse(["td-v", TODO_TAG_VERSION]).unwrap(),
         Tag::parse(["td-op", &op]).unwrap(),
         Tag::parse(["td-list", &list_id]).unwrap(),
+        Tag::parse(["td-vis", visibility]).unwrap(),
     ];
     if let Some(item_id) = content["itemId"].as_str() {
         tags.push(Tag::parse(["td-item", item_id]).unwrap());
@@ -581,6 +605,7 @@ async fn test_malformed_and_unscoped_ops_are_refused() {
             Tag::parse(["td-v", TODO_TAG_VERSION]).unwrap(),
             Tag::parse(["td-op", "item.text"]).unwrap(),
             Tag::parse(["td-list", &list_id]).unwrap(),
+            Tag::parse(["td-vis", "project"]).unwrap(),
             Tag::parse(["td-item", &item_id]).unwrap(),
         ])
         .sign_with_keys(&owner)
@@ -872,6 +897,201 @@ async fn test_two_writers_fold_to_one_list() {
         list.completed[0].completed_by.as_deref(),
         Some(collaborator.public_key().to_hex().as_str())
     );
+}
+
+/// A personal list is its author's alone: another member of the same
+/// project — even the owner — reads none of its ops over WS REQ, `/query`
+/// or `/count`, receives none live, and the author still reads everything.
+#[tokio::test]
+#[ignore = "requires running relay"]
+async fn test_personal_list_is_withheld_from_other_members() {
+    let owner = Keys::generate();
+    let member = Keys::generate();
+    let d_tag = unique("todo-personal");
+    let coordinate = project_coordinate(&owner, &d_tag);
+
+    let mut owner_client = BuzzTestClient::connect(&relay_url(), &owner)
+        .await
+        .expect("owner connect");
+    send_ok(
+        &mut owner_client,
+        project_event(&owner, &d_tag, Some("public"), &[(&member, "collaborator")]),
+        "public project",
+    )
+    .await;
+    let mut member_client = BuzzTestClient::connect(&relay_url(), &member)
+        .await
+        .expect("member connect");
+
+    // The owner subscribes live on its own connection before the member
+    // writes anything; the connection does nothing else until the receive
+    // loop, since a REQ drained on the same socket would swallow the live
+    // events of every other subscription.
+    let mut owner_live = BuzzTestClient::connect(&relay_url(), &owner)
+        .await
+        .expect("owner live connect");
+    let owner_sid = sub_id("personal-owner-live");
+    owner_live
+        .subscribe(&owner_sid, vec![todo_filter(&coordinate)])
+        .await
+        .expect("owner subscribe");
+    owner_live
+        .collect_until_eose(&owner_sid, Duration::from_secs(10))
+        .await
+        .expect("owner eose");
+
+    // The member keeps one personal list and one project list.
+    let personal = todo_id();
+    let shared = todo_id();
+    let personal_create = send_ok(
+        &mut member_client,
+        todo_op_vis(
+            &member,
+            &coordinate,
+            json!({ "op": "list.create", "listId": personal, "title": "Mine" }),
+            &[],
+            None,
+            "personal",
+        ),
+        "personal create",
+    )
+    .await;
+    send_ok(
+        &mut member_client,
+        todo_op_vis(
+            &member,
+            &coordinate,
+            json!({ "op": "item.add", "listId": personal, "itemId": todo_id(), "text": "secret", "rank": "a0" }),
+            &[],
+            None,
+            "personal",
+        ),
+        "personal add",
+    )
+    .await;
+    let shared_create = send_ok(
+        &mut member_client,
+        list_create(&member, &coordinate, &shared, "Ours"),
+        "shared create",
+    )
+    .await;
+
+    // The author reads all three.
+    let seen = query(
+        &mut member_client,
+        "personal-author",
+        todo_filter(&coordinate),
+    )
+    .await;
+    assert_eq!(
+        seen.len(),
+        3,
+        "the author reads personal and shared ops alike"
+    );
+
+    // The project owner reads only the shared one, on every surface.
+    let seen = query(
+        &mut owner_client,
+        "personal-owner",
+        todo_filter(&coordinate),
+    )
+    .await;
+    let ids: Vec<_> = seen.iter().map(|e| e.id).collect();
+    assert_eq!(
+        ids,
+        vec![shared_create],
+        "WS REQ must withhold another member's personal ops"
+    );
+    let seen = query(
+        &mut owner_client,
+        "personal-owner-ids",
+        Filter::new().id(personal_create),
+    )
+    .await;
+    assert!(
+        seen.is_empty(),
+        "a known id must not bypass the personal gate"
+    );
+
+    let http = http_client();
+    let owner_hex = owner.public_key().to_hex();
+    let (status, rows) = post_raw(
+        &http,
+        &relay_http_url(),
+        "/query",
+        &owner_hex,
+        &todo_query_body(&coordinate),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{rows}");
+    assert_eq!(
+        rows.as_array().map(Vec::len),
+        Some(1),
+        "HTTP /query must withhold personal ops: {rows}"
+    );
+    let (status, count) = post_raw(
+        &http,
+        &relay_http_url(),
+        "/count",
+        &owner_hex,
+        &todo_query_body(&coordinate),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{count}");
+    assert_eq!(
+        count["count"].as_u64(),
+        Some(1),
+        "HTTP /count must not count personal ops"
+    );
+
+    // Live: the owner's subscription saw the shared create and never the
+    // personal ones.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let mut saw_shared = false;
+    while tokio::time::Instant::now() < deadline {
+        match owner_live.recv_event(Duration::from_secs(1)).await {
+            Ok(RelayMessage::Event {
+                subscription_id,
+                event,
+            }) if subscription_id == owner_sid => {
+                assert_ne!(
+                    event.id, personal_create,
+                    "a personal op must never fan out to another member"
+                );
+                assert!(
+                    !event
+                        .tags
+                        .iter()
+                        .any(|t| t.as_slice() == ["td-vis", "personal"]),
+                    "a personal op must never fan out to another member"
+                );
+                if event.id == shared_create {
+                    saw_shared = true;
+                }
+            }
+            Ok(_) => {}
+            Err(_) => break,
+        }
+    }
+    assert!(
+        saw_shared,
+        "the shared create must still fan out to the owner"
+    );
+
+    // A `list.create` whose content disagrees with its tag is refused.
+    send_refused(
+        &mut member_client,
+        todo_op_vis(
+            &member,
+            &coordinate,
+            json!({ "op": "list.create", "listId": todo_id(), "title": "x", "visibility": "personal" }),
+            &[],
+            None,
+            "project",
+        ),
+        "does not match its td-vis tag",
+    )
+    .await;
 }
 
 /// A community cannot retrieve another community's coordinate, and the

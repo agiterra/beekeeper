@@ -1219,7 +1219,9 @@ with `bee repos create --id demo` then `bee projects create demo --repo demo`.
 ```bash
 P=30621:<owner-hex>:demo
 bee todos lists --project $P                              # [] at first
-bee todos create-list --project $P --title Launch         # → list_id
+bee todos create-list --project $P --title Launch         # → list_id (project-visible)
+bee todos create-list --project $P --title Mine --personal --pinned   # only you; pinned
+bee todos pin --project $P Launch                          # every member's sidebar; --unpin via `unpin`
 bee --format compact todos add --project $P Launch "Write the NIP"
 bee --format compact todos add --project $P Launch "Ship it" --due 2026-10-01
 bee --format compact todos add --project $P Launch "Mobile" --index 0   # first
@@ -1243,6 +1245,7 @@ bee todos lists --project $P --archived
 | `move --index 0` | the item is first in `open`; other items' ranks are untouched |
 | a `viewer` of a private project writes | `auth_error` "project write access required", exit **3** |
 | an unknown `--project` coordinate | `unknown project coordinate`, exit 3 |
+| another key's `lists` after a `--personal` create | the personal list is absent; `visibility`/`pinned` appear on every row |
 | `show` on a list with malformed ops | `ignored: <n>` present in the output, never silently dropped |
 
 Verified live 2026-09-17 against a local relay on :3010 with two keys

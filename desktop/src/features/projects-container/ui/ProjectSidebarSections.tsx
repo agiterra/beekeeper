@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
   useLocation,
   useNavigate,
+  useSearch,
   useParams,
   useRouter,
 } from "@tanstack/react-router";
@@ -61,6 +62,13 @@ import {
 } from "./ProjectSidebarDnd";
 import { useProjectSessionFilters } from "../lib/projectSessionFilterStorage";
 import { useCreateProjectContainerMutation } from "../useCreateProjectContainer";
+import { publishTodoOp } from "@/features/project-todos/lib/todoMutations";
+import { newTodoId } from "@/features/project-todos/lib/todoOp";
+import { usePinnedTodoListsIndex } from "@/features/project-todos/lib/todoSidebarIndex";
+import {
+  CreateTodoListDialog,
+  type CreateTodoListInput,
+} from "@/features/project-todos/ui/CreateTodoListDialog";
 import { useGeneralProjectMigration } from "../useGeneralProjectMigration";
 import { CreateProjectContainerDialog } from "./CreateProjectContainerDialog";
 import {
@@ -138,6 +146,12 @@ export function ProjectSidebarSections({
   const projectRouteId = pathname.startsWith("/projects/")
     ? decodeURIComponent(pathname.split("/")[2] ?? "")
     : null;
+  // The to-do list on screen, when the To-Do tab is open with `?list=`.
+  const activeTodoListId = useSearch({
+    strict: false,
+    select: (search: { list?: string }) =>
+      pathname.endsWith("/todos") ? (search.list ?? null) : null,
+  });
   const activeShellSessionId = useParams({
     strict: false,
     select: (p) => (p as { sessionId?: string }).sessionId,
@@ -215,6 +229,53 @@ export function ProjectSidebarSections({
     kind: ProjectsScreenCreateKind;
     project: ProjectContainer;
   } | null>(null);
+
+  // One create dialog for to-do lists serves every group's "+" menu.
+  const [todoCreateProject, setTodoCreateProject] =
+    React.useState<ProjectContainer | null>(null);
+  const [todoCreating, setTodoCreating] = React.useState(false);
+  const handleCreateTodoList = React.useCallback(
+    async (input: CreateTodoListInput) => {
+      const project = todoCreateProject;
+      if (!project) return;
+      setTodoCreating(true);
+      try {
+        const listId = newTodoId();
+        await publishTodoOp(queryClient, project.address, {
+          op: "list.create",
+          listId,
+          title: input.title,
+          visibility: input.visibility,
+        });
+        if (input.pinned) {
+          await publishTodoOp(queryClient, project.address, {
+            op: "list.pinned",
+            listId,
+            pinned: true,
+            visibility: input.visibility,
+          });
+        }
+        void navigate({
+          to: "/projects/$projectId/todos",
+          params: { projectId: project.id },
+          search: { list: listId },
+        });
+      } finally {
+        setTodoCreating(false);
+      }
+    },
+    [navigate, queryClient, todoCreateProject],
+  );
+
+  // Pinned to-do lists for every real project, sharing the tab's cache.
+  const todoCoordinates = React.useMemo(
+    () =>
+      projects
+        .filter((project) => project.owner.length > 0)
+        .map((project) => project.address),
+    [projects],
+  );
+  const pinnedTodoLists = usePinnedTodoListsIndex(todoCoordinates);
 
   // One roster read for every project in the sidebar. Close, archive and
   // reopen are founder-only and need no roster; delete is the project's rule,
@@ -472,6 +533,24 @@ export function ProjectSidebarSections({
         }
         remoteTerminals={remoteTerminals}
         onObserveShell={handleObserveShell}
+        todoLists={
+          isFallback ? undefined : pinnedTodoLists.get(project.address)
+        }
+        activeTodoListId={
+          projectRouteId === project.id || projectRouteId === project.dtag
+            ? activeTodoListId
+            : null
+        }
+        onOpenTodoList={(listId) =>
+          void navigate({
+            to: "/projects/$projectId/todos",
+            params: { projectId: project.id },
+            search: { list: listId },
+          })
+        }
+        onNewTodoList={
+          isFallback ? undefined : () => setTodoCreateProject(project)
+        }
       />
     );
   };
@@ -525,6 +604,16 @@ export function ProjectSidebarSections({
         kind={createRequest?.kind ?? null}
         targetProject={createRequest?.project ?? null}
         onClose={() => setCreateRequest(null)}
+      />
+
+      <CreateTodoListDialog
+        isCreating={todoCreating}
+        onCreate={handleCreateTodoList}
+        onOpenChange={(open) => {
+          if (!open) setTodoCreateProject(null);
+        }}
+        open={todoCreateProject !== null}
+        projectName={todoCreateProject?.name ?? ""}
       />
 
       <CreateProjectContainerDialog

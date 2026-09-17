@@ -10,7 +10,7 @@ Project To-Do Lists
 
 ## Abstract
 
-This NIP defines `kind:44248`, a **project to-do op**: one signed, field-level edit to a shared to-do list that belongs to a NIP-MP project. A list is not an event. It is what every reader gets by folding the ops that name it, under one pure rule set shared by every client (`conformance/project-todo-fold/CONTRACT.md`). Any writer the project admits may edit any item; there is no per-author ownership of a list or an item.
+This NIP defines `kind:44248`, a **project to-do op**: one signed, field-level edit to a to-do list that belongs to a NIP-MP project. A list is not an event. It is what every reader gets by folding the ops that name it, under one pure rule set shared by every client (`conformance/project-todo-fold/CONTRACT.md`). A list is either **project** — any writer the project admits may edit any item; there is no per-author ownership — or **personal** — only its author reads or edits it, and the relay withholds its every op from everyone else.
 
 ## Motivation
 
@@ -32,6 +32,7 @@ Tags, position-independent, closed key set:
 | `td-v` | exactly one | `td1-1` |
 | `td-op` | exactly one | the op name, equal to the content `op` |
 | `td-list` | exactly one | the list id, equal to the content `listId` |
+| `td-vis` | exactly one | `project` or `personal`; on a `list.create` equal to the content `visibility` |
 | `td-item` | exactly one on an item op, none on a list op | the item id, equal to the content `itemId` |
 
 Any other key — **including `h`** — is a rejection. A to-do op is never channel-scoped; unlike a Pulse entry there is no optional channel binding to reconcile, so the relay lists the kind as global-only outright.
@@ -40,9 +41,10 @@ Content is JSON, at most 4096 bytes, with `schema` = `buzz-project-todo/v1` and 
 
 | `op` | keys |
 |---|---|
-| `list.create` | `listId`, `title` |
+| `list.create` | `listId`, `title`, `visibility` (`project` or `personal`) |
 | `list.title` | `listId`, `title` |
 | `list.archived` | `listId`, `archived` (boolean) |
+| `list.pinned` | `listId`, `pinned` (boolean) — show in every member's project sidebar |
 | `item.add` | `listId`, `itemId`, `text`, `rank` |
 | `item.text` | `listId`, `itemId`, `text` |
 | `item.done` | `listId`, `itemId`, `done` (boolean) |
@@ -67,7 +69,9 @@ Everything below is the Pulse rule applied through one predicate, `buzz_core::ki
 
 A refusal is an authorization failure (`OK false "restricted: …"` on the wire, **403** over `POST /events`, CLI exit 3), so an agent script can tell it from a malformed event (400, exit 2).
 
-**Reads.** A stored op is withheld from a reader whose hidden-private-project set contains its coordinate unless the reader is its author, on every surface: WS `REQ`, `POST /query`, `POST /count`, FTS, and live fan-out. An inadmissible read is an empty `200`, never a `403`. The SQL pushdown excludes hidden coordinates before `ORDER`/`LIMIT` so a private project cannot starve a page; the per-event gate stays as defence in depth.
+**Reads.** A stored op is withheld from a reader whose hidden-private-project set contains its coordinate unless the reader is its author, on every surface: WS `REQ`, `POST /query`, `POST /count`, FTS, and live fan-out. A **personal** op (`td-vis personal`) is withheld from every reader but its author on the same surfaces, whatever the project's visibility (`buzz_core::kind::is_personal_todo_op`). An inadmissible read is an empty `200`, never a `403`. The SQL pushdown excludes hidden coordinates — and, for a reader with any hidden project, other authors' personal ops — before `ORDER`/`LIMIT` so a private project cannot starve a page; the per-event gate (`project_a_scoped_event_hidden_from`) stays the authority and is what withholds personal ops for a reader with no hidden projects at all.
+
+Visibility is relay-enforced, not encrypted: like everything in a private project, a personal list is readable by the relay operator.
 
 **Request shape (HTTP bridge).** A filter naming a project-scoped kind must name exactly one canonical coordinate in `#a` and no kind outside the set; `{"kinds":[44240,44248],"#a":[c]}` is accepted (one gate, one coordinate), `{"kinds":[44248]}` and `{"kinds":[44248,9],…}` are `400`. WS `REQ` accepts any shape and gates per event.
 
@@ -77,7 +81,7 @@ A refusal is an authorization failure (`OK false "restricted: …"` on the wire,
 
 ## Fold
 
-Normative text is `conformance/project-todo-fold/CONTRACT.md`, pinned by `fixtures/fold-vectors.json`, which the Rust (`buzz-core`), TypeScript (Desktop) and Dart (Mobile) folds all bind to. In one paragraph: decode every op for the coordinate (a malformed op is counted in `ignored`); sort by `(created_at, id)`; the earliest `list.create` / `item.add` per id creates; any `item.remove` on an existing item is terminal; per field the greatest `(created_at, id)` wins, with the create's values taking part under the create's key; `item.done{true}` records `completedAt`/`completedBy` from the winning op; lists order by `(createdAt, id)`, open items by `(rank, id)`, completed items by the winning done op's key descending.
+Normative text is `conformance/project-todo-fold/CONTRACT.md`, pinned by `fixtures/fold-vectors.json`, which the Rust (`buzz-core`), TypeScript (Desktop) and Dart (Mobile) folds all bind to. In one paragraph: decode every op for the coordinate (a malformed op, or one whose `td-vis` is missing or unknown, is counted in `ignored`); sort by `(created_at, id)`; the earliest `list.create` / `item.add` per id creates, and a list's visibility is its create's; an op whose `td-vis` disagrees with its list, or on a personal list is not signed by the list's creator, is ignored; any `item.remove` on an existing item is terminal; per field the greatest `(created_at, id)` wins, with the create's values taking part under the create's key; `item.done{true}` records `completedAt`/`completedBy` from the winning op; lists order by `(createdAt, id)`, open items by `(rank, id)`, completed items by the winning done op's key descending.
 
 ## Ranks
 
@@ -91,7 +95,8 @@ The relay refuses any event whose `created_at` is more than 900 s from its clock
 
 - **Cold read is the whole log.** A reader replays every op for the coordinate (relay page cap 1000). Clients paginate with `until` and disclose truncation rather than presenting a list that silently lost history. A compaction record is a possible follow-up; it is not part of this NIP.
 - **Purging a project leaves its ops readable** to community members, inherited from Pulse: deleting the `kind:30621` head drops the project's ACL row, after which the coordinate is in nobody's hidden set, and `project_purge` does not touch channel-less `a`-tagged events. Recorded in the ledger; not fixed here.
-- **Authority is project-level.** Any writer may edit or remove anyone's item. This is the intended shape of a shared list, stated so nobody expects per-author ownership.
+- **Authority is project-level on a project list.** Any writer may edit or remove anyone's item. This is the intended shape of a shared list, stated so nobody expects per-author ownership. A personal list is the opposite: its creator's alone, and a stray op from anyone else is ignored by the fold even though the relay would already have withheld the list from them.
+- **A pin is shared.** `list.pinned` is a fact about the project, seen by every member; a private sidebar arrangement needs a personal list.
 
 ## Reference
 

@@ -4635,7 +4635,7 @@ pub enum TodosCmd {
         /// List id, unique id prefix, or unique title
         list: String,
     },
-    /// Create a list
+    /// Create a list (visible to every project member unless --personal)
     CreateList {
         /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
         #[arg(long, env = "BUZZ_PULSE_PROJECT")]
@@ -4643,6 +4643,28 @@ pub enum TodosCmd {
         /// The list's title
         #[arg(long)]
         title: String,
+        /// Only you can read it; the relay withholds every op from anyone else
+        #[arg(long)]
+        personal: bool,
+        /// Also pin it to the project sidebar
+        #[arg(long)]
+        pinned: bool,
+    },
+    /// Pin a list to the project sidebar (shared with every member)
+    Pin {
+        /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
+        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        project: Option<String>,
+        /// List id, unique id prefix, or unique title
+        list: String,
+    },
+    /// Unpin a list from the project sidebar
+    Unpin {
+        /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
+        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        project: Option<String>,
+        /// List id, unique id prefix, or unique title
+        list: String,
     },
     /// Retitle a list
     RenameList {

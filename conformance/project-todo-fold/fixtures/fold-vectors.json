@@ -26,11 +26,24 @@
               "a",
               "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
             ],
-            ["td-v", "td1-1"],
-            ["td-op", "list.create"],
-            ["td-list", "11111111111111111111111111111111"]
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "list.create"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-vis",
+              "project"
+            ]
           ],
-          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.create\",\"listId\":\"11111111111111111111111111111111\",\"title\":\"Launch\"}"
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.create\",\"listId\":\"11111111111111111111111111111111\",\"title\":\"Launch\",\"visibility\":\"project\"}"
         },
         {
           "id": "0000000000000000000000000000000000000000000000000000000000000002",
@@ -42,10 +55,26 @@
               "a",
               "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
             ],
-            ["td-v", "td1-1"],
-            ["td-op", "item.add"],
-            ["td-list", "11111111111111111111111111111111"],
-            ["td-item", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.add"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-vis",
+              "project"
+            ],
+            [
+              "td-item",
+              "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ]
           ],
           "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.add\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"text\":\"Write the NIP\",\"rank\":\"a0\"}"
         },
@@ -59,10 +88,26 @@
               "a",
               "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
             ],
-            ["td-v", "td1-1"],
-            ["td-op", "item.add"],
-            ["td-list", "11111111111111111111111111111111"],
-            ["td-item", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.add"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-vis",
+              "project"
+            ],
+            [
+              "td-item",
+              "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            ]
           ],
           "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.add\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"text\":\"Ship it\",\"rank\":\"a1\"}"
         },
@@ -76,10 +121,26 @@
               "a",
               "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
             ],
-            ["td-v", "td1-1"],
-            ["td-op", "item.done"],
-            ["td-list", "11111111111111111111111111111111"],
-            ["td-item", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.done"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-vis",
+              "project"
+            ],
+            [
+              "td-item",
+              "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ]
           ],
           "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.done\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"done\":true}"
         }
@@ -92,7 +153,9 @@
           {
             "id": "11111111111111111111111111111111",
             "title": "Launch",
+            "visibility": "project",
             "archived": false,
+            "pinned": false,
             "createdAt": 100,
             "createdBy": "1111111111111111111111111111111111111111111111111111111111111111",
             "updatedAt": 110,
@@ -146,11 +209,24 @@
               "a",
               "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
             ],
-            ["td-v", "td1-1"],
-            ["td-op", "list.create"],
-            ["td-list", "11111111111111111111111111111111"]
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "list.create"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-vis",
+              "project"
+            ]
           ],
-          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.create\",\"listId\":\"11111111111111111111111111111111\",\"title\":\"L\"}"
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.create\",\"listId\":\"11111111111111111111111111111111\",\"title\":\"L\",\"visibility\":\"project\"}"
         },
         {
           "id": "0000000000000000000000000000000000000000000000000000000000000002",
@@ -162,10 +238,26 @@
               "a",
               "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
             ],
-            ["td-v", "td1-1"],
-            ["td-op", "item.add"],
-            ["td-list", "11111111111111111111111111111111"],
-            ["td-item", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.add"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-vis",
+              "project"
+            ],
+            [
+              "td-item",
+              "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ]
           ],
           "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.add\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"text\":\"v1\",\"rank\":\"a0\"}"
         },
@@ -179,10 +271,26 @@
               "a",
               "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
             ],
-            ["td-v", "td1-1"],
-            ["td-op", "item.text"],
-            ["td-list", "11111111111111111111111111111111"],
-            ["td-item", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.text"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-vis",
+              "project"
+            ],
+            [
+              "td-item",
+              "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ]
           ],
           "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.text\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"text\":\"skewed\"}"
         },
@@ -196,10 +304,26 @@
               "a",
               "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
             ],
-            ["td-v", "td1-1"],
-            ["td-op", "item.text"],
-            ["td-list", "11111111111111111111111111111111"],
-            ["td-item", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.text"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-vis",
+              "project"
+            ],
+            [
+              "td-item",
+              "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ]
           ],
           "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.text\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"text\":\"v2\"}"
         },
@@ -213,10 +337,26 @@
               "a",
               "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
             ],
-            ["td-v", "td1-1"],
-            ["td-op", "item.text"],
-            ["td-list", "11111111111111111111111111111111"],
-            ["td-item", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.text"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-vis",
+              "project"
+            ],
+            [
+              "td-item",
+              "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ]
           ],
           "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.text\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"text\":\"v2b\"}"
         },
@@ -230,10 +370,26 @@
               "a",
               "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
             ],
-            ["td-v", "td1-1"],
-            ["td-op", "item.assignee"],
-            ["td-list", "11111111111111111111111111111111"],
-            ["td-item", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.assignee"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-vis",
+              "project"
+            ],
+            [
+              "td-item",
+              "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ]
           ],
           "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.assignee\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"assignee\":\"2222222222222222222222222222222222222222222222222222222222222222\"}"
         },
@@ -247,10 +403,26 @@
               "a",
               "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
             ],
-            ["td-v", "td1-1"],
-            ["td-op", "item.due"],
-            ["td-list", "11111111111111111111111111111111"],
-            ["td-item", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.due"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-vis",
+              "project"
+            ],
+            [
+              "td-item",
+              "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ]
           ],
           "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.due\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"due\":\"2026-10-01\"}"
         },
@@ -264,10 +436,26 @@
               "a",
               "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
             ],
-            ["td-v", "td1-1"],
-            ["td-op", "item.rank"],
-            ["td-list", "11111111111111111111111111111111"],
-            ["td-item", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.rank"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-vis",
+              "project"
+            ],
+            [
+              "td-item",
+              "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ]
           ],
           "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.rank\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"rank\":\"a0V\"}"
         }
@@ -280,7 +468,9 @@
           {
             "id": "11111111111111111111111111111111",
             "title": "L",
+            "visibility": "project",
             "archived": false,
+            "pinned": false,
             "createdAt": 50,
             "createdBy": "1111111111111111111111111111111111111111111111111111111111111111",
             "updatedAt": 106,
@@ -319,11 +509,24 @@
               "a",
               "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
             ],
-            ["td-v", "td1-1"],
-            ["td-op", "list.create"],
-            ["td-list", "11111111111111111111111111111111"]
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "list.create"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-vis",
+              "project"
+            ]
           ],
-          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.create\",\"listId\":\"11111111111111111111111111111111\",\"title\":\"L\"}"
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.create\",\"listId\":\"11111111111111111111111111111111\",\"title\":\"L\",\"visibility\":\"project\"}"
         },
         {
           "id": "0000000000000000000000000000000000000000000000000000000000000002",
@@ -335,10 +538,26 @@
               "a",
               "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
             ],
-            ["td-v", "td1-1"],
-            ["td-op", "item.add"],
-            ["td-list", "11111111111111111111111111111111"],
-            ["td-item", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.add"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-vis",
+              "project"
+            ],
+            [
+              "td-item",
+              "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ]
           ],
           "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.add\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"text\":\"one\",\"rank\":\"a0\"}"
         },
@@ -352,10 +571,26 @@
               "a",
               "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
             ],
-            ["td-v", "td1-1"],
-            ["td-op", "item.remove"],
-            ["td-list", "11111111111111111111111111111111"],
-            ["td-item", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.remove"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-vis",
+              "project"
+            ],
+            [
+              "td-item",
+              "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ]
           ],
           "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.remove\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}"
         },
@@ -369,10 +604,26 @@
               "a",
               "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
             ],
-            ["td-v", "td1-1"],
-            ["td-op", "item.text"],
-            ["td-list", "11111111111111111111111111111111"],
-            ["td-item", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.text"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-vis",
+              "project"
+            ],
+            [
+              "td-item",
+              "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ]
           ],
           "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.text\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"text\":\"edited after remove\"}"
         },
@@ -386,10 +637,26 @@
               "a",
               "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
             ],
-            ["td-v", "td1-1"],
-            ["td-op", "item.done"],
-            ["td-list", "11111111111111111111111111111111"],
-            ["td-item", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.done"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-vis",
+              "project"
+            ],
+            [
+              "td-item",
+              "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ]
           ],
           "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.done\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"done\":true}"
         },
@@ -403,10 +670,26 @@
               "a",
               "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
             ],
-            ["td-v", "td1-1"],
-            ["td-op", "item.add"],
-            ["td-list", "11111111111111111111111111111111"],
-            ["td-item", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.add"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-vis",
+              "project"
+            ],
+            [
+              "td-item",
+              "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            ]
           ],
           "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.add\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"text\":\"two\",\"rank\":\"a1\"}"
         },
@@ -420,10 +703,26 @@
               "a",
               "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
             ],
-            ["td-v", "td1-1"],
-            ["td-op", "item.remove"],
-            ["td-list", "11111111111111111111111111111111"],
-            ["td-item", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.remove"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-vis",
+              "project"
+            ],
+            [
+              "td-item",
+              "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            ]
           ],
           "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.remove\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}"
         }
@@ -436,7 +735,9 @@
           {
             "id": "11111111111111111111111111111111",
             "title": "L",
+            "visibility": "project",
             "archived": false,
+            "pinned": false,
             "createdAt": 1,
             "createdBy": "1111111111111111111111111111111111111111111111111111111111111111",
             "updatedAt": 3,
@@ -460,11 +761,24 @@
               "a",
               "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
             ],
-            ["td-v", "td1-1"],
-            ["td-op", "list.create"],
-            ["td-list", "11111111111111111111111111111111"]
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "list.create"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-vis",
+              "project"
+            ]
           ],
-          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.create\",\"listId\":\"11111111111111111111111111111111\",\"title\":\"First\"}"
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.create\",\"listId\":\"11111111111111111111111111111111\",\"title\":\"First\",\"visibility\":\"project\"}"
         },
         {
           "id": "0000000000000000000000000000000000000000000000000000000000000002",
@@ -476,11 +790,24 @@
               "a",
               "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
             ],
-            ["td-v", "td1-1"],
-            ["td-op", "list.create"],
-            ["td-list", "11111111111111111111111111111111"]
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "list.create"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-vis",
+              "project"
+            ]
           ],
-          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.create\",\"listId\":\"11111111111111111111111111111111\",\"title\":\"Earlier\"}"
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.create\",\"listId\":\"11111111111111111111111111111111\",\"title\":\"Earlier\",\"visibility\":\"project\"}"
         },
         {
           "id": "0000000000000000000000000000000000000000000000000000000000000003",
@@ -492,10 +819,26 @@
               "a",
               "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
             ],
-            ["td-v", "td1-1"],
-            ["td-op", "item.add"],
-            ["td-list", "22222222222222222222222222222222"],
-            ["td-item", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.add"
+            ],
+            [
+              "td-list",
+              "22222222222222222222222222222222"
+            ],
+            [
+              "td-vis",
+              "project"
+            ],
+            [
+              "td-item",
+              "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ]
           ],
           "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.add\",\"listId\":\"22222222222222222222222222222222\",\"itemId\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"text\":\"orphan\",\"rank\":\"a0\"}"
         },
@@ -509,10 +852,26 @@
               "a",
               "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
             ],
-            ["td-v", "td1-1"],
-            ["td-op", "item.text"],
-            ["td-list", "11111111111111111111111111111111"],
-            ["td-item", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.text"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-vis",
+              "project"
+            ],
+            [
+              "td-item",
+              "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            ]
           ],
           "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.text\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"text\":\"no such item\"}"
         },
@@ -526,9 +885,22 @@
               "a",
               "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
             ],
-            ["td-v", "td1-1"],
-            ["td-op", "list.title"],
-            ["td-list", "22222222222222222222222222222222"]
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "list.title"
+            ],
+            [
+              "td-list",
+              "22222222222222222222222222222222"
+            ],
+            [
+              "td-vis",
+              "project"
+            ]
           ],
           "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.title\",\"listId\":\"22222222222222222222222222222222\",\"title\":\"no such list\"}"
         },
@@ -542,9 +914,22 @@
               "a",
               "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
             ],
-            ["td-v", "td1-1"],
-            ["td-op", "list.title"],
-            ["td-list", "11111111111111111111111111111111"]
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "list.title"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-vis",
+              "project"
+            ]
           ],
           "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.title\",\"listId\":\"11111111111111111111111111111111\",\"title\":\"Renamed\"}"
         },
@@ -558,10 +943,26 @@
               "a",
               "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
             ],
-            ["td-v", "td1-1"],
-            ["td-op", "item.remove"],
-            ["td-list", "11111111111111111111111111111111"],
-            ["td-item", "cccccccccccccccccccccccccccccccc"]
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.remove"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-vis",
+              "project"
+            ],
+            [
+              "td-item",
+              "cccccccccccccccccccccccccccccccc"
+            ]
           ],
           "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.remove\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"cccccccccccccccccccccccccccccccc\"}"
         }
@@ -574,7 +975,9 @@
           {
             "id": "11111111111111111111111111111111",
             "title": "Renamed",
+            "visibility": "project",
             "archived": false,
+            "pinned": false,
             "createdAt": 5,
             "createdBy": "2222222222222222222222222222222222222222222222222222222222222222",
             "updatedAt": 14,
@@ -598,11 +1001,24 @@
               "a",
               "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
             ],
-            ["td-v", "td1-1"],
-            ["td-op", "list.create"],
-            ["td-list", "11111111111111111111111111111111"]
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "list.create"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-vis",
+              "project"
+            ]
           ],
-          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.create\",\"listId\":\"11111111111111111111111111111111\",\"title\":\"L\"}"
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.create\",\"listId\":\"11111111111111111111111111111111\",\"title\":\"L\",\"visibility\":\"project\"}"
         },
         {
           "id": "0000000000000000000000000000000000000000000000000000000000000002",
@@ -614,10 +1030,26 @@
               "a",
               "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
             ],
-            ["td-v", "td1-1"],
-            ["td-op", "item.add"],
-            ["td-list", "11111111111111111111111111111111"],
-            ["td-item", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.add"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-vis",
+              "project"
+            ],
+            [
+              "td-item",
+              "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ]
           ],
           "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.add\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"text\":\"one\",\"rank\":\"a0\"}"
         },
@@ -631,10 +1063,26 @@
               "a",
               "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
             ],
-            ["td-v", "td1-1"],
-            ["td-op", "item.add"],
-            ["td-list", "11111111111111111111111111111111"],
-            ["td-item", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.add"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-vis",
+              "project"
+            ],
+            [
+              "td-item",
+              "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            ]
           ],
           "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.add\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"text\":\"two\",\"rank\":\"a1\"}"
         },
@@ -648,10 +1096,26 @@
               "a",
               "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
             ],
-            ["td-v", "td1-1"],
-            ["td-op", "item.add"],
-            ["td-list", "11111111111111111111111111111111"],
-            ["td-item", "cccccccccccccccccccccccccccccccc"]
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.add"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-vis",
+              "project"
+            ],
+            [
+              "td-item",
+              "cccccccccccccccccccccccccccccccc"
+            ]
           ],
           "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.add\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"cccccccccccccccccccccccccccccccc\",\"text\":\"three\",\"rank\":\"a2\"}"
         },
@@ -665,10 +1129,26 @@
               "a",
               "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
             ],
-            ["td-v", "td1-1"],
-            ["td-op", "item.done"],
-            ["td-list", "11111111111111111111111111111111"],
-            ["td-item", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.done"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-vis",
+              "project"
+            ],
+            [
+              "td-item",
+              "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ]
           ],
           "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.done\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"done\":true}"
         },
@@ -682,10 +1162,26 @@
               "a",
               "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
             ],
-            ["td-v", "td1-1"],
-            ["td-op", "item.done"],
-            ["td-list", "11111111111111111111111111111111"],
-            ["td-item", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.done"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-vis",
+              "project"
+            ],
+            [
+              "td-item",
+              "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            ]
           ],
           "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.done\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"done\":true}"
         },
@@ -699,10 +1195,26 @@
               "a",
               "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
             ],
-            ["td-v", "td1-1"],
-            ["td-op", "item.done"],
-            ["td-list", "11111111111111111111111111111111"],
-            ["td-item", "cccccccccccccccccccccccccccccccc"]
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.done"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-vis",
+              "project"
+            ],
+            [
+              "td-item",
+              "cccccccccccccccccccccccccccccccc"
+            ]
           ],
           "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.done\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"cccccccccccccccccccccccccccccccc\",\"done\":true}"
         },
@@ -716,10 +1228,26 @@
               "a",
               "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
             ],
-            ["td-v", "td1-1"],
-            ["td-op", "item.done"],
-            ["td-list", "11111111111111111111111111111111"],
-            ["td-item", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.done"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-vis",
+              "project"
+            ],
+            [
+              "td-item",
+              "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ]
           ],
           "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.done\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"done\":false}"
         }
@@ -732,7 +1260,9 @@
           {
             "id": "11111111111111111111111111111111",
             "title": "L",
+            "visibility": "project",
             "archived": false,
+            "pinned": false,
             "createdAt": 1,
             "createdBy": "1111111111111111111111111111111111111111111111111111111111111111",
             "updatedAt": 25,
@@ -800,11 +1330,24 @@
               "a",
               "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
             ],
-            ["td-v", "td1-1"],
-            ["td-op", "list.create"],
-            ["td-list", "11111111111111111111111111111111"]
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "list.create"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-vis",
+              "project"
+            ]
           ],
-          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.create\",\"listId\":\"11111111111111111111111111111111\",\"title\":\"L\"}"
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.create\",\"listId\":\"11111111111111111111111111111111\",\"title\":\"L\",\"visibility\":\"project\"}"
         },
         {
           "id": "0000000000000000000000000000000000000000000000000000000000000001",
@@ -816,11 +1359,24 @@
               "a",
               "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
             ],
-            ["td-v", "td1-1"],
-            ["td-op", "list.create"],
-            ["td-list", "11111111111111111111111111111111"]
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "list.create"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-vis",
+              "project"
+            ]
           ],
-          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.create\",\"listId\":\"11111111111111111111111111111111\",\"title\":\"L\"}"
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.create\",\"listId\":\"11111111111111111111111111111111\",\"title\":\"L\",\"visibility\":\"project\"}"
         },
         {
           "id": "0000000000000000000000000000000000000000000000000000000000000002",
@@ -832,11 +1388,24 @@
               "a",
               "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
             ],
-            ["td-v", "td1-1"],
-            ["td-op", "list.create"],
-            ["td-list", "22222222222222222222222222222222"]
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "list.create"
+            ],
+            [
+              "td-list",
+              "22222222222222222222222222222222"
+            ],
+            [
+              "td-vis",
+              "project"
+            ]
           ],
-          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.create\",\"listId\":\"22222222222222222222222222222222\",\"title\":\"wrong kind\"}"
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.create\",\"listId\":\"22222222222222222222222222222222\",\"title\":\"wrong kind\",\"visibility\":\"project\"}"
         },
         {
           "id": "0000000000000000000000000000000000000000000000000000000000000003",
@@ -852,11 +1421,24 @@
               "a",
               "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
             ],
-            ["td-v", "td1-1"],
-            ["td-op", "list.create"],
-            ["td-list", "22222222222222222222222222222222"]
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "list.create"
+            ],
+            [
+              "td-list",
+              "22222222222222222222222222222222"
+            ],
+            [
+              "td-vis",
+              "project"
+            ]
           ],
-          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.create\",\"listId\":\"22222222222222222222222222222222\",\"title\":\"two a tags\"}"
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.create\",\"listId\":\"22222222222222222222222222222222\",\"title\":\"two a tags\",\"visibility\":\"project\"}"
         },
         {
           "id": "0000000000000000000000000000000000000000000000000000000000000004",
@@ -868,11 +1450,24 @@
               "a",
               "30621:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:other"
             ],
-            ["td-v", "td1-1"],
-            ["td-op", "list.create"],
-            ["td-list", "22222222222222222222222222222222"]
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "list.create"
+            ],
+            [
+              "td-list",
+              "22222222222222222222222222222222"
+            ],
+            [
+              "td-vis",
+              "project"
+            ]
           ],
-          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.create\",\"listId\":\"22222222222222222222222222222222\",\"title\":\"other project\"}"
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.create\",\"listId\":\"22222222222222222222222222222222\",\"title\":\"other project\",\"visibility\":\"project\"}"
         },
         {
           "id": "0000000000000000000000000000000000000000000000000000000000000005",
@@ -884,9 +1479,22 @@
               "a",
               "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
             ],
-            ["td-v", "td1-1"],
-            ["td-op", "list.create"],
-            ["td-list", "22222222222222222222222222222222"]
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "list.create"
+            ],
+            [
+              "td-list",
+              "22222222222222222222222222222222"
+            ],
+            [
+              "td-vis",
+              "project"
+            ]
           ],
           "content": "{not json"
         },
@@ -900,22 +1508,91 @@
               "a",
               "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
             ],
-            ["td-v", "td1-1"],
-            ["td-op", "list.create"],
-            ["td-list", "22222222222222222222222222222222"]
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "list.create"
+            ],
+            [
+              "td-list",
+              "22222222222222222222222222222222"
+            ],
+            [
+              "td-vis",
+              "project"
+            ]
           ],
-          "content": "{\"schema\": \"buzz-project-todo/v1\", \"op\": \"list.create\", \"listId\": \"22222222222222222222222222222222\", \"title\": \"x\", \"extra\": 1}"
+          "content": "{\"schema\": \"buzz-project-todo/v1\", \"op\": \"list.create\", \"listId\": \"22222222222222222222222222222222\", \"title\": \"x\", \"visibility\": \"project\", \"extra\": 1}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000007",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 7,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "list.create"
+            ],
+            [
+              "td-list",
+              "22222222222222222222222222222222"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.create\",\"listId\":\"22222222222222222222222222222222\",\"title\":\"no td-vis tag\",\"visibility\":\"project\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000008",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 8,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "list.create"
+            ],
+            [
+              "td-list",
+              "22222222222222222222222222222222"
+            ],
+            [
+              "td-vis",
+              "project"
+            ]
+          ],
+          "content": "{\"schema\": \"buzz-project-todo/v1\", \"op\": \"list.create\", \"listId\": \"22222222222222222222222222222222\", \"title\": \"x\", \"visibility\": \"personal\"}"
         }
       ],
       "expected": {
         "schema": "buzz-project-todo-digest/v1",
         "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
-        "ignored": 5,
+        "ignored": 7,
         "lists": [
           {
             "id": "11111111111111111111111111111111",
             "title": "L",
+            "visibility": "project",
             "archived": false,
+            "pinned": false,
             "createdAt": 1,
             "createdBy": "1111111111111111111111111111111111111111111111111111111111111111",
             "updatedAt": 1,
@@ -939,11 +1616,24 @@
               "a",
               "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
             ],
-            ["td-v", "td1-1"],
-            ["td-op", "list.create"],
-            ["td-list", "22222222222222222222222222222222"]
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "list.create"
+            ],
+            [
+              "td-list",
+              "22222222222222222222222222222222"
+            ],
+            [
+              "td-vis",
+              "project"
+            ]
           ],
-          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.create\",\"listId\":\"22222222222222222222222222222222\",\"title\":\"Second\"}"
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.create\",\"listId\":\"22222222222222222222222222222222\",\"title\":\"Second\",\"visibility\":\"project\"}"
         },
         {
           "id": "0000000000000000000000000000000000000000000000000000000000000002",
@@ -955,11 +1645,24 @@
               "a",
               "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
             ],
-            ["td-v", "td1-1"],
-            ["td-op", "list.create"],
-            ["td-list", "11111111111111111111111111111111"]
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "list.create"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-vis",
+              "project"
+            ]
           ],
-          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.create\",\"listId\":\"11111111111111111111111111111111\",\"title\":\"First\"}"
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.create\",\"listId\":\"11111111111111111111111111111111\",\"title\":\"First\",\"visibility\":\"project\"}"
         },
         {
           "id": "0000000000000000000000000000000000000000000000000000000000000003",
@@ -971,9 +1674,22 @@
               "a",
               "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
             ],
-            ["td-v", "td1-1"],
-            ["td-op", "list.archived"],
-            ["td-list", "22222222222222222222222222222222"]
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "list.archived"
+            ],
+            [
+              "td-list",
+              "22222222222222222222222222222222"
+            ],
+            [
+              "td-vis",
+              "project"
+            ]
           ],
           "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.archived\",\"listId\":\"22222222222222222222222222222222\",\"archived\":true}"
         },
@@ -987,9 +1703,22 @@
               "a",
               "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
             ],
-            ["td-v", "td1-1"],
-            ["td-op", "list.archived"],
-            ["td-list", "22222222222222222222222222222222"]
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "list.archived"
+            ],
+            [
+              "td-list",
+              "22222222222222222222222222222222"
+            ],
+            [
+              "td-vis",
+              "project"
+            ]
           ],
           "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.archived\",\"listId\":\"22222222222222222222222222222222\",\"archived\":false}"
         },
@@ -1003,9 +1732,22 @@
               "a",
               "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
             ],
-            ["td-v", "td1-1"],
-            ["td-op", "list.archived"],
-            ["td-list", "11111111111111111111111111111111"]
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "list.archived"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-vis",
+              "project"
+            ]
           ],
           "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.archived\",\"listId\":\"11111111111111111111111111111111\",\"archived\":true}"
         }
@@ -1018,7 +1760,9 @@
           {
             "id": "11111111111111111111111111111111",
             "title": "First",
+            "visibility": "project",
             "archived": true,
+            "pinned": false,
             "createdAt": 5,
             "createdBy": "1111111111111111111111111111111111111111111111111111111111111111",
             "updatedAt": 8,
@@ -1028,7 +1772,9 @@
           {
             "id": "22222222222222222222222222222222",
             "title": "Second",
+            "visibility": "project",
             "archived": false,
+            "pinned": false,
             "createdAt": 5,
             "createdBy": "1111111111111111111111111111111111111111111111111111111111111111",
             "updatedAt": 7,
@@ -1052,11 +1798,24 @@
               "a",
               "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
             ],
-            ["td-v", "td1-1"],
-            ["td-op", "list.create"],
-            ["td-list", "11111111111111111111111111111111"]
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "list.create"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-vis",
+              "project"
+            ]
           ],
-          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.create\",\"listId\":\"11111111111111111111111111111111\",\"title\":\"L\"}"
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.create\",\"listId\":\"11111111111111111111111111111111\",\"title\":\"L\",\"visibility\":\"project\"}"
         },
         {
           "id": "0000000000000000000000000000000000000000000000000000000000000002",
@@ -1068,10 +1827,26 @@
               "a",
               "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
             ],
-            ["td-v", "td1-1"],
-            ["td-op", "item.add"],
-            ["td-list", "11111111111111111111111111111111"],
-            ["td-item", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.add"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-vis",
+              "project"
+            ],
+            [
+              "td-item",
+              "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            ]
           ],
           "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.add\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"text\":\"b\",\"rank\":\"a0\"}"
         },
@@ -1085,10 +1860,26 @@
               "a",
               "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
             ],
-            ["td-v", "td1-1"],
-            ["td-op", "item.add"],
-            ["td-list", "11111111111111111111111111111111"],
-            ["td-item", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.add"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-vis",
+              "project"
+            ],
+            [
+              "td-item",
+              "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ]
           ],
           "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.add\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"text\":\"a\",\"rank\":\"a0\"}"
         }
@@ -1101,7 +1892,9 @@
           {
             "id": "11111111111111111111111111111111",
             "title": "L",
+            "visibility": "project",
             "archived": false,
+            "pinned": false,
             "createdAt": 1,
             "createdBy": "1111111111111111111111111111111111111111111111111111111111111111",
             "updatedAt": 3,
@@ -1135,6 +1928,451 @@
                 "completedBy": null
               }
             ],
+            "completed": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "pinned is per-field last write wins, shared by every member",
+      "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+      "events": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000001",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 1,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "list.create"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-vis",
+              "project"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.create\",\"listId\":\"11111111111111111111111111111111\",\"title\":\"L\",\"visibility\":\"project\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000002",
+          "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
+          "created_at": 2,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "list.pinned"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-vis",
+              "project"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.pinned\",\"listId\":\"11111111111111111111111111111111\",\"pinned\":true}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000003",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 3,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "list.pinned"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-vis",
+              "project"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.pinned\",\"listId\":\"11111111111111111111111111111111\",\"pinned\":false}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000004",
+          "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
+          "created_at": 3,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "list.pinned"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-vis",
+              "project"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.pinned\",\"listId\":\"11111111111111111111111111111111\",\"pinned\":true}"
+        }
+      ],
+      "expected": {
+        "schema": "buzz-project-todo-digest/v1",
+        "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+        "ignored": 0,
+        "lists": [
+          {
+            "id": "11111111111111111111111111111111",
+            "title": "L",
+            "visibility": "project",
+            "archived": false,
+            "pinned": true,
+            "createdAt": 1,
+            "createdBy": "1111111111111111111111111111111111111111111111111111111111111111",
+            "updatedAt": 3,
+            "open": [],
+            "completed": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "a personal list takes ops from its creator only; a visibility tag that disagrees with the list is ignored",
+      "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+      "events": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000001",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 1,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "list.create"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-vis",
+              "personal"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.create\",\"listId\":\"11111111111111111111111111111111\",\"title\":\"Mine\",\"visibility\":\"personal\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000002",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 2,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.add"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-vis",
+              "personal"
+            ],
+            [
+              "td-item",
+              "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.add\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"text\":\"private one\",\"rank\":\"a0\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000003",
+          "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
+          "created_at": 3,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.add"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-vis",
+              "personal"
+            ],
+            [
+              "td-item",
+              "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.add\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"text\":\"bob intrudes\",\"rank\":\"a1\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000004",
+          "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
+          "created_at": 4,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.done"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-vis",
+              "personal"
+            ],
+            [
+              "td-item",
+              "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.done\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"done\":true}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000005",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 5,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.text"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-vis",
+              "project"
+            ],
+            [
+              "td-item",
+              "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.text\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"text\":\"tagged as project\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000006",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 6,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "list.pinned"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-vis",
+              "personal"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.pinned\",\"listId\":\"11111111111111111111111111111111\",\"pinned\":true}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000007",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 7,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "list.create"
+            ],
+            [
+              "td-list",
+              "22222222222222222222222222222222"
+            ],
+            [
+              "td-vis",
+              "project"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.create\",\"listId\":\"22222222222222222222222222222222\",\"title\":\"Shared\",\"visibility\":\"project\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000008",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 8,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.add"
+            ],
+            [
+              "td-list",
+              "22222222222222222222222222222222"
+            ],
+            [
+              "td-vis",
+              "personal"
+            ],
+            [
+              "td-item",
+              "cccccccccccccccccccccccccccccccc"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.add\",\"listId\":\"22222222222222222222222222222222\",\"itemId\":\"cccccccccccccccccccccccccccccccc\",\"text\":\"mis-tagged as personal\",\"rank\":\"a0\"}"
+        }
+      ],
+      "expected": {
+        "schema": "buzz-project-todo-digest/v1",
+        "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+        "ignored": 4,
+        "lists": [
+          {
+            "id": "11111111111111111111111111111111",
+            "title": "Mine",
+            "visibility": "personal",
+            "archived": false,
+            "pinned": true,
+            "createdAt": 1,
+            "createdBy": "1111111111111111111111111111111111111111111111111111111111111111",
+            "updatedAt": 6,
+            "open": [
+              {
+                "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "listId": "11111111111111111111111111111111",
+                "text": "private one",
+                "done": false,
+                "rank": "a0",
+                "assignee": null,
+                "due": null,
+                "createdAt": 2,
+                "createdBy": "1111111111111111111111111111111111111111111111111111111111111111",
+                "updatedAt": 2,
+                "completedAt": null,
+                "completedBy": null
+              }
+            ],
+            "completed": []
+          },
+          {
+            "id": "22222222222222222222222222222222",
+            "title": "Shared",
+            "visibility": "project",
+            "archived": false,
+            "pinned": false,
+            "createdAt": 7,
+            "createdBy": "1111111111111111111111111111111111111111111111111111111111111111",
+            "updatedAt": 7,
+            "open": [],
             "completed": []
           }
         ]

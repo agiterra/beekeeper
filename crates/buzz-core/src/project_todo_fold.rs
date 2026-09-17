@@ -17,7 +17,11 @@
 //! 3. **Create.** The earliest `list.create` per list id and the earliest
 //!    `item.add` per `(list, item)` bring the target into existence with the
 //!    op's values; later creates for the same id are ignored. An `item.add`
-//!    for a list that was never created is ignored.
+//!    for a list that was never created is ignored. A list's visibility is
+//!    its create's; every later op must carry the same `td-vis` tag or it is
+//!    ignored, and on a **personal** list every op not signed by the list's
+//!    creator is ignored — the relay already withholds those from everyone
+//!    else, and this keeps the owner's own fold honest against a stray op.
 //! 4. **Remove.** Any `item.remove` on an existing item is terminal: the
 //!    item is dropped from the digest and every other op on it is
 //!    disregarded. There is no un-remove; a client that wants the item back
@@ -39,8 +43,12 @@ use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
+use std::str::FromStr;
+
 use crate::kind::{normalize_project_coordinate, KIND_PROJECT_TODO_OP};
-use crate::project_todo::{decode_project_todo_op, ProjectTodoOp, ProjectTodoOpValue};
+use crate::project_todo::{
+    decode_project_todo_op, ProjectTodoOp, ProjectTodoOpValue, TodoVisibility,
+};
 
 /// Exact `schema` value carried by a digest.
 pub const PROJECT_TODO_DIGEST_SCHEMA: &str = "buzz-project-todo-digest/v1";
@@ -119,8 +127,13 @@ pub struct TodoList {
     pub id: String,
     /// Title.
     pub title: String,
+    /// `"project"` or `"personal"`, fixed at creation.
+    pub visibility: String,
     /// Archived or not.
     pub archived: bool,
+    /// Shown in the project sidebar (shared; a personal list's pin is only
+    /// ever seen by its owner).
+    pub pinned: bool,
     /// The winning `list.create`'s `created_at`.
     pub created_at: u64,
     /// The winning `list.create`'s author.
@@ -152,7 +165,9 @@ type OpKey = (u64, String);
 
 struct ListState {
     title: (OpKey, String),
+    visibility: TodoVisibility,
     archived: (OpKey, bool),
+    pinned: (OpKey, bool),
     created_at: u64,
     created_by: String,
     updated_at: u64,
@@ -191,7 +206,16 @@ fn decode(project: &str, event: &TodoFoldEvent) -> Option<ProjectTodoOp> {
     if normalize_project_coordinate(coordinate).as_deref() != Some(project) {
         return None;
     }
-    decode_project_todo_op(&event.content).ok()
+    let mut vis_tags = event
+        .tags
+        .iter()
+        .filter(|t| t.first().map(String::as_str) == Some("td-vis"))
+        .filter_map(|t| t.get(1));
+    let visibility = TodoVisibility::from_str(vis_tags.next()?).ok()?;
+    if vis_tags.next().is_some() {
+        return None;
+    }
+    decode_project_todo_op(&event.content, visibility).ok()
 }
 
 fn set_field<T>(slot: &mut (OpKey, T), key: &OpKey, value: T) {
@@ -223,18 +247,20 @@ pub fn fold_project_todos(project: &str, events: &[TodoFoldEvent]) -> ProjectTod
     ops.sort_by(|a, b| a.key.cmp(&b.key));
 
     // Creates, earliest first.
-    let mut lists: HashMap<&str, ListState> = HashMap::new();
+    let mut lists: HashMap<String, ListState> = HashMap::new();
     for d in &ops {
-        if let ProjectTodoOpValue::ListCreate { title } = &d.op.value {
+        if let ProjectTodoOpValue::ListCreate { title, visibility } = &d.op.value {
             if lists.contains_key(d.op.list_id.as_str()) {
                 ignored += 1;
                 continue;
             }
             lists.insert(
-                &d.op.list_id,
+                d.op.list_id.clone(),
                 ListState {
                     title: (d.key.clone(), title.clone()),
+                    visibility: *visibility,
                     archived: (d.key.clone(), false),
+                    pinned: (d.key.clone(), false),
                     created_at: d.key.0,
                     created_by: d.pubkey.to_owned(),
                     updated_at: d.key.0,
@@ -242,6 +268,24 @@ pub fn fold_project_todos(project: &str, events: &[TodoFoldEvent]) -> ProjectTod
             );
         }
     }
+    // Every other op must agree with its list's visibility, and a personal
+    // list takes ops from its creator only. Ops on a list that does not
+    // exist are counted where they are handled below; these are the ops on
+    // existing lists that are refused on visibility grounds.
+    ops.retain(|d| {
+        if matches!(d.op.value, ProjectTodoOpValue::ListCreate { .. }) {
+            return true;
+        }
+        let Some(list) = lists.get(d.op.list_id.as_str()) else {
+            return true;
+        };
+        let admitted = d.op.visibility == list.visibility
+            && (list.visibility == TodoVisibility::Project || d.pubkey == list.created_by);
+        if !admitted {
+            ignored += 1;
+        }
+        admitted
+    });
     let mut items: HashMap<(&str, &str), ItemState> = HashMap::new();
     let mut removed: HashSet<(&str, &str)> = HashSet::new();
     for d in &ops {
@@ -319,6 +363,10 @@ pub fn fold_project_todos(project: &str, events: &[TodoFoldEvent]) -> ProjectTod
             }
             ProjectTodoOpValue::ListArchived { archived } => {
                 set_field(&mut list.archived, &d.key, *archived);
+                list.updated_at = list.updated_at.max(d.key.0);
+            }
+            ProjectTodoOpValue::ListPinned { pinned } => {
+                set_field(&mut list.pinned, &d.key, *pinned);
                 list.updated_at = list.updated_at.max(d.key.0);
             }
             ProjectTodoOpValue::ItemText { item_id, text } => {
@@ -429,7 +477,9 @@ pub fn fold_project_todos(project: &str, events: &[TodoFoldEvent]) -> ProjectTod
             TodoList {
                 id: (*list_id).to_owned(),
                 title: state.title.1.clone(),
+                visibility: state.visibility.as_str().to_owned(),
                 archived: state.archived.1,
+                pinned: state.pinned.1,
                 created_at: state.created_at,
                 created_by: state.created_by.clone(),
                 updated_at: state.updated_at,

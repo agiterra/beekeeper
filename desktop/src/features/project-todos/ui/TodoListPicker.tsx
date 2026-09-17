@@ -1,4 +1,12 @@
-import { Archive, ArchiveRestore, Pencil, Plus } from "lucide-react";
+import {
+  Archive,
+  ArchiveRestore,
+  Lock,
+  Pencil,
+  Pin,
+  PinOff,
+  Plus,
+} from "lucide-react";
 import * as React from "react";
 
 import { cn } from "@/shared/lib/cn";
@@ -8,9 +16,10 @@ import type { TodoList } from "../lib/todoFold";
 import { todoTextError } from "../lib/todoOp";
 
 /**
- * The rail of a project's lists: pick one, make one, rename or archive the
+ * The rail of a project's lists: pick one, make one (the create dialog is
+ * the caller's — it asks who may see the list), rename, pin or archive the
  * selected one, and show or hide the archived ones. All edits are gated on
- * `canEdit`.
+ * `canEdit`. A personal list wears a lock; a pinned one a pin.
  */
 export function TodoListPicker({
   lists,
@@ -22,6 +31,7 @@ export function TodoListPicker({
   onCreate,
   onRename,
   onSetArchived,
+  onSetPinned,
 }: {
   lists: readonly TodoList[];
   selectedId: string | null;
@@ -29,11 +39,12 @@ export function TodoListPicker({
   canEdit: boolean;
   onSelect: (listId: string) => void;
   onToggleArchived: () => void;
-  onCreate: (title: string) => void;
+  onCreate: () => void;
   onRename: (listId: string, title: string) => void;
   onSetArchived: (listId: string, archived: boolean) => void;
+  onSetPinned: (listId: string, pinned: boolean) => void;
 }) {
-  const [mode, setMode] = React.useState<"idle" | "create" | "rename">("idle");
+  const [mode, setMode] = React.useState<"idle" | "rename">("idle");
   const [draft, setDraft] = React.useState("");
   const inputRef = React.useRef<HTMLInputElement>(null);
   React.useEffect(() => {
@@ -50,8 +61,7 @@ export function TodoListPicker({
     event.preventDefault();
     const title = draft.trim();
     if (title.length === 0 || draftError) return;
-    if (mode === "create") onCreate(title);
-    else if (mode === "rename" && selected) onRename(selected.id, title);
+    if (mode === "rename" && selected) onRename(selected.id, title);
     setMode("idle");
     setDraft("");
   };
@@ -70,10 +80,7 @@ export function TodoListPicker({
           <Button
             aria-label="New list"
             data-testid="todo-list-new"
-            onClick={() => {
-              setDraft("");
-              setMode("create");
-            }}
+            onClick={onCreate}
             size="icon-xs"
             variant="ghost"
           >
@@ -85,7 +92,7 @@ export function TodoListPicker({
       {mode !== "idle" ? (
         <form className="flex flex-col gap-1" onSubmit={submit}>
           <input
-            aria-label={mode === "create" ? "New list title" : "List title"}
+            aria-label="List title"
             className="h-7 rounded-md border border-input bg-background px-2 text-sm"
             data-testid="todo-list-title-input"
             maxLength={1024}
@@ -96,7 +103,6 @@ export function TodoListPicker({
                 setDraft("");
               }
             }}
-            placeholder={mode === "create" ? "List title" : undefined}
             ref={inputRef}
             value={draft}
           />
@@ -121,7 +127,7 @@ export function TodoListPicker({
               size="xs"
               type="submit"
             >
-              {mode === "create" ? "Create" : "Rename"}
+              Rename
             </Button>
           </div>
         </form>
@@ -149,6 +155,20 @@ export function TodoListPicker({
               >
                 {list.title}
               </span>
+              {list.visibility === "personal" ? (
+                <Lock
+                  aria-label="Personal"
+                  className="h-3 w-3 shrink-0 text-muted-foreground"
+                  data-testid="todo-list-personal"
+                />
+              ) : null}
+              {list.pinned ? (
+                <Pin
+                  aria-label="Pinned to the sidebar"
+                  className="h-3 w-3 shrink-0 text-muted-foreground"
+                  data-testid="todo-list-pinned"
+                />
+              ) : null}
               <span className="text-2xs text-muted-foreground">
                 {list.open.length}
               </span>
@@ -184,6 +204,21 @@ export function TodoListPicker({
             variant="ghost"
           >
             <Pencil aria-hidden="true" />
+          </Button>
+          <Button
+            aria-label={
+              selected.pinned ? "Unpin from sidebar" : "Pin to sidebar"
+            }
+            data-testid="todo-list-pin"
+            onClick={() => onSetPinned(selected.id, !selected.pinned)}
+            size="icon-xs"
+            variant="ghost"
+          >
+            {selected.pinned ? (
+              <PinOff aria-hidden="true" />
+            ) : (
+              <Pin aria-hidden="true" />
+            )}
           </Button>
           <Button
             aria-label={selected.archived ? "Restore list" : "Archive list"}

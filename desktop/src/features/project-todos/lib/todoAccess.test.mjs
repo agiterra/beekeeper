@@ -146,7 +146,12 @@ test("readFromEvents dedupes by id and tracks the latest stamp per target", () =
     pubkey: OWNER,
     created_at,
     kind: 44248,
-    tags: [["a", coordinate], ["td-v", "td1-1"], ...tags],
+    tags: [
+      ["a", coordinate],
+      ["td-v", "td1-1"],
+      ["td-vis", "project"],
+      ...tags,
+    ],
     content,
     sig: "",
   });
@@ -162,6 +167,7 @@ test("readFromEvents dedupes by id and tracks the latest stamp per target", () =
       op: "list.create",
       listId,
       title: "L",
+      visibility: "project",
     }),
   );
   const add = event(

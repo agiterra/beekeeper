@@ -116,8 +116,10 @@ test.describe("project to-do lists (live relay)", () => {
 
     await test.step("the creator creates a list and adds an item in the UI", async () => {
       await page.getByTestId("todo-list-new").click();
-      await page.getByTestId("todo-list-title-input").fill("Launch");
-      await page.getByTestId("todo-list-title-submit").click();
+      await page.getByTestId("todo-list-create-title").fill("Launch");
+      // Project-visible, not pinned: the pin test below pins it from the CLI.
+      await page.getByTestId("todo-list-create-pinned").click();
+      await page.getByTestId("todo-list-create-submit").click();
       await expect(page.getByTestId("todo-list-panel")).toBeVisible({
         timeout: 30_000,
       });
@@ -238,6 +240,63 @@ test.describe("project to-do lists (live relay)", () => {
           { timeout: 30_000 },
         )
         .toEqual(["Ship the desktop tab", "Write the NIP"]);
+    });
+
+    await test.step("the sidebar + menu lists work first, rooms below a rule, and creates a personal pinned list", async () => {
+      await page.getByTestId(`project-create-${seed.dtag}`).click();
+      const items = page.getByRole("menuitem");
+      await expect(items).toHaveCount(5);
+      const labels = await items.allTextContents();
+      expect(labels.map((label) => label.trim())).toEqual([
+        "New coding session",
+        "New terminal",
+        "New to-do list",
+        "New channel",
+        "New forum",
+      ]);
+      await page.getByTestId(`project-new-todo-list-${seed.dtag}`).click();
+      await page.getByTestId("todo-list-create-title").fill("Only mine");
+      await page.getByTestId("todo-list-visibility-personal").click();
+      await page.getByTestId("todo-list-create-submit").click();
+      // The create lands on the tab with the new list selected …
+      await expect(page.getByTestId("todo-list-personal")).toBeVisible({
+        timeout: 30_000,
+      });
+      await expect(page.getByTestId("todo-list-pinned")).toBeVisible();
+      await expect(page).toHaveURL(/\/todos\?list=[0-9a-f]{32}$/);
+      // … and as a pinned sidebar row wearing the lock.
+      const row = page.locator('[data-testid^="project-todo-list-row-"]');
+      await expect(row).toHaveCount(1, { timeout: 30_000 });
+      await expect(row).toContainText("Only mine");
+      await expect(row.getByTestId("project-todo-list-personal")).toBeVisible();
+    });
+
+    await test.step("a collaborator never sees the personal list", async () => {
+      const lists = JSON.parse(
+        await runCli(
+          [
+            "--format",
+            "compact",
+            "todos",
+            "lists",
+            "--project",
+            seed.coordinate,
+          ],
+          TEST_IDENTITIES.alice.privateKey,
+        ),
+      ) as { lists: { title: string; visibility: string }[] };
+      expect(lists.lists.map((list) => list.title)).toEqual(["Launch"]);
+      expect(lists.lists[0]?.visibility).toBe("project");
+    });
+
+    await test.step("a collaborator's pin shows in the creator's sidebar live", async () => {
+      await runCli(
+        ["todos", "pin", "--project", seed.coordinate, "Launch"],
+        TEST_IDENTITIES.alice.privateKey,
+      );
+      const rows = page.locator('[data-testid^="project-todo-list-row-"]');
+      await expect(rows).toHaveCount(2, { timeout: 30_000 });
+      await expect(rows.filter({ hasText: "Launch" })).toBeVisible();
     });
 
     await waitForAnimations(page);

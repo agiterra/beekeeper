@@ -15,6 +15,12 @@
 //! order every client sees. There is no "update item" op that carries the
 //! whole row, because such an op would silently overwrite the field the
 //! other person just changed.
+//!
+//! A list is **project** (every member reads it) or **personal** (only its
+//! author does). Visibility is fixed by `list.create` and repeated on every
+//! op as the `td-vis` tag, so the relay withholds a personal op from every
+//! reader but its author without parsing content, and the fold ignores an
+//! op whose tag disagrees with its list.
 
 use std::fmt;
 use std::str::FromStr;
@@ -48,6 +54,8 @@ pub enum ProjectTodoOpKind {
     ListTitle,
     /// Archive or unarchive a list.
     ListArchived,
+    /// Pin or unpin a list in the project sidebar (shared by every member).
+    ListPinned,
     /// Bring an item into existence with its text and its rank.
     ItemAdd,
     /// Rewrite an item's text.
@@ -66,10 +74,11 @@ pub enum ProjectTodoOpKind {
 
 impl ProjectTodoOpKind {
     /// Every op kind, in wire order.
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::ListCreate,
         Self::ListTitle,
         Self::ListArchived,
+        Self::ListPinned,
         Self::ItemAdd,
         Self::ItemText,
         Self::ItemDone,
@@ -85,6 +94,7 @@ impl ProjectTodoOpKind {
             Self::ListCreate => "list.create",
             Self::ListTitle => "list.title",
             Self::ListArchived => "list.archived",
+            Self::ListPinned => "list.pinned",
             Self::ItemAdd => "item.add",
             Self::ItemText => "item.text",
             Self::ItemDone => "item.done",
@@ -100,7 +110,7 @@ impl ProjectTodoOpKind {
     pub const fn is_item_op(self) -> bool {
         !matches!(
             self,
-            Self::ListCreate | Self::ListTitle | Self::ListArchived
+            Self::ListCreate | Self::ListTitle | Self::ListArchived | Self::ListPinned
         )
     }
 
@@ -108,8 +118,10 @@ impl ProjectTodoOpKind {
     /// not null: a nullable field (`assignee`, `due`) must be present.
     pub const fn content_keys(self) -> &'static [&'static str] {
         match self {
-            Self::ListCreate | Self::ListTitle => &["schema", "op", "listId", "title"],
+            Self::ListCreate => &["schema", "op", "listId", "title", "visibility"],
+            Self::ListTitle => &["schema", "op", "listId", "title"],
             Self::ListArchived => &["schema", "op", "listId", "archived"],
+            Self::ListPinned => &["schema", "op", "listId", "pinned"],
             Self::ItemAdd => &["schema", "op", "listId", "itemId", "text", "rank"],
             Self::ItemText => &["schema", "op", "listId", "itemId", "text"],
             Self::ItemDone => &["schema", "op", "listId", "itemId", "done"],
@@ -141,10 +153,12 @@ impl FromStr for ProjectTodoOpKind {
 /// The payload of one op: what it sets.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProjectTodoOpValue {
-    /// `list.create` — the initial title.
+    /// `list.create` — the initial title and the list's fixed visibility.
     ListCreate {
         /// The list's title.
         title: String,
+        /// Who may read the list; fixed for its lifetime.
+        visibility: TodoVisibility,
     },
     /// `list.title`.
     ListTitle {
@@ -155,6 +169,11 @@ pub enum ProjectTodoOpValue {
     ListArchived {
         /// `true` to archive, `false` to restore.
         archived: bool,
+    },
+    /// `list.pinned`.
+    ListPinned {
+        /// `true` to show the list in every member's project sidebar.
+        pinned: bool,
     },
     /// `item.add` — the initial text and rank.
     ItemAdd {
@@ -207,11 +226,55 @@ pub enum ProjectTodoOpValue {
     },
 }
 
-/// One decoded op: the list it names and what it sets.
+/// Who may read a list. Carried on every op as the `td-vis` tag and, for
+/// `list.create`, in content as `visibility`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TodoVisibility {
+    /// Every member of the project reads it.
+    Project,
+    /// Only its author reads it; the relay withholds every op from anyone
+    /// else, and the fold ignores ops on it from anyone else.
+    Personal,
+}
+
+impl TodoVisibility {
+    /// The wire spelling.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Project => "project",
+            Self::Personal => "personal",
+        }
+    }
+}
+
+impl fmt::Display for TodoVisibility {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for TodoVisibility {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "project" => Ok(Self::Project),
+            "personal" => Ok(Self::Personal),
+            other => Err(format!(
+                "todo visibility must be project or personal (got {other:?})"
+            )),
+        }
+    }
+}
+
+/// One decoded op: the list it names, the list's visibility, and what it
+/// sets.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectTodoOp {
     /// The list (32 lowercase hex).
     pub list_id: String,
+    /// The list's visibility, repeated on every op as the `td-vis` tag.
+    pub visibility: TodoVisibility,
     /// The edit.
     pub value: ProjectTodoOpValue,
 }
@@ -223,6 +286,7 @@ impl ProjectTodoOp {
             ProjectTodoOpValue::ListCreate { .. } => ProjectTodoOpKind::ListCreate,
             ProjectTodoOpValue::ListTitle { .. } => ProjectTodoOpKind::ListTitle,
             ProjectTodoOpValue::ListArchived { .. } => ProjectTodoOpKind::ListArchived,
+            ProjectTodoOpValue::ListPinned { .. } => ProjectTodoOpKind::ListPinned,
             ProjectTodoOpValue::ItemAdd { .. } => ProjectTodoOpKind::ItemAdd,
             ProjectTodoOpValue::ItemText { .. } => ProjectTodoOpKind::ItemText,
             ProjectTodoOpValue::ItemDone { .. } => ProjectTodoOpKind::ItemDone,
@@ -238,7 +302,8 @@ impl ProjectTodoOp {
         match &self.value {
             ProjectTodoOpValue::ListCreate { .. }
             | ProjectTodoOpValue::ListTitle { .. }
-            | ProjectTodoOpValue::ListArchived { .. } => None,
+            | ProjectTodoOpValue::ListArchived { .. }
+            | ProjectTodoOpValue::ListPinned { .. } => None,
             ProjectTodoOpValue::ItemAdd { item_id, .. }
             | ProjectTodoOpValue::ItemText { item_id, .. }
             | ProjectTodoOpValue::ItemDone { item_id, .. }
@@ -260,11 +325,18 @@ impl ProjectTodoOp {
             object.insert("itemId".into(), Value::from(item_id));
         }
         match &self.value {
-            ProjectTodoOpValue::ListCreate { title } | ProjectTodoOpValue::ListTitle { title } => {
+            ProjectTodoOpValue::ListCreate { title, visibility } => {
+                object.insert("title".into(), Value::from(title.as_str()));
+                object.insert("visibility".into(), Value::from(visibility.as_str()));
+            }
+            ProjectTodoOpValue::ListTitle { title } => {
                 object.insert("title".into(), Value::from(title.as_str()));
             }
             ProjectTodoOpValue::ListArchived { archived } => {
                 object.insert("archived".into(), Value::from(*archived));
+            }
+            ProjectTodoOpValue::ListPinned { pinned } => {
+                object.insert("pinned".into(), Value::from(*pinned));
             }
             ProjectTodoOpValue::ItemAdd { text, rank, .. } => {
                 object.insert("text".into(), Value::from(text.as_str()));
@@ -308,6 +380,7 @@ impl ProjectTodoOp {
             vec!["td-v".to_owned(), PROJECT_TODO_TAG_VERSION.to_owned()],
             vec!["td-op".to_owned(), self.kind().as_str().to_owned()],
             vec!["td-list".to_owned(), self.list_id.clone()],
+            vec!["td-vis".to_owned(), self.visibility.as_str().to_owned()],
         ];
         if let Some(item_id) = self.item_id() {
             tags.push(vec!["td-item".to_owned(), item_id.to_owned()]);
@@ -418,13 +491,19 @@ fn take_nullable_str<'a>(
     }
 }
 
-/// Strictly decode and validate op content.
+/// Strictly decode and validate op content for a list of `visibility` (the
+/// event's `td-vis` tag, which the caller has already read).
 ///
 /// The whole-content cap is checked before any parse. The key set is
 /// **exact** per op — every key in [`ProjectTodoOpKind::content_keys`] must
 /// be present and no other may be — so absent and `null` are different
-/// things, and a client that forgets a field is told which one.
-pub fn decode_project_todo_op(content: &str) -> Result<ProjectTodoOp, String> {
+/// things, and a client that forgets a field is told which one. A
+/// `list.create` whose content `visibility` disagrees with the tag is an
+/// error: the tag is what the relay gates on, and the two must never drift.
+pub fn decode_project_todo_op(
+    content: &str,
+    visibility: TodoVisibility,
+) -> Result<ProjectTodoOp, String> {
     if content.len() > MAX_PROJECT_TODO_CONTENT_BYTES {
         return Err(format!(
             "todo op content exceeds {MAX_PROJECT_TODO_CONTENT_BYTES} bytes"
@@ -464,17 +543,32 @@ pub fn decode_project_todo_op(content: &str) -> Result<ProjectTodoOp, String> {
     };
     let item = || item_id.clone().unwrap_or_default();
     let value = match kind {
-        ProjectTodoOpKind::ListCreate | ProjectTodoOpKind::ListTitle => {
+        ProjectTodoOpKind::ListCreate => {
             let title = take_str(object, "title")?.to_owned();
             validate_todo_text("title", &title)?;
-            if kind == ProjectTodoOpKind::ListCreate {
-                ProjectTodoOpValue::ListCreate { title }
-            } else {
-                ProjectTodoOpValue::ListTitle { title }
+            let declared = TodoVisibility::from_str(take_str(object, "visibility")?)?;
+            if declared != visibility {
+                return Err(format!(
+                    "todo list.create content visibility {:?} does not match its td-vis tag {:?}",
+                    declared.as_str(),
+                    visibility.as_str()
+                ));
             }
+            ProjectTodoOpValue::ListCreate {
+                title,
+                visibility: declared,
+            }
+        }
+        ProjectTodoOpKind::ListTitle => {
+            let title = take_str(object, "title")?.to_owned();
+            validate_todo_text("title", &title)?;
+            ProjectTodoOpValue::ListTitle { title }
         }
         ProjectTodoOpKind::ListArchived => ProjectTodoOpValue::ListArchived {
             archived: take_bool(object, "archived")?,
+        },
+        ProjectTodoOpKind::ListPinned => ProjectTodoOpValue::ListPinned {
+            pinned: take_bool(object, "pinned")?,
         },
         ProjectTodoOpKind::ItemAdd => {
             let text = take_str(object, "text")?.to_owned();
@@ -533,7 +627,11 @@ pub fn decode_project_todo_op(content: &str) -> Result<ProjectTodoOp, String> {
         }
         ProjectTodoOpKind::ItemRemove => ProjectTodoOpValue::ItemRemove { item_id: item() },
     };
-    Ok(ProjectTodoOp { list_id, value })
+    Ok(ProjectTodoOp {
+        list_id,
+        visibility,
+        value,
+    })
 }
 
 /// Validate a signed op end to end: kind, tag grammar, canonical project
@@ -544,20 +642,20 @@ pub fn decode_project_todo_op(content: &str) -> Result<ProjectTodoOp, String> {
 /// rules.
 ///
 /// **Tag grammar** — position-independent, multiplicity-constrained, closed
-/// key set: exactly one each of `a`, `td-v`, `td-op`, `td-list`; exactly one
-/// `td-item` on an item op and none on a list op; every tag exactly two
-/// fields; any other key — including `h` — is a rejection. A to-do op is
-/// never channel-scoped.
+/// key set: exactly one each of `a`, `td-v`, `td-op`, `td-list`, `td-vis`;
+/// exactly one `td-item` on an item op and none on a list op; every tag
+/// exactly two fields; any other key — including `h` — is a rejection. A
+/// to-do op is never channel-scoped.
 pub fn validate_project_todo_envelope(event: &nostr::Event) -> Result<ProjectTodoOp, String> {
     if event_kind_u32(event) != KIND_PROJECT_TODO_OP {
         return Err("event is not a project todo op (kind 44248)".to_owned());
     }
-    let op = decode_project_todo_op(&event.content)?;
 
     let mut coordinate: Option<&str> = None;
     let mut version: Option<&str> = None;
     let mut tag_op: Option<&str> = None;
     let mut tag_list: Option<&str> = None;
+    let mut tag_vis: Option<&str> = None;
     let mut tag_item: Option<&str> = None;
     for tag in event.tags.iter() {
         let parts = tag.as_slice();
@@ -570,6 +668,7 @@ pub fn validate_project_todo_envelope(event: &nostr::Event) -> Result<ProjectTod
             "td-v" => &mut version,
             "td-op" => &mut tag_op,
             "td-list" => &mut tag_list,
+            "td-vis" => &mut tag_vis,
             "td-item" => &mut tag_item,
             "h" => return Err("todo op must not carry an h tag; it is project-scoped".to_owned()),
             other => return Err(format!("todo op has unsupported tag key {other:?}")),
@@ -590,6 +689,10 @@ pub fn validate_project_todo_envelope(event: &nostr::Event) -> Result<ProjectTod
         Some(PROJECT_TODO_TAG_VERSION) => {}
         _ => return Err("unsupported todo op tag version".to_owned()),
     }
+    let visibility = TodoVisibility::from_str(
+        tag_vis.ok_or_else(|| "todo op requires one td-vis tag".to_owned())?,
+    )?;
+    let op = decode_project_todo_op(&event.content, visibility)?;
     let tag_op = tag_op.ok_or_else(|| "todo op requires one td-op tag".to_owned())?;
     if tag_op != op.kind().as_str() {
         return Err(format!(
@@ -631,6 +734,7 @@ mod tests {
     fn add_op() -> ProjectTodoOp {
         ProjectTodoOp {
             list_id: LIST.to_owned(),
+            visibility: TodoVisibility::Project,
             value: ProjectTodoOpValue::ItemAdd {
                 item_id: ITEM.to_owned(),
                 text: "Write the NIP".to_owned(),
@@ -669,23 +773,41 @@ mod tests {
         let ops = vec![
             ProjectTodoOp {
                 list_id: LIST.to_owned(),
+                visibility: TodoVisibility::Project,
                 value: ProjectTodoOpValue::ListCreate {
                     title: "Launch".to_owned(),
+                    visibility: TodoVisibility::Project,
                 },
             },
             ProjectTodoOp {
                 list_id: LIST.to_owned(),
+                visibility: TodoVisibility::Project,
                 value: ProjectTodoOpValue::ListTitle {
                     title: "Launch v2".to_owned(),
                 },
             },
             ProjectTodoOp {
                 list_id: LIST.to_owned(),
+                visibility: TodoVisibility::Project,
                 value: ProjectTodoOpValue::ListArchived { archived: true },
+            },
+            ProjectTodoOp {
+                list_id: LIST.to_owned(),
+                visibility: TodoVisibility::Project,
+                value: ProjectTodoOpValue::ListPinned { pinned: true },
+            },
+            ProjectTodoOp {
+                list_id: LIST.to_owned(),
+                visibility: TodoVisibility::Personal,
+                value: ProjectTodoOpValue::ListCreate {
+                    title: "Mine".to_owned(),
+                    visibility: TodoVisibility::Personal,
+                },
             },
             add_op(),
             ProjectTodoOp {
                 list_id: LIST.to_owned(),
+                visibility: TodoVisibility::Project,
                 value: ProjectTodoOpValue::ItemText {
                     item_id: ITEM.to_owned(),
                     text: "Write the NIP\nwith examples".to_owned(),
@@ -693,6 +815,7 @@ mod tests {
             },
             ProjectTodoOp {
                 list_id: LIST.to_owned(),
+                visibility: TodoVisibility::Project,
                 value: ProjectTodoOpValue::ItemDone {
                     item_id: ITEM.to_owned(),
                     done: true,
@@ -700,6 +823,7 @@ mod tests {
             },
             ProjectTodoOp {
                 list_id: LIST.to_owned(),
+                visibility: TodoVisibility::Project,
                 value: ProjectTodoOpValue::ItemAssignee {
                     item_id: ITEM.to_owned(),
                     assignee: Some("b".repeat(64)),
@@ -707,6 +831,7 @@ mod tests {
             },
             ProjectTodoOp {
                 list_id: LIST.to_owned(),
+                visibility: TodoVisibility::Project,
                 value: ProjectTodoOpValue::ItemAssignee {
                     item_id: ITEM.to_owned(),
                     assignee: None,
@@ -714,6 +839,7 @@ mod tests {
             },
             ProjectTodoOp {
                 list_id: LIST.to_owned(),
+                visibility: TodoVisibility::Project,
                 value: ProjectTodoOpValue::ItemDue {
                     item_id: ITEM.to_owned(),
                     due: Some("2028-02-29".to_owned()),
@@ -721,6 +847,7 @@ mod tests {
             },
             ProjectTodoOp {
                 list_id: LIST.to_owned(),
+                visibility: TodoVisibility::Project,
                 value: ProjectTodoOpValue::ItemDue {
                     item_id: ITEM.to_owned(),
                     due: None,
@@ -728,6 +855,7 @@ mod tests {
             },
             ProjectTodoOp {
                 list_id: LIST.to_owned(),
+                visibility: TodoVisibility::Project,
                 value: ProjectTodoOpValue::ItemRank {
                     item_id: ITEM.to_owned(),
                     rank: "a0V".to_owned(),
@@ -735,14 +863,16 @@ mod tests {
             },
             ProjectTodoOp {
                 list_id: LIST.to_owned(),
+                visibility: TodoVisibility::Project,
                 value: ProjectTodoOpValue::ItemRemove {
                     item_id: ITEM.to_owned(),
                 },
             },
         ];
-        assert_eq!(ops.len(), ProjectTodoOpKind::ALL.len() + 2);
+        assert_eq!(ops.len(), ProjectTodoOpKind::ALL.len() + 3);
         for op in ops {
-            let decoded = decode_project_todo_op(&op.to_content()).expect("content decodes");
+            let decoded =
+                decode_project_todo_op(&op.to_content(), op.visibility).expect("content decodes");
             assert_eq!(decoded, op);
             let validated = validate_project_todo_envelope(&event_for(&op)).expect("envelope");
             assert_eq!(validated, op);
@@ -758,21 +888,29 @@ mod tests {
         let content = add_op().to_content();
         let mut object: Map<String, Value> = serde_json::from_str(&content).unwrap();
         object.insert("priority".into(), Value::from("high"));
-        let err = decode_project_todo_op(&Value::Object(object.clone()).to_string()).unwrap_err();
+        let err = decode_project_todo_op(
+            &Value::Object(object.clone()).to_string(),
+            TodoVisibility::Project,
+        )
+        .unwrap_err();
         assert!(err.contains("unsupported field \"priority\""), "{err}");
 
         object.remove("priority");
         object.remove("rank");
-        let err = decode_project_todo_op(&Value::Object(object).to_string()).unwrap_err();
+        let err =
+            decode_project_todo_op(&Value::Object(object).to_string(), TodoVisibility::Project)
+                .unwrap_err();
         assert!(err.contains("missing field \"rank\""), "{err}");
 
         // Absent is not null: an assignee op must say null explicitly.
         let missing_assignee = format!(
             r#"{{"schema":"{PROJECT_TODO_SCHEMA}","op":"item.assignee","listId":"{LIST}","itemId":"{ITEM}"}}"#
         );
-        assert!(decode_project_todo_op(&missing_assignee)
-            .unwrap_err()
-            .contains("missing field \"assignee\""));
+        assert!(
+            decode_project_todo_op(&missing_assignee, TodoVisibility::Project)
+                .unwrap_err()
+                .contains("missing field \"assignee\"")
+        );
     }
 
     #[test]
@@ -782,7 +920,8 @@ mod tests {
                 serde_json::from_str(&add_op().to_content()).unwrap();
             let (k, v): (String, Value) = serde_json::from_str(patch).unwrap();
             object.insert(k, v);
-            decode_project_todo_op(&Value::Object(object).to_string()).unwrap_err()
+            decode_project_todo_op(&Value::Object(object).to_string(), TodoVisibility::Project)
+                .unwrap_err()
         };
         assert!(bad(r#"["listId","short"]"#).contains("listId"));
         assert!(bad(r#"["itemId","FEDCBA9876543210FEDCBA9876543210"]"#).contains("itemId"));
@@ -798,7 +937,7 @@ mod tests {
             r#"{{"schema":"{PROJECT_TODO_SCHEMA}","op":"item.text","listId":"{LIST}","itemId":"{ITEM}","text":"{}"}}"#,
             "y".repeat(MAX_PROJECT_TODO_CONTENT_BYTES)
         );
-        assert!(decode_project_todo_op(&oversize)
+        assert!(decode_project_todo_op(&oversize, TodoVisibility::Project)
             .unwrap_err()
             .contains("exceeds"));
     }
@@ -835,11 +974,19 @@ mod tests {
                 r#"{{"schema":"{PROJECT_TODO_SCHEMA}","op":"item.assignee","listId":"{LIST}","itemId":"{ITEM}","assignee":{assignee}}}"#
             )
         };
-        assert!(decode_project_todo_op(&content("null")).is_ok());
-        assert!(decode_project_todo_op(&content(&format!("\"{}\"", "c".repeat(64)))).is_ok());
-        assert!(decode_project_todo_op(&content(&format!("\"{}\"", "C".repeat(64)))).is_err());
-        assert!(decode_project_todo_op(&content("\"abc\"")).is_err());
-        assert!(decode_project_todo_op(&content("7")).is_err());
+        assert!(decode_project_todo_op(&content("null"), TodoVisibility::Project).is_ok());
+        assert!(decode_project_todo_op(
+            &content(&format!("\"{}\"", "c".repeat(64))),
+            TodoVisibility::Project
+        )
+        .is_ok());
+        assert!(decode_project_todo_op(
+            &content(&format!("\"{}\"", "C".repeat(64))),
+            TodoVisibility::Project
+        )
+        .is_err());
+        assert!(decode_project_todo_op(&content("\"abc\""), TodoVisibility::Project).is_err());
+        assert!(decode_project_todo_op(&content("7"), TodoVisibility::Project).is_err());
     }
 
     #[test]
@@ -851,6 +998,7 @@ mod tests {
             &[
                 &["td-item", ITEM],
                 &["td-list", LIST],
+                &["td-vis", "project"],
                 &["td-op", "item.add"],
                 &["td-v", PROJECT_TODO_TAG_VERSION],
                 &["a", COORD],
@@ -859,17 +1007,19 @@ mod tests {
         assert!(ok.is_ok(), "tag order is free: {ok:?}");
 
         let cases: Vec<(&str, Vec<&[&str]>)> = vec![
-            ("requires one a tag", vec![&["td-v", "td1-1"], &["td-op", "item.add"], &["td-list", LIST], &["td-item", ITEM]]),
-            ("canonical", vec![&["a", "30621:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA:tank-loop"], &["td-v", "td1-1"], &["td-op", "item.add"], &["td-list", LIST], &["td-item", ITEM]]),
-            ("tag version", vec![&["a", COORD], &["td-v", "td1-2"], &["td-op", "item.add"], &["td-list", LIST], &["td-item", ITEM]]),
-            ("does not match content op", vec![&["a", COORD], &["td-v", "td1-1"], &["td-op", "item.text"], &["td-list", LIST], &["td-item", ITEM]]),
-            ("does not match content listId", vec![&["a", COORD], &["td-v", "td1-1"], &["td-op", "item.add"], &["td-list", ITEM], &["td-item", ITEM]]),
-            ("does not match content itemId", vec![&["a", COORD], &["td-v", "td1-1"], &["td-op", "item.add"], &["td-list", LIST], &["td-item", LIST]]),
-            ("requires one td-item tag", vec![&["a", COORD], &["td-v", "td1-1"], &["td-op", "item.add"], &["td-list", LIST]]),
-            ("must not carry an h tag", vec![&["a", COORD], &["td-v", "td1-1"], &["td-op", "item.add"], &["td-list", LIST], &["td-item", ITEM], &["h", "0c3b3f8e-1c1d-4f7e-9a2b-3c4d5e6f7a8b"]]),
-            ("unsupported tag key", vec![&["a", COORD], &["td-v", "td1-1"], &["td-op", "item.add"], &["td-list", LIST], &["td-item", ITEM], &["p", "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"]]),
-            ("more than one a tag", vec![&["a", COORD], &["a", COORD], &["td-v", "td1-1"], &["td-op", "item.add"], &["td-list", LIST], &["td-item", ITEM]]),
-            ("exactly two fields", vec![&["a", COORD, "extra"], &["td-v", "td1-1"], &["td-op", "item.add"], &["td-list", LIST], &["td-item", ITEM]]),
+            ("requires one a tag", vec![&["td-v", "td1-1"], &["td-op", "item.add"], &["td-list", LIST], &["td-vis", "project"], &["td-item", ITEM]]),
+            ("canonical", vec![&["a", "30621:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA:tank-loop"], &["td-v", "td1-1"], &["td-op", "item.add"], &["td-list", LIST], &["td-vis", "project"], &["td-item", ITEM]]),
+            ("tag version", vec![&["a", COORD], &["td-v", "td1-2"], &["td-op", "item.add"], &["td-list", LIST], &["td-vis", "project"], &["td-item", ITEM]]),
+            ("does not match content op", vec![&["a", COORD], &["td-v", "td1-1"], &["td-op", "item.text"], &["td-list", LIST], &["td-vis", "project"], &["td-item", ITEM]]),
+            ("does not match content listId", vec![&["a", COORD], &["td-v", "td1-1"], &["td-op", "item.add"], &["td-list", ITEM], &["td-vis", "project"], &["td-item", ITEM]]),
+            ("does not match content itemId", vec![&["a", COORD], &["td-v", "td1-1"], &["td-op", "item.add"], &["td-list", LIST], &["td-vis", "project"], &["td-item", LIST]]),
+            ("requires one td-item tag", vec![&["a", COORD], &["td-v", "td1-1"], &["td-op", "item.add"], &["td-list", LIST], &["td-vis", "project"]]),
+            ("requires one td-vis tag", vec![&["a", COORD], &["td-v", "td1-1"], &["td-op", "item.add"], &["td-list", LIST], &["td-item", ITEM]]),
+            ("visibility must be project or personal", vec![&["a", COORD], &["td-v", "td1-1"], &["td-op", "item.add"], &["td-list", LIST], &["td-vis", "team"], &["td-item", ITEM]]),
+            ("must not carry an h tag", vec![&["a", COORD], &["td-v", "td1-1"], &["td-op", "item.add"], &["td-list", LIST], &["td-vis", "project"], &["td-item", ITEM], &["h", "0c3b3f8e-1c1d-4f7e-9a2b-3c4d5e6f7a8b"]]),
+            ("unsupported tag key", vec![&["a", COORD], &["td-v", "td1-1"], &["td-op", "item.add"], &["td-list", LIST], &["td-vis", "project"], &["td-item", ITEM], &["p", "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"]]),
+            ("more than one a tag", vec![&["a", COORD], &["a", COORD], &["td-v", "td1-1"], &["td-op", "item.add"], &["td-list", LIST], &["td-vis", "project"], &["td-item", ITEM]]),
+            ("exactly two fields", vec![&["a", COORD, "extra"], &["td-v", "td1-1"], &["td-op", "item.add"], &["td-list", LIST], &["td-vis", "project"], &["td-item", ITEM]]),
         ];
         for (needle, tags) in cases {
             let err = validate_project_todo_envelope(&event_with(&content, &tags)).unwrap_err();
@@ -879,6 +1029,7 @@ mod tests {
         // A list op must not carry td-item.
         let list_op = ProjectTodoOp {
             list_id: LIST.to_owned(),
+            visibility: TodoVisibility::Project,
             value: ProjectTodoOpValue::ListArchived { archived: false },
         };
         let err = validate_project_todo_envelope(&event_with(
@@ -888,11 +1039,34 @@ mod tests {
                 &["td-v", "td1-1"],
                 &["td-op", "list.archived"],
                 &["td-list", LIST],
+                &["td-vis", "project"],
                 &["td-item", ITEM],
             ],
         ))
         .unwrap_err();
         assert!(err.contains("must not carry a td-item tag"), "{err}");
+    }
+
+    #[test]
+    fn create_visibility_must_match_its_tag() {
+        let content = format!(
+            r#"{{"schema":"{PROJECT_TODO_SCHEMA}","op":"list.create","listId":"{LIST}","title":"Mine","visibility":"personal"}}"#
+        );
+        assert!(decode_project_todo_op(&content, TodoVisibility::Personal).is_ok());
+        let err = decode_project_todo_op(&content, TodoVisibility::Project).unwrap_err();
+        assert!(err.contains("does not match its td-vis tag"), "{err}");
+        let err = validate_project_todo_envelope(&event_with(
+            &content,
+            &[
+                &["a", COORD],
+                &["td-v", "td1-1"],
+                &["td-op", "list.create"],
+                &["td-list", LIST],
+                &["td-vis", "project"],
+            ],
+        ))
+        .unwrap_err();
+        assert!(err.contains("does not match its td-vis tag"), "{err}");
     }
 
     #[test]

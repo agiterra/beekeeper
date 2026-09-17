@@ -6,6 +6,7 @@ import {
   FolderKanban,
   GripVertical,
   Hash,
+  ListChecks,
   Lock,
   Plus,
   Terminal,
@@ -29,6 +30,7 @@ import { ScopePositionBadge } from "@/features/hotkeys/ui/HotkeyBadge";
 import { deferMenuAction } from "@/features/sidebar/ui/sidebarMenuHelpers";
 import { StatusEmoji } from "@/features/user-status/ui/StatusEmoji";
 import type { ActiveChannelTurnSummary } from "@/features/agents/activeAgentTurnsStore";
+import type { TodoList } from "@/features/project-todos/lib/todoFold";
 import type { RemoteTerminal } from "@/features/builtin-shell/observe/useProjectTerminals";
 import { useUsersBatchQuery } from "@/features/profile/hooks";
 import type { ShellSessionInfo } from "@/shared/api/tauriShell";
@@ -124,6 +126,10 @@ export function ProjectSidebarGroup({
   onNewShell,
   remoteTerminals,
   onObserveShell,
+  todoLists,
+  activeTodoListId,
+  onOpenTodoList,
+  onNewTodoList,
   dragHandleProps,
   isDragging,
 }: {
@@ -180,6 +186,13 @@ export function ProjectSidebarGroup({
   /** Other members' shared terminals in this project (NIP-ST announces). */
   remoteTerminals?: RemoteTerminal[];
   onObserveShell?: (terminal: RemoteTerminal) => void;
+  /** The project's pinned to-do lists (NIP-TD `list.pinned`). */
+  todoLists?: readonly TodoList[];
+  /** Id of the to-do list on screen, or null. */
+  activeTodoListId?: string | null;
+  onOpenTodoList?: (listId: string) => void;
+  /** Undefined when the project has no coordinate to hold lists. */
+  onNewTodoList?: () => void;
   /** Sortable listeners for the reorder grip. Absent means this group
    * cannot be dragged — General is pinned above the sortable list. The
    * header itself is a button that opens the project, so the drag stays
@@ -233,6 +246,7 @@ export function ProjectSidebarGroup({
         forumChannels,
         shellSessions,
         remoteTerminals,
+        todoLists,
       }),
     [
       filtered.shown,
@@ -240,6 +254,7 @@ export function ProjectSidebarGroup({
       forumChannels,
       shellSessions,
       remoteTerminals,
+      todoLists,
     ],
   );
 
@@ -275,6 +290,9 @@ export function ProjectSidebarGroup({
   const terminalRows = children.filter(
     (row) => row.type === "shell" || row.type === "remote-shell",
   );
+  // Pinned to-do lists follow the terminals: work the members chose to
+  // keep in view.
+  const todoRows = children.filter((row) => row.type === "todo-list");
 
   // One batched profile read for every founder on screen; rows never query.
   const founderPubkeys = React.useMemo(
@@ -299,11 +317,12 @@ export function ProjectSidebarGroup({
         ...channelRows,
         ...visibleOpenRows,
         ...terminalRows,
+        ...todoRows,
         ...visibleSettledRows,
       ].filter(
         (row) => !(row.type === "coding-session" && row.entry.pending === true),
       ),
-    [channelRows, terminalRows, visibleOpenRows, visibleSettledRows],
+    [channelRows, terminalRows, todoRows, visibleOpenRows, visibleSettledRows],
   );
 
   const activeHotkeyScope = useActiveHotkeyScope();
@@ -339,6 +358,9 @@ export function ProjectSidebarGroup({
           return;
         case "remote-shell":
           onObserveShell?.(row.terminal);
+          return;
+        case "todo-list":
+          onOpenTodoList?.(row.list.id);
       }
     },
   );
@@ -375,13 +397,16 @@ export function ProjectSidebarGroup({
       onRequestRenameShell={onRequestRenameShell}
       onRequestCloseShell={onRequestCloseShell}
       onObserveShell={onObserveShell}
+      activeTodoListId={activeTodoListId}
+      onOpenTodoList={onOpenTodoList}
     />
   );
 
   // The filter renders whenever the project has any session at all — even
   // when the current filter hides every one of them, otherwise a "My
   // sessions" choice that matches nothing would be impossible to undo.
-  const hasAnySession = allSessions.length > 0 || terminalRows.length > 0;
+  const hasAnySession =
+    allSessions.length > 0 || terminalRows.length > 0 || todoRows.length > 0;
 
   return (
     <SidebarGroup
@@ -450,7 +475,11 @@ export function ProjectSidebarGroup({
               <GripVertical className="size-4" />
             </button>
           ) : null}
-          {onRequestCreate || onNewShell || onNewCodingSession || hasUnread ? (
+          {onRequestCreate ||
+          onNewShell ||
+          onNewCodingSession ||
+          onNewTodoList ||
+          hasUnread ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button
@@ -463,6 +492,40 @@ export function ProjectSidebarGroup({
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start">
+                {/* Work first — session, terminal, to-do list — then the
+                    rooms below a rule: what a member starts most often sits
+                    at the top. */}
+                {onNewCodingSession ? (
+                  <DropdownMenuItem
+                    data-testid={`project-new-coding-session-${project.dtag}`}
+                    onSelect={() => deferMenuAction(onNewCodingSession)}
+                  >
+                    <Terminal />
+                    New coding session
+                  </DropdownMenuItem>
+                ) : null}
+                {onNewShell ? (
+                  <DropdownMenuItem
+                    data-testid={`project-new-shell-${project.dtag}`}
+                    onSelect={() => deferMenuAction(onNewShell)}
+                  >
+                    <Terminal />
+                    New terminal
+                  </DropdownMenuItem>
+                ) : null}
+                {onNewTodoList ? (
+                  <DropdownMenuItem
+                    data-testid={`project-new-todo-list-${project.dtag}`}
+                    onSelect={() => deferMenuAction(onNewTodoList)}
+                  >
+                    <ListChecks />
+                    New to-do list
+                  </DropdownMenuItem>
+                ) : null}
+                {onRequestCreate &&
+                (onNewCodingSession || onNewShell || onNewTodoList) ? (
+                  <DropdownMenuSeparator />
+                ) : null}
                 {onRequestCreate ? (
                   <DropdownMenuItem
                     data-testid={`project-new-channel-${project.dtag}`}
@@ -485,27 +548,12 @@ export function ProjectSidebarGroup({
                     New forum
                   </DropdownMenuItem>
                 ) : null}
-                {onNewCodingSession ? (
-                  <DropdownMenuItem
-                    data-testid={`project-new-coding-session-${project.dtag}`}
-                    onSelect={() => deferMenuAction(onNewCodingSession)}
-                  >
-                    <Terminal />
-                    New coding session
-                  </DropdownMenuItem>
-                ) : null}
-                {onNewShell ? (
-                  <DropdownMenuItem
-                    data-testid={`project-new-shell-${project.dtag}`}
-                    onSelect={() => deferMenuAction(onNewShell)}
-                  >
-                    <Terminal />
-                    New terminal
-                  </DropdownMenuItem>
-                ) : null}
                 {hasUnread ? (
                   <>
-                    {onRequestCreate || onNewShell || onNewCodingSession ? (
+                    {onRequestCreate ||
+                    onNewShell ||
+                    onNewCodingSession ||
+                    onNewTodoList ? (
                       <DropdownMenuSeparator />
                     ) : null}
                     <DropdownMenuItem
@@ -559,6 +607,7 @@ export function ProjectSidebarGroup({
                 >
                   {visibleOpenRows.map(renderRow)}
                   {terminalRows.map(renderRow)}
+                  {todoRows.map(renderRow)}
                   {visibleSettledRows.map(renderRow)}
                   {remainingSessions > 0 ? (
                     <SidebarMenuItem>

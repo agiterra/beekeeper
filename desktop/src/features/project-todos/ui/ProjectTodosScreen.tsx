@@ -1,4 +1,5 @@
 import * as React from "react";
+import { useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
 
 import { useUsersBatchQuery } from "@/features/profile/hooks";
@@ -21,8 +22,27 @@ import { ProjectTodosView } from "./ProjectTodosView";
  * left to do, who has it, when it is due, and what got done, live for every
  * member. Writes are one signed op per field (NIP-TD, kind 44248).
  */
-export function ProjectTodosScreen({ projectId }: { projectId: string }) {
+export function ProjectTodosScreen({
+  projectId,
+  selectedListId,
+}: {
+  projectId: string;
+  /** The `?list=` the route carries, or null. */
+  selectedListId: string | null;
+}) {
   const { project } = useProjectContainerQuery(projectId);
+  const navigate = useNavigate();
+  const onSelectList = React.useCallback(
+    (listId: string | null) => {
+      void navigate({
+        to: "/projects/$projectId/todos",
+        params: { projectId },
+        search: listId ? { list: listId } : {},
+        replace: true,
+      });
+    },
+    [navigate, projectId],
+  );
   const pulseEnabled = useFeatureEnabled("project-pulse");
   const coordinate =
     project && project.id !== LOCAL_GENERAL_ID && project.owner.length > 0
@@ -83,9 +103,11 @@ export function ProjectTodosScreen({ projectId }: { projectId: string }) {
       <ProjectTodosView
         access={access}
         mutations={mutations}
+        onSelectList={onSelectList}
         onWriteError={onWriteError}
         personFor={personFor}
         project={project}
+        selectedListId={selectedListId}
         state={state}
       />
     </div>

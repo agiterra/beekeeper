@@ -7654,7 +7654,8 @@ mod tests {
         let op_tag: [&str; 2] = ["td-op", "item.add"];
         let list_tag: [&str; 2] = ["td-list", list];
         let item_tag: [&str; 2] = ["td-item", item];
-        let base: Vec<&[&str]> = vec![&a_tag, &v_tag, &op_tag, &list_tag, &item_tag];
+        let vis_tag: [&str; 2] = ["td-vis", "project"];
+        let base: Vec<&[&str]> = vec![&a_tag, &v_tag, &op_tag, &list_tag, &vis_tag, &item_tag];
         let ok = build(content(""), &base);
         assert!(buzz_core::project_todo::validate_project_todo_envelope(&ok).is_ok());
 
