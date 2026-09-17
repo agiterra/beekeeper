@@ -220,7 +220,7 @@ class _NewListSheet extends HookWidget {
             textInputAction: TextInputAction.done,
             onSubmitted: (_) => submit(),
             decoration: const InputDecoration(
-              labelText: 'Title',
+              labelText: 'To-Do List Name',
               isDense: true,
             ),
           ),
@@ -241,7 +241,7 @@ class _NewListSheet extends HookWidget {
                   secondary: const Icon(LucideIcons.users, size: 18),
                   title: const Text('Project'),
                   subtitle: const Text(
-                    'Every project member reads and edits it.',
+                    'Every project member can read and edit it.',
                   ),
                 ),
                 RadioListTile<TodoVisibility>(
@@ -251,9 +251,7 @@ class _NewListSheet extends HookWidget {
                   contentPadding: EdgeInsets.zero,
                   secondary: const Icon(LucideIcons.lock, size: 18),
                   title: const Text('Personal'),
-                  subtitle: const Text(
-                    'Only you. The relay withholds it from everyone else.',
-                  ),
+                  subtitle: const Text('Only you can read and edit it.'),
                 ),
               ],
             ),
@@ -273,6 +271,11 @@ class _NewListSheet extends HookWidget {
             contentPadding: EdgeInsets.zero,
             secondary: const Icon(LucideIcons.pin, size: 18),
             title: const Text('Pin to project tree'),
+            subtitle: Text(
+              visibility.value == TodoVisibility.personal
+                  ? 'Visible on your sidebar.'
+                  : "Visible on every member's sidebar.",
+            ),
           ),
           const SizedBox(height: Grid.xxs),
           FilledButton(

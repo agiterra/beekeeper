@@ -283,13 +283,10 @@ void main() {
       findsOneWidget,
     );
     expect(
-      find.text('Every project member reads and edits it.'),
+      find.text('Every project member can read and edit it.'),
       findsOneWidget,
     );
-    expect(
-      find.text('Only you. The relay withholds it from everyone else.'),
-      findsOneWidget,
-    );
+    expect(find.text('Only you can read and edit it.'), findsOneWidget);
     expect(
       find.text('This cannot be changed later; make a new list instead.'),
       findsOneWidget,

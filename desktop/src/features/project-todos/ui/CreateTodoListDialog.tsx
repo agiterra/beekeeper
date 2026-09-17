@@ -112,7 +112,7 @@ export function CreateTodoListDialog({
               id="todo-list-create-title"
               maxLength={1024}
               onChange={(event) => setTitle(event.target.value)}
-              placeholder="Launch checklist"
+              placeholder="To-Do List Name"
               value={title}
             />
           </label>
@@ -128,13 +128,13 @@ export function CreateTodoListDialog({
                 "project",
                 <Users aria-hidden="true" className="h-3.5 w-3.5" />,
                 "Project",
-                "Every project member reads and edits it.",
+                "Every project member can read and edit it.",
               )}
               {choice(
                 "personal",
                 <Lock aria-hidden="true" className="h-3.5 w-3.5" />,
                 "Personal",
-                "Only you. The relay withholds it from everyone else.",
+                "Only you can read and edit it.",
               )}
             </div>
             <p className="text-2xs text-muted-foreground">
@@ -149,8 +149,8 @@ export function CreateTodoListDialog({
               <span>Pin to the sidebar</span>
               <span className="text-2xs text-muted-foreground">
                 {visibility === "personal"
-                  ? "Only your sidebar, since only you can see it."
-                  : "Every member's sidebar."}
+                  ? "Visible on your sidebar."
+                  : "Visible on every member's sidebar."}
               </span>
             </span>
             <Switch
