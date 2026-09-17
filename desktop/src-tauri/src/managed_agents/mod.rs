@@ -46,6 +46,7 @@ pub(crate) mod role_packs_view;
 mod runtime;
 mod runtime_commands;
 mod runtime_types;
+pub(crate) mod seat_pack_plan;
 mod session_policy;
 pub(crate) mod snapshot_avatar;
 pub(crate) mod spawn_snapshot;
