@@ -405,8 +405,11 @@ export function ProjectSidebarGroup({
   // The filter renders whenever the project has any session at all — even
   // when the current filter hides every one of them, otherwise a "My
   // sessions" choice that matches nothing would be impossible to undo.
-  const hasAnySession =
-    allSessions.length > 0 || terminalRows.length > 0 || todoRows.length > 0;
+  const hasAnySession = allSessions.length > 0 || terminalRows.length > 0;
+  // The work menu paints when there is anything to list; the session filter
+  // only when there is a session to filter — a pinned list alone does not
+  // earn a "My sessions" row.
+  const hasWorkRows = hasAnySession || todoRows.length > 0;
 
   return (
     <SidebarGroup
@@ -599,7 +602,7 @@ export function ProjectSidebarGroup({
                 {channelRows.map(renderRow)}
               </SidebarMenu>
             ) : null}
-            {hasAnySession ? (
+            {hasWorkRows ? (
               <>
                 <SidebarMenu
                   aria-label={`${project.name} sessions`}
@@ -629,16 +632,18 @@ export function ProjectSidebarGroup({
                     </SidebarMenuItem>
                   ) : null}
                 </SidebarMenu>
-                <ProjectSessionFilterMenu
-                  currentPubkey={currentPubkey}
-                  filter={sessionFilter}
-                  hiddenByState={filtered.hiddenByState}
-                  hiddenUnattributed={filtered.hiddenUnattributed}
-                  isFallback={isFallback}
-                  onChange={onSessionFilterChange}
-                  project={project}
-                  sessionFounders={sessionFounders}
-                />
+                {hasAnySession ? (
+                  <ProjectSessionFilterMenu
+                    currentPubkey={currentPubkey}
+                    filter={sessionFilter}
+                    hiddenByState={filtered.hiddenByState}
+                    hiddenUnattributed={filtered.hiddenUnattributed}
+                    isFallback={isFallback}
+                    onChange={onSessionFilterChange}
+                    project={project}
+                    sessionFounders={sessionFounders}
+                  />
+                ) : null}
               </>
             ) : null}
           </div>

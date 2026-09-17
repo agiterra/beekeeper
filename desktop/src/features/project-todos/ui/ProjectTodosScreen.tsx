@@ -25,10 +25,13 @@ import { ProjectTodosView } from "./ProjectTodosView";
 export function ProjectTodosScreen({
   projectId,
   selectedListId,
+  focused = false,
 }: {
   projectId: string;
   /** The `?list=` the route carries, or null. */
   selectedListId: string | null;
+  /** `?view=list`: show that one list alone, the way a sidebar row opens it. */
+  focused?: boolean;
 }) {
   const { project } = useProjectContainerQuery(projectId);
   const navigate = useNavigate();
@@ -90,18 +93,21 @@ export function ProjectTodosScreen({
       className="flex h-full min-h-0 min-w-0 flex-col overflow-y-auto p-4"
       data-testid="project-todos-screen"
     >
-      <div>
-        <h1 className="break-words text-xl font-semibold text-foreground">
-          {project.name}
-        </h1>
-        <ProjectPageTabs
-          active="todos"
-          projectId={project.id}
-          showPulse={pulseEnabled}
-        />
-      </div>
+      {focused && selectedListId ? null : (
+        <div>
+          <h1 className="break-words text-xl font-semibold text-foreground">
+            {project.name}
+          </h1>
+          <ProjectPageTabs
+            active="todos"
+            projectId={project.id}
+            showPulse={pulseEnabled}
+          />
+        </div>
+      )}
       <ProjectTodosView
         access={access}
+        focused={focused && selectedListId !== null}
         mutations={mutations}
         onSelectList={onSelectList}
         onWriteError={onWriteError}

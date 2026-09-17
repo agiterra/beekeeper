@@ -258,7 +258,7 @@ export function ProjectSidebarSections({
         void navigate({
           to: "/projects/$projectId/todos",
           params: { projectId: project.id },
-          search: { list: listId },
+          search: { list: listId, view: "list" },
         });
       } finally {
         setTodoCreating(false);
@@ -545,7 +545,7 @@ export function ProjectSidebarSections({
           void navigate({
             to: "/projects/$projectId/todos",
             params: { projectId: project.id },
-            search: { list: listId },
+            search: { list: listId, view: "list" },
           })
         }
         onNewTodoList={

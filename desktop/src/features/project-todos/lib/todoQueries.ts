@@ -42,6 +42,12 @@ export type ProjectTodosRead = {
   truncated: boolean;
   /** The greatest `created_at` seen per `(listId, itemId)` target (`""` = the list). */
   latestByTarget: Record<string, number>;
+  /**
+   * Ops written before the contract carried `td-vis` (a build older than
+   * this one). They are among the digest's `ignored`; counted apart so the
+   * notice can say "older format" rather than "malformed".
+   */
+  legacy: number;
 };
 
 /** The op filter for one coordinate. */
@@ -72,7 +78,9 @@ export function readFromEvents(
   for (const event of events) byId.set(event.id, event);
   const unique = [...byId.values()];
   const latestByTarget: Record<string, number> = {};
+  let legacy = 0;
   for (const event of unique) {
+    if (!event.tags.some((t) => t[0] === "td-vis")) legacy++;
     const listId = event.tags.find((t) => t[0] === "td-list")?.[1];
     if (!listId) continue;
     const itemId = event.tags.find((t) => t[0] === "td-item")?.[1] ?? null;
@@ -91,6 +99,7 @@ export function readFromEvents(
     digest: foldProjectTodos(coordinate, unique),
     truncated,
     latestByTarget,
+    legacy,
   };
 }
 

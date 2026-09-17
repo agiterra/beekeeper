@@ -258,17 +258,25 @@ test.describe("project to-do lists (live relay)", () => {
       await page.getByTestId("todo-list-create-title").fill("Only mine");
       await page.getByTestId("todo-list-visibility-personal").click();
       await page.getByTestId("todo-list-create-submit").click();
-      // The create lands on the tab with the new list selected …
-      await expect(page.getByTestId("todo-list-personal")).toBeVisible({
+      // The create lands on the focused view of the new list alone …
+      await expect(page.getByTestId("todo-focused")).toBeVisible({
         timeout: 30_000,
       });
-      await expect(page.getByTestId("todo-list-pinned")).toBeVisible();
-      await expect(page).toHaveURL(/\/todos\?list=[0-9a-f]{32}$/);
+      await expect(page.getByTestId("todo-focused")).toContainText("Only mine");
+      await expect(page.getByTestId("todo-list-picker")).toHaveCount(0);
+      await expect(page).toHaveURL(/\/todos\?list=[0-9a-f]{32}&view=list$/);
       // … and as a pinned sidebar row wearing the lock.
-      const row = page.locator('[data-testid^="project-todo-list-row-"]');
+      const row = page
+        .getByTestId(`project-group-${seed.dtag}`)
+        .locator('[data-testid^="project-todo-list-row-"]');
       await expect(row).toHaveCount(1, { timeout: 30_000 });
       await expect(row).toContainText("Only mine");
       await expect(row.getByTestId("project-todo-list-personal")).toBeVisible();
+      // "All lists" returns to the full tab, where the rail marks it.
+      await page.getByTestId("todo-focused-all-lists").click();
+      await expect(page.getByTestId("todo-list-picker")).toBeVisible();
+      await expect(page.getByTestId("todo-list-personal")).toBeVisible();
+      await expect(page.getByTestId("todo-list-pinned")).toBeVisible();
     });
 
     await test.step("a collaborator never sees the personal list", async () => {
@@ -294,9 +302,19 @@ test.describe("project to-do lists (live relay)", () => {
         ["todos", "pin", "--project", seed.coordinate, "Launch"],
         TEST_IDENTITIES.alice.privateKey,
       );
-      const rows = page.locator('[data-testid^="project-todo-list-row-"]');
+      const rows = page
+        .getByTestId(`project-group-${seed.dtag}`)
+        .locator('[data-testid^="project-todo-list-row-"]');
       await expect(rows).toHaveCount(2, { timeout: 30_000 });
       await expect(rows.filter({ hasText: "Launch" })).toBeVisible();
+      // A sidebar row opens the focused view of that list.
+      await rows.filter({ hasText: "Launch" }).click();
+      await expect(page.getByTestId("todo-focused")).toContainText("Launch", {
+        timeout: 30_000,
+      });
+      await expect(page.getByTestId("todo-completed-section")).toContainText(
+        "Ship the desktop tab",
+      );
     });
 
     await waitForAnimations(page);

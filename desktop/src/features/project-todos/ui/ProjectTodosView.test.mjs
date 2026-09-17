@@ -3,6 +3,13 @@ import test from "node:test";
 import * as React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  createMemoryHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+  RouterProvider,
+} from "@tanstack/react-router";
 
 import { ProjectTodosView } from "./ProjectTodosView.tsx";
 import { todoListSummary } from "./ProjectTodosCard.tsx";
@@ -92,6 +99,7 @@ function read(lists, extra = {}) {
     },
     truncated: false,
     latestByTarget: {},
+    legacy: 0,
     ...extra,
   };
 }
@@ -111,12 +119,9 @@ const MUTATIONS = {
   removeItem: NOOP,
 };
 
-function render(props) {
-  const client = new QueryClient();
-  return renderToStaticMarkup(
-    React.createElement(
-      QueryClientProvider,
-      { client },
+async function render(props) {
+  const rootRoute = createRootRoute({
+    component: () =>
       React.createElement(ProjectTodosView, {
         project: PROJECT,
         state: { kind: "ready", read: read([list()]), refreshing: false },
@@ -126,12 +131,28 @@ function render(props) {
         onWriteError: () => {},
         ...props,
       }),
+  });
+  const todosRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/projects/$projectId/todos",
+  });
+  const router = createRouter({
+    history: createMemoryHistory({ initialEntries: ["/"] }),
+    routeTree: rootRoute.addChildren([todosRoute]),
+  });
+  await router.load();
+  const client = new QueryClient();
+  return renderToStaticMarkup(
+    React.createElement(
+      QueryClientProvider,
+      { client },
+      React.createElement(RouterProvider, { router }),
     ),
   );
 }
 
-test("open items render in rank order with their chips; completed items follow", () => {
-  const html = render({});
+test("open items render in rank order with their chips; completed items follow", async () => {
+  const html = await render({});
   const openAt = html.indexOf('data-testid="todo-open-section"');
   const completedAt = html.indexOf('data-testid="todo-completed-section"');
   assert.ok(openAt > -1 && completedAt > openAt, "open before completed");
@@ -150,8 +171,8 @@ test("open items render in rank order with their chips; completed items follow",
   assert.doesNotMatch(html, /data-testid="todo-notices"/);
 });
 
-test("a viewer sees the list read-only with the reason and no controls", () => {
-  const html = render({
+test("a viewer sees the list read-only with the reason and no controls", async () => {
+  const html = await render({
     access: { kind: "read-only", reason: "You are a viewer of this project." },
   });
   assert.match(html, /data-testid="todo-notice-read-only"/);
@@ -163,8 +184,8 @@ test("a viewer sees the list read-only with the reason and no controls", () => {
   assert.match(html, /todo-item-aaaaaaaa/, "the items are still shown");
 });
 
-test("truncation and ignored ops are disclosed, never hidden", () => {
-  const html = render({
+test("truncation and ignored ops are disclosed, never hidden", async () => {
+  const html = await render({
     state: {
       kind: "ready",
       read: read([list()], {
@@ -185,8 +206,8 @@ test("truncation and ignored ops are disclosed, never hidden", () => {
   assert.match(html, /2 changes could not be applied/);
 });
 
-test("an archived list is selectable but not editable, and an empty project invites a list", () => {
-  const html = render({
+test("an archived list is selectable but not editable, and an empty project invites a list", async () => {
+  const html = await render({
     state: {
       kind: "ready",
       read: read([list({ archived: true })]),
@@ -201,14 +222,14 @@ test("an archived list is selectable but not editable, and an empty project invi
   );
   assert.match(html, /data-testid="todo-list-archive"/);
 
-  const empty = render({
+  const empty = await render({
     state: { kind: "ready", read: read([]), refreshing: false },
   });
   assert.match(empty, /Create a list to get started/);
 });
 
-test("the rail marks personal and pinned lists and offers the pin toggle", () => {
-  const html = render({
+test("the rail marks personal and pinned lists and offers the pin toggle", async () => {
+  const html = await render({
     state: {
       kind: "ready",
       read: read([
@@ -222,6 +243,60 @@ test("the rail marks personal and pinned lists and offers the pin toggle", () =>
   assert.match(html, /data-testid="todo-list-pinned"/);
   assert.match(html, /data-testid="todo-list-pin"/);
   assert.match(html, /aria-label="Unpin from sidebar"/);
+});
+
+test("a focused view shows one list alone, and names a missing one honestly", async () => {
+  const html = await render({
+    focused: true,
+    selectedListId: "1".repeat(32),
+    state: {
+      kind: "ready",
+      read: read([
+        list({ pinned: true }),
+        list({ id: "2".repeat(32), title: "Other" }),
+      ]),
+      refreshing: false,
+    },
+  });
+  assert.match(html, /data-testid="todo-focused"/);
+  assert.doesNotMatch(html, /data-testid="todo-list-picker"/);
+  assert.match(html, /todo-item-aaaaaaaa/);
+  assert.doesNotMatch(html, />Other</);
+  assert.match(html, /data-testid="todo-focused-all-lists"/);
+  assert.match(html, /aria-label="Pinned to the sidebar"/);
+
+  const missing = await render({
+    focused: true,
+    selectedListId: "9".repeat(32),
+  });
+  assert.match(missing, /data-testid="todo-no-list"/);
+  assert.doesNotMatch(
+    missing,
+    /todo-item-aaaaaaaa/,
+    "never stands another list in for the named one",
+  );
+});
+
+test("ops from an older build are reported as such, apart from malformed ones", async () => {
+  const html = await render({
+    state: {
+      kind: "ready",
+      read: read([list()], {
+        legacy: 2,
+        digest: {
+          schema: "buzz-project-todo-digest/v1",
+          project: PROJECT.address,
+          ignored: 3,
+          lists: [list()],
+        },
+      }),
+      refreshing: false,
+    },
+  });
+  assert.match(html, /data-testid="todo-notice-legacy"/);
+  assert.match(html, /2 changes from an older build/);
+  assert.match(html, /data-testid="todo-notice-ignored"/);
+  assert.match(html, /1 change could not be applied/);
 });
 
 test("the overview card summarizes progress honestly", () => {

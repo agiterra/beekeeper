@@ -1,3 +1,5 @@
+import { Link } from "@tanstack/react-router";
+import { Lock, Pin } from "lucide-react";
 import * as React from "react";
 
 import type { ProjectContainer } from "@/features/projects-container/lib/projectContainerModel";
@@ -24,6 +26,8 @@ export type ProjectTodosViewProps = {
   selectedListId?: string | null;
   /** Called when the person picks a list, so the route can carry it. */
   onSelectList?: (listId: string | null) => void;
+  /** Show only the selected list — no rail — the way a sidebar row opens it. */
+  focused?: boolean;
 };
 
 /**
@@ -40,6 +44,7 @@ export function ProjectTodosView({
   onWriteError,
   selectedListId = null,
   onSelectList,
+  focused = false,
 }: ProjectTodosViewProps) {
   const read = state.read;
   const lists: readonly TodoList[] = read?.digest.lists ?? [];
@@ -64,8 +69,10 @@ export function ProjectTodosView({
   const effectiveSelectedId = React.useMemo(() => {
     if (selectedId && lists.some((list) => list.id === selectedId))
       return selectedId;
+    // A focused view names one list and never stands in another for it.
+    if (focused) return null;
     return lists.find((list) => !list.archived)?.id ?? lists[0]?.id ?? null;
-  }, [lists, selectedId]);
+  }, [focused, lists, selectedId]);
   const selected =
     lists.find((list) => list.id === effectiveSelectedId) ?? null;
   const canEdit = access.kind === "writable";
@@ -115,10 +122,18 @@ export function ProjectTodosView({
       tone: "warn",
     });
   }
-  if (read && read.digest.ignored > 0) {
+  if (read && read.legacy > 0) {
+    notices.push({
+      key: "legacy",
+      text: `${read.legacy} change${read.legacy === 1 ? "" : "s"} from an older build of this feature ${read.legacy === 1 ? "was" : "were"} skipped: ${read.legacy === 1 ? "it predates" : "they predate"} list visibility and cannot be read safely.`,
+      tone: "info",
+    });
+  }
+  const unexplained = read ? read.digest.ignored - read.legacy : 0;
+  if (unexplained > 0) {
     notices.push({
       key: "ignored",
-      text: `${read.digest.ignored} change${read.digest.ignored === 1 ? "" : "s"} could not be applied (malformed, or naming a list or item that does not exist).`,
+      text: `${unexplained} change${unexplained === 1 ? "" : "s"} could not be applied (malformed, or naming a list or item that does not exist).`,
       tone: "warn",
     });
   }
@@ -156,6 +171,60 @@ export function ProjectTodosView({
         <p className="text-sm text-muted-foreground" data-testid="todo-loading">
           Reading lists…
         </p>
+      ) : focused ? (
+        <div
+          className="flex min-h-0 flex-1 flex-col gap-3"
+          data-testid="todo-focused"
+        >
+          <div className="flex items-center gap-2">
+            <h1 className="min-w-0 truncate text-xl font-semibold text-foreground">
+              {selected ? selected.title : "List not found"}
+            </h1>
+            {selected?.visibility === "personal" ? (
+              <Lock
+                aria-label="Personal"
+                className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
+              />
+            ) : null}
+            {selected?.pinned ? (
+              <Pin
+                aria-label="Pinned to the sidebar"
+                className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
+              />
+            ) : null}
+            <span className="flex-1" />
+            <Link
+              className="text-xs text-muted-foreground hover:text-foreground hover:underline"
+              data-testid="todo-focused-all-lists"
+              params={{ projectId: project.id }}
+              search={{}}
+              to="/projects/$projectId/todos"
+            >
+              All lists
+            </Link>
+          </div>
+          {selected ? (
+            <TodoListPanel
+              actions={actions}
+              canEdit={canEdit && !selected.archived}
+              list={selected}
+              onAdd={(text) => run(mutations.addItem(selected.id, text))}
+              onMove={(item, index) =>
+                run(mutations.moveItem(item.listId, item.id, index))
+              }
+              personFor={personFor}
+              project={project}
+            />
+          ) : (
+            <p
+              className="text-sm text-muted-foreground"
+              data-testid="todo-no-list"
+            >
+              This list is not in the current read; it may have been removed or
+              not be visible to you.
+            </p>
+          )}
+        </div>
       ) : (
         <div className="flex min-h-0 flex-1 gap-4">
           <TodoListPicker
