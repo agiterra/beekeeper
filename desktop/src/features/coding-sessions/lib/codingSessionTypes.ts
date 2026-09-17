@@ -1,6 +1,6 @@
 import type { CodingSessionRoutingRecord } from "./codingSessionRouting";
 import type { CodingSessionTurnBudget } from "./codingSessionIngressPayloads";
-import type { PackRef } from "./codingSessionPackRef";
+import type { ComposeRef, PackRef } from "./codingSessionPackRef";
 import type { SeatBeeStamp } from "./codingSessionSeatBee";
 import type { CodingSessionProjectedTranscriptItem } from "./codingSessionTranscriptItems";
 import type { CodingSessionCommandTarget } from "./codingSessionCommand";
@@ -109,6 +109,12 @@ export type CodingSessionCatalogRecord = {
    * an execution's generations.
    */
   packRef: PackRef | null;
+  /**
+   * How that pack was composed — the app version whose templates resolved
+   * it and the digest of the result — or `null` when this 44223 carried no
+   * `composeRef`: an uncomposed pack, a packless seat, or an older host.
+   */
+  composeRef: ComposeRef | null;
 };
 
 /**

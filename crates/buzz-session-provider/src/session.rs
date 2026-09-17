@@ -185,6 +185,10 @@ pub struct SeatSkills {
     /// the bundle manifest so "which pack ran" can be answered from the
     /// bundle on disk as well as from the 44223.
     pub pack_ref: Option<buzz_core::coding_session_payload::PackRef>,
+    /// How that pack was composed, read from its `compose.json` when the
+    /// host staged a composed pack; mirrored into the manifest and the
+    /// 44223's `composeRef` (spec § 4.6).
+    pub compose_ref: Option<buzz_core::coding_session_payload::ComposeRef>,
 }
 
 pub use buzz_core::coding_session_seat_bundle::{SEAT_BUNDLES_DIR, SEAT_BUNDLE_SKILLS_DIR};
@@ -1449,10 +1453,15 @@ fn write_bundle_manifest(skills: &SeatSkills, files: &[SeatSkillFile]) {
         }
         None => None,
     };
+    let compose_ref = skills
+        .compose_ref
+        .as_ref()
+        .and_then(|compose_ref| serde_json::to_value(compose_ref).ok());
     let manifest = buzz_persona::skills::SkillBundleManifest {
         persona_id: skills.persona_id.clone(),
         pack_dir: skills.pack_dir.clone(),
         pack_ref,
+        compose_ref,
         skills: files.iter().map(|file| file.name.clone()).collect(),
     };
     if let Err(error) = buzz_persona::skills::write_bundle_manifest(&skills.bundle_dir, &manifest) {
@@ -3964,6 +3973,7 @@ done
             persona_id: "builder".into(),
             bundle_dir: bundle_dir.clone(),
             pack_ref: None,
+            compose_ref: None,
         });
         manager.create(create).await.expect("create");
 
@@ -4012,6 +4022,7 @@ done
             persona_id: "builder".into(),
             bundle_dir: bundle_dir.clone(),
             pack_ref: None,
+            compose_ref: None,
         });
         manager.create(create).await.expect("seated create");
         manager.shutdown("s1");
@@ -4170,6 +4181,7 @@ done
             persona_id: "builder".into(),
             bundle_dir: bundle_dir.clone(),
             pack_ref: None,
+            compose_ref: None,
         });
 
         let failure = manager.create(create).await.expect_err("the spawn fails");
@@ -4192,6 +4204,7 @@ done
                 persona_id: "builder".into(),
                 bundle_dir: bundle(dir.path(), "unreadable-pack-session"),
                 pack_ref: None,
+                compose_ref: None,
             },
             dir.path(),
         )
@@ -4217,6 +4230,7 @@ done
                 persona_id: "verifier".into(),
                 bundle_dir: bundle_dir.clone(),
                 pack_ref: None,
+                compose_ref: None,
             },
             dir.path(),
         )
@@ -4249,6 +4263,7 @@ done
             persona_id: "builder".into(),
             bundle_dir: bundle(dir.path(), session),
             pack_ref: None,
+            compose_ref: None,
         };
 
         materialize_seat_skills(&skills("session-one"), &one).expect("seat one");
@@ -4407,6 +4422,7 @@ done
             persona_id: "builder".into(),
             bundle_dir: bundle_dir.clone(),
             pack_ref: None,
+            compose_ref: None,
         };
         let briefing = materialize_seat_skills(&skills, &workdir).expect("materialize");
 
@@ -4463,6 +4479,7 @@ done
             persona_id: "builder".into(),
             bundle_dir: bundle_dir.clone(),
             pack_ref: None,
+            compose_ref: None,
         };
 
         let briefing =
@@ -6354,6 +6371,7 @@ mod seat_skill_materialization_tests {
             persona_id: "builder".into(),
             bundle_dir,
             pack_ref: None,
+            compose_ref: None,
         }
     }
 

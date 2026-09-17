@@ -53,6 +53,7 @@ function entry(overrides = {}) {
       statusAt: 1_700_000_000_000,
       status: "running",
       packRef: coordinate(),
+      composeRef: null,
       ...overrides,
     },
   };
@@ -93,6 +94,7 @@ function build(overrides = {}) {
     revisionsError: null,
     provenance: null,
     provenanceError: null,
+    appVersion: "0.4.2",
     nowSeconds: 1_700_000_300,
     ...overrides,
   });
@@ -591,4 +593,28 @@ test("a row with neither a role nor a coordinate reports role: null", () => {
   const row = snapshots.reported[0];
   assert.equal(row.role, null);
   assert.equal(row.coordinate, null);
+});
+
+test("a seat's composeRef surfaces as composedWith beside this computer's version", () => {
+  const snapshots = build({
+    catalogEntries: [
+      entry({
+        composeRef: {
+          appVersion: "0.4.1",
+          digest: `sha256:${"c".repeat(64)}`,
+        },
+      }),
+      entry({ generationId: "generation-2" }),
+    ],
+  });
+  assert.equal(snapshots.thisComputerVersion, "0.4.2");
+  const byGeneration = new Map(
+    snapshots.reported.map((row) => [row.generationId, row.composedWith]),
+  );
+  assert.equal(byGeneration.get("generation-1"), "0.4.1");
+  assert.equal(
+    byGeneration.get("generation-2"),
+    null,
+    "a 44223 without composeRef says nothing about its composition",
+  );
 });

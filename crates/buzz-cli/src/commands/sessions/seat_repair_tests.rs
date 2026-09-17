@@ -396,6 +396,7 @@ fn wire(options: WireOptions) -> Wire {
             bee_stamp: None,
             pack_ref: None,
             handover: None,
+            compose_ref: None,
         };
         let metadata = build_coding_session_metadata(
             channel,
@@ -958,6 +959,7 @@ fn add_seat(wire: &mut Wire, extra: ExtraSeat) -> String {
             bee_stamp: None,
             pack_ref: None,
             handover: None,
+            compose_ref: None,
         };
         let metadata = build_coding_session_metadata(
             channel,

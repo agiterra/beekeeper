@@ -31,6 +31,7 @@ fn record(session_id: &str, command_id: &str) -> SessionRecord {
         actor: None,
         role: None,
         pack_ref: None,
+        compose_ref: None,
         founder_pubkey: None,
         granted_operators: BTreeSet::new(),
         granted_viewers: BTreeSet::new(),

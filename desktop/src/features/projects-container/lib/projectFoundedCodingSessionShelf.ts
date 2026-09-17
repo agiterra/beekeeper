@@ -185,6 +185,7 @@ function synthesizeFoundedSession(
     capabilities: null,
     beeStamp: null,
     packRef: null,
+    composeRef: null,
   };
 }
 

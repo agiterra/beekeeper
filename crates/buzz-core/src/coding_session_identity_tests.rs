@@ -290,6 +290,7 @@ fn the_accessors_type_the_reads_on_every_carrier() {
         bee_stamp: None,
         pack_ref: None,
         handover: None,
+        compose_ref: None,
     };
     let alias = metadata
         .provider_alias()

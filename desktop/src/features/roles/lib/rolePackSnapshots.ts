@@ -121,10 +121,19 @@ export type ReportedRolePackSnapshot = {
    * derived from `label` or `coordinate`.
    */
   role: string | null;
+  /**
+   * The app version whose template catalog composed this seat's
+   * instructions (`composeRef.appVersion`, spec § 4.6), or `null` when the
+   * 44223 carried no `composeRef`. Compared against
+   * {@link RolePackSnapshots.thisComputerVersion} by the card's copy.
+   */
+  composedWith: string | null;
 };
 
 export type RolePackSnapshots = {
   resolvedAt: number | null;
+  /** This computer's own app version, or `null` before it has been read. */
+  thisComputerVersion: string | null;
   resolved: ResolvedRolePackSnapshot[];
   reported: ReportedRolePackSnapshot[];
   /** The revision comparison's own header facts, or `null` when none ran. */
@@ -322,6 +331,8 @@ export function buildRolePackSnapshots(input: {
   provenance: RolePackProvenanceResult | null;
   /** The provenance hook's own readable error, or `null`. */
   provenanceError: string | null;
+  /** This computer's app version (`getVersion()`), or `null` before it resolves. */
+  appVersion: string | null;
   nowSeconds: number;
 }): RolePackSnapshots {
   // A query in error can still carry stale `data` from an earlier success
@@ -394,6 +405,7 @@ export function buildRolePackSnapshots(input: {
           : provenanceFallbackReason,
         founderPubkey: disposition?.founderPubkey ?? null,
         role: session.role ?? null,
+        composedWith: session.composeRef?.appVersion ?? null,
       } satisfies ReportedRolePackSnapshot;
     })
     .sort(
@@ -405,6 +417,7 @@ export function buildRolePackSnapshots(input: {
 
   return {
     resolvedAt: input.resolvedAt,
+    thisComputerVersion: input.appVersion,
     resolved,
     reported,
     comparison: revisions

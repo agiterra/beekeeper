@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { getVersion } from "@tauri-apps/api/app";
 import * as React from "react";
 
 import {
@@ -359,6 +360,24 @@ export function useProjectPacksView(projectId: string): ProjectPacksViewState {
     rows: provenanceRows,
   });
 
+  // This computer's app version names the template catalog it would compose
+  // with today; a seat composed by another version is disclosed as such
+  // (spec § 4.6). Read once; `null` until it resolves or if it cannot.
+  const [appVersion, setAppVersion] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    let cancelled = false;
+    getVersion()
+      .then((version) => {
+        if (!cancelled) setAppVersion(version);
+      })
+      .catch(() => {
+        if (!cancelled) setAppVersion(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const rolePackSnapshots = React.useMemo(
     () =>
       buildRolePackSnapshots({
@@ -372,9 +391,11 @@ export function useProjectPacksView(projectId: string): ProjectPacksViewState {
         revisionsError,
         provenance: provenance.result,
         provenanceError: provenance.error,
+        appVersion,
         nowSeconds,
       }),
     [
+      appVersion,
       executionCatalog.entries,
       nowSeconds,
       packs,

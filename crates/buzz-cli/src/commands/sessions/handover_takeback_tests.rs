@@ -146,6 +146,7 @@ async fn takeback_against(lease_live: bool) -> (String, Option<String>, Vec<nost
         bee_stamp: None,
         pack_ref: None,
         handover: None,
+        compose_ref: None,
     };
     let metadata = json!({
         "id": "aa".repeat(32),

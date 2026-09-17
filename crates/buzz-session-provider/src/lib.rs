@@ -3088,6 +3088,9 @@ impl Provider {
                 }
             }
         };
+        let seat_compose_ref = seat_skills
+            .as_ref()
+            .and_then(|skills| skills.compose_ref.clone());
 
         let request = CreateRequest {
             media: self.media.clone(),
@@ -3172,6 +3175,7 @@ impl Provider {
             genesis_ref: plan.genesis_ref.clone(),
             actor: plan.actor.clone(),
             role: plan.role.clone(),
+            compose_ref: seat_compose_ref,
             pack_ref: seat_pack_ref,
             founder_pubkey: Some(plan.founder_pubkey.clone()),
             granted_operators: std::collections::BTreeSet::new(),
@@ -4107,6 +4111,9 @@ impl Provider {
                 }
             }
         };
+        let seat_compose_ref = seat_skills
+            .as_ref()
+            .and_then(|skills| skills.compose_ref.clone());
 
         let request = CreateRequest {
             media: self.media.clone(),
@@ -4177,6 +4184,7 @@ impl Provider {
             // from a moved ref runs a different commit, and the 44223 has to
             // say which.
             record.pack_ref = seat_pack_ref.clone();
+            record.compose_ref = seat_compose_ref.clone();
             if startup.model.is_some() {
                 record.model = startup.model.clone();
             }
@@ -7180,6 +7188,9 @@ impl Provider {
             // repository. The surfaces say "no pack staged" rather than naming
             // one that did not run.
             pack_ref: record.and_then(|record| record.pack_ref.clone()),
+            // Spec § 4.6: how that pack was composed, from the same record;
+            // absent for uncomposed packs and records that predate the key.
+            compose_ref: record.and_then(|record| record.compose_ref.clone()),
             // §3.1: who holds this umbrella, and on which body. Read from the
             // record's persisted claim state, so a provider that comes back to
             // an execution somebody else has taken over advertises the fence
@@ -9322,7 +9333,31 @@ fn seat_skills(
             persona_id: persona_id.to_owned(),
             bundle_dir: session::seat_bundle_dir(state_dir, session_id),
             pack_ref: seat.pack_ref.clone(),
+            compose_ref: seat_compose_ref(pack_dir),
         })
+}
+
+/// The `composeRef` a staged pack directory discloses, or `None` for a pack
+/// that was never composed. A `compose.json` that exists but cannot be read
+/// is logged and treated as none: the 44223 then says nothing about the
+/// composition rather than something false, and the packRef still names the
+/// source bytes.
+fn seat_compose_ref(pack_dir: &Path) -> Option<buzz_core::coding_session_payload::ComposeRef> {
+    match buzz_persona::compose::read_provenance(pack_dir) {
+        Ok(Some(provenance)) => Some(buzz_core::coding_session_payload::ComposeRef {
+            app_version: provenance.app_version,
+            digest: provenance.digest,
+        }),
+        Ok(None) => None,
+        Err(error) => {
+            tracing::warn!(
+                target: "csp",
+                pack_dir = %pack_dir.display(),
+                "the staged pack's compose.json could not be read; the 44223 will carry no composeRef: {error}"
+            );
+            None
+        }
+    }
 }
 
 fn log_ignored(what: &str, reason: &Ignored) {
@@ -9336,6 +9371,43 @@ fn log_ignored(what: &str, reason: &Ignored) {
 
 #[cfg(test)]
 mod tests {
+    /// Spec § 4.6: a staged pack's `compose.json` becomes the seat's
+    /// `composeRef`; a pack without one contributes nothing; a malformed one
+    /// is disclosed as nothing rather than as a made-up composition.
+    #[test]
+    fn a_composed_pack_discloses_its_compose_ref_and_an_uncomposed_one_does_not() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        assert_eq!(super::seat_compose_ref(dir.path()), None);
+        let digest = format!("sha256:{}", "c".repeat(64));
+        std::fs::write(
+            dir.path().join(buzz_persona::compose::COMPOSE_JSON),
+            serde_json::json!({
+                "schema": buzz_persona::compose::COMPOSE_PROVENANCE_SCHEMA,
+                "role": "builder",
+                "source": {"kind": "local", "path": "personas/roles/builder"},
+                "appVersion": "0.4.2",
+                "digest": digest,
+                "includes": [],
+                "warnings": []
+            })
+            .to_string(),
+        )
+        .expect("write compose.json");
+        let compose_ref = super::seat_compose_ref(dir.path()).expect("a composeRef");
+        assert_eq!(compose_ref.app_version, "0.4.2");
+        assert_eq!(compose_ref.digest, digest);
+        assert!(
+            compose_ref.validate().is_ok(),
+            "what the host discloses passes the wire check"
+        );
+        std::fs::write(
+            dir.path().join(buzz_persona::compose::COMPOSE_JSON),
+            "{not json",
+        )
+        .expect("corrupt it");
+        assert_eq!(super::seat_compose_ref(dir.path()), None);
+    }
+
     /// Finding 71, verbatim: the adapter's JSON-RPC -32603 as `AcpError::
     /// AgentError` renders it. The seat's result item leads with the remedy
     /// sentence, keeps the raw error under `detail`, and the generation is
@@ -10928,6 +11000,7 @@ mod tests {
             handover: ClaimState::NoClaim,
             retired: None,
             pack_ref: None,
+            compose_ref: None,
         }
     }
 
@@ -15622,6 +15695,7 @@ mod tests {
                     handover: ClaimState::NoClaim,
                     retired: None,
                     pack_ref: None,
+                    compose_ref: None,
                 })
                 .expect("insert");
             store

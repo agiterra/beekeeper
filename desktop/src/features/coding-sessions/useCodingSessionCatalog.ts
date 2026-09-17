@@ -424,6 +424,9 @@ export function mergeTrustedCodingSessionIngress(
       // metadata carried no `packRef` — no 30624 source for the project, or
       // an older host (`codingSessionPackRef.ts`).
       packRef: metadata?.packRef ?? null,
+      // How that pack was composed, off the same 44223; null when the host
+      // staged an uncomposed pack or predates the key (spec § 4.6).
+      composeRef: metadata?.composeRef ?? null,
     } satisfies CodingSessionCatalogRecord;
   });
 

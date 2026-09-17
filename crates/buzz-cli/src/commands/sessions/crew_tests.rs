@@ -114,6 +114,7 @@ fn metadata_event(
         bee_stamp: None,
         pack_ref: None,
         handover: None,
+        compose_ref: None,
     };
     json!({
         "id": id,
@@ -4102,6 +4103,7 @@ fn signed_hire_with_status(command_id: &str, status: ReceiptStatus) -> SignedHir
         bee_stamp: None,
         pack_ref: None,
         handover: None,
+        compose_ref: None,
     };
     let metadata = build_coding_session_metadata(
         channel,
@@ -4253,6 +4255,7 @@ fn rival_seated_create(
             bee_stamp: None,
             pack_ref: None,
             handover: None,
+            compose_ref: None,
         };
         let metadata = build_coding_session_metadata(
             channel,

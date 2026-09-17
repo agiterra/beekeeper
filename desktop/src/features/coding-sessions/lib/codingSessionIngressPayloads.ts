@@ -9,7 +9,12 @@ import {
   isStrictCodingSessionRoutingRecord,
   type CodingSessionRoutingRecord,
 } from "./codingSessionRouting";
-import { readPackRef, type PackRef } from "./codingSessionPackRef";
+import {
+  type ComposeRef,
+  type PackRef,
+  readComposeRef,
+  readPackRef,
+} from "./codingSessionPackRef";
 import { readSeatBeeStamp, type SeatBeeStamp } from "./codingSessionSeatBee";
 import type {
   CodingSessionCapabilities,
@@ -316,6 +321,13 @@ export type BuzzCodingSessionMetadataV1 = {
    * `codingSessionPackRef.ts`.
    */
   packRef?: Readonly<PackRef>;
+  /**
+   * How that pack was composed (spec § 4.6): the app version whose template
+   * catalog resolved its includes and the digest of the result. Additive,
+   * omit-when-absent, and never present without `packRef` — the Rust
+   * decoder refuses the orphan, and so does this one.
+   */
+  composeRef?: Readonly<ComposeRef>;
 };
 
 /** How much of one crew session's turn allowance has been spent (D9). */
@@ -613,6 +625,7 @@ export function parseBuzzCodingSessionMetadata(
     "routing",
     "beeStamp",
     "packRef",
+    "composeRef",
     ...factFields,
   ] as const;
   if (
@@ -712,6 +725,15 @@ export function parseBuzzCodingSessionMetadata(
   if (Object.hasOwn(value, "packRef") && readPackRef(value.packRef) === null) {
     return null;
   }
+  // `composeRef` describes how the `packRef` pack was composed, so it is
+  // refused alone, as null, or malformed — exactly the Rust decoder's rule.
+  if (
+    Object.hasOwn(value, "composeRef") &&
+    (!Object.hasOwn(value, "packRef") ||
+      readComposeRef(value.composeRef) === null)
+  ) {
+    return null;
+  }
   // The B1 code-coordinate facts travel all-four-or-none (the Rust producer's
   // METADATA_FACT_FIELDS discipline); a partial subset is corruption.
   if (!hasAllOrNoneKeys(value, factFields)) return null;
@@ -766,6 +788,9 @@ export function parseBuzzCodingSessionMetadata(
       : {}),
     ...(Object.hasOwn(value, "packRef")
       ? { packRef: readPackRef(value.packRef) as PackRef }
+      : {}),
+    ...(Object.hasOwn(value, "composeRef")
+      ? { composeRef: readComposeRef(value.composeRef) as ComposeRef }
       : {}),
     ...(hasFacts
       ? {

@@ -130,6 +130,7 @@ mod tests {
             handover: Default::default(),
             retired: None,
             pack_ref: None,
+            compose_ref: None,
         }
     }
 

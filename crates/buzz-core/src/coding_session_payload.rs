@@ -1246,6 +1246,12 @@ pub struct SessionMetadata {
     /// over.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub handover: Option<SessionMetadataHandover>,
+    /// How the staged pack named by `packRef` was composed: the app version
+    /// whose template catalog resolved its includes, and the digest of the
+    /// bytes that ran (spec § 4.6). Absent when the host staged nothing, or
+    /// staged before this key existed. Never present without `packRef`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compose_ref: Option<ComposeRef>,
 }
 
 /// Whether the claim this metadata discloses still stands.
@@ -1363,6 +1369,53 @@ pub struct PackRef {
     /// The directory inside that commit the pack was read from, e.g.
     /// `personas/roles/builder`.
     pub path: String,
+}
+
+/// The composition of the staged pack `packRef` names (spec § 4.6).
+///
+/// `packRef` names the source bytes; template resolution is a function of
+/// those bytes **and** the app version whose catalog resolved
+/// `![[beekeeper/<template>@<range>]]` includes. This record carries that
+/// version and the digest of the composed result, so "which prompt actually
+/// ran" has one answer even after the app updates its templates.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ComposeRef {
+    /// The app version whose template catalog composed the pack.
+    pub app_version: String,
+    /// `sha256:<64 lowercase hex>` over the staged persona and skill files —
+    /// the `digest` in the staged pack's `compose.json`.
+    pub digest: String,
+}
+
+/// Maximum UTF-8 byte length of `composeRef.appVersion`.
+pub const MAX_COMPOSE_REF_APP_VERSION_BYTES: usize = 64;
+
+impl ComposeRef {
+    /// Check the wire shape: a bounded, non-blank app version and a
+    /// `sha256:` digest of exactly sixty-four lowercase hex characters.
+    pub fn validate(&self) -> Result<(), String> {
+        let app_version = self.app_version.trim();
+        if app_version.is_empty() || app_version.len() > MAX_COMPOSE_REF_APP_VERSION_BYTES {
+            return Err(format!(
+                "metadata composeRef.appVersion must be 1 to {MAX_COMPOSE_REF_APP_VERSION_BYTES} bytes"
+            ));
+        }
+        let Some(hex) = self.digest.strip_prefix("sha256:") else {
+            return Err("metadata composeRef.digest must start with sha256:".to_string());
+        };
+        if hex.len() != 64
+            || !hex
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err(
+                "metadata composeRef.digest must be sha256: followed by 64 lowercase hex characters"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
 }
 
 /// Where a seat's staged packs came from, as a reader must name it.
@@ -1642,6 +1695,13 @@ const METADATA_PACK_REF_FIELD: &str = "packRef";
 /// disclose omits it, and `"handover": null` is a producer inventing a shape
 /// rather than a session nobody took over.
 const METADATA_HANDOVER_FIELD: &str = "handover";
+/// The compose-provenance amendment's one additive key (spec § 4.6).
+/// Independent of the other eight on the wire, so it doubles the accepted
+/// shape count from two hundred and fifty-six to five hundred and twelve —
+/// but `validate_session_metadata` refuses it without `packRef`, since a
+/// composition of nothing is not a fact. An explicit null is refused
+/// **naming the key**, like every other amendment.
+const METADATA_COMPOSE_REF_FIELD: &str = "composeRef";
 
 /// Strictly decode and validate signed metadata content (kind 44223).
 ///
@@ -1698,6 +1758,14 @@ pub fn decode_coding_session_metadata(content: &str) -> Result<SessionMetadata, 
     {
         return Err("coding-session metadata handover must not be null".to_string());
     }
+    let has_compose_ref = object.contains_key(METADATA_COMPOSE_REF_FIELD);
+    if has_compose_ref
+        && object
+            .get(METADATA_COMPOSE_REF_FIELD)
+            .is_some_and(serde_json::Value::is_null)
+    {
+        return Err("coding-session metadata composeRef must not be null".to_string());
+    }
     let has_all_facts = METADATA_FACT_FIELDS
         .iter()
         .all(|key| object.contains_key(*key));
@@ -1732,6 +1800,9 @@ pub fn decode_coding_session_metadata(content: &str) -> Result<SessionMetadata, 
     }
     if has_handover {
         expected.push(METADATA_HANDOVER_FIELD);
+    }
+    if has_compose_ref {
+        expected.push(METADATA_COMPOSE_REF_FIELD);
     }
     let recognized = object.keys().all(|key| expected.contains(&key.as_str()));
     let complete = expected.iter().all(|key| object.contains_key(*key));
@@ -1837,6 +1908,15 @@ fn validate_session_metadata(metadata: &SessionMetadata) -> Result<(), String> {
     }
     if let Some(handover) = &metadata.handover {
         handover.validate()?;
+    }
+    if let Some(compose_ref) = &metadata.compose_ref {
+        if metadata.pack_ref.is_none() {
+            return Err(
+                "metadata composeRef requires a packRef: it describes how that pack was composed"
+                    .to_string(),
+            );
+        }
+        compose_ref.validate()?;
     }
     if let Some(pack_ref) = &metadata.pack_ref {
         // The seat's role decides the pack, so a `packRef` naming a role the
@@ -2627,6 +2707,7 @@ mod tests {
             bee_stamp: None,
             pack_ref: None,
             handover: None,
+            compose_ref: None,
         };
         let value = serde_json::to_value(&metadata).expect("serialize");
         assert_eq!(
@@ -2701,6 +2782,7 @@ mod tests {
             bee_stamp: None,
             pack_ref: None,
             handover: None,
+            compose_ref: None,
         };
         let unclaimed = serde_json::to_value(&metadata).expect("serialize");
         assert!(
@@ -2956,6 +3038,58 @@ mod tests {
             error.contains("packRef"),
             "the refusal must name the key it refused: {error}"
         );
+    }
+
+    /// The compose-provenance amendment (spec § 4.6): absent on every 44223
+    /// signed before it existed and on every packless seat, round-trips
+    /// exactly beside a `packRef`, refuses an explicit null by name, and is
+    /// refused without the `packRef` it describes.
+    #[test]
+    fn decode_metadata_accepts_the_compose_ref_shape_only_beside_a_pack_ref() {
+        let without = pack_ref_base();
+        let decoded_without =
+            decode_coding_session_metadata(&without.to_string()).expect("pre-amendment form");
+        assert!(decoded_without.compose_ref.is_none());
+        let encoded_without = serde_json::to_value(&decoded_without).expect("re-encode");
+        assert!(!encoded_without
+            .as_object()
+            .expect("an object")
+            .contains_key("composeRef"));
+
+        let compose_ref = serde_json::json!({
+            "appVersion": "0.4.2",
+            "digest": format!("sha256:{}", "b".repeat(64))
+        });
+        let mut with = without.clone();
+        with["packRef"] = valid_pack_ref();
+        with["composeRef"] = compose_ref.clone();
+        let decoded = decode_coding_session_metadata(&with.to_string()).expect("composed form");
+        let composed = decoded.compose_ref.clone().expect("a composeRef");
+        assert_eq!(composed.app_version, "0.4.2");
+        let encoded = serde_json::to_value(&decoded).expect("re-encode");
+        assert_eq!(encoded.get("composeRef"), Some(&compose_ref));
+
+        let mut orphan = without.clone();
+        orphan["composeRef"] = compose_ref.clone();
+        let error = decode_coding_session_metadata(&orphan.to_string())
+            .expect_err("a composeRef without a packRef is refused");
+        assert!(error.contains("requires a packRef"), "{error}");
+
+        let mut null_compose = without.clone();
+        null_compose["packRef"] = valid_pack_ref();
+        null_compose["composeRef"] = serde_json::Value::Null;
+        let error = decode_coding_session_metadata(&null_compose.to_string())
+            .expect_err("an explicit null is refused");
+        assert!(error.contains("composeRef"), "{error}");
+
+        let mut bad_digest = with.clone();
+        bad_digest["composeRef"]["digest"] = serde_json::Value::String("abc".into());
+        assert!(decode_coding_session_metadata(&bad_digest.to_string())
+            .expect_err("a malformed digest is refused")
+            .contains("digest"));
+        let mut extra = with.clone();
+        extra["composeRef"]["command"] = serde_json::Value::String("rm".into());
+        assert!(decode_coding_session_metadata(&extra.to_string()).is_err());
     }
 
     /// The handover amendment: the key is absent on every unclaimed session,
@@ -3545,6 +3679,7 @@ mod tests {
             bee_stamp: None,
             pack_ref: None,
             handover: None,
+            compose_ref: None,
         };
         let content = serde_json::to_string(&metadata).expect("serialize");
         assert!(

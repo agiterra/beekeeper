@@ -596,6 +596,26 @@ export function reportsCountLabel(count: number): string {
  * away. Used inside Technical details, and as the `title` of the short form
  * below.
  */
+/**
+ * Spec § 4.6: the template catalog that composed a seat's instructions is
+ * the app version's, so a seat composed by another version may be running
+ * different template text than this computer would compose today. Words
+ * only; the row never claims the text differs, only that the catalogs do.
+ */
+export function templateDriftText(
+  composedWith: string | null,
+  thisComputer: string | null,
+): string | null {
+  if (composedWith === null) return null;
+  if (thisComputer === null) {
+    return `Composed with Beekeeper ${composedWith} · this computer's version is not known yet`;
+  }
+  if (composedWith === thisComputer) {
+    return `Composed with Beekeeper ${composedWith}, this computer's version`;
+  }
+  return `Composed with Beekeeper ${composedWith} · this computer is ${thisComputer}, whose templates may differ`;
+}
+
 export function revisionRelationText(
   relation: ReportedRolePackRelation,
   behind: number | null,

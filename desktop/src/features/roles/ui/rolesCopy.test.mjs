@@ -32,6 +32,7 @@ import {
   revisionComparisonUnavailableSentence,
   revisionRelationShortText,
   revisionRelationText,
+  templateDriftText,
   AGENT_CHIP_PACK_UNKNOWN_TITLE,
   AGENT_SHARED_BADGE,
   AGENT_SHARED_TITLE,
@@ -868,4 +869,20 @@ test("the scope line splits the agent count instead of presenting a roster", () 
 test("the summary strip's two report qualifiers say their own counts", () => {
   assert.equal(unconfirmedCountText(2), "2 unconfirmed");
   assert.equal(disputedCountText(1), "1 disputed");
+});
+
+test("the template-drift line names both versions and claims only that catalogs differ", () => {
+  assert.equal(templateDriftText(null, "0.4.2"), null);
+  assert.equal(
+    templateDriftText("0.4.1", null),
+    "Composed with Beekeeper 0.4.1 · this computer's version is not known yet",
+  );
+  assert.equal(
+    templateDriftText("0.4.2", "0.4.2"),
+    "Composed with Beekeeper 0.4.2, this computer's version",
+  );
+  const drift = templateDriftText("0.4.1", "0.4.2");
+  assert.match(drift, /Composed with Beekeeper 0\.4\.1/);
+  assert.match(drift, /this computer is 0\.4\.2/);
+  assert.match(drift, /may differ/, "never asserts the text differs");
 });

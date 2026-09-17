@@ -262,6 +262,9 @@ pub struct SkillBundleManifest {
     pub pack_dir: PathBuf,
     /// The pack's wire coordinate, when the launcher staged one.
     pub pack_ref: Option<serde_json::Value>,
+    /// How the staged pack was composed (`{appVersion, digest}` from its
+    /// `compose.json`), mirroring the 44223's `composeRef` (spec § 4.6).
+    pub compose_ref: Option<serde_json::Value>,
     /// The skills in the bundle. Sorted and deduplicated before it is written.
     pub skills: Vec<String>,
 }
@@ -355,6 +358,9 @@ pub fn write_bundle_manifest(
     );
     if let Some(pack_ref) = &manifest.pack_ref {
         body.insert("packRef".to_owned(), pack_ref.clone());
+    }
+    if let Some(compose_ref) = &manifest.compose_ref {
+        body.insert("composeRef".to_owned(), compose_ref.clone());
     }
     body.insert(
         "skills".to_owned(),
@@ -1488,6 +1494,10 @@ mod tests {
                 "sha": "f".repeat(40),
                 "role": "builder",
                 "path": "personas/roles/builder",
+            })),
+            compose_ref: Some(serde_json::json!({
+                "appVersion": "0.4.2",
+                "digest": format!("sha256:{}", "b".repeat(64)),
             })),
             skills: vec!["report".into(), "brief".into(), "brief".into()],
         };

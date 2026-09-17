@@ -342,6 +342,7 @@ function synthesizePendingEntry(
     // Same reasoning again: a pending create has published no 44223 yet, so
     // nothing is known about which pack its seat will stage.
     packRef: null,
+    composeRef: null,
   };
   return {
     placement: placement.projectId ? "project" : "unassigned",

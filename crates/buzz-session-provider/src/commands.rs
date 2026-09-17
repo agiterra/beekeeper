@@ -2310,6 +2310,7 @@ mod tests {
             handover: ClaimState::NoClaim,
             retired: None,
             pack_ref: None,
+            compose_ref: None,
         }
     }
 

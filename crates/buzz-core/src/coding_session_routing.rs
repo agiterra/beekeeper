@@ -3451,6 +3451,7 @@ mod tests {
             bee_stamp: None,
             pack_ref: None,
             handover: None,
+            compose_ref: None,
         };
         let json = serde_json::to_string(&metadata).expect("json");
         assert!(

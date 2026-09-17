@@ -51,6 +51,21 @@ export type PackRef = {
 
 const PACK_REF_KEYS = ["repo", "sha", "role", "path"] as const;
 
+/**
+ * How the staged pack named by `packRef` was composed (spec § 4.6): the app
+ * version whose template catalog resolved its includes, and the digest of
+ * the bytes that ran. Present only beside a `packRef`; never on its own.
+ */
+export type ComposeRef = {
+  /** The app version whose template catalog composed the pack. */
+  appVersion: string;
+  /** `sha256:<64 lowercase hex>` over the staged persona and skill files. */
+  digest: string;
+};
+
+const COMPOSE_REF_KEYS = ["appVersion", "digest"] as const;
+const COMPOSE_DIGEST = /^sha256:[0-9a-f]{64}$/;
+
 const EXACT_SHA = /^[0-9a-f]{40}$/;
 const ROLE_SLUG = /^[a-z0-9-]{1,64}$/;
 /** `30617:<64-hex>:<dtag>` — a git repository announcement coordinate. */
@@ -94,6 +109,29 @@ export function readPackRef(value: unknown): PackRef | null {
     return null;
   }
   return { repo, sha, role, path };
+}
+
+/**
+ * Read a `composeRef` exactly as the Rust decoder would, or `null` for
+ * anything else — a missing key, an extra key, a digest that is not
+ * `sha256:` plus sixty-four lowercase hex characters, or a blank version.
+ */
+export function readComposeRef(value: unknown): ComposeRef | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record);
+  if (keys.length !== COMPOSE_REF_KEYS.length) return null;
+  for (const key of COMPOSE_REF_KEYS) {
+    if (!Object.hasOwn(record, key)) return null;
+  }
+  const { appVersion, digest } = record;
+  if (typeof appVersion !== "string" || typeof digest !== "string") return null;
+  const version = appVersion.trim();
+  if (version.length === 0 || version.length > 64) return null;
+  if (!COMPOSE_DIGEST.test(digest)) return null;
+  return { appVersion, digest };
 }
 
 /**

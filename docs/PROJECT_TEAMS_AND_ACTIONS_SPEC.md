@@ -847,6 +847,11 @@ C are independent lanes until C3, which needs `team.yml` (A3) for agent names.
   Proof: edit `roles/builder.md` on `main`, watch the running builder's card
   offer the restart, click it, and read the new instructions in the new
   execution's briefing.
+  *Status 2026-09-17: the wire half is built (ledger 152) — `composeRef` on
+  44223, the provider reading it from the staged pack's `compose.json`, the
+  bundle manifest mirror, and the Roles page's per-seat "composed with
+  Beekeeper X · this computer is Y" line. The drift and restart half landed
+  earlier under A3 (ledger 146, 148). The live proof is still owed.*
 - **A5 — shipped roles compose from templates.** The eight "Working contract"
   paragraphs become `![[beekeeper/working-contract@^1.0.0]]`; rung 4 now
   exercises the composer. Test: the composed shipped lead equals today's lead

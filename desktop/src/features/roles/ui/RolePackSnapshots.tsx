@@ -16,6 +16,7 @@ import {
   reportHistorySummary,
   revisionComparisonUnavailableSentence,
   revisionRelationText,
+  templateDriftText,
   ROLE_PACK_SNAPSHOTS_SUBTITLE,
   ROLES_DIAGNOSTICS_CHECKS_TITLE,
   ROLES_DIAGNOSTICS_SOURCE_TITLE,
@@ -208,9 +209,15 @@ function SourceGroup({
 /** One reported row, unchanged in structure from the pre-disclosure list. */
 function ReportedRow({
   snapshot,
+  thisComputerVersion,
 }: {
   snapshot: RolePackSnapshotModel["reported"][number];
+  thisComputerVersion: string | null;
 }) {
+  const templateDrift = templateDriftText(
+    snapshot.composedWith,
+    thisComputerVersion,
+  );
   return (
     <li
       className="flex flex-col gap-1 text-xs"
@@ -253,6 +260,17 @@ function ReportedRow({
           <>
             {" · "}
             <span className="text-muted-foreground">{snapshot.note}</span>
+          </>
+        ) : null}
+        {templateDrift ? (
+          <>
+            {" · "}
+            <span
+              className="text-muted-foreground"
+              data-testid="role-pack-template-drift"
+            >
+              {templateDrift}
+            </span>
           </>
         ) : null}
         {" · "}
@@ -351,6 +369,7 @@ function HistoryGroup({
               <ReportedRow
                 key={`${snapshot.channelId}:${snapshot.generationId}`}
                 snapshot={snapshot}
+                thisComputerVersion={snapshots.thisComputerVersion}
               />
             ))}
           </ul>

@@ -3166,6 +3166,7 @@ mod tests {
             bee_stamp: None,
             pack_ref: None,
             handover: None,
+            compose_ref: None,
         }
     }
 

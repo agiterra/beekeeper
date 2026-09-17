@@ -728,7 +728,7 @@ mod tests {
     const PROJECT: &str =
         "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse";
 
-    const ACTIONS: &str = "schema: buzz-project-actions/v1\nactions:\n  - name: nightly\n    trigger: { on: webhook }\n    steps:\n      - id: say\n        action: send_message\n        text: hi\n      - id: build\n        action: run_on_host\n        command: [\"true\"]\n";
+    const ACTIONS: &str = "schema: buzz-project-actions/v1\nactions:\n  - name: nightly\n    trigger: { on: manual }\n    steps:\n      - id: say\n        action: send_message\n        text: hi\n      - id: build\n        action: run_on_host\n        command: [\"true\"]\n";
 
     fn checkout_with(actions: Option<&str>) -> tempfile::TempDir {
         let dir = tempfile::tempdir().expect("tempdir");

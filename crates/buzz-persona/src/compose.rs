@@ -76,6 +76,9 @@ pub enum ComposeError {
     #[error("role {role:?} not found in {looked_in}")]
     RoleNotFound { role: String, looked_in: String },
 
+    #[error("{path} is not a readable compose.json: {detail}")]
+    Provenance { path: PathBuf, detail: String },
+
     #[error("role slug {role:?} must be 1-64 bytes of [a-z0-9-]")]
     InvalidRoleSlug { role: String },
 
@@ -222,6 +225,42 @@ pub struct IncludeRecord {
     /// Size of an inserted project file, for `./…` includes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bytes: Option<u64>,
+}
+
+/// Read the `compose.json` beside a staged pack, if the directory has one.
+///
+/// `Ok(None)` for a pack that was never composed (a plain installed or
+/// shipped pack has no such file); an unreadable or malformed file is an
+/// error, because a provenance record that exists but cannot be read is not
+/// the same fact as none.
+pub fn read_provenance(pack_dir: &Path) -> Result<Option<ComposeProvenance>, ComposeError> {
+    let path = pack_dir.join(COMPOSE_JSON);
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => {
+            return Err(ComposeError::Io {
+                operation: "read",
+                path,
+                source,
+            })
+        }
+    };
+    let provenance: ComposeProvenance =
+        serde_json::from_slice(&bytes).map_err(|error| ComposeError::Provenance {
+            path: path.clone(),
+            detail: error.to_string(),
+        })?;
+    if provenance.schema != COMPOSE_PROVENANCE_SCHEMA {
+        return Err(ComposeError::Provenance {
+            path,
+            detail: format!(
+                "schema {:?}, expected {COMPOSE_PROVENANCE_SCHEMA:?}",
+                provenance.schema
+            ),
+        });
+    }
+    Ok(Some(provenance))
 }
 
 /// The `compose.json` beside a staged pack: everything a reader needs to

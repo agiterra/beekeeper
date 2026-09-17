@@ -7,6 +7,7 @@ import {
   derivePackRefs,
   isShippedPackRef,
   PACK_REF_SHIPPED_REPO,
+  readComposeRef,
   readPackRef,
 } from "./codingSessionPackRef.ts";
 
@@ -184,4 +185,20 @@ test("codingSessionSeatStagedFromLine names the shipped fallback as such", () =>
 
 test("codingSessionSeatStagedFromLine is null for no packRef — no provenance is not a guess", () => {
   assert.equal(codingSessionSeatStagedFromLine(null), null);
+});
+
+test("readComposeRef accepts the exact two-key shape and refuses the rest", () => {
+  const digest = `sha256:${"d".repeat(64)}`;
+  assert.deepEqual(readComposeRef({ appVersion: "0.4.2", digest }), {
+    appVersion: "0.4.2",
+    digest,
+  });
+  assert.equal(readComposeRef(null), null);
+  assert.equal(readComposeRef({ appVersion: "0.4.2" }), null);
+  assert.equal(readComposeRef({ appVersion: "", digest }), null);
+  assert.equal(readComposeRef({ appVersion: "0.4.2", digest: "abc" }), null);
+  assert.equal(
+    readComposeRef({ appVersion: "0.4.2", digest, command: ["rm"] }),
+    null,
+  );
 });

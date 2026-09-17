@@ -220,6 +220,12 @@ pub struct SessionRecord {
     /// every record written before this field existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pack_ref: Option<crate::actor_seats::PackRef>,
+    /// How the staged pack was composed — the app version whose templates
+    /// resolved it and the digest of the result — read from the pack's
+    /// `compose.json` at seat start. `None` for an uncomposed pack, a
+    /// packless seat, and every record written before this field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compose_ref: Option<buzz_core::coding_session_payload::ComposeRef>,
     /// The verified signer of the create that opened this execution.
     ///
     /// Not the same fact as [`Self::founder_pubkey`]: for a genesis-bearing
@@ -1627,6 +1633,7 @@ mod tests {
             handover: ClaimState::NoClaim,
             retired: None,
             pack_ref: None,
+            compose_ref: None,
         }
     }
 
