@@ -1777,7 +1777,8 @@ async fn count_events_authed(
         // NIP-MP Pulse (44240) — mirrors the WS COUNT handler: the fast SQL
         // path applies no per-event gate, so a private project's entry count
         // would leak the project's existence through the total alone.
-        let needs_pulse_gate_filtering = crate::handlers::req::filter_can_match_pulse_kind(filter);
+        let needs_pulse_gate_filtering =
+            crate::handlers::req::filter_can_match_project_a_scoped_kind(filter);
 
         // If filter targets a specific channel, verify access.
         if crate::handlers::req::extract_channel_ids_from_filters(std::slice::from_ref(filter))
@@ -1974,42 +1975,43 @@ async fn count_events_authed(
     Ok(Json(serde_json::json!({ "count": total })))
 }
 
-/// Request-shape validation for a filter targeting NIP-MP Pulse entries
-/// (kind:44240), yielding the single canonical project coordinate it names.
+/// Request-shape validation for a filter targeting project-`a`-scoped kinds
+/// — NIP-MP Pulse entries (kind:44240) and NIP-TD to-do ops (kind:44248),
+/// [`buzz_core::kind::is_project_a_scoped_kind`] — yielding the single
+/// canonical project coordinate it names.
 ///
-/// `Ok(None)` means "not a Pulse filter, nothing to check". `Err` is a
-/// **400-level client mistake and explicitly not an authorization verdict**:
-/// read authorization for 44240 lives in the per-event gate
+/// `Ok(None)` means "not a project-scoped filter, nothing to check". `Err`
+/// is a **400-level client mistake and explicitly not an authorization
+/// verdict**: read authorization for these kinds lives in the per-event gate
 /// ([`crate::handlers::req::event_visible_to_reader`]), which every read
 /// surface — WS REQ, live fan-out, `/query`, `/count`, FTS — already shares.
 /// Two shapes are refused:
 ///
-/// - A 44240 query without exactly one canonical `30621:<lowercase-hex>:<dtag>`
-///   value in `#a`. An unscoped or multi-project Pulse read has no meaning,
-///   and a case-variant coordinate can never match the stored (canonical) tag.
-/// - A filter mixing 44240 with any other kind. JSONB `#a` containment
-///   excludes every coding-session kind — 44223 and friends carry no `a` tag
-///   (`crates/buzz-sdk/src/builders.rs`) — so
+/// - A query without exactly one canonical `30621:<lowercase-hex>:<dtag>`
+///   value in `#a`. An unscoped or multi-project read has no meaning, and a
+///   case-variant coordinate can never match the stored (canonical) tag.
+/// - A filter mixing a project-scoped kind with any kind outside the set.
+///   JSONB `#a` containment excludes every coding-session kind — 44223 and
+///   friends carry no `a` tag (`crates/buzz-sdk/src/builders.rs`) — so
 ///   `{"kinds":[44240,44223],"#a":[…]}` satisfies the `#a` rule and still
-///   returns only entries, with an empty session list and no error. Query the
-///   session kinds in their own `#h`-scoped filter.
+///   returns only entries, with an empty session list and no error. Query
+///   the session kinds in their own `#h`-scoped filter. Mixing 44240 with
+///   44248 is fine: they share one gate and one coordinate.
 ///
-/// A filter with no `kinds` at all is not treated as a Pulse query: the
+/// A filter with no `kinds` at all is not treated as a project query: the
 /// p-gate already refuses a kindless read unless it is pinned to `#p=[self]`,
-/// and a 44240 carries no `p` tag, so it can never match one.
+/// and neither kind carries a `p` tag, so it can never match one.
 fn pulse_query_coordinate(filter: &nostr::Filter) -> Result<Option<String>, String> {
     let Some(kinds) = filter.kinds.as_ref() else {
         return Ok(None);
     };
-    if !kinds
-        .iter()
-        .any(|k| k.as_u16() as u32 == buzz_core::kind::KIND_PULSE_ENTRY)
-    {
+    let scoped = |k: &nostr::Kind| buzz_core::kind::is_project_a_scoped_kind(k.as_u16() as u32);
+    if !kinds.iter().any(scoped) {
         return Ok(None);
     }
-    if kinds.len() != 1 {
+    if !kinds.iter().all(scoped) {
         return Err(
-            "kind 44240 must be queried in its own filter, not mixed with other kinds".to_string(),
+            "project-scoped kinds (44240, 44248) must be queried in their own filter, not mixed with other kinds".to_string(),
         );
     }
     let a_tag = nostr::SingleLetterTag::lowercase(nostr::Alphabet::A);
@@ -2020,7 +2022,7 @@ fn pulse_query_coordinate(filter: &nostr::Filter) -> Result<Option<String>, Stri
         .unwrap_or_default();
     let [coordinate] = values.as_slice() else {
         return Err(format!(
-            "kind 44240 queries require exactly one project coordinate in #a (got {})",
+            "project-scoped kind queries require exactly one project coordinate in #a (got {})",
             values.len()
         ));
     };
@@ -2028,7 +2030,8 @@ fn pulse_query_coordinate(filter: &nostr::Filter) -> Result<Option<String>, Stri
         != Some(coordinate.as_str())
     {
         return Err(
-            "kind 44240 #a must be a canonical 30621:<lowercase-hex>:<dtag> coordinate".to_string(),
+            "project-scoped kind #a must be a canonical 30621:<lowercase-hex>:<dtag> coordinate"
+                .to_string(),
         );
     }
     Ok(Some(coordinate.clone()))

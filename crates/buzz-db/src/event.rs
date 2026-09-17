@@ -808,18 +808,27 @@ pub(crate) async fn query_events_on(
             qb.push("))))");
         }
 
-        // NIP-MP Pulse (44240): a Pulse entry belongs to a *project*, not to a
-        // repo, so none of the repo clauses above ever see it — 44240 is
-        // absent from `GIT_PROJECT_GATED_KINDS`, whose leading `kind NOT IN`
-        // guard would short-circuit the whole gate to TRUE for it. Exclude
-        // entries whose `a` tag names a private project hidden from this
-        // reader before ORDER/LIMIT, for the same starvation reason as the
-        // clauses above. `pulse_entry_hidden_from` stays as post-filter
+        // Project-`a`-scoped kinds (Pulse 44240, to-do op 44248): they belong
+        // to a *project*, not to a repo, so none of the repo clauses above
+        // ever see them — they are absent from `GIT_PROJECT_GATED_KINDS`,
+        // whose leading `kind NOT IN` guard would short-circuit the whole
+        // gate to TRUE for them. Exclude events whose `a` tag names a private
+        // project hidden from this reader before ORDER/LIMIT, for the same
+        // starvation reason as the clauses above.
+        // `project_a_scoped_event_hidden_from` stays as post-filter
         // defense-in-depth: it normalizes case-variant coordinates this exact
         // probe would miss, and fails closed when no coordinate parses.
         if !git_gate.hidden.project_coordinates.is_empty() {
-            qb.push(format!(" AND ({col_prefix}kind <> "));
-            qb.push_bind(buzz_core::kind::KIND_PULSE_ENTRY as i32);
+            qb.push(format!(" AND ({col_prefix}kind NOT IN ("));
+            let mut first_kind = true;
+            for kind in buzz_core::kind::PROJECT_A_SCOPED_KINDS {
+                if !first_kind {
+                    qb.push(", ");
+                }
+                first_kind = false;
+                qb.push_bind(*kind as i32);
+            }
+            qb.push(")");
             qb.push(format!(" OR {col_prefix}pubkey = "));
             qb.push_bind(git_gate.reader.clone());
             qb.push(" OR NOT (");
@@ -3732,6 +3741,27 @@ mod tests {
         insert_event(&pool, community, &open_entry, None)
             .await
             .expect("insert open-project entry");
+        // The to-do op (44248) rides the same pushdown: one hidden, one open.
+        let hidden_todo = make_a_tagged_event_at(
+            &author,
+            44_248,
+            &hidden_coordinate,
+            "private todo op",
+            base + 3,
+        );
+        insert_event(&pool, community, &hidden_todo, None)
+            .await
+            .expect("insert hidden-project todo op");
+        let open_todo = make_a_tagged_event_at(
+            &author,
+            44_248,
+            &open_coordinate,
+            "public todo op",
+            base + 4,
+        );
+        insert_event(&pool, community, &open_todo, None)
+            .await
+            .expect("insert open-project todo op");
 
         let gate = |who: &Keys| crate::event::GitGatedReader {
             reader: who.public_key().to_bytes().to_vec(),
@@ -3746,7 +3776,7 @@ mod tests {
         let visible = query_events(
             &pool,
             &EventQuery {
-                kinds: Some(vec![44_240]),
+                kinds: Some(vec![44_240, 44_248]),
                 git_gated_reader: Some(gate(&reader)),
                 limit: Some(10),
                 ..EventQuery::for_community(community)
@@ -3754,13 +3784,19 @@ mod tests {
         )
         .await
         .expect("query as an outsider");
-        assert_eq!(visible.len(), 1, "the hidden project's entry is withheld");
-        assert_eq!(visible[0].event.id, open_entry.id);
+        let mut visible_ids: Vec<_> = visible.iter().map(|e| e.event.id).collect();
+        visible_ids.sort();
+        let mut expected = vec![open_entry.id, open_todo.id];
+        expected.sort();
+        assert_eq!(
+            visible_ids, expected,
+            "the hidden project's entry and todo op are withheld"
+        );
 
         let as_author = query_events(
             &pool,
             &EventQuery {
-                kinds: Some(vec![44_240]),
+                kinds: Some(vec![44_240, 44_248]),
                 git_gated_reader: Some(gate(&author)),
                 limit: Some(10),
                 ..EventQuery::for_community(community)
@@ -3770,8 +3806,8 @@ mod tests {
         .expect("query as the author");
         assert_eq!(
             as_author.len(),
-            2,
-            "an author always reads back their own entries"
+            4,
+            "an author always reads back their own entries and ops"
         );
     }
 

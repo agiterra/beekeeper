@@ -1578,7 +1578,7 @@ pub(crate) fn filter_can_match_project_kind(filter: &Filter) -> bool {
 /// The NIP-MP membership kinds (9010/9011/39010) ride the same rule for the
 /// same reason ([`buzz_core::kind::project_membership_event_hidden_from`]),
 /// and so does the Pulse entry (kind:44240) —
-/// [`buzz_core::kind::pulse_entry_hidden_from`] reads the same coordinate set,
+/// [`buzz_core::kind::project_a_scoped_event_hidden_from`] reads the same coordinate set,
 /// so omitting 44240 here would leave that gate looking at an empty set and
 /// failing open on every private project's Pulse.
 ///
@@ -1602,14 +1602,15 @@ pub(crate) fn filter_can_match_git_gated_kinds(filter: &Filter) -> bool {
                 buzz_core::kind::is_git_project_gated_kind(kind)
                     || kind == buzz_core::kind::KIND_SHELL_SESSION
                     || buzz_core::kind::is_project_membership_kind(kind)
-                    || kind == buzz_core::kind::KIND_PULSE_ENTRY
+                    || buzz_core::kind::is_project_a_scoped_kind(kind)
                     || kind == KIND_PROJECT
             })
     })
 }
 
-/// Returns `true` if the filter CAN match a Pulse entry (kind:44240) — no
-/// `kinds` constraint (wildcard) or 44240 among them.
+/// Returns `true` if the filter CAN match a project-`a`-scoped event (a Pulse
+/// entry 44240 or a to-do op 44248, [`buzz_core::kind::is_project_a_scoped_kind`])
+/// — no `kinds` constraint (wildcard) or one of them among the kinds.
 ///
 /// Used by the COUNT handlers to force the per-event fallback. The fast SQL
 /// `count_events()` applies no per-event gate *and* carries no
@@ -1618,14 +1619,14 @@ pub(crate) fn filter_can_match_git_gated_kinds(filter: &Filter) -> bool {
 /// Unlike the git gate this is not conditioned on a non-empty hidden set: the
 /// set is resolved from the same call, and a count is cheap to route through
 /// the fallback.
-pub(crate) fn filter_can_match_pulse_kind(filter: &Filter) -> bool {
+pub(crate) fn filter_can_match_project_a_scoped_kind(filter: &Filter) -> bool {
     filter.kinds.as_ref().is_none_or(|ks| {
         // Empty kind set == wildcard, same reasoning as
         // [`filter_can_match_git_gated_kinds`].
         ks.is_empty()
             || ks
                 .iter()
-                .any(|k| k.as_u16() as u32 == buzz_core::kind::KIND_PULSE_ENTRY)
+                .any(|k| buzz_core::kind::is_project_a_scoped_kind(k.as_u16() as u32))
     })
 }
 
@@ -1765,7 +1766,7 @@ pub(crate) fn event_visible_to_reader(
     // project in its `a` tag and is otherwise a channel-less global event, so
     // this is the only gate standing between it and every authenticated
     // pubkey. Fails closed when no coordinate parses.
-    if buzz_core::kind::pulse_entry_hidden_from(
+    if buzz_core::kind::project_a_scoped_event_hidden_from(
         event,
         &requester_pubkey_hex,
         &hidden_repos.project_coordinates,
@@ -1828,12 +1829,12 @@ mod tests {
             "an empty kinds array must deserialize to Some(empty), not None"
         );
         assert!(filter_can_match_git_gated_kinds(&filter));
-        assert!(filter_can_match_pulse_kind(&filter));
+        assert!(filter_can_match_project_a_scoped_kind(&filter));
 
         // A genuinely narrow, ungated filter still short-circuits.
         let narrow: Filter = serde_json::from_str(r#"{"kinds":[1]}"#).expect("filter parses");
         assert!(!filter_can_match_git_gated_kinds(&narrow));
-        assert!(!filter_can_match_pulse_kind(&narrow));
+        assert!(!filter_can_match_project_a_scoped_kind(&narrow));
     }
 
     /// `{"kinds":[30621]}` is the desktop's project-list request. Its gate

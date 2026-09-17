@@ -481,7 +481,8 @@ fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static s
         buzz_core::kind::KIND_SHELL_SESSION => Ok(Scope::MessagesWrite),
         // NIP-MP Pulse: an explicit project coordination entry is authored
         // member content, not repository metadata. Per-project write
-        // admission is enforced separately at ingest (`pulse_write_admitted`).
+        // admission is enforced separately at ingest
+        // (`project_scoped_write_admitted`).
         //
         // The computed digest (39011) and the relay-signed summary (44242) are
         // deliberately absent from this match: the default arm below is what
@@ -489,6 +490,10 @@ fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static s
         // silently drop it into the generic parameterized-replaceable
         // store-and-replace path.
         buzz_core::kind::KIND_PULSE_ENTRY => Ok(Scope::MessagesWrite),
+        // NIP-TD: a project to-do op is authored member content on a
+        // project's shared list. Same scope and the same per-project write
+        // admission as Pulse (`project_scoped_write_admitted`).
+        buzz_core::kind::KIND_PROJECT_TODO_OP => Ok(Scope::MessagesWrite),
         KIND_GIT_PATCH
         | KIND_GIT_PULL_REQUEST
         | KIND_GIT_PR_UPDATE
@@ -505,8 +510,9 @@ fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static s
     }
 }
 
-/// Write admission for a NIP-MP Pulse entry (kind:44240), as a pure decision
-/// over already-resolved database facts.
+/// Write admission for a project-`a`-scoped event — a NIP-MP Pulse entry
+/// (kind:44240) or a NIP-TD to-do op (kind:44248) — as a pure decision over
+/// already-resolved database facts.
 ///
 /// `gate` is [`buzz_db::project_acl::get_project_gate_by_coordinate`]'s result
 /// — `Some` only for a **private** project — and `project_exists` answers the
@@ -524,7 +530,7 @@ fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static s
 ///   entry naming a project that does not exist is in nobody's hidden set, so
 ///   it would be shown to everyone as a coordination fact with no project
 ///   behind it.
-fn pulse_write_admitted(
+fn project_scoped_write_admitted(
     gate: Option<&buzz_db::project_acl::ProjectGate>,
     project_exists: bool,
     author_pubkey: &[u8],
@@ -537,6 +543,55 @@ fn pulse_write_admitted(
         None if !project_exists => Err("restricted: unknown project coordinate"),
         None => Ok(()),
     }
+}
+
+/// Resolve the project a project-`a`-scoped event names and admit or refuse
+/// the write with [`project_scoped_write_admitted`]. `what` names the kind in
+/// the refusal text.
+///
+/// The `a` tag is a *required* singleton (both validators enforce it), so
+/// unlike the soft `project` back-references on repository events the
+/// coordinate must resolve to a project that really exists, and the author
+/// must hold write access to it.
+async fn admit_project_scoped_write(
+    state: &AppState,
+    tenant: &TenantContext,
+    event: &Event,
+    what: &str,
+) -> Result<(), IngestError> {
+    let coordinate = buzz_core::kind::project_a_scoped_coordinate(event)
+        .ok_or_else(|| IngestError::Rejected(format!("invalid: {what} requires one a tag")))?;
+    let author_bytes = event.pubkey.to_bytes();
+    let gate = state
+        .db
+        .get_project_gate_by_coordinate(tenant.community(), &coordinate)
+        .await
+        // Fail closed: an unknown gate must not admit a write, matching
+        // the git-child gate.
+        .map_err(|e| IngestError::Internal(format!("error: project gate lookup failed: {e}")))?;
+    // `None` from that query means public-*or-unknown*, because it filters
+    // `visibility = 'private'`. Resolve the ambiguity with an indexed
+    // existence probe rather than the `can_write_project_contents` /
+    // `can_access_project_contents` helpers, which cannot: both
+    // `.unwrap_or(true)` on a missing row, so an event naming a coordinate
+    // no kind:30621 event ever created would be accepted, and an unknown
+    // coordinate is in nobody's hidden set — the relay would then show
+    // everyone a fact invented out of nothing.
+    let project_exists = match gate {
+        Some(_) => true,
+        None => state
+            .db
+            .project_exists_by_coordinate(tenant.community(), &coordinate)
+            .await
+            .map_err(|e| IngestError::Internal(format!("error: project lookup failed: {e}")))?,
+    };
+    // Raised as an *auth* failure, not a rejection: §5.4's exit-code table
+    // requires a refused project write to surface as HTTP 403 (→ CLI exit
+    // 3), and `bridge.rs` maps every `Rejected` to 400 (→ exit 2, transport
+    // error). The WS wire text is unchanged — `handlers/event.rs` sends the
+    // identical `OK false "restricted: …"` for both variants.
+    project_scoped_write_admitted(gate.as_ref(), project_exists, &author_bytes)
+        .map_err(|msg| IngestError::AuthFailed(msg.to_string()))
 }
 
 /// Extract a channel UUID from the `"h"` NIP-29 group tag.
@@ -697,6 +752,11 @@ pub(crate) fn is_global_only_kind(kind: u32) -> bool {
             // NIP-AM: agent turn metrics are owner-scoped global events.
             // Channel identity is encrypted inside the payload — no `h` tag.
             | KIND_AGENT_TURN_METRIC
+            // NIP-TD: a to-do op belongs to a project, never to a room. Its
+            // validator already rejects an `h` tag; listing it here means
+            // nothing downstream can ever treat it as channel-scoped either.
+            // (Pulse 44240 is deliberately absent — its `h` is optional.)
+            | buzz_core::kind::KIND_PROJECT_TODO_OP
             // NIP-PL leases are author-owned, addressable global state.
             | super::push_lease::KIND_PUSH_LEASE
     )
@@ -4280,43 +4340,23 @@ async fn ingest_event_inner(
         // retry reordering still stores.
         buzz_core::pulse::validate_pulse_entry_envelope(&event)
             .map_err(|e| IngestError::Rejected(format!("invalid: {e}")))?;
-        let coordinate =
-            buzz_core::pulse::pulse_entry_project_coordinate(&event).ok_or_else(|| {
-                IngestError::Rejected("invalid: pulse entry requires one a tag".into())
-            })?;
-        let author_bytes = event.pubkey.to_bytes();
-        let gate = state
-            .db
-            .get_project_gate_by_coordinate(tenant.community(), &coordinate)
-            .await
-            // Fail closed: an unknown gate must not admit a write, matching
-            // the git-child gate below.
-            .map_err(|e| {
-                IngestError::Internal(format!("error: project gate lookup failed: {e}"))
-            })?;
-        // `None` from that query means public-*or-unknown*, because it filters
-        // `visibility = 'private'`. Resolve the ambiguity with an indexed
-        // existence probe rather than the `can_write_project_contents` /
-        // `can_access_project_contents` helpers, which cannot: both
-        // `.unwrap_or(true)` on a missing row, so an entry naming a
-        // coordinate no kind:30621 event ever created would be accepted, and
-        // an unknown coordinate is in nobody's hidden set — the relay would
-        // then show everyone a coordination fact invented out of nothing.
-        let project_exists = match gate {
-            Some(_) => true,
-            None => state
-                .db
-                .project_exists_by_coordinate(tenant.community(), &coordinate)
-                .await
-                .map_err(|e| IngestError::Internal(format!("error: project lookup failed: {e}")))?,
-        };
-        // Raised as an *auth* failure, not a rejection: §5.4's exit-code table
-        // requires a refused Pulse write to surface as HTTP 403 (→ CLI exit 3),
-        // and `bridge.rs` maps every `Rejected` to 400 (→ exit 2, transport
-        // error). The WS wire text is unchanged — `handlers/event.rs` sends the
-        // identical `OK false "restricted: …"` for both variants.
-        pulse_write_admitted(gate.as_ref(), project_exists, &author_bytes)
-            .map_err(|msg| IngestError::AuthFailed(msg.to_string()))?;
+        admit_project_scoped_write(state, tenant, &event, "pulse entry").await?;
+    }
+
+    // NIP-TD: a to-do op rides the same admission as a Pulse entry. Its
+    // validator refuses an `h` tag outright, so unlike 44240 there is never a
+    // channel gate to reconcile with.
+    if kind_u32 == buzz_core::kind::KIND_PROJECT_TODO_OP {
+        let got = event.content.len();
+        if got > buzz_core::project_todo::MAX_PROJECT_TODO_CONTENT_BYTES {
+            return Err(IngestError::Rejected(format!(
+                "invalid: todo op content exceeds {} bytes (got {got})",
+                buzz_core::project_todo::MAX_PROJECT_TODO_CONTENT_BYTES
+            )));
+        }
+        buzz_core::project_todo::validate_project_todo_envelope(&event)
+            .map_err(|e| IngestError::Rejected(format!("invalid: {e}")))?;
+        admit_project_scoped_write(state, tenant, &event, "todo op").await?;
     }
 
     if kind_u32 == KIND_GIT_REPO_ANNOUNCEMENT {
@@ -7563,6 +7603,88 @@ mod tests {
         assert!(!requires_h_channel_scope(buzz_core::kind::KIND_PULSE_ENTRY));
     }
 
+    // ── NIP-TD to-do ops (44248) ────────────────────────────────────────
+
+    #[test]
+    fn todo_op_requires_messages_write_scope() {
+        let dummy = make_dummy_event();
+        assert_eq!(
+            required_scope_for_kind(buzz_core::kind::KIND_PROJECT_TODO_OP, &dummy).unwrap(),
+            Scope::MessagesWrite,
+        );
+    }
+
+    /// Unlike 44240, a to-do op never carries `h` (its validator refuses
+    /// one), so it is forced global: a stray `h` can never channel-scope it.
+    #[test]
+    fn todo_op_is_global_only_and_never_h_required() {
+        assert!(is_global_only_kind(buzz_core::kind::KIND_PROJECT_TODO_OP));
+        assert!(!requires_h_channel_scope(
+            buzz_core::kind::KIND_PROJECT_TODO_OP
+        ));
+    }
+
+    #[test]
+    fn todo_op_validator_refuses_h_unknown_keys_and_tag_mismatch() {
+        let keys = nostr::Keys::generate();
+        let coordinate = canonical_pulse_coordinate(&keys);
+        let list = "0123456789abcdef0123456789abcdef";
+        let item = "fedcba9876543210fedcba9876543210";
+        let content = |extra: &str| {
+            format!(
+                r#"{{"schema":"{}","op":"item.add","listId":"{list}","itemId":"{item}","text":"t","rank":"a0"{extra}}}"#,
+                buzz_core::project_todo::PROJECT_TODO_SCHEMA
+            )
+        };
+        let build = |content: String, tags: &[&[&str]]| {
+            let nostr_tags: Vec<nostr::Tag> = tags
+                .iter()
+                .map(|t| nostr::Tag::parse(t.iter().copied()).expect("tag"))
+                .collect();
+            nostr::EventBuilder::new(
+                nostr::Kind::Custom(buzz_core::kind::KIND_PROJECT_TODO_OP as u16),
+                content,
+            )
+            .tags(nostr_tags)
+            .sign_with_keys(&keys)
+            .expect("sign todo op")
+        };
+        let a_tag: [&str; 2] = ["a", &coordinate];
+        let v_tag: [&str; 2] = ["td-v", "td1-1"];
+        let op_tag: [&str; 2] = ["td-op", "item.add"];
+        let list_tag: [&str; 2] = ["td-list", list];
+        let item_tag: [&str; 2] = ["td-item", item];
+        let base: Vec<&[&str]> = vec![&a_tag, &v_tag, &op_tag, &list_tag, &item_tag];
+        let ok = build(content(""), &base);
+        assert!(buzz_core::project_todo::validate_project_todo_envelope(&ok).is_ok());
+
+        let channel = uuid::Uuid::new_v4().to_string();
+        let mut with_h = base.clone();
+        let h_tag: &[&str] = &["h", &channel];
+        with_h.push(h_tag);
+        let err =
+            buzz_core::project_todo::validate_project_todo_envelope(&build(content(""), &with_h))
+                .unwrap_err();
+        assert!(err.contains("must not carry an h tag"), "{err}");
+
+        let err = buzz_core::project_todo::validate_project_todo_envelope(&build(
+            content(r#","priority":"high""#),
+            &base,
+        ))
+        .unwrap_err();
+        assert!(err.contains("unsupported field"), "{err}");
+
+        let wrong_op: [&str; 2] = ["td-op", "item.text"];
+        let mut mismatched = base.clone();
+        mismatched[2] = &wrong_op;
+        let err = buzz_core::project_todo::validate_project_todo_envelope(&build(
+            content(""),
+            &mismatched,
+        ))
+        .unwrap_err();
+        assert!(err.contains("does not match content op"), "{err}");
+    }
+
     #[test]
     fn pulse_entry_rejects_duplicate_singleton_tags() {
         let keys = nostr::Keys::generate();
@@ -7712,28 +7834,31 @@ mod tests {
             ],
         };
 
-        assert_eq!(pulse_write_admitted(Some(&gate), true, &owner), Ok(()));
         assert_eq!(
-            pulse_write_admitted(Some(&gate), true, &collaborator),
+            project_scoped_write_admitted(Some(&gate), true, &owner),
             Ok(())
         );
         assert_eq!(
-            pulse_write_admitted(Some(&gate), true, &viewer),
+            project_scoped_write_admitted(Some(&gate), true, &collaborator),
+            Ok(())
+        );
+        assert_eq!(
+            project_scoped_write_admitted(Some(&gate), true, &viewer),
             Err("restricted: project write access required"),
             "a read-only member of a private project reads the Pulse and never writes it"
         );
         assert_eq!(
-            pulse_write_admitted(Some(&gate), true, &stranger),
+            project_scoped_write_admitted(Some(&gate), true, &stranger),
             Err("restricted: project write access required")
         );
 
         // Public project (no gate row) that exists: any community member.
-        assert_eq!(pulse_write_admitted(None, true, &stranger), Ok(()));
+        assert_eq!(project_scoped_write_admitted(None, true, &stranger), Ok(()));
         // Coordinate no kind:30621 event ever created: refused, because an
         // unknown coordinate is in nobody's hidden set and the entry would
         // otherwise be shown to everyone.
         assert_eq!(
-            pulse_write_admitted(None, false, &owner),
+            project_scoped_write_admitted(None, false, &owner),
             Err("restricted: unknown project coordinate")
         );
     }

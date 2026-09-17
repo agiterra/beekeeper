@@ -334,14 +334,15 @@ pub async fn filter_fanout_by_access(
         matches
     };
 
-    // NIP-MP Pulse gate (fan-out): a project entry (44240) is a global,
-    // channel-less event, so the channel filtering below never sees it and
-    // every matching subscriber would otherwise receive a private project's
-    // coordination view live. Deliver past the author only to connections the
-    // project's gate admits, matching REQ semantics
-    // (`pulse_entry_hidden_from`). A missing coordinate or a gate-lookup
-    // failure delivers to nobody but the author (fail closed).
-    let matches = if event_kind_u32(&stored_event.event) == buzz_core::kind::KIND_PULSE_ENTRY {
+    // Project-`a`-scoped gate (fan-out): a Pulse entry (44240) or a to-do op
+    // (44248) is a global, channel-less event, so the channel filtering below
+    // never sees it and every matching subscriber would otherwise receive a
+    // private project's coordination view live. Deliver past the author only
+    // to connections the project's gate admits, matching REQ semantics
+    // (`project_a_scoped_event_hidden_from`). A missing coordinate or a
+    // gate-lookup failure delivers to nobody but the author (fail closed).
+    let matches = if buzz_core::kind::is_project_a_scoped_kind(event_kind_u32(&stored_event.event))
+    {
         let author = stored_event.event.pubkey.to_bytes();
         type ConnMatches = Vec<(crate::subscription::ConnId, crate::subscription::SubId)>;
         let author_only = |matches: ConnMatches| -> ConnMatches {
@@ -355,9 +356,9 @@ pub async fn filter_fanout_by_access(
                 })
                 .collect()
         };
-        // Ingest rejects a 44240 without exactly one canonical `a`, so a
-        // missing coordinate here is a stored event no gate can describe.
-        match buzz_core::pulse::pulse_entry_project_coordinate(&stored_event.event) {
+        // Ingest rejects a 44240/44248 without exactly one canonical `a`, so
+        // a missing coordinate here is a stored event no gate can describe.
+        match buzz_core::kind::project_a_scoped_coordinate(&stored_event.event) {
             None => author_only(matches),
             Some(coordinate) => match state
                 .project_coordinate_gate_cached(community_id, &coordinate)
@@ -375,7 +376,7 @@ pub async fn filter_fanout_by_access(
                     })
                     .collect(),
                 Err(e) => {
-                    warn!(%coordinate, "fan-out access filter: pulse gate lookup failed: {e}");
+                    warn!(%coordinate, "fan-out access filter: project gate lookup failed: {e}");
                     author_only(matches)
                 }
             },
