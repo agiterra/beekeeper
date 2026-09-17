@@ -13737,6 +13737,28 @@ Evidence and limits: [conditional publication checkpoint](history/2026-09-12-pro
      arriving live. Mobile (delegated lane, gates re-run: 2100 tests) mirrors
      it with pinned rows under the project tree's To-do row.
 
+     **Landed on `main` at `0cbfcf296` (2026-09-17), fast-forward, 14
+     signed commits; the mobile gap above closed the same afternoon.** The
+     page was exercised on an iPhone 17 Pro simulator (iOS 26.5) paired to
+     the Desktop dev identity against the :3010 relay: personal and project
+     lists, pins under the tree's To-do row, reorder. Three things the
+     simulator run turned up, fixed in the follow-up commit: (a) a phone that
+     confirmed the SAS while the desktop's code had expired sat on
+     "Confirmed — waiting for desktop" with no way out short of the session
+     timeout — `PairingNotifier.cancelPairing()` and a Cancel button under
+     the spinner (`mobile/lib/features/pairing/pairing_page.dart`, widget
+     test "waiting for the desktop can be cancelled"); (b) Xcode 27 hard-
+     errors any pod with a deployment target under 15.0, so `Podfile`'s
+     `post_install` floors every pod at 16.0; (c) Xcode 27 has no
+     `Simulator.app` — Device Hub replaces it — so `just mobile-dev` now
+     accepts either host. Not ours to fix: on the iOS 27.0 runtime the
+     device pasteboard is dead (`simctl pbcopy` succeeds, `pbpaste` reads
+     back empty, no `com.apple.pboard` job), so the app's Paste finds
+     nothing; iOS 26.5 on the same Xcode works. Known upstream
+     (AndrewKochulab/sim-mirror#27; Apple forums thread 820393 for the
+     Xcode 26.4 predecessor, FB22336496). Test on a 26.5 device until Apple
+     fixes it.
+
 150. **Project actions C1 built: WF-08 closed, `run_on_host`, host-step kinds 46013/46014/46022/46023, `workflow_host_steps`, provider execution, `bee actions`, Actions tab (2026-09-17).** Spec § 5.4–5.6, § 7 C1 ([`PROJECT_TEAMS_AND_ACTIONS_SPEC.md`](PROJECT_TEAMS_AND_ACTIONS_SPEC.md)). What is built, with the code that proves it:
    - **WF-08 is closed.** A `request_approval` step now parks the run instead of failing it: the step loop calls `suspend::persist_and_publish`, which writes the approval row, flips the run to `waiting_approval` with its full trace, and only then publishes the relay-signed 46010 (`crates/buzz-workflow/src/suspend.rs` `persist_and_publish`; `executor.rs` `StepResult::Suspended` arm). `finalize_run` logs a suspended result and writes nothing (`lib.rs` `finalize_run`), because writing again would race the grant the request invites. Ordering is the contract: row → status → publish. Proved end to end against Postgres by `suspensions_are_durable_before_they_are_announced` (`lib.rs` tests, `#[ignore = "requires Postgres"]`, run 2026-09-17 on the local dev DB: 1 passed): authored gate → `waiting_approval` with its row; grant → resume at 1 → synthetic gate bound to index 1 naming the owner; grant → resume at 1 → `waiting_host` with the host-step row and a 46013 whose `definitionHash` equals the stored hash.
    - **`run_on_host` gates itself.** The executor's `RunOnHost` arm looks for a granted approval bound to the step's own id; absent, it suspends with a synthetic approval whose `step_index` is the host step's index and whose `approver_spec` is the workflow owner's hex key (`executor.rs` `RunOnHost` arm). The relay resumes **at** that index, not after it (`suspend::resume_index_after_approval`), which is how the same approvals table serves both authored gates and the spec's synthetic one. A granted step suspends again as `waiting_host` (new `run_status` value) after `create_host_step` and the 46013 publish.

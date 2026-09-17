@@ -310,6 +310,17 @@ class PairingNotifier extends Notifier<PairingState> {
     );
   }
 
+  /// Give up on a pairing the person confirmed but the desktop never
+  /// completed — its code expired while they typed, or it went away. Tells
+  /// the desktop, if it is still listening, and returns to the start so
+  /// they can try again rather than watch a spinner until the session
+  /// timeout.
+  void cancelPairing() {
+    _sendAbort('user_cancelled');
+    _cleanup();
+    state = const PairingState();
+  }
+
   void reset() {
     _cleanup();
     state = const PairingState();

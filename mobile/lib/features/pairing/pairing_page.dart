@@ -143,6 +143,8 @@ class PairingPage extends HookConsumerWidget {
                     onConfirm: () =>
                         ref.read(pairingProvider.notifier).confirmSas(),
                     onDeny: () => ref.read(pairingProvider.notifier).denySas(),
+                    onCancelWaiting: () =>
+                        ref.read(pairingProvider.notifier).cancelPairing(),
                   ),
                 ),
               ),
@@ -216,6 +218,9 @@ class _SasVerificationView extends StatelessWidget {
   final VoidCallback onConfirm;
   final VoidCallback onDeny;
 
+  /// Stop waiting for a desktop that has not completed the pairing.
+  final VoidCallback onCancelWaiting;
+
   const _SasVerificationView({
     required this.sasCode,
     required this.confirmed,
@@ -226,6 +231,7 @@ class _SasVerificationView extends StatelessWidget {
     required this.onProtectionChanged,
     required this.onConfirm,
     required this.onDeny,
+    required this.onCancelWaiting,
   });
 
   @override
@@ -317,20 +323,33 @@ class _SasVerificationView extends StatelessWidget {
 
         // Confirm / Deny buttons
         if (confirmed)
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
+          Column(
             children: [
-              BuzzLoadingIndicator(
-                size: 24,
-                color: context.colors.primary,
-                semanticLabel: 'Connecting',
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  BuzzLoadingIndicator(
+                    size: 24,
+                    color: context.colors.primary,
+                    semanticLabel: 'Connecting',
+                  ),
+                  const SizedBox(width: Grid.twelve),
+                  Text(
+                    'Confirmed — waiting for desktop',
+                    style: context.textTheme.bodySmall?.copyWith(
+                      color: context.colors.onSurfaceVariant,
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(width: Grid.twelve),
-              Text(
-                'Confirmed — waiting for desktop',
-                style: context.textTheme.bodySmall?.copyWith(
-                  color: context.colors.onSurfaceVariant,
-                ),
+              const SizedBox(height: Grid.xs),
+              // A desktop whose code expired never completes the pairing;
+              // this is the way out short of the two-minute session timeout.
+              OutlinedButton.icon(
+                key: const Key('pairing-cancel-waiting'),
+                onPressed: onCancelWaiting,
+                icon: const Icon(LucideIcons.x),
+                label: const Text('Cancel'),
               ),
             ],
           )

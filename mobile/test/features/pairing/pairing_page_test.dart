@@ -326,6 +326,24 @@ void main() {
       );
     });
 
+    testWidgets('waiting for the desktop can be cancelled', (tester) async {
+      final notifier = _ConfirmingSasPairingNotifier(userConfirmedSas: true);
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [pairingProvider.overrideWith(() => notifier)],
+          child: MaterialApp(theme: AppTheme.dark(), home: const PairingPage()),
+        ),
+      );
+
+      expect(find.text('Confirmed — waiting for desktop'), findsOneWidget);
+      expect(find.text('Codes Match'), findsNothing);
+      // A desktop whose code expired never completes; the person is not
+      // left with a spinner and no way out.
+      await tester.tap(find.byKey(const Key('pairing-cancel-waiting')));
+      await tester.pump();
+      expect(notifier.cancelWaitingCalls, 1);
+    });
+
     testWidgets('recovery SAS warns about permanent desktop access', (
       tester,
     ) async {
@@ -379,6 +397,9 @@ class _ErrorPairingNotifier extends Notifier<PairingState>
 
   @override
   void denySas() {}
+
+  @override
+  void cancelPairing() {}
 }
 
 class _ConnectingPairingNotifier extends Notifier<PairingState>
@@ -404,6 +425,9 @@ class _ConnectingPairingNotifier extends Notifier<PairingState>
 
   @override
   void denySas() {}
+
+  @override
+  void cancelPairing() {}
 }
 
 class _RecordingPairingNotifier extends Notifier<PairingState>
@@ -431,19 +455,28 @@ class _RecordingPairingNotifier extends Notifier<PairingState>
 
   @override
   void denySas() {}
+
+  @override
+  void cancelPairing() {}
 }
 
 class _ConfirmingSasPairingNotifier extends Notifier<PairingState>
     implements PairingNotifier {
-  _ConfirmingSasPairingNotifier({this.sendsIdentityToDesktop = false});
+  _ConfirmingSasPairingNotifier({
+    this.sendsIdentityToDesktop = false,
+    this.userConfirmedSas = false,
+  });
 
   final bool sendsIdentityToDesktop;
+  final bool userConfirmedSas;
+  int cancelWaitingCalls = 0;
 
   @override
   PairingState build() => PairingState(
     status: PairingStatus.confirmingSas,
     sasCode: '123456',
     sendsIdentityToDesktop: sendsIdentityToDesktop,
+    userConfirmedSas: userConfirmedSas,
   );
 
   @override
@@ -464,4 +497,7 @@ class _ConfirmingSasPairingNotifier extends Notifier<PairingState>
 
   @override
   void denySas() {}
+
+  @override
+  void cancelPairing() => cancelWaitingCalls++;
 }
