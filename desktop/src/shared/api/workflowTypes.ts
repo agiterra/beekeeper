@@ -111,6 +111,8 @@ export type WorkflowHostStep = {
   routedAgent: string | null;
   /** For a `wake_agent` step: the kind:44220 command id of that turn. */
   routedCommandId: string | null;
+  /** For a `hire_agent` step: the role the hire asked for. */
+  routedHiredRole: string | null;
   exitedAt: string | null;
   createdAt: string;
 };

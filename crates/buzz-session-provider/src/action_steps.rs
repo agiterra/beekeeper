@@ -32,7 +32,9 @@ use buzz_core::host_step::{
     build_host_step_claim, build_host_step_result, HostIdentity, HostStepClaim,
     HostStepDisposition, HostStepRefusal, HostStepRequested, HostStepResult, HOST_STEP_SCHEMA,
 };
-use buzz_core::host_step::{HOST_STEP_KIND_RUN_ON_HOST, HOST_STEP_KIND_WAKE_AGENT};
+use buzz_core::host_step::{
+    HOST_STEP_KIND_HIRE_AGENT, HOST_STEP_KIND_RUN_ON_HOST, HOST_STEP_KIND_WAKE_AGENT,
+};
 use buzz_core::kind::{KIND_HOST_STEP_CLAIM, KIND_HOST_STEP_RESULT};
 
 /// What a verified, prepared request will do once claimed.
@@ -52,6 +54,27 @@ enum StepPlan {
         target: buzz_core::coding_session_command::CodingSessionTarget,
         text: String,
     },
+    /// Hire a seat into an open execution's umbrella.
+    Hire {
+        agent: String,
+        role: String,
+        session_id: String,
+        session_ref: String,
+        genesis_ref: String,
+        channel_id: uuid::Uuid,
+        text: String,
+    },
+}
+
+/// The hire half of a [`StepPlan`], handed to `route_hire` after the claim.
+struct HirePlan {
+    agent: String,
+    role: String,
+    session_id: String,
+    session_ref: String,
+    genesis_ref: String,
+    channel_id: uuid::Uuid,
+    text: String,
 }
 
 /// The wake half of a [`StepPlan`], handed to `route_wake` after the claim.
@@ -119,6 +142,16 @@ pub enum VerifiedAction {
     /// `wake_agent`: deliver `brief` to the agent `team.yml` calls `agent`.
     Wake {
         /// The agent's name in `team.yml`.
+        agent: String,
+        /// The brief template from `actions.yml`.
+        brief: String,
+    },
+    /// `hire_agent`: seat `role` in the umbrella of the agent `team.yml`
+    /// calls `agent`, with `brief` as the seat's first turn.
+    Hire {
+        /// The role slug to seat.
+        role: String,
+        /// The agent whose umbrella the seat joins.
         agent: String,
         /// The brief template from `actions.yml`.
         brief: String,
@@ -236,8 +269,21 @@ pub fn verify_request(
             agent: to.agent.clone(),
             brief: brief.clone(),
         },
+        (
+            ActionDef::HireAgent {
+                role,
+                session,
+                brief,
+            },
+            HOST_STEP_KIND_HIRE_AGENT,
+        ) => VerifiedAction::Hire {
+            role: role.clone(),
+            agent: session.agent.clone(),
+            brief: brief.clone(),
+        },
         (ActionDef::RunOnHost { .. }, _) => return Err(mismatch("run_on_host")),
         (ActionDef::WakeAgent { .. }, _) => return Err(mismatch("wake_agent")),
+        (ActionDef::HireAgent { .. }, _) => return Err(mismatch("hire_agent")),
         _ => return Err(mismatch("not a host step")),
     };
     Ok(VerifiedStep {
@@ -564,6 +610,50 @@ impl Provider {
                             message: refusal.message,
                         })
                 }
+                VerifiedAction::Hire { role, agent, brief } => {
+                    let agent_role =
+                        crate::action_route::resolve_wake_role(&verified.checkout, &agent)?;
+                    let execution = crate::action_route::pick_open_execution(
+                        self.state.sessions(),
+                        &request.project,
+                        &agent_role,
+                    )
+                    .ok_or_else(|| HostStepRefusal {
+                        code: crate::action_route::ROUTE_NO_SESSION.to_owned(),
+                        message: format!(
+                            "no open execution of {agent} ({agent_role}) for this project runs on \
+                             this computer to hire into"
+                        ),
+                    })?;
+                    let (Some(session_ref), Some(genesis_ref)) =
+                        (execution.session_ref.clone(), execution.genesis_ref.clone())
+                    else {
+                        return Err(HostStepRefusal {
+                            code: crate::action_route::HIRE_NO_UMBRELLA.to_owned(),
+                            message: format!(
+                                "{agent}'s execution names no umbrella and genesis a seat could join"
+                            ),
+                        });
+                    };
+                    let text = crate::action_route::wake_brief_text(
+                        &request,
+                        requested_event_id,
+                        &brief,
+                    )
+                    .map_err(|error| HostStepRefusal {
+                        code: crate::action_route::ROUTE_BRIEF_INVALID.to_owned(),
+                        message: error,
+                    })?;
+                    Ok(StepPlan::Hire {
+                        agent,
+                        role,
+                        session_id: execution.session_id.clone(),
+                        session_ref,
+                        genesis_ref,
+                        channel_id: execution.channel_id,
+                        text,
+                    })
+                }
                 VerifiedAction::Wake { agent, brief } => {
                     let role = crate::action_route::resolve_wake_role(&verified.checkout, &agent)?;
                     let execution = crate::action_route::pick_open_execution(
@@ -717,6 +807,32 @@ impl Provider {
                 self.spawn_host_step(requested_event_id, checkout, prepared)
                     .await
             }
+            StepPlan::Hire {
+                agent,
+                role,
+                session_id,
+                session_ref,
+                genesis_ref,
+                channel_id,
+                text,
+            } => {
+                self.route_hire(
+                    requested_event_id,
+                    &request,
+                    &claim_event_id,
+                    publisher,
+                    HirePlan {
+                        agent,
+                        role,
+                        session_id,
+                        session_ref,
+                        genesis_ref,
+                        channel_id,
+                        text,
+                    },
+                )
+                .await
+            }
             StepPlan::Wake {
                 agent,
                 role,
@@ -744,6 +860,84 @@ impl Provider {
                 .await
             }
         }
+    }
+
+    /// Deliver a claimed `hire_agent` step: publish the `session.hire` into
+    /// the umbrella and report where it went. The desktop answers the hire
+    /// (stages the seat's custody and creates it) exactly as it does for a
+    /// lead's hire; this host only asks.
+    async fn route_hire(
+        &mut self,
+        requested_event_id: &str,
+        request: &HostStepRequested,
+        claim_event_id: &str,
+        publisher: &RelayEventPublisher,
+        plan: HirePlan,
+    ) -> anyhow::Result<()> {
+        let Some(record) = self.action_steps.record(requested_event_id).cloned() else {
+            return Ok(());
+        };
+        let command_id = crate::action_route::hire_command_id(&request.run_id, &request.step_id);
+        let event = match crate::action_route::build_hire_event(
+            &self.config.keys,
+            plan.channel_id,
+            command_id.clone(),
+            plan.session_ref.clone(),
+            plan.genesis_ref.clone(),
+            plan.role.clone(),
+            plan.text.clone(),
+        ) {
+            Ok(event) => event,
+            Err(error) => {
+                let refusal = HostStepRefusal {
+                    code: crate::action_route::HIRE_BRIEF_TOO_LONG.to_owned(),
+                    message: error,
+                };
+                let result =
+                    crate::action_route::route_refused_result(&record, claim_event_id, &refusal);
+                self.report_host_step_result(requested_event_id, result)?;
+                self.action_steps
+                    .mark_refused(requested_event_id, &refusal.code)?;
+                return Ok(());
+            }
+        };
+        if let Err(error) = publisher.publish_event_acknowledged(event).await {
+            let refusal = HostStepRefusal {
+                code: crate::action_route::HIRE_REJECTED.to_owned(),
+                message: format!("the relay did not accept the session.hire: {error}"),
+            };
+            tracing::warn!(
+                target: "csp::actions",
+                %requested_event_id,
+                "a hire was not accepted: {}",
+                refusal.message
+            );
+            let result =
+                crate::action_route::route_refused_result(&record, claim_event_id, &refusal);
+            self.report_host_step_result(requested_event_id, result)?;
+            self.action_steps
+                .mark_refused(requested_event_id, &refusal.code)?;
+            return Ok(());
+        }
+        let routed = buzz_core::host_step::HostStepRouted {
+            agent: plan.agent,
+            role: plan.role.clone(),
+            session_id: plan.session_id,
+            session_ref: Some(plan.session_ref),
+            command_id,
+            hired_role: Some(plan.role),
+        };
+        tracing::info!(
+            target: "csp::actions",
+            %requested_event_id,
+            role = %routed.role,
+            command_id = %routed.command_id,
+            "published a hire for a project action"
+        );
+        let result = crate::action_route::hired_result(&record, claim_event_id, routed);
+        self.action_steps
+            .mark_exited(requested_event_id, result.clone())?;
+        self.report_host_step_result(requested_event_id, result)
     }
 
     /// Deliver a claimed `wake_agent` step: publish the turn, leave the
@@ -809,6 +1003,7 @@ impl Provider {
             session_id: plan.session_id,
             session_ref: plan.session_ref,
             command_id,
+            hired_role: None,
         };
         tracing::info!(
             target: "csp::actions",

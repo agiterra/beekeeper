@@ -86,6 +86,14 @@ pub enum TriggerDef {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         timezone: Option<String>,
     },
+    /// Fires when the relay records a terminal CI result (kind:46008) for
+    /// the definition's project whose check name and conclusion match.
+    CiResult {
+        /// The check name the result must carry (literal).
+        check: String,
+        /// The conclusions that fire; at least one.
+        conclusion: Vec<buzz_core::ci_result::CiConclusion>,
+    },
     /// Fires when a push to the relay's git hosting changes a ref that
     /// matches `ref` (a glob: `refs/heads/main`, `refs/heads/*`,
     /// `refs/tags/v*`). Derived from the committed kind:30618 state, never
@@ -221,6 +229,19 @@ pub enum ActionDef {
         /// What to tell it.
         brief: String,
     },
+    /// Suspend the run and ask an operator's host to hire a seat of `role`
+    /// into the named agent's umbrella with `brief` as its first turn — the
+    /// ephemeral agent of spec § 5.7, and mode (3) when the brief tells it to
+    /// run and watch a command itself. Like `wake_agent`, the text travels
+    /// only in the project's own `actions.yml`.
+    HireAgent {
+        /// The role slug to seat.
+        role: String,
+        /// Whose umbrella the seat joins.
+        session: HireSession,
+        /// The seat's first turn; templates resolve on the host.
+        brief: String,
+    },
     /// Suspend the run and ask an operator's host to execute a command in the
     /// project's checkout. Every field is literal: the host never receives
     /// these values over the wire, it recompiles them from the project's own
@@ -261,6 +282,14 @@ pub struct WakeTarget {
 
 /// Maximum UTF-8 byte length of a `wake_agent` brief.
 pub const WAKE_BRIEF_MAX_BYTES: usize = 4096;
+
+/// Whose umbrella a `hire_agent` step seats the new agent in.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HireSession {
+    /// The agent (in `team.yml`) whose open execution's umbrella the seat joins.
+    pub agent: String,
+}
 
 /// Output capture limits for a `run_on_host` step.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -451,7 +480,9 @@ impl WorkflowDef {
         self.steps.iter().any(|s| {
             matches!(
                 s.action,
-                ActionDef::RunOnHost { .. } | ActionDef::WakeAgent { .. }
+                ActionDef::RunOnHost { .. }
+                    | ActionDef::WakeAgent { .. }
+                    | ActionDef::HireAgent { .. }
             )
         })
     }
@@ -495,8 +526,28 @@ impl WorkflowDef {
         }
         if self.has_host_executed_steps() && self.project.is_none() {
             return Err(WorkflowError::InvalidDefinition(
-                "run_on_host and wake_agent steps require a top-level project coordinate".into(),
+                "run_on_host, wake_agent and hire_agent steps require a top-level project \
+                 coordinate"
+                    .into(),
             ));
+        }
+        if let TriggerDef::CiResult { check, conclusion } = &self.trigger {
+            if self.project.is_none() {
+                return Err(WorkflowError::InvalidDefinition(
+                    "a ci_result trigger requires a top-level project coordinate".into(),
+                ));
+            }
+            if check.trim().is_empty() || check.len() > 128 || check.contains("{{") {
+                return Err(WorkflowError::InvalidDefinition(
+                    "ci_result check must be a literal name of 1 to 128 bytes".into(),
+                ));
+            }
+            if conclusion.is_empty() {
+                return Err(WorkflowError::InvalidDefinition(
+                    "ci_result conclusion must list at least one of success, failure, cancelled"
+                        .into(),
+                ));
+            }
         }
         // The relay hashes a webhook definition after injecting its secret,
         // and a host hashes the plain entry from actions.yml: the two could
@@ -532,6 +583,33 @@ impl WorkflowDef {
 
             if matches!(step.action, ActionDef::RunOnHost { .. }) {
                 resolve_run_on_host(&step.action)?;
+            }
+            if let ActionDef::HireAgent {
+                role,
+                session,
+                brief,
+            } = &step.action
+            {
+                if let Err(reason) =
+                    buzz_core::coding_session_lifecycle_command::validate_role_slug(role)
+                {
+                    return Err(WorkflowError::InvalidDefinition(format!(
+                        "step '{}': hire_agent role {role:?}: {reason}",
+                        step.id
+                    )));
+                }
+                if session.agent.trim().is_empty() || session.agent.len() > 64 {
+                    return Err(WorkflowError::InvalidDefinition(format!(
+                        "step '{}': hire_agent session.agent must be 1 to 64 bytes",
+                        step.id
+                    )));
+                }
+                if brief.trim().is_empty() || brief.len() > WAKE_BRIEF_MAX_BYTES {
+                    return Err(WorkflowError::InvalidDefinition(format!(
+                        "step '{}': hire_agent brief must be 1 to {WAKE_BRIEF_MAX_BYTES} bytes",
+                        step.id
+                    )));
+                }
             }
             if let ActionDef::WakeAgent { to, brief } = &step.action {
                 if to.agent.trim().is_empty() || to.agent.len() > 64 {

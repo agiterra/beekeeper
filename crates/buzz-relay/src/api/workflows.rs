@@ -348,6 +348,12 @@ fn host_step_json(step: &buzz_db::workflow::HostStepRecord) -> Value {
             .and_then(|result| result.get("routed"))
             .and_then(|routed| routed.get("commandId"))
             .and_then(Value::as_str),
+        "routed_hired_role": step
+            .result
+            .as_ref()
+            .and_then(|result| result.get("routed"))
+            .and_then(|routed| routed.get("hiredRole"))
+            .and_then(Value::as_str),
         "exited_at": step.exited_at,
         "created_at": step.created_at,
     })

@@ -30,6 +30,8 @@ pub const HOST_STEP_SCHEMA: &str = "buzz-host-step/v1";
 pub const HOST_STEP_KIND_RUN_ON_HOST: &str = "run_on_host";
 /// A `wake_agent` step: the host delivers a brief to an agent's execution.
 pub const HOST_STEP_KIND_WAKE_AGENT: &str = "wake_agent";
+/// A `hire_agent` step: the host hires a seat into an agent's umbrella.
+pub const HOST_STEP_KIND_HIRE_AGENT: &str = "hire_agent";
 /// Maximum UTF-8 byte length of one captured output tail.
 pub const MAX_HOST_STEP_TAIL_BYTES: usize = 65_536;
 /// Maximum UTF-8 byte length of a workflow step id (the engine's own rule).
@@ -168,8 +170,13 @@ pub struct HostStepRouted {
     /// The umbrella session reference that execution belongs to, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_ref: Option<String>,
-    /// The kind:44220 command id the host minted for the turn.
+    /// The kind:44220 command id the host minted for the turn — or, for a
+    /// `hire_agent` step, the kind:44221 `session.hire` command id.
     pub command_id: String,
+    /// For a `hire_agent` step: the role the hire asked for. Absent on a
+    /// `wake_agent` result.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hired_role: Option<String>,
 }
 
 /// Content of a host-signed kind:46023 result.
@@ -419,9 +426,10 @@ fn validate_requested(request: &HostStepRequested) -> Result<(), String> {
     validate_hex64("host step definition hash", &request.definition_hash)?;
     if request.step_kind != HOST_STEP_KIND_RUN_ON_HOST
         && request.step_kind != HOST_STEP_KIND_WAKE_AGENT
+        && request.step_kind != HOST_STEP_KIND_HIRE_AGENT
     {
         return Err(format!(
-            "host step kind must be {HOST_STEP_KIND_RUN_ON_HOST:?} or {HOST_STEP_KIND_WAKE_AGENT:?}"
+            "host step kind must be {HOST_STEP_KIND_RUN_ON_HOST:?}, {HOST_STEP_KIND_WAKE_AGENT:?} or {HOST_STEP_KIND_HIRE_AGENT:?}"
         ));
     }
     if !request.inputs.is_object() {
@@ -539,6 +547,9 @@ fn validate_result(result: &HostStepResult) -> Result<(), String> {
         validate_nonempty_bounded("host step routed command id", &routed.command_id, 128)?;
         if let Some(session_ref) = &routed.session_ref {
             validate_nonempty_bounded("host step routed session ref", session_ref, 256)?;
+        }
+        if let Some(hired_role) = &routed.hired_role {
+            validate_nonempty_bounded("host step routed hired role", hired_role, 64)?;
         }
     }
     Ok(())

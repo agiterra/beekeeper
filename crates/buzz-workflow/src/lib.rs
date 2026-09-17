@@ -334,10 +334,28 @@ impl WorkflowEngine {
 
         let kind_u32 = event_kind_u32(&event.event);
 
-        // Exclude workflow execution events to prevent infinite loops.
-        if is_workflow_execution_kind(kind_u32) {
+        // Exclude workflow execution events to prevent infinite loops — with
+        // one carve-out (spec § 5.3): a relay-signed kind:46008 CI result may
+        // fire a `ci_result` trigger whose project it names. It is admitted
+        // into the loop below and matched there against the workflow's own
+        // `project_ref`; every other 460xx kind stays refused.
+        if is_workflow_execution_kind(kind_u32) && kind_u32 != buzz_core::kind::KIND_CI_RESULT {
             return Ok(());
         }
+        let ci_result = if kind_u32 == buzz_core::kind::KIND_CI_RESULT {
+            match buzz_core::ci_result::decode_ci_result(&event.event) {
+                Ok(result) => Some(result),
+                Err(error) => {
+                    tracing::debug!(
+                        event_id = %event.event.id.to_hex(),
+                        "Skipping workflow trigger — kind:46008 did not decode: {error}"
+                    );
+                    return Ok(());
+                }
+            }
+        } else {
+            None
+        };
 
         let cache_key = (community_id, channel_id);
         let workflows = match self.workflow_cache.get(&cache_key) {
@@ -383,6 +401,23 @@ impl WorkflowEngine {
 
             if !should_fire_workflow(&def, &trigger_ctx, workflow.id).await {
                 continue;
+            }
+            if let TriggerDef::CiResult { check, conclusion } = &def.trigger {
+                let Some(result) = &ci_result else {
+                    continue;
+                };
+                let same_project =
+                    workflow.project_ref.as_deref() == Some(result.identity.project.as_str());
+                if !same_project
+                    || &result.identity.check != check
+                    || !conclusion.contains(&result.conclusion)
+                {
+                    tracing::debug!(
+                        workflow_id = %workflow.id,
+                        "ci_result trigger: result does not match this workflow's project, check or conclusion"
+                    );
+                    continue;
+                }
             }
 
             // SEC-006: recheck the owner's *current* channel authority
@@ -1187,8 +1222,16 @@ pub fn build_trigger_context(event: &buzz_core::StoredEvent) -> executor::Trigge
         event.event.id.to_hex()
     };
 
+    // A kind:46008 carries its facts in validated JSON, not in `content`
+    // prose: expose the commit, check, conclusion and evidence URL as
+    // `{{trigger.*}}` fields and leave `text` empty.
+    let ci = if kind_u32 == buzz_core::kind::KIND_CI_RESULT {
+        buzz_core::ci_result::decode_ci_result(&event.event).ok()
+    } else {
+        None
+    };
     executor::TriggerContext {
-        text: content,
+        text: if ci.is_some() { String::new() } else { content },
         author,
         channel_id: event
             .channel_id
@@ -1198,6 +1241,27 @@ pub fn build_trigger_context(event: &buzz_core::StoredEvent) -> executor::Trigge
         emoji,
         message_id,
         webhook_fields: HashMap::new(),
+        repository: ci
+            .as_ref()
+            .map(|result| result.identity.repository.clone())
+            .unwrap_or_default(),
+        commit: ci
+            .as_ref()
+            .map(|result| result.identity.commit.clone())
+            .unwrap_or_default(),
+        check: ci
+            .as_ref()
+            .map(|result| result.identity.check.clone())
+            .unwrap_or_default(),
+        conclusion: ci
+            .as_ref()
+            .and_then(|result| serde_json::to_value(result.conclusion).ok())
+            .and_then(|value| value.as_str().map(str::to_owned))
+            .unwrap_or_default(),
+        evidence_url: ci
+            .as_ref()
+            .and_then(|result| result.evidence_url.clone())
+            .unwrap_or_default(),
         ..Default::default()
     }
 }
@@ -1228,6 +1292,7 @@ fn trigger_matches_event(trigger: &TriggerDef, kind_u32: u32) -> bool {
         TriggerDef::MessagePosted { .. } => kind_u32 == KIND_STREAM_MESSAGE,
         TriggerDef::ReactionAdded { .. } => kind_u32 == KIND_REACTION,
         TriggerDef::DiffPosted { .. } => kind_u32 == KIND_STREAM_MESSAGE_DIFF,
+        TriggerDef::CiResult { .. } => kind_u32 == buzz_core::kind::KIND_CI_RESULT,
         // Schedule and Webhook triggers are not fired by channel events.
         TriggerDef::Schedule { .. }
         | TriggerDef::Webhook

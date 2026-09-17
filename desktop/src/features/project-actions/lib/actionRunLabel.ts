@@ -45,7 +45,7 @@ function shortSha(sha: string): string {
 
 /** `action-route-<64 hex>` reads as its prefix plus the first eight hex. */
 function shortCommandId(commandId: string): string {
-  const match = /^(action-route-)([0-9a-f]{64})$/.exec(commandId);
+  const match = /^(action-(?:route|hire)-)([0-9a-f]{64})$/.exec(commandId);
   return match ? `${match[1]}${match[2].slice(0, 8)}` : commandId;
 }
 
@@ -98,6 +98,17 @@ function hostStepDetail(
     }
     case "exited":
     case null: {
+      if (step.routedAgent && step.routedHiredRole) {
+        // Spec § 5.7: the host asked for a seat; whether the desktop seated
+        // it is the umbrella's story, not this row's.
+        const command = step.routedCommandId
+          ? ` · hire ${shortCommandId(step.routedCommandId)}`
+          : "";
+        return {
+          label: `hired a ${step.routedHiredRole} into ${step.routedAgent}'s session${command}`,
+          tone: "ok",
+        };
+      }
       if (step.routedAgent) {
         // Spec § 5.8: `routed to <agent> · turn <commandId>` — the host
         // delivered the brief; whether the agent acted is the session's

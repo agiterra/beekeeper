@@ -101,6 +101,7 @@ type RawWorkflowHostStep = {
   artifact_ref: string | null;
   routed_agent?: string | null;
   routed_command_id?: string | null;
+  routed_hired_role?: string | null;
   exited_at: string | null;
   created_at: string;
 };
@@ -210,6 +211,7 @@ export function fromRawHostStep(raw: RawWorkflowHostStep): WorkflowHostStep {
     artifactRef: raw.artifact_ref ?? null,
     routedAgent: raw.routed_agent ?? null,
     routedCommandId: raw.routed_command_id ?? null,
+    routedHiredRole: raw.routed_hired_role ?? null,
     exitedAt: raw.exited_at ?? null,
     createdAt: raw.created_at,
   };

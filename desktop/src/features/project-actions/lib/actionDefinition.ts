@@ -22,6 +22,7 @@ const TRIGGER_LABELS: Record<string, string> = {
   schedule: "Schedule",
   manual: "Manual",
   ref_updated: "Ref updated",
+  ci_result: "CI result",
 };
 
 /**
@@ -55,6 +56,7 @@ export function actionTriggerSummary(
     diff_posted: "filter",
     reaction_added: "emoji",
     ref_updated: "ref",
+    ci_result: "check",
   };
   const detailKey = detailKeys[on];
   if (detailKey) {

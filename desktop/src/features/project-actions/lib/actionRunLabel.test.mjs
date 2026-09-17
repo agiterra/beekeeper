@@ -65,6 +65,7 @@ function hostStep(overrides = {}) {
     artifactRef: null,
     routedAgent: null,
     routedCommandId: null,
+    routedHiredRole: null,
     exitedAt: null,
     createdAt: new Date((NOW - 80) * 1_000).toISOString(),
     ...overrides,
@@ -258,4 +259,28 @@ test("a routed wake step reads as routed to the agent with its turn", () => {
   );
   assert.equal(routed.label, "routed to Levain · turn action-route-ffffffff");
   assert.equal(routed.tone, "ok");
+});
+
+test("a hire step reads as hired into the agent's session", () => {
+  const hired = describeActionRun(
+    run({ status: "running" }),
+    [],
+    [
+      hostStep({
+        status: "exited",
+        claimedBy: HOST,
+        disposition: "exited",
+        exitCode: 0,
+        routedAgent: "Keystone",
+        routedHiredRole: "runner",
+        routedCommandId: `action-hire-${"e".repeat(64)}`,
+      }),
+    ],
+    clock,
+  );
+  assert.equal(
+    hired.label,
+    "hired a runner into Keystone's session · hire action-hire-eeeeeeee",
+  );
+  assert.equal(hired.tone, "ok");
 });

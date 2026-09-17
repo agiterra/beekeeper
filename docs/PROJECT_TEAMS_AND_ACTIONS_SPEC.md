@@ -915,6 +915,17 @@ C are independent lanes until C3, which needs `team.yml` (A3) for agent names.
 - **C5 — ephemeral hire, agent-managed mode, `ci_result` trigger.** Proof:
   `hire_agent` seats a runner in the project manager's umbrella; a 46008
   failure wakes the project manager.
+  *Status 2026-09-17: built (ledger 155). Amendments: `hire_agent` is a host
+  step like `wake_agent` (no approval gate); the host publishes a
+  provider-signed 44221 `session.hire` into the named agent's umbrella and
+  the desktop answers it as it answers a lead's hire — the relay's
+  `may_hire` rule (founder, granted operator, or an active lead) decides
+  whether this host's key may ask, and a refusal reaches the run as
+  `HIRE_REJECTED`; the `ci_result` carve-out admits a 46008 into `on_event`
+  and matches it against the workflow's `project_ref`, check and
+  conclusions, with `{{trigger.commit|check|conclusion|evidence_url}}`.
+  Mode (3) is a `hire_agent` whose brief names the command. The live proof
+  is still owed.*
 - **C6 — worktree at the triggering commit; artifact upload; `env_from_host`
   scrubbing audit.**
 

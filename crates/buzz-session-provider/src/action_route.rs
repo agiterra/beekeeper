@@ -51,6 +51,13 @@ pub const ROUTE_NO_SESSION: &str = "ROUTE_NO_SESSION";
 pub const ROUTE_REJECTED: &str = "ROUTE_REJECTED";
 /// The brief could not be rendered.
 pub const ROUTE_BRIEF_INVALID: &str = "ROUTE_BRIEF_INVALID";
+/// The named agent's execution has no umbrella (session and genesis refs)
+/// a seat could be hired into.
+pub const HIRE_NO_UMBRELLA: &str = "HIRE_NO_UMBRELLA";
+/// The relay refused the `session.hire` this host published.
+pub const HIRE_REJECTED: &str = "HIRE_REJECTED";
+/// The rendered brief exceeds what a `session.hire` may carry.
+pub const HIRE_BRIEF_TOO_LONG: &str = "HIRE_BRIEF_TOO_LONG";
 
 /// The `type` every routed brief carries, so the woken agent can recognise it.
 pub const ACTION_RESULT_TYPE: &str = "action_result";
@@ -126,6 +133,79 @@ pub fn route_command_id(run_id: &str, step_id: &str) -> String {
 /// The operation pointer the routed turn is fenced under.
 pub fn route_operation_id(run_id: &str, step_id: &str) -> String {
     format!("action-route:{run_id}:{step_id}")
+}
+
+/// The kind:44221 command id for one run's hire step: a pure function of
+/// the run and step, so a second delivery converges on the desktop's answer.
+pub fn hire_command_id(run_id: &str, step_id: &str) -> String {
+    let mut digest = Sha256::new();
+    digest.update(b"buzz-provider-action-hire/v1\0");
+    digest.update(run_id.as_bytes());
+    digest.update(b"\0");
+    digest.update(step_id.as_bytes());
+    format!("action-hire-{}", hex::encode(digest.finalize()))
+}
+
+/// Build the signed kind:44221 `session.hire` that seats `role` in the
+/// umbrella (`session_ref`, `genesis_ref`) with `brief` as its first turn.
+/// The relay admits it from the umbrella's founder, a granted operator, or
+/// an active lead hiring a non-lead role; anything else is refused there.
+pub fn build_hire_event(
+    keys: &nostr::Keys,
+    channel_id: Uuid,
+    command_id: String,
+    session_ref: String,
+    genesis_ref: String,
+    role: String,
+    brief: String,
+) -> Result<nostr::Event, String> {
+    use buzz_core::coding_session_lifecycle_command::{
+        CodingSessionLifecycleAction, CodingSessionLifecycleCommandPayload,
+        CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA, MAX_LIFECYCLE_HIRE_BRIEF_BYTES,
+    };
+    if brief.len() > MAX_LIFECYCLE_HIRE_BRIEF_BYTES {
+        return Err(format!(
+            "the rendered brief is {} bytes; a session.hire carries at most {MAX_LIFECYCLE_HIRE_BRIEF_BYTES}",
+            brief.len()
+        ));
+    }
+    let payload = CodingSessionLifecycleCommandPayload {
+        schema: CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA.to_owned(),
+        command_id,
+        action: CodingSessionLifecycleAction::SessionHire {
+            session_ref,
+            genesis_ref,
+            role,
+            provider_instance_ref: None,
+            model: None,
+            brief,
+            // The signer is the requester: this host's own key.
+            requested_by: None,
+            // No routing request: the seat runs where the desktop's policy puts it.
+            routing: None,
+        },
+    };
+    buzz_sdk::builders::build_coding_session_lifecycle_command(channel_id, &payload)
+        .map_err(|error| error.to_string())?
+        .sign_with_keys(keys)
+        .map_err(|error| error.to_string())
+}
+
+/// The kind:46023 for a hire that reached the relay.
+pub fn hired_result(
+    record: &ActionStepRecord,
+    claim_event_id: &str,
+    routed: HostStepRouted,
+) -> HostStepResult {
+    let line = format!(
+        "hired a {} into {}'s umbrella as {}",
+        routed.hired_role.as_deref().unwrap_or("seat"),
+        routed.agent,
+        routed.command_id
+    );
+    let mut result = routed_result(record, claim_event_id, routed);
+    result.stdout_tail = line;
+    result
 }
 
 /// Render the brief: `{{trigger.*}}` from the request's trigger context and
@@ -389,5 +469,53 @@ mod tests {
             gate_row_for(&bare).outcome,
             CodingSessionObservationGateOutcome::NotRun
         );
+    }
+
+    #[test]
+    fn a_hire_event_is_a_session_hire_into_the_umbrella_with_the_brief() {
+        let keys = nostr::Keys::generate();
+        let event = build_hire_event(
+            &keys,
+            Uuid::from_u128(9),
+            hire_command_id("run-1", "run"),
+            Uuid::from_u128(5).to_string(),
+            "a".repeat(64),
+            "runner".into(),
+            "Run `just test-e2e` yourself.".into(),
+        )
+        .expect("hire event");
+        let payload =
+            buzz_core::coding_session_lifecycle_command::decode_coding_session_lifecycle_command(
+                &event.content,
+            )
+            .expect("decode");
+        match payload.action {
+            buzz_core::coding_session_lifecycle_command::CodingSessionLifecycleAction::SessionHire {
+                role,
+                brief,
+                session_ref,
+                ..
+            } => {
+                assert_eq!(role, "runner");
+                assert_eq!(brief, "Run `just test-e2e` yourself.");
+                assert_eq!(session_ref, Uuid::from_u128(5).to_string());
+            }
+            other => panic!("expected a hire, got {other:?}"),
+        }
+        assert!(payload.command_id.starts_with("action-hire-"));
+        assert_eq!(
+            hire_command_id("run-1", "run"),
+            hire_command_id("run-1", "run")
+        );
+        assert!(build_hire_event(
+            &keys,
+            Uuid::from_u128(9),
+            hire_command_id("run-1", "run"),
+            Uuid::from_u128(5).to_string(),
+            "a".repeat(64),
+            "runner".into(),
+            "x".repeat(20_000),
+        )
+        .is_err());
     }
 }

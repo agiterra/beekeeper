@@ -64,6 +64,18 @@ pub struct TriggerContext {
     /// run fired at the next valid instant instead (RFC 3339, in the zone).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub scheduled_local: String,
+    /// The commit a CI result names (ci_result trigger).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub commit: String,
+    /// The check name a CI result names (ci_result trigger).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub check: String,
+    /// `success`, `failure` or `cancelled` (ci_result trigger).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub conclusion: String,
+    /// The CI result's evidence URL, if it carried one (ci_result trigger).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub evidence_url: String,
 }
 
 impl TriggerContext {
@@ -79,12 +91,19 @@ impl TriggerContext {
             "timestamp" => Some(&self.timestamp),
             "emoji" => Some(&self.emoji),
             "message_id" => Some(&self.message_id),
-            "repository" => Some(&self.repository),
-            "ref" => Some(&self.ref_name),
-            "before" => Some(&self.before),
-            "after" => Some(&self.after),
-            "pusher" => Some(&self.pusher),
-            "scheduled_local" => Some(&self.scheduled_local),
+            // The trigger-specific fields answer only when set, so a webhook
+            // body field of the same name (`commit`, `conclusion`, …) keeps
+            // resolving exactly as it did before these fields existed.
+            "repository" if !self.repository.is_empty() => Some(&self.repository),
+            "ref" if !self.ref_name.is_empty() => Some(&self.ref_name),
+            "before" if !self.before.is_empty() => Some(&self.before),
+            "after" if !self.after.is_empty() => Some(&self.after),
+            "pusher" if !self.pusher.is_empty() => Some(&self.pusher),
+            "scheduled_local" if !self.scheduled_local.is_empty() => Some(&self.scheduled_local),
+            "commit" if !self.commit.is_empty() => Some(&self.commit),
+            "check" if !self.check.is_empty() => Some(&self.check),
+            "conclusion" if !self.conclusion.is_empty() => Some(&self.conclusion),
+            "evidence_url" if !self.evidence_url.is_empty() => Some(&self.evidence_url),
             other => self.webhook_fields.get(other).map(|s| s.as_str()),
         }
     }
@@ -529,7 +548,7 @@ pub fn resolve_step_templates(
         // Literal by construction: the host never receives these values, it
         // recompiles them from the project's own actions.yml (and resolves a
         // wake_agent brief's templates itself, from the request's context).
-        RunOnHost { .. } | WakeAgent { .. } => Ok(step.action.clone()),
+        RunOnHost { .. } | WakeAgent { .. } | HireAgent { .. } => Ok(step.action.clone()),
         RecordCiResult {
             project,
             repository,
@@ -805,6 +824,26 @@ pub async fn dispatch_action(
                     Ok(StepResult::Suspended(Suspension::HostStep {
                         step_id: step_id.to_owned(),
                         step_kind: buzz_core::host_step::HOST_STEP_KIND_WAKE_AGENT.to_owned(),
+                        approval: None,
+                        inputs: serde_json::Value::Object(
+                            step_outputs
+                                .iter()
+                                .map(|(id, output)| (id.clone(), output.clone()))
+                                .collect(),
+                        ),
+                    }))
+                }
+
+                HireAgent { role, session, .. } => {
+                    // A hire is not a command either: no approval gate. The
+                    // host recompiles the role and brief from its own file.
+                    info!(
+                        run_id = %run_id, step = step_id, %role, agent = %session.agent,
+                        "hire_agent: handing the hire to a host"
+                    );
+                    Ok(StepResult::Suspended(Suspension::HostStep {
+                        step_id: step_id.to_owned(),
+                        step_kind: buzz_core::host_step::HOST_STEP_KIND_HIRE_AGENT.to_owned(),
                         approval: None,
                         inputs: serde_json::Value::Object(
                             step_outputs
