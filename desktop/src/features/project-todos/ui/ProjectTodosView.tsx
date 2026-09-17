@@ -122,13 +122,9 @@ export function ProjectTodosView({
       tone: "warn",
     });
   }
-  if (read && read.legacy > 0) {
-    notices.push({
-      key: "legacy",
-      text: `${read.legacy} change${read.legacy === 1 ? "" : "s"} from an older build of this feature ${read.legacy === 1 ? "was" : "were"} skipped: ${read.legacy === 1 ? "it predates" : "they predate"} list visibility and cannot be read safely.`,
-      tone: "info",
-    });
-  }
+  // Ops that predate `td-vis` (a build before visibility existed) are in
+  // the fold's `ignored` but not worth a banner: no deployed relay ever held
+  // one. They are subtracted so the warning below names only real trouble.
   const unexplained = read ? read.digest.ignored - read.legacy : 0;
   if (unexplained > 0) {
     notices.push({

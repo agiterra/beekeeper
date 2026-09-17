@@ -277,7 +277,7 @@ test("a focused view shows one list alone, and names a missing one honestly", as
   );
 });
 
-test("ops from an older build are reported as such, apart from malformed ones", async () => {
+test("ops from an older build are not advertised; malformed ones still are", async () => {
   const html = await render({
     state: {
       kind: "ready",
@@ -293,8 +293,8 @@ test("ops from an older build are reported as such, apart from malformed ones", 
       refreshing: false,
     },
   });
-  assert.match(html, /data-testid="todo-notice-legacy"/);
-  assert.match(html, /2 changes from an older build/);
+  assert.doesNotMatch(html, /data-testid="todo-notice-legacy"/);
+  assert.doesNotMatch(html, /older build/);
   assert.match(html, /data-testid="todo-notice-ignored"/);
   assert.match(html, /1 change could not be applied/);
 });
