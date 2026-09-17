@@ -50,6 +50,7 @@ on 2026-09-09, with `just ci` and `just test` green on that exact commit
 | A Solo session's goal is one line: summarized by the naming model, clamped with a chevron | Andy | landed 2026-09-14 as `3fde2db15` | ledger § "Fixed 2026-09-14 — a Solo session's goal is one line" |
 | The Dashboard shows the relay's machine (CPU, memory, disk) from `GET /health/system`, stewards only | Andy | landing 2026-09-14 on `feat/relay-health`; hive shows it once the relay redeploys | ledger § "Built 2026-09-14 — the Dashboard shows the relay's machine" |
 | Project teams, composable roles and project actions | Andy | 2026-09-17: A1–A3 landed `1395770ff` (ledger 142–148); restart needs a relay redeploy; no live hire yet | [`PROJECT_TEAMS_AND_ACTIONS_SPEC.md`](PROJECT_TEAMS_AND_ACTIONS_SPEC.md), ledger 141, D18 |
+| Project To-Do lists: kind 44248, `bee todos`, Desktop tab, Mobile page | Andy with Opus | 2026-09-17: built on `feat/project-todo-list`; relay, CLI and Desktop verified live on a local relay; landing pending | [`nips/NIP-TD.md`](nips/NIP-TD.md), ledger 149 |
 | Delegated agent-directory visibility follow-up | unassigned | "can resume separately on main" (Astra, 2026-09-09) | ledger § "September 9 main published" |
 | This map, the ledger split and its size gate | Fable | landed 2026-09-11 (`f80781969`); lead pack landed on `agiterra-packs` (`5f4ae76fa`) | `AGENTS.md` top block; `scripts/check-current-state-size.mjs` |
 
@@ -99,17 +100,13 @@ Rules, each with where it is written down.
 - **Automatic context** is blocked on Brian resuming it; the Claude hook
   transport is a candidate, not proven in the installed adapter.
 - ~~**Unknown:** whether the 62 e2e-smoke failures that ledger §1 calls
-  "inherited, not caused" (2026-08-19) still exist.~~ Checked 2026-09-12: a
-  prior full smoke on the steering branch reported six failures also
-  reproduced on base `77b792de9` (ledger item 115). Checked 2026-09-13:
-  all nine cases from Opus's later report now pass on the combined candidate.
-  The fresh selected matrix is 44 passed/1 failed, only dense history; its
-  isolated repeat also fails (286/450 and 336/450). Brian accepted landing
-  with that known limitation while diagnosis continues. The overnight sleep
-  failure passed in the completed 77-case remainder. See [September 13 evidence](history/2026-09-13-startup-smoke-corrections.md).
+  "inherited, not caused" (2026-08-19) still exist.~~ Settled 2026-09-12/13:
+  six reproduced on base `77b792de9` (ledger item 115), all nine later cases
+  pass on the combined candidate, and only dense history still fails (44/1
+  selected; isolated repeat 286/450 and 336/450), which Brian accepted while
+  diagnosis continues — [September 13 evidence](history/2026-09-13-startup-smoke-corrections.md).
   Never run smoke while CI builds the desktop: the plain build overwrites
-  the E2E bundle. Prevent idle sleep during unattended checks; low battery
-  interrupted this run.
+  the E2E bundle. Prevent idle sleep during unattended checks.
 
 ## Next, in order
 
@@ -184,7 +181,7 @@ agent hits in the first hour.
 
 | Kind | Place | Tracked |
 | --- | --- | --- |
-| Numbered findings, items 1–112 and counting | `SESSION_STATE.md` §2; `grep -n '^<n>\. ' docs/SESSION_STATE.md` | yes |
+| Numbered findings, items 1–149 and counting | `SESSION_STATE.md` §2; `grep -n '^<n>\. ' docs/SESSION_STATE.md` | yes |
 | Session reports 2026-09-06 to 2026-09-11 | the top of `SESSION_STATE.md`, above §1; written before this map and left in place | yes |
 | Session reports from 2026-09-11 on | [`history/`](history/README.md), `YYYY-MM-DD-<slug>.md` | yes |
 | Plans and specs | `COLLABORATIVE_WORKSPACE_PLAN.md`, `*_SPEC.md`, `*_IMPL.md` in `docs/` | yes |

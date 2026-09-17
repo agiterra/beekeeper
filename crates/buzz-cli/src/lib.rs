@@ -5749,6 +5749,7 @@ mod tests {
             "sessions",
             "social",
             "terminals",
+            "todos",
             "upload",
             "users",
             "workflows",

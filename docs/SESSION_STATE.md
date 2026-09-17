@@ -13637,12 +13637,82 @@ Evidence and limits: [conditional publication checkpoint](history/2026-09-12-pro
      hire-host and seated-create suites: 113 passed; `pnpm typecheck` and
      biome clean. Not exercised live.
 
+149. **Project To-Do lists: kind 44248 allocated, modelled as append-only
+     field ops folded client-side, not as a NIP-33 head (2026-09-17, Andy
+     with Opus).** Built on `feat/project-todo-list`; the contract is
+     `docs/nips/NIP-TD.md` and `conformance/project-todo-fold/CONTRACT.md`.
 
+     **Allocation.** 44248 is the lowest unused and unreserved kind: 44231–
+     44239 are the continuity research's, 44240 Pulse with 44241–44243
+     reserved, 44244–44247 the team transaction, policy, observation and
+     handover. `git grep 44248` over this tree matched nothing before the
+     constant existed; `git grep 44248 vanilla/main` (`12201c49b`) matched
+     only hashes inside `uv.lock` files. Doc comment on
+     `KIND_PROJECT_TODO_OP` in `crates/buzz-core/src/kind.rs`.
 
+     **Why not NIP-33.** A shared list has many writers and replacement keys
+     on `(kind, pubkey, d)` — one head per author
+     (`crates/buzz-db/src/parameterized_event.rs:22-26`, item 113's hazard).
+     The 30624 cross-author conditional path would cost a transaction lock and
+     a conflict response per tick. So: one regular kind, scoped to the project
+     by the canonical `a` coordinate exactly as 44240 is, each op setting
+     **one field** (`list.create|title|archived`, `item.add|text|done|
+     assignee|due|rank|remove`), folded by earliest-create / latest-`(created_at,
+     id)`-per-field / terminal-remove rules pinned in
+     `conformance/project-todo-fold/fixtures/fold-vectors.json`, which the
+     Rust (`buzz-core`, used by `bee todos`), TypeScript (Desktop) and Dart
+     (Mobile) folds all bind to. Order is a fractional-indexing `rank`
+     (`crates/buzz-core/src/fractional_rank.rs`; `rank-vectors.json`) so a
+     drag or `bee todos move --index N` is one `item.rank` op that never
+     rewrites neighbours.
 
+     **Relay.** Every chokepoint that special-cased 44240 now keys on
+     `buzz_core::kind::is_project_a_scoped_kind` (ingest admission via
+     `admit_project_scoped_write`, `event_visible_to_reader`, live fan-out,
+     the SQL pushdown, the bridge request-shape rule), so both kinds share one
+     gate: private project → owner/collaborator write, viewer read-only;
+     public → any member; unknown coordinate refused; refusal is 403 (CLI
+     exit 3); an `h` tag is rejected and the kind is global-only. No
+     migration. `e2e_project_todos.rs`: six of seven pass against a local
+     relay; the two-host cross-community case fails identically for
+     `e2e_pulse.rs` on this machine (no second community configured), a test
+     environment limit, not a regression.
 
+     **Inherited limitation, recorded not fixed.** Deleting or purging a
+     project's 30621 head drops its ACL row, after which the coordinate is in
+     nobody's hidden set and the ops — like Pulse entries — become readable
+     to community members; `project_purge.rs` never touches channel-less
+     `a`-tagged events. Fix options: fail closed in the read gate when the
+     coordinate has no live head (needs a DB fact the pure predicate lacks),
+     or extend purge to `kind IN (44240, 44248) AND tags @> [["a", coord]]`.
 
+     **Cold read.** A reader replays the whole op log (relay page cap 1000).
+     Desktop pages by `until` and discloses `truncated` after ten full pages;
+     `bee todos` uses `query_all`. A compaction record is a follow-up.
 
+     **Verified live 2026-09-17** on a local relay on :3010 with two keys:
+     `bee todos` viewer refusal exit 3, promotion, collaborator
+     `done`/`move`/`assign` folding into the owner's `show`
+     (`crates/buzz-cli/TESTING.md` § 6.13a); the Desktop tab against the same
+     relay (`desktop/tests/e2e/project-todos.live.spec.ts`, 9 s): UI writes
+     read back by the CLI, a collaborator's `add --index 0 --due` and `done`
+     appearing live in the tab, a UI tick reaching the CLI fold.
+
+     **Mobile** (`mobile/lib/features/project_todos/`, built by a delegated
+     lane, gates re-run by Andy's session: `flutter analyze` clean,
+     `flutter test` 2086 passed) binds the same vectors and reaches the page
+     from the project tree's "To-do" row. Two disclosed gaps: no simulator
+     run yet, widget tests only; and mobile has no kind-39010 roster consumer,
+     so a viewer is not shown a read-only state — the controls render and the
+     relay's refusal is shown verbatim in a SnackBar, never a control that
+     pretends to have worked. The lane also reported, **unverified by this
+     session**, that under Riverpod 3.1 `stateOrNull` is `null` inside a
+     `Notifier.build()` rebuild, so the `(stateOrNull ?? initial).copyWith`
+     idiom in `projects_provider.dart:84,91`, `terminals_index_provider.dart:
+     105,112` and `shell_observer_provider.dart:215-226` would reset those
+     pages to their initial state on a socket-status change; the to-do
+     notifier keeps its read in instance fields instead. Worth a test before
+     it is treated as a finding.
 
 
 
