@@ -5,13 +5,14 @@ import { PROJECT_TAB_TRIGGER_CLASS } from "@/features/projects/ui/ProjectWorkspa
 import { cn } from "@/shared/lib/cn";
 
 /** The project page's tab vocabulary. Overview/Pulse are the URL `tab` search
- * param on `/projects/$projectId`; the To-Do, Agents and Roles (`packs`) tabs
- * are their own paths. */
+ * param on `/projects/$projectId`; the To-Do, Agents, Actions and Roles
+ * (`packs`) tabs are their own paths. */
 export type ProjectPageTab =
   | "overview"
   | "pulse"
   | "todos"
   | "agents"
+  | "actions"
   | "packs";
 
 export function parseProjectPageTab(value: unknown): ProjectPageTab {
@@ -20,11 +21,12 @@ export function parseProjectPageTab(value: unknown): ProjectPageTab {
 
 type SearchTab = { id: "overview" | "pulse"; label: string };
 type PathTab = {
-  id: "todos" | "agents" | "packs";
+  id: "todos" | "agents" | "actions" | "packs";
   label: string;
   to:
     | "/projects/$projectId/todos"
     | "/projects/$projectId/agents"
+    | "/projects/$projectId/actions"
     | "/projects/$projectId/packs";
 };
 
@@ -35,6 +37,9 @@ const PATH_TABS: readonly PathTab[] = [
   // Agents: who is working here and why. It replaced Contributors, whose
   // path now redirects here.
   { id: "agents", label: "Agents", to: "/projects/$projectId/agents" },
+  // Actions: the project's `beekeeper/actions.yml` entries as the relay holds
+  // them, their runs, and the approvals and host steps each run proves.
+  { id: "actions", label: "Actions", to: "/projects/$projectId/actions" },
   // The tab reads "Roles" — the page answers "what is this role for, which
   // version of its instructions is here". Its id, path and testid stay
   // `packs` so routes, links and existing selectors keep working.

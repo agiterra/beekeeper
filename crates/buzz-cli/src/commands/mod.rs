@@ -1,3 +1,5 @@
+/// `bee actions` — a project's `beekeeper/actions.yml`, published as kind:30620s.
+pub mod actions;
 pub mod agents;
 pub mod channel_templates;
 pub mod channels;

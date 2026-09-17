@@ -29,6 +29,9 @@
 
 #![deny(unsafe_code)]
 
+pub mod action_step_listener;
+pub mod action_step_store;
+pub mod action_steps;
 pub mod actor_seats;
 mod agent_fence;
 pub mod attachments;
@@ -46,6 +49,7 @@ mod gate_cwd;
 mod gate_observer;
 mod git_exclude;
 mod git_probe;
+pub mod host_command;
 mod lease;
 mod model_catalog;
 pub mod native_restore;
@@ -441,6 +445,12 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
     // borrows in one `select!` do not compile. The listener's queue is the
     // loop's, exactly like the relay socket's.
     let mut ci_events = provider.take_ci_result_events();
+    // The same shape for host-step requests: one listener over the served
+    // projects, started only once a request signer can be verified, and any
+    // run the last exit lost reported before a new one is claimed.
+    provider.recover_action_steps_on_start()?;
+    provider.start_action_step_listener();
+    let mut action_step_events = provider.take_action_step_events();
 
     let channels = relay.discover_channels().await?;
     for channel_id in channels.keys().copied() {
@@ -521,6 +531,14 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
                     tracing::warn!(target: "csp::lease", "lease handoff after a CI result failed: {error}");
                 }
             }
+            event = action_step_listener::next_action_step_event(&mut action_step_events) => {
+                if let Err(error) = provider.handle_action_step_event(event, &publisher).await {
+                    tracing::error!(target: "csp::actions", "host step handling failed: {error}");
+                }
+                if let Err(error) = provider.flush_pending_leases(&publisher).await {
+                    tracing::warn!(target: "csp::lease", "lease handoff after a host step failed: {error}");
+                }
+            }
             Some(event) = provider.next_session_event() => {
                 if let Err(error) = provider.handle_session_event(event) {
                     tracing::error!(target: "csp", "failed to record session event: {error}");
@@ -535,6 +553,10 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
                 if let Err(error) = provider.refresh_catalog(false) {
                     tracing::error!(target: "csp", "catalog refresh failed: {error}");
                 }
+                // Same hot-reload for the served project set: a project added
+                // to the file starts receiving host step requests on the
+                // next tick. A no-op when nothing changed.
+                provider.sync_action_step_listener();
                 if let Err(error) = provider.queue_initial_live_leases() {
                     tracing::error!(target: "csp::lease", "initial lease construction failed: {error}");
                 }
@@ -673,6 +695,14 @@ pub struct Provider {
     ci_listener: Option<ci_result_listener::CiResultListener>,
     /// The listener's report queue, merged into the run loop's `select!`.
     ci_events: Option<mpsc::Receiver<ci_result_listener::CiListenerEvent>>,
+    /// Durable record of every host-step request seen. See [`action_steps`].
+    action_steps: action_step_store::ActionStepStore,
+    /// Verified kind:46013 requests and finished commands, reported by the
+    /// single listener task. `None` until
+    /// [`Provider::start_action_step_listener`] runs.
+    action_step_listener: Option<action_step_listener::ActionStepListener>,
+    /// That listener's queue, merged into the run loop's `select!`.
+    action_step_events: Option<mpsc::Receiver<action_step_listener::ActionStepEvent>>,
     team_wakes: team_wake::WakeIntentStore,
     /// Channels whose complete stored 44244 partition was scanned this run.
     team_wake_scanned_channels: HashSet<Uuid>,
@@ -1032,6 +1062,7 @@ impl Provider {
         let outbox = Outbox::open(&config.state_dir, &pubkey_hex)?;
         let team_wakes = team_wake::WakeIntentStore::open(&config.state_dir)?;
         let ci_continuations = ci_continuation_store::CiContinuationStore::open(&config.state_dir)?;
+        let action_steps = action_step_store::ActionStepStore::open(&config.state_dir)?;
         let team_wake_refusals_at_startup = team_wakes.refused_channels().collect();
         let (events_tx, session_events) = mpsc::channel(SESSION_EVENT_CAPACITY);
         let media = attachments::MediaFetcher::new(&config.relay_url, config.keys.clone());
@@ -1043,6 +1074,9 @@ impl Provider {
             ci_continuations,
             ci_listener: None,
             ci_events: None,
+            action_steps,
+            action_step_listener: None,
+            action_step_events: None,
             team_wakes,
             team_wake_scanned_channels: HashSet::new(),
             team_wake_discovery_backoff: HashMap::new(),

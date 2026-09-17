@@ -37,14 +37,31 @@ pub fn build_workflow_trigger(workflow_id: &str) -> Result<EventBuilder, String>
     Ok(EventBuilder::new(Kind::Custom(46020), "").tags(tags))
 }
 
-/// Kind 46030 — grant an approval token (with optional note).
-pub fn build_approval_grant(token: &str, note: Option<&str>) -> Result<EventBuilder, String> {
-    let tags = vec![tag(vec!["t", token])?];
+/// Lowercase hex of the stored approval token hash, as the relay's approvals
+/// listing returns it (`approval_ref`).
+///
+/// The relay resolves a kind:46030/46031 by its `d` tag (or an `e` tag naming
+/// the kind:46010 request), never by a `t` tag: see
+/// `crates/buzz-relay/src/handlers/command_executor.rs` `handle_approval_grant`.
+fn approval_ref_tag(approval_ref: &str) -> Result<nostr::Tag, String> {
+    let approval_ref = approval_ref.trim();
+    if approval_ref.len() != 64 || !approval_ref.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("invalid approval reference: expected 64 hex characters".to_string());
+    }
+    tag(vec!["d", &approval_ref.to_ascii_lowercase()])
+}
+
+/// Kind 46030 — grant an approval by its reference (with optional note).
+pub fn build_approval_grant(
+    approval_ref: &str,
+    note: Option<&str>,
+) -> Result<EventBuilder, String> {
+    let tags = vec![approval_ref_tag(approval_ref)?];
     Ok(EventBuilder::new(Kind::Custom(46030), note.unwrap_or("")).tags(tags))
 }
 
-/// Kind 46031 — deny an approval token (with optional note).
-pub fn build_approval_deny(token: &str, note: Option<&str>) -> Result<EventBuilder, String> {
-    let tags = vec![tag(vec!["t", token])?];
+/// Kind 46031 — deny an approval by its reference (with optional note).
+pub fn build_approval_deny(approval_ref: &str, note: Option<&str>) -> Result<EventBuilder, String> {
+    let tags = vec![approval_ref_tag(approval_ref)?];
     Ok(EventBuilder::new(Kind::Custom(46031), note.unwrap_or("")).tags(tags))
 }

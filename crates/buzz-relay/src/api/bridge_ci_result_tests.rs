@@ -143,6 +143,7 @@ async fn fixture(request_host: Option<String>) -> WebhookCiFixture {
     let definition = buzz_workflow::WorkflowDef {
         name: "Record exact CI completion".into(),
         description: None,
+        project: None,
         trigger: buzz_workflow::TriggerDef::Webhook,
         steps: vec![buzz_workflow::Step {
             id: "record".into(),

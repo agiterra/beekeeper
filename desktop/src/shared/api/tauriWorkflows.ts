@@ -8,6 +8,7 @@ import type {
   WorkflowSaveResult,
   TraceEntry,
 } from "@/shared/api/types";
+import type { WorkflowHostStep } from "@/shared/api/workflowTypes";
 
 // ── Raw types (snake_case from backend) ───────────────────────────────────
 
@@ -75,6 +76,35 @@ type RawWorkflowApproval = {
 
 type RawWorkflowApprovalsResponse = {
   approvals: RawWorkflowApproval[];
+};
+
+/** One row of `GET /workflows/{id}/runs/{run}/host-steps`, verbatim. */
+type RawWorkflowHostStep = {
+  run_id: string;
+  step_id: string;
+  workflow_id: string;
+  step_index: number;
+  status: WorkflowHostStep["status"];
+  requested_event_id: string | null;
+  expires_at: string;
+  claimed_by: string | null;
+  claimed_at: string | null;
+  claim_event_id: string | null;
+  result_event_id: string | null;
+  exited_event_id: string | null;
+  exit_code: number | null;
+  disposition: WorkflowHostStep["disposition"];
+  timed_out: boolean | null;
+  duration_ms: number | null;
+  head_sha: string | null;
+  dirty: boolean | null;
+  artifact_ref: string | null;
+  exited_at: string | null;
+  created_at: string;
+};
+
+type RawWorkflowHostStepsResponse = {
+  host_steps: RawWorkflowHostStep[];
 };
 
 type RawTriggerWorkflowResponse = {
@@ -151,6 +181,32 @@ export function fromRawApproval(raw: RawWorkflowApproval): WorkflowApproval {
     approverPubkey: raw.approver_pubkey,
     note: raw.note,
     expiresAt: raw.expires_at,
+    createdAt: raw.created_at,
+  };
+}
+
+export function fromRawHostStep(raw: RawWorkflowHostStep): WorkflowHostStep {
+  return {
+    runId: raw.run_id,
+    stepId: raw.step_id,
+    workflowId: raw.workflow_id,
+    stepIndex: raw.step_index,
+    status: raw.status,
+    requestedEventId: raw.requested_event_id ?? null,
+    expiresAt: raw.expires_at,
+    claimedBy: raw.claimed_by ?? null,
+    claimedAt: raw.claimed_at ?? null,
+    claimEventId: raw.claim_event_id ?? null,
+    resultEventId: raw.result_event_id ?? null,
+    exitedEventId: raw.exited_event_id ?? null,
+    exitCode: raw.exit_code ?? null,
+    disposition: raw.disposition ?? null,
+    timedOut: raw.timed_out ?? null,
+    durationMs: raw.duration_ms ?? null,
+    headSha: raw.head_sha ?? null,
+    dirty: raw.dirty ?? null,
+    artifactRef: raw.artifact_ref ?? null,
+    exitedAt: raw.exited_at ?? null,
     createdAt: raw.created_at,
   };
 }
@@ -261,6 +317,21 @@ export async function getRunApprovals(
   return raw.approvals.map(fromRawApproval);
 }
 
+/**
+ * The `run_on_host` steps of one run, as the relay records them. Empty for a
+ * run whose definition has no host step.
+ */
+export async function getRunHostSteps(
+  workflowId: string,
+  runId: string,
+): Promise<WorkflowHostStep[]> {
+  const raw = await invokeTauri<RawWorkflowHostStepsResponse>(
+    "get_run_host_steps",
+    { workflowId, runId },
+  );
+  return raw.host_steps.map(fromRawHostStep);
+}
+
 export async function triggerWorkflow(
   workflowId: string,
 ): Promise<TriggerWorkflowResponse> {
@@ -271,23 +342,29 @@ export async function triggerWorkflow(
   return fromRawTriggerResponse(raw);
 }
 
+/**
+ * Grant a pending approval. `approvalRef` is the `approvalRef` the approvals
+ * listing returns (hex of the stored token hash); the backend puts it in the
+ * kind:46030's `d` tag, which is how the relay resolves the approval.
+ */
 export async function grantApproval(
-  token: string,
+  approvalRef: string,
   note?: string,
 ): Promise<ApprovalActionResponse> {
   const raw = await invokeTauri<RawApprovalActionResponse>("grant_approval", {
-    token,
+    approvalRef,
     note: note ?? null,
   });
   return fromRawApprovalResponse(raw);
 }
 
+/** Deny a pending approval; same reference as {@link grantApproval}. */
 export async function denyApproval(
-  token: string,
+  approvalRef: string,
   note?: string,
 ): Promise<ApprovalActionResponse> {
   const raw = await invokeTauri<RawApprovalActionResponse>("deny_approval", {
-    token,
+    approvalRef,
     note: note ?? null,
   });
   return fromRawApprovalResponse(raw);

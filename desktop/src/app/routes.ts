@@ -33,6 +33,7 @@ export const routes = rootRoute("root.tsx", [
     route("/pulse", "projects.$projectId.pulse.tsx"),
     route("/todos", "projects.$projectId.todos.tsx"),
     route("/agents", "projects.$projectId.agents.tsx"),
+    route("/actions", "projects.$projectId.actions.tsx"),
     route("/packs", "projects.$projectId.packs.tsx"),
     route("/contributors", "projects.$projectId.contributors.tsx"),
     route("/sessions/new", "projects.$projectId.sessions.new.tsx"),

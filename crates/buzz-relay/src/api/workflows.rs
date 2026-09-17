@@ -197,6 +197,41 @@ pub async fn run_approvals(
     })))
 }
 
+/// `GET /workflows/{workflow_id}/runs/{run_id}/host-steps` — every
+/// `run_on_host` step of a run: who claimed it, how it ended, and the event
+/// ids that prove each transition.
+pub async fn run_host_steps(
+    State(state): State<Arc<AppState>>,
+    Path((workflow_id, run_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let path = format!("/workflows/{workflow_id}/runs/{run_id}/host-steps");
+    let tenant = authorize_workflow_read(&state, &headers, &path, None, workflow_id).await?;
+
+    let run = state
+        .db
+        .get_workflow_run(tenant.community(), run_id)
+        .await
+        .map_err(|error| match error {
+            buzz_db::error::DbError::NotFound(_) => {
+                api_error(StatusCode::NOT_FOUND, "workflow run not found")
+            }
+            other => internal_error(&format!("get workflow run for host step read: {other}")),
+        })?;
+    if run.workflow_id != workflow_id {
+        return Err(api_error(StatusCode::NOT_FOUND, "workflow run not found"));
+    }
+
+    let host_steps = state
+        .db
+        .list_run_host_steps(tenant.community(), run_id)
+        .await
+        .map_err(|error| internal_error(&format!("list run host steps: {error}")))?;
+    Ok(Json(serde_json::json!({
+        "host_steps": host_steps.iter().map(host_step_json).collect::<Vec<_>>(),
+    })))
+}
+
 fn run_json(run: &buzz_db::workflow::WorkflowRunRecord) -> Value {
     serde_json::json!({
         "id": run.id,
@@ -225,6 +260,35 @@ fn approval_json(approval: &buzz_db::workflow::ApprovalRecord) -> Value {
         "note": approval.note,
         "expires_at": approval.expires_at,
         "created_at": approval.created_at.timestamp(),
+    })
+}
+
+/// The wire shape of one host-step row. Event ids and the claiming host are
+/// lowercase hex or `null`; timestamps are RFC 3339 like `expires_at` on an
+/// approval.
+fn host_step_json(step: &buzz_db::workflow::HostStepRecord) -> Value {
+    serde_json::json!({
+        "run_id": step.run_id,
+        "step_id": step.step_id,
+        "workflow_id": step.workflow_id,
+        "step_index": step.step_index,
+        "status": step.status,
+        "requested_event_id": step.requested_event_id.as_ref().map(hex::encode),
+        "expires_at": step.expires_at,
+        "claimed_by": step.claimed_by.as_ref().map(hex::encode),
+        "claimed_at": step.claimed_at,
+        "claim_event_id": step.claim_event_id.as_ref().map(hex::encode),
+        "result_event_id": step.result_event_id.as_ref().map(hex::encode),
+        "exited_event_id": step.exited_event_id.as_ref().map(hex::encode),
+        "exit_code": step.exit_code,
+        "disposition": step.disposition,
+        "timed_out": step.timed_out,
+        "duration_ms": step.duration_ms,
+        "head_sha": step.head_sha,
+        "dirty": step.dirty,
+        "artifact_ref": step.artifact_ref,
+        "exited_at": step.exited_at,
+        "created_at": step.created_at,
     })
 }
 
@@ -262,5 +326,55 @@ mod tests {
         let wire = approval_json(&approval);
         assert!(wire.get("token").is_none());
         assert_eq!(wire["approval_ref"], hex::encode([0xab; 32]));
+    }
+
+    #[test]
+    fn host_step_wire_hex_encodes_ids_and_keeps_nulls() {
+        let claimed_by = vec![0x02; 33];
+        let step = buzz_db::workflow::HostStepRecord {
+            run_id: Uuid::new_v4(),
+            step_id: "build".to_string(),
+            workflow_id: Uuid::new_v4(),
+            step_index: 1,
+            status: buzz_db::workflow::HostStepStatus::Exited,
+            requested_event_id: Some(vec![0xaa; 32]),
+            expires_at: Utc::now(),
+            claimed_by: Some(claimed_by.clone()),
+            claimed_at: Some(Utc::now()),
+            claim_event_id: Some(vec![0xbb; 32]),
+            result_event_id: Some(vec![0xcc; 32]),
+            exited_event_id: None,
+            exit_code: Some(124),
+            disposition: Some("timed_out".to_string()),
+            timed_out: Some(true),
+            duration_ms: Some(1_800_000),
+            head_sha: Some("a".repeat(40)),
+            dirty: Some(false),
+            artifact_ref: Some("/tmp/actions/run/build".to_string()),
+            result: Some(serde_json::json!({"stdoutTail": "secret-free"})),
+            exited_at: Some(Utc::now()),
+            created_at: Utc::now(),
+        };
+        let wire = host_step_json(&step);
+        assert_eq!(wire["status"], "exited");
+        assert_eq!(wire["requested_event_id"], hex::encode([0xaa; 32]));
+        assert_eq!(wire["claimed_by"], hex::encode(&claimed_by));
+        assert_eq!(wire["claim_event_id"], hex::encode([0xbb; 32]));
+        assert_eq!(wire["result_event_id"], hex::encode([0xcc; 32]));
+        assert!(wire["exited_event_id"].is_null());
+        assert_eq!(wire["exit_code"], 124);
+        assert_eq!(wire["disposition"], "timed_out");
+        assert_eq!(wire["timed_out"], true);
+        assert_eq!(wire["head_sha"], "a".repeat(40));
+        assert!(
+            wire["expires_at"].as_str().is_some_and(|s| s.contains('T')),
+            "timestamps are RFC 3339 strings"
+        );
+        assert!(
+            wire.get("result").is_none(),
+            "the verbatim result is not part of the listing; the 46014 echo carries it"
+        );
+        assert_eq!(wire["step_id"], "build");
+        assert_eq!(wire["step_index"], 1);
     }
 }

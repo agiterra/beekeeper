@@ -312,3 +312,57 @@ fn run_reads_serialize_to_backend_envelopes() {
         serde_json::json!({ "approvals": [] })
     );
 }
+
+const APPROVAL_REF: &str = "abababababababababababababababababababababababababababababababab";
+
+fn tag_values(ev: &nostr::Event, name: &str) -> Vec<String> {
+    ev.tags
+        .iter()
+        .filter_map(|t| {
+            let slice = t.as_slice();
+            (slice.first().map(String::as_str) == Some(name)).then(|| slice[1].clone())
+        })
+        .collect()
+}
+
+#[test]
+fn approval_grant_and_deny_reference_the_approval_by_d_tag() {
+    // The relay resolves a grant/deny by its `d` tag (the stored token hash
+    // hex the approvals listing returns as `approval_ref`) or an `e` tag —
+    // never `t`. Sending `t` used to make every desktop grant "missing
+    // approval reference".
+    let keys = Keys::generate();
+    for (builder, kind) in [
+        (
+            events::build_approval_grant(APPROVAL_REF, Some("ok")),
+            46030,
+        ),
+        (events::build_approval_deny(APPROVAL_REF, None), 46031),
+    ] {
+        let ev = builder.expect("build").sign_with_keys(&keys).expect("sign");
+        assert_eq!(ev.kind, Kind::Custom(kind));
+        assert_eq!(tag_values(&ev, "d"), vec![APPROVAL_REF.to_string()]);
+        assert!(tag_values(&ev, "t").is_empty());
+    }
+}
+
+#[test]
+fn approval_reference_is_lowercased_and_validated() {
+    let upper = APPROVAL_REF.to_ascii_uppercase();
+    let ev = events::build_approval_grant(&upper, None)
+        .expect("build")
+        .sign_with_keys(&Keys::generate())
+        .expect("sign");
+    assert_eq!(tag_values(&ev, "d"), vec![APPROVAL_REF.to_string()]);
+    assert_eq!(ev.content, "");
+    assert!(events::build_approval_grant("not-a-hash", None).is_err());
+    assert!(events::build_approval_deny("", None).is_err());
+}
+
+#[test]
+fn host_steps_wire_round_trips_the_relay_shape() {
+    let raw = serde_json::json!({ "host_steps": [{ "run_id": "r", "status": "claimed" }] });
+    let wire: WorkflowHostStepsWire = serde_json::from_value(raw.clone()).expect("deserialize");
+    assert_eq!(wire.host_steps.len(), 1);
+    assert_eq!(serde_json::to_value(&wire).expect("serialize"), raw);
+}

@@ -31,14 +31,20 @@
 //! ```
 
 pub mod action_sink;
+pub mod actions_file;
 pub mod error;
 pub mod executor;
+pub mod hash;
 pub mod schema;
+pub mod suspend;
 
-pub use action_sink::{ActionSink, ActionSinkError};
+pub use action_sink::{ActionSink, ActionSinkError, ApprovalRequest};
+pub use actions_file::{parse_actions_yml, ActionEntry, ACTIONS_SCHEMA, ACTIONS_YML};
 pub use error::{PartialProgress, WorkflowError};
 pub use executor::ExecutionResult;
+pub use hash::{definition_hash, definition_hash_hex, hash_definition_value};
 pub use schema::{ActionDef, Step, TriggerDef, WorkflowDef};
+pub use suspend::{host_step_output, resume_index_after_approval, Suspension};
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -204,12 +210,20 @@ impl WorkflowEngine {
 
     /// Finalize a workflow run after execution completes or fails.
     ///
-    /// This is the **single** place that maps an executor result to a DB status
-    /// update. All execution paths (event-triggered, manual trigger/webhook,
-    /// approval resume) call this instead of duplicating the 3-way match.
+    /// This is the **single** place that maps a completed or failed executor
+    /// result to a DB status update. All execution paths (event-triggered,
+    /// manual trigger/webhook, approval and host-step resume) call this
+    /// instead of duplicating the match.
+    ///
+    /// A **suspended** result is already durable when it arrives here: the
+    /// step loop wrote the approval or host-step row, parked the run as
+    /// `waiting_approval` / `waiting_host` with its full trace, and published
+    /// the request, in that order (`suspend::persist_and_publish`). Writing
+    /// again here would race the grant or claim that the request invites, so
+    /// this function only logs it.
     ///
     /// `existing_trace` is prepended to the executor's trace — used by the
-    /// approval-resume path where pre-approval steps already have trace entries.
+    /// resume paths where earlier steps already have trace entries.
     pub async fn finalize_run(
         &self,
         community_id: CommunityId,
@@ -226,34 +240,21 @@ impl WorkflowEngine {
                 let trace_json = serde_json::Value::Array(full_trace);
                 let step_count = result.step_index as i32;
 
-                if result.approval_token.is_some() {
-                    // Approval gates are not yet implemented (WF-08).
-                    // Fail explicitly rather than creating unreachable WaitingApproval rows.
-                    tracing::warn!(
+                if let Some(suspension) = &result.suspension {
+                    // WF-08 closed: the run is parked and its request is out.
+                    tracing::info!(
                         run_id = %run_id,
                         step_index = result.step_index,
-                        "Workflow hit approval gate — not yet implemented, marking as failed"
+                        step_id = suspension.step_id(),
+                        "Workflow run suspended — {}",
+                        match suspension {
+                            Suspension::Approval { synthetic: true, .. } =>
+                                "waiting for the operator to approve a host step",
+                            Suspension::Approval { .. } => "waiting for approval",
+                            Suspension::HostStep { .. } => "waiting for a host to run the step",
+                        }
                     );
-                    if let Err(e) = self
-                        .db
-                        .update_workflow_run(
-                            community_id,
-                            run_id,
-                            RunStatus::Failed,
-                            step_count,
-                            &trace_json,
-                            Some(buzz_db::workflow::WorkflowRunFailure {
-                                code: "approval_not_supported",
-                                message: "approval gates not yet implemented — see WF-08",
-                            }),
-                        )
-                        .await
-                    {
-                        tracing::error!(
-                            run_id = %run_id,
-                            "Failed to update run to Failed (approval gate): {e}"
-                        );
-                    }
+                    let _ = (trace_json, step_count);
                 } else {
                     tracing::info!(run_id = %run_id, "Workflow run completed");
                     if let Err(e) = self
@@ -1047,7 +1048,7 @@ fn trigger_matches_event(trigger: &TriggerDef, kind_u32: u32) -> bool {
         TriggerDef::ReactionAdded { .. } => kind_u32 == KIND_REACTION,
         TriggerDef::DiffPosted { .. } => kind_u32 == KIND_STREAM_MESSAGE_DIFF,
         // Schedule and Webhook triggers are not fired by channel events.
-        TriggerDef::Schedule { .. } | TriggerDef::Webhook => false,
+        TriggerDef::Schedule { .. } | TriggerDef::Webhook | TriggerDef::Manual => false,
     }
 }
 
@@ -1907,5 +1908,243 @@ steps:
             1,
             "channel owner's call_webhook workflow fires"
         );
+    }
+
+    // -- C1: suspensions are durable before they are announced (requires Postgres)
+
+    /// Records what the engine asked the relay to publish, and answers with a
+    /// deterministic event id so the test can check what was stored.
+    #[derive(Default)]
+    struct RecordingSink {
+        approvals: std::sync::Mutex<Vec<crate::action_sink::ApprovalRequest>>,
+        host_steps: std::sync::Mutex<Vec<buzz_core::host_step::HostStepRequested>>,
+    }
+
+    impl ActionSink for RecordingSink {
+        fn send_message(
+            &self,
+            _community_id: CommunityId,
+            _channel_id: &str,
+            _text: &str,
+            _author_pubkey: &str,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<String, ActionSinkError>> + Send + '_>,
+        > {
+            Box::pin(async { Ok("00".repeat(32)) })
+        }
+
+        fn record_ci_result(
+            &self,
+            _community_id: CommunityId,
+            _result: &buzz_core::ci_result::CiResult,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<String, ActionSinkError>> + Send + '_>,
+        > {
+            Box::pin(async { Ok("00".repeat(32)) })
+        }
+
+        fn request_approval(
+            &self,
+            _community_id: CommunityId,
+            request: &crate::action_sink::ApprovalRequest,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<String, ActionSinkError>> + Send + '_>,
+        > {
+            self.approvals
+                .lock()
+                .expect("approvals lock")
+                .push(request.clone());
+            Box::pin(async { Ok("aa".repeat(32)) })
+        }
+
+        fn request_host_step(
+            &self,
+            _community_id: CommunityId,
+            request: &buzz_core::host_step::HostStepRequested,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<String, ActionSinkError>> + Send + '_>,
+        > {
+            self.host_steps
+                .lock()
+                .expect("host steps lock")
+                .push(request.clone());
+            Box::pin(async { Ok("bb".repeat(32)) })
+        }
+    }
+
+    /// WF-08 closed, and the spec's synthetic gate (§ 5.4): an authored
+    /// `request_approval` parks the run as `waiting_approval` with its
+    /// approval row already written; a `run_on_host` step gates itself the
+    /// same way, bound to its own index; once granted it parks the run as
+    /// `waiting_host` with the host-step row written and a 46013 whose
+    /// `definitionHash` is the stored definition's hash. Every status is
+    /// checked *after* the sink recorded the request, which is the ordering
+    /// the design promises.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn suspensions_are_durable_before_they_are_announced() {
+        let db = setup_db().await;
+        let owner_keys = nostr::Keys::generate();
+        let owner = owner_keys.public_key().to_bytes().to_vec();
+        let member = nostr::Keys::generate().public_key().to_bytes().to_vec();
+        let (community, channel_id) = setup_channel(&db, &owner, &member).await;
+
+        let project = format!("30621:{}:pulse", "1".repeat(64));
+        let (def, canonical) = WorkflowEngine::parse_yaml(&format!(
+            "name: c1-suspend\nproject: '{project}'\ntrigger:\n  on: manual\nsteps:\n  - id: gate\n    action: request_approval\n    from: any\n    message: go?\n  - id: build\n    action: run_on_host\n    command: [\"true\"]\n  - id: after\n    action: send_message\n    text: done\n"
+        ))
+        .expect("parse");
+        let hash = crate::hash::definition_hash(&def).expect("hash");
+        let workflow_id = db
+            .create_workflow(
+                community,
+                Some(channel_id),
+                &owner,
+                "c1-suspend",
+                &canonical,
+                &hash,
+            )
+            .await
+            .expect("create workflow");
+        let run_id = db
+            .create_workflow_run(community, workflow_id, None, None)
+            .await
+            .expect("create run");
+
+        let sink = Arc::new(RecordingSink::default());
+        let engine = WorkflowEngine::new(db.clone(), WorkflowConfig::default());
+        engine.set_action_sink(sink.clone());
+        let ctx = executor::TriggerContext::default();
+
+        // 1. The authored gate parks the run; the approval row exists first.
+        let result = executor::execute_run(&engine, community, run_id, &def, &ctx)
+            .await
+            .expect("first segment");
+        assert!(matches!(
+            result.suspension,
+            Some(Suspension::Approval {
+                synthetic: false,
+                ..
+            })
+        ));
+        engine
+            .finalize_run(community, run_id, Ok(result), None)
+            .await;
+        let run = db.get_workflow_run(community, run_id).await.expect("run");
+        assert_eq!(run.status, RunStatus::WaitingApproval);
+        assert_eq!(run.current_step, 0);
+        let approvals = db
+            .get_run_approvals(community, workflow_id, run_id)
+            .await
+            .expect("approvals");
+        assert_eq!(approvals.len(), 1);
+        assert_eq!(approvals[0].step_id, "gate");
+        let recorded = sink.approvals.lock().expect("lock").clone();
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(recorded[0].approval_ref, hex::encode(&approvals[0].token));
+        assert!(!recorded[0].synthetic);
+        assert_eq!(resume_index_after_approval(&def, 0), 1);
+
+        // 2. Granting the authored gate resumes after it; the host step then
+        //    gates itself, bound to its own index, naming the owner.
+        assert!(db
+            .update_approval_by_stored_hash(
+                community,
+                &approvals[0].token,
+                buzz_db::workflow::ApprovalStatus::Granted,
+                Some(&owner),
+                None,
+            )
+            .await
+            .expect("grant"));
+        let result = executor::execute_from_step(&engine, community, run_id, &def, &ctx, 1, None)
+            .await
+            .expect("second segment");
+        match &result.suspension {
+            Some(Suspension::Approval {
+                step_id,
+                approver_spec,
+                synthetic: true,
+                ..
+            }) => {
+                assert_eq!(step_id, "build");
+                assert_eq!(approver_spec, &owner_keys.public_key().to_hex());
+            }
+            other => panic!("expected a synthetic approval, got {other:?}"),
+        }
+        assert_eq!(result.step_index, 1);
+        let run = db.get_workflow_run(community, run_id).await.expect("run");
+        assert_eq!(run.status, RunStatus::WaitingApproval);
+        assert_eq!(run.current_step, 1);
+        let approvals = db
+            .get_run_approvals(community, workflow_id, run_id)
+            .await
+            .expect("approvals");
+        let synthetic = approvals
+            .iter()
+            .find(|approval| approval.step_id == "build")
+            .expect("synthetic approval row");
+        assert_eq!(synthetic.step_index, 1);
+        assert_eq!(
+            resume_index_after_approval(&def, 1),
+            1,
+            "resumes at the host step"
+        );
+        assert_eq!(sink.approvals.lock().expect("lock").len(), 2);
+
+        // 3. Granting the synthetic gate hands the step to a host.
+        assert!(db
+            .update_approval_by_stored_hash(
+                community,
+                &synthetic.token,
+                buzz_db::workflow::ApprovalStatus::Granted,
+                Some(&owner),
+                None,
+            )
+            .await
+            .expect("grant host step"));
+        let result = executor::execute_from_step(&engine, community, run_id, &def, &ctx, 1, None)
+            .await
+            .expect("third segment");
+        assert!(matches!(
+            result.suspension,
+            Some(Suspension::HostStep { ref step_id, .. }) if step_id == "build"
+        ));
+        let run = db.get_workflow_run(community, run_id).await.expect("run");
+        assert_eq!(run.status, RunStatus::WaitingHost);
+        let host_step = db
+            .get_host_step(community, run_id, "build")
+            .await
+            .expect("host step row");
+        assert_eq!(
+            host_step.status,
+            buzz_db::workflow::HostStepStatus::Requested
+        );
+        assert_eq!(
+            host_step.requested_event_id.as_deref(),
+            Some(&hex::decode("bb".repeat(32)).expect("hex")[..])
+        );
+        let requests = sink.host_steps.lock().expect("lock").clone();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].definition_hash, hex::encode(&hash));
+        assert_eq!(requests[0].project, project);
+        assert_eq!(requests[0].step_index, 1);
+        assert_eq!(requests[0].workflow_name, "c1-suspend");
+        assert_eq!(
+            requests[0]
+                .approval
+                .as_ref()
+                .map(|a| a.approval_ref.as_str()),
+            Some(hex::encode(&synthetic.token).as_str())
+        );
+        let trace = run.execution_trace.as_array().cloned().unwrap_or_default();
+        // The trace keeps every parking: the authored gate, the synthetic
+        // gate, then the hand-off — none with an `output`, so a resume's
+        // output reconstruction ignores them.
+        assert_eq!(trace.len(), 3);
+        assert_eq!(trace[0]["status"], crate::suspend::TRACE_AWAITING_APPROVAL);
+        assert_eq!(trace[1]["status"], crate::suspend::TRACE_AWAITING_APPROVAL);
+        assert_eq!(trace[2]["status"], crate::suspend::TRACE_REQUESTED_ON_HOST);
+        assert!(trace.iter().all(|entry| entry.get("output").is_none()));
     }
 }

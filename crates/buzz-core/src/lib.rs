@@ -88,6 +88,9 @@ pub mod filter;
 pub mod fractional_rank;
 /// Git permission types — ref patterns, protection rules, policy evaluation.
 pub mod git_perms;
+/// Host-executed workflow step request, claim and result payloads (kinds
+/// 46013, 46014, 46022, 46023).
+pub mod host_step;
 /// Shared invite-link contract constants.
 pub mod invite;
 /// Buzz kind number registry — custom event type constants.

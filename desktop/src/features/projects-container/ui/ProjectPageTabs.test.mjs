@@ -28,9 +28,18 @@ async function renderTabs(props) {
     getParentRoute: () => rootRoute,
     path: "/projects/$projectId/agents",
   });
+  const actionsRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/projects/$projectId/actions",
+  });
   const router = createRouter({
     history: createMemoryHistory({ initialEntries: ["/projects/p1/packs"] }),
-    routeTree: rootRoute.addChildren([projectRoute, packsRoute, agentsRoute]),
+    routeTree: rootRoute.addChildren([
+      projectRoute,
+      packsRoute,
+      agentsRoute,
+      actionsRoute,
+    ]),
   });
   await router.load();
   return renderToStaticMarkup(React.createElement(RouterProvider, { router }));
@@ -63,7 +72,7 @@ test("the active packs tab is still marked as the current page", async () => {
   assert.match(html, /data-testid="project-tab-agents"[^>]*>Agents</);
 });
 
-test("the strip reads Overview, Pulse, To-Do, Agents, Roles, and Contributors is gone", async () => {
+test("the strip reads Overview, Pulse, To-Do, Agents, Actions, Roles, and Contributors is gone", async () => {
   const html = await renderTabs({
     active: "agents",
     projectId: "p1",
@@ -73,9 +82,18 @@ test("the strip reads Overview, Pulse, To-Do, Agents, Roles, and Contributors is
   const order = [...html.matchAll(/data-testid="project-tab-([a-z]+)"/g)].map(
     (match) => match[1],
   );
-  assert.deepEqual(order, ["overview", "pulse", "todos", "agents", "packs"]);
+  assert.deepEqual(order, [
+    "overview",
+    "pulse",
+    "todos",
+    "agents",
+    "actions",
+    "packs",
+  ]);
   assert.match(html, /href="\/projects\/p1\/todos"/);
   assert.match(html, /href="\/projects\/p1\/agents"/);
+  assert.match(html, /href="\/projects\/p1\/actions"/);
+  assert.match(html, /data-testid="project-tab-actions"[^>]*>Actions</);
   assert.match(html, /data-state="active" data-testid="project-tab-agents"/);
   assert.doesNotMatch(html, /Contributors/);
 });

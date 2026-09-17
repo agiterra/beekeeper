@@ -23,7 +23,8 @@ export type WorkflowRunStatus =
   | "completed"
   | "failed"
   | "cancelled"
-  | "waiting_approval";
+  | "waiting_approval"
+  | "waiting_host";
 
 export type TraceEntry = {
   stepId: string;
@@ -66,6 +67,48 @@ export type WorkflowApproval = {
   note: string | null;
   expiresAt: string;
   createdAt: number;
+};
+
+export type WorkflowHostStepStatus =
+  | "requested"
+  | "claimed"
+  | "exited"
+  | "lost"
+  | "expired";
+
+export type WorkflowHostStepDisposition =
+  | "exited"
+  | "timed_out"
+  | "lost_on_restart"
+  | "refused";
+
+/**
+ * One `run_on_host` step of a run as the relay records it: who claimed it,
+ * how it ended, and the event ids that prove each transition. Event ids and
+ * the claiming host are lowercase hex; timestamps are RFC 3339 strings.
+ */
+export type WorkflowHostStep = {
+  runId: string;
+  stepId: string;
+  workflowId: string;
+  stepIndex: number;
+  status: WorkflowHostStepStatus;
+  requestedEventId: string | null;
+  expiresAt: string;
+  claimedBy: string | null;
+  claimedAt: string | null;
+  claimEventId: string | null;
+  resultEventId: string | null;
+  exitedEventId: string | null;
+  exitCode: number | null;
+  disposition: WorkflowHostStepDisposition | null;
+  timedOut: boolean | null;
+  durationMs: number | null;
+  headSha: string | null;
+  dirty: boolean | null;
+  artifactRef: string | null;
+  exitedAt: string | null;
+  createdAt: string;
 };
 
 export type TriggerWorkflowResponse = {

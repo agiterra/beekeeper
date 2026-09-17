@@ -320,6 +320,7 @@ pub(crate) fn invoke_handler(
         delete_workflow,
         get_workflow_runs,
         get_run_approvals,
+        get_run_host_steps,
         trigger_workflow,
         grant_approval,
         deny_approval,

@@ -68,6 +68,14 @@ pub struct WorkflowApprovalsWire {
     pub approvals: Vec<Value>,
 }
 
+/// `GET /workflows/{id}/runs/{run}/host-steps` verbatim: one row per
+/// `run_on_host` step of the run. Mirrors `RawWorkflowHostStep` in the
+/// frontend; the relay's `host_step_json` is the source of the field set.
+#[derive(Debug, Clone, serde::Deserialize, Serialize, PartialEq)]
+pub struct WorkflowHostStepsWire {
+    pub host_steps: Vec<Value>,
+}
+
 /// Canonical trigger acknowledgement consumed by the Desktop client.
 ///
 /// The relay currently returns only `run_id`; the workflow id is the command
@@ -347,24 +355,47 @@ pub async fn get_run_approvals(
     .await
 }
 
+/// The host steps of one run, as the relay records them (who claimed, how it
+/// ended, which events prove it). Empty for a run with no `run_on_host` step.
+#[tauri::command]
+pub async fn get_run_host_steps(
+    workflow_id: String,
+    run_id: String,
+    state: State<'_, AppState>,
+) -> Result<WorkflowHostStepsWire, String> {
+    let workflow_id =
+        uuid::Uuid::parse_str(&workflow_id).map_err(|_| "invalid workflow id".to_string())?;
+    let run_id =
+        uuid::Uuid::parse_str(&run_id).map_err(|_| "invalid workflow run id".to_string())?;
+    get_relay_json(
+        &state,
+        &format!("/workflows/{workflow_id}/runs/{run_id}/host-steps"),
+    )
+    .await
+}
+
+/// Grant a pending approval. `approval_ref` is the `approval_ref` the
+/// approvals listing returns (hex of the stored token hash), which becomes
+/// the kind:46030's `d` tag.
 #[tauri::command]
 pub async fn grant_approval(
-    token: String,
+    approval_ref: String,
     note: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Value, String> {
-    let builder = events::build_approval_grant(&token, note.as_deref())?;
+    let builder = events::build_approval_grant(&approval_ref, note.as_deref())?;
     let result = submit_event(builder, &state).await?;
     Ok(serde_json::json!({ "event_id": result.event_id }))
 }
 
+/// Deny a pending approval; same reference as [`grant_approval`].
 #[tauri::command]
 pub async fn deny_approval(
-    token: String,
+    approval_ref: String,
     note: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Value, String> {
-    let builder = events::build_approval_deny(&token, note.as_deref())?;
+    let builder = events::build_approval_deny(&approval_ref, note.as_deref())?;
     let result = submit_event(builder, &state).await?;
     Ok(serde_json::json!({ "event_id": result.event_id }))
 }

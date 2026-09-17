@@ -4570,6 +4570,113 @@ impl Db {
         .await
     }
 
+    /// Record a new host-step request.
+    #[datastore_span(name = "create_host_step", system = "postgresql")]
+    pub async fn create_host_step(&self, params: workflow::CreateHostStepParams<'_>) -> Result<()> {
+        workflow::create_host_step(&self.pool, params).await
+    }
+
+    /// Attach the published kind:46013's id to its host-step row.
+    #[datastore_span(name = "set_host_step_requested_event", system = "postgresql")]
+    pub async fn set_host_step_requested_event(
+        &self,
+        community_id: CommunityId,
+        run_id: uuid::Uuid,
+        step_id: &str,
+        requested_event_id: &[u8],
+    ) -> Result<()> {
+        workflow::set_host_step_requested_event(
+            &self.pool,
+            community_id,
+            run_id,
+            step_id,
+            requested_event_id,
+        )
+        .await
+    }
+
+    /// Fetch one host step.
+    #[datastore_span(name = "get_host_step", system = "postgresql")]
+    pub async fn get_host_step(
+        &self,
+        community_id: CommunityId,
+        run_id: uuid::Uuid,
+        step_id: &str,
+    ) -> Result<workflow::HostStepRecord> {
+        workflow::get_host_step(&self.pool, community_id, run_id, step_id).await
+    }
+
+    /// Every host step of one run.
+    #[datastore_span(name = "list_run_host_steps", system = "postgresql")]
+    pub async fn list_run_host_steps(
+        &self,
+        community_id: CommunityId,
+        run_id: uuid::Uuid,
+    ) -> Result<Vec<workflow::HostStepRecord>> {
+        workflow::list_run_host_steps(&self.pool, community_id, run_id).await
+    }
+
+    /// Every host step of one workflow, newest first.
+    #[datastore_span(name = "list_workflow_host_steps", system = "postgresql")]
+    pub async fn list_workflow_host_steps(
+        &self,
+        community_id: CommunityId,
+        workflow_id: uuid::Uuid,
+        limit: i64,
+    ) -> Result<Vec<workflow::HostStepRecord>> {
+        workflow::list_workflow_host_steps(&self.pool, community_id, workflow_id, limit).await
+    }
+
+    /// Claim a requested host step for one host; exactly one claim wins.
+    #[datastore_span(name = "claim_host_step", system = "postgresql")]
+    pub async fn claim_host_step(
+        &self,
+        community_id: CommunityId,
+        run_id: uuid::Uuid,
+        step_id: &str,
+        host: &[u8],
+        claim_event_id: &[u8],
+    ) -> Result<workflow::HostStepClaimOutcome> {
+        workflow::claim_host_step(
+            &self.pool,
+            community_id,
+            run_id,
+            step_id,
+            host,
+            claim_event_id,
+        )
+        .await
+    }
+
+    /// Record the claiming host's terminal result; `None` when the reporter
+    /// does not hold the claim or the row is already closed.
+    #[datastore_span(name = "record_host_step_result", system = "postgresql")]
+    pub async fn record_host_step_result(
+        &self,
+        params: workflow::HostStepResultParams<'_>,
+    ) -> Result<Option<workflow::HostStepRecord>> {
+        workflow::record_host_step_result(&self.pool, params).await
+    }
+
+    /// Attach the relay-signed kind:46014 echo's id to a closed host step.
+    #[datastore_span(name = "set_host_step_exited_event", system = "postgresql")]
+    pub async fn set_host_step_exited_event(
+        &self,
+        community_id: CommunityId,
+        run_id: uuid::Uuid,
+        step_id: &str,
+        exited_event_id: &[u8],
+    ) -> Result<()> {
+        workflow::set_host_step_exited_event(
+            &self.pool,
+            community_id,
+            run_id,
+            step_id,
+            exited_event_id,
+        )
+        .await
+    }
+
     /// Ensures monthly partitions exist for the next N months.
     #[datastore_span(name = "ensure_future_partitions", system = "postgresql")]
     pub async fn ensure_future_partitions(&self, months_ahead: u32) -> Result<()> {

@@ -29,8 +29,9 @@ CREATE TYPE channel_type AS ENUM ('stream', 'forum', 'dm', 'workflow', 'transpor
 CREATE TYPE channel_visibility AS ENUM ('open', 'private');
 CREATE TYPE member_role AS ENUM ('owner', 'admin', 'member', 'guest', 'bot');
 CREATE TYPE workflow_status AS ENUM ('active', 'disabled', 'archived');
-CREATE TYPE run_status AS ENUM ('pending', 'running', 'waiting_approval', 'completed', 'failed', 'cancelled');
+CREATE TYPE run_status AS ENUM ('pending', 'running', 'waiting_approval', 'completed', 'failed', 'cancelled', 'waiting_host');
 CREATE TYPE approval_status AS ENUM ('pending', 'granted', 'denied', 'expired');
+CREATE TYPE host_step_status AS ENUM ('requested', 'claimed', 'exited', 'lost', 'expired');
 CREATE TYPE delivery_method AS ENUM ('webhook', 'websocket');
 CREATE TYPE subscription_status AS ENUM ('active', 'paused', 'deleted');
 CREATE TYPE pause_reason AS ENUM ('user', 'system', 'rate_limit');
@@ -438,6 +439,45 @@ CREATE TABLE workflow_approvals (
 CREATE INDEX idx_workflow_approvals_workflow ON workflow_approvals (community_id, workflow_id);
 CREATE INDEX idx_workflow_approvals_run ON workflow_approvals (community_id, run_id);
 CREATE INDEX idx_workflow_approvals_status ON workflow_approvals (community_id, status);
+
+-- ── Workflow host steps ───────────────────────────────────────────────────────
+-- Spec § 5.4: a `run_on_host` step parks the run as `waiting_host` and one row
+-- here records the request. Exactly one host claims it (UPDATE … WHERE
+-- claimed_by IS NULL RETURNING); the claiming host's result closes the row.
+
+CREATE TABLE workflow_host_steps (
+    community_id        UUID NOT NULL REFERENCES communities(id),
+    run_id              UUID NOT NULL,
+    step_id             VARCHAR(64) NOT NULL,
+    workflow_id         UUID NOT NULL,
+    step_index          INT NOT NULL,
+    status              host_step_status NOT NULL DEFAULT 'requested',
+    requested_event_id  BYTEA,
+    expires_at          TIMESTAMPTZ NOT NULL,
+    claimed_by          BYTEA,
+    claimed_at          TIMESTAMPTZ,
+    claim_event_id      BYTEA,
+    result_event_id     BYTEA,
+    exited_event_id     BYTEA,
+    exit_code           INT,
+    disposition         TEXT,
+    timed_out           BOOLEAN,
+    duration_ms         BIGINT,
+    head_sha            TEXT,
+    dirty               BOOLEAN,
+    artifact_ref        TEXT,
+    result              JSONB,
+    exited_at           TIMESTAMPTZ,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (community_id, run_id, step_id),
+    FOREIGN KEY (community_id, workflow_id)
+        REFERENCES workflows (community_id, id) ON DELETE CASCADE,
+    FOREIGN KEY (community_id, run_id)
+        REFERENCES workflow_runs (community_id, id) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_workflow_host_steps_workflow ON workflow_host_steps (community_id, workflow_id);
+CREATE INDEX idx_workflow_host_steps_status ON workflow_host_steps (community_id, status);
 
 -- ── Scheduled workflow fires (cron claim) ─────────────────────────────────────
 -- Plan §5: the at-most-once cron fire claim. UNIQUE (community_id, workflow_id,

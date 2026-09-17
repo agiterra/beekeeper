@@ -298,6 +298,9 @@ enum Cmd {
     /// Create, trigger, and manage workflows
     #[command(subcommand)]
     Workflows(WorkflowsCmd),
+    /// Publish a project's `beekeeper/actions.yml` as workflows
+    #[command(subcommand)]
+    Actions(ActionsCmd),
     /// Read the activity feed
     #[command(subcommand)]
     Feed(FeedCmd),
@@ -1286,6 +1289,37 @@ pub enum WorkflowsCmd {
         /// Optional note to include with the approval/denial
         #[arg(long)]
         note: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ActionsCmd {
+    /// Publish every entry of `beekeeper/actions.yml` as a kind:30620 workflow
+    #[command(
+        after_help = "Each entry becomes one workflow whose id is derived from the project and \
+the entry's name, so publishing again updates the same workflows in place.\n\nExamples:\n  \
+bee actions publish --project 30621:<owner-hex>:<id> --channel <UUID>\n  bee actions publish \
+--project 30621:<owner-hex>:<id> --channel <UUID> --file path/to/actions.yml"
+    )]
+    Publish {
+        /// The project's kind:30621 coordinate (30621:<owner-hex>:<id>)
+        #[arg(long)]
+        project: String,
+        /// Channel UUID the workflows are published into
+        #[arg(long)]
+        channel: String,
+        /// Path to the actions file (default: beekeeper/actions.yml; `-` for stdin)
+        #[arg(long)]
+        file: Option<String>,
+    },
+    /// Show what the actions file would publish: name, hash, trigger, host steps
+    Status {
+        /// The project's kind:30621 coordinate (30621:<owner-hex>:<id>)
+        #[arg(long)]
+        project: String,
+        /// Path to the actions file (default: beekeeper/actions.yml; `-` for stdin)
+        #[arg(long)]
+        file: Option<String>,
     },
 }
 
@@ -5099,6 +5133,7 @@ async fn run(cli: Cli) -> Result<(), CliError> {
         Cmd::Dms(sub) => commands::dms::dispatch(sub, &client).await,
         Cmd::Users(sub) => commands::users::dispatch(sub, &client, &cli.format).await,
         Cmd::Workflows(sub) => commands::workflows::dispatch(sub, &client).await,
+        Cmd::Actions(sub) => commands::actions::dispatch(sub, &client).await,
         Cmd::Feed(sub) => commands::feed::dispatch(sub, &client, &cli.format).await,
         Cmd::Social(sub) => commands::social::dispatch(sub, &client).await,
         Cmd::Notes(sub) => commands::notes::dispatch(sub, &client).await,
@@ -5744,6 +5779,7 @@ mod tests {
     #[test]
     fn command_inventory_is_stable() {
         let expected_groups: Vec<&str> = vec![
+            "actions",
             "agents",
             "canvas",
             "channels",
@@ -6104,9 +6140,29 @@ mod tests {
         );
     }
 
+    /// The `actions` group's own inventory, kept out of
+    /// `subcommand_names_are_stable` for the reason `registry` is (item 108).
+    #[test]
+    fn actions_subcommand_names_are_stable() {
+        let cmd = Cli::command();
+        let actions = cmd
+            .get_subcommands()
+            .find(|group| group.get_name() == "actions")
+            .expect("actions group");
+        let mut names: Vec<String> = actions
+            .get_subcommands()
+            .map(|sub| sub.get_name().to_string())
+            .filter(|name| name != "help")
+            .collect();
+        names.sort();
+        assert_eq!(names, vec!["publish".to_owned(), "status".to_owned()]);
+    }
+
     #[test]
     fn subcommand_counts_are_stable() {
         let expected: Vec<(&str, usize)> = vec![
+            // C1: `publish` and `status` (spec § 5.1).
+            ("actions", 2),
             ("agents", 5),
             ("canvas", 2),
             ("channels", 16),

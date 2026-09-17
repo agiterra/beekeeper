@@ -21,6 +21,7 @@ buzz-core = { workspace = true }
 buzz-sdk = { workspace = true }
 buzz-acp = { path = "../buzz-acp" }
 buzz-persona = { path = "../buzz-persona" }
+buzz-workflow = { workspace = true }
 
 # Nostr
 nostr = { workspace = true }
@@ -57,6 +58,11 @@ tracing-subscriber = { workspace = true }
 # Error handling
 thiserror = { workspace = true }
 anyhow = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+# Process-group kill and pid liveness for host-executed action steps; the
+# same version and features `buzz-dev-mcp` pins for its shell runner.
+nix = { version = "0.31", default-features = false, features = ["signal", "process", "hostname"] }
 
 [dev-dependencies]
 axum = { workspace = true }

@@ -916,6 +916,17 @@ pub const KIND_WORKFLOW_APPROVAL_REQUESTED: u32 = 46010;
 pub const KIND_WORKFLOW_APPROVAL_GRANTED: u32 = 46011;
 /// A pending workflow approval was denied.
 pub const KIND_WORKFLOW_APPROVAL_DENIED: u32 = 46012;
+/// Relay-signed request for an operator's host to execute one `run_on_host`
+/// workflow step. Carries no command text: the host recompiles the step from
+/// the project's own `beekeeper/actions.yml` and refuses on hash drift.
+pub const KIND_WORKFLOW_HOST_STEP_REQUESTED: u32 = 46013;
+/// Relay-signed echo of the accepted host result for one `run_on_host` step,
+/// plus which host claimed it.
+pub const KIND_WORKFLOW_HOST_STEP_EXITED: u32 = 46014;
+/// Host-signed claim of one kind:46013 request. Exactly one host wins.
+pub const KIND_HOST_STEP_CLAIM: u32 = 46022;
+/// Host-signed terminal result for one claimed kind:46013 request.
+pub const KIND_HOST_STEP_RESULT: u32 = 46023;
 
 // User groups (47000–47999)
 
@@ -1753,10 +1764,10 @@ pub const fn is_parameterized_replaceable(kind: u32) -> bool {
     kind >= PARAM_REPLACEABLE_KIND_MIN && kind <= PARAM_REPLACEABLE_KIND_MAX
 }
 
-/// Returns `true` if `kind` is a workflow execution event (46001–46012).
+/// Returns `true` if `kind` is a workflow execution event (46001–46014).
 /// These must not trigger workflows (prevents infinite loops).
 pub const fn is_workflow_execution_kind(kind: u32) -> bool {
-    kind >= KIND_WORKFLOW_TRIGGERED && kind <= KIND_WORKFLOW_APPROVAL_DENIED
+    kind >= KIND_WORKFLOW_TRIGGERED && kind <= KIND_WORKFLOW_HOST_STEP_EXITED
 }
 
 /// Returns `true` if `kind` is a NIP-43 relay membership admin command (9030–9032)
@@ -1791,6 +1802,8 @@ pub const fn is_command_kind(kind: u32) -> bool {
             | KIND_WORKFLOW_TRIGGER
             | KIND_APPROVAL_GRANT
             | KIND_APPROVAL_DENY
+            | KIND_HOST_STEP_CLAIM
+            | KIND_HOST_STEP_RESULT
     )
 }
 
@@ -1831,6 +1844,8 @@ pub const fn is_relay_only_kind(kind: u32) -> bool {
             | KIND_THREAD_SUMMARY
             | KIND_WINDOW_BOUNDS
             | KIND_CI_RESULT
+            | KIND_WORKFLOW_HOST_STEP_REQUESTED
+            | KIND_WORKFLOW_HOST_STEP_EXITED
             | KIND_SYSTEM_MESSAGE
     )
 }

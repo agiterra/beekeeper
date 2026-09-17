@@ -68,6 +68,11 @@ pub enum WorkflowError {
     /// The action is defined but not yet implemented.
     #[error("action not implemented: {0}")]
     NotImplemented(String),
+
+    /// A suspension (approval gate or host step) could not be made durable
+    /// or announced, so the run cannot honestly wait.
+    #[error("suspension failed: {0}")]
+    SuspensionFailed(String),
 }
 
 impl WorkflowError {
@@ -85,6 +90,7 @@ impl WorkflowError {
             Self::Database(_) => "database_error",
             Self::Unauthorized(_) => "owner_unauthorized",
             Self::NotImplemented(_) => "action_not_implemented",
+            Self::SuspensionFailed(_) => "suspension_failed",
         }
     }
 }

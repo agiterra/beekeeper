@@ -9,9 +9,12 @@ use std::pin::Pin;
 use std::sync::{Arc, Weak};
 
 use buzz_core::ci_result::CiResult;
-use buzz_core::kind::KIND_STREAM_MESSAGE;
+use buzz_core::host_step::{build_host_step_requested, HostStepRequested};
+use buzz_core::kind::{
+    KIND_STREAM_MESSAGE, KIND_WORKFLOW_APPROVAL_REQUESTED, KIND_WORKFLOW_HOST_STEP_REQUESTED,
+};
 use buzz_core::tenant::CommunityId;
-use buzz_workflow::action_sink::{ActionSink, ActionSinkError};
+use buzz_workflow::action_sink::{ActionSink, ActionSinkError, ApprovalRequest};
 use chrono::Utc;
 use nostr::{EventBuilder, Kind, Tag};
 use tracing::info;
@@ -148,6 +151,97 @@ fn resolve_mention_pubkeys(text: &str, members: &[(String, String)]) -> Vec<Stri
     }
     out
 }
+
+/// Sign `content` with the relay keypair as `kind`, store it under the
+/// community's tenant scoped to `channel_id`, and fan it out.
+///
+/// This is the one path every relay-authored workflow record takes: the
+/// kind:46010 approval request, the kind:46013 host-step request and the
+/// kind:46014 host-step echo. The tenant is read back from the community id
+/// (never re-derived from the deployment host) exactly as `send_message`
+/// does. Returns the event id hex; a duplicate insert still returns the id
+/// but skips fan-out.
+pub(crate) async fn publish_relay_event(
+    state: &Arc<AppState>,
+    community_id: CommunityId,
+    kind: u32,
+    tags: Vec<Vec<String>>,
+    content: String,
+    channel_id: Uuid,
+) -> Result<String, ActionSinkError> {
+    let host = state
+        .db
+        .lookup_community_host(community_id)
+        .await
+        .map_err(|e| ActionSinkError::Database(e.to_string()))?
+        .ok_or_else(|| {
+            ActionSinkError::Database(format!(
+                "workflow run community {community_id} is not mapped to a host"
+            ))
+        })?;
+    let tenant = buzz_core::tenant::TenantContext::resolved(community_id, host);
+
+    let tags = tags
+        .into_iter()
+        .map(|tag| {
+            Tag::parse(tag)
+                .map_err(|e| ActionSinkError::EventBuild(format!("kind {kind} tag: {e}")))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let event = EventBuilder::new(Kind::from(kind as u16), content)
+        .tags(tags)
+        .sign_with_keys(&state.relay_keypair)
+        .map_err(|e| ActionSinkError::EventBuild(format!("kind {kind} signing: {e}")))?;
+    let event_id_hex = event.id.to_hex();
+
+    let (stored, was_inserted) = state
+        .db
+        .insert_event(community_id, &event, Some(channel_id))
+        .await
+        .map_err(|e| ActionSinkError::Database(e.to_string()))?;
+    if was_inserted {
+        let relay_pubkey_hex = state.relay_keypair.public_key().to_hex();
+        let _ =
+            dispatch_persistent_event(&tenant, state, &stored, kind, &relay_pubkey_hex, None).await;
+    }
+    info!(
+        event_id = %event_id_hex,
+        channel_id = %channel_id,
+        inserted = was_inserted,
+        "Workflow: published relay-signed kind {kind} event"
+    );
+    Ok(event_id_hex)
+}
+
+/// Tags and content of the kind:46010 that announces a parked approval.
+///
+/// `d` is the approval ref (the stored token hash, hex) so a kind:46030 grant
+/// names it directly; `p` attributes the request to the workflow owner;
+/// `buzz:workflow` keeps the event out of trigger matching.
+pub(crate) fn approval_request_wire(request: &ApprovalRequest) -> (Vec<Vec<String>>, String) {
+    let tags = vec![
+        vec!["d".into(), request.approval_ref.clone()],
+        vec!["h".into(), request.channel_id.clone()],
+        vec!["p".into(), request.owner_pubkey_hex.clone()],
+        vec!["buzz:workflow".into(), "true".into()],
+    ];
+    let content = serde_json::json!({
+        "schema": APPROVAL_REQUEST_SCHEMA,
+        "runId": request.run_id.to_string(),
+        "workflowId": request.workflow_id.to_string(),
+        "workflowName": request.workflow_name,
+        "stepId": request.step_id,
+        "stepIndex": request.step_index,
+        "approverSpec": request.approver_spec,
+        "message": request.message,
+        "expiresAt": request.expires_at,
+        "synthetic": request.synthetic,
+    });
+    (tags, content.to_string())
+}
+
+/// Schema named in every kind:46010 approval request's content.
+pub(crate) const APPROVAL_REQUEST_SCHEMA: &str = "buzz-approval-request/v1";
 
 /// Relay-side action sink — executes workflow side-effects directly.
 ///
@@ -380,6 +474,61 @@ impl ActionSink for RelayActionSink {
             crate::workflow_ci_result::record_ci_result(&state, community_id, &result).await
         })
     }
+
+    fn request_approval(
+        &self,
+        community_id: CommunityId,
+        request: &ApprovalRequest,
+    ) -> Pin<Box<dyn Future<Output = Result<String, ActionSinkError>> + Send + '_>> {
+        let request = request.clone();
+        Box::pin(async move {
+            let state = self
+                .state
+                .upgrade()
+                .ok_or_else(|| ActionSinkError::Database("relay is shutting down".into()))?;
+            let channel_id = Uuid::parse_str(&request.channel_id).map_err(|e| {
+                ActionSinkError::InvalidInput(format!("approval request channel: {e}"))
+            })?;
+            let (tags, content) = approval_request_wire(&request);
+            publish_relay_event(
+                &state,
+                community_id,
+                KIND_WORKFLOW_APPROVAL_REQUESTED,
+                tags,
+                content,
+                channel_id,
+            )
+            .await
+        })
+    }
+
+    fn request_host_step(
+        &self,
+        community_id: CommunityId,
+        request: &HostStepRequested,
+    ) -> Pin<Box<dyn Future<Output = Result<String, ActionSinkError>> + Send + '_>> {
+        let request = request.clone();
+        Box::pin(async move {
+            let state = self
+                .state
+                .upgrade()
+                .ok_or_else(|| ActionSinkError::Database("relay is shutting down".into()))?;
+            let channel_id = Uuid::parse_str(&request.channel_id).map_err(|e| {
+                ActionSinkError::InvalidInput(format!("host step request channel: {e}"))
+            })?;
+            let (tags, content) =
+                build_host_step_requested(&request).map_err(ActionSinkError::InvalidInput)?;
+            publish_relay_event(
+                &state,
+                community_id,
+                KIND_WORKFLOW_HOST_STEP_REQUESTED,
+                tags,
+                content,
+                channel_id,
+            )
+            .await
+        })
+    }
 }
 
 #[cfg(test)]
@@ -393,6 +542,49 @@ mod tests {
     // A 64-char hex pubkey built from a single repeated nibble, for readable tests.
     fn pk(nibble: char) -> String {
         std::iter::repeat_n(nibble, 64).collect()
+    }
+
+    #[test]
+    fn approval_request_wire_names_the_approval_ref_in_d() {
+        let request = ApprovalRequest {
+            approval_ref: "ab".repeat(32),
+            run_id: Uuid::from_u128(1),
+            workflow_id: Uuid::from_u128(2),
+            workflow_name: "nightly".into(),
+            step_id: "build".into(),
+            step_index: 3,
+            approver_spec: "cd".repeat(32),
+            message: "Run build on a host?".into(),
+            expires_at: 1_800_000_000,
+            channel_id: Uuid::from_u128(9).to_string(),
+            owner_pubkey_hex: "cd".repeat(32),
+            synthetic: true,
+        };
+        let (tags, content) = approval_request_wire(&request);
+        assert_eq!(tags[0], vec!["d".to_string(), "ab".repeat(32)]);
+        assert_eq!(
+            tags[1],
+            vec!["h".to_string(), Uuid::from_u128(9).to_string()]
+        );
+        assert_eq!(tags[2], vec!["p".to_string(), "cd".repeat(32)]);
+        assert_eq!(
+            tags[3],
+            vec!["buzz:workflow".to_string(), "true".to_string()]
+        );
+        let content: serde_json::Value = serde_json::from_str(&content).expect("json");
+        assert_eq!(content["schema"], APPROVAL_REQUEST_SCHEMA);
+        assert_eq!(content["runId"], Uuid::from_u128(1).to_string());
+        assert_eq!(content["workflowId"], Uuid::from_u128(2).to_string());
+        assert_eq!(content["workflowName"], "nightly");
+        assert_eq!(content["stepId"], "build");
+        assert_eq!(content["stepIndex"], 3);
+        assert_eq!(content["approverSpec"], "cd".repeat(32));
+        assert_eq!(content["expiresAt"], 1_800_000_000u64);
+        assert_eq!(content["synthetic"], true);
+        assert!(
+            content.get("token").is_none(),
+            "the raw token never leaves the relay"
+        );
     }
 
     #[test]

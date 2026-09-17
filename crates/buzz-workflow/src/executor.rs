@@ -20,6 +20,7 @@ use uuid::Uuid;
 
 use crate::error::WorkflowError;
 use crate::schema::{ActionDef, Step, WorkflowDef};
+use crate::suspend::Suspension;
 use crate::WorkflowEngine;
 
 /// Data extracted from the triggering event, passed to every step.
@@ -495,6 +496,9 @@ pub fn resolve_step_templates(
         Delay { duration } => Ok(Delay {
             duration: duration.clone(),
         }),
+        // Literal by construction: the host never receives these values, it
+        // recompiles them from the project's own actions.yml.
+        RunOnHost { .. } => Ok(step.action.clone()),
         RecordCiResult {
             project,
             repository,
@@ -526,11 +530,9 @@ pub fn resolve_step_templates(
 pub enum StepResult {
     /// Step completed normally. Output is stored in `step_outputs`.
     Completed(JsonValue),
-    /// Step requests suspension (approval gate). Execution must pause.
-    Suspended {
-        /// Token used to resume or reject this approval gate.
-        approval_token: String,
-    },
+    /// Step requests suspension (approval gate or host step). Execution must
+    /// pause; the step loop makes the suspension durable and announces it.
+    Suspended(Suspension),
     /// Step was skipped due to `if:` condition being false.
     Skipped,
 }
@@ -742,19 +744,93 @@ pub async fn dispatch_action(
                     timeout,
                 } => {
                     let timeout_str = timeout.as_deref().unwrap_or("24h");
+                    let timeout_secs = parse_duration_secs(timeout_str)?;
                     info!(
                         run_id = %run_id, step = step_id,
                         "RequestApproval from={from} timeout={timeout_str}: {message}"
                     );
+                    // The step loop writes the approval row, parks the run as
+                    // waiting_approval and publishes the kind:46010 — in that
+                    // order — via `suspend::persist_and_publish`.
+                    Ok(StepResult::Suspended(Suspension::Approval {
+                        step_id: step_id.to_owned(),
+                        approver_spec: from.clone(),
+                        message: message.clone(),
+                        timeout_secs,
+                        synthetic: false,
+                    }))
+                }
 
-                    let token = generate_approval_token(run_id, step_id);
-
-                    // TODO (WF-08): create approval record in DB, emit kind:46010.
-                    // For now, return Suspended with the token so the caller can persist state.
-
-                    Ok(StepResult::Suspended {
-                        approval_token: token,
-                    })
+                RunOnHost { .. } => {
+                    // Validate limits exactly as the host will, so a step the
+                    // host would refuse never reaches it.
+                    crate::schema::resolve_run_on_host(action)?;
+                    let wf_run = engine
+                        .db
+                        .get_workflow_run(community_id, run_id)
+                        .await
+                        .map_err(|e| {
+                            WorkflowError::Database(format!(
+                                "run_on_host: failed to load workflow run {run_id}: {e}"
+                            ))
+                        })?;
+                    let workflow = engine
+                        .db
+                        .get_workflow(community_id, wf_run.workflow_id)
+                        .await
+                        .map_err(|e| {
+                            WorkflowError::Database(format!(
+                                "run_on_host: failed to load workflow {}: {e}",
+                                wf_run.workflow_id
+                            ))
+                        })?;
+                    // Spec § 5.4: every host step is gated on the operator's
+                    // approval unless a grant already released this step. The
+                    // gate is bound to the host step's own index, so the
+                    // grant resumes *at* the step (`resume_index_after_approval`).
+                    match crate::suspend::granted_approval_for_step(
+                        engine,
+                        community_id,
+                        wf_run.workflow_id,
+                        run_id,
+                        step_id,
+                    )
+                    .await?
+                    {
+                        Some(approval) => {
+                            info!(
+                                run_id = %run_id, step = step_id,
+                                "run_on_host: approval granted — handing the step to a host"
+                            );
+                            Ok(StepResult::Suspended(Suspension::HostStep {
+                                step_id: step_id.to_owned(),
+                                approval: Some(approval),
+                            }))
+                        }
+                        None => {
+                            let owner_hex = nostr::PublicKey::from_slice(&workflow.owner_pubkey)
+                                .map(|key| key.to_hex())
+                                .map_err(|e| {
+                                    WorkflowError::Database(format!(
+                                        "run_on_host: workflow owner pubkey is invalid: {e}"
+                                    ))
+                                })?;
+                            info!(
+                                run_id = %run_id, step = step_id,
+                                "run_on_host: no approval yet — asking the workflow owner"
+                            );
+                            Ok(StepResult::Suspended(Suspension::Approval {
+                                step_id: step_id.to_owned(),
+                                approver_spec: owner_hex,
+                                message: format!(
+                                    "Run step `{step_id}` of `{}` on your host?",
+                                    workflow.name
+                                ),
+                                timeout_secs: crate::suspend::SYNTHETIC_APPROVAL_TIMEOUT_SECS,
+                                synthetic: true,
+                            }))
+                        }
+                    }
                 }
 
                 Delay { duration } => {
@@ -862,16 +938,6 @@ pub async fn dispatch_action(
             Err(error)
         }
     }
-}
-
-/// Generate a cryptographically random approval token.
-///
-/// Uses `Uuid::new_v4()` which draws from the OS CSPRNG (via the `getrandom`
-/// crate). The `run_id` and `step_id` parameters are accepted for logging
-/// context but are not mixed into the token — the UUID's own randomness is
-/// sufficient and avoids the predictability of time-based entropy.
-fn generate_approval_token(_run_id: Uuid, _step_id: &str) -> String {
-    Uuid::new_v4().to_string()
 }
 
 /// Parse a duration string like "5m", "1h", "30s" into seconds.
@@ -1110,14 +1176,17 @@ async fn add_reaction_impl(message_id: &str, emoji: &str) -> Result<JsonValue, W
 /// Rich return type from `execute_run` / `execute_from_step`.
 ///
 /// Carries enough information for the caller to:
-/// - Persist the approval record when suspended at a `RequestApproval` step.
 /// - Update the run's execution trace and current step in the DB.
 /// - Resume execution from the correct step after approval.
+///
+/// A suspended result is already durable: the step loop wrote the approval
+/// or host-step row, parked the run and published the request before
+/// returning (see [`crate::suspend`]). `finalize_run` writes nothing for it.
 #[derive(Debug)]
 pub struct ExecutionResult {
-    /// Set when execution suspended at a `RequestApproval` step.
+    /// Set when execution suspended at an approval gate or a host step.
     /// `None` means the run completed normally.
-    pub approval_token: Option<String>,
+    pub suspension: Option<Suspension>,
     /// Index of the step that suspended (or the total step count on completion).
     pub step_index: usize,
     /// Accumulated step outputs at the point of suspension or completion.
@@ -1134,10 +1203,10 @@ pub struct ExecutionResult {
 /// 3. Dispatches the action.
 /// 4. Stores the step output for use by later steps.
 ///
-/// On `RequestApproval`: returns `ExecutionResult` with `approval_token = Some(token)`.
-/// Caller must persist the approval record and update the run status.
+/// On an approval gate or a host step: returns `ExecutionResult` with
+/// `suspension = Some(..)`, the run already parked and its request published.
 ///
-/// Returns `ExecutionResult` with `approval_token = None` on normal completion.
+/// Returns `ExecutionResult` with `suspension = None` on normal completion.
 ///
 /// Enforces `engine.config.max_concurrent` via a semaphore — returns
 /// [`WorkflowError::CapacityExceeded`] immediately if all permits are taken.
@@ -1358,15 +1427,46 @@ async fn execute_steps(
                 }));
                 step_outputs.insert(step.id.clone(), output);
             }
-            StepResult::Suspended { approval_token } => {
+            StepResult::Suspended(suspension) => {
                 info!(
                     run_id = %run_id, step = %step.id,
-                    "Step suspended — awaiting approval (token: <redacted>)"
+                    "Step suspended — {}",
+                    match &suspension {
+                        Suspension::Approval { synthetic: true, .. } => "awaiting the operator's approval of a host step",
+                        Suspension::Approval { .. } => "awaiting approval",
+                        Suspension::HostStep { .. } => "handed to a host",
+                    }
                 );
-                // Return the token and current state so the caller can persist the
-                // approval record and update the run's execution trace.
+                // The run row holds the trace prefix (execute_from_step wrote
+                // it back); this segment is appended and the suspension row,
+                // status and request are made durable in that order.
+                let prefix = engine
+                    .db
+                    .get_workflow_run(community_id, run_id)
+                    .await
+                    .ok()
+                    .and_then(|run| run.execution_trace.as_array().cloned())
+                    .unwrap_or_default();
+                let mut full_trace = prefix;
+                full_trace.extend(trace.iter().cloned());
+                if let Err(e) = crate::suspend::persist_and_publish(
+                    engine,
+                    community_id,
+                    run_id,
+                    i,
+                    &suspension,
+                    &mut full_trace,
+                )
+                .await
+                {
+                    let progress = crate::error::PartialProgress {
+                        step_index: i,
+                        trace,
+                    };
+                    return Err((e, progress));
+                }
                 return Ok(ExecutionResult {
-                    approval_token: Some(approval_token),
+                    suspension: Some(suspension),
                     step_index: i,
                     step_outputs,
                     trace,
@@ -1384,7 +1484,7 @@ async fn execute_steps(
 
     info!(run_id = %run_id, "Workflow run completed");
     Ok(ExecutionResult {
-        approval_token: None,
+        suspension: None,
         step_index: def.steps.len(),
         step_outputs,
         trace,

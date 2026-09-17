@@ -6,7 +6,42 @@
 use std::future::Future;
 use std::pin::Pin;
 
-use buzz_core::{ci_result::CiResult, tenant::CommunityId};
+use buzz_core::{ci_result::CiResult, host_step::HostStepRequested, tenant::CommunityId};
+
+/// What the relay publishes as a kind:46010 when a run suspends on approval.
+///
+/// The approval row already exists and the run is already `waiting_approval`
+/// when this is sent, so a client that acts on the event finds a run in the
+/// state the event describes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApprovalRequest {
+    /// Lowercase hex of the stored token hash: the `d` tag, and what a
+    /// kind:46030 grant names.
+    pub approval_ref: String,
+    /// The run waiting on this approval.
+    pub run_id: uuid::Uuid,
+    /// The workflow definition the run executes.
+    pub workflow_id: uuid::Uuid,
+    /// The definition's name, for the inbox row.
+    pub workflow_name: String,
+    /// The gated step's id.
+    pub step_id: String,
+    /// The gated step's zero-based index.
+    pub step_index: usize,
+    /// Who may approve, in `check_approver_spec` terms.
+    pub approver_spec: String,
+    /// Text shown to the approver.
+    pub message: String,
+    /// Unix seconds after which the approval expires.
+    pub expires_at: u64,
+    /// The workflow's channel, canonical UUID string.
+    pub channel_id: String,
+    /// Hex pubkey of the workflow owner, for the `p` attribution tag.
+    pub owner_pubkey_hex: String,
+    /// True when the engine inserted this gate itself before a `run_on_host`
+    /// step (spec § 5.4), false for an authored `request_approval` step.
+    pub synthetic: bool,
+}
 
 /// Errors from action sink operations.
 #[derive(Debug, thiserror::Error)]
@@ -88,5 +123,25 @@ pub trait ActionSink: Send + Sync {
         &self,
         community_id: CommunityId,
         result: &CiResult,
+    ) -> Pin<Box<dyn Future<Output = Result<String, ActionSinkError>> + Send + '_>>;
+
+    /// Publish a relay-signed kind:46010 approval request for a run that the
+    /// engine has already parked as `waiting_approval`.
+    ///
+    /// Returns the event id hex string on success.
+    fn request_approval(
+        &self,
+        community_id: CommunityId,
+        request: &ApprovalRequest,
+    ) -> Pin<Box<dyn Future<Output = Result<String, ActionSinkError>> + Send + '_>>;
+
+    /// Publish a relay-signed kind:46013 host-step request for a run that the
+    /// engine has already parked as `waiting_host`.
+    ///
+    /// Returns the event id hex string on success.
+    fn request_host_step(
+        &self,
+        community_id: CommunityId,
+        request: &HostStepRequested,
     ) -> Pin<Box<dyn Future<Output = Result<String, ActionSinkError>> + Send + '_>>;
 }

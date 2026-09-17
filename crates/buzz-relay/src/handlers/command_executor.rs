@@ -13,7 +13,6 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use nostr::Event;
-use sha2::{Digest, Sha256};
 use tracing::warn;
 use uuid::Uuid;
 
@@ -71,6 +70,12 @@ pub async fn handle_command(
         KIND_WORKFLOW_TRIGGER => handle_workflow_trigger(tenant, state, &event, &auth).await,
         KIND_APPROVAL_GRANT => handle_approval_grant(tenant, state, &event, &auth).await,
         KIND_APPROVAL_DENY => handle_approval_deny(tenant, state, &event, &auth).await,
+        KIND_HOST_STEP_CLAIM => {
+            super::host_steps::handle_host_step_claim(tenant, state, &event, &auth).await
+        }
+        KIND_HOST_STEP_RESULT => {
+            super::host_steps::handle_host_step_result(tenant, state, &event, &auth).await
+        }
         _ => Err(IngestError::Rejected(format!(
             "unknown command kind: {kind}"
         ))),
@@ -79,7 +84,7 @@ pub async fn handle_command(
 
 /// Result of persisting a command event: either a duplicate (already processed)
 /// or an open transaction that the handler must commit after executing mutations.
-enum PersistResult {
+pub(super) enum PersistResult {
     /// Event was already processed — return idempotent success.
     Duplicate,
     /// Event inserted — transaction is open, handler must commit after mutations.
@@ -100,7 +105,7 @@ enum PersistResult {
 /// (no conflict), and the mutation re-executes — which is safe for idempotent
 /// operations (open_dm, hide_dm, update_approval, upsert_workflow).
 #[datastore_span(name = "persist_command_event", system = "postgresql")]
-async fn persist_command_event(
+pub(super) async fn persist_command_event(
     db: &buzz_db::Db,
     tenant: &TenantContext,
     event: &Event,
@@ -361,11 +366,6 @@ fn decode_pubkey(hex_str: &str) -> Result<Vec<u8>, IngestError> {
         )));
     }
     Ok(bytes)
-}
-
-/// Compute SHA-256 hash of a string, returning raw bytes.
-fn compute_definition_hash(json_str: &str) -> Vec<u8> {
-    Sha256::digest(json_str.as_bytes()).to_vec()
 }
 
 async fn handle_dm_open(
@@ -798,6 +798,39 @@ async fn handle_workflow_def(
         }
     }
 
+    // A `run_on_host` step runs a command on an operator's machine (spec
+    // § 5.6), so saving one takes the same standing authority as saving an
+    // exfiltration-capable action: the channel owner or an admin. Fail closed.
+    if def.has_host_steps() {
+        let role = state
+            .db
+            .get_member_role(tenant.community(), channel_id, &self_bytes)
+            .await
+            .map_err(|e| IngestError::Internal(format!("error: role check: {e}")))?;
+        if !matches!(role.as_deref(), Some("owner") | Some("admin")) {
+            return Err(IngestError::Rejected(
+                "forbidden: workflows with run_on_host actions require the owner or admin role"
+                    .into(),
+            ));
+        }
+        // The `project` binding is what a host uses to decide the request is
+        // for a project it serves, and the host's own actions.yml is what it
+        // runs — so whoever binds a definition to a project must own that
+        // project's coordinate. Otherwise an admin of any channel a host is
+        // in could republish a victim project's public entry under the
+        // victim's coordinate and approve it himself (review P2-e). Repository
+        // founders (the `record_ci_result` rule) come with C2's project scope.
+        let project = def.project.as_deref().unwrap_or_default();
+        let project_owner = project.split(':').nth(1).unwrap_or_default();
+        if project_owner != hex::encode(&self_bytes) {
+            return Err(IngestError::Rejected(
+                "forbidden: a run_on_host definition must be saved by the owner of its \
+                 project coordinate"
+                    .into(),
+            ));
+        }
+    }
+
     let mut definition_json: serde_json::Value = serde_json::from_str(&definition_json_str)
         .map_err(|e| IngestError::Internal(format!("error: json parse of definition: {e}")))?;
 
@@ -839,10 +872,13 @@ async fn handle_workflow_def(
         None
     };
 
-    // Compute hash AFTER secret injection
+    // Compute hash AFTER secret injection, with the one function a host also
+    // runs over its own `actions.yml` entry (`buzz_workflow::hash`), so the
+    // relay's stored hash and the host's recompiled hash agree byte for byte.
     let definition_json_final = serde_json::to_string(&definition_json)
         .map_err(|e| IngestError::Internal(format!("error: json serialize: {e}")))?;
-    let hash = compute_definition_hash(&definition_json_final);
+    let hash = buzz_workflow::hash_definition_value(&definition_json)
+        .map_err(|e| IngestError::Internal(format!("error: definition hash: {e}")))?;
 
     // Persist the command event — returns open transaction
     let tx = match persist_command_event(&state.db, tenant, event, None).await? {
@@ -1213,13 +1249,20 @@ async fn handle_approval_grant(
     let community_id = tenant.community();
     let run_id = approval.run_id;
     let workflow_id = approval.workflow_id;
-    let resume_index = approval.step_index as usize + 1;
+    let approval_step_index = approval.step_index.max(0) as usize;
     let engine = Arc::clone(&state.workflow_engine);
     let db = state.db.clone();
 
     tokio::spawn(async move {
-        resume_workflow_after_approval(engine, db, community_id, run_id, workflow_id, resume_index)
-            .await;
+        resume_workflow_after_approval(
+            engine,
+            db,
+            community_id,
+            run_id,
+            workflow_id,
+            approval_step_index,
+        )
+        .await;
     });
 
     // 7. Return response
@@ -1377,13 +1420,19 @@ async fn handle_approval_deny(
 }
 
 /// Resume a suspended workflow run after an approval gate has been granted.
+/// Resume a run parked on the approval bound to `approval_step_index`.
+///
+/// The index execution resumes at is derived from the parsed definition
+/// (`buzz_workflow::resume_index_after_approval`): a synthetic gate on a
+/// `run_on_host` step resumes **at** that step so the executor can hand it
+/// to a host; an authored `request_approval` step resumes after itself.
 async fn resume_workflow_after_approval(
     engine: Arc<buzz_workflow::WorkflowEngine>,
     db: buzz_db::Db,
     community_id: CommunityId,
     run_id: Uuid,
     workflow_id: Uuid,
-    resume_index: usize,
+    approval_step_index: usize,
 ) {
     let run = match db.get_workflow_run(community_id, run_id).await {
         Ok(r) => r,
@@ -1435,19 +1484,10 @@ async fn resume_workflow_after_approval(
         }
     };
 
+    let resume_index = buzz_workflow::resume_index_after_approval(&def, approval_step_index);
+
     // Reconstruct step_outputs from execution trace for template resolution
-    let mut initial_outputs: std::collections::HashMap<String, serde_json::Value> =
-        std::collections::HashMap::new();
-    if let Some(trace_arr) = run.execution_trace.as_array() {
-        for entry in trace_arr {
-            if let (Some(step_id), Some(output)) = (
-                entry.get("step_id").and_then(|v| v.as_str()),
-                entry.get("output"),
-            ) {
-                initial_outputs.insert(step_id.to_string(), output.clone());
-            }
-        }
-    }
+    let initial_outputs = super::host_steps::outputs_from_trace(&run.execution_trace);
 
     // Restore trigger context for {{trigger.*}} templates
     let trigger_ctx: TriggerContext = run
@@ -1664,6 +1704,32 @@ mod tests {
             IngestError::Rejected(ref message)
                 if message == "conflict: workflow update was superseded; refresh and try again"
         ));
+    }
+
+    /// The grant handler hands the approval's own step index to the resume
+    /// path, which derives where to continue from the parsed definition: a
+    /// synthetic gate on a `run_on_host` step resumes at that step, an
+    /// authored gate after itself.
+    #[test]
+    fn approval_resume_index_comes_from_the_parsed_definition() {
+        let yaml = format!(
+            "name: nightly\nproject: '30621:{}:pulse'\ntrigger:\n  on: manual\nsteps:\n  - id: gate\n    action: request_approval\n    from: any\n    message: ok?\n  - id: build\n    action: run_on_host\n    command: [\"true\"]\n",
+            "1".repeat(64)
+        );
+        let (def, canonical) = buzz_workflow::WorkflowEngine::parse_yaml(&yaml).expect("parse");
+        // The stored definition round-trips through the same JSON the resume
+        // path reads back from `workflows.definition`.
+        let stored: serde_json::Value = serde_json::from_str(&canonical).expect("json");
+        let reread: buzz_workflow::WorkflowDef =
+            serde_json::from_value(stored.clone()).expect("reread");
+        assert_eq!(buzz_workflow::resume_index_after_approval(&reread, 0), 1);
+        assert_eq!(buzz_workflow::resume_index_after_approval(&reread, 1), 1);
+        assert_eq!(buzz_workflow::resume_index_after_approval(&def, 1), 1);
+        // And the hash the relay stores is the one a host recomputes.
+        assert_eq!(
+            buzz_workflow::hash_definition_value(&stored).expect("hash"),
+            buzz_workflow::definition_hash(&reread).expect("hash")
+        );
     }
 
     #[test]

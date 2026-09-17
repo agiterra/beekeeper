@@ -3,11 +3,22 @@
 //! Workflow definitions are authored in YAML and stored as canonical JSON.
 //! All types must round-trip through both formats without loss.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
 use crate::error::WorkflowError;
+
+/// Default `run_on_host` timeout when the step names none.
+pub const RUN_ON_HOST_DEFAULT_TIMEOUT_SECS: u64 = 1800;
+/// Ceiling on a `run_on_host` timeout; the host refuses anything above it.
+pub const RUN_ON_HOST_MAX_TIMEOUT_SECS: u64 = 3600;
+/// Default bytes of stdout/stderr tail a host step captures.
+pub const RUN_ON_HOST_DEFAULT_TAIL_BYTES: u64 = 8192;
+/// Ceiling on the captured tail.
+pub const RUN_ON_HOST_MAX_TAIL_BYTES: u64 = 65_536;
+/// Default ceiling on the on-disk artifact a host step keeps.
+pub const RUN_ON_HOST_DEFAULT_ARTIFACT_MAX_BYTES: u64 = 10 * 1024 * 1024;
 
 /// Top-level workflow definition, authored in YAML and stored as canonical JSON.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -19,6 +30,12 @@ pub struct WorkflowDef {
     pub description: Option<String>,
     /// The event trigger that starts this workflow.
     pub trigger: TriggerDef,
+    /// Full canonical kind:30621 project coordinate this definition acts
+    /// for. Required when any step is `run_on_host`: it is the `a` tag on the
+    /// kind:46013 request, which is how a host knows the request is for a
+    /// project it serves. Literal; templates are refused.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
     /// Ordered list of steps to execute when triggered.
     pub steps: Vec<Step>,
     /// Whether this workflow is active. Defaults to `true`.
@@ -65,6 +82,10 @@ pub enum TriggerDef {
     },
     /// Fires when HTTP POST arrives at `/hooks/{id}`.
     Webhook,
+    /// Never fires on its own: only a kind:46020 trigger (`bee workflows
+    /// trigger`, the Run button) starts it. The trigger for an action a
+    /// person runs by hand (spec § 5.1).
+    Manual,
 }
 
 /// A single step in a workflow definition.
@@ -169,6 +190,194 @@ pub enum ActionDef {
         #[serde(default)]
         summary: Option<String>,
     },
+    /// Suspend the run and ask an operator's host to execute a command in the
+    /// project's checkout. Every field is literal: the host never receives
+    /// these values over the wire, it recompiles them from the project's own
+    /// `beekeeper/actions.yml` and refuses when the definition hash differs.
+    RunOnHost {
+        /// Program and arguments, exec-style (no shell).
+        command: Vec<String>,
+        /// Directory relative to the project checkout. Defaults to `"."`;
+        /// absolute paths and `..` components are refused.
+        #[serde(default)]
+        working_directory: Option<String>,
+        /// Duration string (`"30m"`, `"1800s"`). Defaults to 30 minutes;
+        /// at most one hour.
+        #[serde(default)]
+        timeout: Option<String>,
+        /// Literal environment values. No secrets: this file lives in git.
+        #[serde(default)]
+        env: Option<BTreeMap<String, String>>,
+        /// Names whose values the host supplies from its own environment.
+        /// Those values are scrubbed from the captured tails.
+        #[serde(default)]
+        env_from_host: Option<Vec<String>>,
+        /// Output capture limits.
+        #[serde(default)]
+        capture: Option<HostCapture>,
+    },
+}
+
+/// Output capture limits for a `run_on_host` step.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HostCapture {
+    /// Bytes of stdout and stderr tail carried in the result.
+    #[serde(default)]
+    pub tail_bytes: Option<u64>,
+    /// Bytes of full output kept on the host's disk.
+    #[serde(default)]
+    pub artifact_max_bytes: Option<u64>,
+}
+
+/// One `run_on_host` step with defaults applied and limits checked.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedRunOnHost {
+    /// Program and arguments.
+    pub command: Vec<String>,
+    /// Directory relative to the checkout, never escaping it.
+    pub working_directory: String,
+    /// Timeout in seconds, at most [`RUN_ON_HOST_MAX_TIMEOUT_SECS`].
+    pub timeout_secs: u64,
+    /// Literal environment.
+    pub env: BTreeMap<String, String>,
+    /// Names the host supplies.
+    pub env_from_host: Vec<String>,
+    /// Tail bytes to capture.
+    pub tail_bytes: u64,
+    /// Artifact ceiling.
+    pub artifact_max_bytes: u64,
+}
+
+/// Apply defaults to a `run_on_host` step and refuse anything outside the
+/// host's limits. The same function runs on the relay when the definition is
+/// saved and on the host before it executes, so both refuse identically.
+pub fn resolve_run_on_host(action: &ActionDef) -> Result<ResolvedRunOnHost, WorkflowError> {
+    let ActionDef::RunOnHost {
+        command,
+        working_directory,
+        timeout,
+        env,
+        env_from_host,
+        capture,
+    } = action
+    else {
+        return Err(WorkflowError::InvalidDefinition(
+            "step is not run_on_host".into(),
+        ));
+    };
+    let invalid =
+        |detail: String| WorkflowError::InvalidDefinition(format!("run_on_host {detail}"));
+    if command.is_empty() || command.iter().any(|arg| arg.is_empty()) {
+        return Err(invalid(
+            "command must be a non-empty list of non-empty strings".into(),
+        ));
+    }
+    if command.iter().any(|arg| arg.contains("{{")) {
+        return Err(invalid(
+            "command must be literal; templates are not supported".into(),
+        ));
+    }
+    let working_directory = working_directory
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(".")
+        .to_owned();
+    if working_directory.contains("{{") {
+        return Err(invalid("working_directory must be literal".into()));
+    }
+    let path = std::path::Path::new(&working_directory);
+    if path.is_absolute()
+        || working_directory.starts_with('/')
+        || working_directory.starts_with('\\')
+    {
+        return Err(invalid(
+            "working_directory must be relative to the checkout".into(),
+        ));
+    }
+    if path.components().any(|component| {
+        matches!(
+            component,
+            std::path::Component::ParentDir
+                | std::path::Component::Prefix(_)
+                | std::path::Component::RootDir
+        )
+    }) {
+        return Err(invalid(
+            "working_directory must not escape the checkout".into(),
+        ));
+    }
+    let timeout_secs = match timeout.as_deref().map(str::trim) {
+        None | Some("") => RUN_ON_HOST_DEFAULT_TIMEOUT_SECS,
+        Some(value) => crate::executor::parse_duration_secs(value).map_err(|_| {
+            invalid(format!(
+                "timeout '{value}' is invalid: expected a duration like '30m', '1h', or '1800s'"
+            ))
+        })?,
+    };
+    if timeout_secs == 0 || timeout_secs > RUN_ON_HOST_MAX_TIMEOUT_SECS {
+        return Err(invalid(format!(
+            "timeout must be between 1s and {RUN_ON_HOST_MAX_TIMEOUT_SECS}s (got {timeout_secs}s)"
+        )));
+    }
+    let env = env.clone().unwrap_or_default();
+    for (key, value) in &env {
+        if !is_env_name(key) {
+            return Err(invalid(format!(
+                "env name '{key}' is not a valid environment name"
+            )));
+        }
+        if value.contains("{{") {
+            return Err(invalid(format!("env value for '{key}' must be literal")));
+        }
+    }
+    let env_from_host = env_from_host.clone().unwrap_or_default();
+    for key in &env_from_host {
+        if !is_env_name(key) {
+            return Err(invalid(format!(
+                "env_from_host name '{key}' is not a valid environment name"
+            )));
+        }
+        if env.contains_key(key) {
+            return Err(invalid(format!(
+                "'{key}' cannot be both a literal env value and env_from_host"
+            )));
+        }
+    }
+    let capture = capture.clone().unwrap_or_default();
+    let tail_bytes = capture.tail_bytes.unwrap_or(RUN_ON_HOST_DEFAULT_TAIL_BYTES);
+    if tail_bytes == 0 || tail_bytes > RUN_ON_HOST_MAX_TAIL_BYTES {
+        return Err(invalid(format!(
+            "capture.tail_bytes must be between 1 and {RUN_ON_HOST_MAX_TAIL_BYTES}"
+        )));
+    }
+    let artifact_max_bytes = capture
+        .artifact_max_bytes
+        .unwrap_or(RUN_ON_HOST_DEFAULT_ARTIFACT_MAX_BYTES);
+    if artifact_max_bytes < tail_bytes {
+        return Err(invalid(
+            "capture.artifact_max_bytes must be at least capture.tail_bytes".into(),
+        ));
+    }
+    Ok(ResolvedRunOnHost {
+        command: command.clone(),
+        working_directory,
+        timeout_secs,
+        env,
+        env_from_host,
+        tail_bytes,
+        artifact_max_bytes,
+    })
+}
+
+fn is_env_name(name: &str) -> bool {
+    let mut bytes = name.bytes();
+    match bytes.next() {
+        Some(first) if first.is_ascii_alphabetic() || first == b'_' => {}
+        _ => return false,
+    }
+    bytes.all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
 }
 
 impl WorkflowDef {
@@ -183,6 +392,13 @@ impl WorkflowDef {
         self.steps
             .iter()
             .any(|s| matches!(s.action, ActionDef::CallWebhook { .. }))
+    }
+
+    /// True when any step asks an operator's host to execute a command.
+    pub fn has_host_steps(&self) -> bool {
+        self.steps
+            .iter()
+            .any(|s| matches!(s.action, ActionDef::RunOnHost { .. }))
     }
 
     /// Validate the workflow definition. Returns `Err` with a descriptive message
@@ -209,6 +425,36 @@ impl WorkflowDef {
                 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
         };
 
+        if let Some(project) = &self.project {
+            let normalized =
+                buzz_core::kind::normalize_project_coordinate(project).ok_or_else(|| {
+                    WorkflowError::InvalidDefinition(
+                        "project must be a full 30621:<64-hex>:<id> coordinate".into(),
+                    )
+                })?;
+            if &normalized != project {
+                return Err(WorkflowError::InvalidDefinition(
+                    "project must use a lowercase canonical owner key".into(),
+                ));
+            }
+        }
+        if self.has_host_steps() && self.project.is_none() {
+            return Err(WorkflowError::InvalidDefinition(
+                "run_on_host steps require a top-level project coordinate".into(),
+            ));
+        }
+        // The relay hashes a webhook definition after injecting its secret,
+        // and a host hashes the plain entry from actions.yml: the two could
+        // never agree, so every request would be refused as drift. Refuse
+        // the combination here, where the author sees it.
+        if self.has_host_steps() && matches!(self.trigger, TriggerDef::Webhook) {
+            return Err(WorkflowError::InvalidDefinition(
+                "run_on_host steps cannot use a webhook trigger; use manual, schedule, \
+                 message_posted, reaction_added or diff_posted"
+                    .into(),
+            ));
+        }
+
         let mut seen_ids: HashSet<&str> = HashSet::new();
         for step in &self.steps {
             if step.id.trim().is_empty() {
@@ -227,6 +473,10 @@ impl WorkflowDef {
                     "duplicate step id: {}",
                     step.id
                 )));
+            }
+
+            if matches!(step.action, ActionDef::RunOnHost { .. }) {
+                resolve_run_on_host(&step.action)?;
             }
 
             if let ActionDef::RecordCiResult {

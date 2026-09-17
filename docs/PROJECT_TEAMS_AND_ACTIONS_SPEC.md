@@ -655,7 +655,10 @@ The run is the existing `workflow_runs` row. Two new tables:
 
 Approval is **not authored YAML**. For any definition with `project_ref`, the
 engine inserts a synthetic approval gate before the first `run_on_host` unless
-an unrevoked grant matches the current `definition_hash`. Editing the action
+an unrevoked grant matches the current `definition_hash`. (Built in C1 as: the
+gate is bound to the host step's own index, so the approval row that releases
+it names that step, and `resume_index_after_approval` resumes *at* the step
+rather than after it; an authored `request_approval` still resumes after.) Editing the action
 changes the hash and re-arms approval. First task: close WF-08 — `finalize_run`
 writes `WaitingApproval` and `create_approval` (`workflow.rs:990`) instead of
 failing, and the existing 46010 request plus `handle_approval_grant`
@@ -858,6 +861,18 @@ C are independent lanes until C3, which needs `team.yml` (A3) for agent names.
   provider runs `true` / `false` → 46014 exit 0 / 1; a second host sees
   `claimed by`. Tests: engine yields `WaitingApproval`; relay ingest claim
   race; provider store restart → `lost_on_restart`.
+  *Status 2026-09-17: built (ledger 150). Three amendments to the text above,
+  made while building: the run parks as a distinct `waiting_host` status,
+  not `waiting_approval`, so the two resume guards can tell the parties
+  apart; the step loop persists a suspension (row → status → publish) and
+  `finalize_run` only logs it, so a grant or claim never finds a run that
+  still says `running`; and the project binding rides inside the definition
+  as `WorkflowDef.project` until C2 adds the column and `a`-tag index. Two
+  more from review: `run_on_host` refuses a webhook trigger (the relay hashes
+  a webhook definition after injecting its secret, so relay and host could
+  never agree), and `manual` landed in C1 rather than C2 so a hand-run action
+  has an honest trigger. The live proof is still owed: nothing has run
+  against a deployed relay.*
 - **C2 — project scoping, `ref_updated`, timezone, `actions.yml` publish.**
   `workflows.project_ref`, the `a` tag, `on_repo_state` at `transport.rs:2165`,
   `chrono-tz`. Proof: a push to `main` fires; a Friday 17:00 local schedule

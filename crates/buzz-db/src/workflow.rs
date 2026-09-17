@@ -88,6 +88,8 @@ pub enum RunStatus {
     Failed,
     /// Run was cancelled before completion.
     Cancelled,
+    /// Run is suspended waiting for an operator's host to execute a step.
+    WaitingHost,
 }
 
 impl fmt::Display for RunStatus {
@@ -99,6 +101,7 @@ impl fmt::Display for RunStatus {
             RunStatus::Completed => write!(f, "completed"),
             RunStatus::Failed => write!(f, "failed"),
             RunStatus::Cancelled => write!(f, "cancelled"),
+            RunStatus::WaitingHost => write!(f, "waiting_host"),
         }
     }
 }
@@ -113,6 +116,7 @@ impl FromStr for RunStatus {
             "completed" => Ok(RunStatus::Completed),
             "failed" => Ok(RunStatus::Failed),
             "cancelled" => Ok(RunStatus::Cancelled),
+            "waiting_host" => Ok(RunStatus::WaitingHost),
             other => Err(DbError::InvalidData(format!("unknown run status: {other}"))),
         }
     }
@@ -267,6 +271,160 @@ pub struct ApprovalRecord {
     pub expires_at: DateTime<Utc>,
     /// When the approval record was created.
     pub created_at: DateTime<Utc>,
+}
+
+/// Status of a host-executed step. Stored as ENUM in workflow_host_steps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HostStepStatus {
+    /// The relay published the request; no host has claimed it.
+    Requested,
+    /// Exactly one host claimed it and has not yet reported.
+    Claimed,
+    /// The claiming host reported a terminal result.
+    Exited,
+    /// The claiming host reported it lost the process (restart).
+    Lost,
+    /// The claim window closed with no result.
+    Expired,
+}
+
+impl fmt::Display for HostStepStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            HostStepStatus::Requested => write!(f, "requested"),
+            HostStepStatus::Claimed => write!(f, "claimed"),
+            HostStepStatus::Exited => write!(f, "exited"),
+            HostStepStatus::Lost => write!(f, "lost"),
+            HostStepStatus::Expired => write!(f, "expired"),
+        }
+    }
+}
+
+impl FromStr for HostStepStatus {
+    type Err = DbError;
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s {
+            "requested" => Ok(HostStepStatus::Requested),
+            "claimed" => Ok(HostStepStatus::Claimed),
+            "exited" => Ok(HostStepStatus::Exited),
+            "lost" => Ok(HostStepStatus::Lost),
+            "expired" => Ok(HostStepStatus::Expired),
+            other => Err(DbError::InvalidData(format!(
+                "unknown host step status: {other}"
+            ))),
+        }
+    }
+}
+
+/// One `run_on_host` step's request, claim and result.
+#[derive(Debug, Clone)]
+pub struct HostStepRecord {
+    /// The run this step belongs to.
+    pub run_id: Uuid,
+    /// The step's id within the definition.
+    pub step_id: String,
+    /// The workflow definition.
+    pub workflow_id: Uuid,
+    /// Zero-based index of the step.
+    pub step_index: i32,
+    /// Where the step is in its lifecycle.
+    pub status: HostStepStatus,
+    /// Event id bytes of the relay-signed kind:46013, once published.
+    pub requested_event_id: Option<Vec<u8>>,
+    /// After this the relay refuses a claim.
+    pub expires_at: DateTime<Utc>,
+    /// Compressed pubkey of the host whose claim won.
+    pub claimed_by: Option<Vec<u8>>,
+    /// When the claim won.
+    pub claimed_at: Option<DateTime<Utc>>,
+    /// Event id bytes of the winning kind:46022.
+    pub claim_event_id: Option<Vec<u8>>,
+    /// Event id bytes of the accepted kind:46023.
+    pub result_event_id: Option<Vec<u8>>,
+    /// Event id bytes of the relay-signed kind:46014 echo.
+    pub exited_event_id: Option<Vec<u8>>,
+    /// Process exit status, when the command ran.
+    pub exit_code: Option<i32>,
+    /// `exited`, `timed_out`, `lost_on_restart` or `refused`.
+    pub disposition: Option<String>,
+    /// Whether the host's timeout fired.
+    pub timed_out: Option<bool>,
+    /// Wall-clock duration of the command.
+    pub duration_ms: Option<i64>,
+    /// Commit the command ran at.
+    pub head_sha: Option<String>,
+    /// Whether that checkout had uncommitted changes.
+    pub dirty: Option<bool>,
+    /// Host-local artifact path.
+    pub artifact_ref: Option<String>,
+    /// The accepted result, verbatim.
+    pub result: Option<serde_json::Value>,
+    /// When the result was recorded.
+    pub exited_at: Option<DateTime<Utc>>,
+    /// When the request row was written.
+    pub created_at: DateTime<Utc>,
+}
+
+/// Parameters for recording a new host-step request.
+pub struct CreateHostStepParams<'a> {
+    /// Server-resolved community that owns the run.
+    pub community_id: CommunityId,
+    /// The run parking on this step.
+    pub run_id: Uuid,
+    /// The run's workflow definition.
+    pub workflow_id: Uuid,
+    /// The step's id.
+    pub step_id: &'a str,
+    /// Zero-based index of the step.
+    pub step_index: i32,
+    /// After this the relay refuses a claim.
+    pub expires_at: DateTime<Utc>,
+}
+
+/// Outcome of a host's attempt to claim a step.
+#[derive(Debug, Clone)]
+pub enum HostStepClaimOutcome {
+    /// This host's claim won; the row is now `claimed`.
+    Claimed(HostStepRecord),
+    /// Another host already holds the claim (or this host repeated its own).
+    AlreadyClaimed(HostStepRecord),
+    /// The claim window has closed.
+    Expired(HostStepRecord),
+    /// No such request.
+    NotFound,
+}
+
+/// The terminal facts a host reported for a claimed step.
+pub struct HostStepResultParams<'a> {
+    /// Server-resolved community that owns the run.
+    pub community_id: CommunityId,
+    /// The run.
+    pub run_id: Uuid,
+    /// The step.
+    pub step_id: &'a str,
+    /// Compressed pubkey of the reporting host; must equal `claimed_by`.
+    pub reporter: &'a [u8],
+    /// Event id bytes of the kind:46023.
+    pub result_event_id: &'a [u8],
+    /// `exited` or `lost`.
+    pub status: HostStepStatus,
+    /// Process exit status, when the command ran.
+    pub exit_code: Option<i32>,
+    /// `exited`, `timed_out`, `lost_on_restart` or `refused`.
+    pub disposition: &'a str,
+    /// Whether the timeout fired.
+    pub timed_out: bool,
+    /// Wall-clock duration.
+    pub duration_ms: Option<i64>,
+    /// Commit the command ran at.
+    pub head_sha: Option<&'a str>,
+    /// Whether the checkout was dirty.
+    pub dirty: Option<bool>,
+    /// Host-local artifact path.
+    pub artifact_ref: Option<&'a str>,
+    /// The accepted result, verbatim.
+    pub result: &'a serde_json::Value,
 }
 
 // -- Workflow CRUD ------------------------------------------------------------
@@ -1211,6 +1369,290 @@ fn row_to_run_record(row: sqlx::postgres::PgRow) -> Result<WorkflowRunRecord> {
         completed_at: row.try_get("completed_at")?,
         error_message: row.try_get("error_message")?,
         error_code: row.try_get("error_code")?,
+        created_at: row.try_get("created_at")?,
+    })
+}
+
+// -- Host step CRUD -----------------------------------------------------------
+
+/// The projection every host-step read shares. A macro rather than a `const`
+/// so each query stays one string literal: sqlx refuses a runtime-built SQL
+/// string, which is the right default for an injection audit.
+macro_rules! host_step_columns {
+    () => {
+        "run_id, step_id, workflow_id, step_index, status::text AS status, \
+         requested_event_id, expires_at, claimed_by, claimed_at, claim_event_id, result_event_id, \
+         exited_event_id, exit_code, disposition, timed_out, duration_ms, head_sha, dirty, \
+         artifact_ref, result, exited_at, created_at"
+    };
+}
+
+/// Record a new host-step request in `requested` state.
+pub async fn create_host_step(pool: &PgPool, params: CreateHostStepParams<'_>) -> Result<()> {
+    let CreateHostStepParams {
+        community_id,
+        run_id,
+        workflow_id,
+        step_id,
+        step_index,
+        expires_at,
+    } = params;
+    sqlx::query(
+        r#"
+        INSERT INTO workflow_host_steps
+            (community_id, run_id, step_id, workflow_id, step_index, status, expires_at)
+        VALUES ($1, $2, $3, $4, $5, 'requested', $6)
+        "#,
+    )
+    .bind(community_id.as_uuid())
+    .bind(run_id)
+    .bind(step_id)
+    .bind(workflow_id)
+    .bind(step_index)
+    .bind(expires_at)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Attach the published kind:46013's event id to its request row.
+pub async fn set_host_step_requested_event(
+    pool: &PgPool,
+    community_id: CommunityId,
+    run_id: Uuid,
+    step_id: &str,
+    requested_event_id: &[u8],
+) -> Result<()> {
+    let affected = sqlx::query(
+        r#"
+        UPDATE workflow_host_steps
+        SET requested_event_id = $4
+        WHERE community_id = $1 AND run_id = $2 AND step_id = $3
+        "#,
+    )
+    .bind(community_id.as_uuid())
+    .bind(run_id)
+    .bind(step_id)
+    .bind(requested_event_id)
+    .execute(pool)
+    .await?
+    .rows_affected();
+    if affected == 0 {
+        return Err(DbError::NotFound(format!("host step {run_id}:{step_id}")));
+    }
+    Ok(())
+}
+
+/// Fetch one host step.
+pub async fn get_host_step(
+    pool: &PgPool,
+    community_id: CommunityId,
+    run_id: Uuid,
+    step_id: &str,
+) -> Result<HostStepRecord> {
+    let row = sqlx::query(concat!(
+        "SELECT ",
+        host_step_columns!(),
+        " FROM workflow_host_steps WHERE community_id = $1 AND run_id = $2 AND step_id = $3"
+    ))
+    .bind(community_id.as_uuid())
+    .bind(run_id)
+    .bind(step_id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| DbError::NotFound(format!("host step {run_id}:{step_id}")))?;
+    row_to_host_step_record(row)
+}
+
+/// Every host step of one run, in step order.
+pub async fn list_run_host_steps(
+    pool: &PgPool,
+    community_id: CommunityId,
+    run_id: Uuid,
+) -> Result<Vec<HostStepRecord>> {
+    let rows = sqlx::query(concat!(
+        "SELECT ",
+        host_step_columns!(),
+        " FROM workflow_host_steps WHERE community_id = $1 AND run_id = $2 \
+         ORDER BY step_index, created_at"
+    ))
+    .bind(community_id.as_uuid())
+    .bind(run_id)
+    .fetch_all(pool)
+    .await?;
+    rows.into_iter().map(row_to_host_step_record).collect()
+}
+
+/// Every host step of one workflow, newest request first.
+pub async fn list_workflow_host_steps(
+    pool: &PgPool,
+    community_id: CommunityId,
+    workflow_id: Uuid,
+    limit: i64,
+) -> Result<Vec<HostStepRecord>> {
+    let rows = sqlx::query(concat!(
+        "SELECT ",
+        host_step_columns!(),
+        " FROM workflow_host_steps WHERE community_id = $1 AND workflow_id = $2 \
+         ORDER BY created_at DESC LIMIT $3"
+    ))
+    .bind(community_id.as_uuid())
+    .bind(workflow_id)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    rows.into_iter().map(row_to_host_step_record).collect()
+}
+
+/// Claim a requested step for `host`.
+///
+/// The single UPDATE predicated on `claimed_by IS NULL` is the whole race:
+/// exactly one host's statement touches the row. A loser gets
+/// [`HostStepClaimOutcome::AlreadyClaimed`] with the winner's row, so its
+/// ingest response can say who won.
+pub async fn claim_host_step(
+    pool: &PgPool,
+    community_id: CommunityId,
+    run_id: Uuid,
+    step_id: &str,
+    host: &[u8],
+    claim_event_id: &[u8],
+) -> Result<HostStepClaimOutcome> {
+    let claimed = sqlx::query(concat!(
+        "UPDATE workflow_host_steps \
+         SET status = 'claimed', claimed_by = $4, claimed_at = NOW(), claim_event_id = $5 \
+         WHERE community_id = $1 AND run_id = $2 AND step_id = $3 \
+           AND claimed_by IS NULL AND status = 'requested' AND expires_at > NOW() \
+         RETURNING ",
+        host_step_columns!()
+    ))
+    .bind(community_id.as_uuid())
+    .bind(run_id)
+    .bind(step_id)
+    .bind(host)
+    .bind(claim_event_id)
+    .fetch_optional(pool)
+    .await?;
+    if let Some(row) = claimed {
+        return Ok(HostStepClaimOutcome::Claimed(row_to_host_step_record(row)?));
+    }
+    match get_host_step(pool, community_id, run_id, step_id).await {
+        Ok(existing) if existing.claimed_by.is_some() => {
+            Ok(HostStepClaimOutcome::AlreadyClaimed(existing))
+        }
+        Ok(existing) => Ok(HostStepClaimOutcome::Expired(existing)),
+        Err(DbError::NotFound(_)) => Ok(HostStepClaimOutcome::NotFound),
+        Err(error) => Err(error),
+    }
+}
+
+/// Record the claiming host's terminal result.
+///
+/// Only the host that holds the claim may report, and only once: the WHERE
+/// clause requires `claimed_by = reporter AND status = 'claimed'`, so a
+/// repeated or foreign result touches no row and yields `Ok(None)`.
+pub async fn record_host_step_result(
+    pool: &PgPool,
+    params: HostStepResultParams<'_>,
+) -> Result<Option<HostStepRecord>> {
+    let HostStepResultParams {
+        community_id,
+        run_id,
+        step_id,
+        reporter,
+        result_event_id,
+        status,
+        exit_code,
+        disposition,
+        timed_out,
+        duration_ms,
+        head_sha,
+        dirty,
+        artifact_ref,
+        result,
+    } = params;
+    if !matches!(status, HostStepStatus::Exited | HostStepStatus::Lost) {
+        return Err(DbError::InvalidData(format!(
+            "a host step result must be exited or lost, not {status}"
+        )));
+    }
+    let row = sqlx::query(concat!(
+        "UPDATE workflow_host_steps \
+         SET status = $5::host_step_status, result_event_id = $6, exit_code = $7, \
+             disposition = $8, timed_out = $9, duration_ms = $10, head_sha = $11, \
+             dirty = $12, artifact_ref = $13, result = $14, exited_at = NOW() \
+         WHERE community_id = $1 AND run_id = $2 AND step_id = $3 \
+           AND claimed_by = $4 AND status = 'claimed' \
+         RETURNING ",
+        host_step_columns!()
+    ))
+    .bind(community_id.as_uuid())
+    .bind(run_id)
+    .bind(step_id)
+    .bind(reporter)
+    .bind(status.to_string())
+    .bind(result_event_id)
+    .bind(exit_code)
+    .bind(disposition)
+    .bind(timed_out)
+    .bind(duration_ms)
+    .bind(head_sha)
+    .bind(dirty)
+    .bind(artifact_ref)
+    .bind(result)
+    .fetch_optional(pool)
+    .await?;
+    row.map(row_to_host_step_record).transpose()
+}
+
+/// Attach the relay-signed kind:46014 echo's event id to a closed row.
+pub async fn set_host_step_exited_event(
+    pool: &PgPool,
+    community_id: CommunityId,
+    run_id: Uuid,
+    step_id: &str,
+    exited_event_id: &[u8],
+) -> Result<()> {
+    sqlx::query(
+        r#"
+        UPDATE workflow_host_steps
+        SET exited_event_id = $4
+        WHERE community_id = $1 AND run_id = $2 AND step_id = $3
+        "#,
+    )
+    .bind(community_id.as_uuid())
+    .bind(run_id)
+    .bind(step_id)
+    .bind(exited_event_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+fn row_to_host_step_record(row: sqlx::postgres::PgRow) -> Result<HostStepRecord> {
+    let status_str: String = row.try_get("status")?;
+    Ok(HostStepRecord {
+        run_id: row.try_get("run_id")?,
+        step_id: row.try_get("step_id")?,
+        workflow_id: row.try_get("workflow_id")?,
+        step_index: row.try_get("step_index")?,
+        status: status_str.parse()?,
+        requested_event_id: row.try_get("requested_event_id")?,
+        expires_at: row.try_get("expires_at")?,
+        claimed_by: row.try_get("claimed_by")?,
+        claimed_at: row.try_get("claimed_at")?,
+        claim_event_id: row.try_get("claim_event_id")?,
+        result_event_id: row.try_get("result_event_id")?,
+        exited_event_id: row.try_get("exited_event_id")?,
+        exit_code: row.try_get("exit_code")?,
+        disposition: row.try_get("disposition")?,
+        timed_out: row.try_get("timed_out")?,
+        duration_ms: row.try_get("duration_ms")?,
+        head_sha: row.try_get("head_sha")?,
+        dirty: row.try_get("dirty")?,
+        artifact_ref: row.try_get("artifact_ref")?,
+        result: row.try_get("result")?,
+        exited_at: row.try_get("exited_at")?,
         created_at: row.try_get("created_at")?,
     })
 }
@@ -2445,5 +2887,166 @@ mod tests {
             enabled_b.iter().any(|w| w.id == wf_departing_b),
             "same owner's workflow in a different channel must be untouched"
         );
+    }
+
+    /// Spec § 5.4: exactly one host executes a `run_on_host` step. Two hosts
+    /// claiming the same request race on one UPDATE predicated on
+    /// `claimed_by IS NULL`; the loser is told who won, a foreign or repeated
+    /// result touches no row, and a claim after the window closes is refused.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn host_step_claim_is_won_exactly_once() {
+        let pool = setup_pool().await;
+        let community = make_community(&pool).await;
+        let workflow_id = Uuid::new_v4();
+        insert_workflow_with_ids(&pool, community, workflow_id, Uuid::new_v4(), "nightly").await;
+        let run_id = create_workflow_run(&pool, community, workflow_id, None, None)
+            .await
+            .expect("run");
+        create_host_step(
+            &pool,
+            CreateHostStepParams {
+                community_id: community,
+                run_id,
+                workflow_id,
+                step_id: "build",
+                step_index: 0,
+                expires_at: Utc::now() + chrono::Duration::hours(1),
+            },
+        )
+        .await
+        .expect("create host step");
+        set_host_step_requested_event(&pool, community, run_id, "build", &[0xaa; 32])
+            .await
+            .expect("requested event");
+
+        let host_a = vec![0x01; 33];
+        let host_b = vec![0x02; 33];
+        let (first, second) = tokio::join!(
+            claim_host_step(&pool, community, run_id, "build", &host_a, &[0xa1; 32]),
+            claim_host_step(&pool, community, run_id, "build", &host_b, &[0xb2; 32]),
+        );
+        let outcomes = [first.expect("claim a"), second.expect("claim b")];
+        let winners = outcomes
+            .iter()
+            .filter(|outcome| matches!(outcome, HostStepClaimOutcome::Claimed(_)))
+            .count();
+        assert_eq!(winners, 1, "exactly one claim wins the race");
+        let loser = outcomes
+            .iter()
+            .find_map(|outcome| match outcome {
+                HostStepClaimOutcome::AlreadyClaimed(row) => Some(row),
+                _ => None,
+            })
+            .expect("the other claim is told who won");
+        let winner_key = loser.claimed_by.clone().expect("winner recorded");
+        assert!(winner_key == host_a || winner_key == host_b);
+        assert_eq!(loser.status, HostStepStatus::Claimed);
+
+        // A result from the host that did not win touches no row.
+        let intruder = if winner_key == host_a {
+            &host_b
+        } else {
+            &host_a
+        };
+        let result_json = serde_json::json!({"exitCode": 0});
+        let foreign = record_host_step_result(
+            &pool,
+            HostStepResultParams {
+                community_id: community,
+                run_id,
+                step_id: "build",
+                reporter: intruder,
+                result_event_id: &[0xc3; 32],
+                status: HostStepStatus::Exited,
+                exit_code: Some(0),
+                disposition: "exited",
+                timed_out: false,
+                duration_ms: Some(10),
+                head_sha: None,
+                dirty: None,
+                artifact_ref: None,
+                result: &result_json,
+            },
+        )
+        .await
+        .expect("foreign result");
+        assert!(foreign.is_none(), "only the claiming host may report");
+
+        // The winner's result closes the row; a repeat touches nothing.
+        let params = || HostStepResultParams {
+            community_id: community,
+            run_id,
+            step_id: "build",
+            reporter: &winner_key,
+            result_event_id: &[0xd4; 32],
+            status: HostStepStatus::Exited,
+            exit_code: Some(1),
+            disposition: "exited",
+            timed_out: false,
+            duration_ms: Some(10),
+            head_sha: Some("0123456789abcdef0123456789abcdef01234567"),
+            dirty: Some(true),
+            artifact_ref: Some("/var/actions/run/build"),
+            result: &result_json,
+        };
+        let closed = record_host_step_result(&pool, params())
+            .await
+            .expect("winner result")
+            .expect("row closed");
+        assert_eq!(closed.status, HostStepStatus::Exited);
+        assert_eq!(closed.exit_code, Some(1));
+        assert_eq!(closed.dirty, Some(true));
+        assert!(closed.exited_at.is_some());
+        assert!(record_host_step_result(&pool, params())
+            .await
+            .expect("repeat result")
+            .is_none());
+
+        let listed = list_run_host_steps(&pool, community, run_id)
+            .await
+            .expect("list");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(
+            listed[0].requested_event_id.as_deref(),
+            Some(&[0xaa; 32][..])
+        );
+
+        // A request whose window has closed cannot be claimed.
+        let late_run = create_workflow_run(&pool, community, workflow_id, None, None)
+            .await
+            .expect("late run");
+        create_host_step(
+            &pool,
+            CreateHostStepParams {
+                community_id: community,
+                run_id: late_run,
+                workflow_id,
+                step_id: "build",
+                step_index: 0,
+                expires_at: Utc::now() - chrono::Duration::seconds(1),
+            },
+        )
+        .await
+        .expect("expired host step");
+        assert!(matches!(
+            claim_host_step(&pool, community, late_run, "build", &host_a, &[0xe5; 32])
+                .await
+                .expect("late claim"),
+            HostStepClaimOutcome::Expired(_)
+        ));
+        assert!(matches!(
+            claim_host_step(
+                &pool,
+                community,
+                Uuid::new_v4(),
+                "build",
+                &host_a,
+                &[0xe6; 32]
+            )
+            .await
+            .expect("missing claim"),
+            HostStepClaimOutcome::NotFound
+        ));
     }
 }

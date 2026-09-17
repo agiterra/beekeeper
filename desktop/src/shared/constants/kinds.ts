@@ -32,6 +32,12 @@ export const KIND_JOB_ERROR = 43006;
 export const KIND_FORUM_POST = 45001;
 export const KIND_FORUM_COMMENT = 45003;
 export const KIND_APPROVAL_REQUEST = 46010;
+// Host-executed workflow steps (spec § 5.6): the relay's request and its echo
+// of the result, and the host's claim and result.
+export const KIND_WORKFLOW_HOST_STEP_REQUESTED = 46013;
+export const KIND_WORKFLOW_HOST_STEP_EXITED = 46014;
+export const KIND_HOST_STEP_CLAIM = 46022;
+export const KIND_HOST_STEP_RESULT = 46023;
 export const KIND_MEMBER_ADDED_NOTIFICATION = 44100;
 export const KIND_MEMBER_REMOVED_NOTIFICATION = 44101;
 export const KIND_TYPING_INDICATOR = 20002;

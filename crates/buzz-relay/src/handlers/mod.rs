@@ -10,6 +10,9 @@ pub mod community_provisioning;
 pub mod count;
 /// EVENT handler — WS dispatcher → ingest pipeline → fan-out.
 pub mod event;
+/// Host-executed workflow steps: the kind:46022 claim and kind:46023 result
+/// handlers, and the resume after a host reports.
+pub mod host_steps;
 /// NIP-IA identity archive request handler (kinds 9035–9036).
 pub mod identity_archive;
 /// imeta tag validation helpers.
