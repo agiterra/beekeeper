@@ -835,6 +835,8 @@ pub fn stage_project_role_pack(
 }
 
 #[cfg(test)]
+mod override_tests;
+#[cfg(test)]
 mod tests;
 
 mod branch_override;
@@ -844,9 +846,7 @@ pub use branch_override::{
     branch_role_override, BranchOverride, BranchOverrideCheck, BRANCH_OVERRIDE_KIND,
     UNCOMMITTED_ROLE_EDITS,
 };
-pub use definition_drift::{
-    definition_drift, definition_drift_against, DefinitionDrift, DefinitionDriftState,
-};
+pub use definition_drift::{definition_drift, DefinitionDrift, DefinitionDriftState};
 
 #[cfg(test)]
 mod shipped_pack_ref_tests;
