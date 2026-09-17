@@ -16,6 +16,7 @@ import 'features/channels/agent_activity/observer_subscription.dart';
 import 'features/channels/deep_link_dispatcher.dart';
 import 'features/profile/user_status_cache_provider.dart';
 import 'features/profile/settings_profile_header.dart';
+import 'features/project_todos/state/project_todos_provider.dart';
 import 'features/project_todos/ui/project_todos_page.dart';
 import 'features/projects/ui/project_tree.dart';
 import 'features/settings/settings_page.dart';
@@ -55,15 +56,32 @@ final _unreadInboxItemCountProvider = Provider<int>((ref) {
 /// the root [ProviderScope].
 List<Override> appFeatureOverrides() => [
   projectTodoOpenerProvider.overrideWithValue(openProjectTodos),
+  projectPinnedTodoListsProvider.overrideWithValue(readPinnedProjectTodoLists),
 ];
 
-/// Push a project's to-do page.
-void openProjectTodos(BuildContext context, String address) =>
+/// Push a project's to-do page, on [listId] when one was asked for.
+void openProjectTodos(BuildContext context, String address, {String? listId}) =>
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => ProjectTodosPage(address: address),
+        builder: (_) =>
+            ProjectTodosPage(address: address, initialListId: listId),
       ),
     );
+
+/// A project's pinned, unarchived to-do lists as its tree shows them, read
+/// live from the project's fold.
+List<PinnedTodoListRow> readPinnedProjectTodoLists(
+  WidgetRef ref,
+  String address,
+) => [
+  for (final list in ref.watch(projectTodosProvider(address)).digest.lists)
+    if (list.pinned && !list.archived)
+      PinnedTodoListRow(
+        id: list.id,
+        title: list.title,
+        personal: list.personal,
+      ),
+];
 
 class App extends HookConsumerWidget {
   const App({super.key});

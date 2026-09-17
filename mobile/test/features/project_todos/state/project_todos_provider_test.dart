@@ -73,15 +73,21 @@ Future<void> _settle([int rounds = 8]) async {
 }
 
 void main() {
-  final create = const ProjectTodoOp.listCreate(listId: listA, title: 'L');
+  final create = const ProjectTodoOp.listCreate(
+    listId: listA,
+    visibility: TodoVisibility.project,
+    title: 'L',
+  );
   final add1 = const ProjectTodoOp.itemAdd(
     listId: listA,
+    visibility: TodoVisibility.project,
     itemId: _item1,
     text: 'first',
     rank: 'a0',
   );
   final add2 = const ProjectTodoOp.itemAdd(
     listId: listA,
+    visibility: TodoVisibility.project,
     itemId: _item2,
     text: 'second',
     rank: 'a1',
@@ -147,6 +153,7 @@ void main() {
           _op(
             ProjectTodoOp.itemText(
               listId: listA,
+              visibility: TodoVisibility.project,
               itemId: _item1,
               text: 'edit $i',
             ),
@@ -196,7 +203,12 @@ void main() {
       List<NostrEvent> page(int n) => [
         for (var i = 0; i < projectTodoHistoryPageLimit; i++)
           _op(
-            ProjectTodoOp.itemText(listId: listA, itemId: _item1, text: 'e'),
+            ProjectTodoOp.itemText(
+              listId: listA,
+              visibility: TodoVisibility.project,
+              itemId: _item1,
+              text: 'e',
+            ),
             createdAt: 100000 - n * 1000 - i,
           ),
       ];
@@ -225,7 +237,12 @@ void main() {
         final same = [
           for (var i = 0; i < projectTodoHistoryPageLimit; i++)
             _op(
-              ProjectTodoOp.itemText(listId: listA, itemId: _item1, text: 'e'),
+              ProjectTodoOp.itemText(
+                listId: listA,
+                visibility: TodoVisibility.project,
+                itemId: _item1,
+                text: 'e',
+              ),
               createdAt: 500,
             ),
         ];
@@ -385,6 +402,7 @@ void main() {
         ['td-v', 'td1-1'],
         ['td-op', 'item.add'],
         ['td-list', listA],
+        ['td-vis', 'project'],
         ['td-item', itemId],
       ]);
       expect(
@@ -427,20 +445,32 @@ void main() {
           .single;
 
       await actions.addItem(snapshot(), 'third');
-      expect(decodeProjectTodoOp(h.relay.published.last.content).rank, 'a2');
+      expect(
+        decodeProjectTodoOp(
+          h.relay.published.last.content,
+          TodoVisibility.project,
+        ).rank,
+        'a2',
+      );
 
       // Move the second item (index 1) to the top (index 0).
       await actions.moveItem(snapshot(), 1, 0);
-      final move = decodeProjectTodoOp(h.relay.published.last.content);
+      final move = decodeProjectTodoOp(
+        h.relay.published.last.content,
+        TodoVisibility.project,
+      );
       expect(move.kind, ProjectTodoOpKind.itemRank);
       expect(move.itemId, _item2);
       expect(move.rank, 'Zz');
-      expect(h.relay.published.last.tags[4], ['td-item', _item2]);
+      expect(h.relay.published.last.tags[5], ['td-item', _item2]);
 
       // Move the first item (index 0) below the second, in
       // ReorderableListView terms (newIndex counts the old slot).
       await actions.moveItem(snapshot(), 0, 2);
-      final down = decodeProjectTodoOp(h.relay.published.last.content);
+      final down = decodeProjectTodoOp(
+        h.relay.published.last.content,
+        TodoVisibility.project,
+      );
       expect(down.itemId, _item1);
       expect(down.rank, 'a2');
 
@@ -471,6 +501,7 @@ void main() {
           _op(
             const ProjectTodoOp.itemDone(
               listId: listA,
+              visibility: TodoVisibility.project,
               itemId: _item1,
               done: true,
             ),
@@ -485,7 +516,10 @@ void main() {
         await actions.setDone(listA, _item1, false);
         expect(h.relay.published.last.createdAt, now + 301);
         expect(
-          decodeProjectTodoOp(h.relay.published.last.content).done,
+          decodeProjectTodoOp(
+            h.relay.published.last.content,
+            TodoVisibility.project,
+          ).done,
           isFalse,
         );
 
@@ -499,6 +533,7 @@ void main() {
           _op(
             const ProjectTodoOp.itemText(
               listId: listA,
+              visibility: TodoVisibility.project,
               itemId: _item1,
               text: 'x',
             ),
@@ -572,12 +607,165 @@ void main() {
         // An assignee's hex case is folded to the wire's lowercase.
         await actions.setAssignee(listA, _item1, todoViewer.toUpperCase());
         expect(
-          decodeProjectTodoOp(h.relay.published.last.content).assignee,
+          decodeProjectTodoOp(
+            h.relay.published.last.content,
+            TodoVisibility.project,
+          ).assignee,
           todoViewer,
         );
         // Cleared fields are null on the wire.
         await actions.setDue(listA, _item1, null);
         expect(h.relay.published.last.content, contains('"due":null'));
+      },
+    );
+
+    test('createList publishes list.create with the chosen visibility, then '
+        'list.pinned stamped after it when asked to pin', () async {
+      final h = _harness(queryResults: [<NostrEvent>[]]);
+      final sub = h.container.listen(
+        projectTodosProvider(todoAddress),
+        (_, _) {},
+      );
+      addTearDown(sub.close);
+      await _settle();
+      final actions = h.container.read(projectTodoActionsProvider(todoAddress));
+
+      final before = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+      final listId = await actions.createList(
+        'Mine',
+        visibility: TodoVisibility.personal,
+        pinned: true,
+      );
+      expect(isTodoId(listId), isTrue);
+      expect(h.relay.published.length, 2);
+
+      final create = h.relay.published[0];
+      expect(create.tags, [
+        ['a', todoAddress],
+        ['td-v', 'td1-1'],
+        ['td-op', 'list.create'],
+        ['td-list', listId],
+        ['td-vis', 'personal'],
+      ]);
+      expect(
+        create.content,
+        '{"schema":"buzz-project-todo/v1","op":"list.create",'
+        '"listId":"$listId","title":"Mine","visibility":"personal"}',
+      );
+      expect(create.createdAt >= before, isTrue);
+      expect(
+        validateProjectTodoEnvelope(create).visibility,
+        TodoVisibility.personal,
+      );
+
+      final pin = h.relay.published[1];
+      expect(pin.tags, [
+        ['a', todoAddress],
+        ['td-v', 'td1-1'],
+        ['td-op', 'list.pinned'],
+        ['td-list', listId],
+        ['td-vis', 'personal'],
+      ]);
+      expect(
+        pin.content,
+        '{"schema":"buzz-project-todo/v1","op":"list.pinned",'
+        '"listId":"$listId","pinned":true}',
+      );
+      // The pin is a field write on the list the create made; it must sort
+      // after the create even before the relay echoes either back, or the
+      // create's own pinned=false would win the tie on id.
+      expect(pin.createdAt, create.createdAt + 1);
+      expect(
+        validateProjectTodoEnvelope(pin).kind,
+        ProjectTodoOpKind.listPinned,
+      );
+
+      // Without pinning: one op, project visibility.
+      final plain = await actions.createList(
+        'Shared',
+        visibility: TodoVisibility.project,
+      );
+      expect(h.relay.published.length, 3);
+      expect(h.relay.published.last.tags[3], ['td-list', plain]);
+      expect(h.relay.published.last.tags[4], ['td-vis', 'project']);
+      expect(
+        h.relay.published.last.content,
+        contains('"visibility":"project"'),
+      );
+    });
+
+    test('every op on an existing list repeats that list\'s visibility; '
+        'setListPinned publishes list.pinned', () async {
+      final personal = const ProjectTodoOp.listCreate(
+        listId: listB,
+        visibility: TodoVisibility.personal,
+        title: 'Mine',
+      );
+      final h = _harness(
+        queryResults: [
+          [_op(create, createdAt: 100), _op(personal, createdAt: 101)],
+        ],
+      );
+      final sub = h.container.listen(
+        projectTodosProvider(todoAddress),
+        (_, _) {},
+      );
+      addTearDown(sub.close);
+      await _settle();
+      final actions = h.container.read(projectTodoActionsProvider(todoAddress));
+
+      await actions.setListPinned(listB, true);
+      expect(h.relay.published.last.tags[2], ['td-op', 'list.pinned']);
+      expect(h.relay.published.last.tags[4], ['td-vis', 'personal']);
+      expect(h.relay.published.last.content, contains('"pinned":true'));
+
+      await actions.setListPinned(listA, false);
+      expect(h.relay.published.last.tags[4], ['td-vis', 'project']);
+      expect(h.relay.published.last.content, contains('"pinned":false'));
+
+      await actions.retitleList(listB, 'Still mine');
+      expect(h.relay.published.last.tags[4], ['td-vis', 'personal']);
+      final personalList = h.container
+          .read(projectTodosProvider(todoAddress))
+          .digest
+          .listById(listB)!;
+      await actions.addItem(personalList, 'secret');
+      expect(h.relay.published.last.tags[4], ['td-vis', 'personal']);
+      expect(h.relay.published.last.tags[2], ['td-op', 'item.add']);
+    });
+
+    test(
+      'a write on a list the read does not know is refused, not guessed',
+      () async {
+        final h = _harness(
+          queryResults: [
+            [_op(create, createdAt: 100)],
+          ],
+        );
+        final sub = h.container.listen(
+          projectTodosProvider(todoAddress),
+          (_, _) {},
+        );
+        addTearDown(sub.close);
+        await _settle();
+        final actions = h.container.read(
+          projectTodoActionsProvider(todoAddress),
+        );
+        await expectLater(
+          actions.retitleList(listB, 'Nope'),
+          throwsA(
+            isA<ProjectTodoUnknownListError>().having(
+              (e) => e.toString(),
+              'message',
+              'This list is not in the current read; refresh and try again.',
+            ),
+          ),
+        );
+        await expectLater(
+          actions.setListPinned(listB, true),
+          throwsA(isA<ProjectTodoUnknownListError>()),
+        );
+        expect(h.relay.published, isEmpty);
       },
     );
   });

@@ -13,6 +13,12 @@ import 'fractional_rank.dart';
 /// grammar. The fold that turns a bag of ops into lists lives in
 /// `project_todo_fold.dart`. Every op sets exactly one thing, so two people
 /// editing different fields of one item never race.
+///
+/// A list is **project** (every member reads it) or **personal** (only its
+/// author does). Visibility is fixed by `list.create` and repeated on every
+/// op as the `td-vis` tag, so the relay withholds a personal op from every
+/// reader but its author without parsing content, and the fold ignores an
+/// op whose tag disagrees with its list.
 
 /// Exact `schema` value carried by kind 44248 content.
 const projectTodoSchema = 'buzz-project-todo/v1';
@@ -26,16 +32,43 @@ const maxProjectTodoContentBytes = 4 * 1024;
 /// Maximum UTF-8 byte length of a list title or an item's text.
 const maxProjectTodoTextBytes = 1024;
 
+/// Who may read a list. Carried on every op as the `td-vis` tag and, for
+/// `list.create`, in content as `visibility`.
+enum TodoVisibility {
+  /// Every member of the project reads it.
+  project('project'),
+
+  /// Only its author reads it; the relay withholds every op from anyone
+  /// else, and the fold ignores ops on it from anyone else.
+  personal('personal');
+
+  const TodoVisibility(this.wire);
+
+  /// The wire spelling, identical in the `td-vis` tag and in content.
+  final String wire;
+
+  /// The visibility spelled [wire], or `null` for an unknown value.
+  static TodoVisibility? fromWire(String wire) {
+    for (final visibility in values) {
+      if (visibility.wire == wire) return visibility;
+    }
+    return null;
+  }
+}
+
 /// What one op does. [wire] is the `td-op` tag and the content `op` field.
 enum ProjectTodoOpKind {
-  /// Bring a list into existence with a title.
-  listCreate('list.create', ['schema', 'op', 'listId', 'title']),
+  /// Bring a list into existence with a title and a fixed visibility.
+  listCreate('list.create', ['schema', 'op', 'listId', 'title', 'visibility']),
 
   /// Retitle a list.
   listTitle('list.title', ['schema', 'op', 'listId', 'title']),
 
   /// Archive or unarchive a list.
   listArchived('list.archived', ['schema', 'op', 'listId', 'archived']),
+
+  /// Pin or unpin a list in the project tree (shared by every member).
+  listPinned('list.pinned', ['schema', 'op', 'listId', 'pinned']),
 
   /// Bring an item into existence with its text and its rank.
   itemAdd('item.add', ['schema', 'op', 'listId', 'itemId', 'text', 'rank']),
@@ -86,9 +119,10 @@ enum ProjectTodoOpKind {
   }
 }
 
-/// One decoded op: the list it names and what it sets. Only the fields the
-/// op's [kind] carries are non-null, except `assignee` and `due`, which are
-/// legitimately `null` on their own ops when cleared.
+/// One decoded op: the list it names, the list's visibility, and what it
+/// sets. Only the fields the op's [kind] carries are non-null, except
+/// `assignee` and `due`, which are legitimately `null` on their own ops
+/// when cleared.
 @immutable
 class ProjectTodoOp {
   final ProjectTodoOpKind kind;
@@ -96,10 +130,16 @@ class ProjectTodoOp {
   /// The list (32 lowercase hex).
   final String listId;
 
+  /// The list's visibility, repeated on every op as the `td-vis` tag. On a
+  /// `list.create` it is also the content's `visibility`; the two never
+  /// differ.
+  final TodoVisibility visibility;
+
   /// The item (32 lowercase hex), on item ops.
   final String? itemId;
   final String? title;
   final bool? archived;
+  final bool? pinned;
   final String? text;
   final String? rank;
   final bool? done;
@@ -109,9 +149,11 @@ class ProjectTodoOp {
   const ProjectTodoOp._({
     required this.kind,
     required this.listId,
+    required this.visibility,
     this.itemId,
     this.title,
     this.archived,
+    this.pinned,
     this.text,
     this.rank,
     this.done,
@@ -119,31 +161,62 @@ class ProjectTodoOp {
     this.due,
   });
 
+  /// `list.create`: [visibility] is both the content's `visibility` and the
+  /// `td-vis` tag, fixed for the list's lifetime.
   const ProjectTodoOp.listCreate({
     required String listId,
+    required TodoVisibility visibility,
     required String title,
-  }) : this._(kind: ProjectTodoOpKind.listCreate, listId: listId, title: title);
+  }) : this._(
+         kind: ProjectTodoOpKind.listCreate,
+         listId: listId,
+         visibility: visibility,
+         title: title,
+       );
 
-  const ProjectTodoOp.listTitle({required String listId, required String title})
-    : this._(kind: ProjectTodoOpKind.listTitle, listId: listId, title: title);
+  const ProjectTodoOp.listTitle({
+    required String listId,
+    required TodoVisibility visibility,
+    required String title,
+  }) : this._(
+         kind: ProjectTodoOpKind.listTitle,
+         listId: listId,
+         visibility: visibility,
+         title: title,
+       );
 
   const ProjectTodoOp.listArchived({
     required String listId,
+    required TodoVisibility visibility,
     required bool archived,
   }) : this._(
          kind: ProjectTodoOpKind.listArchived,
          listId: listId,
+         visibility: visibility,
          archived: archived,
+       );
+
+  const ProjectTodoOp.listPinned({
+    required String listId,
+    required TodoVisibility visibility,
+    required bool pinned,
+  }) : this._(
+         kind: ProjectTodoOpKind.listPinned,
+         listId: listId,
+         visibility: visibility,
+         pinned: pinned,
        );
 
   const ProjectTodoOp.itemAdd({
     required String listId,
+    required TodoVisibility visibility,
     required String itemId,
     required String text,
     required String rank,
   }) : this._(
          kind: ProjectTodoOpKind.itemAdd,
          listId: listId,
+         visibility: visibility,
          itemId: itemId,
          text: text,
          rank: rank,
@@ -151,65 +224,77 @@ class ProjectTodoOp {
 
   const ProjectTodoOp.itemText({
     required String listId,
+    required TodoVisibility visibility,
     required String itemId,
     required String text,
   }) : this._(
          kind: ProjectTodoOpKind.itemText,
          listId: listId,
+         visibility: visibility,
          itemId: itemId,
          text: text,
        );
 
   const ProjectTodoOp.itemDone({
     required String listId,
+    required TodoVisibility visibility,
     required String itemId,
     required bool done,
   }) : this._(
          kind: ProjectTodoOpKind.itemDone,
          listId: listId,
+         visibility: visibility,
          itemId: itemId,
          done: done,
        );
 
   const ProjectTodoOp.itemAssignee({
     required String listId,
+    required TodoVisibility visibility,
     required String itemId,
     required String? assignee,
   }) : this._(
          kind: ProjectTodoOpKind.itemAssignee,
          listId: listId,
+         visibility: visibility,
          itemId: itemId,
          assignee: assignee,
        );
 
   const ProjectTodoOp.itemDue({
     required String listId,
+    required TodoVisibility visibility,
     required String itemId,
     required String? due,
   }) : this._(
          kind: ProjectTodoOpKind.itemDue,
          listId: listId,
+         visibility: visibility,
          itemId: itemId,
          due: due,
        );
 
   const ProjectTodoOp.itemRank({
     required String listId,
+    required TodoVisibility visibility,
     required String itemId,
     required String rank,
   }) : this._(
          kind: ProjectTodoOpKind.itemRank,
          listId: listId,
+         visibility: visibility,
          itemId: itemId,
          rank: rank,
        );
 
   const ProjectTodoOp.itemRemove({
     required String listId,
+    required TodoVisibility visibility,
     required String itemId,
   }) : this._(
          kind: ProjectTodoOpKind.itemRemove,
          listId: listId,
+         visibility: visibility,
          itemId: itemId,
        );
 
@@ -224,10 +309,14 @@ class ProjectTodoOp {
     if (kind.isItemOp) object['itemId'] = itemId;
     switch (kind) {
       case ProjectTodoOpKind.listCreate:
+        object['title'] = title;
+        object['visibility'] = visibility.wire;
       case ProjectTodoOpKind.listTitle:
         object['title'] = title;
       case ProjectTodoOpKind.listArchived:
         object['archived'] = archived;
+      case ProjectTodoOpKind.listPinned:
+        object['pinned'] = pinned;
       case ProjectTodoOpKind.itemAdd:
         object['text'] = text;
         object['rank'] = rank;
@@ -248,12 +337,13 @@ class ProjectTodoOp {
   }
 
   /// The tags this op carries, in canonical order: `a`, `td-v`, `td-op`,
-  /// `td-list`, and `td-item` for item ops.
+  /// `td-list`, `td-vis`, and `td-item` for item ops.
   List<List<String>> tags(String coordinate) => [
     ['a', coordinate],
     ['td-v', projectTodoTagVersion],
     ['td-op', kind.wire],
     ['td-list', listId],
+    ['td-vis', visibility.wire],
     if (kind.isItemOp) ['td-item', itemId!],
   ];
 
@@ -262,9 +352,11 @@ class ProjectTodoOp {
       other is ProjectTodoOp &&
       other.kind == kind &&
       other.listId == listId &&
+      other.visibility == visibility &&
       other.itemId == itemId &&
       other.title == title &&
       other.archived == archived &&
+      other.pinned == pinned &&
       other.text == text &&
       other.rank == rank &&
       other.done == done &&
@@ -275,9 +367,11 @@ class ProjectTodoOp {
   int get hashCode => Object.hash(
     kind,
     listId,
+    visibility,
     itemId,
     title,
     archived,
+    pinned,
     text,
     rank,
     done,
@@ -373,13 +467,16 @@ String? _takeNullableString(Map<String, Object?> object, String key) {
   throw FormatException('todo op $key must be a string or null');
 }
 
-/// Strictly decode and validate op content. Throws a [FormatException]
-/// naming the first problem.
+/// Strictly decode and validate op content for a list of [visibility] (the
+/// event's `td-vis` tag, which the caller has already read). Throws a
+/// [FormatException] naming the first problem.
 ///
 /// The whole-content cap is checked before any parse. The key set is
 /// **exact** per op — every key in [ProjectTodoOpKind.contentKeys] must be
 /// present and no other may be — so absent and `null` are different things.
-ProjectTodoOp decodeProjectTodoOp(String content) {
+/// A `list.create` whose content `visibility` disagrees with the tag is an
+/// error: the tag is what the relay gates on, and the two must never drift.
+ProjectTodoOp decodeProjectTodoOp(String content, TodoVisibility visibility) {
   if (utf8.encode(content).length > maxProjectTodoContentBytes) {
     throw const FormatException(
       'todo op content exceeds $maxProjectTodoContentBytes bytes',
@@ -424,15 +521,43 @@ ProjectTodoOp decodeProjectTodoOp(String content) {
     case ProjectTodoOpKind.listCreate:
       final title = _takeString(object, 'title');
       validateTodoText('title', title);
-      return ProjectTodoOp.listCreate(listId: listId, title: title);
+      final declaredWire = _takeString(object, 'visibility');
+      final declared = TodoVisibility.fromWire(declaredWire);
+      if (declared == null) {
+        throw FormatException(
+          'todo visibility must be project or personal (got "$declaredWire")',
+        );
+      }
+      if (declared != visibility) {
+        throw FormatException(
+          'todo list.create content visibility "${declared.wire}" does not '
+          'match its td-vis tag "${visibility.wire}"',
+        );
+      }
+      return ProjectTodoOp.listCreate(
+        listId: listId,
+        visibility: declared,
+        title: title,
+      );
     case ProjectTodoOpKind.listTitle:
       final title = _takeString(object, 'title');
       validateTodoText('title', title);
-      return ProjectTodoOp.listTitle(listId: listId, title: title);
+      return ProjectTodoOp.listTitle(
+        listId: listId,
+        visibility: visibility,
+        title: title,
+      );
     case ProjectTodoOpKind.listArchived:
       return ProjectTodoOp.listArchived(
         listId: listId,
+        visibility: visibility,
         archived: _takeBool(object, 'archived'),
+      );
+    case ProjectTodoOpKind.listPinned:
+      return ProjectTodoOp.listPinned(
+        listId: listId,
+        visibility: visibility,
+        pinned: _takeBool(object, 'pinned'),
       );
     case ProjectTodoOpKind.itemAdd:
       final text = _takeString(object, 'text');
@@ -441,6 +566,7 @@ ProjectTodoOp decodeProjectTodoOp(String content) {
       validateRank(rank);
       return ProjectTodoOp.itemAdd(
         listId: listId,
+        visibility: visibility,
         itemId: itemId!,
         text: text,
         rank: rank,
@@ -450,12 +576,14 @@ ProjectTodoOp decodeProjectTodoOp(String content) {
       validateTodoText('text', text);
       return ProjectTodoOp.itemText(
         listId: listId,
+        visibility: visibility,
         itemId: itemId!,
         text: text,
       );
     case ProjectTodoOpKind.itemDone:
       return ProjectTodoOp.itemDone(
         listId: listId,
+        visibility: visibility,
         itemId: itemId!,
         done: _takeBool(object, 'done'),
       );
@@ -468,23 +596,34 @@ ProjectTodoOp decodeProjectTodoOp(String content) {
       }
       return ProjectTodoOp.itemAssignee(
         listId: listId,
+        visibility: visibility,
         itemId: itemId!,
         assignee: assignee,
       );
     case ProjectTodoOpKind.itemDue:
       final due = _takeNullableString(object, 'due');
       if (due != null) validateDueDate(due);
-      return ProjectTodoOp.itemDue(listId: listId, itemId: itemId!, due: due);
+      return ProjectTodoOp.itemDue(
+        listId: listId,
+        visibility: visibility,
+        itemId: itemId!,
+        due: due,
+      );
     case ProjectTodoOpKind.itemRank:
       final rank = _takeString(object, 'rank');
       validateRank(rank);
       return ProjectTodoOp.itemRank(
         listId: listId,
+        visibility: visibility,
         itemId: itemId!,
         rank: rank,
       );
     case ProjectTodoOpKind.itemRemove:
-      return ProjectTodoOp.itemRemove(listId: listId, itemId: itemId!);
+      return ProjectTodoOp.itemRemove(
+        listId: listId,
+        visibility: visibility,
+        itemId: itemId!,
+      );
   }
 }
 
@@ -512,22 +651,32 @@ String? normalizeProjectCoordinate(String value) {
 }
 
 /// The fold's decode rule (CONTRACT rule 1): the event is a 44248, carries
-/// exactly one `a` tag that normalizes to [project], and its content passes
-/// the op grammar. Returns `null` for anything else — the fold counts it in
-/// `ignored`.
+/// exactly one `a` tag that normalizes to [project], exactly one `td-vis`
+/// tag spelling a known visibility, and its content passes the op grammar.
+/// Returns `null` for anything else — the fold counts it in `ignored`.
 ProjectTodoOp? decodeProjectTodoEvent(NostrEvent event, String project) {
   if (event.kind != EventKind.projectTodoOp) return null;
   String? coordinate;
+  String? visibilityWire;
   for (final tag in event.tags) {
-    if (tag.isEmpty || tag[0] != 'a') continue;
-    if (coordinate != null) return null;
-    if (tag.length < 2) return null;
-    coordinate = tag[1];
+    if (tag.isEmpty) continue;
+    switch (tag[0]) {
+      case 'a':
+        if (coordinate != null) return null;
+        if (tag.length < 2) return null;
+        coordinate = tag[1];
+      case 'td-vis':
+        if (visibilityWire != null) return null;
+        if (tag.length < 2) return null;
+        visibilityWire = tag[1];
+    }
   }
-  if (coordinate == null) return null;
+  if (coordinate == null || visibilityWire == null) return null;
   if (normalizeProjectCoordinate(coordinate) != project) return null;
+  final visibility = TodoVisibility.fromWire(visibilityWire);
+  if (visibility == null) return null;
   try {
-    return decodeProjectTodoOp(event.content);
+    return decodeProjectTodoOp(event.content, visibility);
   } on FormatException {
     return null;
   }
@@ -538,14 +687,13 @@ ProjectTodoOp? decodeProjectTodoEvent(NostrEvent event, String project) {
 /// rule, so a client can check what it is about to send.
 ///
 /// Tag grammar: position-independent, closed key set; exactly one each of
-/// `a`, `td-v`, `td-op`, `td-list`; exactly one `td-item` on an item op and
-/// none on a list op; every tag exactly two fields; any other key —
-/// including `h` — is a rejection.
+/// `a`, `td-v`, `td-op`, `td-list`, `td-vis`; exactly one `td-item` on an
+/// item op and none on a list op; every tag exactly two fields; any other
+/// key — including `h` — is a rejection.
 ProjectTodoOp validateProjectTodoEnvelope(NostrEvent event) {
   if (event.kind != EventKind.projectTodoOp) {
     throw const FormatException('event is not a project todo op (kind 44248)');
   }
-  final op = decodeProjectTodoOp(event.content);
   final seen = <String, String>{};
   for (final tag in event.tags) {
     if (tag.length != 2) {
@@ -553,7 +701,7 @@ ProjectTodoOp validateProjectTodoEnvelope(NostrEvent event) {
     }
     final key = tag[0];
     switch (key) {
-      case 'a' || 'td-v' || 'td-op' || 'td-list' || 'td-item':
+      case 'a' || 'td-v' || 'td-op' || 'td-list' || 'td-vis' || 'td-item':
         if (seen.containsKey(key)) {
           throw FormatException('todo op has more than one $key tag');
         }
@@ -579,6 +727,17 @@ ProjectTodoOp validateProjectTodoEnvelope(NostrEvent event) {
   if (seen['td-v'] != projectTodoTagVersion) {
     throw const FormatException('unsupported todo op tag version');
   }
+  final tagVis = seen['td-vis'];
+  if (tagVis == null) {
+    throw const FormatException('todo op requires one td-vis tag');
+  }
+  final visibility = TodoVisibility.fromWire(tagVis);
+  if (visibility == null) {
+    throw FormatException(
+      'todo visibility must be project or personal (got "$tagVis")',
+    );
+  }
+  final op = decodeProjectTodoOp(event.content, visibility);
   final tagOp = seen['td-op'];
   if (tagOp == null) {
     throw const FormatException('todo op requires one td-op tag');

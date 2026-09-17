@@ -1,5 +1,6 @@
 import 'package:buzz/features/profile/user_cache_provider.dart';
 import 'package:buzz/features/profile/user_profile.dart';
+import 'package:buzz/features/project_todos/domain/project_todo_op.dart';
 import 'package:buzz/features/project_todos/state/project_todo_actions.dart';
 import 'package:buzz/features/project_todos/state/project_todos_provider.dart';
 import 'package:buzz/features/project_todos/ui/project_todos_page.dart';
@@ -26,6 +27,7 @@ void main() {
     required ProjectTodosRead read,
     Map<String, UserProfile> users = const {},
     Set<String> agents = const {},
+    String? initialListId,
   }) async {
     actions = FakeProjectTodoActions();
     await tester.pumpWidget(
@@ -44,7 +46,10 @@ void main() {
         ],
         child: MaterialApp(
           theme: AppTheme.light(),
-          home: const ProjectTodosPage(address: todoAddress),
+          home: ProjectTodosPage(
+            address: todoAddress,
+            initialListId: initialListId,
+          ),
         ),
       ),
     );
@@ -261,8 +266,9 @@ void main() {
     );
   });
 
-  testWidgets('no lists: an empty state with a New list door that asks for '
-      'list.create', (tester) async {
+  testWidgets('no lists: an empty state with a New list door; the sheet '
+      'offers Project or Personal and a pin switch, and asks for '
+      'list.create with the choice', (tester) async {
     await pump(tester, read: testTodosRead(lists: const []));
     expect(find.byKey(const ValueKey('todo-empty')), findsOneWidget);
     expect(find.text('No to-do lists yet'), findsOneWidget);
@@ -270,6 +276,33 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('todo-empty-new-list')));
     await tester.pumpAndSettle();
+    // The choice, with its one-line explanations and the "fixed" warning.
+    expect(find.byKey(const ValueKey('todo-new-list-project')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('todo-new-list-personal')),
+      findsOneWidget,
+    );
+    expect(
+      find.text('Every project member reads and edits it.'),
+      findsOneWidget,
+    );
+    expect(
+      find.text('Only you. The relay withholds it from everyone else.'),
+      findsOneWidget,
+    );
+    expect(
+      find.text('This cannot be changed later; make a new list instead.'),
+      findsOneWidget,
+    );
+    // Defaults: project, pinned.
+    expect(
+      tester
+          .widget<SwitchListTile>(
+            find.byKey(const ValueKey('todo-new-list-pinned')),
+          )
+          .value,
+      isTrue,
+    );
     await tester.enterText(
       find.byKey(const ValueKey('todo-list-title-field')),
       'Launch',
@@ -277,7 +310,84 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('todo-list-title-save')));
     await tester.pumpAndSettle();
-    expect(actions.calls, ['createList Launch']);
+    expect(actions.calls, ['createList Launch project pinned=true']);
+
+    // Personal and unpinned, when chosen.
+    await tester.tap(find.byKey(const ValueKey('todo-empty-new-list')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('todo-new-list-personal')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('todo-new-list-pinned')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('todo-list-title-field')),
+      'Mine',
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('todo-list-title-save')));
+    await tester.pumpAndSettle();
+    expect(actions.calls.last, 'createList Mine personal pinned=false');
+  });
+
+  testWidgets('a personal list shows a lock and a pinned one a pin in the '
+      'picker; the menu asks for list.pinned', (tester) async {
+    final mine = testTodoList(
+      id: listB,
+      title: 'Mine',
+      visibility: TodoVisibility.personal,
+      pinned: true,
+      createdAt: 200,
+    );
+    await pump(tester, read: testTodosRead(lists: [launch, mine]));
+    // Launch is shown first: project, unpinned — no glyphs.
+    expect(find.byKey(ValueKey('todo-list-personal-$listA')), findsNothing);
+    expect(find.byKey(ValueKey('todo-list-pinned-$listA')), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('todo-list-picker')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(ValueKey('todo-list-personal-$listB')), findsWidgets);
+    expect(find.byKey(ValueKey('todo-list-pinned-$listB')), findsWidgets);
+    expect(find.byIcon(LucideIcons.lock), findsWidgets);
+    await tester.tap(find.text('Mine').last);
+    await tester.pumpAndSettle();
+    // The closed picker keeps the glyphs on the selected personal list.
+    expect(find.byKey(ValueKey('todo-list-personal-$listB')), findsOneWidget);
+    expect(find.byKey(ValueKey('todo-list-pinned-$listB')), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('todo-list-menu')));
+    await tester.pumpAndSettle();
+    expect(find.text('Unpin from project tree'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('todo-menu-pin')));
+    await tester.pumpAndSettle();
+    expect(actions.calls, ['setListPinned $listB false']);
+
+    // Back on the unpinned list, the menu offers to pin.
+    await tester.tap(find.byKey(const ValueKey('todo-list-picker')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Launch').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('todo-list-menu')));
+    await tester.pumpAndSettle();
+    expect(find.text('Pin to project tree'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('todo-menu-pin')));
+    await tester.pumpAndSettle();
+    expect(actions.calls.last, 'setListPinned $listA true');
+  });
+
+  testWidgets('initialListId selects that list first', (tester) async {
+    final second = testTodoList(
+      id: listB,
+      title: 'Later',
+      createdAt: 200,
+      open: [testTodoItem('b1', listId: listB, text: 'Second list item')],
+    );
+    await pump(
+      tester,
+      read: testTodosRead(lists: [launch, second]),
+      initialListId: listB,
+    );
+    expect(find.text('Second list item'), findsOneWidget);
+    expect(find.text('Write the NIP'), findsNothing);
   });
 
   testWidgets('the picker switches lists; archived lists hide until shown', (

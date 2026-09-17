@@ -51,14 +51,44 @@ final projectTerminalOpenerProvider = Provider<ProjectTerminalOpener?>(
       ),
 );
 
-/// Opens a project's to-do lists from a project tree.
-typedef ProjectTodoOpener = void Function(BuildContext context, String address);
+/// Opens a project's to-do lists from a project tree, on [listId] when a
+/// pinned list's row was tapped.
+typedef ProjectTodoOpener =
+    void Function(BuildContext context, String address, {String? listId});
 
 /// The opener the tree's "To-do" row uses. `null` — the default here, so
 /// this feature never imports `project_todos` — hides the row; the app
 /// composition root (`app.dart`, `appFeatureOverrides`) provides the real
 /// one, and tests leave it `null` or install a recorder.
 final projectTodoOpenerProvider = Provider<ProjectTodoOpener?>((ref) => null);
+
+/// One to-do list pinned to a project's tree: what the row needs and no
+/// more, so this feature never imports the to-do fold.
+@immutable
+class PinnedTodoListRow {
+  final String id;
+  final String title;
+
+  /// `true` for a list only its creator reads; the row shows a lock.
+  final bool personal;
+
+  const PinnedTodoListRow({
+    required this.id,
+    required this.title,
+    required this.personal,
+  });
+}
+
+/// Reads a project's pinned, unarchived to-do lists for its tree.
+typedef ProjectPinnedTodoListsReader =
+    List<PinnedTodoListRow> Function(WidgetRef ref, String address);
+
+/// The reader the tree uses for the rows under "To-do". `null` — the
+/// default here — renders no rows; `app.dart` (`appFeatureOverrides`) reads
+/// the `project_todos` fold, and tests leave it `null` or install a fake.
+final projectPinnedTodoListsProvider = Provider<ProjectPinnedTodoListsReader?>(
+  (ref) => null,
+);
 
 /// The one line a project with nothing in it shows.
 const projectEmptyLabel = 'No channels, coding sessions or terminals yet';
@@ -96,6 +126,7 @@ class ProjectTree extends HookConsumerWidget {
     final profiles = ref.watch(userCacheProvider);
     final opener = ref.watch(projectTerminalOpenerProvider);
     final todoOpener = ref.watch(projectTodoOpenerProvider);
+    final pinnedTodoReader = ref.watch(projectPinnedTodoListsProvider);
     final binding = ref.watch(codingSessionObserverBindingProvider);
     final filter = ref
         .watch(projectSessionFiltersProvider)
@@ -202,7 +233,8 @@ class ProjectTree extends HookConsumerWidget {
         readNotes.isEmpty &&
         !terminalsUnreadable;
     // The to-do row is a door, not content: a project with nothing else in
-    // it still says so, and the door stays above that line.
+    // it still says so, and the door stays above that line. The pinned
+    // lists sit under it, each a door straight to its list.
     final todoRow = todoOpener == null
         ? null
         : _ProjectChildTile(
@@ -212,6 +244,9 @@ class ProjectTree extends HookConsumerWidget {
             detail: null,
             onTap: () => todoOpener(context, project.address),
           );
+    final pinnedTodoLists = todoOpener == null || pinnedTodoReader == null
+        ? const <PinnedTodoListRow>[]
+        : pinnedTodoReader(ref, project.address);
 
     String ownerLabel(String pubkey) =>
         profiles[pubkey.toLowerCase()]?.label ?? shortPubkey(pubkey);
@@ -247,6 +282,24 @@ class ProjectTree extends HookConsumerWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         ?todoRow,
+        for (final list in pinnedTodoLists)
+          _ProjectChildTile(
+            key: ValueKey(
+              'project-row-todo-list:${project.address}:${list.id}',
+            ),
+            icon: LucideIcons.listChecks,
+            label: list.title,
+            detail: null,
+            trailing: list.personal
+                ? Icon(
+                    LucideIcons.lock,
+                    key: ValueKey('project-row-todo-list-lock:${list.id}'),
+                    size: 14,
+                    color: context.colors.onSurfaceVariant,
+                  )
+                : null,
+            onTap: () => todoOpener!(context, project.address, listId: list.id),
+          ),
         if (isEmpty)
           ProjectSectionNote(
             key: ValueKey('project-empty-${project.address}'),

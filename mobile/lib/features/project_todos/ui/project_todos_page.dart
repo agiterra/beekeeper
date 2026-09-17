@@ -38,14 +38,22 @@ class ProjectTodosPage extends HookConsumerWidget {
   /// The canonical `30621:<owner>:<dtag>` coordinate.
   final String address;
 
-  const ProjectTodosPage({super.key, required this.address});
+  /// The list to show first (a pinned row in the project tree opens its
+  /// list directly), or `null` for the first visible list.
+  final String? initialListId;
+
+  const ProjectTodosPage({
+    super.key,
+    required this.address,
+    this.initialListId,
+  });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final read = ref.watch(projectTodosProvider(address));
     final project = ref.watch(projectsProvider).byAddress(address);
     final showArchived = useState(false);
-    final selectedId = useState<String?>(null);
+    final selectedId = useState<String?>(initialListId);
 
     final lists = read.digest.lists;
     final visible = [
@@ -69,10 +77,14 @@ class ProjectTodosPage extends HookConsumerWidget {
         ref.read(projectTodoActionsProvider(address));
 
     Future<void> newList() async {
-      final title = await _showListTitleSheet(context, title: 'New list');
-      if (title == null || !context.mounted) return;
+      final draft = await _showNewListSheet(context);
+      if (draft == null || !context.mounted) return;
       await runTodoAction(context, () async {
-        final id = await actions().createList(title);
+        final id = await actions().createList(
+          draft.title,
+          visibility: draft.visibility,
+          pinned: draft.pinned,
+        );
         selectedId.value = id;
       });
     }
@@ -91,6 +103,9 @@ class ProjectTodosPage extends HookConsumerWidget {
       context,
       () => actions().setListArchived(list.id, archived),
     );
+
+    Future<void> setPinned(TodoList list, bool pinned) =>
+        runTodoAction(context, () => actions().setListPinned(list.id, pinned));
 
     final colors = context.colors;
     return FrostedScaffold(
@@ -114,6 +129,10 @@ class ProjectTodosPage extends HookConsumerWidget {
                   if (selected != null) setArchived(selected, true);
                 case _ListMenuAction.unarchive:
                   if (selected != null) setArchived(selected, false);
+                case _ListMenuAction.pin:
+                  if (selected != null) setPinned(selected, true);
+                case _ListMenuAction.unpin:
+                  if (selected != null) setPinned(selected, false);
                 case _ListMenuAction.toggleArchived:
                   showArchived.value = !showArchived.value;
               }
@@ -129,6 +148,17 @@ class ProjectTodosPage extends HookConsumerWidget {
                   key: ValueKey('todo-menu-rename'),
                   value: _ListMenuAction.rename,
                   child: Text('Rename list'),
+                ),
+                PopupMenuItem(
+                  key: const ValueKey('todo-menu-pin'),
+                  value: selected.pinned
+                      ? _ListMenuAction.unpin
+                      : _ListMenuAction.pin,
+                  child: Text(
+                    selected.pinned
+                        ? 'Unpin from project tree'
+                        : 'Pin to project tree',
+                  ),
                 ),
                 PopupMenuItem(
                   key: const ValueKey('todo-menu-archive'),
@@ -227,7 +257,15 @@ class ProjectTodosPage extends HookConsumerWidget {
   }
 }
 
-enum _ListMenuAction { newList, rename, archive, unarchive, toggleArchived }
+enum _ListMenuAction {
+  newList,
+  rename,
+  archive,
+  unarchive,
+  pin,
+  unpin,
+  toggleArchived,
+}
 
 /// Run one write and, when the relay or the validator refuses it, show the
 /// refusal as it came — a viewer of a private project sees the relay's

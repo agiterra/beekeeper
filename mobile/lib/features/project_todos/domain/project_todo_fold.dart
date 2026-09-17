@@ -84,7 +84,14 @@ class TodoItem {
 class TodoList {
   final String id;
   final String title;
+
+  /// Who reads the list, fixed by its `list.create`.
+  final TodoVisibility visibility;
   final bool archived;
+
+  /// Shown in the project tree. Shared by every member of a project list;
+  /// a personal list's pin is only ever seen by its owner.
+  final bool pinned;
 
   /// The winning `list.create`'s `created_at`.
   final int createdAt;
@@ -104,7 +111,9 @@ class TodoList {
   const TodoList({
     required this.id,
     required this.title,
+    required this.visibility,
     required this.archived,
+    required this.pinned,
     required this.createdAt,
     required this.createdBy,
     required this.updatedAt,
@@ -112,11 +121,16 @@ class TodoList {
     required this.completed,
   });
 
+  /// `true` for a list only its creator reads.
+  bool get personal => visibility == TodoVisibility.personal;
+
   /// The contract's list shape.
   Map<String, Object?> toJson() => {
     'id': id,
     'title': title,
+    'visibility': visibility.wire,
     'archived': archived,
+    'pinned': pinned,
     'createdAt': createdAt,
     'createdBy': createdBy,
     'updatedAt': updatedAt,
@@ -200,14 +214,18 @@ class _Field<T> {
 
 class _ListState {
   final _Field<String> title;
+  final TodoVisibility visibility;
   final _Field<bool> archived;
+  final _Field<bool> pinned;
   final int createdAt;
   final String createdBy;
   int updatedAt;
 
   _ListState({
     required this.title,
+    required this.visibility,
     required this.archived,
+    required this.pinned,
     required this.createdAt,
     required this.createdBy,
     required this.updatedAt,
@@ -286,12 +304,29 @@ ProjectTodoDigest foldProjectTodos(
     }
     lists[d.op.listId] = _ListState(
       title: _Field(d.key, d.op.title!),
+      visibility: d.op.visibility,
       archived: _Field(d.key, false),
+      pinned: _Field(d.key, false),
       createdAt: d.key.createdAt,
       createdBy: d.pubkey,
       updatedAt: d.key.createdAt,
     );
   }
+  // Every other op must agree with its list's visibility, and a personal
+  // list takes ops from its creator only. Ops on a list that does not exist
+  // are counted where they are handled below; these are the ops on existing
+  // lists that are refused on visibility grounds.
+  ops.removeWhere((d) {
+    if (d.op.kind == ProjectTodoOpKind.listCreate) return false;
+    final list = lists[d.op.listId];
+    if (list == null) return false;
+    final admitted =
+        d.op.visibility == list.visibility &&
+        (list.visibility == TodoVisibility.project ||
+            d.pubkey == list.createdBy);
+    if (!admitted) ignored++;
+    return !admitted;
+  });
   final items = <String, _ItemState>{};
   final removed = <String>{};
   for (final d in ops) {
@@ -354,6 +389,10 @@ ProjectTodoDigest foldProjectTodos(
         continue;
       case ProjectTodoOpKind.listArchived:
         list.archived.set(d.key, d.op.archived!);
+        list.touch(d.key.createdAt);
+        continue;
+      case ProjectTodoOpKind.listPinned:
+        list.pinned.set(d.key, d.op.pinned!);
         list.touch(d.key.createdAt);
         continue;
       case ProjectTodoOpKind.itemText:
@@ -435,7 +474,9 @@ ProjectTodoDigest foldProjectTodos(
       TodoList(
         id: listId,
         title: state.title.value,
+        visibility: state.visibility,
         archived: state.archived.value,
+        pinned: state.pinned.value,
         createdAt: state.createdAt,
         createdBy: state.createdBy,
         updatedAt: state.updatedAt,

@@ -1,10 +1,12 @@
 part of '../project_tree.dart';
 
-/// A channel or forum row: one icon for the type, the name, a detail line.
+/// A channel or forum row: one icon for the type, the name, a detail line,
+/// and an optional trailing glyph (a pinned personal list's lock).
 class _ProjectChildTile extends StatelessWidget {
   final IconData icon;
   final String label;
   final String? detail;
+  final Widget? trailing;
   final VoidCallback onTap;
 
   const _ProjectChildTile({
@@ -12,6 +14,7 @@ class _ProjectChildTile extends StatelessWidget {
     required this.icon,
     required this.label,
     required this.detail,
+    this.trailing,
     required this.onTap,
   });
 
@@ -36,6 +39,7 @@ class _ProjectChildTile extends StatelessWidget {
                 color: colors.onSurfaceVariant,
               ),
             ),
+      trailing: trailing,
       onTap: onTap,
     );
   }

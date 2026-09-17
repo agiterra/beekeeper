@@ -1,4 +1,5 @@
 import 'package:buzz/features/project_todos/domain/project_todo_fold.dart';
+import 'package:buzz/features/project_todos/domain/project_todo_op.dart';
 import 'package:buzz/features/project_todos/state/project_todo_actions.dart';
 import 'package:buzz/features/project_todos/state/project_todos_provider.dart';
 import 'package:buzz/shared/relay/relay.dart';
@@ -49,14 +50,18 @@ TodoItem testTodoItem(
 TodoList testTodoList({
   String id = listA,
   String title = 'Launch',
+  TodoVisibility visibility = TodoVisibility.project,
   bool archived = false,
+  bool pinned = false,
   int createdAt = 100,
   List<TodoItem> open = const [],
   List<TodoItem> completed = const [],
 }) => TodoList(
   id: id,
   title: title,
+  visibility: visibility,
   archived: archived,
+  pinned: pinned,
   createdAt: createdAt,
   createdBy: todoOwner,
   updatedAt: createdAt,
@@ -122,8 +127,11 @@ class FakeProjectTodoActions extends ProjectTodoActions {
   }
 
   @override
-  Future<String> createList(String title) =>
-      _record('createList $title', listB);
+  Future<String> createList(
+    String title, {
+    required TodoVisibility visibility,
+    bool pinned = false,
+  }) => _record('createList $title ${visibility.wire} pinned=$pinned', listB);
 
   @override
   Future<void> retitleList(String listId, String title) =>
@@ -132,6 +140,10 @@ class FakeProjectTodoActions extends ProjectTodoActions {
   @override
   Future<void> setListArchived(String listId, bool archived) =>
       _record('setListArchived $listId $archived', null);
+
+  @override
+  Future<void> setListPinned(String listId, bool pinned) =>
+      _record('setListPinned $listId $pinned', null);
 
   @override
   Future<String> addItem(TodoList list, String text) =>

@@ -131,6 +131,11 @@ class ProjectTodosNotifier extends Notifier<ProjectTodosRead> {
     await _start();
   }
 
+  /// The list with [id] as the current read folded it, or `null` when the
+  /// read does not know it. What a writer consults for a list's visibility.
+  TodoList? listById(String id) =>
+      (_digest ?? stateOrNull?.digest)?.listById(id);
+
   /// The greatest `created_at` among the ops seen on one target, or `null`.
   /// A writer stamps `max(now, this + 1)` so its write wins the field even
   /// on a slightly slow clock (NIP-TD § Timestamps).
