@@ -334,7 +334,11 @@ fn approval_grant_and_deny_reference_the_approval_by_d_tag() {
     let keys = Keys::generate();
     for (builder, kind) in [
         (
-            events::build_approval_grant(APPROVAL_REF, Some("ok")),
+            events::build_approval_grant(
+                APPROVAL_REF,
+                Some("ok"),
+                buzz_core_pkg::workflow_autorun::ApprovalScope::Run,
+            ),
             46030,
         ),
         (events::build_approval_deny(APPROVAL_REF, None), 46031),
@@ -349,13 +353,29 @@ fn approval_grant_and_deny_reference_the_approval_by_d_tag() {
 #[test]
 fn approval_reference_is_lowercased_and_validated() {
     let upper = APPROVAL_REF.to_ascii_uppercase();
-    let ev = events::build_approval_grant(&upper, None)
-        .expect("build")
-        .sign_with_keys(&Keys::generate())
-        .expect("sign");
+    let ev = events::build_approval_grant(
+        &upper,
+        None,
+        buzz_core_pkg::workflow_autorun::ApprovalScope::Action,
+    )
+    .expect("build")
+    .sign_with_keys(&Keys::generate())
+    .expect("sign");
     assert_eq!(tag_values(&ev, "d"), vec![APPROVAL_REF.to_string()]);
-    assert_eq!(ev.content, "");
-    assert!(events::build_approval_grant("not-a-hash", None).is_err());
+    // C4: the content is the `{note, scope}` form even without a note.
+    let decoded = buzz_core_pkg::workflow_autorun::decode_approval_grant_content(&ev.content)
+        .expect("decode");
+    assert_eq!(decoded.note, None);
+    assert_eq!(
+        decoded.scope,
+        buzz_core_pkg::workflow_autorun::ApprovalScope::Action
+    );
+    assert!(events::build_approval_grant(
+        "not-a-hash",
+        None,
+        buzz_core_pkg::workflow_autorun::ApprovalScope::Run
+    )
+    .is_err());
     assert!(events::build_approval_deny("", None).is_err());
 }
 
@@ -365,4 +385,37 @@ fn host_steps_wire_round_trips_the_relay_shape() {
     let wire: WorkflowHostStepsWire = serde_json::from_value(raw.clone()).expect("deserialize");
     assert_eq!(wire.host_steps.len(), 1);
     assert_eq!(serde_json::to_value(&wire).expect("serialize"), raw);
+}
+
+/// Spec § 5.4: the grant's content is the `{note, scope}` JSON the relay
+/// decodes, and `scope: action` is what the checkbox sends.
+#[test]
+fn approval_grant_content_carries_note_and_scope() {
+    let ev = events::build_approval_grant(
+        APPROVAL_REF,
+        Some("ship it"),
+        buzz_core_pkg::workflow_autorun::ApprovalScope::Action,
+    )
+    .expect("builder")
+    .sign_with_keys(&nostr::Keys::generate())
+    .expect("sign");
+    let decoded = buzz_core_pkg::workflow_autorun::decode_approval_grant_content(&ev.content)
+        .expect("decode");
+    assert_eq!(decoded.note.as_deref(), Some("ship it"));
+    assert_eq!(
+        decoded.scope,
+        buzz_core_pkg::workflow_autorun::ApprovalScope::Action
+    );
+    let revoke = events::build_autorun_revoke(
+        "00000000-0000-0000-0000-000000000007",
+        "00000000-0000-0000-0000-000000000009",
+    )
+    .expect("revoke builder")
+    .sign_with_keys(&nostr::Keys::generate())
+    .expect("sign");
+    assert_eq!(
+        revoke.kind.as_u16() as u32,
+        buzz_core_pkg::kind::KIND_WORKFLOW_AUTORUN_REVOKE
+    );
+    assert!(buzz_core_pkg::workflow_autorun::decode_autorun_revoke(&revoke).is_ok());
 }

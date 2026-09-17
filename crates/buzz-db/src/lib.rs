@@ -4586,6 +4586,61 @@ impl Db {
         .await
     }
 
+    /// Record an autorun grant bound to a definition hash.
+    #[datastore_span(name = "create_autorun_grant", system = "postgresql")]
+    pub async fn create_autorun_grant(
+        &self,
+        community_id: CommunityId,
+        workflow_id: uuid::Uuid,
+        definition_hash: &[u8],
+        granted_by: &[u8],
+        grant_event_id: &[u8],
+    ) -> Result<workflow::AutorunGrantRecord> {
+        workflow::create_autorun_grant(
+            &self.pool,
+            community_id,
+            workflow_id,
+            definition_hash,
+            granted_by,
+            grant_event_id,
+        )
+        .await
+    }
+
+    /// The unrevoked autorun grant bound to exactly this definition hash.
+    #[datastore_span(name = "find_active_autorun_grant", system = "postgresql")]
+    pub async fn find_active_autorun_grant(
+        &self,
+        community_id: CommunityId,
+        workflow_id: uuid::Uuid,
+        definition_hash: &[u8],
+    ) -> Result<Option<workflow::AutorunGrantRecord>> {
+        workflow::find_active_autorun_grant(&self.pool, community_id, workflow_id, definition_hash)
+            .await
+    }
+
+    /// Every autorun grant for a workflow, newest first.
+    #[datastore_span(name = "list_autorun_grants", system = "postgresql")]
+    pub async fn list_autorun_grants(
+        &self,
+        community_id: CommunityId,
+        workflow_id: uuid::Uuid,
+    ) -> Result<Vec<workflow::AutorunGrantRecord>> {
+        workflow::list_autorun_grants(&self.pool, community_id, workflow_id).await
+    }
+
+    /// Revoke every unrevoked autorun grant for a workflow.
+    #[datastore_span(name = "revoke_autorun_grants", system = "postgresql")]
+    pub async fn revoke_autorun_grants(
+        &self,
+        community_id: CommunityId,
+        workflow_id: uuid::Uuid,
+        revoke_event_id: &[u8],
+    ) -> Result<u64> {
+        workflow::revoke_autorun_grants(&self.pool, community_id, workflow_id, revoke_event_id)
+            .await
+    }
+
     /// Record a new host-step request.
     #[datastore_span(name = "create_host_step", system = "postgresql")]
     pub async fn create_host_step(&self, params: workflow::CreateHostStepParams<'_>) -> Result<()> {

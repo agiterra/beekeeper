@@ -905,6 +905,13 @@ C are independent lanes until C3, which needs `team.yml` (A3) for agent names.
   proof is still owed.*
 - **C4 — autorun grant and revoke.** `scope: action`, hash binding, 46032,
   46015, the inbox checkbox. Proof: editing the action re-arms approval.
+  *Status 2026-09-17: built (ledger 154). Amendments: a pre-C4 46030 whose
+  content is plain text is read as a note with `scope: run`, so older
+  clients never grant more than they asked; the synthetic gate on a project
+  action names `project-owner:<coord>` (creator or roster Owner) rather than
+  the workflow owner's key; the 46032 is admitted from the workflow owner or
+  anyone the kind:30624 rule admits. The re-arm proof is engine-level against
+  Postgres; the live proof is still owed.*
 - **C5 — ephemeral hire, agent-managed mode, `ci_result` trigger.** Proof:
   `hire_agent` seats a runner in the project manager's umbrella; a 46008
   failure wakes the project manager.

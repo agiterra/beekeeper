@@ -7,7 +7,6 @@ import { formatItemTimestamp } from "@/shared/lib/datetime";
 import { cn } from "@/shared/lib/cn";
 import { Button } from "@/shared/ui/button";
 import { Checkbox } from "@/shared/ui/checkbox";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 
 import { type ActionRunTone, describeActionRun } from "../lib/actionRunLabel";
 import type { ProjectActionRun } from "../lib/useProjectActions";
@@ -19,8 +18,8 @@ const TONE_CLASS: Record<ActionRunTone, string> = {
   muted: "text-muted-foreground",
 };
 
-/** The C4 autorun-grant checkbox, present but inert until that slice lands. */
-export const AUTORUN_GRANT_PENDING = "coming with autorun grants";
+/** Spec § 5.4: the checkbox that turns a grant into an autorun grant. */
+export const AUTORUN_GRANT_LABEL = "allow future runs of this action";
 
 function formatSince(unixSeconds: number): string {
   return formatItemTimestamp(unixSeconds, { withTime: true });
@@ -49,13 +48,28 @@ export function ProjectActionRunRow({
     [entry],
   );
 
+  const [allowFutureRuns, setAllowFutureRuns] = React.useState(false);
   const decide = useMutation({
-    mutationFn: async (input: { action: "grant" | "deny"; ref: string }) =>
+    mutationFn: async (input: {
+      action: "grant" | "deny";
+      ref: string;
+      allowFutureRuns: boolean;
+    }) =>
       input.action === "grant"
-        ? grantApproval(input.ref)
+        ? grantApproval(
+            input.ref,
+            undefined,
+            input.allowFutureRuns ? "action" : "run",
+          )
         : denyApproval(input.ref),
     onSuccess: (_data, input) => {
-      toast.success(input.action === "grant" ? "Approved" : "Denied");
+      toast.success(
+        input.action === "deny"
+          ? "Denied"
+          : input.allowFutureRuns
+            ? "Approved, and future runs of this definition"
+            : "Approved",
+      );
       onChanged();
     },
     onError: (error: unknown) => {
@@ -86,22 +100,26 @@ export function ProjectActionRunRow({
       </span>
       {pending ? (
         <span className="ml-auto flex items-center gap-2">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span className="flex cursor-not-allowed items-center gap-1.5 text-xs text-muted-foreground">
-                <Checkbox checked={false} disabled id={autorunId} />
-                <label htmlFor={autorunId}>allow future runs</label>
-              </span>
-            </TooltipTrigger>
-            <TooltipContent className="text-xs" side="top">
-              {AUTORUN_GRANT_PENDING}
-            </TooltipContent>
-          </Tooltip>
+          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <Checkbox
+              checked={allowFutureRuns}
+              data-testid="project-action-autorun"
+              id={autorunId}
+              onCheckedChange={(checked) =>
+                setAllowFutureRuns(checked === true)
+              }
+            />
+            <label htmlFor={autorunId}>{AUTORUN_GRANT_LABEL}</label>
+          </span>
           <Button
             data-testid="project-action-approve"
             disabled={deciding}
             onClick={() =>
-              decideMutate({ action: "grant", ref: pending.approvalRef })
+              decideMutate({
+                action: "grant",
+                ref: pending.approvalRef,
+                allowFutureRuns,
+              })
             }
             size="sm"
             type="button"
@@ -112,7 +130,11 @@ export function ProjectActionRunRow({
             data-testid="project-action-deny"
             disabled={deciding}
             onClick={() =>
-              decideMutate({ action: "deny", ref: pending.approvalRef })
+              decideMutate({
+                action: "deny",
+                ref: pending.approvalRef,
+                allowFutureRuns: false,
+              })
             }
             size="sm"
             type="button"

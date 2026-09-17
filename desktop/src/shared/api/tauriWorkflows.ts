@@ -354,12 +354,89 @@ export async function triggerWorkflow(
 export async function grantApproval(
   approvalRef: string,
   note?: string,
+  scope: WorkflowApprovalScope = "run",
 ): Promise<ApprovalActionResponse> {
   const raw = await invokeTauri<RawApprovalActionResponse>("grant_approval", {
     approvalRef,
     note: note ?? null,
+    scope,
   });
   return fromRawApprovalResponse(raw);
+}
+
+/** What a grant releases: this run, or every later run of the same definition. */
+export type WorkflowApprovalScope = "run" | "action";
+
+type RawWorkflowAutorunGrant = {
+  id: string;
+  definition_hash: string;
+  matches_current: boolean;
+  granted_by: string;
+  grant_event_id: string;
+  granted_at: string;
+  revoked_at: string | null;
+  revoke_event_id: string | null;
+};
+
+type RawWorkflowAutorun = {
+  definition_hash: string;
+  active: boolean;
+  grants: RawWorkflowAutorunGrant[];
+};
+
+/** One autorun grant, as the relay records it (spec § 5.4). */
+export type WorkflowAutorunGrant = {
+  id: string;
+  definitionHash: string;
+  /** Whether it binds the definition as stored now; an edit changes the hash. */
+  matchesCurrent: boolean;
+  grantedBy: string;
+  grantEventId: string;
+  grantedAt: string;
+  revokedAt: string | null;
+  revokeEventId: string | null;
+};
+
+/** A workflow's autorun state: whether an unrevoked grant binds it now. */
+export type WorkflowAutorun = {
+  definitionHash: string;
+  active: boolean;
+  grants: WorkflowAutorunGrant[];
+};
+
+/** Read a workflow's autorun grants. */
+export async function getWorkflowAutorun(
+  workflowId: string,
+): Promise<WorkflowAutorun> {
+  const raw = await invokeTauri<RawWorkflowAutorun>("get_workflow_autorun", {
+    workflowId,
+  });
+  return {
+    definitionHash: raw.definition_hash,
+    active: raw.active,
+    grants: raw.grants.map((grant) => ({
+      id: grant.id,
+      definitionHash: grant.definition_hash,
+      matchesCurrent: grant.matches_current,
+      grantedBy: grant.granted_by,
+      grantEventId: grant.grant_event_id,
+      grantedAt: grant.granted_at,
+      revokedAt: grant.revoked_at ?? null,
+      revokeEventId: grant.revoke_event_id ?? null,
+    })),
+  };
+}
+
+/** Revoke every autorun grant of a workflow (kind 46032). */
+export async function revokeAutorun(
+  workflowId: string,
+  channelId: string,
+): Promise<{ eventId: string }> {
+  const raw = await invokeTauri<{ event_id: string }>("revoke_autorun", {
+    workflowId,
+    channelId,
+  });
+  return { eventId: raw.event_id };
 }
 
 /** Deny a pending approval; same reference as {@link grantApproval}. */

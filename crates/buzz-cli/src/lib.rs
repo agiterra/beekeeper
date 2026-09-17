@@ -1289,6 +1289,10 @@ pub enum WorkflowsCmd {
         /// Optional note to include with the approval/denial
         #[arg(long)]
         note: Option<String>,
+        /// With --approved: also allow every future run of this exact action
+        /// definition without asking again (an edit re-arms approval)
+        #[arg(long, default_value_t = false)]
+        allow_future_runs: bool,
     },
 }
 

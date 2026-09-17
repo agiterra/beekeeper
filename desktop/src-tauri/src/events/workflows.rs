@@ -51,13 +51,37 @@ fn approval_ref_tag(approval_ref: &str) -> Result<nostr::Tag, String> {
     tag(vec!["d", &approval_ref.to_ascii_lowercase()])
 }
 
-/// Kind 46030 — grant an approval by its reference (with optional note).
+/// Kind 46030 — grant an approval by its reference, with an optional note
+/// and the scope it releases: `run` (this run) or `action` (every later run
+/// of the same definition hash, spec § 5.4). The content is the `{note,
+/// scope}` JSON the relay's `decode_approval_grant_content` reads.
 pub fn build_approval_grant(
     approval_ref: &str,
     note: Option<&str>,
+    scope: buzz_core_pkg::workflow_autorun::ApprovalScope,
 ) -> Result<EventBuilder, String> {
     let tags = vec![approval_ref_tag(approval_ref)?];
-    Ok(EventBuilder::new(Kind::Custom(46030), note.unwrap_or("")).tags(tags))
+    let content = buzz_core_pkg::workflow_autorun::encode_approval_grant_content(note, scope);
+    Ok(EventBuilder::new(Kind::Custom(46030), content).tags(tags))
+}
+
+/// Kind 46032 — revoke every autorun grant of a workflow.
+pub fn build_autorun_revoke(workflow_id: &str, channel_id: &str) -> Result<EventBuilder, String> {
+    let revoke = buzz_core_pkg::workflow_autorun::AutorunRevoke {
+        schema: buzz_core_pkg::workflow_autorun::AUTORUN_SCHEMA.into(),
+        workflow_id: workflow_id.trim().to_ascii_lowercase(),
+        channel_id: channel_id.trim().to_ascii_lowercase(),
+    };
+    let (tags, content) = buzz_core_pkg::workflow_autorun::build_autorun_revoke(&revoke)?;
+    let tags = tags
+        .into_iter()
+        .map(|parts| tag(parts.iter().map(String::as_str).collect()))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(EventBuilder::new(
+        Kind::Custom(buzz_core_pkg::kind::KIND_WORKFLOW_AUTORUN_REVOKE as u16),
+        content,
+    )
+    .tags(tags))
 }
 
 /// Kind 46031 — deny an approval by its reference (with optional note).

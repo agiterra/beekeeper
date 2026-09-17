@@ -2353,6 +2353,135 @@ steps:
         assert_eq!(started, 0);
     }
 
+    /// Spec § 5.4 / § 7 C4 proof, engine side: an unrevoked autorun grant
+    /// bound to the stored definition hash releases a `run_on_host` step
+    /// without a gate; editing the definition changes the hash, so the same
+    /// grant no longer applies and the gate is re-armed; revoking it does the
+    /// same for an unchanged definition.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn an_autorun_grant_skips_the_gate_until_the_definition_changes() {
+        let db = setup_db().await;
+        let owner_keys = nostr::Keys::generate();
+        let owner = owner_keys.public_key().to_bytes().to_vec();
+        let member = nostr::Keys::generate().public_key().to_bytes().to_vec();
+        let (community, channel_id) = setup_channel(&db, &owner, &member).await;
+        let project = format!("30621:{}:pulse", "1".repeat(64));
+        let yaml = |cmd: &str| {
+            format!(
+                "name: c4\nproject: '{project}'\ntrigger:\n  on: manual\nsteps:\n  - id: build\n    action: run_on_host\n    command: [\"{cmd}\"]\n"
+            )
+        };
+        let (def, canonical) = WorkflowEngine::parse_yaml(&yaml("true")).expect("parse");
+        let hash = crate::hash::definition_hash(&def).expect("hash");
+        let workflow_id = db
+            .create_workflow(
+                community,
+                Some(channel_id),
+                &owner,
+                "c4",
+                &canonical,
+                &hash,
+                Some(&project),
+            )
+            .await
+            .expect("create workflow");
+        db.create_autorun_grant(community, workflow_id, &hash, &owner, &[0x11; 32])
+            .await
+            .expect("grant");
+
+        let sink = Arc::new(RecordingSink::default());
+        let engine = WorkflowEngine::new(db.clone(), WorkflowConfig::default());
+        engine.set_action_sink(sink.clone());
+        let ctx = executor::TriggerContext::default();
+
+        // 1. Granted: straight to the host, no approval row.
+        let run_id = db
+            .create_workflow_run(community, workflow_id, None, None)
+            .await
+            .expect("run");
+        let result = executor::execute_run(&engine, community, run_id, &def, &ctx)
+            .await
+            .expect("segment");
+        match &result.suspension {
+            Some(Suspension::HostStep { approval, .. }) => {
+                let approval = approval.as_ref().expect("released by the grant");
+                assert_eq!(approval.scope, "action");
+                assert_eq!(approval.approval_ref, hex::encode([0x11; 32]));
+            }
+            other => panic!("expected a host step, got {other:?}"),
+        }
+        assert!(db
+            .get_run_approvals(community, workflow_id, run_id)
+            .await
+            .expect("approvals")
+            .is_empty());
+        assert_eq!(sink.host_steps.lock().expect("lock").len(), 1);
+
+        // 2. Edited: a new hash, the grant no longer matches, the gate is back,
+        //    and it names the project's owners rather than one key.
+        let (edited, canonical_b) = WorkflowEngine::parse_yaml(&yaml("false")).expect("parse");
+        let hash_b = crate::hash::definition_hash(&edited).expect("hash");
+        assert_ne!(hash, hash_b);
+        db.update_workflow(
+            community,
+            workflow_id,
+            "c4",
+            &canonical_b,
+            &hash_b,
+            Some(&project),
+        )
+        .await
+        .expect("update");
+        let run_b = db
+            .create_workflow_run(community, workflow_id, None, None)
+            .await
+            .expect("run b");
+        let result = executor::execute_run(&engine, community, run_b, &edited, &ctx)
+            .await
+            .expect("segment b");
+        match &result.suspension {
+            Some(Suspension::Approval {
+                synthetic: true,
+                approver_spec,
+                ..
+            }) => assert_eq!(approver_spec, &format!("project-owner:{project}")),
+            other => panic!("expected the gate to be re-armed, got {other:?}"),
+        }
+
+        // 3. Revoked: the original definition, restored, is gated again.
+        db.update_workflow(
+            community,
+            workflow_id,
+            "c4",
+            &canonical,
+            &hash,
+            Some(&project),
+        )
+        .await
+        .expect("restore");
+        assert_eq!(
+            db.revoke_autorun_grants(community, workflow_id, &[0x22; 32])
+                .await
+                .expect("revoke"),
+            1
+        );
+        let run_c = db
+            .create_workflow_run(community, workflow_id, None, None)
+            .await
+            .expect("run c");
+        let result = executor::execute_run(&engine, community, run_c, &def, &ctx)
+            .await
+            .expect("segment c");
+        assert!(matches!(
+            result.suspension,
+            Some(Suspension::Approval {
+                synthetic: true,
+                ..
+            })
+        ));
+    }
+
     // -- C1: suspensions are durable before they are announced (requires Postgres)
 
     /// Records what the engine asked the relay to publish, and answers with a

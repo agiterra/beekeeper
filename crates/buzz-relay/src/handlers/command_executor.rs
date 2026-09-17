@@ -70,6 +70,9 @@ pub async fn handle_command(
         KIND_WORKFLOW_TRIGGER => handle_workflow_trigger(tenant, state, &event, &auth).await,
         KIND_APPROVAL_GRANT => handle_approval_grant(tenant, state, &event, &auth).await,
         KIND_APPROVAL_DENY => handle_approval_deny(tenant, state, &event, &auth).await,
+        buzz_core::kind::KIND_WORKFLOW_AUTORUN_REVOKE => {
+            handle_autorun_revoke(tenant, state, &event, &auth).await
+        }
         KIND_HOST_STEP_CLAIM => {
             super::host_steps::handle_host_step_claim(tenant, state, &event, &auth).await
         }
@@ -1180,6 +1183,35 @@ async fn handle_workflow_trigger(
 /// - 64-char lowercase hex string — only that exact pubkey may approve.
 ///
 /// All other formats are rejected (fail-closed).
+/// Admit an approver against a stored `approver_spec`, including the C4
+/// `project-owner:<coord>` form: the project's creator or a roster Owner.
+async fn approver_admitted(
+    state: &Arc<AppState>,
+    community: CommunityId,
+    approver_spec: &str,
+    requester_hex: &str,
+    requester_bytes: &[u8],
+) -> Result<(), IngestError> {
+    if let Some(project) = approver_spec.trim().strip_prefix("project-owner:") {
+        let creator = project.split(':').nth(1).unwrap_or_default();
+        if creator.eq_ignore_ascii_case(requester_hex) {
+            return Ok(());
+        }
+        let role = state
+            .db
+            .get_project_role_by_coordinate(community, project, requester_bytes)
+            .await
+            .map_err(|e| IngestError::Internal(format!("error: project role: {e}")))?;
+        if matches!(role, Some(buzz_core::channel::ProjectRole::Owner)) {
+            return Ok(());
+        }
+        return Err(IngestError::Rejected(
+            "forbidden: only a project owner may approve this step".into(),
+        ));
+    }
+    check_approver_spec(approver_spec, requester_hex)
+}
+
 fn check_approver_spec(approver_spec: &str, requester_hex: &str) -> Result<(), IngestError> {
     let spec = approver_spec.trim();
 
@@ -1246,7 +1278,14 @@ async fn handle_approval_grant(
     }
 
     // 4. Validate caller is authorized approver
-    check_approver_spec(&approval.approver_spec, &self_hex)?;
+    approver_admitted(
+        state,
+        tenant.community(),
+        &approval.approver_spec,
+        &self_hex,
+        &self_bytes,
+    )
+    .await?;
 
     // Persist the command event — returns open transaction
     let tx = match persist_command_event(&state.db, tenant, event, None).await? {
@@ -1260,12 +1299,11 @@ async fn handle_approval_grant(
         PersistResult::Inserted(tx) => tx,
     };
 
-    // 5. Execute: update approval status to granted
-    let note = if event.content.is_empty() {
-        None
-    } else {
-        Some(event.content.as_str())
-    };
+    // 5. Execute: update approval status to granted. The content is the C4
+    // `{note, scope}` form or a plain pre-C4 note (`decode_approval_grant_content`).
+    let grant_content = buzz_core::workflow_autorun::decode_approval_grant_content(&event.content)
+        .map_err(|e| IngestError::Rejected(format!("invalid: {e}")))?;
+    let note = grant_content.note.as_deref();
 
     let updated = state
         .db
@@ -1289,6 +1327,37 @@ async fn handle_approval_grant(
     tx.commit()
         .await
         .map_err(|e| IngestError::Internal(format!("error: commit transaction: {e}")))?;
+
+    // 5b. Spec § 5.4: `scope: action` also records an autorun grant bound to
+    // the definition hash as stored *now*, and the relay says so as a 46015.
+    // An edit changes the hash and re-arms the gate without any revocation.
+    if grant_content.scope == buzz_core::workflow_autorun::ApprovalScope::Action {
+        let workflow = state
+            .db
+            .get_workflow(tenant.community(), approval.workflow_id)
+            .await
+            .map_err(|e| IngestError::Internal(format!("error: db get_workflow: {e}")))?;
+        state
+            .db
+            .create_autorun_grant(
+                tenant.community(),
+                approval.workflow_id,
+                &workflow.definition_hash,
+                &self_bytes,
+                event.id.as_bytes(),
+            )
+            .await
+            .map_err(|e| IngestError::Internal(format!("error: db create_autorun_grant: {e}")))?;
+        publish_autorun_changed(
+            state,
+            tenant.community(),
+            &workflow,
+            buzz_core::workflow_autorun::AutorunChange::Granted,
+            &self_hex,
+            &event.id.to_hex(),
+        )
+        .await;
+    }
 
     // 6. Resume workflow execution (post-commit, async)
     let community_id = tenant.community();
@@ -1320,6 +1389,132 @@ async fn handle_approval_grant(
                 "status": "granted",
                 "run_id": run_id.to_string(),
             })
+        ),
+    })
+}
+
+/// Publish the relay-signed kind:46015 that records an autorun change. A
+/// failure is logged, not fatal: the grant row is the fact, the event is its
+/// announcement.
+async fn publish_autorun_changed(
+    state: &Arc<AppState>,
+    community: CommunityId,
+    workflow: &buzz_db::workflow::WorkflowRecord,
+    change: buzz_core::workflow_autorun::AutorunChange,
+    by_hex: &str,
+    source_event_id: &str,
+) {
+    let Some(channel_id) = workflow.channel_id else {
+        return;
+    };
+    let changed = buzz_core::workflow_autorun::AutorunChanged {
+        schema: buzz_core::workflow_autorun::AUTORUN_SCHEMA.into(),
+        workflow_id: workflow.id.to_string(),
+        definition_hash: hex::encode(&workflow.definition_hash),
+        change,
+        by: by_hex.to_ascii_lowercase(),
+        source_event_id: source_event_id.to_owned(),
+        channel_id: channel_id.to_string(),
+    };
+    match buzz_core::workflow_autorun::build_autorun_changed(&changed) {
+        Ok((tags, content)) => {
+            if let Err(error) = crate::workflow_sink::publish_relay_event(
+                state,
+                community,
+                buzz_core::kind::KIND_WORKFLOW_AUTORUN_CHANGED,
+                tags,
+                content,
+                channel_id,
+            )
+            .await
+            {
+                tracing::error!(workflow_id = %workflow.id, "autorun: could not publish kind:46015: {error}");
+            }
+        }
+        Err(error) => {
+            tracing::error!(workflow_id = %workflow.id, "autorun: could not build kind:46015: {error}")
+        }
+    }
+}
+
+/// Kind 46032: revoke every autorun grant for a workflow. Admitted from the
+/// workflow's owner, and for a project action from anyone the kind:30624
+/// rule admits (creator, roster owner, repository founder).
+async fn handle_autorun_revoke(
+    tenant: &TenantContext,
+    state: &Arc<AppState>,
+    event: &Event,
+    auth: &IngestAuth,
+) -> Result<IngestResult, IngestError> {
+    let self_bytes = auth.pubkey().to_bytes().to_vec();
+    let self_hex = hex::encode(&self_bytes);
+    let revoke = buzz_core::workflow_autorun::decode_autorun_revoke(event)
+        .map_err(|e| IngestError::Rejected(format!("invalid: {e}")))?;
+    let workflow_id = Uuid::parse_str(&revoke.workflow_id)
+        .map_err(|_| IngestError::Rejected("invalid: bad workflow_id format".into()))?;
+    let workflow = state
+        .db
+        .get_workflow(tenant.community(), workflow_id)
+        .await
+        .map_err(|_| IngestError::Rejected("invalid: workflow not found".into()))?;
+    if workflow.channel_id.map(|id| id.to_string()).as_deref() != Some(revoke.channel_id.as_str()) {
+        return Err(IngestError::Rejected(
+            "invalid: h tag must name the workflow's channel".into(),
+        ));
+    }
+    let mut admitted = workflow.owner_pubkey == self_bytes;
+    if !admitted {
+        if let Some(project) = &workflow.project_ref {
+            admitted = matches!(
+                crate::handlers::pack_source::project_write_admitted(
+                    state,
+                    tenant.community(),
+                    project,
+                    &self_hex,
+                )
+                .await,
+                Ok(Ok(_))
+            );
+        }
+    }
+    if !admitted {
+        return Err(IngestError::Rejected(
+            "forbidden: only the workflow owner or a project owner may revoke autorun".into(),
+        ));
+    }
+    let tx = match persist_command_event(&state.db, tenant, event, workflow.channel_id).await? {
+        PersistResult::Duplicate => {
+            return Ok(IngestResult {
+                event_id: event.id.to_hex(),
+                accepted: true,
+                message: "duplicate: already processed".into(),
+            });
+        }
+        PersistResult::Inserted(tx) => tx,
+    };
+    let revoked = state
+        .db
+        .revoke_autorun_grants(tenant.community(), workflow_id, event.id.as_bytes())
+        .await
+        .map_err(|e| IngestError::Internal(format!("error: db revoke_autorun_grants: {e}")))?;
+    tx.commit()
+        .await
+        .map_err(|e| IngestError::Internal(format!("error: commit transaction: {e}")))?;
+    publish_autorun_changed(
+        state,
+        tenant.community(),
+        &workflow,
+        buzz_core::workflow_autorun::AutorunChange::Revoked,
+        &self_hex,
+        &event.id.to_hex(),
+    )
+    .await;
+    Ok(IngestResult {
+        event_id: event.id.to_hex(),
+        accepted: true,
+        message: format!(
+            "response:{}",
+            serde_json::json!({ "status": "revoked", "revoked": revoked })
         ),
     })
 }
@@ -1364,7 +1559,14 @@ async fn handle_approval_deny(
     }
 
     // 4. Validate caller is authorized approver
-    check_approver_spec(&approval.approver_spec, &self_hex)?;
+    approver_admitted(
+        state,
+        tenant.community(),
+        &approval.approver_spec,
+        &self_hex,
+        &self_bytes,
+    )
+    .await?;
 
     // Persist the command event — returns open transaction
     let tx = match persist_command_event(&state.db, tenant, event, None).await? {

@@ -11,6 +11,8 @@ import {
   getRunApprovals,
   getRunHostSteps,
   getWorkflowRuns,
+  getWorkflowAutorun,
+  type WorkflowAutorun,
 } from "@/shared/api/tauriWorkflows";
 import type {
   Workflow,
@@ -40,6 +42,10 @@ export type ProjectActionRun = {
 export type ProjectAction = {
   workflow: Workflow;
   runs: ProjectActionRun[];
+  /** The workflow's autorun grants, or `null` when the read failed. */
+  autorun: WorkflowAutorun | null;
+  /** Why the autorun read failed, or `null`. */
+  autorunError: string | null;
 };
 
 export type ProjectActionsState = {
@@ -114,7 +120,17 @@ export async function loadProjectActions(
         runs.map((run) => loadRun(workflow.id, run)),
       );
       detailed.sort((a, b) => b.run.createdAt - a.run.createdAt);
-      return { workflow, runs: detailed };
+      // Spec § 5.4: whether an unrevoked autorun grant binds this exact
+      // definition. A read failure is kept as a sentence, not hidden as
+      // "no grant".
+      let autorun: WorkflowAutorun | null = null;
+      let autorunError: string | null = null;
+      try {
+        autorun = await getWorkflowAutorun(workflow.id);
+      } catch (error) {
+        autorunError = errorSentence(error);
+      }
+      return { workflow, runs: detailed, autorun, autorunError };
     }),
   );
 }

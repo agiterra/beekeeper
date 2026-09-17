@@ -1412,6 +1412,139 @@ fn row_to_run_record(row: sqlx::postgres::PgRow) -> Result<WorkflowRunRecord> {
     })
 }
 
+// -- Autorun grant CRUD -------------------------------------------------------
+
+/// One autorun grant: who allowed later runs of which definition, and who
+/// stopped it.
+#[derive(Debug, Clone)]
+pub struct AutorunGrantRecord {
+    /// Row id.
+    pub id: Uuid,
+    /// The workflow the grant belongs to.
+    pub workflow_id: Uuid,
+    /// The definition hash the grant is bound to.
+    pub definition_hash: Vec<u8>,
+    /// Compressed pubkey of the approver.
+    pub granted_by: Vec<u8>,
+    /// Event id bytes of the kind:46030 that granted it.
+    pub grant_event_id: Vec<u8>,
+    /// When it was granted.
+    pub granted_at: DateTime<Utc>,
+    /// When it was revoked, if it was.
+    pub revoked_at: Option<DateTime<Utc>>,
+    /// Event id bytes of the kind:46032 (or the desktop's) that revoked it.
+    pub revoke_event_id: Option<Vec<u8>>,
+}
+
+macro_rules! autorun_grant_columns {
+    () => {
+        "id, workflow_id, definition_hash, granted_by, grant_event_id, granted_at, revoked_at, \
+         revoke_event_id"
+    };
+}
+
+/// Record an autorun grant bound to `definition_hash`.
+pub async fn create_autorun_grant(
+    pool: &PgPool,
+    community_id: CommunityId,
+    workflow_id: Uuid,
+    definition_hash: &[u8],
+    granted_by: &[u8],
+    grant_event_id: &[u8],
+) -> Result<AutorunGrantRecord> {
+    let row = sqlx::query(concat!(
+        "INSERT INTO workflow_autorun_grants \
+         (community_id, workflow_id, definition_hash, granted_by, grant_event_id) \
+         VALUES ($1, $2, $3, $4, $5) RETURNING ",
+        autorun_grant_columns!()
+    ))
+    .bind(community_id.as_uuid())
+    .bind(workflow_id)
+    .bind(definition_hash)
+    .bind(granted_by)
+    .bind(grant_event_id)
+    .fetch_one(pool)
+    .await?;
+    row_to_autorun_grant(row)
+}
+
+/// The unrevoked grant bound to exactly `definition_hash`, if one stands.
+pub async fn find_active_autorun_grant(
+    pool: &PgPool,
+    community_id: CommunityId,
+    workflow_id: Uuid,
+    definition_hash: &[u8],
+) -> Result<Option<AutorunGrantRecord>> {
+    let row = sqlx::query(concat!(
+        "SELECT ",
+        autorun_grant_columns!(),
+        " FROM workflow_autorun_grants \
+         WHERE community_id = $1 AND workflow_id = $2 AND definition_hash = $3 \
+           AND revoked_at IS NULL \
+         ORDER BY granted_at DESC LIMIT 1"
+    ))
+    .bind(community_id.as_uuid())
+    .bind(workflow_id)
+    .bind(definition_hash)
+    .fetch_optional(pool)
+    .await?;
+    row.map(row_to_autorun_grant).transpose()
+}
+
+/// Every grant for a workflow, newest first, revoked ones included.
+pub async fn list_autorun_grants(
+    pool: &PgPool,
+    community_id: CommunityId,
+    workflow_id: Uuid,
+) -> Result<Vec<AutorunGrantRecord>> {
+    let rows = sqlx::query(concat!(
+        "SELECT ",
+        autorun_grant_columns!(),
+        " FROM workflow_autorun_grants WHERE community_id = $1 AND workflow_id = $2 \
+         ORDER BY granted_at DESC LIMIT 100"
+    ))
+    .bind(community_id.as_uuid())
+    .bind(workflow_id)
+    .fetch_all(pool)
+    .await?;
+    rows.into_iter().map(row_to_autorun_grant).collect()
+}
+
+/// Revoke every unrevoked grant for a workflow; returns how many were.
+pub async fn revoke_autorun_grants(
+    pool: &PgPool,
+    community_id: CommunityId,
+    workflow_id: Uuid,
+    revoke_event_id: &[u8],
+) -> Result<u64> {
+    Ok(sqlx::query(
+        r#"
+        UPDATE workflow_autorun_grants
+        SET revoked_at = NOW(), revoke_event_id = $3
+        WHERE community_id = $1 AND workflow_id = $2 AND revoked_at IS NULL
+        "#,
+    )
+    .bind(community_id.as_uuid())
+    .bind(workflow_id)
+    .bind(revoke_event_id)
+    .execute(pool)
+    .await?
+    .rows_affected())
+}
+
+fn row_to_autorun_grant(row: sqlx::postgres::PgRow) -> Result<AutorunGrantRecord> {
+    Ok(AutorunGrantRecord {
+        id: row.try_get("id")?,
+        workflow_id: row.try_get("workflow_id")?,
+        definition_hash: row.try_get("definition_hash")?,
+        granted_by: row.try_get("granted_by")?,
+        grant_event_id: row.try_get("grant_event_id")?,
+        granted_at: row.try_get("granted_at")?,
+        revoked_at: row.try_get("revoked_at")?,
+        revoke_event_id: row.try_get("revoke_event_id")?,
+    })
+}
+
 // -- Host step CRUD -----------------------------------------------------------
 
 /// The projection every host-step read shares. A macro rather than a `const`

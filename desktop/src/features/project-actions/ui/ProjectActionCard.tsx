@@ -2,7 +2,8 @@ import { Play } from "lucide-react";
 import { useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
 
-import { triggerWorkflow } from "@/shared/api/tauriWorkflows";
+import { revokeAutorun, triggerWorkflow } from "@/shared/api/tauriWorkflows";
+import { truncatePubkey } from "@/shared/lib/pubkey";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 
@@ -30,7 +31,17 @@ export function ProjectActionCard({
   action: ProjectAction;
   onChanged: () => void;
 }) {
-  const { workflow, runs } = action;
+  const { workflow, runs, autorun, autorunError } = action;
+  const activeGrant =
+    autorun?.grants.find(
+      (grant) => grant.revokedAt === null && grant.matchesCurrent,
+    ) ?? null;
+  const staleGrant =
+    !activeGrant &&
+    (autorun?.grants.some(
+      (grant) => grant.revokedAt === null && !grant.matchesCurrent,
+    ) ??
+      false);
   const trigger = actionTriggerSummary(workflow.definition);
   const description = actionDescription(workflow.definition);
   const hostSteps = runOnHostStepIds(workflow.definition);
@@ -47,6 +58,23 @@ export function ProjectActionCard({
     },
   });
   const { mutate: runMutate, isPending: running } = run;
+
+  const revoke = useMutation({
+    mutationFn: () => {
+      if (!workflow.channelId) {
+        throw new Error("this workflow has no channel to revoke in");
+      }
+      return revokeAutorun(workflow.id, workflow.channelId);
+    },
+    onSuccess: () => {
+      toast.success(`Autorun revoked for ${workflow.name}`);
+      onChanged();
+    },
+    onError: (error: unknown) => {
+      toast.error(`Revoke failed: ${errorSentence(error)}`);
+    },
+  });
+  const { mutate: revokeMutate, isPending: revoking } = revoke;
 
   return (
     <section
@@ -67,6 +95,33 @@ export function ProjectActionCard({
               </Badge>
             ) : null}
             {disabled ? <Badge variant="secondary">disabled</Badge> : null}
+            {activeGrant ? (
+              <span
+                className="flex items-center gap-1.5"
+                data-testid="project-action-autorun-state"
+              >
+                <Badge variant="outline">
+                  autorun · granted by {truncatePubkey(activeGrant.grantedBy)}
+                </Badge>
+                <Button
+                  data-testid="project-action-autorun-revoke"
+                  disabled={revoking}
+                  onClick={() => revokeMutate()}
+                  size="sm"
+                  type="button"
+                  variant="ghost"
+                >
+                  Revoke
+                </Button>
+              </span>
+            ) : staleGrant ? (
+              <Badge variant="secondary">
+                autorun granted for an earlier definition · approval re-armed
+              </Badge>
+            ) : null}
+            {autorunError ? (
+              <span>autorun state unreadable: {autorunError}</span>
+            ) : null}
           </p>
           {description ? (
             <p className="mt-1 text-sm text-muted-foreground">{description}</p>

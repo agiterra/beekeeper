@@ -208,10 +208,26 @@ pub async fn cmd_approve_step(
     approval_token: &str,
     approved: bool,
     note: Option<&str>,
+    allow_future_runs: bool,
 ) -> Result<(), CliError> {
     validate_uuid(approval_token)?;
 
-    let content = note.unwrap_or("");
+    // Spec § 5.4: a grant's content is `{note, scope}`; `scope: action` also
+    // records an autorun grant bound to the definition as stored now. A deny
+    // carries the plain note.
+    let content_owned = if approved {
+        buzz_core::workflow_autorun::encode_approval_grant_content(
+            note,
+            if allow_future_runs {
+                buzz_core::workflow_autorun::ApprovalScope::Action
+            } else {
+                buzz_core::workflow_autorun::ApprovalScope::Run
+            },
+        )
+    } else {
+        note.unwrap_or("").to_owned()
+    };
+    let content = content_owned.as_str();
 
     // The relay expects d-tag = hex(SHA256(token)), not the raw token UUID.
     let token_hash = hex::encode(Sha256::digest(approval_token.as_bytes()));
@@ -248,9 +264,10 @@ pub async fn dispatch(cmd: crate::WorkflowsCmd, client: &BuzzClient) -> Result<(
             token,
             approved,
             note,
+            allow_future_runs,
         } => {
             // approved is already a bool — no parse_bool_flag needed
-            cmd_approve_step(client, &token, approved, note.as_deref()).await
+            cmd_approve_step(client, &token, approved, note.as_deref(), allow_future_runs).await
         }
     }
 }

@@ -509,6 +509,7 @@ fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static s
         // A host's claim on, and result for, a `run_on_host` workflow step.
         // Channel membership and the claim race are checked by the handler.
         KIND_HOST_STEP_CLAIM | KIND_HOST_STEP_RESULT => Ok(Scope::MessagesWrite),
+        buzz_core::kind::KIND_WORKFLOW_AUTORUN_REVOKE => Ok(Scope::MessagesWrite),
         _ => Err("restricted: unknown event kind"),
     }
 }

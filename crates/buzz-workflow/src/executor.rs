@@ -839,18 +839,38 @@ pub async fn dispatch_action(
                             ))
                         })?;
                     // Spec § 5.4: every host step is gated on the operator's
-                    // approval unless a grant already released this step. The
-                    // gate is bound to the host step's own index, so the
-                    // grant resumes *at* the step (`resume_index_after_approval`).
-                    match crate::suspend::granted_approval_for_step(
-                        engine,
-                        community_id,
-                        wf_run.workflow_id,
-                        run_id,
-                        step_id,
-                    )
-                    .await?
-                    {
+                    // approval unless a grant already released this step —
+                    // this run's own grant, or an unrevoked autorun grant
+                    // bound to exactly this definition hash (an edit changes
+                    // the hash and re-arms the gate). The gate is bound to
+                    // the host step's own index, so the grant resumes *at*
+                    // the step (`resume_index_after_approval`).
+                    let autorun = engine
+                        .db
+                        .find_active_autorun_grant(
+                            community_id,
+                            wf_run.workflow_id,
+                            &workflow.definition_hash,
+                        )
+                        .await?
+                        .map(|grant| buzz_core::host_step::HostStepApproval {
+                            approval_ref: hex::encode(&grant.grant_event_id),
+                            scope: "action".into(),
+                        });
+                    let released = match autorun {
+                        Some(grant) => Some(grant),
+                        None => {
+                            crate::suspend::granted_approval_for_step(
+                                engine,
+                                community_id,
+                                wf_run.workflow_id,
+                                run_id,
+                                step_id,
+                            )
+                            .await?
+                        }
+                    };
+                    match released {
                         Some(approval) => {
                             info!(
                                 run_id = %run_id, step = step_id,
@@ -872,13 +892,20 @@ pub async fn dispatch_action(
                                         "run_on_host: workflow owner pubkey is invalid: {e}"
                                     ))
                                 })?;
+                            // A project action may be approved by any project
+                            // Owner (spec § 5.4's `project-owner:<coord>`);
+                            // a plain workflow only by its owner.
+                            let approver_spec = match workflow.project_ref.as_deref() {
+                                Some(project) => format!("project-owner:{project}"),
+                                None => owner_hex,
+                            };
                             info!(
-                                run_id = %run_id, step = step_id,
-                                "run_on_host: no approval yet — asking the workflow owner"
+                                run_id = %run_id, step = step_id, %approver_spec,
+                                "run_on_host: no approval yet — asking for one"
                             );
                             Ok(StepResult::Suspended(Suspension::Approval {
                                 step_id: step_id.to_owned(),
-                                approver_spec: owner_hex,
+                                approver_spec,
                                 message: format!(
                                     "Run step `{step_id}` of `{}` on your host?",
                                     workflow.name

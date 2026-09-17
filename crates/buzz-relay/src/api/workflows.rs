@@ -197,6 +197,53 @@ pub async fn run_approvals(
     })))
 }
 
+/// `GET /workflows/{workflow_id}/autorun` — every autorun grant for a
+/// workflow, newest first, each marked whether it binds the definition as
+/// stored *now* (an edit changes the hash, so an old grant no longer applies).
+pub async fn workflow_autorun(
+    State(state): State<Arc<AppState>>,
+    Path(workflow_id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let path = format!("/workflows/{workflow_id}/autorun");
+    let tenant = authorize_workflow_read(&state, &headers, &path, None, workflow_id).await?;
+    let workflow = state
+        .db
+        .get_workflow(tenant.community(), workflow_id)
+        .await
+        .map_err(|error| match error {
+            buzz_db::error::DbError::NotFound(_) => {
+                api_error(StatusCode::NOT_FOUND, "workflow not found")
+            }
+            other => internal_error(&format!("get workflow for autorun read: {other}")),
+        })?;
+    let grants = state
+        .db
+        .list_autorun_grants(tenant.community(), workflow_id)
+        .await
+        .map_err(|error| internal_error(&format!("list autorun grants: {error}")))?;
+    let active = grants.iter().any(|grant| {
+        grant.revoked_at.is_none() && grant.definition_hash == workflow.definition_hash
+    });
+    Ok(Json(serde_json::json!({
+        "definition_hash": hex::encode(&workflow.definition_hash),
+        "active": active,
+        "grants": grants
+            .iter()
+            .map(|grant| serde_json::json!({
+                "id": grant.id,
+                "definition_hash": hex::encode(&grant.definition_hash),
+                "matches_current": grant.definition_hash == workflow.definition_hash,
+                "granted_by": hex::encode(&grant.granted_by),
+                "grant_event_id": hex::encode(&grant.grant_event_id),
+                "granted_at": grant.granted_at,
+                "revoked_at": grant.revoked_at,
+                "revoke_event_id": grant.revoke_event_id.as_ref().map(hex::encode),
+            }))
+            .collect::<Vec<_>>(),
+    })))
+}
+
 /// `GET /workflows/{workflow_id}/runs/{run_id}/host-steps` — every
 /// `run_on_host` step of a run: who claimed it, how it ended, and the event
 /// ids that prove each transition.

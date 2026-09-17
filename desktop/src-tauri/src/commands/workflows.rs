@@ -381,11 +381,43 @@ pub async fn get_run_host_steps(
 pub async fn grant_approval(
     approval_ref: String,
     note: Option<String>,
+    scope: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Value, String> {
-    let builder = events::build_approval_grant(&approval_ref, note.as_deref())?;
+    let scope = match scope.as_deref().map(str::trim) {
+        None | Some("") | Some("run") => buzz_core_pkg::workflow_autorun::ApprovalScope::Run,
+        Some("action") => buzz_core_pkg::workflow_autorun::ApprovalScope::Action,
+        Some(other) => return Err(format!("unknown approval scope {other:?}")),
+    };
+    let builder = events::build_approval_grant(&approval_ref, note.as_deref(), scope)?;
     let result = submit_event(builder, &state).await?;
     Ok(serde_json::json!({ "event_id": result.event_id }))
+}
+
+/// Revoke every autorun grant of a workflow (kind 46032). The relay admits
+/// the workflow owner and, for a project action, anyone the project's
+/// writer rule admits.
+#[tauri::command]
+pub async fn revoke_autorun(
+    workflow_id: String,
+    channel_id: String,
+    state: State<'_, AppState>,
+) -> Result<Value, String> {
+    let builder = events::build_autorun_revoke(&workflow_id, &channel_id)?;
+    let result = submit_event(builder, &state).await?;
+    Ok(serde_json::json!({ "event_id": result.event_id }))
+}
+
+/// The autorun grants of a workflow, as the relay records them, each marked
+/// whether it binds the definition as stored now.
+#[tauri::command]
+pub async fn get_workflow_autorun(
+    workflow_id: String,
+    state: State<'_, AppState>,
+) -> Result<Value, String> {
+    let workflow_id =
+        uuid::Uuid::parse_str(&workflow_id).map_err(|_| "invalid workflow id".to_string())?;
+    get_relay_json(&state, &format!("/workflows/{workflow_id}/autorun")).await
 }
 
 /// Deny a pending approval; same reference as [`grant_approval`].

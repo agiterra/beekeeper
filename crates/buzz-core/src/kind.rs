@@ -927,6 +927,11 @@ pub const KIND_WORKFLOW_HOST_STEP_EXITED: u32 = 46014;
 pub const KIND_HOST_STEP_CLAIM: u32 = 46022;
 /// Host-signed terminal result for one claimed kind:46013 request.
 pub const KIND_HOST_STEP_RESULT: u32 = 46023;
+/// Relay-signed record that an autorun grant for a workflow definition was
+/// granted or revoked (spec § 5.4).
+pub const KIND_WORKFLOW_AUTORUN_CHANGED: u32 = 46015;
+/// Operator-signed revocation of a workflow's autorun grants.
+pub const KIND_WORKFLOW_AUTORUN_REVOKE: u32 = 46032;
 
 // User groups (47000–47999)
 
@@ -1764,10 +1769,10 @@ pub const fn is_parameterized_replaceable(kind: u32) -> bool {
     kind >= PARAM_REPLACEABLE_KIND_MIN && kind <= PARAM_REPLACEABLE_KIND_MAX
 }
 
-/// Returns `true` if `kind` is a workflow execution event (46001–46014).
+/// Returns `true` if `kind` is a workflow execution event (46001–46015).
 /// These must not trigger workflows (prevents infinite loops).
 pub const fn is_workflow_execution_kind(kind: u32) -> bool {
-    kind >= KIND_WORKFLOW_TRIGGERED && kind <= KIND_WORKFLOW_HOST_STEP_EXITED
+    kind >= KIND_WORKFLOW_TRIGGERED && kind <= KIND_WORKFLOW_AUTORUN_CHANGED
 }
 
 /// Returns `true` if `kind` is a NIP-43 relay membership admin command (9030–9032)
@@ -1804,6 +1809,7 @@ pub const fn is_command_kind(kind: u32) -> bool {
             | KIND_APPROVAL_DENY
             | KIND_HOST_STEP_CLAIM
             | KIND_HOST_STEP_RESULT
+            | KIND_WORKFLOW_AUTORUN_REVOKE
     )
 }
 
@@ -1846,6 +1852,7 @@ pub const fn is_relay_only_kind(kind: u32) -> bool {
             | KIND_CI_RESULT
             | KIND_WORKFLOW_HOST_STEP_REQUESTED
             | KIND_WORKFLOW_HOST_STEP_EXITED
+            | KIND_WORKFLOW_AUTORUN_CHANGED
             | KIND_SYSTEM_MESSAGE
     )
 }

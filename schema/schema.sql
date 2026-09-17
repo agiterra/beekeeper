@@ -444,6 +444,28 @@ CREATE INDEX idx_workflow_approvals_workflow ON workflow_approvals (community_id
 CREATE INDEX idx_workflow_approvals_run ON workflow_approvals (community_id, run_id);
 CREATE INDEX idx_workflow_approvals_status ON workflow_approvals (community_id, status);
 
+-- ── Workflow autorun grants ───────────────────────────────────────────────────
+-- Spec § 5.4: a `scope: action` grant bound to a definition hash; a later run
+-- of the same hash skips its approval gate while an unrevoked row matches.
+
+CREATE TABLE workflow_autorun_grants (
+    community_id    UUID NOT NULL REFERENCES communities(id),
+    id              UUID NOT NULL DEFAULT gen_random_uuid(),
+    workflow_id     UUID NOT NULL,
+    definition_hash BYTEA NOT NULL,
+    granted_by      BYTEA NOT NULL,
+    grant_event_id  BYTEA NOT NULL,
+    granted_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    revoked_at      TIMESTAMPTZ,
+    revoke_event_id BYTEA,
+    PRIMARY KEY (community_id, id),
+    FOREIGN KEY (community_id, workflow_id)
+        REFERENCES workflows (community_id, id) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_workflow_autorun_grants_workflow
+    ON workflow_autorun_grants (community_id, workflow_id);
+
 -- ── Workflow host steps ───────────────────────────────────────────────────────
 -- Spec § 5.4: a `run_on_host` step parks the run as `waiting_host` and one row
 -- here records the request. Exactly one host claims it (UPDATE … WHERE
