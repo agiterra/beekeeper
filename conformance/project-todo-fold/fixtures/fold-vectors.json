@@ -1,0 +1,1669 @@
+{
+  "schema": "buzz-project-todo-fold-vectors/v1",
+  "cases": [
+    {
+      "name": "empty",
+      "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+      "events": [],
+      "expected": {
+        "schema": "buzz-project-todo-digest/v1",
+        "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+        "ignored": 0,
+        "lists": []
+      }
+    },
+    {
+      "name": "basic list with open and completed items",
+      "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+      "events": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000001",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 100,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "list.create"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.create\",\"listId\":\"11111111111111111111111111111111\",\"title\":\"Launch\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000002",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 101,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.add"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-item",
+              "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.add\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"text\":\"Write the NIP\",\"rank\":\"a0\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000003",
+          "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
+          "created_at": 102,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.add"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-item",
+              "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.add\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"text\":\"Ship it\",\"rank\":\"a1\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000004",
+          "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
+          "created_at": 110,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.done"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-item",
+              "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.done\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"done\":true}"
+        }
+      ],
+      "expected": {
+        "schema": "buzz-project-todo-digest/v1",
+        "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+        "ignored": 0,
+        "lists": [
+          {
+            "id": "11111111111111111111111111111111",
+            "title": "Launch",
+            "archived": false,
+            "createdAt": 100,
+            "createdBy": "1111111111111111111111111111111111111111111111111111111111111111",
+            "updatedAt": 110,
+            "open": [
+              {
+                "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "listId": "11111111111111111111111111111111",
+                "text": "Ship it",
+                "done": false,
+                "rank": "a1",
+                "assignee": null,
+                "due": null,
+                "createdAt": 102,
+                "createdBy": "2222222222222222222222222222222222222222222222222222222222222222",
+                "updatedAt": 102,
+                "completedAt": null,
+                "completedBy": null
+              }
+            ],
+            "completed": [
+              {
+                "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "listId": "11111111111111111111111111111111",
+                "text": "Write the NIP",
+                "done": true,
+                "rank": "a0",
+                "assignee": null,
+                "due": null,
+                "createdAt": 101,
+                "createdBy": "1111111111111111111111111111111111111111111111111111111111111111",
+                "updatedAt": 110,
+                "completedAt": 110,
+                "completedBy": "2222222222222222222222222222222222222222222222222222222222222222"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "per-field last write wins; ties break on event id; a skewed write before the add loses",
+      "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+      "events": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000001",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 50,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "list.create"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.create\",\"listId\":\"11111111111111111111111111111111\",\"title\":\"L\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000002",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 100,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.add"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-item",
+              "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.add\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"text\":\"v1\",\"rank\":\"a0\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000003",
+          "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
+          "created_at": 90,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.text"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-item",
+              "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.text\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"text\":\"skewed\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000004",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 105,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.text"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-item",
+              "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.text\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"text\":\"v2\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000005",
+          "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
+          "created_at": 105,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.text"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-item",
+              "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.text\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"text\":\"v2b\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000006",
+          "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
+          "created_at": 103,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.assignee"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-item",
+              "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.assignee\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"assignee\":\"2222222222222222222222222222222222222222222222222222222222222222\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000007",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 104,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.due"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-item",
+              "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.due\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"due\":\"2026-10-01\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000008",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 106,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.rank"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-item",
+              "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.rank\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"rank\":\"a0V\"}"
+        }
+      ],
+      "expected": {
+        "schema": "buzz-project-todo-digest/v1",
+        "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+        "ignored": 0,
+        "lists": [
+          {
+            "id": "11111111111111111111111111111111",
+            "title": "L",
+            "archived": false,
+            "createdAt": 50,
+            "createdBy": "1111111111111111111111111111111111111111111111111111111111111111",
+            "updatedAt": 106,
+            "open": [
+              {
+                "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "listId": "11111111111111111111111111111111",
+                "text": "v2b",
+                "done": false,
+                "rank": "a0V",
+                "assignee": "2222222222222222222222222222222222222222222222222222222222222222",
+                "due": "2026-10-01",
+                "createdAt": 100,
+                "createdBy": "1111111111111111111111111111111111111111111111111111111111111111",
+                "updatedAt": 106,
+                "completedAt": null,
+                "completedBy": null
+              }
+            ],
+            "completed": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "remove is terminal whenever it was stamped; later ops on a removed item are dropped silently",
+      "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+      "events": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000001",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 1,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "list.create"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.create\",\"listId\":\"11111111111111111111111111111111\",\"title\":\"L\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000002",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 2,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.add"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-item",
+              "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.add\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"text\":\"one\",\"rank\":\"a0\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000003",
+          "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
+          "created_at": 3,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.remove"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-item",
+              "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.remove\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000004",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 4,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.text"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-item",
+              "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.text\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"text\":\"edited after remove\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000005",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 5,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.done"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-item",
+              "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.done\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"done\":true}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000006",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 2,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.add"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-item",
+              "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.add\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"text\":\"two\",\"rank\":\"a1\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000007",
+          "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
+          "created_at": 1,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.remove"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-item",
+              "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.remove\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}"
+        }
+      ],
+      "expected": {
+        "schema": "buzz-project-todo-digest/v1",
+        "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+        "ignored": 0,
+        "lists": [
+          {
+            "id": "11111111111111111111111111111111",
+            "title": "L",
+            "archived": false,
+            "createdAt": 1,
+            "createdBy": "1111111111111111111111111111111111111111111111111111111111111111",
+            "updatedAt": 3,
+            "open": [],
+            "completed": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "earliest create wins; ops on missing lists and items are counted as ignored",
+      "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+      "events": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000001",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 10,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "list.create"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.create\",\"listId\":\"11111111111111111111111111111111\",\"title\":\"First\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000002",
+          "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
+          "created_at": 5,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "list.create"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.create\",\"listId\":\"11111111111111111111111111111111\",\"title\":\"Earlier\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000003",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 11,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.add"
+            ],
+            [
+              "td-list",
+              "22222222222222222222222222222222"
+            ],
+            [
+              "td-item",
+              "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.add\",\"listId\":\"22222222222222222222222222222222\",\"itemId\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"text\":\"orphan\",\"rank\":\"a0\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000004",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 12,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.text"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-item",
+              "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.text\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"text\":\"no such item\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000005",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 13,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "list.title"
+            ],
+            [
+              "td-list",
+              "22222222222222222222222222222222"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.title\",\"listId\":\"22222222222222222222222222222222\",\"title\":\"no such list\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000006",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 14,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "list.title"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.title\",\"listId\":\"11111111111111111111111111111111\",\"title\":\"Renamed\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000007",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 15,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.remove"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-item",
+              "cccccccccccccccccccccccccccccccc"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.remove\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"cccccccccccccccccccccccccccccccc\"}"
+        }
+      ],
+      "expected": {
+        "schema": "buzz-project-todo-digest/v1",
+        "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+        "ignored": 5,
+        "lists": [
+          {
+            "id": "11111111111111111111111111111111",
+            "title": "Renamed",
+            "archived": false,
+            "createdAt": 5,
+            "createdBy": "2222222222222222222222222222222222222222222222222222222222222222",
+            "updatedAt": 14,
+            "open": [],
+            "completed": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "completed sorts most recent first; undo returns the item to its rank",
+      "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+      "events": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000001",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 1,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "list.create"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.create\",\"listId\":\"11111111111111111111111111111111\",\"title\":\"L\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000002",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 2,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.add"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-item",
+              "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.add\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"text\":\"one\",\"rank\":\"a0\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000003",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 3,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.add"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-item",
+              "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.add\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"text\":\"two\",\"rank\":\"a1\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000004",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 4,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.add"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-item",
+              "cccccccccccccccccccccccccccccccc"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.add\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"cccccccccccccccccccccccccccccccc\",\"text\":\"three\",\"rank\":\"a2\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000005",
+          "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
+          "created_at": 10,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.done"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-item",
+              "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.done\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"done\":true}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000006",
+          "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
+          "created_at": 20,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.done"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-item",
+              "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.done\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"done\":true}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000007",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 15,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.done"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-item",
+              "cccccccccccccccccccccccccccccccc"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.done\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"cccccccccccccccccccccccccccccccc\",\"done\":true}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000008",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 25,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.done"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-item",
+              "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.done\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"done\":false}"
+        }
+      ],
+      "expected": {
+        "schema": "buzz-project-todo-digest/v1",
+        "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+        "ignored": 0,
+        "lists": [
+          {
+            "id": "11111111111111111111111111111111",
+            "title": "L",
+            "archived": false,
+            "createdAt": 1,
+            "createdBy": "1111111111111111111111111111111111111111111111111111111111111111",
+            "updatedAt": 25,
+            "open": [
+              {
+                "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "listId": "11111111111111111111111111111111",
+                "text": "one",
+                "done": false,
+                "rank": "a0",
+                "assignee": null,
+                "due": null,
+                "createdAt": 2,
+                "createdBy": "1111111111111111111111111111111111111111111111111111111111111111",
+                "updatedAt": 25,
+                "completedAt": null,
+                "completedBy": null
+              }
+            ],
+            "completed": [
+              {
+                "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "listId": "11111111111111111111111111111111",
+                "text": "two",
+                "done": true,
+                "rank": "a1",
+                "assignee": null,
+                "due": null,
+                "createdAt": 3,
+                "createdBy": "1111111111111111111111111111111111111111111111111111111111111111",
+                "updatedAt": 20,
+                "completedAt": 20,
+                "completedBy": "2222222222222222222222222222222222222222222222222222222222222222"
+              },
+              {
+                "id": "cccccccccccccccccccccccccccccccc",
+                "listId": "11111111111111111111111111111111",
+                "text": "three",
+                "done": true,
+                "rank": "a2",
+                "assignee": null,
+                "due": null,
+                "createdAt": 4,
+                "createdBy": "1111111111111111111111111111111111111111111111111111111111111111",
+                "updatedAt": 15,
+                "completedAt": 15,
+                "completedBy": "1111111111111111111111111111111111111111111111111111111111111111"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "events that do not decode are ignored; duplicate ids are kept once",
+      "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+      "events": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000001",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 1,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "list.create"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.create\",\"listId\":\"11111111111111111111111111111111\",\"title\":\"L\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000001",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 1,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "list.create"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.create\",\"listId\":\"11111111111111111111111111111111\",\"title\":\"L\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000002",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 2,
+          "kind": 44240,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "list.create"
+            ],
+            [
+              "td-list",
+              "22222222222222222222222222222222"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.create\",\"listId\":\"22222222222222222222222222222222\",\"title\":\"wrong kind\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000003",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 3,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "list.create"
+            ],
+            [
+              "td-list",
+              "22222222222222222222222222222222"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.create\",\"listId\":\"22222222222222222222222222222222\",\"title\":\"two a tags\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000004",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 4,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:other"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "list.create"
+            ],
+            [
+              "td-list",
+              "22222222222222222222222222222222"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.create\",\"listId\":\"22222222222222222222222222222222\",\"title\":\"other project\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000005",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 5,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "list.create"
+            ],
+            [
+              "td-list",
+              "22222222222222222222222222222222"
+            ]
+          ],
+          "content": "{not json"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000006",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 6,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "list.create"
+            ],
+            [
+              "td-list",
+              "22222222222222222222222222222222"
+            ]
+          ],
+          "content": "{\"schema\": \"buzz-project-todo/v1\", \"op\": \"list.create\", \"listId\": \"22222222222222222222222222222222\", \"title\": \"x\", \"extra\": 1}"
+        }
+      ],
+      "expected": {
+        "schema": "buzz-project-todo-digest/v1",
+        "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+        "ignored": 5,
+        "lists": [
+          {
+            "id": "11111111111111111111111111111111",
+            "title": "L",
+            "archived": false,
+            "createdAt": 1,
+            "createdBy": "1111111111111111111111111111111111111111111111111111111111111111",
+            "updatedAt": 1,
+            "open": [],
+            "completed": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "archived is reversible; lists order by createdAt then id",
+      "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+      "events": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000001",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 5,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "list.create"
+            ],
+            [
+              "td-list",
+              "22222222222222222222222222222222"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.create\",\"listId\":\"22222222222222222222222222222222\",\"title\":\"Second\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000002",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 5,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "list.create"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.create\",\"listId\":\"11111111111111111111111111111111\",\"title\":\"First\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000003",
+          "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
+          "created_at": 6,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "list.archived"
+            ],
+            [
+              "td-list",
+              "22222222222222222222222222222222"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.archived\",\"listId\":\"22222222222222222222222222222222\",\"archived\":true}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000004",
+          "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
+          "created_at": 7,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "list.archived"
+            ],
+            [
+              "td-list",
+              "22222222222222222222222222222222"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.archived\",\"listId\":\"22222222222222222222222222222222\",\"archived\":false}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000005",
+          "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
+          "created_at": 8,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "list.archived"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.archived\",\"listId\":\"11111111111111111111111111111111\",\"archived\":true}"
+        }
+      ],
+      "expected": {
+        "schema": "buzz-project-todo-digest/v1",
+        "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+        "ignored": 0,
+        "lists": [
+          {
+            "id": "11111111111111111111111111111111",
+            "title": "First",
+            "archived": true,
+            "createdAt": 5,
+            "createdBy": "1111111111111111111111111111111111111111111111111111111111111111",
+            "updatedAt": 8,
+            "open": [],
+            "completed": []
+          },
+          {
+            "id": "22222222222222222222222222222222",
+            "title": "Second",
+            "archived": false,
+            "createdAt": 5,
+            "createdBy": "1111111111111111111111111111111111111111111111111111111111111111",
+            "updatedAt": 7,
+            "open": [],
+            "completed": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "open items with equal ranks order by id",
+      "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+      "events": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000001",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 1,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "list.create"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"list.create\",\"listId\":\"11111111111111111111111111111111\",\"title\":\"L\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000002",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 2,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.add"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-item",
+              "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.add\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"text\":\"b\",\"rank\":\"a0\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000003",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 3,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "td-v",
+              "td1-1"
+            ],
+            [
+              "td-op",
+              "item.add"
+            ],
+            [
+              "td-list",
+              "11111111111111111111111111111111"
+            ],
+            [
+              "td-item",
+              "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-todo/v1\",\"op\":\"item.add\",\"listId\":\"11111111111111111111111111111111\",\"itemId\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"text\":\"a\",\"rank\":\"a0\"}"
+        }
+      ],
+      "expected": {
+        "schema": "buzz-project-todo-digest/v1",
+        "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+        "ignored": 0,
+        "lists": [
+          {
+            "id": "11111111111111111111111111111111",
+            "title": "L",
+            "archived": false,
+            "createdAt": 1,
+            "createdBy": "1111111111111111111111111111111111111111111111111111111111111111",
+            "updatedAt": 3,
+            "open": [
+              {
+                "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "listId": "11111111111111111111111111111111",
+                "text": "a",
+                "done": false,
+                "rank": "a0",
+                "assignee": null,
+                "due": null,
+                "createdAt": 3,
+                "createdBy": "1111111111111111111111111111111111111111111111111111111111111111",
+                "updatedAt": 3,
+                "completedAt": null,
+                "completedBy": null
+              },
+              {
+                "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "listId": "11111111111111111111111111111111",
+                "text": "b",
+                "done": false,
+                "rank": "a0",
+                "assignee": null,
+                "due": null,
+                "createdAt": 2,
+                "createdBy": "1111111111111111111111111111111111111111111111111111111111111111",
+                "updatedAt": 2,
+                "completedAt": null,
+                "completedBy": null
+              }
+            ],
+            "completed": []
+          }
+        ]
+      }
+    }
+  ]
+}

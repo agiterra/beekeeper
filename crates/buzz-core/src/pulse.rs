@@ -471,25 +471,12 @@ pub fn validate_pulse_entry_envelope(event: &nostr::Event) -> Result<PulseEntry,
 }
 
 /// The project coordinate a Pulse entry is scoped to, normalized to
-/// `30621:<lowercase-hex>:<dtag>`.
-///
-/// Parsing is tolerant of hex case (like [`crate::kind::git_event_repo_names`])
-/// so a smuggled case-variant coordinate cannot dodge the per-event read gate,
-/// even though ingest requires the tag to already be canonical and the SQL
-/// containment probe matches exact bytes. Returns `None` when the event does
-/// not carry exactly one well-formed `a` tag — the gate closes, it does not
-/// open.
+/// `30621:<lowercase-hex>:<dtag>`. The Pulse-named spelling of
+/// [`crate::kind::project_a_scoped_coordinate`], which owns the rule (shared
+/// with the to-do op, kind 44248): case-tolerant parse, `None` unless
+/// exactly one well-formed `a` tag is present.
 pub fn pulse_entry_project_coordinate(event: &nostr::Event) -> Option<String> {
-    let a = nostr::SingleLetterTag::lowercase(nostr::Alphabet::A);
-    let mut values = event
-        .tags
-        .filter(nostr::TagKind::SingleLetter(a))
-        .filter_map(|tag| tag.content());
-    let first = values.next()?;
-    if values.next().is_some() {
-        return None;
-    }
-    normalize_project_coordinate(first)
+    crate::kind::project_a_scoped_coordinate(event)
 }
 
 /// Strip a single leading `./` — the one normalization a code area gets.

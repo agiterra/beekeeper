@@ -84,6 +84,8 @@ pub mod error;
 pub mod event;
 /// NIP-01 subscription filter matching.
 pub mod filter;
+/// Fractional ranks for ordered, concurrently edited lists.
+pub mod fractional_rank;
 /// Git permission types — ref patterns, protection rules, policy evaluation.
 pub mod git_perms;
 /// Shared invite-link contract constants.
@@ -103,6 +105,11 @@ pub mod private_managed_agent;
 /// Project Pulse entries (44240): the explicit coordination claim contract.
 pub mod project_agent_association;
 pub mod project_pack_source;
+/// Project to-do ops (44248): the wire contract of one field-level edit.
+pub mod project_todo;
+/// Pure project to-do fold shared by every adapter, pinned by
+/// `conformance/project-todo-fold/`.
+pub mod project_todo_fold;
 pub mod pulse;
 /// Declared work in Project Pulse: assignments, their evidence, and the one
 /// word the canonical fold settles them with.

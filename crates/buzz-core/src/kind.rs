@@ -845,6 +845,39 @@ pub const KIND_CODING_SESSION_OBSERVATION: u32 = 44246;
 /// The wire contract is `docs/HANDOVER_IMPL.md` §2.
 pub const KIND_CODING_SESSION_HANDOVER: u32 = 44247;
 
+/// NIP-TD: Project to-do operation — one field-level edit to a shared,
+/// project-scoped to-do list.
+///
+/// Regular stored event (append-only), scoped to exactly one NIP-MP project
+/// by a canonical `a` coordinate and **never** to a channel: an `h` tag is
+/// rejected at ingest. Content is strict public JSON
+/// ([`crate::project_todo::ProjectTodoOp`]) naming one operation on one list
+/// or one item — create/title/archived for a list; add/text/done/assignee/
+/// due/rank/remove for an item. Tags are position-independent with a closed
+/// key set: `a`, `td-v`, `td-op`, `td-list`, and `td-item` on item ops; the
+/// three `td-*` values must equal the content's `op`, `listId` and `itemId`.
+///
+/// Deliberately **not** parameterized-replaceable. A shared list has many
+/// writers, and NIP-33 replacement keys on `(kind, pubkey, d)` — one head per
+/// author — so a replaceable kind could not express "any collaborator edits
+/// any item" without a relay-side cross-author head (the 30624 conditional
+/// path, ledger 113). Every op instead sets exactly one field, and the fold
+/// ([`crate::project_todo_fold`], pinned by `conformance/project-todo-fold/`)
+/// takes the latest `(created_at, id)` per field, so two people editing
+/// different fields of one item both survive.
+///
+/// **Allocation.** 44248 is the lowest unused and unreserved kind in this fork
+/// and in vanilla: 44231–44239 are reserved by the continuity research, 44240
+/// is the shipped Pulse entry with 44241–44243 reserved by the Pulse plan, and
+/// 44244–44247 are the team transaction, policy, observation and handover.
+/// Both greps were run on 2026-09-17 before this constant existed:
+/// `git grep 44248` over this tree matched nothing, and
+/// `git grep 44248 vanilla/main` (`12201c49b`) matched only unrelated hashes
+/// inside `uv.lock` files.
+///
+/// The wire contract is `docs/nips/NIP-TD.md`.
+pub const KIND_PROJECT_TODO_OP: u32 = 44248;
+
 // Forum / social (45000–45999)
 // V1 used addressable range (30001–30003) — wrong.
 /// A forum post (thread root).
@@ -1204,6 +1237,44 @@ pub fn shell_observe_project_ref(event: &nostr::Event) -> Option<String> {
         .find_map(|t| t.content().map(str::to_string))
 }
 
+/// Kinds scoped to a NIP-MP project by a required, canonical, singleton `a`
+/// tag and gated by project membership alone — no channel, no per-event
+/// roster. Today: the Pulse entry (44240) and the to-do op (44248). Every
+/// relay chokepoint that gates on a project's hidden set keys on this
+/// predicate, so a new member of the set inherits ingest admission, the
+/// stored-read gate, live fan-out filtering, the SQL pushdown and the HTTP
+/// request-shape rule without a per-kind arm.
+pub const fn is_project_a_scoped_kind(kind: u32) -> bool {
+    matches!(kind, KIND_PULSE_ENTRY | KIND_PROJECT_TODO_OP)
+}
+
+/// The members of [`is_project_a_scoped_kind`], for callers that must bind a
+/// list (the SQL pushdown in `buzz_db::event`). Keep the two in step; the
+/// test `project_a_scoped_kinds_agree` pins it.
+pub const PROJECT_A_SCOPED_KINDS: &[u32] = &[KIND_PULSE_ENTRY, KIND_PROJECT_TODO_OP];
+
+/// The project coordinate a project-`a`-scoped event is scoped to,
+/// normalized to `30621:<lowercase-hex>:<dtag>`.
+///
+/// Parsing is tolerant of hex case (like [`git_event_repo_names`]) so a
+/// smuggled case-variant coordinate cannot dodge the per-event read gate,
+/// even though ingest requires the tag to already be canonical and the SQL
+/// containment probe matches exact bytes. Returns `None` when the event does
+/// not carry exactly one well-formed `a` tag — the gate closes, it does not
+/// open.
+pub fn project_a_scoped_coordinate(event: &nostr::Event) -> Option<String> {
+    let a = nostr::SingleLetterTag::lowercase(nostr::Alphabet::A);
+    let mut values = event
+        .tags
+        .filter(nostr::TagKind::SingleLetter(a))
+        .filter_map(|tag| tag.content());
+    let first = values.next()?;
+    if values.next().is_some() {
+        return None;
+    }
+    normalize_project_coordinate(first)
+}
+
 /// Returns `true` if a stored kind:30623 session announce must be withheld
 /// from this reader: its project coordinate is in the reader's
 /// hidden-private-project set (resolved per reader by
@@ -1240,23 +1311,24 @@ pub fn shell_session_hidden_from(
     }
 }
 
-/// Returns `true` if a stored kind:44240 Pulse entry must be withheld from
-/// this reader: its project coordinate is in the reader's
+/// Returns `true` if a stored project-`a`-scoped event (kind:44240 Pulse
+/// entry or kind:44248 to-do op, [`is_project_a_scoped_kind`]) must be
+/// withheld from this reader: its project coordinate is in the reader's
 /// hidden-private-project set (resolved per reader by
 /// `buzz_db::git_repo::hidden_repos_for_reader`) and the reader is not its
-/// author. An empty set (the common case) hides nothing; an entry with no
+/// author. An empty set (the common case) hides nothing; an event with no
 /// resolvable coordinate hides from every non-author (fail closed — ingest
-/// rejects that shape, but a smuggled entry must not leak).
+/// rejects that shape, but a smuggled event must not leak).
 ///
-/// A Pulse entry carries no roster: unlike a 30623 announce, there is no
-/// per-entry invite that grants a reader outside the project. Project
+/// These kinds carry no roster: unlike a 30623 announce, there is no
+/// per-event invite that grants a reader outside the project. Project
 /// membership is the only key.
-pub fn pulse_entry_hidden_from(
+pub fn project_a_scoped_event_hidden_from(
     event: &nostr::Event,
     reader_pubkey_hex: &str,
     hidden_project_coordinates: &std::collections::HashSet<String>,
 ) -> bool {
-    if event_kind_u32(event) != KIND_PULSE_ENTRY {
+    if !is_project_a_scoped_kind(event_kind_u32(event)) {
         return false;
     }
     if event
@@ -1266,10 +1338,20 @@ pub fn pulse_entry_hidden_from(
     {
         return false;
     }
-    match crate::pulse::pulse_entry_project_coordinate(event) {
+    match project_a_scoped_coordinate(event) {
         Some(coord) => hidden_project_coordinates.contains(&coord),
         None => true,
     }
+}
+
+/// The Pulse-only spelling of [`project_a_scoped_event_hidden_from`], kept
+/// for the existing call sites and tests; the gate is the same function.
+pub fn pulse_entry_hidden_from(
+    event: &nostr::Event,
+    reader_pubkey_hex: &str,
+    hidden_project_coordinates: &std::collections::HashSet<String>,
+) -> bool {
+    project_a_scoped_event_hidden_from(event, reader_pubkey_hex, hidden_project_coordinates)
 }
 
 /// The roster of a kind:30623 announce: every `["p", <hex>, <hint>, <role>]`
@@ -1571,6 +1653,7 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_MEMBER_REMOVED_NOTIFICATION,
     KIND_AGENT_TURN_METRIC,
     KIND_PULSE_ENTRY,
+    KIND_PROJECT_TODO_OP,
     KIND_CODING_SESSION_COMMAND,
     KIND_CODING_SESSION_LIFECYCLE_COMMAND,
     KIND_CODING_SESSION_PROVIDER_CATALOG,
@@ -1791,6 +1874,12 @@ const _: () = assert!(!is_ephemeral(KIND_PULSE_ENTRY));
 const _: () = assert!(!is_replaceable(KIND_PULSE_ENTRY));
 const _: () = assert!(!is_parameterized_replaceable(KIND_PULSE_ENTRY));
 const _: () = assert!(KIND_PULSE_ENTRY <= u16::MAX as u32);
+const _: () = assert!(!is_ephemeral(KIND_PROJECT_TODO_OP));
+const _: () = assert!(!is_replaceable(KIND_PROJECT_TODO_OP));
+const _: () = assert!(!is_parameterized_replaceable(KIND_PROJECT_TODO_OP));
+const _: () = assert!(KIND_PROJECT_TODO_OP <= u16::MAX as u32);
+const _: () = assert!(is_project_a_scoped_kind(KIND_PROJECT_TODO_OP));
+const _: () = assert!(is_project_a_scoped_kind(KIND_PULSE_ENTRY));
 // A session lease is deliberately ephemeral: it is bounded evidence of recent
 // provider reachability, not durable session history or a replaceable head.
 const _: () = assert!(is_ephemeral(KIND_CODING_SESSION_LEASE));
@@ -2200,6 +2289,82 @@ mod tests {
         // Other kinds never trip this predicate.
         let other = make_event_of_kind(KIND_PROJECT, &[&["d", "s1"]]);
         assert!(!shell_session_hidden_from(&other, FOREIGN_HEX, &hidden));
+    }
+
+    // ── Project-a-scoped kinds: the shared gate ──────────────────────────
+
+    #[test]
+    fn project_a_scoped_kinds_agree() {
+        for kind in PROJECT_A_SCOPED_KINDS {
+            assert!(
+                is_project_a_scoped_kind(*kind),
+                "{kind} listed but not matched"
+            );
+            assert!(ALL_KINDS.contains(kind), "{kind} not registered");
+            assert!(
+                !is_parameterized_replaceable(*kind),
+                "{kind} must be regular"
+            );
+            assert!(!is_replaceable(*kind), "{kind} must be regular");
+        }
+        let matched: Vec<u32> = ALL_KINDS
+            .iter()
+            .copied()
+            .filter(|k| is_project_a_scoped_kind(*k))
+            .collect();
+        assert_eq!(matched, PROJECT_A_SCOPED_KINDS.to_vec());
+    }
+
+    #[test]
+    fn project_todo_op_rides_the_same_gate_as_pulse() {
+        let coord = format!("{KIND_PROJECT}:{FOREIGN_HEX}:platform");
+        let ev = make_event_of_kind(
+            KIND_PROJECT_TODO_OP,
+            &[&["a", &coord], &["td-op", "item.add"]],
+        );
+        let mut hidden = std::collections::HashSet::new();
+        assert!(!project_a_scoped_event_hidden_from(
+            &ev,
+            FOREIGN_HEX,
+            &hidden
+        ));
+        hidden.insert(coord.clone());
+        assert!(project_a_scoped_event_hidden_from(
+            &ev,
+            FOREIGN_HEX,
+            &hidden
+        ));
+        assert!(!project_a_scoped_event_hidden_from(
+            &ev,
+            &ev.pubkey.to_hex(),
+            &hidden
+        ));
+        // No coordinate: fail closed for a non-author.
+        let no_a = make_event_of_kind(KIND_PROJECT_TODO_OP, &[&["td-op", "item.add"]]);
+        assert!(project_a_scoped_event_hidden_from(
+            &no_a,
+            FOREIGN_HEX,
+            &hidden
+        ));
+        // Case-variant coordinate still resolves to the hidden set.
+        let upper = format!("{KIND_PROJECT}:{}:platform", FOREIGN_HEX.to_uppercase());
+        let variant = make_event_of_kind(KIND_PROJECT_TODO_OP, &[&["a", &upper]]);
+        assert!(project_a_scoped_event_hidden_from(
+            &variant,
+            FOREIGN_HEX,
+            &hidden
+        ));
+        assert_eq!(
+            project_a_scoped_coordinate(&variant).as_deref(),
+            Some(coord.as_str())
+        );
+        // A kind outside the set never trips it.
+        let other = make_event_of_kind(KIND_SHELL_SESSION, &[&["a", &coord]]);
+        assert!(!project_a_scoped_event_hidden_from(
+            &other,
+            FOREIGN_HEX,
+            &hidden
+        ));
     }
 
     // ── Project Pulse entries: hidden-from ───────────────────────────────
