@@ -359,6 +359,9 @@ enum Cmd {
     /// (kind 44240) folded with observed coding-session facts
     #[command(subcommand)]
     Pulse(PulseCmd),
+    /// Read and edit a project's shared to-do lists (NIP-TD, kind 44248)
+    #[command(subcommand)]
+    Todos(TodosCmd),
     /// Run raw Nostr filters against the relay — the debugging verb
     #[command(subcommand)]
     Events(EventsCmd),
@@ -4605,6 +4608,151 @@ impl PulseKindArg {
     }
 }
 
+/// `bee todos` — a project's shared to-do lists.
+///
+/// Every subcommand takes `--project`, resolved exactly as `bee pulse` does
+/// (a full `30621:<owner-hex>:<dtag>` coordinate, or a bare dtag that
+/// resolves only when exactly one visible project matches; `BUZZ_PULSE_PROJECT`
+/// supplies it when the flag is absent, so a seat the harness launched needs
+/// no flag). Lists and items are named by id, by a unique id prefix of at
+/// least six characters, or — for lists — by a unique title.
+#[derive(Subcommand)]
+pub enum TodosCmd {
+    /// List the project's to-do lists with open/completed counts
+    Lists {
+        /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
+        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        project: Option<String>,
+        /// Include archived lists
+        #[arg(long)]
+        archived: bool,
+    },
+    /// Show one list: open items in order, then completed most recent first
+    Show {
+        /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
+        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        project: Option<String>,
+        /// List id, unique id prefix, or unique title
+        list: String,
+    },
+    /// Create a list
+    CreateList {
+        /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
+        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        project: Option<String>,
+        /// The list's title
+        #[arg(long)]
+        title: String,
+    },
+    /// Retitle a list
+    RenameList {
+        /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
+        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        project: Option<String>,
+        /// List id, unique id prefix, or unique title
+        list: String,
+        /// The new title
+        #[arg(long)]
+        title: String,
+    },
+    /// Archive a list (or restore it with --undo)
+    ArchiveList {
+        /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
+        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        project: Option<String>,
+        /// List id, unique id prefix, or unique title
+        list: String,
+        /// Restore an archived list
+        #[arg(long)]
+        undo: bool,
+    },
+    /// Add an item to a list (one op per field: add, then assignee, then due)
+    Add {
+        /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
+        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        project: Option<String>,
+        /// List id, unique id prefix, or unique title
+        list: String,
+        /// The item's text
+        text: String,
+        /// Assignee pubkey (64 hex)
+        #[arg(long)]
+        assignee: Option<String>,
+        /// Due date, YYYY-MM-DD
+        #[arg(long)]
+        due: Option<String>,
+        /// Position among the open items (0 = first); default last
+        #[arg(long)]
+        index: Option<usize>,
+    },
+    /// Rewrite an item's text
+    Edit {
+        /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
+        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        project: Option<String>,
+        /// Item id or unique id prefix
+        item: String,
+        /// The new text
+        #[arg(long)]
+        text: String,
+    },
+    /// Mark an item done
+    Done {
+        /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
+        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        project: Option<String>,
+        /// Item id or unique id prefix
+        item: String,
+    },
+    /// Mark an item not done; it returns to its place among the open items
+    Undone {
+        /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
+        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        project: Option<String>,
+        /// Item id or unique id prefix
+        item: String,
+    },
+    /// Assign an item to a pubkey, or `none` to clear
+    Assign {
+        /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
+        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        project: Option<String>,
+        /// Item id or unique id prefix
+        item: String,
+        /// Assignee pubkey (64 hex), or `none`
+        assignee: String,
+    },
+    /// Set an item's due date (YYYY-MM-DD), or `none` to clear
+    Due {
+        /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
+        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        project: Option<String>,
+        /// Item id or unique id prefix
+        item: String,
+        /// Due date, or `none`
+        due: String,
+    },
+    /// Move an open item to a position (0 = first)
+    Move {
+        /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
+        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        project: Option<String>,
+        /// Item id or unique id prefix
+        item: String,
+        /// New position among the open items
+        #[arg(long)]
+        index: usize,
+    },
+    /// Remove an item for good
+    Remove {
+        /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
+        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        project: Option<String>,
+        /// Item id or unique id prefix
+        item: String,
+    },
+}
+
 /// `bee pulse` — per-project coordination.
 ///
 /// Every subcommand takes `--project`, which accepts a full
@@ -4944,6 +5092,7 @@ async fn run(cli: Cli) -> Result<(), CliError> {
         Cmd::Sessions(sub) => commands::sessions::dispatch(sub, &client, &cli.format).await,
         Cmd::Terminals(sub) => commands::terminals::dispatch(sub, &client).await,
         Cmd::Pulse(sub) => commands::pulse::dispatch(sub, &client, &cli.format).await,
+        Cmd::Todos(sub) => commands::todos::dispatch(sub, &client, &cli.format).await,
         Cmd::Events(sub) => commands::events::dispatch(sub, &client, &cli.format).await,
         Cmd::Packs(sub) => commands::packs_cli::dispatch(sub, &client).await,
         Cmd::Pack(_) => unreachable!("handled above"),

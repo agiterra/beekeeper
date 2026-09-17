@@ -407,7 +407,10 @@ fn split_project_coordinate(coordinate: &str) -> Option<(&str, &str)> {
 /// already be a full `30621:<owner-hex>:<dtag>` coordinate; a bare dtag
 /// resolves only when exactly one **visible** project matches, because
 /// guessing an owner would silently write another person's project.
-async fn resolve_project(client: &BuzzClient, project: Option<&str>) -> Result<String, CliError> {
+pub(crate) async fn resolve_project(
+    client: &BuzzClient,
+    project: Option<&str>,
+) -> Result<String, CliError> {
     if let Some(coordinate) = direct_project_coordinate(project)? {
         return Ok(coordinate);
     }

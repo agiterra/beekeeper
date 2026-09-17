@@ -30,6 +30,8 @@ pub mod session;
 pub mod sessions;
 pub mod social;
 pub mod terminals;
+/// `bee todos` — a project's shared to-do lists (NIP-TD).
+pub mod todos;
 pub mod upload;
 pub mod users;
 pub mod wip_refs;

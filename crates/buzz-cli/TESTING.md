@@ -1207,6 +1207,50 @@ the 2026-09-01 batch.
 
 ---
 
+### 6.13a Project to-do lists (`bee todos`, kind 44248)
+
+Shared per-project lists, NIP-TD (`docs/nips/NIP-TD.md`). Every subcommand
+takes `--project` exactly as `bee pulse` does (`BUZZ_PULSE_PROJECT` when the
+flag is absent). Reads fold every op for the coordinate with the same fold
+Desktop and Mobile bind to; each write is one op on one field, stamped past
+the latest op on its target. Needs a project the signer may write: create one
+with `bee repos create --id demo` then `bee projects create demo --repo demo`.
+
+```bash
+P=30621:<owner-hex>:demo
+bee todos lists --project $P                              # [] at first
+bee todos create-list --project $P --title Launch         # → list_id
+bee --format compact todos add --project $P Launch "Write the NIP"
+bee --format compact todos add --project $P Launch "Ship it" --due 2026-10-01
+bee --format compact todos add --project $P Launch "Mobile" --index 0   # first
+bee --format compact todos show --project $P launch       # title match, case-insensitive
+bee todos done --project $P <item-id-prefix>              # ≥ 6 chars
+bee todos move --project $P <item> --index 0
+bee todos assign --project $P <item> <64-hex|none>
+bee todos due --project $P <item> 2026-12-31              # or none
+bee todos edit --project $P <item> --text "…"
+bee todos undone --project $P <item>
+bee todos remove --project $P <item>
+bee todos rename-list --project $P Launch --title "Launch v2"
+bee todos archive-list --project $P "Launch v2"           # --undo restores
+bee todos lists --project $P --archived
+```
+
+| Check | Expect |
+| --- | --- |
+| `add --due` / `--assignee` | one `item.add` plus one op per extra field, listed under `ops`; the follow-ups are stamped after the add |
+| `show` after another key's `done` | the item is under `completed` (most recent first); `open` keeps rank order |
+| `move --index 0` | the item is first in `open`; other items' ranks are untouched |
+| a `viewer` of a private project writes | `auth_error` "project write access required", exit **3** |
+| an unknown `--project` coordinate | `unknown project coordinate`, exit 3 |
+| `show` on a list with malformed ops | `ignored: <n>` present in the output, never silently dropped |
+
+Verified live 2026-09-17 against a local relay on :3010 with two keys
+(owner and collaborator): viewer refusal exit 3, promotion to collaborator,
+`done`/`move`/`assign` from the second key, and the owner's `show` folding
+all of it. The e2e file `crates/buzz-test-client/tests/e2e_project_todos.rs`
+covers the relay surfaces.
+
 ### 6.14 Raw events (`bee events query`)
 
 The debugging verb: one authenticated REQ, no contract decoding, no writes.

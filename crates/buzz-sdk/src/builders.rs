@@ -51,13 +51,14 @@ use buzz_core::{
         KIND_GIT_STATUS_MERGED, KIND_GIT_STATUS_OPEN, KIND_IA_ARCHIVE_REQUEST,
         KIND_IA_UNARCHIVE_REQUEST, KIND_MODERATION_BAN, KIND_MODERATION_RESOLVE_REPORT,
         KIND_MODERATION_TIMEOUT, KIND_MODERATION_UNBAN, KIND_MODERATION_UNTIMEOUT,
-        KIND_PRESENCE_UPDATE, KIND_PROJECT, KIND_PULSE_ENTRY, KIND_USER_STATUS, KIND_WORKFLOW_DEF,
-        KIND_WORKFLOW_TRIGGER,
+        KIND_PRESENCE_UPDATE, KIND_PROJECT, KIND_PROJECT_TODO_OP, KIND_PULSE_ENTRY,
+        KIND_USER_STATUS, KIND_WORKFLOW_DEF, KIND_WORKFLOW_TRIGGER,
     },
     observer::{
         content_looks_like_nip44, OBSERVER_AGENT_TAG, OBSERVER_FRAME_CONTROL, OBSERVER_FRAME_TAG,
         OBSERVER_FRAME_TELEMETRY,
     },
+    project_todo::{validate_project_todo_envelope, ProjectTodoOp},
     pulse::{validate_pulse_entry_envelope, PulseEntry, PULSE_ENTRY_TAG_VERSION},
 };
 use nostr::{EventBuilder, Kind, Tag};
@@ -2552,6 +2553,50 @@ fn pulse_entry_probe(tags: &[Tag], content: &str) -> Result<nostr::Event, SdkErr
         nostr::PublicKey::from_byte_array([0u8; 32]),
         nostr::Timestamp::from_secs(0),
         Kind::Custom(KIND_PULSE_ENTRY as u16),
+        tags.to_vec(),
+        content,
+        signature,
+    ))
+}
+
+// ---- Project to-do ops (NIP-TD) ---------------------------------------------
+
+/// Build a NIP-TD project to-do op (kind:44248) scoped to `coordinate`.
+///
+/// Tags are emitted in the canonical order `a`, `td-v`, `td-op`, `td-list`,
+/// `[td-item]`, every one derived from the op itself, so a tag and the
+/// content it addresses can never disagree. Every rule is
+/// [`validate_project_todo_envelope`]'s: this builder owns no copy of the
+/// tag grammar, the canonical-coordinate rule, or the content caps, and an
+/// invalid op is an [`SdkError::InvalidInput`] before anything is signed.
+pub fn build_project_todo_op(
+    coordinate: &str,
+    op: &ProjectTodoOp,
+) -> Result<EventBuilder, SdkError> {
+    let content = op.to_content();
+    let tags = op
+        .tags(coordinate)
+        .iter()
+        .map(|parts| {
+            let parts: Vec<&str> = parts.iter().map(String::as_str).collect();
+            tag(&parts)
+        })
+        .collect::<Result<Vec<Tag>, SdkError>>()?;
+    validate_project_todo_envelope(&project_todo_probe(&tags, &content)?)
+        .map_err(SdkError::InvalidInput)?;
+    Ok(EventBuilder::new(Kind::Custom(KIND_PROJECT_TODO_OP as u16), content).tags(tags))
+}
+
+/// The unsigned probe for [`build_project_todo_op`] — same shape as
+/// [`pulse_entry_probe`]; no NIP-TD rule reads the id, author or signature.
+fn project_todo_probe(tags: &[Tag], content: &str) -> Result<nostr::Event, SdkError> {
+    let signature = nostr::secp256k1::schnorr::Signature::from_slice(&[0u8; 64])
+        .map_err(|error| SdkError::InvalidInput(format!("todo op probe: {error}")))?;
+    Ok(nostr::Event::new(
+        nostr::EventId::from_byte_array([0u8; 32]),
+        nostr::PublicKey::from_byte_array([0u8; 32]),
+        nostr::Timestamp::from_secs(0),
+        Kind::Custom(KIND_PROJECT_TODO_OP as u16),
         tags.to_vec(),
         content,
         signature,
