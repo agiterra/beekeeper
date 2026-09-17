@@ -49,6 +49,8 @@ pub(super) fn preview(
         pack_ref: Some(receipt.pack_ref.clone()),
         refusal: None,
         reason: None,
+        warnings: Vec::new(),
+        compose_digest: None,
     })
 }
 

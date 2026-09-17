@@ -40,6 +40,33 @@ use std::path::{Path, PathBuf};
 
 use crate::commands::project_git_exec::{run_git, validate_clone_url, GitAuthConfig};
 
+/// The composer's source and provenance types, re-exported so the planner,
+/// the Roles view and this module name one vocabulary.
+pub use buzz_persona_pkg::compose::{RoleSource, SourceProvenance};
+pub use buzz_persona_pkg::template::TemplateCatalog;
+
+/// Where a project repository keeps its flat team layout
+/// (`<path>/roles/<role>.md`, `<path>/team.yml`): the `path` a kind:30624
+/// names for roles that ride with the code (spec § 4.7), and the second
+/// place the session-checkout rung looks (spec § 4.8).
+pub const DEFAULT_FLAT_PATH: &str = "beekeeper";
+
+/// Where this build ships its role templates, relative to the resource root
+/// and to a development checkout: `personas/templates`.
+pub const DEFAULT_TEMPLATES_PATH: &str = "personas/templates";
+
+/// The directory under the packs cache holding composed, staged packs:
+/// `<packs root>/staged/<source key>/<digest>/`.
+pub const STAGED_PACKS_DIR: &str = "staged";
+
+/// The refusal a seat carries when this computer found a pack for its role
+/// but could not compose it — a broken pack, an include it cannot resolve,
+/// a template this build does not ship. The seat is **not** started on a
+/// bare persona; the reason travels beside this sentence.
+pub const SEAT_PACK_UNCOMPOSABLE: &str =
+    "This computer found a pack for that role but could not compose it, so the seat was not \
+     started — an agent seated without its role instructions is not the agent asked for.";
+
 /// Where in a packs repository the role directories live when a 30624 names
 /// no `path` tag — the wire's own default, re-exported so the host and the
 /// relay cannot disagree about it.
@@ -120,14 +147,34 @@ enum PackTarget {
 /// A staged role pack: where it is on this computer, and what it was.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StagedProjectPack {
-    /// Directory of the role's pack inside the checkout — what the seat's
-    /// `packDir` points at.
+    /// The composed, staged pack directory under the packs cache — what the
+    /// seat's `packDir` points at. Never a directory inside the shared
+    /// checkout, so a later sync cannot change a running seat's instructions
+    /// (spec § 4.5).
     pub dir: PathBuf,
     /// The persona inside [`Self::dir`] that declares the role — the seat's
     /// `personaId`.
     pub persona: String,
     /// The wire's account of it.
     pub pack_ref: PackRef,
+    /// The composition's content digest (`sha256:…`), from its `compose.json`.
+    pub digest: String,
+    /// What the composer wanted said: a deprecated template, a mid-line
+    /// `![[`. Never a refusal — those are `Err`.
+    pub warnings: Vec<String>,
+}
+
+/// A composed pack staged under the packs cache from any rung.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StagedComposedPack {
+    /// `<packs root>/staged/<source key>/<digest12>/`.
+    pub dir: PathBuf,
+    /// The persona inside it: always the role slug.
+    pub persona: String,
+    /// `sha256:…` over the staged bytes.
+    pub digest: String,
+    /// The composer's warnings, verbatim.
+    pub warnings: Vec<String>,
 }
 
 /// Split `30617:<owner-hex>:<id>` into its owner and repository id.
@@ -335,18 +382,54 @@ pub fn shipped_packs_version(app: &tauri::AppHandle) -> String {
     app.package_info().version.to_string()
 }
 
-/// The role directory inside a *session checkout*, when it holds one.
-///
-/// A project that keeps its packs in the repository it is being worked on gets
-/// them without announcing anything: `<checkout>/personas/roles/<role>`. The
-/// checkout is only ever read — it never becomes a git remote, a write target,
-/// or a clone destination — so it is the same read-only use the role-pack
-/// installer's own scan already makes of a chosen folder
-/// (`crew_roles::scan_project_role_packs`).
-pub fn checkout_role_pack(checkout: &Path, role: &str) -> Option<(PathBuf, String)> {
-    role_pack_in_checkout(checkout, DEFAULT_PACK_PATH, role)
+/// The role templates this build ships, or `None` when it ships none —
+/// resolved exactly as [`shipped_packs_dir`] resolves the packs: the bundle
+/// resource first, the development checkout second, a guess never.
+pub fn shipped_templates_dir(app: &tauri::AppHandle) -> Option<PathBuf> {
+    use tauri::Manager;
+    if let Ok(resource) = app
+        .path()
+        .resolve(DEFAULT_TEMPLATES_PATH, tauri::path::BaseDirectory::Resource)
+    {
+        if resource.is_dir() {
+            return Some(resource);
+        }
+    }
+    let checkout = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()?
+        .parent()?
+        .join(DEFAULT_TEMPLATES_PATH);
+    checkout.is_dir().then_some(checkout)
 }
 
+/// The template catalog every composition on this host resolves against:
+/// this build's shipped templates, identified by the app version.
+///
+/// A build with no templates directory, or one whose catalog does not load,
+/// yields an **empty** catalog rather than an error: a role with no
+/// `![[beekeeper/…]]` include composes fine without one, and a role with one
+/// is refused at that include, naming the template it could not find. The
+/// load failure is logged so it is not silent.
+pub fn template_catalog(app: &tauri::AppHandle) -> TemplateCatalog {
+    let version = shipped_packs_version(app);
+    let Some(dir) = shipped_templates_dir(app) else {
+        return TemplateCatalog::empty(&version);
+    };
+    match TemplateCatalog::load(&dir, &version) {
+        Ok(catalog) => catalog,
+        Err(error) => {
+            tracing::warn!(
+                templates = %dir.display(),
+                %error,
+                "the shipped template catalog could not be loaded; composing with none"
+            );
+            TemplateCatalog::empty(&version)
+        }
+    }
+}
+
+/// The role directory inside a *session checkout*, when it holds one.
+///
 /// This host's checkout directory for one packs repository.
 ///
 /// `<packs root>/<owner-prefix>-<id>`: short enough to read, keyed by both
@@ -564,20 +647,154 @@ pub fn role_pack_in_checkout(checkout: &Path, path: &str, role: &str) -> Option<
 /// for `role`: one sentence, written here so the staging path and the Roles
 /// view cannot spell it two ways.
 pub(crate) fn missing_role_pack_reason(sha: &str, path: &str, role: &str) -> String {
-    format!("the packs repository at {sha} holds no {path}/{role} pack for role {role}")
+    format!(
+        "the packs repository at {sha} holds no {path}/{role} pack and no {path}/roles/{role}.md for role {role}"
+    )
+}
+
+/// Find the source of `role` under `<checkout>/<path>`, in the two layouts
+/// the composer reads (spec § 4.8): a pack directory
+/// `<path>/<role>/.plugin/plugin.json` whose persona declares the role
+/// first, then a flat file `<path>/roles/<role>.md`. `None` when neither is
+/// there, which the caller turns into the same refusal it always did.
+///
+/// A pack directory whose persona declares some other role is not this role
+/// ([`role_persona_in_pack`]), and a flat file that is not a file is nothing.
+pub fn locate_role_source(checkout: &Path, path: &str, role: &str) -> Option<RoleSource> {
+    if !is_role_slug(role) {
+        return None;
+    }
+    let mut root = checkout.to_path_buf();
+    for segment in path.split('/').filter(|segment| !segment.is_empty()) {
+        root.push(segment);
+    }
+    let pack_dir = root.join(role);
+    if let Some(persona) = role_persona_in_pack(&pack_dir, role) {
+        return Some(RoleSource::Pack {
+            dir: pack_dir,
+            role: role.to_string(),
+            persona: Some(persona),
+        });
+    }
+    let flat = root
+        .join(buzz_persona_pkg::compose::FLAT_ROLES_DIR)
+        .join(format!("{role}.md"));
+    if flat.is_file() {
+        return Some(RoleSource::Flat {
+            root,
+            role: role.to_string(),
+        });
+    }
+    None
+}
+
+/// The repository-relative `packRef.path` for a role found at `path`: the
+/// pack directory for a pack source, `<path>/roles/<role>` for a flat one.
+/// Both end in `/<role>`, which the closed 44223 validator requires; the
+/// flat form's `.md` is implied (spec § 4.6).
+pub fn pack_ref_path(source: &RoleSource, path: &str) -> String {
+    let path = path.trim_matches('/');
+    match source {
+        RoleSource::Pack { role, .. } if path.is_empty() => role.clone(),
+        RoleSource::Pack { role, .. } => format!("{path}/{role}"),
+        RoleSource::Flat { role, .. } if path.is_empty() => {
+            format!("{}/{role}", buzz_persona_pkg::compose::FLAT_ROLES_DIR)
+        }
+        RoleSource::Flat { role, .. } => {
+            format!(
+                "{path}/{}/{role}",
+                buzz_persona_pkg::compose::FLAT_ROLES_DIR
+            )
+        }
+    }
+}
+
+/// Where composed packs are staged: `<packs root>/staged`.
+pub fn staged_packs_root(packs_root: &Path) -> PathBuf {
+    packs_root.join(STAGED_PACKS_DIR)
+}
+
+/// A source key for a directory nobody on the wire can name: twelve hex of
+/// the SHA-256 of its path, prefixed `local-`. Two hosts never share a
+/// staged directory, so the key only has to be stable on this one.
+pub fn local_source_key(dir: &Path) -> String {
+    use sha2::Digest;
+    let digest = sha2::Sha256::digest(dir.to_string_lossy().as_bytes());
+    format!("local-{}", &hex::encode(digest)[..12])
+}
+
+/// Compose `source` against `catalog` and stage the result as an ordinary
+/// pack under `<packs root>/staged/<source_key>/<digest12>/`.
+///
+/// The directory is keyed by the composition's content digest, so it is
+/// immutable for as long as any seat points at it: composing the same
+/// inputs again finds the same directory and writes nothing; composing
+/// changed inputs writes a sibling. A running seat's `packDir` therefore
+/// never changes underneath it — the hazard the shared checkout had
+/// (`sync_packs_checkout` runs `git checkout --force` on it).
+///
+/// # Errors
+/// The composer's refusal, verbatim — a missing role, a cycle, a template
+/// this build does not ship, a skill provided twice — or a filesystem error
+/// under the staging root.
+pub fn stage_composed_pack(
+    packs_root: &Path,
+    source_key: &str,
+    source: &RoleSource,
+    catalog: &TemplateCatalog,
+    provenance: SourceProvenance,
+) -> Result<StagedComposedPack, String> {
+    use buzz_persona_pkg::compose::{
+        compose_role, write_staged_pack, ComposeOptions, COMPOSE_JSON,
+    };
+    let options = ComposeOptions {
+        pack_id: None,
+        pack_version: None,
+        source: provenance,
+    };
+    let composed = compose_role(source, catalog, &options).map_err(|error| error.to_string())?;
+    let digest_hex = composed
+        .provenance
+        .digest
+        .strip_prefix("sha256:")
+        .unwrap_or(&composed.provenance.digest);
+    let short: String = digest_hex.chars().take(12).collect();
+    let dir = staged_packs_root(packs_root).join(source_key).join(short);
+    let already = std::fs::read_to_string(dir.join(COMPOSE_JSON))
+        .ok()
+        .and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok())
+        .and_then(|value| value.get("digest")?.as_str().map(str::to_owned))
+        .is_some_and(|digest| digest == composed.provenance.digest);
+    if !already {
+        write_staged_pack(&composed, &dir).map_err(|error| {
+            format!(
+                "failed to stage the composed pack at {}: {error}",
+                dir.display()
+            )
+        })?;
+    }
+    Ok(StagedComposedPack {
+        dir,
+        persona: composed.role().to_string(),
+        digest: composed.provenance.digest,
+        warnings: composed.provenance.warnings,
+    })
 }
 
 /// Sync a project's packs repository and stage one role out of it.
 ///
 /// The whole wire-driven staging rule in one call: validate the source, put
-/// the checkout on the exact commit, find the role's directory, and describe
-/// what was staged in the shape the seat's 44223 carries.
+/// the checkout on the exact commit, find the role's source in it (pack or
+/// flat, [`locate_role_source`]), compose it against `catalog`, stage the
+/// result under the packs cache, and describe what was staged in the shape
+/// the seat's 44223 carries.
 pub fn stage_project_role_pack(
     packs_root: &Path,
     relay_http_base: &str,
     source: &ProjectPackSource,
     role: &str,
     auth: &GitAuthConfig,
+    catalog: &TemplateCatalog,
 ) -> Result<StagedProjectPack, String> {
     if !is_role_slug(role) {
         return Err(format!("{role:?} is not a role slug"));
@@ -588,17 +805,32 @@ pub fn stage_project_role_pack(
     let clone_url = packs_clone_url(relay_http_base, &owner, &id);
     validate_clone_url(&clone_url)?;
     let sha = sync_packs_checkout(&checkout, &clone_url, source, auth)?;
-    let (dir, persona) = role_pack_in_checkout(&checkout, &path, role)
+    let role_source = locate_role_source(&checkout, &path, role)
         .ok_or_else(|| missing_role_pack_reason(&sha, &path, role))?;
+    let ref_path = pack_ref_path(&role_source, &path);
+    let staged = stage_composed_pack(
+        packs_root,
+        &format!("{}-{sha}", pack_cache_dir_name(&owner, &id)),
+        &role_source,
+        catalog,
+        SourceProvenance {
+            kind: "repository".to_string(),
+            repo: Some(source.repo.clone()),
+            sha: Some(sha.clone()),
+            path: ref_path.clone(),
+        },
+    )?;
     Ok(StagedProjectPack {
         pack_ref: PackRef {
             repo: source.repo.clone(),
             sha,
             role: role.to_string(),
-            path: format!("{path}/{role}"),
+            path: ref_path,
         },
-        dir,
-        persona,
+        dir: staged.dir,
+        persona: staged.persona,
+        digest: staged.digest,
+        warnings: staged.warnings,
     })
 }
 
@@ -887,18 +1119,223 @@ mod tests {
         let checkout = root.join("checkout");
         write_role_pack(&checkout, "builder", "You build, from the checkout.");
         assert_eq!(
-            checkout_role_pack(&checkout, "builder"),
-            Some((
-                checkout.join(DEFAULT_PACK_PATH).join("builder"),
-                "builder".to_owned()
-            ))
+            locate_role_source(&checkout, DEFAULT_PACK_PATH, "builder"),
+            Some(RoleSource::Pack {
+                dir: checkout.join(DEFAULT_PACK_PATH).join("builder"),
+                role: "builder".to_owned(),
+                persona: Some("builder".to_owned()),
+            })
         );
         // A role the checkout does not hold is not the checkout's answer.
-        assert!(checkout_role_pack(&checkout, "runner").is_none());
+        assert!(locate_role_source(&checkout, DEFAULT_PACK_PATH, "runner").is_none());
         // And a directory that is not a pack is not one either.
         std::fs::create_dir_all(checkout.join(DEFAULT_PACK_PATH).join("runner"))
             .expect("empty role dir");
-        assert!(checkout_role_pack(&checkout, "runner").is_none());
+        assert!(locate_role_source(&checkout, DEFAULT_PACK_PATH, "runner").is_none());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// The flat layout (spec § 4.1): `<path>/roles/<role>.md` answers when
+    /// no pack directory does, and a pack directory outranks it.
+    #[test]
+    fn a_flat_role_file_is_located_after_a_pack_directory() {
+        let root = scratch_root();
+        let checkout = root.join("checkout");
+        write(
+            &checkout.join(DEFAULT_FLAT_PATH).join("roles/builder.md"),
+            "You build, flat.\n",
+        );
+        assert_eq!(
+            locate_role_source(&checkout, DEFAULT_FLAT_PATH, "builder"),
+            Some(RoleSource::Flat {
+                root: checkout.join(DEFAULT_FLAT_PATH),
+                role: "builder".to_owned(),
+            })
+        );
+        assert!(locate_role_source(&checkout, DEFAULT_FLAT_PATH, "runner").is_none());
+        assert!(
+            locate_role_source(&checkout, DEFAULT_FLAT_PATH, "../builder").is_none(),
+            "a traversing role is not a role slug"
+        );
+        // A pack directory beside the flat file wins, byte for byte the old rule.
+        let pack = checkout.join(DEFAULT_FLAT_PATH).join("builder");
+        write(
+            &pack.join(".plugin/plugin.json"),
+            r#"{"id":"com.test.builder","name":"builder","version":"0.1.0","personas":["personas/builder.persona.md"]}"#,
+        );
+        write(
+            &pack.join("personas/builder.persona.md"),
+            "---\nname: builder\ndisplay_name: builder\ndescription: The builder.\nrole: builder\n---\nPacked.\n",
+        );
+        assert!(matches!(
+            locate_role_source(&checkout, DEFAULT_FLAT_PATH, "builder"),
+            Some(RoleSource::Pack { .. })
+        ));
+        assert_eq!(
+            pack_ref_path(
+                &RoleSource::Flat {
+                    root: checkout.clone(),
+                    role: "builder".into()
+                },
+                DEFAULT_FLAT_PATH
+            ),
+            "beekeeper/roles/builder"
+        );
+        assert_eq!(
+            pack_ref_path(
+                &RoleSource::Pack {
+                    dir: pack,
+                    role: "builder".into(),
+                    persona: None
+                },
+                DEFAULT_PACK_PATH
+            ),
+            "personas/roles/builder"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// Staging is keyed by the composition's digest: the same inputs land in
+    /// the same immutable directory and write nothing the second time; a
+    /// change lands beside it. The staged directory is an ordinary pack the
+    /// resolver reads, never the source itself.
+    #[test]
+    fn staging_a_composed_pack_is_digest_keyed_and_idempotent() {
+        let root = scratch_root();
+        let packs_root = root.join("packs");
+        let checkout = root.join("checkout");
+        write_role_pack(&checkout, "builder", "You build.");
+        let source = locate_role_source(&checkout, DEFAULT_PACK_PATH, "builder").expect("located");
+        let catalog = TemplateCatalog::empty("0.5.16");
+        let key = local_source_key(&checkout.join(DEFAULT_PACK_PATH));
+        let provenance = SourceProvenance::local("personas/roles/builder");
+
+        let first = stage_composed_pack(&packs_root, &key, &source, &catalog, provenance.clone())
+            .expect("staged");
+        assert!(first
+            .dir
+            .starts_with(staged_packs_root(&packs_root).join(&key)));
+        assert_eq!(first.persona, "builder");
+        assert!(first.digest.starts_with("sha256:"));
+        assert!(first.warnings.is_empty());
+        assert_ne!(first.dir, checkout.join(DEFAULT_PACK_PATH).join("builder"));
+        let resolved = buzz_persona_pkg::resolve::resolve_persona_by_name(&first.dir, "builder")
+            .expect("the staged pack is a pack");
+        assert_eq!(resolved.system_prompt, "You build.\n");
+        assert_eq!(resolved.role.as_deref(), Some("builder"));
+        let stamp = std::fs::metadata(first.dir.join("compose.json"))
+            .and_then(|m| m.modified())
+            .expect("mtime");
+
+        let again = stage_composed_pack(&packs_root, &key, &source, &catalog, provenance.clone())
+            .expect("staged again");
+        assert_eq!(again.dir, first.dir);
+        assert_eq!(again.digest, first.digest);
+        assert_eq!(
+            std::fs::metadata(first.dir.join("compose.json"))
+                .and_then(|m| m.modified())
+                .expect("mtime"),
+            stamp,
+            "an identical composition writes nothing"
+        );
+
+        write_role_pack(&checkout, "builder", "You build, revised.");
+        let changed = stage_composed_pack(&packs_root, &key, &source, &catalog, provenance)
+            .expect("staged changed");
+        assert_ne!(
+            changed.dir, first.dir,
+            "a changed source lands beside the old one"
+        );
+        assert!(
+            first.dir.join("personas/builder.persona.md").is_file(),
+            "the old staged copy is untouched"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// A pack that cannot be composed — here, an include of a template this
+    /// build does not ship — refuses with the composer's reason, and stages
+    /// nothing.
+    #[test]
+    fn an_uncomposable_pack_refuses_and_stages_nothing() {
+        let root = scratch_root();
+        let packs_root = root.join("packs");
+        let checkout = root.join("checkout");
+        write_role_pack(
+            &checkout,
+            "builder",
+            "![[beekeeper/memory@^1.0.0]]\nYou build.",
+        );
+        let source = locate_role_source(&checkout, DEFAULT_PACK_PATH, "builder").expect("located");
+        let error = stage_composed_pack(
+            &packs_root,
+            "k",
+            &source,
+            &TemplateCatalog::empty("0.5.16"),
+            SourceProvenance::local("personas/roles/builder"),
+        )
+        .expect_err("refused");
+        assert!(error.contains("no template catalog"), "{error}");
+        assert!(!staged_packs_root(&packs_root).join("k").exists());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// The project rung end to end: a synced repository whose role is a flat
+    /// file stages a composed pack and stamps the flat `packRef.path`.
+    #[test]
+    fn a_project_source_with_a_flat_role_stages_it_and_names_its_path() {
+        let root = scratch_root();
+        let (origin, _first, _second) = packs_repo(&root);
+        write(
+            &origin.dir.join("beekeeper/roles/verifier.md"),
+            "---\ndescription: Verifies.\n---\nYou verify, flat.\n",
+        );
+        git(&["add", "--all"], &origin.dir);
+        git(&["commit", "--quiet", "-m", "flat verifier"], &origin.dir);
+        let third = git(&["rev-parse", "HEAD"], &origin.dir).trim().to_string();
+        let auth = build_test_git_auth_config().expect("git auth");
+        let packs_root = root.join("cache");
+        let url = origin.dir.to_string_lossy().to_string();
+        let mut project = source(REPO, None, Some(&third));
+        project.path = DEFAULT_FLAT_PATH.to_string();
+        // `stage_project_role_pack` builds the clone URL from the relay base;
+        // hand it the origin's parent so `<base>/git/<owner>/<id>` is not
+        // what is cloned — instead exercise the pieces it composes.
+        let (owner, id) = parse_repo_coordinate(REPO).expect("coordinate");
+        let checkout = packs_checkout_dir(&packs_root, &owner, &id);
+        let sha = sync_packs_checkout(&checkout, &url, &project, &auth).expect("sync");
+        assert_eq!(sha, third);
+        let located =
+            locate_role_source(&checkout, DEFAULT_FLAT_PATH, "verifier").expect("flat verifier");
+        assert!(matches!(located, RoleSource::Flat { .. }));
+        assert_eq!(
+            pack_ref_path(&located, DEFAULT_FLAT_PATH),
+            "beekeeper/roles/verifier"
+        );
+        let staged = stage_composed_pack(
+            &packs_root,
+            &format!("{}-{sha}", pack_cache_dir_name(&owner, &id)),
+            &located,
+            &TemplateCatalog::empty("0.5.16"),
+            SourceProvenance {
+                kind: "repository".into(),
+                repo: Some(REPO.into()),
+                sha: Some(sha.clone()),
+                path: "beekeeper/roles/verifier".into(),
+            },
+        )
+        .expect("staged");
+        let resolved = buzz_persona_pkg::resolve::resolve_persona_by_name(&staged.dir, "verifier")
+            .expect("staged pack resolves");
+        assert_eq!(resolved.system_prompt, "You verify, flat.\n");
+        assert_eq!(resolved.description, "Verifies.");
+        let provenance: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(staged.dir.join("compose.json")).expect("compose.json"),
+        )
+        .expect("json");
+        assert_eq!(provenance["source"]["kind"], "repository");
+        assert_eq!(provenance["source"]["sha"], sha);
+        assert_eq!(provenance["source"]["path"], "beekeeper/roles/verifier");
         std::fs::remove_dir_all(&root).ok();
     }
 

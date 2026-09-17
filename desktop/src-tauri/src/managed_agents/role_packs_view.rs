@@ -87,6 +87,12 @@ pub struct RolePackSummary {
     /// The sentence a hire in this role would be refused with, or `null`
     /// when staging would go ahead.
     pub refusal: Option<String>,
+    /// What the composer wanted said while staging this role. Never a
+    /// refusal.
+    pub warnings: Vec<String>,
+    /// The staged composition's `sha256:…` digest, or `null` when nothing
+    /// could be staged.
+    pub compose_digest: Option<String>,
 }
 
 /// The project rung, after the packs repository has been synced — or not.
@@ -129,15 +135,21 @@ pub(crate) struct RolePackLadder<'a> {
     pub shipped_root: Option<&'a Path>,
     /// The version that pins the shipped packs.
     pub shipped_version: &'a str,
+    /// The template catalog every composition resolves against.
+    pub catalog: &'a packs_cache::TemplateCatalog,
+    /// The packs cache root composed packs are staged under.
+    pub packs_root: &'a Path,
 }
 
-/// One rung's answer for one role, before the persona is read.
+/// One rung's answer for one role, before it is composed and read.
 #[derive(Clone, Debug)]
 struct Candidate {
-    dir: PathBuf,
-    persona: String,
+    source: packs_cache::RoleSource,
     origin: SeatPackOrigin,
     pack_ref: Option<PackRef>,
+    /// The staging key and provenance `plan_seat_pack` would stage under.
+    source_key: String,
+    provenance: packs_cache::SourceProvenance,
 }
 
 /// Walk the ladder and describe every role it holds, sorted by slug.
@@ -182,7 +194,13 @@ pub(crate) fn walk_role_pack_ladder(ladder: &RolePackLadder<'_>) -> Vec<RolePack
                 },
                 ProjectRung::Unavailable { reason } => (local?, Some(project_refusal(reason))),
             };
-            Some(summarize(role, candidate, refusal))
+            Some(summarize(
+                role,
+                candidate,
+                refusal,
+                ladder.catalog,
+                ladder.packs_root,
+            ))
         })
         .collect()
 }
@@ -224,50 +242,110 @@ fn project_candidates(rung: &ProjectRung) -> BTreeMap<String, Candidate> {
     for segment in path.split('/').filter(|segment| !segment.is_empty()) {
         parent.push(segment);
     }
-    role_directories(&parent)
+    let mut roles = role_directories(&parent);
+    for role in flat_role_files(&parent) {
+        if !roles.contains(&role) {
+            roles.push(role);
+        }
+    }
+    roles.sort();
+    let Ok((owner, id)) = packs_cache::parse_repo_coordinate(repo) else {
+        return BTreeMap::new();
+    };
+    roles
         .into_iter()
         .filter_map(|role| {
-            let (dir, persona) = packs_cache::role_pack_in_checkout(checkout, path, &role)?;
+            let source = packs_cache::locate_role_source(checkout, path, &role)?;
+            let ref_path = packs_cache::pack_ref_path(&source, path);
             // Field-for-field what `stage_project_role_pack` stamps.
             let pack_ref = PackRef {
                 repo: repo.clone(),
                 sha: sha.clone(),
                 role: role.clone(),
-                path: format!("{path}/{role}"),
+                path: ref_path.clone(),
             };
             Some((
                 role,
                 Candidate {
-                    dir,
-                    persona,
+                    source,
                     origin: SeatPackOrigin::Project,
                     pack_ref: Some(pack_ref),
+                    source_key: format!("{}-{sha}", packs_cache::pack_cache_dir_name(&owner, &id)),
+                    provenance: packs_cache::SourceProvenance {
+                        kind: "repository".to_string(),
+                        repo: Some(repo.clone()),
+                        sha: Some(sha.clone()),
+                        path: ref_path,
+                    },
                 },
             ))
         })
         .collect()
 }
 
+/// The role slugs named by flat role files `<parent>/roles/<role>.md`,
+/// sorted. A name is a candidate only; [`packs_cache::locate_role_source`]
+/// still decides.
+fn flat_role_files(parent: &Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(parent.join(buzz_persona_pkg::compose::FLAT_ROLES_DIR))
+    else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = entries
+        .flatten()
+        .filter(|entry| entry.path().is_file())
+        .filter_map(|entry| {
+            entry
+                .file_name()
+                .to_str()?
+                .strip_suffix(".md")
+                .map(str::to_owned)
+        })
+        .filter(|name| packs_cache::is_role_slug(name))
+        .collect();
+    names.sort();
+    names
+}
+
 fn checkout_candidates(checkout: Option<&Path>) -> BTreeMap<String, Candidate> {
     let Some(checkout) = checkout else {
         return BTreeMap::new();
     };
-    let parent = crate::managed_agents::crew_roles::project_role_packs_dir(checkout);
-    role_directories(&parent)
-        .into_iter()
-        .filter_map(|role| {
-            let (dir, persona) = packs_cache::checkout_role_pack(checkout, &role)?;
-            Some((
+    // The pack layout under `personas/roles`, then the flat layout under
+    // `beekeeper/roles`: the two places `plan_seat_pack` looks, in its order.
+    let mut out = BTreeMap::new();
+    for path in [
+        packs_cache::DEFAULT_PACK_PATH,
+        packs_cache::DEFAULT_FLAT_PATH,
+    ] {
+        let mut parent = checkout.to_path_buf();
+        for segment in path.split('/').filter(|segment| !segment.is_empty()) {
+            parent.push(segment);
+        }
+        let mut roles = role_directories(&parent);
+        roles.extend(flat_role_files(&parent));
+        for role in roles {
+            if out.contains_key(&role) {
+                continue;
+            }
+            let Some(source) = packs_cache::locate_role_source(checkout, path, &role) else {
+                continue;
+            };
+            let provenance =
+                packs_cache::SourceProvenance::local(packs_cache::pack_ref_path(&source, path));
+            out.insert(
                 role,
                 Candidate {
-                    dir,
-                    persona,
+                    source,
                     origin: SeatPackOrigin::Checkout,
                     pack_ref: None,
+                    source_key: packs_cache::local_source_key(&parent),
+                    provenance,
                 },
-            ))
-        })
-        .collect()
+            );
+        }
+    }
+    out
 }
 
 /// The installed rung: one candidate per home role some agent on this
@@ -297,17 +375,47 @@ fn installed_candidates(
         };
         let (origin, pack_ref) =
             installed_seat_pack_ref(shipped_root, shipped_version, &dir, Some(role));
+        let (source_key, provenance) = local_or_shipped_key(&dir, &origin, pack_ref.as_ref());
         out.insert(
             role.to_owned(),
             Candidate {
-                dir,
-                persona,
+                source: packs_cache::RoleSource::Pack {
+                    dir,
+                    role: role.to_owned(),
+                    persona: Some(persona),
+                },
                 origin,
                 pack_ref,
+                source_key,
+                provenance,
             },
         );
     }
     out
+}
+
+/// The staging key and provenance `plan_seat_pack` uses for a local rung:
+/// the app version for a pack this build vouches for, a path hash otherwise.
+fn local_or_shipped_key(
+    dir: &Path,
+    origin: &SeatPackOrigin,
+    pack_ref: Option<&PackRef>,
+) -> (String, packs_cache::SourceProvenance) {
+    match (origin, pack_ref) {
+        (SeatPackOrigin::Shipped, Some(pack_ref)) => (
+            format!("app-{}", pack_ref.sha),
+            packs_cache::SourceProvenance {
+                kind: "shipped".to_string(),
+                repo: Some(pack_ref.repo.clone()),
+                sha: Some(pack_ref.sha.clone()),
+                path: pack_ref.path.clone(),
+            },
+        ),
+        _ => (
+            packs_cache::local_source_key(dir),
+            packs_cache::SourceProvenance::local(dir.to_string_lossy().into_owned()),
+        ),
+    }
 }
 
 fn shipped_candidates(
@@ -323,44 +431,91 @@ fn shipped_candidates(
             let (dir, persona) = packs_cache::role_pack_in_checkout(root, "", &role)?;
             let pack_ref =
                 packs_cache::shipped_pack_ref_for_dir(Some(root), &dir, &role, shipped_version);
+            let (source_key, provenance) =
+                local_or_shipped_key(&dir, &SeatPackOrigin::Shipped, pack_ref.as_ref());
+            let source = packs_cache::RoleSource::Pack {
+                dir,
+                role: role.clone(),
+                persona: Some(persona),
+            };
             Some((
                 role,
                 Candidate {
-                    dir,
-                    persona,
+                    source,
                     origin: SeatPackOrigin::Shipped,
                     pack_ref,
+                    source_key,
+                    provenance,
                 },
             ))
         })
         .collect()
 }
 
-/// Read the persona behind `candidate` and describe the role.
-fn summarize(role: &str, candidate: &Candidate, refusal: Option<String>) -> RolePackSummary {
-    let pack_dir = candidate.dir.to_string_lossy().into_owned();
-    match buzz_persona_pkg::resolve::resolve_persona_by_name(&candidate.dir, &candidate.persona) {
+/// Compose and stage `candidate` exactly as a seat would be, then read the
+/// staged persona and describe the role. A candidate that cannot be composed
+/// carries the composer's reason as its refusal — the same refusal a hire
+/// would get — rather than a description of a pack no seat would run.
+fn summarize(
+    role: &str,
+    candidate: &Candidate,
+    refusal: Option<String>,
+    catalog: &packs_cache::TemplateCatalog,
+    packs_root: &Path,
+) -> RolePackSummary {
+    let staged = match packs_cache::stage_composed_pack(
+        packs_root,
+        &candidate.source_key,
+        &candidate.source,
+        catalog,
+        candidate.provenance.clone(),
+    ) {
+        Ok(staged) => staged,
+        Err(reason) => {
+            return RolePackSummary {
+                role: role.to_owned(),
+                display_name: role.to_owned(),
+                description: String::new(),
+                summary: String::new(),
+                version: None,
+                origin: candidate.origin,
+                pack_dir: String::new(),
+                pack_ref: candidate.pack_ref.clone(),
+                skills: Vec::new(),
+                refusal: refusal.or_else(|| {
+                    Some(format!(
+                        "{} ({reason})",
+                        packs_cache::SEAT_PACK_UNCOMPOSABLE
+                    ))
+                }),
+                warnings: Vec::new(),
+                compose_digest: None,
+            };
+        }
+    };
+    let pack_dir = staged.dir.to_string_lossy().into_owned();
+    match buzz_persona_pkg::resolve::resolve_persona_by_name(&staged.dir, &staged.persona) {
         Ok(persona) => {
-            let skills =
-                match buzz_persona_pkg::skill_meta::list_skill_meta(&candidate.dir, &persona) {
-                    Ok(skills) => skills
-                        .into_iter()
-                        .map(|skill| RolePackSkill {
-                            name: skill.name,
-                            description: skill.description,
-                            shared: skill.shared,
-                        })
-                        .collect(),
-                    Err(error) => {
-                        tracing::warn!(
-                            pack = %pack_dir,
-                            %role,
-                            %error,
-                            "role pack skills could not be listed; showing none"
-                        );
-                        Vec::new()
-                    }
-                };
+            let skills = match buzz_persona_pkg::skill_meta::list_skill_meta(&staged.dir, &persona)
+            {
+                Ok(skills) => skills
+                    .into_iter()
+                    .map(|skill| RolePackSkill {
+                        name: skill.name,
+                        description: skill.description,
+                        shared: skill.shared,
+                    })
+                    .collect(),
+                Err(error) => {
+                    tracing::warn!(
+                        pack = %pack_dir,
+                        %role,
+                        %error,
+                        "role pack skills could not be listed; showing none"
+                    );
+                    Vec::new()
+                }
+            };
             let display_name = if persona.display_name.trim().is_empty() {
                 persona.name.clone()
             } else {
@@ -377,6 +532,8 @@ fn summarize(role: &str, candidate: &Candidate, refusal: Option<String>) -> Role
                 pack_ref: candidate.pack_ref.clone(),
                 skills,
                 refusal,
+                warnings: staged.warnings.clone(),
+                compose_digest: Some(staged.digest.clone()),
             }
         }
         Err(error) => {
@@ -392,6 +549,8 @@ fn summarize(role: &str, candidate: &Candidate, refusal: Option<String>) -> Role
                 pack_ref: candidate.pack_ref.clone(),
                 skills: Vec::new(),
                 refusal: refusal.or(Some(unreadable)),
+                warnings: staged.warnings.clone(),
+                compose_digest: Some(staged.digest.clone()),
             }
         }
     }
@@ -551,6 +710,8 @@ pub(crate) fn list_project_role_packs_blocking(
     let project = project_rung(app, &state, source);
     let shipped_root = packs_cache::shipped_packs_dir(app);
     let shipped_version = packs_cache::shipped_packs_version(app);
+    let catalog = packs_cache::template_catalog(app);
+    let packs_root = packs_cache::packs_root(app)?;
     rows_or_refusal(&RolePackLadder {
         project,
         checkout: None,
@@ -558,6 +719,8 @@ pub(crate) fn list_project_role_packs_blocking(
         teams: &teams,
         shipped_root: shipped_root.as_deref(),
         shipped_version: &shipped_version,
+        catalog: &catalog,
+        packs_root: &packs_root,
     })
 }
 

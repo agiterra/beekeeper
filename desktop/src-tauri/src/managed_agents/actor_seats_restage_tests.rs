@@ -84,6 +84,8 @@ fn staged_plan(persona: &str) -> SeatPackPreview {
         pack_ref: Some(pack_ref("builder")),
         refusal: None,
         reason: None,
+        warnings: Vec::new(),
+        compose_digest: None,
     }
 }
 

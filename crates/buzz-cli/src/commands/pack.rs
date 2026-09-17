@@ -182,6 +182,7 @@ pub fn cmd_compose(
             RoleSource::Pack {
                 dir: source_dir.to_path_buf(),
                 role: role.to_owned(),
+                persona: None,
             },
             format!("{}/{role}", path.trim_end_matches('/')),
         )

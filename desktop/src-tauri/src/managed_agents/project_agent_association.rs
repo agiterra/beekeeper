@@ -158,6 +158,8 @@ pub(crate) fn refused_seat_preview(
         pack_ref: None,
         refusal: Some(refusal.to_string()),
         reason: None,
+        warnings: Vec::new(),
+        compose_digest: None,
     }
 }
 

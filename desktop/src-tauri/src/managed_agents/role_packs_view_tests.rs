@@ -87,7 +87,23 @@ fn installed_role_agent(role: &str, pack: Option<&Path>) -> ManagedAgentRecord {
     record
 }
 
+/// Where a test's compositions are staged, and the catalog they resolve
+/// against: one empty catalog, one scratch root per test. Both must outlive
+/// the ladder that borrows them.
+struct Staging {
+    root: tempfile::TempDir,
+    catalog: packs_cache::TemplateCatalog,
+}
+
+fn staging() -> Staging {
+    Staging {
+        root: tempfile::tempdir().expect("staging dir"),
+        catalog: packs_cache::TemplateCatalog::empty(SHIPPED_VERSION),
+    }
+}
+
 fn ladder<'a>(
+    staging: &'a Staging,
     project: ProjectRung,
     checkout: Option<&'a Path>,
     records: &'a [ManagedAgentRecord],
@@ -100,7 +116,40 @@ fn ladder<'a>(
         teams: &[],
         shipped_root,
         shipped_version: SHIPPED_VERSION,
+        catalog: &staging.catalog,
+        packs_root: staging.root.path(),
     }
+}
+
+/// A row's `pack_dir` is a staged copy under the packs root, keyed by the
+/// source and holding the composer's provenance — never the source itself.
+fn assert_staged_under(row: &RolePackSummary, staging: &Staging, source_key_prefix: &str) {
+    let dir = Path::new(&row.pack_dir);
+    let staged_root = packs_cache::staged_packs_root(staging.root.path());
+    assert!(
+        dir.starts_with(&staged_root),
+        "{} is not under {}",
+        row.pack_dir,
+        staged_root.display()
+    );
+    let key = dir
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    assert!(
+        key.starts_with(source_key_prefix),
+        "source key {key:?} does not start with {source_key_prefix:?}"
+    );
+    assert!(
+        dir.join("compose.json").is_file(),
+        "no compose.json in {}",
+        row.pack_dir
+    );
+    assert!(row
+        .compose_digest
+        .as_deref()
+        .is_some_and(|d| d.starts_with("sha256:")));
 }
 
 fn shipped_ref(role: &str) -> PackRef {
@@ -114,6 +163,7 @@ fn shipped_ref(role: &str) -> PackRef {
 
 #[test]
 fn shipped_roles_are_sorted_by_slug_with_origin_ref_and_skills() {
+    let staging = staging();
     let tmp = tempfile::tempdir().expect("temp dir");
     let shipped = tmp.path().join("shipped");
     write_role_pack(
@@ -134,7 +184,13 @@ fn shipped_roles_are_sorted_by_slug_with_origin_ref_and_skills() {
     );
     write_role_pack(&shipped, "builder", "builder", &[], &[]);
 
-    let rows = walk_role_pack_ladder(&ladder(ProjectRung::Absent, None, &[], Some(&shipped)));
+    let rows = walk_role_pack_ladder(&ladder(
+        &staging,
+        ProjectRung::Absent,
+        None,
+        &[],
+        Some(&shipped),
+    ));
 
     let roles: Vec<&str> = rows.iter().map(|row| row.role.as_str()).collect();
     assert_eq!(roles, vec!["builder", "lead"]);
@@ -142,10 +198,7 @@ fn shipped_roles_are_sorted_by_slug_with_origin_ref_and_skills() {
     let builder = &rows[0];
     assert_eq!(builder.origin, SeatPackOrigin::Shipped);
     assert_eq!(builder.pack_ref, Some(shipped_ref("builder")));
-    assert_eq!(
-        builder.pack_dir,
-        shipped.join("builder").to_string_lossy().into_owned()
-    );
+    assert_staged_under(builder, &staging, "app-");
     assert!(builder.skills.is_empty(), "{:?}", builder.skills);
     assert_eq!(builder.display_name, "The builder");
     assert_eq!(builder.description, "Does builder work.");
@@ -174,6 +227,7 @@ fn shipped_roles_are_sorted_by_slug_with_origin_ref_and_skills() {
 
 #[test]
 fn a_session_checkout_outranks_the_shipped_pack_for_its_role_only() {
+    let staging = staging();
     let tmp = tempfile::tempdir().expect("temp dir");
     let shipped = tmp.path().join("shipped");
     write_role_pack(&shipped, "lead", "lead", &[], &[]);
@@ -183,6 +237,7 @@ fn a_session_checkout_outranks_the_shipped_pack_for_its_role_only() {
     write_role_pack(&checkout_roles, "lead", "lead", &[], &[]);
 
     let rows = walk_role_pack_ladder(&ladder(
+        &staging,
         ProjectRung::Absent,
         Some(&checkout),
         &[],
@@ -198,14 +253,12 @@ fn a_session_checkout_outranks_the_shipped_pack_for_its_role_only() {
         rows[1].pack_ref, None,
         "no repository vouches for a checkout"
     );
-    assert_eq!(
-        rows[1].pack_dir,
-        checkout_roles.join("lead").to_string_lossy().into_owned()
-    );
+    assert_staged_under(&rows[1], &staging, "local-");
 }
 
 #[test]
 fn an_installed_pack_is_installed_unless_it_is_the_shipped_bytes() {
+    let staging = staging();
     let tmp = tempfile::tempdir().expect("temp dir");
     let shipped = tmp.path().join("shipped");
     write_role_pack(&shipped, "lead", "lead", &[], &[]);
@@ -217,7 +270,13 @@ fn an_installed_pack_is_installed_unless_it_is_the_shipped_bytes() {
         installed_role_agent("lead", Some(&shipped.join("lead"))),
     ];
 
-    let rows = walk_role_pack_ladder(&ladder(ProjectRung::Absent, None, &records, Some(&shipped)));
+    let rows = walk_role_pack_ladder(&ladder(
+        &staging,
+        ProjectRung::Absent,
+        None,
+        &records,
+        Some(&shipped),
+    ));
 
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0].role, "lead");
@@ -229,20 +288,25 @@ fn an_installed_pack_is_installed_unless_it_is_the_shipped_bytes() {
         rows[1].pack_ref, None,
         "nothing on the wire names a local pack"
     );
-    assert_eq!(
-        rows[1].pack_dir,
-        verifier_pack.to_string_lossy().into_owned()
-    );
+    assert_staged_under(&rows[1], &staging, "local-");
+    assert_staged_under(&rows[0], &staging, "app-");
 }
 
 #[test]
 fn an_agent_with_a_home_role_and_no_pack_contributes_no_row() {
+    let staging = staging();
     let tmp = tempfile::tempdir().expect("temp dir");
     let shipped = tmp.path().join("shipped");
     write_role_pack(&shipped, "lead", "lead", &[], &[]);
     let records = vec![installed_role_agent("poker", None)];
 
-    let rows = walk_role_pack_ladder(&ladder(ProjectRung::Absent, None, &records, Some(&shipped)));
+    let rows = walk_role_pack_ladder(&ladder(
+        &staging,
+        ProjectRung::Absent,
+        None,
+        &records,
+        Some(&shipped),
+    ));
 
     let roles: Vec<&str> = rows.iter().map(|row| row.role.as_str()).collect();
     assert_eq!(roles, vec!["lead"], "a home role is not a pack");
@@ -250,18 +314,26 @@ fn an_agent_with_a_home_role_and_no_pack_contributes_no_row() {
 
 #[test]
 fn a_directory_named_for_a_role_its_persona_does_not_declare_is_not_that_role() {
+    let staging = staging();
     let tmp = tempfile::tempdir().expect("temp dir");
     let shipped = tmp.path().join("shipped");
     // `runner/` whose persona says it is the lead.
     write_role_pack(&shipped, "runner", "lead", &[], &[]);
 
-    let rows = walk_role_pack_ladder(&ladder(ProjectRung::Absent, None, &[], Some(&shipped)));
+    let rows = walk_role_pack_ladder(&ladder(
+        &staging,
+        ProjectRung::Absent,
+        None,
+        &[],
+        Some(&shipped),
+    ));
 
     assert!(rows.is_empty(), "{rows:?}");
 }
 
 #[test]
 fn the_project_rung_wins_and_roles_it_lacks_carry_the_refusal() {
+    let staging = staging();
     let tmp = tempfile::tempdir().expect("temp dir");
     let shipped = tmp.path().join("shipped");
     write_role_pack(&shipped, "lead", "lead", &[], &[]);
@@ -274,6 +346,7 @@ fn the_project_rung_wins_and_roles_it_lacks_carry_the_refusal() {
         "30617:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef:packs".to_string();
 
     let rows = walk_role_pack_ladder(&ladder(
+        &staging,
         ProjectRung::Synced {
             repo: repo.clone(),
             checkout: repo_checkout.clone(),
@@ -317,24 +390,29 @@ fn the_project_rung_wins_and_roles_it_lacks_carry_the_refusal() {
             path: format!("{path}/lead"),
         })
     );
-    assert_eq!(
-        lead.pack_dir,
-        repo_checkout
-            .join(&path)
-            .join("lead")
-            .to_string_lossy()
-            .into_owned()
+    // The row's directory is the composed, staged copy under the packs root
+    // keyed by the repository and commit — never the checkout the sync
+    // moves (spec § 4.5).
+    assert_staged_under(lead, &staging, "deadbeef-packs-");
+    assert!(
+        !lead
+            .pack_dir
+            .starts_with(&repo_checkout.to_string_lossy().into_owned()),
+        "{}",
+        lead.pack_dir
     );
 }
 
 #[test]
 fn an_unavailable_project_source_refuses_every_role() {
+    let staging = staging();
     let tmp = tempfile::tempdir().expect("temp dir");
     let shipped = tmp.path().join("shipped");
     write_role_pack(&shipped, "lead", "lead", &[], &[]);
     write_role_pack(&shipped, "builder", "builder", &[], &[]);
 
     let rows = walk_role_pack_ladder(&ladder(
+        &staging,
         ProjectRung::Unavailable {
             reason: "the packs repository does not contain commit abc".into(),
         },
@@ -363,7 +441,9 @@ fn an_unavailable_project_source_refuses_every_role() {
 
 #[test]
 fn an_unavailable_source_with_nothing_local_is_an_error_not_an_empty_catalog() {
+    let staging = staging();
     let err = rows_or_refusal(&ladder(
+        &staging,
         ProjectRung::Unavailable {
             reason: "the packs repository does not contain commit abc".into(),
         },
@@ -382,6 +462,7 @@ fn an_unavailable_source_with_nothing_local_is_an_error_not_an_empty_catalog() {
     let shipped = tmp.path().join("shipped");
     write_role_pack(&shipped, "lead", "lead", &[], &[]);
     let rows = rows_or_refusal(&ladder(
+        &staging,
         ProjectRung::Unavailable {
             reason: "boom".into(),
         },
@@ -414,6 +495,8 @@ fn the_wire_shape_is_camel_case_with_exactly_these_keys() {
             shared: false,
         }],
         refusal: None,
+        warnings: vec!["beekeeper/memory@^1.0.0 resolved to 1.0.0, which is deprecated".into()],
+        compose_digest: Some("sha256:abc".into()),
     };
     let json = serde_json::to_value(&row).expect("serializes");
     let keys = |value: &serde_json::Value| -> Vec<String> {
@@ -429,6 +512,7 @@ fn the_wire_shape_is_camel_case_with_exactly_these_keys() {
     assert_eq!(
         top,
         [
+            "composeDigest",
             "description",
             "displayName",
             "origin",
@@ -438,7 +522,8 @@ fn the_wire_shape_is_camel_case_with_exactly_these_keys() {
             "role",
             "skills",
             "summary",
-            "version"
+            "version",
+            "warnings"
         ]
     );
     assert_eq!(json["origin"], "shipped");
@@ -463,7 +548,8 @@ fn the_wire_shape_is_camel_case_with_exactly_these_keys() {
 
 #[test]
 fn no_rungs_means_no_rows() {
-    let rows = walk_role_pack_ladder(&ladder(ProjectRung::Absent, None, &[], None));
+    let staging = staging();
+    let rows = walk_role_pack_ladder(&ladder(&staging, ProjectRung::Absent, None, &[], None));
     assert!(rows.is_empty());
 }
 

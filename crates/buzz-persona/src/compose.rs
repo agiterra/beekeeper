@@ -124,9 +124,15 @@ pub enum ComposeError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RoleSource {
     /// A pack directory (`.plugin/plugin.json`, `personas/*.persona.md`,
-    /// `skills/`): the shipped and sibling-repo layout. The persona whose
-    /// `role` equals `role` (or, failing that, whose `name` does) is the role.
-    Pack { dir: PathBuf, role: String },
+    /// `skills/`): the shipped and sibling-repo layout. `persona` names the
+    /// persona to compose; when `None`, the persona whose `role` equals
+    /// `role` (or, failing that, whose `name` does) is the one. A host that
+    /// resolved a roleless installed pack names its persona explicitly.
+    Pack {
+        dir: PathBuf,
+        role: String,
+        persona: Option<String>,
+    },
     /// A flat project layout: `<root>/roles/<role>.md`, optional
     /// `<root>/roles/<role>/skills/*`, shared `<root>/skills/*`.
     Flat { root: PathBuf, role: String },
@@ -158,6 +164,7 @@ impl RoleSource {
             Self::Pack { dir, .. } => Self::Pack {
                 dir: dir.clone(),
                 role: role.to_owned(),
+                persona: None,
             },
             Self::Flat { root, .. } => Self::Flat {
                 root: root.clone(),
@@ -238,6 +245,11 @@ pub struct SkillSource {
     pub dir: PathBuf,
     /// Where it came from, for the collision message.
     pub origin: String,
+    /// `true` when the source claimed it for this role (frontmatter,
+    /// role-private, or a template's); `false` when it was shared with every
+    /// role. The staged frontmatter lists only claimed skills, so the pack
+    /// resolver's shared/claimed distinction survives staging.
+    pub claimed: bool,
 }
 
 /// A composed role, ready to stage.
@@ -369,8 +381,11 @@ pub fn compose_role(
         }
         skills.push(skill);
     }
+    // Only claimed skills are listed; an unclaimed one is shared by the
+    // pack loader's rule, which for a one-persona pack reaches the same seat.
     persona.skills = skills
         .iter()
+        .filter(|s| s.claimed)
         .map(|s| format!("./skills/{}/", s.name))
         .collect();
 
@@ -478,20 +493,29 @@ struct RoleDraft {
 
 fn load_draft(source: &RoleSource) -> Result<RoleDraft, ComposeError> {
     match source {
-        RoleSource::Pack { dir, role } => {
+        RoleSource::Pack {
+            dir,
+            role,
+            persona: wanted,
+        } => {
             let loaded = pack::load_pack(dir)?;
-            let persona =
-                find_pack_persona(&loaded, role).ok_or_else(|| ComposeError::RoleNotFound {
-                    role: role.clone(),
-                    looked_in: source.describe(),
-                })?;
+            let persona = match wanted {
+                Some(name) => loaded.personas.iter().find(|p| &p.name == name),
+                None => find_pack_persona(&loaded, role),
+            }
+            .ok_or_else(|| ComposeError::RoleNotFound {
+                role: wanted.clone().unwrap_or_else(|| role.clone()),
+                looked_in: source.describe(),
+            })?;
             let effective = pack::resolve_skills(&loaded.root, &loaded.personas);
             let names = effective.get(&persona.name).cloned().unwrap_or_default();
+            let claimed: Vec<String> = persona.skills.iter().map(|s| skill_dir_name(s)).collect();
             let skills = names
                 .into_iter()
                 .map(|name| SkillSource {
                     dir: loaded.root.join("skills").join(&name),
                     origin: format!("pack {}", dir.display()),
+                    claimed: claimed.contains(&name),
                     name,
                 })
                 .collect();
@@ -529,6 +553,7 @@ fn load_draft(source: &RoleSource) -> Result<RoleDraft, ComposeError> {
                     name: dir_name(&dir),
                     dir,
                     origin: format!("{} frontmatter", path.display()),
+                    claimed: true,
                 });
             }
             // Role-private, auto-claimed.
@@ -537,6 +562,7 @@ fn load_draft(source: &RoleSource) -> Result<RoleDraft, ComposeError> {
                     name: dir_name(&dir),
                     origin: format!("{}", dir.parent().unwrap_or(&dir).display()),
                     dir,
+                    claimed: true,
                 });
             }
             // Shared: every role receives them.
@@ -549,6 +575,7 @@ fn load_draft(source: &RoleSource) -> Result<RoleDraft, ComposeError> {
                     name,
                     origin: format!("{}", root.join(FLAT_SKILLS_DIR).display()),
                     dir,
+                    claimed: false,
                 });
             }
             let body = persona.prompt.clone();
@@ -693,6 +720,7 @@ impl ComposeState<'_> {
                     name: dir_name(&dir),
                     origin: format!("template {}@{}", template.name, template.version),
                     dir,
+                    claimed: true,
                 });
             }
             self.includes.push(IncludeRecord {
@@ -829,6 +857,16 @@ fn skill_dirs(dir: &Path) -> Result<Vec<PathBuf>, ComposeError> {
     }
     out.sort();
     Ok(out)
+}
+
+/// The bare directory name a frontmatter skill path claims (`./skills/x/`,
+/// `skills/x`, `x` all name `x`), the way `pack::resolve_skills` reads it.
+fn skill_dir_name(path: &str) -> String {
+    Path::new(path.trim_end_matches('/'))
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(path)
+        .to_owned()
 }
 
 fn dir_name(path: &Path) -> String {
@@ -1177,7 +1215,8 @@ mod tests {
         assert_eq!(skill_names, vec!["verify-before-claiming", "recall"]);
         assert_eq!(
             composed.persona.skills,
-            vec!["./skills/verify-before-claiming/", "./skills/recall/"]
+            vec!["./skills/recall/"],
+            "only claimed skills are listed; the shared one stays shared"
         );
         let refs: Vec<&str> = composed
             .provenance
@@ -1440,6 +1479,7 @@ mod tests {
             &RoleSource::Pack {
                 dir: pack.clone(),
                 role: "lead".to_owned(),
+                persona: None,
             },
             &TemplateCatalog::empty("0.4.2"),
             &ComposeOptions::local("personas/roles/lead"),
@@ -1513,7 +1553,15 @@ mod tests {
             .join("SKILL.md")
             .is_file());
         let resolved = crate::resolve::resolve_persona_by_name(&staged, "project-manager").unwrap();
-        assert_eq!(resolved.skills, vec!["verify-before-claiming", "recall"]);
+        // The claimed skill is listed in the staged frontmatter; the shared
+        // one reaches the persona through the pack loader's sharing rule.
+        assert_eq!(resolved.skills, vec!["recall", "verify-before-claiming"]);
+        let meta = crate::skill_meta::list_skill_meta(&staged, &resolved).unwrap();
+        let shared: Vec<(&str, bool)> = meta.iter().map(|m| (m.name.as_str(), m.shared)).collect();
+        assert_eq!(
+            shared,
+            vec![("recall", false), ("verify-before-claiming", true)]
+        );
     }
 
     #[test]

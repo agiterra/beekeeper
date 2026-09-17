@@ -7,6 +7,77 @@ use super::*;
 
 const OWNER: &str = "6cbdf4451d3989c10c20d13240c665a9e11e3959a95488382193481692b68df2";
 
+/// `status --role` composes the cached role the way the host stages it and
+/// says so without writing: a pack directory, then a flat file, then a
+/// disclosed absence; an include this catalog cannot resolve is a refusal
+/// with the composer's reason, never a silent bare persona.
+#[test]
+fn status_composes_the_cached_role_and_discloses_what_it_cannot() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let cache = tmp.path().join("cache");
+    let write = |rel: &str, body: &str| {
+        let path = cache.join(rel);
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+        std::fs::write(path, body).expect("write");
+    };
+    // A pack directory.
+    write(
+        "personas/roles/builder/.plugin/plugin.json",
+        r#"{"id":"t.builder","name":"builder","version":"0.1.0","personas":["personas/builder.persona.md"]}"#,
+    );
+    write(
+        "personas/roles/builder/personas/builder.persona.md",
+        "---\nname: builder\ndisplay_name: Builder\ndescription: Builds.\nrole: builder\n---\nYou build.\n",
+    );
+    // A flat file that includes a shipped template.
+    write(
+        "beekeeper/roles/lead.md",
+        "![[beekeeper/memory@latest]]\nYou lead.\n",
+    );
+    // A catalog that ships it.
+    let templates = tmp.path().join("templates");
+    std::fs::create_dir_all(templates.join("memory/1.0.0")).expect("mkdir");
+    std::fs::write(
+        templates.join("memory/1.0.0/TEMPLATE.md"),
+        "---\nname: memory\nversion: 1.0.0\ndescription: m\n---\nRemember.\n",
+    )
+    .expect("template");
+
+    let pack = compose_status(&cache, "personas/roles", "builder", None);
+    assert_eq!(pack["ok"], true, "{pack}");
+    assert_eq!(pack["layout"], "pack");
+    assert!(pack["digest"]
+        .as_str()
+        .is_some_and(|d| d.starts_with("sha256:")));
+    assert!(pack["note"]
+        .as_str()
+        .is_some_and(|n| n.contains("BUZZ_TEMPLATES_DIR")));
+
+    let flat = compose_status(&cache, "beekeeper", "lead", Some(&templates));
+    assert_eq!(flat["ok"], true, "{flat}");
+    assert_eq!(flat["layout"], "flat");
+    assert_eq!(flat["includes"][0]["ref"], "beekeeper/memory@latest");
+    assert_eq!(flat["includes"][0]["resolved"], "1.0.0");
+    assert_eq!(flat["note"], "");
+
+    let refused = compose_status(&cache, "beekeeper", "lead", None);
+    assert_eq!(refused["ok"], false, "{refused}");
+    assert!(refused["reason"]
+        .as_str()
+        .is_some_and(|r| r.contains("no template catalog")));
+
+    let absent = compose_status(&cache, "beekeeper", "runner", None);
+    assert_eq!(absent["ok"], false);
+    assert!(absent["layout"].is_null());
+    assert!(absent["reason"]
+        .as_str()
+        .is_some_and(|r| r.contains("beekeeper/roles/runner.md")));
+    assert!(
+        !tmp.path().join("cache/staged").exists(),
+        "status writes nothing"
+    );
+}
+
 /// Exactly one pin, and the refusal says which flags to use.
 #[test]
 fn set_source_requires_exactly_one_pin() {

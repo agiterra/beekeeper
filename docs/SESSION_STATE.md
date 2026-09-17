@@ -13351,6 +13351,62 @@ Evidence and limits: [conditional publication checkpoint](history/2026-09-12-pro
      on the staged directory says `Valid.`; `beekeeper/memory@^9.0.0`
      refuses with "this build ships memory 1.0.0; ^9.0.0 matches none".
 
+143. **Slice A2, host half: every seat is staged from a composed copy, never
+     from a directory the host can move underneath it (2026-09-17, Andy with
+     Fable).** Spec `docs/PROJECT_TEAMS_AND_ACTIONS_SPEC.md` § 4.5, § 4.8,
+     § 7 A2. The sparse checkout of `beekeeper/` (§ 4.10), the branch
+     override (§ 4.9) and the Claude `Read` denial are **not** in this
+     landing; they are the next commit on the same branch.
+
+     **What landed.** `desktop/src-tauri/src/managed_agents/packs_cache.rs`:
+     `locate_role_source` (a pack directory whose persona declares the role,
+     then `<path>/roles/<role>.md`), `pack_ref_path` (`<path>/<role>` or
+     `<path>/roles/<role>`, both ending in `/<role>` for the closed 44223
+     validator), `stage_composed_pack` writing
+     `<app data>/packs/staged/<source key>/<digest12>/` and skipping the
+     write when that digest is already there, `template_catalog` /
+     `shipped_templates_dir` mirroring the packs resource, and
+     `stage_project_role_pack` now taking the catalog and returning the
+     staged directory plus `digest` and `warnings`. `actor_seats.rs`
+     `plan_seat_pack`: every rung — project, session checkout (now also
+     `beekeeper/roles/<role>.md`), installed, shipped — composes and stages;
+     a seat with no role keeps its uncomposed pack because there is no slug
+     to compose under; a rung that finds a pack it cannot compose refuses
+     with the new `SEAT_PACK_UNCOMPOSABLE` sentence and the composer's
+     reason rather than seating on the uncomposed directory.
+     `SeatPackPreview` and `RolePackSummary` gain `warnings` and
+     `composeDigest` (the TypeScript type widened to match). The Roles view
+     (`role_packs_view.rs`) stages each candidate the way a seat would and
+     reads the staged copy, so its `packDir` is now the staged directory.
+     `bee packs status --role <r>` gains a `compose` block (`--templates` /
+     `BUZZ_TEMPLATES_DIR`) that composes the cached role without writing.
+     `tauri.conf.json` bundles `personas/templates`. `buzz-persona`:
+     `RoleSource::Pack` names its persona explicitly (installed packs can be
+     roleless), and the staged frontmatter lists only *claimed* skills so the
+     loader's shared/claimed distinction survives staging. The dead
+     `checkout_role_pack` is removed.
+
+     **Hazard closed.** Before this, a seat's `packDir` pointed inside the
+     shared packs checkout, and a later hire under a `ref` pin ran
+     `git checkout --detach --force` plus `git clean` on that directory
+     (`packs_cache.rs` `sync_packs_checkout`), changing a running seat's
+     instructions in place. A staged directory keyed by source and digest
+     is immutable for the seat's life (`staging_a_composed_pack_is_digest_keyed_and_idempotent`).
+
+     **Evidence.** `cargo test --manifest-path desktop/src-tauri/Cargo.toml
+     managed_agents::`: 1375 passed (new: pack-then-flat location,
+     digest-keyed idempotent staging with an untouched old copy, an
+     uncomposable pack refusing and staging nothing, a flat role in a synced
+     repository staged with `packRef.path` `beekeeper/roles/verifier`; the
+     Roles view tests assert the staged directory under the packs root
+     rather than the source). `just desktop-tauri-clippy` clean; `cargo
+     test -p buzz-cli` 1210 + the new `status_composes_the_cached_role…`;
+     `cargo test -p buzz-persona` 208 + 3; `just desktop-typecheck` clean.
+     **Not exercised live**: no seat has been hired through the installed
+     app on this build; the provider is untouched, so the staged directory
+     reaches it through the same `packDir`/`personaId` it always read.
+
+
 
 
 

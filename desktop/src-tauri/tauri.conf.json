@@ -62,7 +62,8 @@
       "binaries/buzz-shell-host"
     ],
     "resources": {
-      "../../personas/roles": "personas/roles"
+      "../../personas/roles": "personas/roles",
+      "../../personas/templates": "personas/templates"
     },
     "icon": [
       "icons/32x32.png",

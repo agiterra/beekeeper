@@ -63,6 +63,13 @@ export type RolePackSummary = {
   skills: RolePackSkill[];
   /** The backend's sentence for why this role cannot be staged for this project, or `null`. */
   refusal: string | null;
+  /**
+   * What the composer wanted said while staging this role — a deprecated
+   * template, a `![[` that was not on its own line. Never a refusal.
+   */
+  warnings: string[];
+  /** The staged composition's `sha256:…` digest, or `null` when nothing was staged. */
+  composeDigest: string | null;
 };
 
 /**

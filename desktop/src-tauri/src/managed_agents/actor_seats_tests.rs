@@ -844,6 +844,8 @@ fn a_planned_project_pack_is_what_stage_actor_seat_files_and_the_webview_is_told
         pack_ref: Some(pack_ref.clone()),
         refusal: None,
         reason: None,
+        warnings: Vec::new(),
+        compose_digest: None,
     };
 
     let entry = seat_entry_for_plan(&record, "wss://relay.example", plan).expect("entry");
@@ -892,6 +894,8 @@ fn a_plan_that_refuses_stages_nothing_and_says_why() {
         pack_ref: None,
         refusal: Some(packs_cache::HIRE_PACK_UNAVAILABLE.to_string()),
         reason: Some("no builder directory at that commit".into()),
+        warnings: Vec::new(),
+        compose_digest: None,
     };
     let error = seat_entry_for_plan(&record, "wss://relay.example", plan)
         .expect_err("a refused plan is not an entry");
@@ -923,6 +927,8 @@ fn a_local_plan_is_told_with_no_pack_ref() {
         pack_ref: None,
         refusal: None,
         reason: None,
+        warnings: Vec::new(),
+        compose_digest: None,
     };
     let entry = seat_entry_for_plan(&record, "wss://relay.example", plan).expect("entry");
     let told = StagedActorSeat::of(&entry);

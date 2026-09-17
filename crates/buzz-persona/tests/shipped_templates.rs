@@ -91,6 +91,7 @@ fn every_shipped_role_composes_from_its_pack_byte_identical_and_restages_as_a_va
         let source = RoleSource::Pack {
             dir: dir.clone(),
             role: role.to_owned(),
+            persona: None,
         };
         let composed = compose_role(
             &source,

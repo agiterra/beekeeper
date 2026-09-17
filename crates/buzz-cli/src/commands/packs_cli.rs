@@ -87,6 +87,11 @@ pub enum PacksCmd {
         /// Override the packs cache directory this machine reads
         #[arg(long)]
         packs_dir: Option<PathBuf>,
+        /// Template catalog to compose against (`<name>/<semver>/TEMPLATE.md`).
+        /// Defaults to `$BUZZ_TEMPLATES_DIR`; without either, a role that
+        /// includes a shipped template reports a compose refusal.
+        #[arg(long, env = "BUZZ_TEMPLATES_DIR")]
+        templates: Option<PathBuf>,
     },
 }
 
@@ -158,8 +163,16 @@ pub(crate) async fn dispatch(sub: PacksCmd, client: &BuzzClient) -> Result<(), C
             project,
             role,
             packs_dir,
+            templates,
         } => {
-            super::packs::cmd_status(client, &project, role.as_deref(), packs_dir.as_deref()).await
+            super::packs::cmd_status(
+                client,
+                &project,
+                role.as_deref(),
+                packs_dir.as_deref(),
+                templates.as_deref(),
+            )
+            .await
         }
     }
 }

@@ -187,6 +187,7 @@ pub async fn cmd_status(
     project: &str,
     role: Option<&str>,
     packs_dir: Option<&Path>,
+    templates: Option<&Path>,
 ) -> Result<(), CliError> {
     let coordinate = normalize_project(project)?;
     if let Some(role) = role {
@@ -243,6 +244,15 @@ pub async fn cmd_status(
         }),
         None => Value::Null,
     };
+    // What the host's composer would make of the cached role: a pure read
+    // of this disk, written nowhere. `null` when there is no role or no
+    // cache to compose from — a different fact from a refusal.
+    let compose = match (role, cache_dir.as_ref()) {
+        (Some(role), Some(dir)) if dir.is_dir() => {
+            compose_status(dir, source.path(), role, templates)
+        }
+        _ => Value::Null,
+    };
 
     println!(
         "{}",
@@ -264,9 +274,99 @@ pub async fn cmd_status(
             "cache_dir_source": cache_dir_source.as_str(),
             "cache_present": cache_dir.as_ref().map(|dir| dir.is_dir()),
             "roles_found": role_dirs,
+            "compose": compose,
         })
     );
     Ok(())
+}
+
+/// Compose `role` out of the cached checkout the way the host stages it —
+/// a pack directory `<path>/<role>` first, then a flat `<path>/roles/<role>.md`
+/// — and report the result without writing anything.
+///
+/// `templates` is the catalog to resolve `![[beekeeper/…]]` against; absent,
+/// the catalog is empty and such an include is a disclosed refusal, because
+/// this CLI cannot see which templates the desktop build ships.
+fn compose_status(cache_dir: &Path, path: &str, role: &str, templates: Option<&Path>) -> Value {
+    use buzz_persona::compose::{compose_role, ComposeOptions, RoleSource, FLAT_ROLES_DIR};
+    use buzz_persona::template::TemplateCatalog;
+    let mut root = cache_dir.to_path_buf();
+    for segment in path.split('/').filter(|segment| !segment.is_empty()) {
+        root.push(segment);
+    }
+    let (source, source_path, layout) = if root
+        .join(role)
+        .join(".plugin")
+        .join("plugin.json")
+        .is_file()
+    {
+        (
+            RoleSource::Pack {
+                dir: root.join(role),
+                role: role.to_owned(),
+                persona: None,
+            },
+            format!("{path}/{role}"),
+            "pack",
+        )
+    } else if root
+        .join(FLAT_ROLES_DIR)
+        .join(format!("{role}.md"))
+        .is_file()
+    {
+        (
+            RoleSource::Flat {
+                root: root.clone(),
+                role: role.to_owned(),
+            },
+            format!("{path}/{FLAT_ROLES_DIR}/{role}"),
+            "flat",
+        )
+    } else {
+        return json!({
+            "ok": false,
+            "layout": Value::Null,
+            "reason": format!("the cache holds neither {path}/{role}/ nor {path}/{FLAT_ROLES_DIR}/{role}.md"),
+            "templates": templates.map(|dir| dir.display().to_string()),
+        });
+    };
+    let catalog = match templates {
+        Some(dir) => match TemplateCatalog::load(dir, "cli") {
+            Ok(catalog) => catalog,
+            Err(error) => {
+                return json!({
+                    "ok": false,
+                    "layout": layout,
+                    "reason": format!("template catalog at {}: {error}", dir.display()),
+                    "templates": dir.display().to_string(),
+                })
+            }
+        },
+        None => TemplateCatalog::empty("cli"),
+    };
+    match compose_role(&source, &catalog, &ComposeOptions::local(source_path)) {
+        Ok(composed) => json!({
+            "ok": true,
+            "layout": layout,
+            "digest": composed.provenance.digest,
+            "includes": composed.provenance.includes,
+            "warnings": composed.provenance.warnings,
+            "skills": composed.skills.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(),
+            "templates": templates.map(|dir| dir.display().to_string()),
+            "note": if templates.is_none() {
+                "no template catalog was given; pass --templates or set BUZZ_TEMPLATES_DIR to \
+                 resolve ![[beekeeper/…]] includes the way the desktop host does"
+            } else {
+                ""
+            },
+        }),
+        Err(error) => json!({
+            "ok": false,
+            "layout": layout,
+            "reason": error.to_string(),
+            "templates": templates.map(|dir| dir.display().to_string()),
+        }),
+    }
 }
 
 /// What `bee packs init` was asked to build.
