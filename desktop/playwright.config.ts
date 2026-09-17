@@ -239,6 +239,7 @@ export default defineConfig({
         "**/team-snapshot.spec.ts",
         "**/agents-everywhere.live.spec.ts",
         "**/relay-restart.live.spec.ts",
+        "**/project-todos.live.spec.ts",
         "**/parity-ancestor-island.spec.ts",
       ],
       use: {
