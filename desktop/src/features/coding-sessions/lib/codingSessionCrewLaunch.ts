@@ -165,9 +165,18 @@ export type CodingSessionCrewLaunchDeps = {
     workdir: string;
     name: string;
     source: string | null;
-    /** Always `true` for the lead: a role seat's tree omits `beekeeper/`. */
+    /**
+     * Whether the lead's tree omits `beekeeper/` (spec § 4.10): `true`
+     * unless `leadHidesRoles` says the manifest makes it visible.
+     */
     hideRoles: boolean;
   }) => Promise<{ path: string }>;
+  /**
+   * Whether the lead's worktree hides the team definitions, decided from
+   * the lead's pack preview (`team.yml` `workspace.roles_visible`). Absent
+   * means hidden.
+   */
+  leadHidesRoles?: (seat: ResolvedCodingSessionCrewSeat) => Promise<boolean>;
   publishSeatCreate: (input: {
     seat: ResolvedCodingSessionCrewSeat;
     index: number;
@@ -721,7 +730,11 @@ export async function launchCodingSessionCrew(
       );
     }
     try {
-      leadWorkdir = (await deps.createLeadWorktree(worktree)).path;
+      const lead = leadSeat(input.seats, input.primaryPersonaId);
+      const hideRoles =
+        deps.leadHidesRoles && lead ? await deps.leadHidesRoles(lead) : true;
+      leadWorkdir = (await deps.createLeadWorktree({ ...worktree, hideRoles }))
+        .path;
     } catch (error) {
       return fail(
         CODING_SESSION_CREW_LAUNCH_WORKTREE_STEP,

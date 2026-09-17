@@ -4,12 +4,14 @@ import { relayClient } from "@/shared/api/relayClient";
 import { signRelayEvent } from "@/shared/api/tauri";
 import { stageCodingSessionCreateHint } from "@/shared/api/tauriCodingSessionWorkdirs";
 import { createCodingSessionWorktree } from "@/shared/api/tauriCodingSessionWorktrees";
+import { hideRolesForSeat } from "../lib/codingSessionSeatWorkspace";
 import type { CodingSessionProviderRuntime } from "@/shared/api/tauriSessionProvider";
 import type { RelayEvent } from "@/shared/api/types";
 import { ensureActorChannelMembership } from "../lib/actorSeatChannelMembership";
 import {
   clearCodingSessionActorSeat,
   type CodingSessionSeatPackRef,
+  previewCodingSessionSeatPack,
   stageCodingSessionActorSeat,
 } from "../lib/codingSessionActorSeatCustody";
 import { fetchCodingSessionSeatPackSource } from "../lib/codingSessionSeatPackSource";
@@ -211,6 +213,12 @@ export type CodingSessionHireDeps = {
   subscribe: (listener: (events: readonly RelayEvent[]) => void) => () => void;
   fetchRosterFold: typeof fetchCodingSessionRosterFold;
   createWorktree: typeof createCodingSessionWorktree;
+  /**
+   * Preview the seat's pack before its worktree is cut, so `team.yml`'s
+   * `workspace.roles_visible` decides whether the tree keeps `beekeeper/`
+   * (spec § 4.10). Optional: a caller without it hides the directory.
+   */
+  previewSeat?: typeof previewCodingSessionSeatPack;
   stageCreateHint: typeof stageCodingSessionCreateHint;
   /** The three custody/membership steps `publishSeatedCodingSessionCreate` runs. */
   seatDeps: SeatedCodingSessionCreateDeps;
@@ -259,6 +267,7 @@ export const DEFAULT_CODING_SESSION_HIRE_DEPS: CodingSessionHireDeps = {
   subscribe: subscribeToObservedCodingSessionEvents,
   fetchRosterFold: fetchCodingSessionRosterFold,
   createWorktree: createCodingSessionWorktree,
+  previewSeat: previewCodingSessionSeatPack,
   stageCreateHint: stageCodingSessionCreateHint,
   seatDeps: {
     ensureMembership: ensureActorChannelMembership,
@@ -752,6 +761,21 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
       // working directory the create names. A seat is never signed against a
       // directory that does not exist yet — and never against the operator's
       // own checkout (item 80a).
+      // Whether this seat's tree keeps the team definitions is the
+      // manifest's call (spec § 4.10); hidden unless it says otherwise.
+      const workspace = await hideRolesForSeat(
+        {
+          agentPubkey: plan.actor,
+          role: plan.role,
+          projectRef: plan.projectRef,
+          requireProjectRef: plan.projectRef,
+          newSelection: true,
+        },
+        {
+          previewSeat: hireDeps.previewSeat,
+          fetchPackSource: hireDeps.seatDeps.fetchPackSource,
+        },
+      );
       const created = await hireDeps.createWorktree({
         workdir: checkout,
         name: plan.worktreeName,
@@ -764,8 +788,9 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
         // 60).
         sessionRef: plan.sessionRef,
         seatLabel: plan.seatLabel,
-        // A hired seat never sees the team definitions (spec § 4.10).
-        hideRoles: true,
+        // A hired seat sees the team definitions only when its manifest
+        // entry says so (spec § 4.10).
+        hideRoles: workspace.hideRoles,
       });
       await hireDeps.stageCreateHint({
         commandId: plan.commandId,

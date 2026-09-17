@@ -247,7 +247,7 @@ async function publishWithStagedSeat<T>(input: {
  * quiet substitution the source exists to end — so the create is refused
  * with the reader's own words instead.
  */
-async function resolveSeatPackSource(
+export async function resolveSeatPackSource(
   projectRef: string | null,
   fetchPackSource: CodingSessionSeatPackSourceReader | undefined,
 ): Promise<CodingSessionProjectPackSource | null> {

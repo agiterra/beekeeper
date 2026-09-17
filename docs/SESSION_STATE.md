@@ -13615,6 +13615,29 @@ Evidence and limits: [conditional publication checkpoint](history/2026-09-12-pro
      overwrite; layout words, default paths and role listing). Clippy clean
      on both. Desktop: the wire-shape test gains `rolesVisible`.
 
+148. **`workspace.roles_visible` decides the seat cut (2026-09-17, Andy with
+     Fable).** Closes the gap ledger 147 disclosed. Spec § 4.10.
+
+     `desktop/src/features/coding-sessions/lib/codingSessionSeatWorkspace.ts`
+     `hideRolesForSeat`: previews the seat's pack the way staging will
+     (same 30624 source, same project check) and answers `hideRoles: false`
+     only when the host's preview says `rolesVisible: true`; every other
+     outcome — no preview dependency, no role, a refused pack, a thrown
+     preview, a host too old to say — keeps the directory hidden and names
+     why. The hire (`useCodingSessionHire.ts`) runs it before it cuts the
+     seat's worktree; the team launch (`codingSessionCrewLaunch.ts`
+     `leadHidesRoles`, wired by `useCodingSessionCrewLaunch.ts`) runs it for
+     the lead's tree. Both dependencies are optional so a caller without a
+     preview hides, and the existing hire and launch tests are unchanged in
+     what they assert (`hideRoles: true` with no preview).
+
+     **Evidence.** `codingSessionSeatWorkspace.test.mjs` (visible only on
+     the manifest's word; every failure keeps the default and says why; an
+     older host's silence is not permission); the hire, crew-launch,
+     hire-host and seated-create suites: 113 passed; `pnpm typecheck` and
+     biome clean. Not exercised live.
+
+
 
 
 

@@ -97,6 +97,12 @@ export type CodingSessionSeatPackPreview = {
   refusal: string | null;
   /** The underlying reason behind `refusal`, or null. */
   reason: string | null;
+  /**
+   * `team.yml` `workspace.roles_visible` for this role (spec § 4.10): a
+   * seat in this role keeps `beekeeper/` in its worktree. Absent from a host
+   * too old to say, which a caller reads as `false` — hidden.
+   */
+  rolesVisible?: boolean;
 };
 
 /**
