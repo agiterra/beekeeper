@@ -2,6 +2,7 @@ import { invokeTauri } from "@/shared/api/tauri";
 import type {
   ProjectPackRevisionComparison,
   RolePackSummary,
+  SeatDefinitionDrift,
 } from "@/shared/api/types";
 
 /**
@@ -35,4 +36,29 @@ export async function compareProjectPackRevisions(
     "compare_project_pack_revisions",
     { projectRef, shas },
   );
+}
+
+/**
+ * Has a running seat's role definition drifted from what this computer
+ * would stage for it now (spec § 4.9)? `seatSha` is the seat's
+ * `packRef.sha` off its 44223; `worktree` is the seat's own tree when
+ * known, so its branch override counts as "now".
+ *
+ * Read-only for the seat: it syncs the project's packs cache and stages the
+ * two compositions under it, publishes nothing and touches no execution.
+ * The answer is `unknown` — never `current` — when one side cannot be
+ * composed here.
+ */
+export async function seatDefinitionDrift(input: {
+  projectRef: string;
+  role: string;
+  seatSha: string;
+  worktree?: string | null;
+}): Promise<SeatDefinitionDrift> {
+  return invokeTauri<SeatDefinitionDrift>("seat_definition_drift", {
+    projectRef: input.projectRef,
+    role: input.role,
+    seatSha: input.seatSha,
+    worktree: input.worktree ?? null,
+  });
 }

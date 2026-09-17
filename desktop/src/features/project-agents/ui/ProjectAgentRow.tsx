@@ -26,6 +26,7 @@ import type {
 } from "../lib/projectAgentsModel";
 import type { ProjectAgentAssociateAccess } from "../lib/publishedProjectAgents";
 import { ProjectAgentAssociate } from "./ProjectAgentAssociate";
+import { ProjectAgentSessionDefinition } from "./ProjectAgentSessionDefinition";
 import {
   ASSIGNMENT_ACCEPTANCE,
   ASSIGNMENT_BRIEF,
@@ -86,10 +87,14 @@ export type OpenProjectAgentSession = (
 ) => void;
 
 function SessionItem({
+  agentPubkey,
   onOpen,
+  projectRef,
   session,
 }: {
+  agentPubkey: string;
   onOpen: OpenProjectAgentSession;
+  projectRef: string;
   session: ProjectAgentSession;
 }) {
   return (
@@ -140,6 +145,11 @@ function SessionItem({
       >
         {sessionInstructionsText(session)}
       </p>
+      <ProjectAgentSessionDefinition
+        agentPubkey={agentPubkey}
+        projectRef={projectRef}
+        session={session}
+      />
       {session.providerAuthorityPubkey ? (
         <p
           className="truncate font-mono text-2xs text-muted-foreground/80"
@@ -474,8 +484,10 @@ export function ProjectAgentRow({
           <ul className="mt-1 flex flex-col gap-1">
             {row.sessions.map((session) => (
               <SessionItem
+                agentPubkey={row.pubkey}
                 key={session.key}
                 onOpen={onOpenSession}
+                projectRef={projectRef}
                 session={session}
               />
             ))}

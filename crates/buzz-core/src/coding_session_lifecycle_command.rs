@@ -293,6 +293,18 @@ pub enum CodingSessionLifecycleAction {
         /// Signing pubkey of the provider authority that owns the target.
         provider_authority_pubkey: String,
     },
+    /// Detach a live execution and reattach it at once as a new generation
+    /// with a freshly staged seat, continuing from its cursor (spec § 4.9,
+    /// **Restart with current definition**). The same shape and authority
+    /// as a resume; unlike a stop, nothing becomes terminal. A provider
+    /// refuses it while a turn is open (`SESSION_BUSY`).
+    #[serde(rename = "session.restart")]
+    SessionRestart {
+        /// Exact current generation being restarted.
+        session: CodingSessionTarget,
+        /// Signing pubkey of the provider authority that owns the target.
+        provider_authority_pubkey: String,
+    },
     /// Durably stop an execution so a provider restart cannot revive it.
     #[serde(rename = "session.stop")]
     SessionStop {
@@ -331,7 +343,9 @@ impl CodingSessionLifecycleAction {
             } => provider_instance_ref
                 .as_ref()
                 .map(ProviderInstanceAlias::as_str),
-            Self::SessionResume { .. } | Self::SessionStop { .. } => None,
+            Self::SessionResume { .. } | Self::SessionRestart { .. } | Self::SessionStop { .. } => {
+                None
+            }
         };
         // The field carries the newtype since B2, but `#[serde(transparent)]`
         // decoding does not run `from_wire` — a signed create may still carry
@@ -536,6 +550,10 @@ impl CodingSessionLifecycleCommandPayload {
                 session,
                 provider_authority_pubkey,
             }
+            | CodingSessionLifecycleAction::SessionRestart {
+                session,
+                provider_authority_pubkey,
+            }
             | CodingSessionLifecycleAction::SessionStop {
                 session,
                 provider_authority_pubkey,
@@ -686,7 +704,7 @@ pub fn decode_coding_session_lifecycle_command(
                 require_hire_routing_request_shape(routing)?;
             }
         }
-        Some("session.resume" | "session.stop") => require_exact_fields(
+        Some("session.resume" | "session.restart" | "session.stop") => require_exact_fields(
             action,
             &["type", "session", "providerAuthorityPubkey"],
             "action",
@@ -1453,6 +1471,10 @@ mod tests {
         };
         for action in [
             CodingSessionLifecycleAction::SessionResume {
+                session: target.clone(),
+                provider_authority_pubkey: "ab".repeat(32),
+            },
+            CodingSessionLifecycleAction::SessionRestart {
                 session: target.clone(),
                 provider_authority_pubkey: "ab".repeat(32),
             },

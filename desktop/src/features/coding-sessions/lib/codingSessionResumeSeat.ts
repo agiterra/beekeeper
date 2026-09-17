@@ -43,6 +43,12 @@ export type CodingSessionResumeSeat = {
    * signed metadata the composer renders everything else from.
    */
   projectRef: string | null;
+  /**
+   * The seat's own worktree when the caller knows it, so the new generation
+   * is staged under the § 4.9 branch override. Omitted means "not known",
+   * which stages main's definition.
+   */
+  worktree?: string | null;
 };
 
 /**
@@ -63,6 +69,7 @@ export function buildCodingSessionResumeInput<T>(input: {
   actorPubkey: string | null;
   actorRole: string | null;
   projectRef: string | null;
+  worktree?: string | null;
   publish: () => Promise<T>;
   deps: CodingSessionSeatCustody;
 } {
@@ -71,6 +78,7 @@ export function buildCodingSessionResumeInput<T>(input: {
     actorPubkey: input.seat.actorPubkey,
     actorRole: input.seat.role,
     projectRef: input.seat.projectRef,
+    ...(input.seat.worktree ? { worktree: input.seat.worktree } : {}),
     publish: input.publish,
     deps: input.deps,
   };

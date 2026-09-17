@@ -240,7 +240,10 @@ fn accepted_lifecycle_pairs<'a>(
                 receipt_payload.status,
                 ReceiptStatus::Created | ReceiptStatus::CreatedWithFailedInitialTurn
             ),
-            CodingSessionLifecycleAction::SessionResume { .. } => matches!(
+            // A restart is a resume that detached first; the provider answers
+            // both with the resume receipts.
+            CodingSessionLifecycleAction::SessionResume { .. }
+            | CodingSessionLifecycleAction::SessionRestart { .. } => matches!(
                 receipt_payload.status,
                 ReceiptStatus::Resumed | ReceiptStatus::ResumedWithoutContext
             ),
@@ -289,6 +292,10 @@ fn lifecycle_authority(action: &CodingSessionLifecycleAction) -> Option<&str> {
             ..
         }
         | CodingSessionLifecycleAction::SessionResume {
+            provider_authority_pubkey,
+            ..
+        }
+        | CodingSessionLifecycleAction::SessionRestart {
             provider_authority_pubkey,
             ..
         }

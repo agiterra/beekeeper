@@ -125,6 +125,12 @@ export type CodingSessionResumeAction = {
   providerAuthorityPubkey: string;
 };
 
+export type CodingSessionRestartAction = {
+  type: "session.restart";
+  session: CodingSessionCommandTarget;
+  providerAuthorityPubkey: string;
+};
+
 export type CodingSessionStopAction = {
   type: "session.stop";
   session: CodingSessionCommandTarget;
@@ -134,6 +140,7 @@ export type CodingSessionStopAction = {
 export type CodingSessionLifecycleAction =
   | CodingSessionCreateAction
   | CodingSessionResumeAction
+  | CodingSessionRestartAction
   | CodingSessionStopAction;
 
 export type CodingSessionLifecycleCommandPayload = {
@@ -389,6 +396,21 @@ export function buildCodingSessionResumeEvent(input: {
   return buildCodingSessionTargetLifecycleEvent(input, "session.resume");
 }
 
+/**
+ * Build an exact-generation restart request: detach the live execution and
+ * reattach it at once as the next generation with a freshly staged seat
+ * (spec § 4.9, "Restart with current definition"). The provider refuses it
+ * while a turn is open (`SESSION_BUSY`).
+ */
+export function buildCodingSessionRestartEvent(input: {
+  channelId: string;
+  commandId: string;
+  target: CodingSessionCommandTarget;
+  providerAuthorityPubkey: string;
+}): CodingSessionLifecycleCommandEventInput {
+  return buildCodingSessionTargetLifecycleEvent(input, "session.restart");
+}
+
 /** Build an exact-generation durable stop request. */
 export function buildCodingSessionStopEvent(input: {
   channelId: string;
@@ -406,7 +428,7 @@ function buildCodingSessionTargetLifecycleEvent(
     target: CodingSessionCommandTarget;
     providerAuthorityPubkey: string;
   },
-  type: "session.resume" | "session.stop",
+  type: "session.resume" | "session.restart" | "session.stop",
 ): CodingSessionLifecycleCommandEventInput {
   validateTargetLifecycleInput(input);
   const payload: CodingSessionLifecycleCommandPayload = {
@@ -512,6 +534,22 @@ export async function publishCodingSessionResume(
     buildCodingSessionResumeEvent(input),
     "Timed out while reconnecting the coding session.",
     "Failed to reconnect the coding session.",
+    dependencies,
+  );
+}
+
+/** Publish an exact-generation restart request (spec § 4.9). */
+export async function publishCodingSessionRestart(
+  input: Parameters<typeof buildCodingSessionRestartEvent>[0],
+  dependencies: {
+    publisher?: LifecyclePublisher;
+    signer?: LifecycleSigner;
+  } = {},
+): Promise<PublishedCodingSessionLifecycleCommand> {
+  return publishLifecycleEvent(
+    buildCodingSessionRestartEvent(input),
+    "Timed out while restarting the coding session.",
+    "Failed to restart the coding session.",
     dependencies,
   );
 }

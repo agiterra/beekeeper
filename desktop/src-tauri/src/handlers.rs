@@ -295,6 +295,7 @@ pub(crate) fn invoke_handler(
         scan_project_role_packs_directory,
         list_project_role_packs,
         compare_project_pack_revisions,
+        seat_definition_drift,
         update_team,
         delete_team,
         export_agent_snapshot,

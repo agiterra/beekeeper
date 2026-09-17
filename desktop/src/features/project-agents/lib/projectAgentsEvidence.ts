@@ -15,6 +15,7 @@ import type {
   CodingSessionCatalogRecord,
   CodingSessionStatus,
 } from "@/features/coding-sessions/lib/codingSessionTypes";
+import type { CodingSessionCommandTarget } from "@/features/coding-sessions/lib/codingSessionCommand";
 import type { ProjectCodingSessionShelfEntry } from "@/features/projects-container/lib/projectCodingSessionShelf";
 import { seatAgeSeconds } from "@/features/roles/lib/seatRows";
 import type {
@@ -87,6 +88,13 @@ export type ProjectAgentSession = {
   packDiffersFromInstalled: boolean;
   /** The fact-stream signer — the only machine identity the wire carries. */
   providerAuthorityPubkey: string | null;
+  /** The transport channel this execution's events live in. */
+  channelId: string;
+  /**
+   * The exact generation a lifecycle command addresses, or `null` when the
+   * catalog has not established one. A restart (spec § 4.9) needs it.
+   */
+  commandTarget: CodingSessionCommandTarget | null;
 };
 
 export type ProjectAgentAssignment = {
@@ -248,6 +256,8 @@ export function collectProjectAgentEvidence(input: {
         session.packRef.role === role &&
         session.packRef.sha !== installedSha,
       providerAuthorityPubkey: session.providerAuthorityPubkey,
+      channelId: entry.channelId,
+      commandTarget: session.commandTarget,
     });
   }
 

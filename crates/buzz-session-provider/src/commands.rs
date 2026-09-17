@@ -172,6 +172,9 @@ pub enum LifecycleDecision {
     Create(Box<CreatePlan>),
     /// Reattach a disconnected session as a new generation.
     Resume(ResumePlan),
+    /// Detach a live session and reattach it at once as a new generation
+    /// with a freshly staged seat (spec § 4.9).
+    Restart(RestartPlan),
     /// Durably stop a session.
     Stop(StopPlan),
 }
@@ -255,6 +258,17 @@ pub struct ResumePlan {
     /// Channel the execution belongs to.
     pub channel_id: Uuid,
     /// Exact disconnected generation the operator observed.
+    pub target: CodingSessionTarget,
+}
+
+/// A validated request to restart one exact current generation in place.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RestartPlan {
+    /// Lifecycle command being answered.
+    pub command_id: String,
+    /// Channel the execution belongs to.
+    pub channel_id: Uuid,
+    /// Exact current generation the operator observed.
     pub target: CodingSessionTarget,
 }
 
@@ -449,6 +463,10 @@ pub fn decide_lifecycle(
             provider_authority_pubkey,
             ..
         }
+        | CodingSessionLifecycleAction::SessionRestart {
+            provider_authority_pubkey,
+            ..
+        }
         | CodingSessionLifecycleAction::SessionStop {
             provider_authority_pubkey,
             ..
@@ -475,6 +493,7 @@ pub fn decide_lifecycle(
     }
 
     if let CodingSessionLifecycleAction::SessionResume { session, .. }
+    | CodingSessionLifecycleAction::SessionRestart { session, .. }
     | CodingSessionLifecycleAction::SessionStop { session, .. } = &payload.action
     {
         if session.instance_id != context.instance_id {
@@ -506,9 +525,12 @@ pub fn decide_lifecycle(
                 ),
             };
         }
+        // A restart reattaches too: it takes the resume's fence and the
+        // resume's authority, never the stop's exemption.
         let is_resume = matches!(
             &payload.action,
             CodingSessionLifecycleAction::SessionResume { .. }
+                | CodingSessionLifecycleAction::SessionRestart { .. }
         );
         // A chain this process has not re-read yet cannot answer whether the
         // session has been handed over, and "not known" must not read as "not
@@ -571,7 +593,10 @@ pub fn decide_lifecycle(
         }
 
         return match &payload.action {
-            CodingSessionLifecycleAction::SessionResume { .. } if record.closed => {
+            CodingSessionLifecycleAction::SessionResume { .. }
+            | CodingSessionLifecycleAction::SessionRestart { .. }
+                if record.closed =>
+            {
                 LifecycleDecision::Fail {
                     command_id: payload.command_id,
                     code: SESSION_CLOSED,
@@ -580,6 +605,13 @@ pub fn decide_lifecycle(
             }
             CodingSessionLifecycleAction::SessionResume { .. } => {
                 LifecycleDecision::Resume(ResumePlan {
+                    command_id: payload.command_id,
+                    channel_id,
+                    target: session.clone(),
+                })
+            }
+            CodingSessionLifecycleAction::SessionRestart { .. } => {
+                LifecycleDecision::Restart(RestartPlan {
                     command_id: payload.command_id,
                     channel_id,
                     target: session.clone(),

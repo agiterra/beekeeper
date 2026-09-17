@@ -56,6 +56,10 @@ pub const PROVIDER_AUTH_REQUIRED: &str = "PROVIDER_AUTH_REQUIRED";
 pub const PROVIDER_UNAVAILABLE: &str = "PROVIDER_UNAVAILABLE";
 /// A resume was requested while the execution still had a live actor.
 pub const SESSION_ALREADY_ATTACHED: &str = "SESSION_ALREADY_ATTACHED";
+/// A `session.restart` arrived while a turn was open on the execution: the
+/// provider will not kill work in flight. Wait for the turn to end, or
+/// interrupt it, then restart.
+pub const SESSION_BUSY: &str = "SESSION_BUSY";
 /// A new generation started, but the provider could not recover prior context.
 pub const CONTEXT_NOT_RECOVERED: &str = "CONTEXT_NOT_RECOVERED";
 /// A create named a genesis event that could not be resolved and verified.

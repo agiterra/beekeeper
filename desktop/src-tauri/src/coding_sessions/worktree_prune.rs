@@ -109,6 +109,10 @@ pub struct CodingSessionSeatWorktreeRow {
     pub tip_on_relay_known: bool,
     /// Whether the caller named this session as deleted.
     pub session_deleted: bool,
+    /// The provider session id recorded at cut time, or `null` for a tree cut
+    /// before its execution had one. The join a surface uses to pair a
+    /// running execution (its 44223 target) with its tree (spec § 4.9).
+    pub session_id: Option<String>,
     /// The one sentence a surface shows for this row.
     pub detail: String,
 }
@@ -293,6 +297,7 @@ pub(crate) fn build_row(
     );
     CodingSessionSeatWorktreeRow {
         key: key.to_string(),
+        session_id: entry.session_id.clone(),
         session_ref,
         seat_label,
         detail,

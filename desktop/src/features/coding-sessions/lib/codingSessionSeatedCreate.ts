@@ -290,6 +290,8 @@ export async function publishSeatedCodingSessionResume<T>(input: {
    * the host stages its local copy.
    */
   projectRef?: string | null;
+  /** The seat's own worktree, for the § 4.9 branch override; omitted when unknown. */
+  worktree?: string | null;
   publish: () => Promise<T>;
   deps: CodingSessionSeatCustody;
   /** Called with what staging actually put on disk, before the publish. */
@@ -301,6 +303,7 @@ export async function publishSeatedCodingSessionResume<T>(input: {
     actorPubkey: input.actorPubkey,
     actorRole: input.actorRole ?? null,
     projectRef: input.projectRef ?? null,
+    ...(input.worktree ? { worktree: input.worktree } : {}),
     publish: input.publish,
     deps: input.deps,
     ...(input.onSeatStaged ? { onSeatStaged: input.onSeatStaged } : {}),

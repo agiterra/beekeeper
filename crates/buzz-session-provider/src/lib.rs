@@ -2735,6 +2735,7 @@ impl Provider {
                 self.create_session(plan, relay).await
             }
             LifecycleDecision::Resume(plan) => self.resume_session(plan, relay).await,
+            LifecycleDecision::Restart(plan) => self.restart_session(plan, relay).await,
             LifecycleDecision::Stop(plan) => self.stop_session(plan),
         }
     }
@@ -4333,6 +4334,60 @@ impl Provider {
             self.publish_seat_requests();
         }
         live.len()
+    }
+
+    /// Spec § 4.9, **Restart with current definition**: detach the live
+    /// child, then reattach as the next generation through the ordinary
+    /// resume path, whose staged seat (under this command id) carries the
+    /// freshly composed pack and whose cursor continues the conversation.
+    ///
+    /// Refuses while a turn is open — the provider does not kill work in
+    /// flight — with `SESSION_BUSY`, consuming the command and the seat the
+    /// desktop staged for it, the same one-shot rule every refusal follows.
+    /// An execution with no live child is simply resumed.
+    async fn restart_session(
+        &mut self,
+        plan: commands::RestartPlan,
+        relay: Option<&HarnessRelay>,
+    ) -> anyhow::Result<()> {
+        let session_id = plan.target.session_id.clone();
+        let Some(record) = self.state.session(&session_id).cloned() else {
+            return Ok(());
+        };
+        if record.open_turn.is_some() {
+            self.state.consume_command(&plan.command_id, now_secs())?;
+            if record.actor.is_some() {
+                self.forget_actor_seat(&plan.command_id);
+            }
+            let receipt = LifecycleReceipt::failed(
+                &plan.command_id,
+                buzz_core::coding_session_payload::SESSION_BUSY,
+                "a turn is open on this execution; wait for it to end or interrupt it, then restart",
+            );
+            return self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt);
+        }
+        if self.sessions.handle(&session_id).is_some() {
+            // The handover fence's detach, made reachable by a command: the
+            // child ends, its packages go, the record stays resumable.
+            self.sessions.shutdown(&session_id);
+            self.discard_context_packages(&session_id);
+            self.publish_metadata(plan.channel_id, &plan.target, SessionStatus::Disconnected)?;
+            tracing::info!(
+                target: "csp",
+                command_id = %plan.command_id,
+                session_id = %session_id,
+                "session detached for restart"
+            );
+        }
+        self.resume_session(
+            ResumePlan {
+                command_id: plan.command_id,
+                channel_id: plan.channel_id,
+                target: plan.target,
+            },
+            relay,
+        )
+        .await
     }
 
     fn stop_session(&mut self, plan: StopPlan) -> anyhow::Result<()> {
@@ -14463,6 +14518,177 @@ mod tests {
             "a refused reconnect left the seat's key at rest: {body}"
         );
         assert!(!body.contains("resume-1"), "{body}");
+    }
+
+    /// Spec § 4.9, **Restart with current definition**: a `session.restart`
+    /// against a live seated execution detaches its child and reattaches it
+    /// as the next generation through the resume path, reading the seat the
+    /// desktop staged under the restart's own command id — so the new
+    /// generation's `packRef` is the freshly staged one, not the old.
+    #[tokio::test]
+    async fn a_restart_of_a_live_seated_execution_detaches_and_reattaches_with_the_new_seat() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let actor = "cd".repeat(32);
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        write_actor_seats(dir.path(), "create-1", &actor);
+        let mut provider = provider(&dir.path().join("state"), Some(&projects));
+
+        let create = seated_create_event(&provider, channel_id, "create-1", &actor, "builder");
+        provider
+            .handle_command_event(channel_id, &create)
+            .await
+            .expect("create");
+        let target = provider
+            .state()
+            .sessions()
+            .next()
+            .expect("session")
+            .target(&provider.config.instance_id);
+        assert_eq!(target.generation, 1);
+        assert!(
+            provider.sessions.handle(&target.session_id).is_some(),
+            "the execution is live before the restart"
+        );
+
+        // The desktop stages the seat anew under the restart's command id,
+        // this time with the composed pack's coordinate on it.
+        let mut extra = serde_json::Map::new();
+        extra.insert(
+            "packRef".into(),
+            serde_json::json!({
+                "repo": format!("30617:{}:packs", "ab".repeat(32)),
+                "sha": "b".repeat(40),
+                "role": "builder",
+                "path": "beekeeper/roles/builder",
+            }),
+        );
+        let seats = write_actor_seats_with(dir.path(), "restart-1", &actor, extra);
+        let restart = lifecycle_target_event(
+            &provider,
+            channel_id,
+            "restart-1",
+            "session.restart",
+            &target,
+        );
+        provider
+            .handle_command_event(channel_id, &restart)
+            .await
+            .expect("restart");
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        let receipt = sink
+            .contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT)
+            .into_iter()
+            .find(|receipt| receipt["commandId"] == "restart-1")
+            .expect("the restart was answered");
+        assert_ne!(
+            receipt["status"], "failed",
+            "a live execution restarts rather than refusing: {receipt}"
+        );
+        let record = provider
+            .state()
+            .session(&target.session_id)
+            .cloned()
+            .expect("record");
+        assert_eq!(record.generation, 2, "the restart is the next generation");
+        assert!(!record.closed, "a restart is not a stop");
+        assert_eq!(
+            record.pack_ref.as_ref().map(|pack| pack.sha.as_str()),
+            Some("b".repeat(40).as_str()),
+            "the new generation runs the seat staged for the restart"
+        );
+        assert_eq!(
+            record.pack_ref.as_ref().map(|pack| pack.path.as_str()),
+            Some("beekeeper/roles/builder")
+        );
+        let body = std::fs::read_to_string(&seats).expect("read seats");
+        assert!(
+            !body.contains("restart-1"),
+            "the restart's seat was consumed: {body}"
+        );
+    }
+
+    /// A restart while a turn is open is refused `SESSION_BUSY`: the provider
+    /// does not kill work in flight. The refusal consumes the command and the
+    /// seat staged for it, and the execution is untouched.
+    #[tokio::test]
+    async fn a_restart_while_a_turn_is_open_is_refused_busy_and_takes_its_seat_with_it() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let actor = "cd".repeat(32);
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        write_actor_seats(dir.path(), "create-1", &actor);
+        let mut provider = provider(&dir.path().join("state"), Some(&projects));
+
+        let create = seated_create_event(&provider, channel_id, "create-1", &actor, "builder");
+        provider
+            .handle_command_event(channel_id, &create)
+            .await
+            .expect("create");
+        let target = provider
+            .state()
+            .sessions()
+            .next()
+            .expect("session")
+            .target(&provider.config.instance_id);
+        provider
+            .state
+            .update_session(&target.session_id, |record| {
+                record.open_turn = Some(OpenTurn {
+                    turn_id: "turn-1".into(),
+                    command_id: Some("csc-1".into()),
+                    team_wake_eligible: false,
+                    started_at_ms: now_ms(),
+                    operator_pubkey: None,
+                });
+            })
+            .expect("open a turn");
+
+        let seats = write_actor_seats(dir.path(), "restart-1", &actor);
+        let restart = lifecycle_target_event(
+            &provider,
+            channel_id,
+            "restart-1",
+            "session.restart",
+            &target,
+        );
+        provider
+            .handle_command_event(channel_id, &restart)
+            .await
+            .expect("restart");
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        let refusal = sink
+            .contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT)
+            .into_iter()
+            .find(|receipt| receipt["commandId"] == "restart-1")
+            .expect("the restart was answered");
+        assert_eq!(refusal["status"], "failed");
+        assert_eq!(
+            refusal["error"]["code"],
+            buzz_core::coding_session_payload::SESSION_BUSY
+        );
+        let record = provider
+            .state()
+            .session(&target.session_id)
+            .cloned()
+            .expect("record");
+        assert_eq!(record.generation, 1, "the execution was not touched");
+        assert!(record.open_turn.is_some(), "the turn is still open");
+        assert!(
+            provider.sessions.handle(&target.session_id).is_some(),
+            "the child is still live"
+        );
+        let body = std::fs::read_to_string(&seats).expect("read seats");
+        assert!(!body.contains("restart-1"), "{body}");
+        assert!(!body.contains(TEST_SEAT_NSEC), "{body}");
     }
 
     /// A create refused before it dispatches takes the seat's key with it.

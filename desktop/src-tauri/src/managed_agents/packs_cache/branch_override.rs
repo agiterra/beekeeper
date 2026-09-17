@@ -127,16 +127,48 @@ pub fn branch_role_override(
         .join(BRANCH_TREES_DIR)
         .join(format!("{}-{sha}", pack_cache_dir_name(&owner, &id)));
     materialize_commit_tree(worktree, &sha, &path, &tree_dir, auth)?;
-    let Some(role_source) = locate_role_source(&tree_dir, &path, role) else {
+    compose_commit_tree(
+        packs_root,
+        source,
+        &owner,
+        &id,
+        &sha,
+        &path,
+        role,
+        &tree_dir,
+        catalog,
+        main_digest,
+        dirty,
+    )
+}
+
+/// Compose `role` from a materialized commit tree and compare it with
+/// `main`'s digest.
+#[allow(clippy::too_many_arguments)] // Every argument is a fact the comparison reads.
+fn compose_commit_tree(
+    packs_root: &Path,
+    source: &ProjectPackSource,
+    owner: &str,
+    id: &str,
+    sha: &str,
+    path: &str,
+    role: &str,
+    tree_dir: &Path,
+    catalog: &TemplateCatalog,
+    main_digest: &str,
+    dirty: bool,
+) -> Result<BranchOverrideCheck, String> {
+    let sha = sha.to_string();
+    let Some(role_source) = locate_role_source(tree_dir, path, role) else {
         return Ok(BranchOverrideCheck {
             decision: BranchOverride::RoleAbsent { sha },
             dirty,
         });
     };
-    let ref_path = pack_ref_path(&role_source, &path);
+    let ref_path = pack_ref_path(&role_source, path);
     let staged = stage_composed_pack(
         packs_root,
-        &format!("{}-{sha}", pack_cache_dir_name(&owner, &id)),
+        &format!("{}-{sha}", pack_cache_dir_name(owner, id)),
         &role_source,
         catalog,
         SourceProvenance {
@@ -163,12 +195,17 @@ pub fn branch_role_override(
 }
 
 /// Write every file under `<sha>:<path>` into `<dest>/<path>/…`, byte for
-/// byte, from the repository's objects.
+/// byte, from the objects of the repository at `worktree` (any checkout or
+/// worktree of it; the packs cache included).
 ///
 /// Idempotent: a destination that already holds the commit's tree is left
 /// alone (a commit's tree cannot change), so the second seat cut on the same
 /// branch commit reads what the first one wrote.
-fn materialize_commit_tree(
+///
+/// # Errors
+/// A sentence when the repository does not hold `sha` (`ls-tree` refuses),
+/// when a listed path would escape `dest`, or on a filesystem failure.
+pub(super) fn materialize_commit_tree(
     worktree: &Path,
     sha: &str,
     path: &str,

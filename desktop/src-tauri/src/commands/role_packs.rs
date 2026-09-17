@@ -15,6 +15,7 @@ use crate::app_state::AppState;
 use crate::managed_agents::pack_revisions::{
     compare_project_pack_revisions_blocking, ProjectPackRevisionComparison,
 };
+use crate::managed_agents::packs_cache::{self, DefinitionDrift, DefinitionDriftState};
 use crate::managed_agents::role_packs_view::{
     fetch_project_pack_source, list_project_role_packs_blocking, RolePackSummary,
 };
@@ -92,4 +93,80 @@ pub async fn compare_project_pack_revisions(
     tokio::task::spawn_blocking(move || compare_project_pack_revisions_blocking(&app, source, shas))
         .await
         .map_err(|error| format!("spawn_blocking failed: {error}"))?
+}
+
+/// Has a running seat's role definition drifted from what this computer
+/// would stage for it now? Spec § 4.9, the fact behind **Definition changed**.
+///
+/// `seat_sha` is the seat's `packRef.sha` off its kind:44223 — the commit
+/// its instructions came from. `worktree` is the seat's own tree when the
+/// caller knows it, so the seat's branch override is part of "now".
+///
+/// Read-only for the seat: the project's packs cache is synced and the two
+/// compositions are staged under the packs cache (immutable, digest-keyed);
+/// nothing is published, no execution is touched. A project with no
+/// kind:30624 answers `unknown` — the seat came from a local rung the wire
+/// cannot name, so there is nothing to compare against.
+///
+/// # Errors
+/// A sentence when `project_ref` is blank, when the relay could not be read,
+/// or when this computer's packs cache or git could not be prepared.
+#[tauri::command]
+pub async fn seat_definition_drift(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    project_ref: String,
+    role: String,
+    seat_sha: String,
+    worktree: Option<String>,
+) -> Result<DefinitionDrift, String> {
+    let project_ref = project_ref.trim().to_owned();
+    if project_ref.is_empty() {
+        return Err("a project coordinate is required".to_string());
+    }
+    let role = role.trim().to_owned();
+    if !packs_cache::is_role_slug(&role) {
+        return Err(format!("{role:?} is not a role slug"));
+    }
+    let Some(source) = fetch_project_pack_source(&state, &project_ref).await? else {
+        return Ok(DefinitionDrift {
+            state: DefinitionDriftState::Unknown,
+            seat_sha: seat_sha.trim().to_ascii_lowercase(),
+            current_sha: None,
+            current_source_kind: None,
+            current_digest: None,
+            seat_digest: None,
+            cause: String::new(),
+            reason: Some(
+                "this project publishes no pack source (kind 30624), so there is no current \
+                 definition to compare the seat's against"
+                    .to_string(),
+            ),
+            warnings: Vec::new(),
+        });
+    };
+    let worktree = worktree
+        .map(|path| path.trim().to_owned())
+        .filter(|path| !path.is_empty());
+    tokio::task::spawn_blocking(move || {
+        use tauri::Manager;
+        let state = app.state::<AppState>();
+        let packs_root = packs_cache::packs_root(&app)?;
+        let auth = crate::commands::project_git_exec::build_git_auth_config(&state)?;
+        let relay_http =
+            crate::relay::relay_http_base_url(&crate::relay::relay_ws_url_with_override(&state));
+        let catalog = packs_cache::template_catalog(&app);
+        Ok::<_, String>(packs_cache::definition_drift(
+            &packs_root,
+            &relay_http,
+            &source,
+            &role,
+            &seat_sha,
+            worktree.as_deref().map(std::path::Path::new),
+            &auth,
+            &catalog,
+        ))
+    })
+    .await
+    .map_err(|error| format!("spawn_blocking failed: {error}"))?
 }

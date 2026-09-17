@@ -13500,6 +13500,71 @@ Evidence and limits: [conditional publication checkpoint](history/2026-09-12-pro
      for the seated create, hire, crew launch and resume: 75 passed; `pnpm
      typecheck` clean. No live hire exercised.
 
+146. **Definition drift and `session.restart`: a running seat says whether it
+     still runs the definition this computer would stage now, and one button
+     restarts it on the current one (2026-09-17, Andy with Fable).** Spec
+     `docs/PROJECT_TEAMS_AND_ACTIONS_SPEC.md` § 4.9, second half. Closes the
+     restage gap ledger 145 disclosed for seats whose tree the host recorded.
+
+     **Drift.** `desktop/src-tauri/src/managed_agents/packs_cache/
+     definition_drift.rs`: `definition_drift` stages `main`'s current
+     composition for the role, runs the § 4.9 branch check when the seat's
+     worktree is known, composes the seat's own `packRef.sha` from the packs
+     cache's objects (`materialize_commit_tree` over the cache checkout, into
+     `<packs root>/seat/…`), and compares digests. Three states, never a
+     guess: `current` (same digest; the cause says "the source moved … and
+     this role's definition is unchanged" when the sha differs), `changed`
+     (cause names `main moved a → b and changed the <role> definition` or
+     `this seat's branch changed the <role> definition`), `unknown` with the
+     reason (the cache does not hold the seat's commit; the source cannot be
+     staged; a malformed sha). Tauri command `seat_definition_drift(project,
+     role, seat_sha, worktree?)`; a project with no 30624 answers `unknown`.
+     The seat's worktree reaches the check through the host's seat-worktree
+     rows, which now carry `sessionId` so an execution's 44223 target joins
+     its tree (`worktree_prune.rs` row, TS `SeatWorktreeRow.sessionId`).
+
+     **Restart.** New kind 44221 action `session.restart {session,
+     providerAuthorityPubkey}` (`crates/buzz-core/src/
+     coding_session_lifecycle_command.rs`; exact three-key shape like
+     resume; resume's fence and authority in `decide_lifecycle`; judged by
+     the resume receipts in `pulse_fold` and verdict-admission). The
+     provider's `restart_session` refuses while a turn is open with the new
+     code `SESSION_BUSY` (consuming the command and its staged seat, the
+     one-shot rule), otherwise shuts the live child down, discards its
+     packages, publishes `Disconnected`, and runs the ordinary resume: the
+     next generation reads the seat the desktop staged under the restart's
+     command id — the freshly composed pack — and continues from the cursor.
+     The detach primitive existed only inside the handover fence
+     (`lib.rs` ~6270); this makes it reachable by a command. **The relay's
+     shared validator refuses an action type it does not know, so
+     `session.restart` works against hive only after the relay is redeployed
+     from a `main` that carries this commit.**
+
+     **Card.** `desktop/src/features/project-agents/ui/
+     ProjectAgentSessionDefinition.tsx` under each open execution's
+     instructions line on the project Agents tab: checking → current (only
+     shown when the source moved or a warning applies) → **Definition
+     changed: <cause>** with **Restart with current definition**, disabled
+     mid-turn with the reason, and the host's or relay's refusal rendered
+     verbatim. The click stages the seat afresh (with the seat's worktree
+     when known) under a new command id and publishes `session.restart`;
+     nothing restarts without it. `ProjectAgentSession` gains `channelId`
+     and `commandTarget`.
+
+     **Evidence.** Provider: `a_restart_of_a_live_seated_execution_detaches_
+     and_reattaches_with_the_new_seat` (generation 1 → 2, `packRef` from the
+     restart's seat, `closed` false, seat consumed) and
+     `a_restart_while_a_turn_is_open_is_refused_busy_and_takes_its_seat_with_it`.
+     Desktop: three drift tests in `packs_cache/tests.rs` (current on the
+     same commit and on an unrelated move; changed when `main` changed the
+     role and unknown for a commit the cache lacks; the seat's branch counts
+     as now, with uncommitted edits disclosed). Core lifecycle tests extended
+     with the restart round-trip. Clippy clean across core, provider, relay,
+     CLI and Tauri; desktop typecheck and biome clean. **Not exercised
+     live**: no restart has been clicked against a running seat on this
+     build, and the relay side needs the redeploy above.
+
+
 
 
 

@@ -332,3 +332,31 @@ export function assignmentScopeText(scope: {
   }
   return null;
 }
+
+// ── Spec § 4.9: definition drift and restart ─────────────────────────────────
+
+/** The card's heading when a running seat no longer runs what would be staged now. */
+export const DEFINITION_CHANGED = "Definition changed";
+/** Shown while the host compares the seat's definition with the current one. */
+export const DEFINITION_CHECKING =
+  "Checking whether this definition is current…";
+/** The seat is current, and the source moved without touching its role. */
+export const DEFINITION_CURRENT_MOVED = "Definition current";
+/** The host could not compose one side; its reason follows verbatim. */
+export const DEFINITION_UNKNOWN = "Definition status unknown";
+/** The one action the card offers. */
+export const RESTART_WITH_CURRENT_DEFINITION =
+  "Restart with current definition";
+/** Why the button is disabled mid-turn: the provider refuses a restart then. */
+export const RESTART_WAIT_FOR_TURN =
+  "Wait for the current turn to end, or interrupt it, before restarting.";
+/** After the restart command is published; the new generation arrives as a fact. */
+export const RESTART_REQUESTED =
+  "Restart requested. The new generation appears here once the provider answers.";
+
+/** The host's cause sentence, verbatim, with a fallback that names nothing. */
+export function definitionDriftCause(drift: { cause: string }): string {
+  return drift.cause.length > 0
+    ? drift.cause
+    : "the current definition differs";
+}

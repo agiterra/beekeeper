@@ -239,6 +239,12 @@ export type SeatWorktreeRow = {
   exists: boolean;
   /** Whether the caller named this session as deleted. */
   sessionDeleted: boolean;
+  /**
+   * The provider session id recorded at cut time, or `null` for a tree cut
+   * before its execution had one. Pairs a running execution's target with
+   * its tree (spec § 4.9).
+   */
+  sessionId: string | null;
   /** Whether the relay's current ref state was established at all. */
   tipOnRelayKnown: boolean;
   /** The one sentence a surface shows for this row. */

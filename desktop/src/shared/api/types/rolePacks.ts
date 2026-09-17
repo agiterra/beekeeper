@@ -122,3 +122,31 @@ export type ProjectPackRevisionComparison = {
   reason: string | null;
   relations: ProjectPackRevisionEntry[];
 };
+
+/**
+ * Whether a running seat's role definition has drifted from what this
+ * computer would stage for it now (spec § 4.9). Mirrors the Rust
+ * `DefinitionDrift` (`desktop/src-tauri/src/managed_agents/packs_cache/definition_drift.rs`).
+ *
+ * `unknown` is a disclosed non-answer, never a "current": one side could
+ * not be composed here and `reason` says which.
+ */
+export type SeatDefinitionDriftState = "current" | "changed" | "unknown";
+
+export type SeatDefinitionDrift = {
+  state: SeatDefinitionDriftState;
+  /** The commit the seat's instructions came from (its `packRef.sha`). */
+  seatSha: string;
+  /** The commit "now" resolves to: main's pin, or the seat's branch. `null` when unknown. */
+  currentSha: string | null;
+  /** `repository` or `branch-override`; `null` when unknown. */
+  currentSourceKind: string | null;
+  currentDigest: string | null;
+  seatDigest: string | null;
+  /** One sentence naming what moved; `""` when nothing did. */
+  cause: string;
+  /** Why the answer is `unknown`, verbatim; `null` otherwise. */
+  reason: string | null;
+  /** Uncommitted role edits, composer warnings — facts beside the state. */
+  warnings: string[];
+};
