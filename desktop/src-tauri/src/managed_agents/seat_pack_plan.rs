@@ -85,6 +85,7 @@ pub(crate) fn plan_seat_pack(
                                 pack.persona = staged.persona;
                                 pack.digest = staged.digest;
                                 pack.warnings.extend(staged.warnings);
+                                pack.roles_visible = staged.roles_visible;
                                 pack.pack_ref.sha = sha;
                                 pack.pack_ref.path = pack_ref_path;
                                 source_kind = packs_cache::BRANCH_OVERRIDE_KIND.to_string();
@@ -107,6 +108,7 @@ pub(crate) fn plan_seat_pack(
                     warnings: pack.warnings,
                     compose_digest: Some(pack.digest),
                     source_kind: Some(source_kind),
+                    roles_visible: pack.roles_visible,
                 }
             }
             Err(reason) => refused_plan(Some(role), packs_cache::HIRE_PACK_UNAVAILABLE, reason),
@@ -190,6 +192,7 @@ pub(crate) fn plan_seat_pack(
                     warnings: Vec::new(),
                     compose_digest: None,
                     source_kind: Some("local".to_string()),
+                    roles_visible: false,
                 };
             };
             let (key, provenance) = match (&origin, &pack_ref) {
@@ -228,6 +231,7 @@ pub(crate) fn plan_seat_pack(
             warnings: Vec::new(),
             compose_digest: None,
             source_kind: None,
+            roles_visible: false,
         },
     }
 }
@@ -246,6 +250,7 @@ fn refused_plan(role: Option<String>, refusal: &str, reason: String) -> SeatPack
         warnings: Vec::new(),
         compose_digest: None,
         source_kind: None,
+        roles_visible: false,
     }
 }
 
@@ -283,6 +288,7 @@ fn stage_local_plan(
             warnings: staged.warnings,
             compose_digest: Some(staged.digest),
             source_kind: Some(provenance_kind.to_string()),
+            roles_visible: staged.roles_visible,
         },
         Err(reason) => refused_plan(
             Some(role.to_string()),

@@ -497,6 +497,7 @@ fn the_wire_shape_is_camel_case_with_exactly_these_keys() {
         refusal: None,
         warnings: vec!["beekeeper/memory@^1.0.0 resolved to 1.0.0, which is deprecated".into()],
         compose_digest: Some("sha256:abc".into()),
+        roles_visible: false,
     };
     let json = serde_json::to_value(&row).expect("serializes");
     let keys = |value: &serde_json::Value| -> Vec<String> {
@@ -520,6 +521,7 @@ fn the_wire_shape_is_camel_case_with_exactly_these_keys() {
             "packRef",
             "refusal",
             "role",
+            "rolesVisible",
             "skills",
             "summary",
             "version",

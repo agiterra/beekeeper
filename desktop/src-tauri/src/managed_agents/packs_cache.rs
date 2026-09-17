@@ -162,6 +162,9 @@ pub struct StagedProjectPack {
     /// What the composer wanted said: a deprecated template, a mid-line
     /// `![[`. Never a refusal — those are `Err`.
     pub warnings: Vec<String>,
+    /// Whether a seat in this role may see the `beekeeper/` directory in its
+    /// worktree (`team.yml` `workspace.roles_visible`, spec § 4.10).
+    pub roles_visible: bool,
 }
 
 /// A composed pack staged under the packs cache from any rung.
@@ -175,6 +178,9 @@ pub struct StagedComposedPack {
     pub digest: String,
     /// The composer's warnings, verbatim.
     pub warnings: Vec<String>,
+    /// `team.yml` `workspace.roles_visible` for this role; `false` without
+    /// a manifest or for a pack source.
+    pub roles_visible: bool,
 }
 
 /// Split `30617:<owner-hex>:<id>` into its owner and repository id.
@@ -778,6 +784,7 @@ pub fn stage_composed_pack(
         persona: composed.role().to_string(),
         digest: composed.provenance.digest,
         warnings: composed.provenance.warnings,
+        roles_visible: composed.roles_visible,
     })
 }
 
@@ -831,6 +838,7 @@ pub fn stage_project_role_pack(
         persona: staged.persona,
         digest: staged.digest,
         warnings: staged.warnings,
+        roles_visible: staged.roles_visible,
     })
 }
 

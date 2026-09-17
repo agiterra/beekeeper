@@ -93,6 +93,9 @@ pub struct RolePackSummary {
     /// The staged composition's `sha256:…` digest, or `null` when nothing
     /// could be staged.
     pub compose_digest: Option<String>,
+    /// `team.yml` `workspace.roles_visible` for this role (spec § 4.10):
+    /// a seat in this role keeps `beekeeper/` in its worktree.
+    pub roles_visible: bool,
 }
 
 /// The project rung, after the packs repository has been synced — or not.
@@ -490,6 +493,7 @@ fn summarize(
                 }),
                 warnings: Vec::new(),
                 compose_digest: None,
+                roles_visible: false,
             };
         }
     };
@@ -534,6 +538,7 @@ fn summarize(
                 refusal,
                 warnings: staged.warnings.clone(),
                 compose_digest: Some(staged.digest.clone()),
+                roles_visible: staged.roles_visible,
             }
         }
         Err(error) => {
@@ -551,6 +556,7 @@ fn summarize(
                 refusal: refusal.or(Some(unreadable)),
                 warnings: staged.warnings.clone(),
                 compose_digest: Some(staged.digest.clone()),
+                roles_visible: staged.roles_visible,
             }
         }
     }

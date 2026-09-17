@@ -62,6 +62,9 @@ pub enum ComposeError {
     #[error(transparent)]
     Template(#[from] TemplateError),
 
+    #[error(transparent)]
+    Team(#[from] crate::team::TeamError),
+
     #[error("failed to {operation} {path}: {source}")]
     Io {
         operation: &'static str,
@@ -258,6 +261,10 @@ pub struct ComposedRole {
     /// The synthesized manifest id and version.
     pub pack_id: String,
     pub pack_version: String,
+    /// Whether a seat in this role may see the `beekeeper/` directory in
+    /// its worktree (`team.yml` `workspace.roles_visible`, spec § 4.10).
+    /// `false` for a pack source and for a flat root with no manifest.
+    pub roles_visible: bool,
     /// The persona as it will be written: frontmatter fields with the body
     /// fully expanded and `skills` rewritten to the staged layout.
     pub persona: PersonaConfig,
@@ -389,24 +396,26 @@ pub fn compose_role(
         .map(|s| format!("./skills/{}/", s.name))
         .collect();
 
+    // The pack's own manifest, then `team.yml`, then the caller's option,
+    // then a disclosed placeholder.
     let pack_id = match source {
         RoleSource::Pack { .. } => draft.pack_id,
-        RoleSource::Flat { .. } => options
-            .pack_id
-            .clone()
-            .unwrap_or_else(|| format!("project:{}", dir_name(source.root()))),
+        RoleSource::Flat { .. } => options.pack_id.clone().unwrap_or(draft.pack_id),
     };
     let pack_version = match source {
         RoleSource::Pack { .. } => draft.pack_version,
-        RoleSource::Flat { .. } => options
+        RoleSource::Flat { .. } if draft.pack_version.is_empty() => options
             .pack_version
             .clone()
             .unwrap_or_else(|| "0.0.0".to_owned()),
+        RoleSource::Flat { .. } => draft.pack_version,
     };
+    let roles_visible = draft.roles_visible;
 
     let mut composed = ComposedRole {
         pack_id,
         pack_version,
+        roles_visible,
         persona,
         skills,
         provenance: ComposeProvenance {
@@ -489,6 +498,7 @@ struct RoleDraft {
     skills: Vec<SkillSource>,
     pack_id: String,
     pack_version: String,
+    roles_visible: bool,
 }
 
 fn load_draft(source: &RoleSource) -> Result<RoleDraft, ComposeError> {
@@ -526,10 +536,22 @@ fn load_draft(source: &RoleSource) -> Result<RoleDraft, ComposeError> {
                 skills,
                 pack_id: loaded.manifest.id.clone(),
                 pack_version: loaded.manifest.version.clone(),
+                roles_visible: false,
             })
         }
         RoleSource::Flat { root, role } => {
-            let path = root.join(FLAT_ROLES_DIR).join(format!("{role}.md"));
+            // The manifest is advisory about everything but which file to
+            // read and what the pack is called; a broken one refuses.
+            let team = crate::team::load_team(root)?;
+            let entry = team.as_ref().map(|t| t.role(role)).unwrap_or_default();
+            let rel = team
+                .as_ref()
+                .map(|t| t.role_file(role))
+                .unwrap_or_else(|| format!("{FLAT_ROLES_DIR}/{role}.md"));
+            let path = safe_join(root, &rel).ok_or_else(|| ComposeError::IncludeEscapes {
+                path: root.join(crate::team::TEAM_YML),
+                directive: rel.clone(),
+            })?;
             if !path.is_file() {
                 return Err(ComposeError::RoleNotFound {
                     role: role.clone(),
@@ -537,11 +559,18 @@ fn load_draft(source: &RoleSource) -> Result<RoleDraft, ComposeError> {
                 });
             }
             let content = read_bounded(&path)?;
-            let persona =
+            let mut persona =
                 persona::parse_role_md(&content, role).map_err(|source| ComposeError::Persona {
                     path: path.clone(),
                     source,
                 })?;
+            // Advisory fill-ins: the role file's own frontmatter wins.
+            if persona.runtime.is_none() {
+                persona.runtime = entry.runtime.clone();
+            }
+            if persona.model.is_none() {
+                persona.model = entry.model.clone();
+            }
             let mut skills = Vec::new();
             // Frontmatter-claimed, relative to the root.
             for claimed in &persona.skills {
@@ -579,13 +608,21 @@ fn load_draft(source: &RoleSource) -> Result<RoleDraft, ComposeError> {
                 });
             }
             let body = persona.prompt.clone();
+            let pack_id = format!(
+                "project:{}",
+                team.as_ref()
+                    .and_then(|t| t.name.clone())
+                    .unwrap_or_else(|| dir_name(root))
+            );
+            let pack_version = team.as_ref().map(|t| t.version.clone()).unwrap_or_default();
             Ok(RoleDraft {
                 persona,
                 body,
                 path,
                 skills,
-                pack_id: String::new(),
-                pack_version: String::new(),
+                pack_id,
+                pack_version,
+                roles_visible: entry.workspace.roles_visible,
             })
         }
     }
@@ -1578,6 +1615,82 @@ mod tests {
             compose_flat(&root, "Not Valid", &catalog).unwrap_err(),
             ComposeError::InvalidRoleSlug { .. }
         ));
+    }
+
+    #[test]
+    fn a_team_manifest_names_the_pack_picks_the_file_and_fills_in_advisory_facts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let catalog = TemplateCatalog::empty("x");
+        let root = tmp.path().join("beekeeper");
+        write(
+            &root.join("team.yml"),
+            "schema: beekeeper-team/v1\nname: tank-loop\nversion: 0.3.0\nlead: pm\nroles:\n  pm:\n    file: roles/manager.md\n    runtime: claude\n    model: anthropic:claude-sonnet-5\n    workspace: { roles_visible: true }\n  builder:\n    runtime: codex\nagents:\n  - { name: Keystone, role: pm, lifetime: persistent }\n",
+        );
+        write(&root.join("roles").join("manager.md"), "Manage.\n");
+        write(
+            &root.join("roles").join("builder.md"),
+            "---\nruntime: claude\n---\nBuild.\n",
+        );
+        let pm = compose_flat(&root, "pm", &catalog).unwrap();
+        assert_eq!(pm.pack_id, "project:tank-loop");
+        assert_eq!(pm.pack_version, "0.3.0");
+        assert_eq!(
+            pm.persona.prompt, "Manage.\n",
+            "the manifest's file was read"
+        );
+        assert_eq!(pm.persona.runtime.as_deref(), Some("claude"));
+        assert_eq!(
+            pm.persona.model.as_deref(),
+            Some("anthropic:claude-sonnet-5")
+        );
+        assert!(pm.roles_visible);
+        let builder = compose_flat(&root, "builder", &catalog).unwrap();
+        assert_eq!(
+            builder.persona.runtime.as_deref(),
+            Some("claude"),
+            "the role file's own frontmatter wins over the advisory value"
+        );
+        assert!(!builder.roles_visible);
+        // A role the manifest does not list still composes from its file.
+        write(&root.join("roles").join("verifier.md"), "Verify.\n");
+        let verifier = compose_flat(&root, "verifier", &catalog).unwrap();
+        assert_eq!(verifier.pack_id, "project:tank-loop");
+        assert!(!verifier.roles_visible);
+        // The caller's pack id overrides the manifest's; the version does not
+        // fall back to the placeholder when the manifest has one.
+        let overridden = compose_role(
+            &RoleSource::Flat {
+                root: root.clone(),
+                role: "pm".into(),
+            },
+            &catalog,
+            &ComposeOptions {
+                pack_id: Some("project:other".into()),
+                pack_version: None,
+                source: SourceProvenance::local("x"),
+            },
+        )
+        .unwrap();
+        assert_eq!(overridden.pack_id, "project:other");
+        assert_eq!(overridden.pack_version, "0.3.0");
+    }
+
+    #[test]
+    fn a_broken_team_manifest_refuses_composition_and_a_missing_one_is_fine() {
+        let tmp = tempfile::tempdir().unwrap();
+        let catalog = TemplateCatalog::empty("x");
+        let root = tmp.path().join("beekeeper");
+        write(&root.join("roles").join("lead.md"), "Lead.\n");
+        let fine = compose_flat(&root, "lead", &catalog).unwrap();
+        assert_eq!(fine.pack_id, "project:beekeeper");
+        assert_eq!(fine.pack_version, "0.0.0");
+        write(
+            &root.join("team.yml"),
+            "schema: beekeeper-team/v1\nversion: 1\nlead: nobody\n",
+        );
+        let error = compose_flat(&root, "lead", &catalog).unwrap_err();
+        assert!(matches!(error, ComposeError::Team(_)), "{error}");
+        assert!(error.to_string().contains("lead"), "{error}");
     }
 
     #[test]

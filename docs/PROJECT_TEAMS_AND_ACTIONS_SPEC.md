@@ -233,6 +233,9 @@ agents:                         # advisory: the host mints identities (D11)
 ```
 
 `lifetime` is parsed and surfaced here and enforced only by Part C (§ 5.7).
+Status 2026-09-17: the manifest is read by the composer (ledger 147); `name`
+is optional and defaults to the root directory's name; `runtime`/`model`
+fill in only where the role file's own frontmatter is silent.
 `agents[].name` is what `actions.yml` uses to name a routing target. A role in
 `agents` that is not in `roles` is a validation error; a role in `roles` with
 no agent is fine (hired by name at run time).

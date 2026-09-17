@@ -1206,6 +1206,14 @@ Besides a pack directory, the composer reads a flat project layout:
 <root>/skills/<s>/SKILL.md              # shared: every role
 ```
 
+An optional `<root>/team.yml` (`schema: beekeeper-team/v1`; `name`,
+`version`, `lead`, `roles.<role>.{file, runtime, model,
+workspace.roles_visible}`, `agents[{name, role, lifetime}]`) names the
+synthesized pack and fills in advisory facts the role file leaves unsaid; a
+role file composes whether or not the manifest lists it, and a manifest that
+is present and invalid refuses every composition from that root
+(`buzz-persona::team`).
+
 A flat role's frontmatter, when present, is the same closed key set as a
 `.persona.md`. `name`, `display_name` and `role` default from the file stem,
 which must be a role slug; `description` defaults to the role's own first

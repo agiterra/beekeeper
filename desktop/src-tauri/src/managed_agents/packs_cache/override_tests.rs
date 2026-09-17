@@ -97,6 +97,7 @@ fn main_composition(
             persona: staged.persona,
             digest: staged.digest,
             warnings: staged.warnings,
+            roles_visible: staged.roles_visible,
         },
     )
 }
@@ -357,6 +358,7 @@ fn drift_is_current_when_the_seat_runs_the_current_commit_or_an_unchanged_role()
                 persona: staged.persona,
                 digest: staged.digest,
                 warnings: staged.warnings,
+                roles_visible: staged.roles_visible,
             },
         )
     };

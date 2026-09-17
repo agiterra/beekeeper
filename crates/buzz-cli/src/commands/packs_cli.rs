@@ -59,9 +59,15 @@ pub enum PacksCmd {
         /// Role packs to seed from (default: the nearest personas/roles)
         #[arg(long)]
         from: Option<PathBuf>,
-        /// Directory inside the repository to write them to (default: personas/roles)
+        /// Directory inside the repository to write them to (default:
+        /// personas/roles for --layout pack, beekeeper for --layout flat)
         #[arg(long)]
         path: Option<String>,
+        /// The layout of the seed directory: `pack` (one pack directory per
+        /// role, the shipped layout) or `flat` (`roles/<role>.md`, `team.yml`,
+        /// `skills/` — the layout a project keeps beside its code)
+        #[arg(long, default_value = "pack")]
+        layout: String,
         /// Print the plan and touch nothing
         #[arg(long)]
         dry_run: bool,
@@ -144,8 +150,10 @@ pub(crate) async fn dispatch(sub: PacksCmd, client: &BuzzClient) -> Result<(), C
             repo_id,
             from,
             path,
+            layout,
             dry_run,
         } => {
+            let layout = super::packs::PackLayout::parse(&layout)?;
             super::packs::cmd_init(
                 client,
                 &super::packs::PackInitRequest {
@@ -153,6 +161,7 @@ pub(crate) async fn dispatch(sub: PacksCmd, client: &BuzzClient) -> Result<(), C
                     repo_id: repo_id.as_deref(),
                     from: from.as_deref(),
                     path: path.as_deref(),
+                    layout,
                     dry_run,
                 },
             )

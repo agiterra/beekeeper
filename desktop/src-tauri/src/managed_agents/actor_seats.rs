@@ -588,6 +588,12 @@ pub struct SeatPackPreview {
     /// `local`. `null` when nothing was staged.
     #[serde(default)]
     pub source_kind: Option<String>,
+    /// Whether a seat in this role may see the `beekeeper/` directory in its
+    /// worktree (`team.yml` `workspace.roles_visible`, spec § 4.10); the
+    /// worktree cut reads it to decide `hide_roles`. `false` when nothing
+    /// was staged or the source has no manifest.
+    #[serde(default)]
+    pub roles_visible: bool,
 }
 
 // The staging rule itself lives in `seat_pack_plan.rs`; re-exported so every

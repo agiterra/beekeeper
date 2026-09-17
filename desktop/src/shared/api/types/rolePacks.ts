@@ -70,6 +70,12 @@ export type RolePackSummary = {
   warnings: string[];
   /** The staged composition's `sha256:…` digest, or `null` when nothing was staged. */
   composeDigest: string | null;
+  /**
+   * `team.yml` `workspace.roles_visible` for this role (spec § 4.10): a seat
+   * in this role keeps `beekeeper/` in its worktree. `false` without a
+   * manifest.
+   */
+  rolesVisible: boolean;
 };
 
 /**

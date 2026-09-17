@@ -230,9 +230,17 @@ pub async fn cmd_status(
         .as_ref()
         .zip(source.cache_dir_name())
         .map(|(root, name)| root.join(name));
-    let role_dirs = cache_dir
-        .as_ref()
-        .map(|dir| role_directories(&dir.join(source.path())));
+    let role_dirs = cache_dir.as_ref().map(|dir| {
+        let root = dir.join(source.path());
+        let mut found = role_directories(&root);
+        for flat in flat_role_files(&root) {
+            if !found.contains(&flat) {
+                found.push(flat);
+            }
+        }
+        found.sort();
+        found
+    });
 
     let would_stage = match role {
         Some(role) => json!({
@@ -369,6 +377,47 @@ fn compose_status(cache_dir: &Path, path: &str, role: &str, templates: Option<&P
     }
 }
 
+/// The two layouts a role source comes in (spec § 4.8).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PackLayout {
+    /// One pack directory per role: `<path>/<role>/.plugin/plugin.json`.
+    Pack,
+    /// The flat team layout: `<path>/roles/<role>.md`, `<path>/team.yml`.
+    Flat,
+}
+
+impl PackLayout {
+    /// Parse `--layout`.
+    ///
+    /// # Errors
+    /// [`CliError::Usage`] naming the two accepted words.
+    pub fn parse(word: &str) -> Result<Self, CliError> {
+        match word.trim() {
+            "pack" => Ok(Self::Pack),
+            "flat" => Ok(Self::Flat),
+            other => Err(CliError::Usage(format!(
+                "--layout must be `pack` or `flat`, got {other:?}"
+            ))),
+        }
+    }
+
+    /// The `path` a source of this layout defaults to.
+    pub fn default_path(self) -> &'static str {
+        match self {
+            Self::Pack => DEFAULT_PACK_PATH,
+            Self::Flat => "beekeeper",
+        }
+    }
+
+    /// The roles a seed directory of this layout holds, sorted.
+    pub fn roles_in(self, seed: &Path) -> Vec<String> {
+        match self {
+            Self::Pack => role_directories(seed),
+            Self::Flat => flat_role_files(seed),
+        }
+    }
+}
+
 /// What `bee packs init` was asked to build.
 pub struct PackInitRequest<'a> {
     /// Project coordinate `30621:<owner-hex>:<slug>`.
@@ -380,6 +429,8 @@ pub struct PackInitRequest<'a> {
     pub from: Option<&'a Path>,
     /// Directory inside the repository to write the packs to.
     pub path: Option<&'a str>,
+    /// The layout of the seed directory, which also picks the default path.
+    pub layout: PackLayout,
     /// Print the plan and touch nothing.
     pub dry_run: bool,
 }
@@ -413,14 +464,24 @@ pub async fn cmd_init(client: &BuzzClient, request: &PackInitRequest<'_>) -> Res
         Some(id) => id.to_string(),
         None => format!("{slug}-packs"),
     };
-    let path = request.path.unwrap_or(DEFAULT_PACK_PATH).to_string();
+    let path = request
+        .path
+        .unwrap_or(request.layout.default_path())
+        .to_string();
     let seed = resolve_seed_dir(request.from)?;
-    let roles = role_directories(&seed);
+    let roles = request.layout.roles_in(&seed);
     if roles.is_empty() {
-        return Err(CliError::Usage(format!(
-            "{} holds no role directories, so there is nothing to seed; pass --from <dir>",
-            seed.display()
-        )));
+        return Err(CliError::Usage(match request.layout {
+            PackLayout::Pack => format!(
+                "{} holds no role directories, so there is nothing to seed; pass --from <dir>",
+                seed.display()
+            ),
+            PackLayout::Flat => format!(
+                "{} holds no roles/<role>.md files, so there is nothing to seed; pass --from <dir> \
+                 naming a flat team root",
+                seed.display()
+            ),
+        }));
     }
 
     // A second pack source would silently re-point every seat on the project.
@@ -753,6 +814,26 @@ async fn query_pack_sources(
         }
     }
     Ok(decoded)
+}
+
+/// The role slugs named by flat role files `<root>/roles/<role>.md`, sorted.
+fn flat_role_files(root: &Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(root.join("roles")) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = entries
+        .flatten()
+        .filter(|entry| entry.path().is_file())
+        .filter_map(|entry| {
+            entry
+                .file_name()
+                .to_str()?
+                .strip_suffix(".md")
+                .map(str::to_owned)
+        })
+        .collect();
+    names.sort();
+    names
 }
 
 /// The role directories inside a staged pack path, sorted, or an empty list.

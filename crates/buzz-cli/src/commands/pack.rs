@@ -5,7 +5,7 @@
 use std::path::Path;
 
 use buzz_persona::compose::{compose_role, write_staged_pack, ComposeOptions, RoleSource};
-use buzz_persona::template::TemplateCatalog;
+use buzz_persona::template::{TemplateCatalog, TemplateRange};
 
 use crate::error::CliError;
 
@@ -212,4 +212,180 @@ pub fn cmd_compose(
         }
     }
     Ok(())
+}
+
+/// Run `bee pack clone-template <name>@<range> --templates <dir> --into <root>`.
+///
+/// Spec § 3.2: a project that wants to own a shipped template's text copies
+/// it. The template's body — everything after its frontmatter — lands at
+/// `<into>/templates/<name>.md`, so a role includes it as
+/// `![[./templates/<name>.md]]`; its skills land whole under
+/// `<into>/skills/<skill>/`. The frontmatter is not copied: a project file
+/// is inserted verbatim into a prompt, and a `name:`/`version:` block would
+/// be inserted with it. The resolved version is printed, because after the
+/// copy nothing in the project records it.
+///
+/// Refuses to overwrite an existing file without `--force`, and refuses a
+/// range this catalog cannot satisfy with the composer's own sentence.
+pub fn cmd_clone_template(
+    spec: &str,
+    templates: &Path,
+    into: &Path,
+    force: bool,
+) -> Result<(), CliError> {
+    let (name, range) = spec
+        .split_once('@')
+        .ok_or_else(|| CliError::Usage(format!("expected <name>@<range>, got {spec:?}")))?;
+    let catalog = TemplateCatalog::load(templates, "clone")
+        .map_err(|e| CliError::Usage(format!("template catalog: {e}")))?;
+    let range = TemplateRange::parse(name, range).map_err(|e| CliError::Usage(e.to_string()))?;
+    let resolved = catalog
+        .resolve(name, &range)
+        .map_err(|e| CliError::Usage(e.to_string()))?;
+    if let Some(warning) = &resolved.warning {
+        eprintln!("  WARN:  {warning}");
+    }
+    let template = resolved.template;
+    let text_target = into.join("templates").join(format!("{name}.md"));
+    let mut writes: Vec<(std::path::PathBuf, std::path::PathBuf)> = Vec::new();
+    for rel in &template.skills {
+        let skill_dir = template
+            .dir
+            .join(rel.trim_start_matches("./").trim_end_matches('/'));
+        let skill_name = skill_dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or_else(|| CliError::Other(format!("skill path {rel:?} has no name")))?
+            .to_owned();
+        writes.push((skill_dir, into.join("skills").join(skill_name)));
+    }
+    if !force {
+        if text_target.exists() {
+            return Err(CliError::Usage(format!(
+                "{} exists; pass --force to overwrite it",
+                text_target.display()
+            )));
+        }
+        for (_, target) in &writes {
+            if target.exists() {
+                return Err(CliError::Usage(format!(
+                    "{} exists; pass --force to overwrite it",
+                    target.display()
+                )));
+            }
+        }
+    }
+    if let Some(parent) = text_target.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| CliError::Other(format!("could not create {}: {e}", parent.display())))?;
+    }
+    std::fs::write(&text_target, template.body.as_bytes())
+        .map_err(|e| CliError::Other(format!("could not write {}: {e}", text_target.display())))?;
+    for (source, target) in &writes {
+        copy_dir(source, target)?;
+    }
+    println!(
+        "cloned beekeeper/{name}@{} -> {}",
+        template.version,
+        text_target.display()
+    );
+    for (_, target) in &writes {
+        println!("cloned skill -> {}", target.display());
+    }
+    println!(
+        "include it with ![[./templates/{name}.md]]; the project now owns these bytes and \
+         nothing records that they came from {name}@{}",
+        template.version
+    );
+    Ok(())
+}
+
+/// Copy a directory tree; symlinks are refused, as the composer refuses them.
+fn copy_dir(from: &Path, to: &Path) -> Result<(), CliError> {
+    std::fs::create_dir_all(to)
+        .map_err(|e| CliError::Other(format!("could not create {}: {e}", to.display())))?;
+    let entries = std::fs::read_dir(from)
+        .map_err(|e| CliError::Other(format!("could not read {}: {e}", from.display())))?;
+    for entry in entries {
+        let entry = entry
+            .map_err(|e| CliError::Other(format!("could not read {}: {e}", from.display())))?;
+        let path = entry.path();
+        let file_type = entry
+            .file_type()
+            .map_err(|e| CliError::Other(format!("could not read {}: {e}", path.display())))?;
+        if file_type.is_symlink() {
+            return Err(CliError::Usage(format!(
+                "{} is a symlink; a template's skills must be plain files",
+                path.display()
+            )));
+        }
+        let target = to.join(entry.file_name());
+        if file_type.is_dir() {
+            copy_dir(&path, &target)?;
+        } else {
+            std::fs::copy(&path, &target)
+                .map_err(|e| CliError::Other(format!("could not copy {}: {e}", path.display())))?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn write(path: &Path, content: &str) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, content).unwrap();
+    }
+
+    #[test]
+    fn clone_template_copies_the_body_and_skills_and_refuses_to_overwrite() {
+        let tmp = tempfile::tempdir().unwrap();
+        let templates = tmp.path().join("templates");
+        write(
+            &templates.join("memory/1.0.0/TEMPLATE.md"),
+            "---\nname: memory\nversion: 1.0.0\ndescription: m\nskills:\n  - ./skills/recall/\n---\nRecall first.\n",
+        );
+        write(
+            &templates.join("memory/1.0.0/skills/recall/SKILL.md"),
+            "---\nname: recall\ndescription: r\n---\nrecall\n",
+        );
+        let into = tmp.path().join("beekeeper");
+        cmd_clone_template("memory@latest", &templates, &into, false).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(into.join("templates/memory.md")).unwrap(),
+            "Recall first.\n",
+            "the body only: frontmatter would be inserted into a prompt"
+        );
+        assert!(into.join("skills/recall/SKILL.md").is_file());
+        let again = cmd_clone_template("memory@latest", &templates, &into, false).unwrap_err();
+        assert!(again.to_string().contains("--force"), "{again}");
+        cmd_clone_template("memory@^1.0.0", &templates, &into, true).unwrap();
+        let missing = cmd_clone_template("memory@^9", &templates, &into, true).unwrap_err();
+        assert!(missing.to_string().contains("matches none"), "{missing}");
+        let bad = cmd_clone_template("memory", &templates, &into, true).unwrap_err();
+        assert!(bad.to_string().contains("<name>@<range>"), "{bad}");
+    }
+
+    #[test]
+    fn layout_words_and_defaults() {
+        use crate::commands::packs::PackLayout;
+        assert_eq!(PackLayout::parse("pack").unwrap(), PackLayout::Pack);
+        assert_eq!(PackLayout::parse("flat").unwrap(), PackLayout::Flat);
+        assert!(PackLayout::parse("nested").is_err());
+        assert_eq!(PackLayout::Pack.default_path(), "personas/roles");
+        assert_eq!(PackLayout::Flat.default_path(), "beekeeper");
+        let tmp = tempfile::tempdir().unwrap();
+        let flat = tmp.path().join("flat");
+        write(&flat.join("roles/lead.md"), "Lead.\n");
+        write(&flat.join("roles/builder.md"), "Build.\n");
+        assert_eq!(PackLayout::Flat.roles_in(&flat), vec!["builder", "lead"]);
+        // The pack lister counts directories by name; a flat root's `roles/`
+        // would read as a role, so each layout gets its own fixture.
+        let packs = tmp.path().join("packs");
+        write(&packs.join("lead/.plugin/plugin.json"), "{}");
+        assert_eq!(PackLayout::Pack.roles_in(&packs), vec!["lead"]);
+        assert!(PackLayout::Flat.roles_in(&packs).is_empty());
+    }
 }

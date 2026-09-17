@@ -2491,6 +2491,23 @@ pub enum PackCmd {
         #[arg(long)]
         out: Option<PathBuf>,
     },
+    /// Copy a shipped template's text and skills into a project so the
+    /// project owns and evolves them (spec § 3.2)
+    CloneTemplate {
+        /// The template to clone: `<name>@<range>`, e.g. `memory@1.2.0` or
+        /// `memory@latest`
+        template: String,
+        /// Path to the template catalog (`<name>/<semver>/TEMPLATE.md`)
+        #[arg(long, env = "BUZZ_TEMPLATES_DIR")]
+        templates: PathBuf,
+        /// The project's team root, e.g. `beekeeper/`; the text lands in
+        /// `<into>/templates/<name>.md` and skills in `<into>/skills/`
+        #[arg(long)]
+        into: PathBuf,
+        /// Overwrite files the project already has at those paths
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 pub use commands::packs_cli::PacksCmd;
@@ -4753,6 +4770,12 @@ async fn run(cli: Cli) -> Result<(), CliError> {
                 app_version,
                 out.as_deref(),
             ),
+            PackCmd::CloneTemplate {
+                template,
+                templates,
+                into,
+                force,
+            } => commands::pack::cmd_clone_template(template, templates, into, *force),
         };
     }
 
@@ -5854,7 +5877,10 @@ mod tests {
         );
         assert_eq!(names(&cmd, "media"), vec!["get"]);
         assert_eq!(names(&cmd, "upload"), vec!["file"]);
-        assert_eq!(names(&cmd, "pack"), vec!["compose", "inspect", "validate"]);
+        assert_eq!(
+            names(&cmd, "pack"),
+            vec!["clone-template", "compose", "inspect", "validate"]
+        );
         assert_eq!(
             names(&cmd, "moderation"),
             vec![
@@ -5918,7 +5944,7 @@ mod tests {
             ("issues", 6),
             ("media", 1),
             ("messages", 8),
-            ("pack", 3),
+            ("pack", 4),
             ("patches", 4),
             ("pr", 5),
             ("projects", 12),

@@ -13564,6 +13564,58 @@ Evidence and limits: [conditional publication checkpoint](history/2026-09-12-pro
      live**: no restart has been clicked against a running seat on this
      build, and the relay side needs the redeploy above.
 
+147. **Slice A3, first half: `team.yml` is read, `bee packs init --layout
+     flat` seeds the flat layout, `bee pack clone-template` forks a shipped
+     template, and NIP-PK now says what the host does (2026-09-17, Andy
+     with Fable).** Spec `docs/PROJECT_TEAMS_AND_ACTIONS_SPEC.md` § 4.2,
+     § 3.2, § 4.8, § 7 A3.
+
+     **`team.yml`** (`crates/buzz-persona/src/team.rs`): schema
+     `beekeeper-team/v1`; `name` (the synthesized pack id's tail), `version`
+     (the pack version), `lead`, `roles.<role>.{file, runtime, model,
+     workspace.roles_visible}`, `agents[{name, role, lifetime}]`. Unknown
+     keys, a lead or an agent naming an undeclared role, a duplicate agent
+     name, a non-slug role key and an escaping `file` are refused naming the
+     key. The manifest is advisory: a role file under `roles/` composes
+     whether or not it is listed; `runtime`/`model` fill in only when the
+     role file's own frontmatter is silent; a present-but-broken manifest
+     refuses every composition from that root (`ComposeError::Team`).
+     `ComposedRole.roles_visible` carries the workspace flag and it rides
+     through `StagedComposedPack`, `StagedProjectPack`, `SeatPackPreview`
+     and `RolePackSummary.rolesVisible`. **Not yet honoured by the seat
+     cut**: the hire cuts its worktree before it stages, so `hideRoles` is
+     still always `true` for a hire; wiring a preview before the cut is the
+     next half.
+
+     **CLI.** `bee packs init --layout flat` (default path `beekeeper`,
+     roles read from `roles/*.md`, seeding otherwise unchanged);
+     `bee packs status` lists flat roles beside pack directories in
+     `roles_found`; `bee pack clone-template <name>@<range> --templates
+     <dir> --into <root> [--force]` writes the template's **body** to
+     `<root>/templates/<name>.md` (not its frontmatter, which a verbatim
+     include would insert into the prompt) and its skills under
+     `<root>/skills/`, refuses to overwrite without `--force`, and prints
+     the resolved version, because the project records nothing else about
+     the copy's origin.
+
+     **NIP-PK.** The `path` bullet names both layouts and the in-repo
+     pin; the "Shipped defaults" and "Staging" sections previously
+     described a file-by-file overlay of the session checkout over the
+     project's pack, which the code has not done for some time
+     (`plan_seat_pack`: the project source is the only rung when present,
+     the checkout is a fallback when absent). Corrected to the actual
+     ladder, plus composition, digest-keyed staging and the branch
+     override.
+
+     **Evidence.** `cargo test -p buzz-persona`: 214 (four new: manifest
+     parse and refusals; missing vs broken manifest; the composer reading
+     `file`, filling advisory facts with frontmatter winning, naming the
+     pack from the manifest and refusing on a broken one). `cargo test -p
+     buzz-cli`: 1213 (clone-template copies body and skills and refuses to
+     overwrite; layout words, default paths and role listing). Clippy clean
+     on both. Desktop: the wire-shape test gains `rolesVisible`.
+
+
 
 
 

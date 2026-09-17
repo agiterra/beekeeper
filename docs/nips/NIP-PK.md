@@ -63,8 +63,15 @@ fields:
   is staged verbatim. Both is invalid, neither is invalid. A record carrying
   both would let two honest hosts stage two different trees from one signed
   event; a record carrying neither points at nothing.
-* `path` — **optional, singleton.** A repository-relative directory holding one
-  directory per role. Defaults to `personas/roles`. Absolute paths, `..`
+* `path` — **optional, singleton.** A repository-relative directory holding the
+  roles, in either of two layouts a host reads: one **pack directory per
+  role** (`<path>/<role>/.plugin/plugin.json`, the shipped layout), or the
+  **flat team layout** (`<path>/roles/<role>.md`, `<path>/team.yml`,
+  `<path>/skills/`) a project keeps beside its code
+  (`docs/PROJECT_TEAMS_AND_ACTIONS_SPEC.md` § 4). Defaults to
+  `personas/roles`; a project whose team rides with its code names the
+  code repository as `repo` and `beekeeper` as `path`, pinned by `ref` to
+  its default branch (spec § 4.7). Absolute paths, `..`
   segments, backslashes and colons are refused: a host joins this value to a
   tree it fetched over the network, so a path that escapes is a path that reads
   the operator's disk.
@@ -197,14 +204,18 @@ the key existed" decode test
 ## Shipped defaults — the third rung
 
 A team that has published nothing still gets working roles, and the wire says
-so. A host stages, in order:
+so. A host stages from the first rung that answers, in order:
 
-1. the packs repository the project's kind:30624 names;
-2. the session checkout's own `personas/roles/<role>/`, overlaid file by file
-   (the checkout wins, so a lane can iterate on a role without publishing);
-3. the packs the running app's own build bundles.
+1. the packs repository the project's kind:30624 names — and when a project
+   names one, it is the **only** rung consulted: a role the repository does
+   not hold is refused, never quietly served from below;
+2. with no kind:30624, the session checkout's own `personas/roles/<role>/`
+   pack or `beekeeper/roles/<role>.md` flat file (no overlay: the checkout
+   answers whole or not at all);
+3. a pack installed on this computer for the role;
+4. the packs the running app's own build bundles.
 
-When rung 3 answers, the seat's `packRef` carries `"repo": "app:shipped"` and
+When the last rung answers, the seat's `packRef` carries `"repo": "app:shipped"` and
 the **app version** as `sha`:
 
 ```json
@@ -234,14 +245,24 @@ A host resolving a seat:
    `ProjectPackSource::cache_dir_name` derives);
 3. checks out the pinned `sha`, or the ref's tip while **recording** the sha it
    resolved;
-4. stages `<path>/<seat role>/`, then overlays the session checkout's own
-   `personas/roles/<role>/` file by file — the checkout wins, so a lane can
-   iterate on a role without publishing;
-5. publishes the resulting `packRef` on the seat's 44223.
+4. locates the role — `<path>/<role>/` as a pack, else
+   `<path>/roles/<role>.md` — **composes** it against the templates this
+   build ships (expanding its `![[…]]` includes, spec § 4.4) and stages the
+   result as an ordinary pack under the packs cache, keyed by the
+   composition's content digest, so the seat's directory never changes
+   underneath it while the checkout moves;
+5. when the seat's own worktree belongs to this repository and its `HEAD`
+   composes the role differently from the pinned commit, stages that
+   composition instead — the branch override (spec § 4.9) — and stamps the
+   branch commit as `sha`; uncommitted edits are disclosed, never in effect;
+6. publishes the resulting `packRef` on the seat's 44223. For the flat
+   layout `path` is `<path>/roles/<role>`, the `.md` implied.
 
-With no kind:30624 the host stages the checkout's packs alone and publishes no
-`packRef`. A pack that cannot be fetched **refuses the hire** with a sentence;
-it never becomes a silent bare persona.
+With no kind:30624 the host stages the checkout's own pack or flat file,
+then an installed pack, then the shipped packs, composed the same way; a
+checkout or installed pack publishes no `packRef`. A pack that cannot be
+fetched, or a role that cannot be composed, **refuses the hire** with a
+sentence; it never becomes a silent bare persona.
 
 ## Reading it
 

@@ -87,6 +87,7 @@ fn staged_plan(persona: &str) -> SeatPackPreview {
         warnings: Vec::new(),
         compose_digest: None,
         source_kind: None,
+        roles_visible: false,
     }
 }
 
