@@ -486,6 +486,19 @@ possible — and removes them from every seat's working copy.
   a seat that deliberately runs `git show main:beekeeper/roles/lead.md`; the
   objects are in the repository. It targets accidental confusion, not
   exfiltration, and changes no authority.
+- **Harness directives are a second layer, not a replacement (Andy,
+  2026-09-17).** On Claude Code the permission grammar the write fence
+  already uses has `Read(…)` rules, and the provider already writes
+  `.claude/settings.local.json` into every Claude seat before the child
+  starts (`crates/buzz-session-provider/src/agent_fence.rs:297,635`). A
+  `Read` denial for the worktree's `beekeeper/` directory joins that file.
+  Its limits are the write fence's, measured and recorded there: the file
+  tools are governed, Bash is not (`cat`, `grep`, `rg` still read), and
+  whether Grep and Glob honour a `Read` denial is **measured before it is
+  claimed** (slice A2). Codex has no permission surface — codex-acp's fence
+  is briefing text only (`agent_fence.rs:98`) — so on Codex the sparse
+  checkout is the whole mechanism. No `.claudeignore` or Codex equivalent
+  exists to rely on.
 - **Not affected.** The operator's own checkout, and Solo sessions, which
   run in the operator's folder and hold no role. Offering Solo sessions the
   same exclusion is a possible setting, not part of this spec.
@@ -772,7 +785,10 @@ Open, to be settled before the slice that needs them:
    custody outside the desktop (after C5).
 5. Whether a project policy may restart a seat automatically when its
    definition changes, instead of waiting for the click (§ 4.9; after A4).
-6. Whether Solo sessions should get the § 4.10 exclusion as a setting.
+6. Whether Solo sessions, which run in the operator's own checkout where
+   the sparse exclusion does not apply, should get the Claude `Read` denial
+   of § 4.10 as a per-project setting. It is the only lever there; Codex Solo
+   sessions would have none.
 
 ## 7. Phased delivery
 
@@ -795,7 +811,9 @@ C are independent lanes until C3, which needs `team.yml` (A3) for agent names.
   `crates/buzz-cli/src/commands/packs.rs` (`compose` block in `status`),
   `tauri.conf.json:65`, `coding_sessions/worktree.rs:596` (sparse exclusion
   of `beekeeper/` on every seat cut, § 4.10; branch-override detection and
-  `git show`-based composition, § 4.9). Provider untouched. Tests:
+  `git show`-based composition, § 4.9), `crates/buzz-session-provider/src/
+  agent_fence.rs` (a `Read(//<worktree>/beekeeper/**)` denial in the Claude
+  fence, with a measured note on whether Grep and Glob honour it). Tests:
   scratch-repo flat layout; pack-over-flat precedence; refusal text on a
   missing template; a running seat's `pack_dir` survives a checkout re-sync;
   a seat worktree has no `beekeeper/` files while the hub keeps them; a
