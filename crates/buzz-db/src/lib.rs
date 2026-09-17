@@ -4168,6 +4168,7 @@ impl Db {
     }
 
     /// Create a new workflow.
+    #[allow(clippy::too_many_arguments)]
     #[datastore_span(name = "create_workflow", system = "postgresql")]
     pub async fn create_workflow(
         &self,
@@ -4177,6 +4178,7 @@ impl Db {
         name: &str,
         definition_json: &str,
         definition_hash: &[u8],
+        project_ref: Option<&str>,
     ) -> Result<Uuid> {
         workflow::create_workflow(
             &self.pool,
@@ -4186,6 +4188,7 @@ impl Db {
             name,
             definition_json,
             definition_hash,
+            project_ref,
         )
         .await
     }
@@ -4202,6 +4205,7 @@ impl Db {
         name: &str,
         definition_json: &str,
         definition_hash: &[u8],
+        project_ref: Option<&str>,
     ) -> Result<()> {
         workflow::upsert_workflow(
             &self.pool,
@@ -4212,6 +4216,7 @@ impl Db {
             name,
             definition_json,
             definition_hash,
+            project_ref,
         )
         .await
     }
@@ -4246,6 +4251,15 @@ impl Db {
         channel_id: Uuid,
     ) -> Result<Vec<workflow::WorkflowRecord>> {
         workflow::list_enabled_channel_workflows(&self.pool, community_id, channel_id).await
+    }
+
+    /// Every enabled `ref_updated` definition in a community.
+    #[datastore_span(name = "list_enabled_ref_updated_workflows", system = "postgresql")]
+    pub async fn list_enabled_ref_updated_workflows(
+        &self,
+        community_id: CommunityId,
+    ) -> Result<Vec<workflow::WorkflowRecord>> {
+        workflow::list_enabled_ref_updated_workflows(&self.pool, community_id).await
     }
 
     /// List all active, enabled schedule-triggered workflows.
@@ -4325,6 +4339,7 @@ impl Db {
         name: &str,
         definition_json: &str,
         definition_hash: &[u8],
+        project_ref: Option<&str>,
     ) -> Result<()> {
         workflow::update_workflow(
             &self.pool,
@@ -4333,6 +4348,7 @@ impl Db {
             name,
             definition_json,
             definition_hash,
+            project_ref,
         )
         .await
     }

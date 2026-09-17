@@ -177,6 +177,7 @@ async fn fixture(request_host: Option<String>) -> WebhookCiFixture {
             &definition.name,
             &definition_value.to_string(),
             &[9_u8; 32],
+            None,
         )
         .await
         .expect("store webhook workflow");

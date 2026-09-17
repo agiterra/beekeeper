@@ -1922,6 +1922,58 @@ pub(crate) struct PushContext {
     pub repo_handle: HydratedRepo,
 }
 
+/// Start `ref_updated` workflow runs for a push whose kind:30618 was just
+/// committed. Spawned so the push response never waits on the engine; the
+/// engine reports what it started in its own logs.
+#[allow(clippy::too_many_arguments)]
+fn fire_ref_updated_workflows(
+    state: &Arc<AppState>,
+    community: buzz_core::CommunityId,
+    owner_hex: &str,
+    repo_id: &str,
+    before: &std::collections::BTreeMap<String, String>,
+    after: &std::collections::BTreeMap<String, String>,
+    pusher: &nostr::PublicKey,
+    state_event_id: &[u8],
+) {
+    let engine = Arc::clone(&state.workflow_engine);
+    let db = state.db.clone();
+    let repository = format!("30617:{owner_hex}:{repo_id}");
+    let repo_id = repo_id.to_owned();
+    let before = before.clone();
+    let after = after.clone();
+    let pusher_hex = pusher.to_hex();
+    let state_event_id = state_event_id.to_vec();
+    tokio::spawn(async move {
+        let repository_project = match db.get_repo_project_ref(community, &repo_id).await {
+            Ok(project) => project,
+            Err(error) => {
+                tracing::warn!(
+                    %repository,
+                    "ref_updated: repository project lookup failed, matching by repository only: {error}"
+                );
+                None
+            }
+        };
+        match engine
+            .on_repo_state(
+                community,
+                &repository,
+                repository_project.as_deref(),
+                &before,
+                &after,
+                &pusher_hex,
+                &state_event_id,
+            )
+            .await
+        {
+            Ok(0) => {}
+            Ok(started) => tracing::info!(%repository, started, "ref_updated workflows fired"),
+            Err(error) => tracing::error!(%repository, "ref_updated dispatch failed: {error}"),
+        }
+    });
+}
+
 #[derive(Default)]
 struct FinalizePushHooks {
     #[cfg(test)]
@@ -2181,6 +2233,20 @@ async fn finalize_push_inner(
                             repo = %ctx.repo_id,
                             manifest = %success.manifest_key,
                             "kind:30618 published (derived after CAS)"
+                        );
+                        // Spec § 5.3: `ref_updated` workflows fire from the
+                        // committed state, after CAS and fan-out — never from
+                        // the pre-receive policy path — so a denied push
+                        // cannot fire and a no-op push (no 30618) is silent.
+                        fire_ref_updated_workflows(
+                            state,
+                            ctx.tenant.community(),
+                            &ctx.owner,
+                            &ctx.repo_id,
+                            &ctx.parent_state.parent.refs,
+                            &success.manifest.refs,
+                            &ctx.pusher,
+                            stored.event.id.as_bytes(),
                         );
                         Ok(())
                     }

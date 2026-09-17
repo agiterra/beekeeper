@@ -353,6 +353,7 @@ mod tests {
                 &definition.name,
                 &serde_json::to_string(&definition).expect("serialize definition"),
                 &[7_u8; 32],
+                None,
             )
             .await
             .expect("insert workflow");
@@ -447,6 +448,7 @@ mod tests {
                 &changed.name,
                 &serde_json::to_string(&changed).expect("serialize changed definition"),
                 &[8_u8; 32],
+                None,
             )
             .await
             .expect("change binding");

@@ -73,12 +73,31 @@ pub enum TriggerDef {
     },
     /// Fires on a cron schedule.
     Schedule {
-        /// Cron expression (UTC). Mutually exclusive with `interval`.
+        /// Cron expression, evaluated in `timezone` (UTC when unset).
+        /// Mutually exclusive with `interval`.
         #[serde(default)]
         cron: Option<String>,
         /// Simple interval string (e.g. "1h", "30m"). Mutually exclusive with `cron`.
         #[serde(default)]
         interval: Option<String>,
+        /// IANA zone the cron expression is written in (`America/New_York`).
+        /// The fire instant is converted to UTC before the durable claim, so
+        /// a local time a DST change skips fires at the next valid instant.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timezone: Option<String>,
+    },
+    /// Fires when a push to the relay's git hosting changes a ref that
+    /// matches `ref` (a glob: `refs/heads/main`, `refs/heads/*`,
+    /// `refs/tags/v*`). Derived from the committed kind:30618 state, never
+    /// from the pre-receive policy path, so a denied push cannot fire.
+    RefUpdated {
+        /// Glob over full ref names.
+        #[serde(rename = "ref")]
+        ref_glob: String,
+        /// Full kind:30617 repository coordinate. When unset, every
+        /// repository attached to the definition's `project` matches.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        repository: Option<String>,
     },
     /// Fires when HTTP POST arrives at `/hooks/{id}`.
     Webhook,
@@ -510,7 +529,53 @@ impl WorkflowDef {
             }
         }
 
-        if let TriggerDef::Schedule { cron, interval } = &self.trigger {
+        if let TriggerDef::RefUpdated {
+            ref_glob,
+            repository,
+        } = &self.trigger
+        {
+            if ref_glob.trim().is_empty() {
+                return Err(WorkflowError::InvalidDefinition(
+                    "ref_updated trigger requires a 'ref' glob such as refs/heads/main".into(),
+                ));
+            }
+            ref_glob_matcher(ref_glob)?;
+            match repository {
+                Some(repository) => {
+                    let normalized =
+                        buzz_core::project_pack_source::normalize_repository_coordinate(repository)
+                            .ok_or_else(|| {
+                                WorkflowError::InvalidDefinition(
+                            "ref_updated repository must be a full 30617:<64-hex>:<name> coordinate"
+                                .into(),
+                        )
+                            })?;
+                    if &normalized != repository {
+                        return Err(WorkflowError::InvalidDefinition(
+                            "ref_updated repository must use a lowercase canonical owner key"
+                                .into(),
+                        ));
+                    }
+                }
+                None if self.project.is_none() => {
+                    return Err(WorkflowError::InvalidDefinition(
+                        "ref_updated without a repository requires a top-level project coordinate"
+                            .into(),
+                    ));
+                }
+                None => {}
+            }
+        }
+
+        if let TriggerDef::Schedule {
+            cron,
+            interval,
+            timezone,
+        } = &self.trigger
+        {
+            if let Some(timezone) = timezone {
+                parse_timezone(timezone)?;
+            }
             if cron.is_none() && interval.is_none() {
                 return Err(WorkflowError::InvalidDefinition(
                     "schedule trigger requires either 'cron' or 'interval'".into(),
@@ -545,6 +610,28 @@ impl WorkflowDef {
 
         Ok(())
     }
+}
+
+/// Compile a `ref_updated` glob. Full ref names only; `*` does not cross a
+/// `/`, `**` does, so `refs/heads/*` is the branches and `refs/**` is every
+/// ref.
+pub fn ref_glob_matcher(glob: &str) -> Result<globset::GlobMatcher, WorkflowError> {
+    globset::GlobBuilder::new(glob.trim())
+        .literal_separator(true)
+        .build()
+        .map(|glob| glob.compile_matcher())
+        .map_err(|error| {
+            WorkflowError::InvalidDefinition(format!("invalid ref glob '{glob}': {error}"))
+        })
+}
+
+/// Parse an IANA timezone name.
+pub fn parse_timezone(name: &str) -> Result<chrono_tz::Tz, WorkflowError> {
+    name.trim().parse::<chrono_tz::Tz>().map_err(|_| {
+        WorkflowError::InvalidDefinition(format!(
+            "unknown timezone '{name}': use an IANA name such as America/New_York"
+        ))
+    })
 }
 
 /// Validate a cron expression using the `cron` crate.
@@ -871,7 +958,7 @@ mod tests {
         let yaml = "name: Interval Schedule\ntrigger:\n  on: schedule\n  interval: 30m\nsteps:\n  - id: s1\n    action: send_message\n    text: tick\n";
         let (def, _) = parse_yaml(yaml).expect("parse failed");
         match &def.trigger {
-            TriggerDef::Schedule { cron, interval } => {
+            TriggerDef::Schedule { cron, interval, .. } => {
                 assert!(cron.is_none());
                 assert_eq!(interval.as_deref(), Some("30m"));
             }

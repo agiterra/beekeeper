@@ -21,6 +21,7 @@ const TRIGGER_LABELS: Record<string, string> = {
   webhook: "Webhook",
   schedule: "Schedule",
   manual: "Manual",
+  ref_updated: "Ref updated",
 };
 
 /**
@@ -53,6 +54,7 @@ export function actionTriggerSummary(
     message_posted: "filter",
     diff_posted: "filter",
     reaction_added: "emoji",
+    ref_updated: "ref",
   };
   const detailKey = detailKeys[on];
   if (detailKey) {

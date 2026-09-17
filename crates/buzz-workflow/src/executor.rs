@@ -40,6 +40,25 @@ pub struct TriggerContext {
     pub message_id: String,
     /// Arbitrary webhook body fields (webhook trigger).
     pub webhook_fields: HashMap<String, String>,
+    /// Full kind:30617 coordinate of the pushed repository (ref_updated).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub repository: String,
+    /// The ref the push changed (ref_updated), e.g. `refs/heads/main`.
+    #[serde(default, rename = "ref", skip_serializing_if = "String::is_empty")]
+    pub ref_name: String,
+    /// The ref's commit before the push; empty when the ref was created.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub before: String,
+    /// The ref's commit after the push; empty when the ref was deleted.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub after: String,
+    /// Hex pubkey of the pusher (ref_updated).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub pusher: String,
+    /// Set when a schedule's local time was skipped by a DST change and the
+    /// run fired at the next valid instant instead (RFC 3339, in the zone).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub scheduled_local: String,
 }
 
 impl TriggerContext {
@@ -55,6 +74,12 @@ impl TriggerContext {
             "timestamp" => Some(&self.timestamp),
             "emoji" => Some(&self.emoji),
             "message_id" => Some(&self.message_id),
+            "repository" => Some(&self.repository),
+            "ref" => Some(&self.ref_name),
+            "before" => Some(&self.before),
+            "after" => Some(&self.after),
+            "pusher" => Some(&self.pusher),
+            "scheduled_local" => Some(&self.scheduled_local),
             other => self.webhook_fields.get(other).map(|s| s.as_str()),
         }
     }
@@ -1505,6 +1530,7 @@ mod tests {
             emoji: "fire".to_owned(),
             message_id: "event-id-hex".to_owned(),
             webhook_fields: HashMap::new(),
+            ..Default::default()
         }
     }
 

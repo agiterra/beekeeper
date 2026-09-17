@@ -443,6 +443,161 @@ impl WorkflowEngine {
         Ok(())
     }
 
+    /// Called by the git transport right after a push's kind:30618 state was
+    /// committed and fanned out (never from the pre-receive policy path, so a
+    /// denied push cannot fire). Starts one run per `ref_updated` workflow
+    /// per changed ref its glob matches.
+    ///
+    /// `repository` is the pushed repository's full kind:30617 coordinate;
+    /// `repository_project` is the project that repository is attached to,
+    /// if any (`git_repo_names.project_ref`). A trigger that names a
+    /// `repository` matches that coordinate exactly; one that does not
+    /// matches when the definition's project equals `repository_project`.
+    /// `before`/`after` are the parent and committed ref maps; a ref missing
+    /// on one side is a creation or deletion, reported with an empty commit.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn on_repo_state(
+        self: &Arc<Self>,
+        community_id: CommunityId,
+        repository: &str,
+        repository_project: Option<&str>,
+        before: &std::collections::BTreeMap<String, String>,
+        after: &std::collections::BTreeMap<String, String>,
+        pusher_hex: &str,
+        state_event_id: &[u8],
+    ) -> Result<usize, WorkflowError> {
+        let mut changed: Vec<(String, String, String)> = Vec::new();
+        for name in before.keys().chain(after.keys()) {
+            let old = before.get(name).cloned().unwrap_or_default();
+            let new = after.get(name).cloned().unwrap_or_default();
+            if old != new && !changed.iter().any(|(n, _, _)| n == name) {
+                changed.push((name.clone(), old, new));
+            }
+        }
+        if changed.is_empty() {
+            return Ok(0);
+        }
+        let workflows = self
+            .db
+            .list_enabled_ref_updated_workflows(community_id)
+            .await
+            .map_err(WorkflowError::from)?;
+        let mut started = 0usize;
+        for workflow in &workflows {
+            let def: WorkflowDef = match serde_json::from_value(workflow.definition.clone()) {
+                Ok(def) => def,
+                Err(e) => {
+                    tracing::warn!(workflow_id = %workflow.id, "Failed to parse definition: {e}");
+                    continue;
+                }
+            };
+            let TriggerDef::RefUpdated {
+                ref_glob,
+                repository: wanted,
+            } = &def.trigger
+            else {
+                continue;
+            };
+            if !def.enabled {
+                continue;
+            }
+            let repository_matches = match wanted {
+                Some(wanted) => wanted == repository,
+                None => {
+                    workflow.project_ref.is_some()
+                        && workflow.project_ref.as_deref() == repository_project
+                }
+            };
+            if !repository_matches {
+                continue;
+            }
+            let matcher = match schema::ref_glob_matcher(ref_glob) {
+                Ok(matcher) => matcher,
+                Err(e) => {
+                    tracing::warn!(workflow_id = %workflow.id, "ref_updated: {e}");
+                    continue;
+                }
+            };
+            let Some(channel_id) = workflow.channel_id else {
+                tracing::warn!(
+                    workflow_id = %workflow.id,
+                    "ref_updated: workflow has no channel; cannot check owner authority"
+                );
+                continue;
+            };
+            for (name, old, new) in changed.iter().filter(|(n, _, _)| matcher.is_match(n)) {
+                if let Err(e) = self
+                    .check_owner_authority(community_id, channel_id, &workflow.owner_pubkey, &def)
+                    .await
+                {
+                    tracing::warn!(
+                        workflow_id = %workflow.id,
+                        "ref_updated: skipping — owner authority check failed: {e}"
+                    );
+                    break;
+                }
+                let trigger_ctx = executor::TriggerContext {
+                    author: pusher_hex.to_owned(),
+                    channel_id: channel_id.to_string(),
+                    timestamp: Utc::now().timestamp().to_string(),
+                    repository: repository.to_owned(),
+                    ref_name: name.clone(),
+                    before: old.clone(),
+                    after: new.clone(),
+                    pusher: pusher_hex.to_owned(),
+                    ..Default::default()
+                };
+                let trigger_ctx_json = match serde_json::to_value(&trigger_ctx) {
+                    Ok(value) => value,
+                    Err(e) => {
+                        tracing::error!("Failed to serialize trigger context: {e}");
+                        continue;
+                    }
+                };
+                let run_id = match self
+                    .db
+                    .create_workflow_run(
+                        community_id,
+                        workflow.id,
+                        Some(state_event_id),
+                        Some(&trigger_ctx_json),
+                    )
+                    .await
+                {
+                    Ok(id) => id,
+                    Err(e) => {
+                        tracing::error!(workflow_id = %workflow.id, "Failed to create run: {e}");
+                        continue;
+                    }
+                };
+                tracing::info!(
+                    workflow_id = %workflow.id,
+                    run_id = %run_id,
+                    %repository,
+                    r#ref = %name,
+                    "ref_updated fired"
+                );
+                started += 1;
+                let engine = Arc::clone(self);
+                let def_clone = def.clone();
+                tokio::spawn(async move {
+                    let result = executor::execute_run(
+                        &engine,
+                        community_id,
+                        run_id,
+                        &def_clone,
+                        &trigger_ctx,
+                    )
+                    .await;
+                    engine
+                        .finalize_run(community_id, run_id, result, None)
+                        .await;
+                });
+            }
+        }
+        Ok(started)
+    }
+
     /// Interval prefilter: decide whether the interval workflow should fire this
     /// tick, applying the cold-start anchor seed as a side effect.
     ///
@@ -543,13 +698,25 @@ impl WorkflowEngine {
                     schema::TriggerDef::Schedule {
                         cron: Some(expr),
                         interval: None,
-                    } => match cron_fire_instant(expr, now, 60, workflow.id) {
-                        Some(instant) => (instant, "cron"),
-                        None => continue,
-                    },
+                        timezone,
+                    } => {
+                        let zone = match timezone.as_deref().map(schema::parse_timezone) {
+                            None => None,
+                            Some(Ok(zone)) => Some(zone),
+                            Some(Err(error)) => {
+                                tracing::warn!(workflow_id = %workflow.id, "Cron tick: {error}");
+                                continue;
+                            }
+                        };
+                        match cron_fire_instant(expr, now, 60, workflow.id, zone) {
+                            Some(instant) => (instant, "cron"),
+                            None => continue,
+                        }
+                    }
                     schema::TriggerDef::Schedule {
                         cron: None,
                         interval: Some(dur),
+                        ..
                     } => {
                         // Cheap pre-filter: skip the claim attempt when the
                         // in-memory clock says we're clearly mid-interval. The
@@ -768,12 +935,25 @@ fn cron_fire_instant(
     now: DateTime<Utc>,
     window_secs: i64,
     workflow_id: Uuid,
+    timezone: Option<chrono_tz::Tz>,
 ) -> Option<DateTime<Utc>> {
     let normalized = schema::normalize_cron(expr);
     match normalized.parse::<cron::Schedule>() {
         Ok(sched) => {
             let window_start = now - chrono::Duration::seconds(window_secs);
-            sched.after(&window_start).next().filter(|t| *t <= now)
+            match timezone {
+                // Evaluate in the definition's zone and convert the instant
+                // back, so the `(community, workflow, scheduled_for)` claim
+                // key stays UTC. The cron crate walks real instants in the
+                // zone: a wall-clock time a DST change skips is never
+                // produced, so the next valid instant is what fires.
+                Some(zone) => sched
+                    .after(&window_start.with_timezone(&zone))
+                    .next()
+                    .map(|t| t.with_timezone(&Utc))
+                    .filter(|t| *t <= now),
+                None => sched.after(&window_start).next().filter(|t| *t <= now),
+            }
         }
         Err(e) => {
             tracing::warn!(
@@ -1018,6 +1198,7 @@ pub fn build_trigger_context(event: &buzz_core::StoredEvent) -> executor::Trigge
         emoji,
         message_id,
         webhook_fields: HashMap::new(),
+        ..Default::default()
     }
 }
 
@@ -1048,7 +1229,10 @@ fn trigger_matches_event(trigger: &TriggerDef, kind_u32: u32) -> bool {
         TriggerDef::ReactionAdded { .. } => kind_u32 == KIND_REACTION,
         TriggerDef::DiffPosted { .. } => kind_u32 == KIND_STREAM_MESSAGE_DIFF,
         // Schedule and Webhook triggers are not fired by channel events.
-        TriggerDef::Schedule { .. } | TriggerDef::Webhook | TriggerDef::Manual => false,
+        TriggerDef::Schedule { .. }
+        | TriggerDef::Webhook
+        | TriggerDef::Manual
+        | TriggerDef::RefUpdated { .. } => false,
     }
 }
 
@@ -1065,7 +1249,7 @@ mod tests {
         let wf_id = Uuid::new_v4();
         // The matched instant is the minute boundary 12:00:00, NOT `now`.
         assert_eq!(
-            cron_fire_instant("* * * * *", now, 60, wf_id),
+            cron_fire_instant("* * * * *", now, 60, wf_id, None),
             Some(
                 chrono::DateTime::parse_from_rfc3339("2026-06-15T12:00:00Z")
                     .unwrap()
@@ -1080,7 +1264,7 @@ mod tests {
         let now = Utc::now();
         let wf_id = Uuid::new_v4();
         assert!(
-            cron_fire_instant("not-a-cron", now, 60, wf_id).is_none(),
+            cron_fire_instant("not-a-cron", now, 60, wf_id, None).is_none(),
             "invalid cron should return None"
         );
     }
@@ -1094,7 +1278,7 @@ mod tests {
         let wf_id = Uuid::new_v4();
         // "0 0 1 1 *" = midnight on Jan 1 only — June 15 is definitely outside.
         assert!(
-            cron_fire_instant("0 0 1 1 *", now, 60, wf_id).is_none(),
+            cron_fire_instant("0 0 1 1 *", now, 60, wf_id, None).is_none(),
             "Jan-1-only cron should not fire on June 15"
         );
     }
@@ -1108,7 +1292,7 @@ mod tests {
             .with_timezone(&Utc);
         let wf_id = Uuid::new_v4();
         assert_eq!(
-            cron_fire_instant("0 9 * * *", now, 60, wf_id),
+            cron_fire_instant("0 9 * * *", now, 60, wf_id, None),
             Some(now),
             "cron should fire at exact minute boundary, anchored on 09:00:00"
         );
@@ -1125,7 +1309,7 @@ mod tests {
             .with_timezone(&Utc);
         let wf_id = Uuid::new_v4();
         assert_eq!(
-            cron_fire_instant("0 9 * * *", now, 60, wf_id),
+            cron_fire_instant("0 9 * * *", now, 60, wf_id, None),
             Some(
                 chrono::DateTime::parse_from_rfc3339("2026-06-15T09:00:00Z")
                     .unwrap()
@@ -1144,7 +1328,7 @@ mod tests {
             .with_timezone(&Utc);
         let wf_id = Uuid::new_v4();
         assert!(
-            cron_fire_instant("0 9 * * *", now, 60, wf_id).is_none(),
+            cron_fire_instant("0 9 * * *", now, 60, wf_id, None).is_none(),
             "cron should not fire 61s after the scheduled time"
         );
     }
@@ -1381,6 +1565,7 @@ steps:
         let trigger = TriggerDef::Schedule {
             cron: Some("0 9 * * 1-5".to_owned()),
             interval: None,
+            timezone: None,
         };
         // Schedule triggers are fired by the cron loop, not by events.
         assert!(!trigger_matches_event(
@@ -1483,6 +1668,7 @@ steps:
         let sched_trigger = TriggerDef::Schedule {
             cron: None,
             interval: Some("1h".to_owned()),
+            timezone: None,
         };
         let webhook_trigger = TriggerDef::Webhook;
 
@@ -1804,6 +1990,7 @@ steps:
                 "sec006-event",
                 &def_json,
                 &[0u8; 32],
+                None,
             )
             .await
             .expect("create workflow");
@@ -1870,6 +2057,7 @@ steps:
                 "hook-member",
                 &def_json,
                 &[0u8; 32],
+                None,
             )
             .await
             .expect("create member workflow");
@@ -1881,6 +2069,7 @@ steps:
                 "hook-owner",
                 &def_json,
                 &[1u8; 32],
+                None,
             )
             .await
             .expect("create owner workflow");
@@ -1908,6 +2097,260 @@ steps:
             1,
             "channel owner's call_webhook workflow fires"
         );
+    }
+
+    /// Spec § 5.3: a schedule written in a zone claims the right UTC instant
+    /// on both sides of a DST change. Friday 17:00 in New York is 22:00Z
+    /// before 2026-03-08 and 21:00Z after it; UTC evaluation would be wrong
+    /// on one side or the other.
+    #[test]
+    fn cron_fire_instant_honours_the_definition_timezone_across_dst() {
+        let zone: chrono_tz::Tz = "America/New_York".parse().expect("zone");
+        let wf_id = Uuid::new_v4();
+        let at = |s: &str| {
+            chrono::DateTime::parse_from_rfc3339(s)
+                .expect("rfc3339")
+                .with_timezone(&Utc)
+        };
+        // Friday 2026-03-06, still EST (UTC-5): 17:00 local = 22:00Z.
+        assert_eq!(
+            cron_fire_instant(
+                "0 0 17 * * FRI",
+                at("2026-03-06T22:00:30Z"),
+                60,
+                wf_id,
+                Some(zone)
+            ),
+            Some(at("2026-03-06T22:00:00Z"))
+        );
+        assert_eq!(
+            cron_fire_instant(
+                "0 0 17 * * FRI",
+                at("2026-03-06T21:00:30Z"),
+                60,
+                wf_id,
+                Some(zone)
+            ),
+            None,
+            "21:00Z is 16:00 EST — not yet"
+        );
+        // Friday 2026-03-13, EDT (UTC-4): 17:00 local = 21:00Z.
+        assert_eq!(
+            cron_fire_instant(
+                "0 0 17 * * FRI",
+                at("2026-03-13T21:00:30Z"),
+                60,
+                wf_id,
+                Some(zone)
+            ),
+            Some(at("2026-03-13T21:00:00Z"))
+        );
+        // Without a zone the same expression means 17:00Z.
+        assert_eq!(
+            cron_fire_instant(
+                "0 0 17 * * FRI",
+                at("2026-03-13T17:00:30Z"),
+                60,
+                wf_id,
+                None
+            ),
+            Some(at("2026-03-13T17:00:00Z"))
+        );
+        // A wall-clock time the spring-forward skips (02:30 on 2026-03-08)
+        // is never produced; the next valid 02:30 is the following day.
+        assert_eq!(
+            cron_fire_instant(
+                "0 30 2 * * *",
+                at("2026-03-08T07:30:30Z"),
+                60,
+                wf_id,
+                Some(zone)
+            ),
+            None,
+            "02:30 EST would be 07:30Z, but that local time does not exist"
+        );
+        assert_eq!(
+            cron_fire_instant(
+                "0 30 2 * * *",
+                at("2026-03-09T06:30:30Z"),
+                60,
+                wf_id,
+                Some(zone)
+            ),
+            Some(at("2026-03-09T06:30:00Z")),
+            "02:30 EDT the next day"
+        );
+    }
+
+    /// `ref_updated` matches full ref names with `*` stopping at `/` and
+    /// `**` crossing it, and refuses shapes the engine could not act on.
+    #[test]
+    fn ref_updated_definitions_validate_their_glob_and_repository() {
+        let project = format!("30621:{}:pulse", "1".repeat(64));
+        let parse = |trigger: &str, with_project: bool| {
+            let project_line = if with_project {
+                format!("project: '{project}'\n")
+            } else {
+                String::new()
+            };
+            WorkflowEngine::parse_yaml(&format!(
+                "name: on-push\n{project_line}trigger:\n{trigger}steps:\n  - id: say\n    action: send_message\n    text: pushed\n"
+            ))
+        };
+        let (def, _) =
+            parse("  on: ref_updated\n  ref: refs/heads/*\n", true).expect("branches glob");
+        let TriggerDef::RefUpdated {
+            ref_glob,
+            repository,
+        } = &def.trigger
+        else {
+            panic!("expected ref_updated");
+        };
+        assert_eq!(ref_glob, "refs/heads/*");
+        assert!(repository.is_none());
+        let matcher = schema::ref_glob_matcher(ref_glob).expect("matcher");
+        assert!(matcher.is_match("refs/heads/main"));
+        assert!(
+            !matcher.is_match("refs/heads/feature/x"),
+            "`*` stops at `/`"
+        );
+        assert!(!matcher.is_match("refs/tags/v1"));
+        let all = schema::ref_glob_matcher("refs/**").expect("matcher");
+        assert!(all.is_match("refs/heads/feature/x"));
+
+        assert!(parse("  on: ref_updated\n  ref: refs/heads/main\n", false)
+            .unwrap_err()
+            .to_string()
+            .contains("requires a top-level project"));
+        let repo = format!("30617:{}:beekeeper", "2".repeat(64));
+        assert!(parse(
+            &format!("  on: ref_updated\n  ref: refs/heads/main\n  repository: '{repo}'\n"),
+            false
+        )
+        .is_ok());
+        assert!(parse(
+            "  on: ref_updated\n  ref: refs/heads/main\n  repository: not-a-coordinate\n",
+            true
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("30617"));
+        assert!(parse("  on: ref_updated\n  ref: ''\n", true).is_err());
+        assert!(
+            !trigger_matches_event(&def.trigger, buzz_core::kind::KIND_STREAM_MESSAGE),
+            "never from channel events"
+        );
+    }
+
+    #[test]
+    fn schedule_timezone_must_be_an_iana_name() {
+        let yaml = |tz: &str| {
+            format!("name: nightly\ntrigger:\n  on: schedule\n  cron: '0 17 * * FRI'\n  timezone: {tz}\nsteps:\n  - id: s\n    action: send_message\n    text: hi\n")
+        };
+        assert!(WorkflowEngine::parse_yaml(&yaml("America/New_York")).is_ok());
+        assert!(WorkflowEngine::parse_yaml(&yaml("Mars/Olympus"))
+            .unwrap_err()
+            .to_string()
+            .contains("unknown timezone"));
+    }
+
+    /// Spec § 7 C2 proof, engine side: a push that moves `refs/heads/main`
+    /// starts exactly one run of a `ref_updated` action bound to the pushed
+    /// repository's project, with the ref and commits in its trigger
+    /// context; a push that only moves a tag starts none; a workflow bound
+    /// to another project is not touched.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn on_repo_state_fires_ref_updated_for_the_repositorys_project() {
+        let db = setup_db().await;
+        let owner = nostr::Keys::generate().public_key().to_bytes().to_vec();
+        let member = nostr::Keys::generate().public_key().to_bytes().to_vec();
+        let (community, channel_id) = setup_channel(&db, &owner, &member).await;
+
+        let project = format!("30621:{}:pulse", "1".repeat(64));
+        let other_project = format!("30621:{}:other", "2".repeat(64));
+        let repository = format!("30617:{}:beekeeper", "3".repeat(64));
+        let yaml = |project: &str| {
+            format!(
+                "name: on-push\nproject: '{project}'\ntrigger:\n  on: ref_updated\n  ref: refs/heads/*\nsteps:\n  - id: say\n    action: send_message\n    text: 'pushed {{{{trigger.ref}}}} at {{{{trigger.after}}}}'\n"
+            )
+        };
+        let mut ids = Vec::new();
+        for coord in [&project, &other_project] {
+            let (def, canonical) = WorkflowEngine::parse_yaml(&yaml(coord)).expect("parse");
+            let hash = crate::hash::definition_hash(&def).expect("hash");
+            let id = db
+                .create_workflow(
+                    community,
+                    Some(channel_id),
+                    &owner,
+                    "on-push",
+                    &canonical,
+                    &hash,
+                    Some(coord),
+                )
+                .await
+                .expect("create workflow");
+            ids.push(id);
+        }
+
+        let engine = Arc::new(WorkflowEngine::new(db.clone(), WorkflowConfig::default()));
+        engine.set_action_sink(Arc::new(RecordingSink::default()));
+        let mut before = std::collections::BTreeMap::new();
+        before.insert("refs/heads/main".to_owned(), "a".repeat(40));
+        before.insert("refs/tags/v1".to_owned(), "c".repeat(40));
+        let mut after = before.clone();
+        after.insert("refs/heads/main".to_owned(), "b".repeat(40));
+
+        let started = engine
+            .on_repo_state(
+                community,
+                &repository,
+                Some(&project),
+                &before,
+                &after,
+                &"4".repeat(64),
+                &[0x5a; 32],
+            )
+            .await
+            .expect("dispatch");
+        assert_eq!(started, 1, "one run for the project's own workflow");
+        let runs = db
+            .list_workflow_runs(community, ids[0], 10)
+            .await
+            .expect("runs");
+        assert_eq!(runs.len(), 1);
+        let ctx = runs[0].trigger_context.clone().expect("trigger context");
+        assert_eq!(ctx["ref"], "refs/heads/main");
+        assert_eq!(ctx["before"], "a".repeat(40));
+        assert_eq!(ctx["after"], "b".repeat(40));
+        assert_eq!(ctx["repository"], repository);
+        assert_eq!(runs[0].trigger_event_id.as_deref(), Some(&[0x5a; 32][..]));
+        let other_runs = db
+            .list_workflow_runs(community, ids[1], 10)
+            .await
+            .expect("runs");
+        assert!(
+            other_runs.is_empty(),
+            "another project's workflow does not fire"
+        );
+
+        // A tag-only push matches no `refs/heads/*` glob.
+        let mut tagged = after.clone();
+        tagged.insert("refs/tags/v2".to_owned(), "d".repeat(40));
+        let started = engine
+            .on_repo_state(
+                community,
+                &repository,
+                Some(&project),
+                &after,
+                &tagged,
+                &"4".repeat(64),
+                &[0x5b; 32],
+            )
+            .await
+            .expect("dispatch");
+        assert_eq!(started, 0);
     }
 
     // -- C1: suspensions are durable before they are announced (requires Postgres)
@@ -2003,6 +2446,7 @@ steps:
                 "c1-suspend",
                 &canonical,
                 &hash,
+                None,
             )
             .await
             .expect("create workflow");

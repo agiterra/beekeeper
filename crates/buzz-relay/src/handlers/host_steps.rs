@@ -783,6 +783,7 @@ mod tests {
                 "nightly",
                 &canonical,
                 &hash,
+                None,
             )
             .await
             .expect("upsert workflow");

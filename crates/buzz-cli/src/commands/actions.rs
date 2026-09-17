@@ -71,7 +71,8 @@ pub async fn cmd_publish(
         let workflow_id = action_workflow_id(project, &entry.name);
         let yaml = bound_definition_yaml(entry)?;
         let builder =
-            buzz_sdk::build_workflow_def(channel_uuid, workflow_id, &yaml).map_err(sdk_err)?;
+            buzz_sdk::build_project_workflow_def(channel_uuid, workflow_id, project, &yaml)
+                .map_err(sdk_err)?;
         let event = client.sign_event(builder)?;
         let (accepted, event_id, message) = match client.submit_event(event).await {
             Ok(raw) => {

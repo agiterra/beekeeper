@@ -813,21 +813,48 @@ async fn handle_workflow_def(
                     .into(),
             ));
         }
-        // The `project` binding is what a host uses to decide the request is
-        // for a project it serves, and the host's own actions.yml is what it
-        // runs — so whoever binds a definition to a project must own that
-        // project's coordinate. Otherwise an admin of any channel a host is
-        // in could republish a victim project's public entry under the
-        // victim's coordinate and approve it himself (review P2-e). Repository
-        // founders (the `record_ci_result` rule) come with C2's project scope.
-        let project = def.project.as_deref().unwrap_or_default();
-        let project_owner = project.split(':').nth(1).unwrap_or_default();
-        if project_owner != hex::encode(&self_bytes) {
-            return Err(IngestError::Rejected(
-                "forbidden: a run_on_host definition must be saved by the owner of its \
-                 project coordinate"
-                    .into(),
-            ));
+    }
+
+    // Spec § 5.3: a definition bound to a project (its `project`, mirrored by
+    // an optional `a` tag that must agree) is admitted by the kind:30624 rule
+    // — the project's creator, a roster Owner, or a founder of one of its
+    // endorsed repositories. This is what stops an admin of any channel a
+    // host is in from republishing a victim project's public entry under
+    // the victim's coordinate and approving it himself (review P2-e).
+    let project_ref: Option<String> = match (&def.project, extract_tag(event, "a")) {
+        (Some(project), Some(a_tag)) if a_tag != *project => {
+            return Err(IngestError::Rejected(format!(
+                "invalid: a tag {a_tag:?} must equal the definition's project {project:?}"
+            )));
+        }
+        (None, Some(a_tag)) => {
+            return Err(IngestError::Rejected(format!(
+                "invalid: a tag {a_tag:?} names a project the definition does not declare"
+            )));
+        }
+        (project, _) => project.clone(),
+    };
+    if let Some(project) = &project_ref {
+        match crate::handlers::pack_source::project_write_admitted(
+            state,
+            tenant.community(),
+            project,
+            &hex::encode(&self_bytes),
+        )
+        .await
+        {
+            Ok(Ok(_)) => {}
+            Ok(Err(refusal)) => {
+                return Err(IngestError::Rejected(format!(
+                    "forbidden: a project action must be saved by the project creator, a \
+                     roster owner or a repository founder ({refusal:?})"
+                )));
+            }
+            Err(()) => {
+                return Err(IngestError::Internal(
+                    "error: project admission lookup failed".into(),
+                ));
+            }
         }
     }
 
@@ -920,6 +947,7 @@ async fn handle_workflow_def(
             &workflow_name,
             &definition_json_final,
             &hash,
+            project_ref.as_deref(),
         )
         .await
         .map_err(|e| match e {
@@ -986,10 +1014,27 @@ async fn handle_workflow_trigger(
     // 3. Manual triggers execute with the workflow owner's authority, so only
     // the owner may start them. Channel membership alone is insufficient: a
     // member could otherwise invoke another user's webhook or message actions.
+    // A project action (spec § 5.3) may also be started by a project Owner
+    // or Collaborator on the kind:39010 roster — the roles that write into
+    // the project's contents; Viewers may not.
     if workflow.owner_pubkey != self_bytes {
-        return Err(IngestError::Rejected(
-            "forbidden: not authorized to trigger this workflow".into(),
-        ));
+        let project_role = match &workflow.project_ref {
+            Some(project) => state
+                .db
+                .get_project_role_by_coordinate(community_id, project, &self_bytes)
+                .await
+                .map_err(|e| IngestError::Internal(format!("error: project role: {e}")))?,
+            None => None,
+        };
+        if !matches!(
+            project_role,
+            Some(buzz_core::channel::ProjectRole::Owner)
+                | Some(buzz_core::channel::ProjectRole::Collaborator)
+        ) {
+            return Err(IngestError::Rejected(
+                "forbidden: not authorized to trigger this workflow".into(),
+            ));
+        }
     }
 
     // SEC-006: manual triggers must honor the workflow's lifecycle state and

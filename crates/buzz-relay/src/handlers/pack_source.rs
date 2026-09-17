@@ -169,6 +169,24 @@ pub(crate) async fn pack_source_write_admitted(
         Err(_) => return Err(()),
     };
     let coordinate = record.project().to_string();
+    project_write_admitted(state, community, &coordinate, &event.pubkey.to_hex()).await
+}
+
+/// The kind:30624 writer rule, reusable for any record that binds itself to a
+/// project: the project's creator, a roster Owner, or a founder of one of the
+/// project's endorsed repositories may write. Project actions (kind:30620
+/// with a `project`, spec § 5.3) take the same rule.
+///
+/// # Errors
+/// `Err(Some(refusal))` when the author may not write; `Err(None)` when
+/// storage could not answer, which the caller must map to an internal error.
+pub(crate) async fn project_write_admitted(
+    state: &Arc<AppState>,
+    community: buzz_core::CommunityId,
+    coordinate: &str,
+    author_hex: &str,
+) -> Result<Result<PackSourceAdmission, PackSourceRefusal>, ()> {
+    let coordinate = coordinate.to_owned();
     let creator = project_coordinate_owner(&coordinate).unwrap_or_default();
 
     let roster = match state.db.get_project_roster(community, &coordinate).await {
@@ -201,7 +219,7 @@ pub(crate) async fn pack_source_write_admitted(
     };
 
     Ok(decide_pack_source_admission(
-        &event.pubkey.to_hex(),
+        author_hex,
         &coordinate,
         &creator,
         &rows,

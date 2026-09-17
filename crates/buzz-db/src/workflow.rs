@@ -181,6 +181,9 @@ pub struct WorkflowRecord {
     pub definition: serde_json::Value,
     /// SHA-256 hash of the canonical definition JSON.
     pub definition_hash: Vec<u8>,
+    /// The kind:30621 coordinate this definition acts for, when it is a
+    /// project action (spec § 5.3).
+    pub project_ref: Option<String>,
     /// Current lifecycle status of the workflow definition.
     pub status: WorkflowStatus,
     /// Whether the workflow will fire on matching events.
@@ -434,6 +437,7 @@ pub struct HostStepResultParams<'a> {
 ///
 /// NOTE: see the cache-invalidation note on [`update_workflow`]. The relay's
 /// creation path is [`upsert_workflow`] via event ingest. (No current callers.)
+#[allow(clippy::too_many_arguments)]
 pub async fn create_workflow(
     pool: &PgPool,
     community_id: CommunityId,
@@ -442,14 +446,15 @@ pub async fn create_workflow(
     name: &str,
     definition_json: &str,
     definition_hash: &[u8],
+    project_ref: Option<&str>,
 ) -> Result<Uuid> {
     let id = Uuid::new_v4();
 
     sqlx::query(
         r#"
         INSERT INTO workflows
-            (id, community_id, name, owner_pubkey, channel_id, definition, definition_hash, status, enabled)
-        VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, 'active', TRUE)
+            (id, community_id, name, owner_pubkey, channel_id, definition, definition_hash, project_ref, status, enabled)
+        VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, 'active', TRUE)
         "#,
     )
     .bind(id)
@@ -459,6 +464,7 @@ pub async fn create_workflow(
     .bind(channel_id)
     .bind(definition_json)
     .bind(definition_hash)
+    .bind(project_ref)
     .execute(pool)
     .await?;
 
@@ -480,16 +486,18 @@ pub async fn upsert_workflow(
     name: &str,
     definition_json: &str,
     definition_hash: &[u8],
+    project_ref: Option<&str>,
 ) -> Result<()> {
     let row = sqlx::query(
         r#"
         INSERT INTO workflows
-            (community_id, id, name, owner_pubkey, channel_id, definition, definition_hash, status, enabled)
-        VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, 'active', TRUE)
+            (community_id, id, name, owner_pubkey, channel_id, definition, definition_hash, project_ref, status, enabled)
+        VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, 'active', TRUE)
         ON CONFLICT (community_id, id) DO UPDATE
         SET name = EXCLUDED.name,
             definition = EXCLUDED.definition,
             definition_hash = EXCLUDED.definition_hash,
+            project_ref = EXCLUDED.project_ref,
             updated_at = NOW()
         WHERE workflows.owner_pubkey = EXCLUDED.owner_pubkey
           AND workflows.channel_id IS NOT DISTINCT FROM EXCLUDED.channel_id
@@ -503,6 +511,7 @@ pub async fn upsert_workflow(
     .bind(channel_id)
     .bind(definition_json)
     .bind(definition_hash)
+    .bind(project_ref)
     .fetch_optional(pool)
     .await?;
 
@@ -529,7 +538,7 @@ pub async fn get_workflow(
     let row = sqlx::query(
         r#"
         SELECT id, community_id, name, owner_pubkey, channel_id, definition, definition_hash,
-               status::text AS status, enabled, created_at, updated_at
+               project_ref, status::text AS status, enabled, created_at, updated_at
         FROM workflows
         WHERE community_id = $1 AND id = $2
         "#,
@@ -560,7 +569,7 @@ pub async fn list_channel_workflows(
     let rows = sqlx::query(
         r#"
         SELECT id, community_id, name, owner_pubkey, channel_id, definition, definition_hash,
-               status::text AS status, enabled, created_at, updated_at
+               project_ref, status::text AS status, enabled, created_at, updated_at
         FROM workflows
         WHERE community_id = $1 AND channel_id = $2
         ORDER BY created_at DESC
@@ -591,7 +600,7 @@ pub async fn list_enabled_channel_workflows(
     let rows = sqlx::query(
         r#"
         SELECT id, community_id, name, owner_pubkey, channel_id, definition, definition_hash,
-               status::text AS status, enabled, created_at, updated_at
+               project_ref, status::text AS status, enabled, created_at, updated_at
         FROM workflows
         WHERE community_id = $1
           AND channel_id = $2
@@ -618,7 +627,7 @@ pub async fn list_enabled_channel_workflows(
 pub async fn list_all_enabled_workflows(pool: &PgPool) -> Result<Vec<WorkflowRecord>> {
     let rows = sqlx::query(
         r#"
-        SELECT w.id, w.community_id, w.name, w.owner_pubkey, w.channel_id, w.definition, w.definition_hash,
+        SELECT w.id, w.community_id, w.name, w.owner_pubkey, w.channel_id, w.definition, w.definition_hash, w.project_ref,
                w.status::text AS status, w.enabled, w.created_at, w.updated_at
         FROM workflows w
         JOIN communities c ON c.id = w.community_id
@@ -773,6 +782,33 @@ pub async fn prune_scheduled_workflow_fires_before(
     Ok(result.rows_affected())
 }
 
+/// Every enabled definition whose trigger is `ref_updated`, across the
+/// community. The engine filters by repository and glob; the set is small
+/// (one per project action) and the JSONB path keeps the scan honest.
+pub async fn list_enabled_ref_updated_workflows(
+    pool: &PgPool,
+    community_id: CommunityId,
+) -> Result<Vec<WorkflowRecord>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT id, community_id, name, owner_pubkey, channel_id, definition, definition_hash,
+               project_ref, status::text AS status, enabled, created_at, updated_at
+        FROM workflows
+        WHERE community_id = $1
+          AND status = 'active'
+          AND enabled = TRUE
+          AND definition->'trigger'->>'on' = 'ref_updated'
+        ORDER BY created_at DESC
+        LIMIT $2
+        "#,
+    )
+    .bind(community_id.as_uuid())
+    .bind(LIST_MAX_LIMIT)
+    .fetch_all(pool)
+    .await?;
+    rows.into_iter().map(row_to_workflow_record).collect()
+}
+
 /// Update a workflow's name, definition, and definition_hash.
 ///
 /// NOTE: the relay's `WorkflowEngine` caches enabled workflows per
@@ -786,11 +822,12 @@ pub async fn update_workflow(
     name: &str,
     definition_json: &str,
     definition_hash: &[u8],
+    project_ref: Option<&str>,
 ) -> Result<()> {
     let affected = sqlx::query(
         r#"
         UPDATE workflows
-        SET name = $1, definition = $2::jsonb, definition_hash = $3
+        SET name = $1, definition = $2::jsonb, definition_hash = $3, project_ref = $6
         WHERE community_id = $4 AND id = $5
         "#,
     )
@@ -799,6 +836,7 @@ pub async fn update_workflow(
     .bind(definition_hash)
     .bind(community_id.as_uuid())
     .bind(id)
+    .bind(project_ref)
     .execute(pool)
     .await?
     .rows_affected();
@@ -1341,6 +1379,7 @@ fn row_to_workflow_record(row: sqlx::postgres::PgRow) -> Result<WorkflowRecord> 
         channel_id,
         definition: row.try_get("definition")?,
         definition_hash: row.try_get("definition_hash")?,
+        project_ref: row.try_get("project_ref")?,
         status,
         enabled,
         created_at: row.try_get("created_at")?,
@@ -1690,7 +1729,7 @@ pub async fn find_by_owner_and_name(
     let row = sqlx::query(
         r#"
         SELECT id, community_id, name, owner_pubkey, channel_id, definition, definition_hash,
-               status::text AS status, enabled, created_at, updated_at
+               project_ref, status::text AS status, enabled, created_at, updated_at
         FROM workflows
         WHERE community_id = $1 AND owner_pubkey = $2 AND name = $3
         LIMIT 1
@@ -1824,6 +1863,7 @@ mod tests {
             channel_id: Some(channel_id),
             definition: def.clone(),
             definition_hash: vec![0x01, 0x02, 0x03, 0x04],
+            project_ref: None,
             status: WorkflowStatus::Active,
             enabled: true,
             created_at: now,
@@ -1854,6 +1894,7 @@ mod tests {
             channel_id: None,
             definition: serde_json::json!({}),
             definition_hash: vec![],
+            project_ref: None,
             status: WorkflowStatus::Active,
             enabled: true,
             created_at: now,
@@ -1876,6 +1917,7 @@ mod tests {
             channel_id: None,
             definition: serde_json::json!({}),
             definition_hash: vec![0xAA],
+            project_ref: None,
             status: WorkflowStatus::Active,
             enabled: true,
             created_at: now,
@@ -1905,6 +1947,7 @@ mod tests {
                 channel_id: None,
                 definition: serde_json::json!({}),
                 definition_hash: vec![],
+                project_ref: None,
                 status: status.clone(),
                 enabled: true,
                 created_at: now,
@@ -1925,6 +1968,7 @@ mod tests {
             channel_id: None,
             definition: serde_json::json!({}),
             definition_hash: vec![],
+            project_ref: None,
             status: WorkflowStatus::Active,
             enabled: false,
             created_at: now,
@@ -2277,6 +2321,7 @@ mod tests {
             "f1-attack-workflow",
             r#"{"trigger":{"on":"schedule"},"steps":[]}"#,
             &[0u8; 32],
+            None,
         )
         .await
         .expect("create workflow");
@@ -2826,6 +2871,7 @@ mod tests {
             "departing-a",
             def,
             &[0u8; 32],
+            None,
         )
         .await
         .expect("wf departing a");
@@ -2837,6 +2883,7 @@ mod tests {
             "departing-b",
             def,
             &[0u8; 32],
+            None,
         )
         .await
         .expect("wf departing b");
@@ -2848,6 +2895,7 @@ mod tests {
             "staying-a",
             def,
             &[0u8; 32],
+            None,
         )
         .await
         .expect("wf staying a");

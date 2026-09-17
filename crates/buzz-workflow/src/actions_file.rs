@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::WorkflowError;
 use crate::hash::definition_hash_hex;
-use crate::schema::WorkflowDef;
+use crate::schema::{TriggerDef, WorkflowDef};
 
 /// Exact schema the file must name.
 pub const ACTIONS_SCHEMA: &str = "buzz-project-actions/v1";
@@ -30,9 +30,9 @@ pub const MAX_ACTIONS: usize = 64;
 pub struct ActionsFile {
     /// Must equal [`ACTIONS_SCHEMA`].
     pub schema: String,
-    /// IANA timezone for every schedule below. Parsed, not yet honoured:
-    /// slice C2 wires it, so a file that sets it is refused until then rather
-    /// than silently run in UTC.
+    /// IANA timezone every `schedule` below is written in, unless the
+    /// schedule names its own. Applied to each entry before hashing, so the
+    /// stored definition carries the zone explicitly.
     #[serde(default)]
     pub timezone: Option<String>,
     /// The actions, each a workflow definition.
@@ -74,12 +74,15 @@ pub fn parse_actions_yml(text: &str, project: &str) -> Result<Vec<ActionEntry>, 
             file.schema
         )));
     }
-    if let Some(timezone) = &file.timezone {
-        return Err(WorkflowError::InvalidDefinition(format!(
-            "actions.yml timezone {timezone:?} is not supported yet; schedules run in UTC until \
-             project-scoped triggers land (spec § 5.3), so remove the key for now"
-        )));
-    }
+    let default_timezone = match &file.timezone {
+        Some(timezone) => {
+            crate::schema::parse_timezone(timezone).map_err(|error| {
+                WorkflowError::InvalidDefinition(format!("actions.yml: {error}"))
+            })?;
+            Some(timezone.trim().to_owned())
+        }
+        None => None,
+    };
     if file.actions.is_empty() {
         return Err(WorkflowError::InvalidDefinition(
             "actions.yml must list at least one action".into(),
@@ -106,6 +109,16 @@ pub fn parse_actions_yml(text: &str, project: &str) -> Result<Vec<ActionEntry>, 
             )));
         }
         def.name = name.clone();
+        if let (
+            Some(default_timezone),
+            TriggerDef::Schedule {
+                timezone: timezone @ None,
+                ..
+            },
+        ) = (&default_timezone, &mut def.trigger)
+        {
+            *timezone = Some(default_timezone.clone());
+        }
         match &def.project {
             Some(declared) if declared != project => {
                 return Err(WorkflowError::InvalidDefinition(format!(
@@ -156,6 +169,22 @@ mod tests {
         assert_eq!(again[0].hash, entries[0].hash);
     }
 
+    /// The file's `timezone` becomes every schedule's explicit zone before
+    /// hashing, so the stored definition and the host's recompilation agree
+    /// without either knowing the file-level default.
+    #[test]
+    fn file_timezone_is_applied_to_schedules_without_their_own() {
+        let text = "schema: buzz-project-actions/v1\ntimezone: Europe/London\nactions:\n  - name: nightly\n    trigger: { on: schedule, cron: '0 17 * * FRI' }\n    steps:\n      - id: build\n        action: run_on_host\n        command: [\"true\"]\n  - name: tokyo\n    trigger: { on: schedule, cron: '0 9 * * *', timezone: Asia/Tokyo }\n    steps:\n      - id: say\n        action: send_message\n        text: hi\n";
+        let entries = parse_actions_yml(text, PROJECT).expect("parse");
+        let zone = |entry: &ActionEntry| match &entry.def.trigger {
+            TriggerDef::Schedule { timezone, .. } => timezone.clone(),
+            _ => None,
+        };
+        assert_eq!(zone(&entries[0]).as_deref(), Some("Europe/London"));
+        assert_eq!(zone(&entries[1]).as_deref(), Some("Asia/Tokyo"));
+        assert!(entries[0].canonical_json.contains("Europe/London"));
+    }
+
     #[test]
     fn refuses_wrong_schema_timezone_duplicates_and_foreign_project() {
         let bad_schema = file("").replace("buzz-project-actions/v1", "nope/v9");
@@ -164,10 +193,10 @@ mod tests {
             .to_string()
             .contains("schema"));
         assert!(
-            parse_actions_yml(&file("timezone: Europe/London\n"), PROJECT)
+            parse_actions_yml(&file("timezone: Mars/Olympus\n"), PROJECT)
                 .unwrap_err()
                 .to_string()
-                .contains("timezone")
+                .contains("unknown timezone")
         );
         let dup = file("").replace("name: hello", "name: nightly-build");
         assert!(parse_actions_yml(&dup, PROJECT)

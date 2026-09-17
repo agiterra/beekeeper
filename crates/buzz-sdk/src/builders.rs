@@ -1659,6 +1659,26 @@ pub fn build_workflow_def(
     Ok(EventBuilder::new(Kind::Custom(KIND_WORKFLOW_DEF as u16), yaml).tags(tags))
 }
 
+/// Build a project action definition (kind 30620): a workflow definition
+/// bound to a kind:30621 project by its `a` tag, alongside the channel `h`.
+/// The relay requires `a` to equal the definition's own `project` and admits
+/// the write by the kind:30624 rule (project creator, roster owner, or a
+/// repository founder).
+pub fn build_project_workflow_def(
+    channel_id: Uuid,
+    workflow_id: Uuid,
+    project: &str,
+    yaml: &str,
+) -> Result<EventBuilder, SdkError> {
+    check_content(yaml, 64 * 1024)?;
+    let tags = vec![
+        tag(&["d", &workflow_id.to_string()])?,
+        tag(&["h", &channel_id.to_string()])?,
+        tag(&["a", project])?,
+    ];
+    Ok(EventBuilder::new(Kind::Custom(KIND_WORKFLOW_DEF as u16), yaml).tags(tags))
+}
+
 /// Build a workflow update event (kind 30620) for an existing workflow.
 ///
 /// Updates an existing workflow definition in-place via the parameterized

@@ -20,6 +20,8 @@ dashmap     = { workspace = true }
 moka        = { workspace = true }
 evalexpr    = "11"
 cron        = "0.16"
+chrono-tz   = "0.10"
+globset     = "0.4"
 nostr       = { workspace = true }
 uuid        = { workspace = true }
 chrono      = { workspace = true }

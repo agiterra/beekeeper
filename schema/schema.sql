@@ -376,12 +376,16 @@ CREATE TABLE workflows (
     enabled         BOOLEAN NOT NULL DEFAULT TRUE,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- Spec § 5.3: the kind:30621 coordinate a project action belongs to.
+    project_ref     TEXT,
     PRIMARY KEY (community_id, id),
     FOREIGN KEY (community_id, owner_pubkey) REFERENCES users (community_id, pubkey),
     FOREIGN KEY (community_id, channel_id) REFERENCES channels (community_id, id)
 );
 
 CREATE INDEX idx_workflows_channel_active ON workflows (community_id, channel_id, status, enabled);
+CREATE INDEX idx_workflows_project ON workflows (community_id, project_ref)
+    WHERE project_ref IS NOT NULL;
 -- Scheduler scans enabled schedule workflows; community_id returned per row so
 -- side effects run under the owning tenant's context (Lane0 contract §4a.5).
 CREATE INDEX idx_workflows_enabled ON workflows (enabled, status) WHERE enabled;

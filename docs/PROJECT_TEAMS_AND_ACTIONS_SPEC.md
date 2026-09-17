@@ -877,6 +877,14 @@ C are independent lanes until C3, which needs `team.yml` (A3) for agent names.
   `workflows.project_ref`, the `a` tag, `on_repo_state` at `transport.rs:2165`,
   `chrono-tz`. Proof: a push to `main` fires; a Friday 17:00 local schedule
   claims the right UTC instant across a DST boundary.
+  *Status 2026-09-17: built (ledger 151). Amendments: the 30620 `d` is a UUID
+  v5 of `<project>\n<name>` rather than a sha256, because the relay's `d` tag
+  is a UUID; the roster has no "Admin" role, so a manual trigger admits Owner
+  and Collaborator; a `ref_updated` trigger without `repository` matches the
+  repository attached to the definition's project (`git_repo_names
+  .project_ref`), not the project's own repository list; the `ci_result`
+  carve-out stays C5. The push-to-`main` proof is engine-level against
+  Postgres, not a live push.*
 - **C3 — conditional and always routing to a persistent agent.** `wake_agent`,
   fenced 44220, 44246 row in the target session. Proof: a failing build wakes
   the builder exactly once across a duplicate 46013 delivery and a provider
