@@ -595,7 +595,12 @@ test("the lead's create runs in the worktree the launch cut for it", async () =>
   );
   assert.equal(result.ok, true);
   assert.deepEqual(cut, [
-    { workdir: "/Users/b/Projects/bk/bk", name: "ui-lead", source: "main" },
+    {
+      workdir: "/Users/b/Projects/bk/bk",
+      name: "ui-lead",
+      source: "main",
+      hideRoles: true,
+    },
   ]);
   assert.equal(workdir, "/Users/b/Projects/bk/bk-ui-lead");
   assert.equal(result.leadWorkdir, "/Users/b/Projects/bk/bk-ui-lead");

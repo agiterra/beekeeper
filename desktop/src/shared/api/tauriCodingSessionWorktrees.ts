@@ -167,6 +167,14 @@ export async function createCodingSessionWorktree(input: {
   seatLabel?: string | null;
   /** The execution's session id, when it is already known at cut time. */
   sessionId?: string | null;
+  /**
+   * Cut the tree without the project's team definitions (`beekeeper/`),
+   * as every role seat's tree is (spec § 4.10). A seat that finds the other
+   * roles' instructions while searching the repository confuses itself
+   * about its own; the host composes its role from git objects, never from
+   * this working copy. Solo sessions leave this unset and keep the files.
+   */
+  hideRoles?: boolean | null;
 }): Promise<CodingSessionWorktreeCreated> {
   return invokeTauri<CodingSessionWorktreeCreated>(
     "create_coding_session_worktree",
@@ -178,6 +186,7 @@ export async function createCodingSessionWorktree(input: {
       sessionRef: input.sessionRef ?? null,
       seatLabel: input.seatLabel ?? null,
       sessionId: input.sessionId ?? null,
+      hideRoles: input.hideRoles ?? null,
     },
   );
 }

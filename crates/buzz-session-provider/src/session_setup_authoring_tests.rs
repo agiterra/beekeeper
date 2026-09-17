@@ -3,7 +3,7 @@
 //! the scripted child is not evidence of model judgment or SDK enforcement.
 
 use super::*;
-use crate::agent_fence::{write_fence_rules, WriteFenceLayout};
+use crate::agent_fence::{roles_read_fence_rule, write_fence_rules, WriteFenceLayout};
 
 fn edit_rule(path: &Path, directory: bool) -> String {
     format!(
@@ -42,7 +42,14 @@ fn setup_draft_is_writable_while_existing_private_siblings_are_denied() {
     assert!(rules.contains(&edit_rule(&journal, false)));
     assert!(rules.contains(&edit_rule(&custody, false)));
     assert!(rules.contains(&edit_rule(&bootstrap, true)));
-    assert!(rules.iter().all(|rule| rule.starts_with("Edit(")));
+    // Every rule is a write rule, except the one read rule the fence writes
+    // inside the seat's own tree on purpose (spec § 4.10) — for a setup
+    // draft that names a directory it does not have.
+    let read_fence = roles_read_fence_rule(&draft);
+    assert!(rules
+        .iter()
+        .all(|rule| rule.starts_with("Edit(") || *rule == read_fence));
+    assert_eq!(rules.iter().filter(|rule| **rule == read_fence).count(), 1);
 
     // The previous sibling CWD really did fence out the entire editable draft.
     let previous = write_fence_rules(&WriteFenceLayout::new(

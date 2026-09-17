@@ -233,6 +233,87 @@ fn rev_parse(dir: &Path, rev: &str) -> String {
         .to_string()
 }
 
+/// Spec § 4.10: a seat's worktree does not materialise the project's team
+/// definitions, the person's checkout keeps them, the objects stay readable
+/// through git, and a worktree cut without the flag keeps everything.
+#[test]
+fn a_seat_worktree_hides_the_roles_directory_and_the_checkout_keeps_it() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let checkout = root.path().join("beekeeper");
+    std::fs::create_dir_all(&checkout).expect("create checkout");
+    if scratch_repo(&checkout).is_err() {
+        return;
+    }
+    let auth = build_local_git_auth_config().expect("git");
+    std::fs::create_dir_all(checkout.join(HIDDEN_ROLES_DIR).join("roles")).expect("roles dir");
+    std::fs::write(
+        checkout
+            .join(HIDDEN_ROLES_DIR)
+            .join("roles")
+            .join("lead.md"),
+        "You lead.\n",
+    )
+    .expect("role file");
+    std::fs::create_dir_all(checkout.join("src")).expect("src dir");
+    std::fs::write(checkout.join("src").join("main.rs"), "fn main() {}\n").expect("source");
+    run_git(&["add", "--all"], Some(&checkout), &auth).expect("add");
+    scratch_commit(&checkout, "team and code").expect("commit");
+    let checkout_str = checkout.to_string_lossy().into_owned();
+
+    let seat = create(&checkout_str, "builder seat", None, None, true).expect("seat worktree");
+    let seat_path = Path::new(&seat.path);
+    assert!(
+        seat_path.join("src").join("main.rs").is_file(),
+        "the rest of the tree is materialised"
+    );
+    assert!(
+        !seat_path.join(HIDDEN_ROLES_DIR).exists(),
+        "{HIDDEN_ROLES_DIR}/ is absent from the seat's working copy"
+    );
+    assert!(
+        checkout
+            .join(HIDDEN_ROLES_DIR)
+            .join("roles")
+            .join("lead.md")
+            .is_file(),
+        "the person's checkout keeps it"
+    );
+    let shown = run_git(
+        &["show", &format!("HEAD:{HIDDEN_ROLES_DIR}/roles/lead.md")],
+        Some(seat_path),
+        &auth,
+    )
+    .expect("git show still answers: the objects are in the repository");
+    assert_eq!(shown.trim(), "You lead.");
+    // The setting is the seat worktree's own, not the repository's.
+    let scope = run_git(
+        &["config", "--worktree", "--get", "core.sparseCheckout"],
+        Some(seat_path),
+        &auth,
+    )
+    .expect("worktree-scoped config");
+    assert_eq!(scope.trim(), "true");
+    let repo_wide = run_git(
+        &["config", "--local", "--get", "core.sparseCheckout"],
+        Some(&checkout),
+        &auth,
+    );
+    assert!(
+        repo_wide.map(|v| v.trim() != "true").unwrap_or(true),
+        "the checkout is not sparse"
+    );
+
+    let solo = create(&checkout_str, "solo tree", None, None, false).expect("solo worktree");
+    assert!(
+        Path::new(&solo.path)
+            .join(HIDDEN_ROLES_DIR)
+            .join("roles")
+            .join("lead.md")
+            .is_file(),
+        "a worktree cut without the flag keeps the directory"
+    );
+}
+
 /// The scenario this feature exists for: the checkout is parked on a topic
 /// branch that has drifted from `main`, and a new session must not silently
 /// inherit that topic branch as its ancestor.
@@ -259,7 +340,7 @@ fn a_worktree_starts_from_main_even_when_the_checkout_is_parked_elsewhere() {
     assert_eq!(listed.head_branch.as_deref(), Some("old-topic"));
 
     // Create with no explicit source, the way the dialog's default submits.
-    let created = create(&checkout_str, "fresh session", None, None).expect("create");
+    let created = create(&checkout_str, "fresh session", None, None, false).expect("create");
     assert_eq!(
         rev_parse(Path::new(&created.path), "HEAD"),
         rev_parse(&checkout, "main"),
@@ -267,8 +348,14 @@ fn a_worktree_starts_from_main_even_when_the_checkout_is_parked_elsewhere() {
     );
 
     // An explicit source is honored too.
-    let from_topic = create(&checkout_str, "topic followup", None, Some("old-topic"))
-        .expect("create from topic");
+    let from_topic = create(
+        &checkout_str,
+        "topic followup",
+        None,
+        Some("old-topic"),
+        false,
+    )
+    .expect("create from topic");
     assert_eq!(
         rev_parse(Path::new(&from_topic.path), "HEAD"),
         rev_parse(&checkout, "old-topic"),
@@ -400,8 +487,14 @@ fn a_late_record_admits_a_cut_worktree_and_refuses_a_plain_checkout() {
     if scratch_repo(&checkout).is_err() {
         return;
     }
-    let created = create(&checkout.to_string_lossy(), "fix the timeout", None, None)
-        .expect("create the worktree");
+    let created = create(
+        &checkout.to_string_lossy(),
+        "fix the timeout",
+        None,
+        None,
+        false,
+    )
+    .expect("create the worktree");
 
     let repo_root = Path::new(&created.repo_root);
     assert!(

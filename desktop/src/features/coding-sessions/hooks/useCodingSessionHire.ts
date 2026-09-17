@@ -764,6 +764,8 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
         // 60).
         sessionRef: plan.sessionRef,
         seatLabel: plan.seatLabel,
+        // A hired seat never sees the team definitions (spec § 4.10).
+        hideRoles: true,
       });
       await hireDeps.stageCreateHint({
         commandId: plan.commandId,

@@ -165,6 +165,8 @@ export type CodingSessionCrewLaunchDeps = {
     workdir: string;
     name: string;
     source: string | null;
+    /** Always `true` for the lead: a role seat's tree omits `beekeeper/`. */
+    hideRoles: boolean;
   }) => Promise<{ path: string }>;
   publishSeatCreate: (input: {
     seat: ResolvedCodingSessionCrewSeat;
@@ -444,11 +446,23 @@ export function planCodingSessionCrewLaunch(
  */
 export function leadWorktreeRequest(
   input: Pick<CodingSessionCrewLaunchInput, "leadWorktree" | "workdir">,
-): { workdir: string; name: string; source: string | null } | null {
+): {
+  workdir: string;
+  name: string;
+  source: string | null;
+  hideRoles: boolean;
+} | null {
   const workdir = input.workdir?.trim() ?? "";
   const name = input.leadWorktree?.name.trim() ?? "";
   if (workdir.length === 0 || name.length === 0) return null;
-  return { workdir, name, source: input.leadWorktree?.source ?? null };
+  // The lead is a role seat: its tree omits the team definitions (spec
+  // § 4.10), the same as every hire's.
+  return {
+    workdir,
+    name,
+    source: input.leadWorktree?.source ?? null,
+    hideRoles: true,
+  };
 }
 
 /**

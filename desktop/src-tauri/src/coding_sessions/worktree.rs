@@ -566,6 +566,7 @@ fn create(
     name: &str,
     chosen_parent: Option<&str>,
     source: Option<&str>,
+    hide_roles: bool,
 ) -> Result<CodingSessionWorktreeCreated, String> {
     // Re-planned rather than trusting the caller: the dialog's preview can go
     // stale between showing and submitting, and a refused folder must be
@@ -597,10 +598,55 @@ fn create(
         Some(Path::new(&repo_root)),
         &auth,
     )?;
+    if hide_roles {
+        hide_roles_directory(Path::new(&path), &auth)?;
+    }
     Ok(CodingSessionWorktreeCreated {
         path,
         branch,
         repo_root,
+    })
+}
+
+/// The directory a seat's worktree does not materialise: the project's team
+/// definitions (`beekeeper/roles/*.md`, `beekeeper/team.yml`, …).
+///
+/// Spec § 4.10: a seat that finds the other roles' instructions while
+/// searching the repository confuses itself about its own role. The host
+/// composes the seat's role from git objects and the packs cache, never
+/// from the seat's working copy, so the seat loses nothing it needs.
+pub const HIDDEN_ROLES_DIR: &str = crate::managed_agents::packs_cache::DEFAULT_FLAT_PATH;
+
+/// Exclude [`HIDDEN_ROLES_DIR`] from `worktree`'s working copy with a
+/// worktree-local sparse checkout.
+///
+/// `git sparse-checkout set --no-cone '/*' '!/<dir>/'`: everything is
+/// materialised except that one directory. The setting is written to the
+/// worktree's own config (git enables `extensions.worktreeConfig` for it),
+/// so the person's checkout and every other worktree keep the directory.
+/// The objects stay in the repository — `git show HEAD:<dir>/…` still
+/// answers — which is the honest limit: this prevents accidental reading,
+/// not deliberate reading.
+fn hide_roles_directory(
+    worktree: &Path,
+    auth: &crate::commands::project_git_exec::GitAuthConfig,
+) -> Result<(), String> {
+    let exclude = format!("!/{HIDDEN_ROLES_DIR}/");
+    run_git(
+        &[
+            "sparse-checkout",
+            "set",
+            "--no-cone",
+            "--end-of-options",
+            "/*",
+            &exclude,
+        ],
+        Some(worktree),
+        auth,
+    )
+    .map(|_| ())
+    .map_err(|error| {
+        format!("could not hide {HIDDEN_ROLES_DIR}/ from the seat's worktree: {error}")
     })
 }
 
@@ -629,9 +675,17 @@ pub async fn create_coding_session_worktree(
     session_ref: Option<String>,
     seat_label: Option<String>,
     session_id: Option<String>,
+    hide_roles: Option<bool>,
 ) -> Result<CodingSessionWorktreeCreated, String> {
+    let hide_roles = hide_roles.unwrap_or(false);
     let created = tauri::async_runtime::spawn_blocking(move || {
-        create(&workdir, &name, parent.as_deref(), source.as_deref())
+        create(
+            &workdir,
+            &name,
+            parent.as_deref(),
+            source.as_deref(),
+            hide_roles,
+        )
     })
     .await
     .map_err(|error| format!("worktree create task failed: {error}"))??;

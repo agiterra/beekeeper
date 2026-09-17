@@ -13406,6 +13406,52 @@ Evidence and limits: [conditional publication checkpoint](history/2026-09-12-pro
      app on this build; the provider is untouched, so the staged directory
      reaches it through the same `packDir`/`personaId` it always read.
 
+144. **Slice A2, second half: a seat's worktree is cut without `beekeeper/`,
+     and the Claude fence denies reading it (2026-09-17, Andy with Fable).**
+     Spec `docs/PROJECT_TEAMS_AND_ACTIONS_SPEC.md` § 4.10. The branch
+     override and the restart button (§ 4.9) are still to come.
+
+     **What landed.** `desktop/src-tauri/src/coding_sessions/worktree.rs`:
+     `create` takes `hide_roles`, and when set runs `git sparse-checkout set
+     --no-cone --end-of-options '/*' '!/beekeeper/'` in the new worktree
+     (`hide_roles_directory`); the Tauri command gains `hide_roles:
+     Option<bool>`, default off. The TypeScript wrapper gains `hideRoles`;
+     the hire path (`useCodingSessionHire.ts`) and the lead's worktree at
+     team launch (`codingSessionCrewLaunch.ts` `leadWorktreeRequest`) pass
+     `true`; a Solo session's worktree and the provider dialog's do not, so
+     the person's files stay. `crates/buzz-session-provider/src/
+     agent_fence.rs`: `write_fence_rules` now also emits
+     `Read(//<cwd>/beekeeper/**)` (`roles_read_fence_rule`), the one rule
+     allowed to point inside the seat's tree; `install_write_fence` keeps it
+     once across rewrites; the test helper that forbids rules naming the
+     seat's tree exempts exactly that rule.
+
+     **Measured.** `a_seat_worktree_hides_the_roles_directory_and_the_checkout_keeps_it`
+     (worktree_tests.rs) on git 2.55: the seat's tree has `src/main.rs` and
+     no `beekeeper/`; the checkout keeps `beekeeper/roles/lead.md`; `git
+     show HEAD:beekeeper/roles/lead.md` in the seat's tree still answers;
+     `core.sparseCheckout` is set in the worktree's own config
+     (`--worktree`) and not in the repository's `--local`; a tree cut with
+     the flag off keeps the directory.
+
+     **Not measured, and the spec does not claim it.** Whether Claude Code's
+     `Grep` and `Glob` tools honour a `Read` denial. The `Edit` rules were
+     measured against the installed adapter when the write fence was built
+     (the notes at `WRITE_FENCE_SETTINGS_FILE`); the `Read` rule is emitted
+     on the same grammar and the same file, and its effect on the file
+     tools other than `Read` is owed a live run with a seat that greps for
+     `beekeeper/`. `Bash` is not governed either way. On Codex there is no
+     permission surface, so the sparse checkout is the whole mechanism.
+
+     **Evidence.** `cargo test --manifest-path desktop/src-tauri/Cargo.toml
+     coding_sessions::worktree`: 50 passed; `cargo test -p
+     buzz-session-provider agent_fence`: 21 passed (new
+     `the_fence_denies_reading_the_roles_directory_under_the_seat`);
+     desktop node tests for the hire, crew launch and founded-start hooks:
+     104 passed; `pnpm typecheck` and biome clean; clippy clean on both
+     crates.
+
+
 
 
 
