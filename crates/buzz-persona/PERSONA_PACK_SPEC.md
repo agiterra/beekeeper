@@ -1150,4 +1150,94 @@ Features required by this spec but not yet implemented.
 
 ---
 
+## 17. Templates and Composition
+
+Contract: `docs/PROJECT_TEAMS_AND_ACTIONS_SPEC.md` § 3–4. Implemented in
+`buzz-persona::template` and `buzz-persona::compose`; exercised by
+`bee pack compose`.
+
+### Shipped templates
+
+Beekeeper ships reusable prompt fragments beside the shipped packs, every
+supported version present at once:
+
+```
+personas/templates/<name>/<semver>/TEMPLATE.md
+personas/templates/<name>/<semver>/skills/<skill>/SKILL.md   (optional)
+```
+
+`TEMPLATE.md` carries frontmatter `name`, `version`, `description`, optional
+`deprecated: "<reason>"` and optional `skills: [./skills/<s>/]`; the body is
+the fragment. Unknown keys are refused. The directory names must equal
+`name` and `version`. A template is a leaf: it may not contain an include
+directive. A new version directory is added only when the text or skills
+change between app releases; identical bytes under two versions is a
+`validate_catalog` warning.
+
+Ranges: `@1.2.0` is exact (not the caret the `semver` crate would read),
+`@^1.0.0` and `@~1.1` are `semver` requirements, `@latest` is the highest
+non-deprecated version. A range matching only deprecated versions resolves
+to the highest of them with a warning; a range matching nothing refuses,
+naming the versions this build ships.
+
+### Include directives
+
+A role's body may contain whole-line directives; a `![[` anywhere else is
+prose and produces a warning rather than a guess.
+
+| line | meaning |
+| --- | --- |
+| `![[beekeeper/<template>@<range>]]` | a shipped template; the range is required |
+| `![[./<path>]]` | a file under the source root, inserted verbatim (not expanded) |
+| `![[roles/<role>]]` | another role's *resolved body* from the same source; its frontmatter and skills are not inherited |
+
+Cycles over `roles/<role>` refuse naming the chain; the chain may be at most
+8 deep; the expanded body may not exceed `MAX_BODY_BYTES`; a skill name
+provided by two sources refuses; a missing template, version or file
+refuses. Templates' skills join the role's own in the staged pack.
+
+### Flat role sources
+
+Besides a pack directory, the composer reads a flat project layout:
+
+```
+<root>/roles/<role>.md                 # optional persona frontmatter; body
+<root>/roles/<role>/skills/<s>/SKILL.md # role-private, auto-claimed
+<root>/skills/<s>/SKILL.md              # shared: every role
+```
+
+A flat role's frontmatter, when present, is the same closed key set as a
+`.persona.md`. `name`, `display_name` and `role` default from the file stem,
+which must be a role slug; `description` defaults to the role's own first
+line of prose (a template's opening line describes the template, not the
+role). `skills:` paths are relative to `<root>`.
+
+### Staged output and provenance
+
+`compose_role` returns a `ComposedRole`; `write_staged_pack` writes it as an
+ordinary pack (`.plugin/plugin.json`, `personas/<role>.persona.md`,
+`skills/*`) plus `compose.json`:
+
+```json
+{
+  "schema": "buzz-composed-role/v1",
+  "role": "project-manager",
+  "source": {"kind": "local", "path": "beekeeper/roles/project-manager"},
+  "appVersion": "0.4.2",
+  "digest": "sha256:…",
+  "includes": [{"ref": "beekeeper/memory@^1.0.0", "resolved": "1.2.0"}],
+  "warnings": []
+}
+```
+
+`digest` is SHA-256 over the staged persona file and every skill file, so
+equal digests are equal directories. `source` is recorded verbatim from the
+caller; the composer verifies no repository coordinate or commit. The
+session provider reads a staged pack exactly as it reads a hand-written one:
+`resolve_persona_by_name`, then `materialize_skill_bundle`. A pack with no
+directives composes byte-identical to itself (pinned by
+`tests/shipped_templates.rs` for every shipped role).
+
+---
+
 *End of Persona Pack Specification*

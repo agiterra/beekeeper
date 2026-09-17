@@ -300,6 +300,71 @@ pub fn parse_persona_md(content: &str) -> Result<PersonaConfig, PersonaError> {
     })
 }
 
+/// Parse a flat role file (`beekeeper/roles/<role>.md`) whose frontmatter
+/// is optional.
+///
+/// When frontmatter is present it must be valid persona frontmatter — the
+/// same closed key set as [`parse_persona_md`]. Identity fields default from
+/// the file stem, which must be a legal role slug: `name`, `display_name`
+/// and `role` all become `stem`. `description` defaults to the empty string;
+/// the composer fills it from the first prose line of the expanded body, and
+/// refuses if there is none. A `role` declared in frontmatter must equal the
+/// stem, because the file's name is what a hire resolves.
+pub fn parse_role_md(content: &str, stem: &str) -> Result<PersonaConfig, PersonaError> {
+    if !is_valid_role_slug(stem) {
+        return Err(PersonaError::InvalidField(format!(
+            "role file stem must be 1-{MAX_ROLE_BYTES} bytes of [a-z0-9-]: {stem:?}"
+        )));
+    }
+    let (fm, body) = if content.starts_with("---") {
+        let (fm_str, body) = split_frontmatter(content)?;
+        if fm_str.len() > MAX_FRONTMATTER_BYTES {
+            return Err(PersonaError::FrontmatterTooLarge);
+        }
+        let fm: Frontmatter = if fm_str.trim().is_empty() {
+            serde_yaml::from_str("{}")?
+        } else {
+            serde_yaml::from_str(fm_str)?
+        };
+        (fm, body)
+    } else {
+        (serde_yaml::from_str::<Frontmatter>("{}")?, content)
+    };
+    if body.len() > MAX_BODY_BYTES {
+        return Err(PersonaError::BodyTooLarge);
+    }
+    if let Some(role) = fm.role.as_deref() {
+        if role != stem {
+            return Err(PersonaError::InvalidField(format!(
+                "role file {stem}.md declares role {role:?}; the file name is the role"
+            )));
+        }
+    }
+    let non_empty =
+        |value: Option<String>| value.map(|v| v.trim().to_owned()).filter(|v| !v.is_empty());
+    Ok(PersonaConfig {
+        name: non_empty(fm.name).unwrap_or_else(|| stem.to_owned()),
+        display_name: non_empty(fm.display_name).unwrap_or_else(|| stem.to_owned()),
+        avatar: fm.avatar,
+        description: non_empty(fm.description).unwrap_or_default(),
+        role: Some(stem.to_owned()),
+        version: fm.version,
+        author: fm.author,
+        skills: fm.skills,
+        mcp_servers: fm.mcp_servers,
+        subscribe: fm.subscribe,
+        triggers: fm.triggers,
+        model: fm.model,
+        runtime: fm.runtime,
+        temperature: fm.temperature,
+        max_context_tokens: fm.max_context_tokens,
+        thread_replies: fm.thread_replies,
+        broadcast_replies: fm.broadcast_replies,
+        hooks: fm.hooks,
+        prompt: body.to_string(),
+    })
+}
+
 /// Parse a `.persona.md` file from disk.
 pub fn parse_persona_file(path: &Path) -> Result<PersonaConfig, PersonaError> {
     // Fix #4: check file size before reading to avoid large allocations

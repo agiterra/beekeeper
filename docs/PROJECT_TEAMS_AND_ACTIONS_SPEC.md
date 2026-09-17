@@ -243,7 +243,9 @@ Bare markdown with optional frontmatter. When frontmatter is present it must
 be valid persona frontmatter — the same `Frontmatter` struct, still rejecting
 unknown keys. Defaults when absent: `name`, `role` and `display_name` from the
 file stem, which must pass `is_valid_role_slug` (`persona.rs:64`);
-`description` from the first prose line of the resolved body. `skills:` paths
+`description` from the role's own first line of prose (a template's opening
+line describes the template, not the role), falling back to the expanded
+body, and refusing when neither has one. `skills:` paths
 are relative to `beekeeper/`; skills under `roles/<role>/skills/` are claimed
 by that role automatically.
 

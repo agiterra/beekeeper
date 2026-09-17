@@ -4,6 +4,9 @@
 
 use std::path::Path;
 
+use buzz_persona::compose::{compose_role, write_staged_pack, ComposeOptions, RoleSource};
+use buzz_persona::template::TemplateCatalog;
+
 use crate::error::CliError;
 
 /// Run `bee pack validate <path>`.
@@ -147,5 +150,65 @@ pub fn cmd_inspect(path: &str) -> Result<(), CliError> {
         println!();
     }
 
+    Ok(())
+}
+
+/// Run `bee pack compose <path> --role <role> [--templates <dir>] [--out <dir>]`.
+///
+/// `path` is a pack directory when it holds `.plugin/plugin.json`, otherwise
+/// a flat `beekeeper/`-style directory holding `roles/<role>.md`. Without
+/// `--out`, the expanded persona file is printed to stdout and the
+/// `compose.json` provenance to stderr; with it, the staged pack is written
+/// there and its path printed. Warnings always go to stderr. Exit 1 on any
+/// refusal, with the composer's reason.
+pub fn cmd_compose(
+    path: &str,
+    role: &str,
+    templates: Option<&Path>,
+    app_version: &str,
+    out: Option<&Path>,
+) -> Result<(), CliError> {
+    let source_dir = Path::new(path);
+    if !source_dir.is_dir() {
+        return Err(CliError::Usage(format!("not a directory: {path}")));
+    }
+    let catalog = match templates {
+        Some(dir) => TemplateCatalog::load(dir, app_version)
+            .map_err(|e| CliError::Usage(format!("template catalog: {e}")))?,
+        None => TemplateCatalog::empty(app_version),
+    };
+    let (source, source_path) = if source_dir.join(".plugin").join("plugin.json").is_file() {
+        (
+            RoleSource::Pack {
+                dir: source_dir.to_path_buf(),
+                role: role.to_owned(),
+            },
+            format!("{}/{role}", path.trim_end_matches('/')),
+        )
+    } else {
+        (
+            RoleSource::Flat {
+                root: source_dir.to_path_buf(),
+                role: role.to_owned(),
+            },
+            format!("{}/roles/{role}", path.trim_end_matches('/')),
+        )
+    };
+    let composed = compose_role(&source, &catalog, &ComposeOptions::local(source_path))
+        .map_err(|e| CliError::Usage(format!("compose refused: {e}")))?;
+    for warning in &composed.provenance.warnings {
+        eprintln!("  WARN:  {warning}");
+    }
+    match out {
+        Some(dest) => {
+            let written = write_staged_pack(&composed, dest)
+                .map_err(|e| CliError::Other(format!("stage failed: {e}")))?;
+            println!("{}", written.display());
+        }
+        None => {
+            print!("{}", composed.persona_markdown());
+            eprint!("{}", composed.provenance_json());
+        }
+    }
     Ok(())
 }

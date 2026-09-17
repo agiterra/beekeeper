@@ -13306,6 +13306,52 @@ Evidence and limits: [conditional publication checkpoint](history/2026-09-12-pro
      still answers — so it prevents confusion, not exfiltration. Roles that
      author roles opt in with `workspace.roles_visible: true`.
 
+142. **Slice A1 of the project teams spec built: the pure composer and the
+     shipped template catalog (2026-09-17, Andy with Fable).** Spec:
+     `docs/PROJECT_TEAMS_AND_ACTIONS_SPEC.md` § 3, § 4.4–4.6, § 7 A1. Nothing
+     host-side changed: no seat is staged through this yet (A2).
+
+     **What landed.** `crates/buzz-persona/src/template.rs` — a
+     `TemplateCatalog` read from `<dir>/<name>/<semver>/TEMPLATE.md`, with
+     directory-equals-frontmatter checks, leaf-only templates, `@latest` =
+     highest non-deprecated, a bare version exact (not the `semver` crate's
+     caret), deprecated-only resolution as a warning, no-match refusal naming
+     the shipped set, and `validate_catalog` warning on identical bytes under
+     two versions. `crates/buzz-persona/src/compose.rs` — `compose_role`
+     over `RoleSource::{Pack, Flat}` with the three whole-line directives
+     (`beekeeper/<t>@<range>`, `./<path>`, `roles/<role>`), cycle refusal
+     naming the chain, depth cap 8, `MAX_BODY_BYTES` cap on the expanded
+     body, skill-name collision refusal, mid-line `![[` as prose with a
+     warning; `write_staged_pack` writes an ordinary pack plus
+     `compose.json` (`buzz-composed-role/v1`, SHA-256 digest over the staged
+     persona and skill bytes). `persona::parse_role_md` reads a flat role
+     file with optional frontmatter, identity defaulting from the stem.
+     `personas/templates/{working-contract,memory,project-pulse}/1.0.0/`;
+     `working-contract` is byte-for-byte the "## Working contract" section
+     all eight shipped personas repeat. `bee pack compose <path> --role <r>
+     [--templates <dir>] [--app-version <v>] [--out <dir>]`
+     (`crates/buzz-cli/src/commands/pack.rs`). `PERSONA_PACK_SPEC.md` § 17.
+
+     **One rule refined while building.** A flat role's default
+     `description` is its *own* first line of prose, falling back to the
+     expanded body; the spec's "first prose line of the resolved body" would
+     have described the first included template instead. Spec § 4.3 wording
+     is amended in this landing.
+
+     **Evidence.** `cargo test -p buzz-persona`: 208 unit + 3 integration
+     (`tests/shipped_templates.rs`: the shipped catalog loads and validates
+     clean; the template equals every shipped role's section; all eight
+     shipped roles compose byte-identical and restage as packs
+     `validate_pack` accepts). `cargo test -p buzz-cli`: 1210 passed, the
+     subcommand-shape tests now list `compose`. Clippy `-D warnings` and
+     `cargo fmt --check` clean on both crates. Smoke run on a scratch flat
+     root with `--templates personas/templates`: the staged persona opens
+     with the working contract, `compose.json` records both template
+     resolutions (`1.0.0`) and the 10-byte `./rules.md`, `bee pack validate`
+     on the staged directory says `Valid.`; `beekeeper/memory@^9.0.0`
+     refuses with "this build ships memory 1.0.0; ^9.0.0 matches none".
+
+
 
 
 ## 2a. Direction settled 2026-08-18

@@ -2471,6 +2471,26 @@ pub enum PackCmd {
         /// Path to the pack directory
         path: String,
     },
+    /// Compose one role: expand its `![[…]]` includes against a template
+    /// catalog and print the resulting persona and its compose.json
+    Compose {
+        /// Path to the role source: a pack directory, or a flat
+        /// `beekeeper/` directory holding `roles/<role>.md`
+        path: String,
+        /// The role slug to compose
+        #[arg(long)]
+        role: String,
+        /// Path to a template catalog (`<name>/<semver>/TEMPLATE.md`).
+        /// Without one, `![[beekeeper/…]]` includes refuse.
+        #[arg(long)]
+        templates: Option<PathBuf>,
+        /// The app version the catalog belongs to, recorded in compose.json
+        #[arg(long, default_value = "unversioned")]
+        app_version: String,
+        /// Write the staged pack directory here instead of printing
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
 }
 
 pub use commands::packs_cli::PacksCmd;
@@ -4720,6 +4740,19 @@ async fn run(cli: Cli) -> Result<(), CliError> {
         return match sub {
             PackCmd::Validate { path } => commands::pack::cmd_validate(path),
             PackCmd::Inspect { path } => commands::pack::cmd_inspect(path),
+            PackCmd::Compose {
+                path,
+                role,
+                templates,
+                app_version,
+                out,
+            } => commands::pack::cmd_compose(
+                path,
+                role,
+                templates.as_deref(),
+                app_version,
+                out.as_deref(),
+            ),
         };
     }
 
@@ -5821,7 +5854,7 @@ mod tests {
         );
         assert_eq!(names(&cmd, "media"), vec!["get"]);
         assert_eq!(names(&cmd, "upload"), vec!["file"]);
-        assert_eq!(names(&cmd, "pack"), vec!["inspect", "validate"]);
+        assert_eq!(names(&cmd, "pack"), vec!["compose", "inspect", "validate"]);
         assert_eq!(
             names(&cmd, "moderation"),
             vec![
@@ -5885,7 +5918,7 @@ mod tests {
             ("issues", 6),
             ("media", 1),
             ("messages", 8),
-            ("pack", 2),
+            ("pack", 3),
             ("patches", 4),
             ("pr", 5),
             ("projects", 12),
