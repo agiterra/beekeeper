@@ -58,6 +58,15 @@ abstract final class EventKind {
   /// address).
   static const projectRoster = 39010;
 
+  // --- Project to-dos (NIP-TD) ------------------------------------------------
+  // Keep in sync with `crates/buzz-core/src/kind.rs` and
+  // `desktop/src/shared/constants/kinds.ts`. See `docs/nips/NIP-TD.md`.
+
+  /// Kind:44248 project to-do op: one field-level edit to a shared,
+  /// project-scoped to-do list. Regular, append-only, scoped by a canonical
+  /// `a` coordinate (`30621:<owner>:<dtag>`); never carries an `h` tag.
+  static const projectTodoOp = 44248;
+
   // --- Shared terminals (NIP-ST) ---------------------------------------------
   // Keep in sync with `crates/buzz-core/src/kind.rs` and
   // `desktop/src/shared/constants/kinds.ts`. See `docs/nips/NIP-ST.md`.

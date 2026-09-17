@@ -51,6 +51,15 @@ final projectTerminalOpenerProvider = Provider<ProjectTerminalOpener?>(
       ),
 );
 
+/// Opens a project's to-do lists from a project tree.
+typedef ProjectTodoOpener = void Function(BuildContext context, String address);
+
+/// The opener the tree's "To-do" row uses. `null` — the default here, so
+/// this feature never imports `project_todos` — hides the row; the app
+/// composition root (`app.dart`, `appFeatureOverrides`) provides the real
+/// one, and tests leave it `null` or install a recorder.
+final projectTodoOpenerProvider = Provider<ProjectTodoOpener?>((ref) => null);
+
 /// The one line a project with nothing in it shows.
 const projectEmptyLabel = 'No channels, coding sessions or terminals yet';
 
@@ -86,6 +95,7 @@ class ProjectTree extends HookConsumerWidget {
     final me = ref.watch(myPubkeyProvider);
     final profiles = ref.watch(userCacheProvider);
     final opener = ref.watch(projectTerminalOpenerProvider);
+    final todoOpener = ref.watch(projectTodoOpenerProvider);
     final binding = ref.watch(codingSessionObserverBindingProvider);
     final filter = ref
         .watch(projectSessionFiltersProvider)
@@ -191,6 +201,17 @@ class ProjectTree extends HookConsumerWidget {
         projectTerminals.isEmpty &&
         readNotes.isEmpty &&
         !terminalsUnreadable;
+    // The to-do row is a door, not content: a project with nothing else in
+    // it still says so, and the door stays above that line.
+    final todoRow = todoOpener == null
+        ? null
+        : _ProjectChildTile(
+            key: ValueKey('project-row-todo:${project.address}'),
+            icon: LucideIcons.listChecks,
+            label: 'To-do',
+            detail: null,
+            onTap: () => todoOpener(context, project.address),
+          );
 
     String ownerLabel(String pubkey) =>
         profiles[pubkey.toLowerCase()]?.label ?? shortPubkey(pubkey);
@@ -225,6 +246,7 @@ class ProjectTree extends HookConsumerWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        ?todoRow,
         if (isEmpty)
           ProjectSectionNote(
             key: ValueKey('project-empty-${project.address}'),

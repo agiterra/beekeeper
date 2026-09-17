@@ -377,6 +377,39 @@ abstract final class NostrFilters {
     limit: 1,
   );
 
+  // --- Project to-dos (NIP-TD) ------------------------------------------------
+
+  /// One history page of to-do ops (kind:44248) for a project coordinate,
+  /// newest first. The relay pages at 1000; a caller walks older pages with
+  /// [until] (inclusive, so it dedupes by id) until a page comes back short.
+  static NostrFilter projectTodoOps(
+    String projectAddress, {
+    int limit = 500,
+    int? until,
+  }) => NostrFilter(
+    kinds: const [EventKind.projectTodoOp],
+    tags: {
+      '#a': [projectAddress],
+    },
+    limit: limit,
+    until: until,
+  );
+
+  /// Live twin of [projectTodoOps]: ops from [sinceSeconds] on. NIP-TD says
+  /// `since = now - 900`, because a peer may legally stamp up to 900 s in
+  /// the past; the reader dedupes by id.
+  static NostrFilter projectTodoOpsLive(
+    String projectAddress,
+    int sinceSeconds,
+  ) => NostrFilter(
+    kinds: const [EventKind.projectTodoOp],
+    tags: {
+      '#a': [projectAddress],
+    },
+    since: sinceSeconds,
+    limit: 100,
+  );
+
   // --- Shared terminals (NIP-ST) ---------------------------------------------
 
   /// Every shared-terminal announce (kind:30623) the relay will show me.

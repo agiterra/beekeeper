@@ -162,6 +162,7 @@ List<Override> projectOverrides({
   Map<String, UserProfile> users = const {},
   String? viewerPubkey = testViewer,
   ProjectTerminalOpener? terminalOpener,
+  ProjectTodoOpener? todoOpener,
 }) => [
   projectsProvider.overrideWith(() => FakeProjectsNotifier(projects)),
   terminalsIndexProvider.overrideWith(
@@ -171,4 +172,5 @@ List<Override> projectOverrides({
   userCacheProvider.overrideWith(() => FakeUserCacheNotifier(users)),
   myPubkeyProvider.overrideWithValue(viewerPubkey),
   projectTerminalOpenerProvider.overrideWithValue(terminalOpener),
+  projectTodoOpenerProvider.overrideWithValue(todoOpener),
 ];

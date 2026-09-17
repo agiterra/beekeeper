@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:hooks_riverpod/misc.dart' show Override;
 
 import 'features/activity/activity_provider.dart';
 import 'features/activity/inbox_local_state_provider.dart';
@@ -15,6 +16,8 @@ import 'features/channels/agent_activity/observer_subscription.dart';
 import 'features/channels/deep_link_dispatcher.dart';
 import 'features/profile/user_status_cache_provider.dart';
 import 'features/profile/settings_profile_header.dart';
+import 'features/project_todos/ui/project_todos_page.dart';
+import 'features/projects/ui/project_tree.dart';
 import 'features/settings/settings_page.dart';
 import 'shared/auth/auth.dart';
 import 'shared/deeplink/pending_deep_link_provider.dart';
@@ -45,6 +48,22 @@ final _unreadInboxItemCountProvider = Provider<int>((ref) {
       )
       .length;
 });
+
+/// Cross-feature wiring that belongs at the composition root: a project
+/// tree's "To-do" row opens the `project_todos` feature. It lives here so
+/// `projects/` never imports `project_todos/`; `main.dart` installs it on
+/// the root [ProviderScope].
+List<Override> appFeatureOverrides() => [
+  projectTodoOpenerProvider.overrideWithValue(openProjectTodos),
+];
+
+/// Push a project's to-do page.
+void openProjectTodos(BuildContext context, String address) =>
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ProjectTodosPage(address: address),
+      ),
+    );
 
 class App extends HookConsumerWidget {
   const App({super.key});

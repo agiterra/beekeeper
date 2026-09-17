@@ -15,7 +15,11 @@ import '../state/projects_provider.dart';
 import 'project_tree.dart';
 
 export 'project_tree.dart'
-    show ProjectTerminalOpener, projectTerminalOpenerProvider;
+    show
+        ProjectTerminalOpener,
+        ProjectTodoOpener,
+        projectTerminalOpenerProvider,
+        projectTodoOpenerProvider;
 
 /// One project on its own page: the same tree the Home screen shows under
 /// the project's header, with a description line above it.

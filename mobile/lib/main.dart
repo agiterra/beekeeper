@@ -13,7 +13,10 @@ void main() async {
 
   runApp(
     ProviderScope(
-      overrides: [savedPrefsProvider.overrideWithValue(prefs)],
+      overrides: [
+        savedPrefsProvider.overrideWithValue(prefs),
+        ...appFeatureOverrides(),
+      ],
       child: const App(),
     ),
   );
