@@ -37,6 +37,8 @@ import {
   KIND_HUDDLE_PARTICIPANT_LEFT,
   KIND_HUDDLE_ENDED,
   KIND_REPO_STATE,
+  KIND_PROJECT_TODO_OP,
+  KIND_PULSE_ENTRY,
 } from "./kinds.ts";
 
 test("isConversationalUnreadKind_streamMessage_counts", () => {
@@ -227,5 +229,15 @@ test("the handover kind is read off the wire and served by the mock relay", () =
   assert.equal(
     CHANNEL_TIMELINE_CONTENT_KINDS.includes(KIND_CODING_SESSION_HANDOVER),
     false,
+  );
+});
+
+test("projectScopedKinds_matchBuzzCoreValues", () => {
+  // Mirror of crates/buzz-core/src/kind.rs `PROJECT_A_SCOPED_KINDS`: the
+  // Pulse entry and the to-do op share one relay gate and one `#a` filter
+  // shape, and a drift here is a wire break no type checker catches.
+  assert.deepEqual(
+    { pulse: KIND_PULSE_ENTRY, todoOp: KIND_PROJECT_TODO_OP },
+    { pulse: 44240, todoOp: 44248 },
   );
 });

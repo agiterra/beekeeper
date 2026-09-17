@@ -5,9 +5,14 @@ import { PROJECT_TAB_TRIGGER_CLASS } from "@/features/projects/ui/ProjectWorkspa
 import { cn } from "@/shared/lib/cn";
 
 /** The project page's tab vocabulary. Overview/Pulse are the URL `tab` search
- * param on `/projects/$projectId`; the Agents and Roles (`packs`) tabs are
- * their own paths. */
-export type ProjectPageTab = "overview" | "pulse" | "agents" | "packs";
+ * param on `/projects/$projectId`; the To-Do, Agents and Roles (`packs`) tabs
+ * are their own paths. */
+export type ProjectPageTab =
+  | "overview"
+  | "pulse"
+  | "todos"
+  | "agents"
+  | "packs";
 
 export function parseProjectPageTab(value: unknown): ProjectPageTab {
   return value === "pulse" ? "pulse" : "overview";
@@ -15,14 +20,20 @@ export function parseProjectPageTab(value: unknown): ProjectPageTab {
 
 type SearchTab = { id: "overview" | "pulse"; label: string };
 type PathTab = {
-  id: "agents" | "packs";
+  id: "todos" | "agents" | "packs";
   label: string;
-  to: "/projects/$projectId/agents" | "/projects/$projectId/packs";
+  to:
+    | "/projects/$projectId/todos"
+    | "/projects/$projectId/agents"
+    | "/projects/$projectId/packs";
 };
 
 const PATH_TABS: readonly PathTab[] = [
-  // Agents first: who is working here and why is the question a reader
-  // asks most. It replaced Contributors, whose path now redirects here.
+  // To-Do next to Overview: the shared list of what is left is the thing a
+  // member checks most often after the project's state.
+  { id: "todos", label: "To-Do", to: "/projects/$projectId/todos" },
+  // Agents: who is working here and why. It replaced Contributors, whose
+  // path now redirects here.
   { id: "agents", label: "Agents", to: "/projects/$projectId/agents" },
   // The tab reads "Roles" — the page answers "what is this role for, which
   // version of its instructions is here". Its id, path and testid stay

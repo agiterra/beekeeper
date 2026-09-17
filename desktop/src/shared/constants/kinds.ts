@@ -222,6 +222,17 @@ export const KIND_CODING_SESSION_HANDOVER = 44247;
 // observed fact — worktree state stays in the coding-session kinds.
 export const KIND_PULSE_ENTRY = 44240;
 
+// ── Project to-do ops (44248) ───────────────────────────────────────────────
+//
+// NIP-TD: one field-level edit to a project's shared to-do list (`td1-1`).
+// Project-scoped by an `a` tag holding the canonical 30621 coordinate, never
+// by `h` (the relay rejects one), and append-only: every op sets exactly one
+// field and the fold (features/project-todos/lib/todoFold.ts, pinned by
+// conformance/project-todo-fold/) takes the latest write per field, so two
+// people editing different fields of one item both survive. Mirrored in
+// `crates/buzz-core/src/kind.rs` and `mobile/lib/shared/relay/nostr_models.dart`.
+export const KIND_PROJECT_TODO_OP = 44248;
+
 // The coding-session kinds Desktop's own consumer reads, in one place, so the
 // regression guard keeping them out of the chat timeline cannot silently miss a
 // newly added member.

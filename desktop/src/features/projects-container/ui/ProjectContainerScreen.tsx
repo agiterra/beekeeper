@@ -19,6 +19,7 @@ import { useNavigate } from "@tanstack/react-router";
 
 import { useAppNavigation } from "@/app/navigation/useAppNavigation";
 import { ProjectTerminalsCard } from "@/features/builtin-shell/ui/ProjectTerminalsCard";
+import { ProjectTodosCard } from "@/features/project-todos/ui/ProjectTodosCard";
 import { ProjectPulseCard } from "@/features/project-pulse/ui/ProjectPulseCard";
 import { ProjectPulseScreen } from "@/features/project-pulse/ui/ProjectPulseScreen";
 import { useChannelsQuery } from "@/features/channels/hooks";
@@ -515,6 +516,8 @@ export function ProjectContainerScreen({
                 </ul>
               )}
             </SectionCard>
+
+            <ProjectTodosCard project={project} />
 
             <FeatureGate feature="builtin-shell">
               <ProjectTerminalsCard
