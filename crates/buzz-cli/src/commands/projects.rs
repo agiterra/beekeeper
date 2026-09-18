@@ -17,8 +17,8 @@
 //!     not in scope.
 
 use buzz_core::kind::{
-    KIND_PROJECT, KIND_PROJECT_MEMBERS, KIND_PROJECT_PUT_MEMBER, KIND_PROJECT_REMOVE_MEMBER,
-    PROJECT_ROLE_COLLABORATOR, PROJECT_ROLE_OWNER,
+    KIND_GIT_REPO_ANNOUNCEMENT, KIND_PROJECT, KIND_PROJECT_MEMBERS, KIND_PROJECT_PUT_MEMBER,
+    KIND_PROJECT_REMOVE_MEMBER, PROJECT_ROLE_COLLABORATOR, PROJECT_ROLE_OWNER,
 };
 use buzz_sdk::{
     build_delete_addressable, build_project_with_tags, ProjectMemberCoord, PROJECT_D_MAX_LEN,
@@ -176,6 +176,21 @@ pub async fn cmd_create(
 
     let caller_pubkey = client.keys().public_key().to_hex();
 
+    // No repositories named: create the project's own two (spec § 4.11).
+    if repos.is_empty() {
+        return create_with_repositories(
+            client,
+            slug,
+            name,
+            description,
+            channel,
+            visibility,
+            access,
+            invited,
+        )
+        .await;
+    }
+
     // Expand and validate repo coordinates.
     let members: Vec<ProjectMemberCoord> = repos
         .iter()
@@ -249,6 +264,276 @@ pub async fn cmd_create(
 
     let builder = build_project_with_tags("", tags).map_err(crate::validate::sdk_err)?;
     submit_project(client, builder).await
+}
+
+/// The two repository ids a project creates with it (spec § 4.11).
+pub(crate) fn project_repository_ids(slug: &str) -> Result<(String, String), CliError> {
+    crate::validate::validate_repo_id(slug).map_err(|error| {
+        CliError::Usage(format!(
+            "without --repo the project slug must also be a repository id: {error}"
+        ))
+    })?;
+    Ok((
+        slug.to_string(),
+        super::packs::default_repo_id(slug, super::packs::AGENTS_REPO_SUFFIX),
+    ))
+}
+
+/// The refusal when one of `ids` is already announced by a key other than
+/// `caller` — repository ids are one namespace per community — or `None`.
+pub(crate) fn taken_repository_refusal(
+    announcements: &[Event],
+    caller: &str,
+    ids: &[&str],
+) -> Option<String> {
+    announcements.iter().find_map(|event| {
+        let author = event.pubkey.to_hex();
+        if author == caller {
+            return None;
+        }
+        let id = event
+            .tags
+            .iter()
+            .find(|tag| tag.as_slice().first().map(String::as_str) == Some("d"))
+            .and_then(|tag| tag.as_slice().get(1))?;
+        ids.contains(&id.as_str()).then(|| {
+            format!(
+                "repository id {id:?} is already taken in this community by {}…; repository ids \
+                 are one namespace per community, so choose another project slug — nothing was \
+                 changed",
+                &author[..8]
+            )
+        })
+    })
+}
+
+/// `bee projects create <slug>` without `--repo`: the project and its two
+/// repositories, in the order the desktop uses (spec § 4.11) — preflight both
+/// ids community-wide; publish the 30621; announce `<slug>`, empty; announce
+/// `<slug>-beekeeper-agents`; seed it from this build's shipped role
+/// templates by reference and push `main`; publish the 30624 (`ref:
+/// refs/heads/main`, `path: .`); republish the 30621 naming both. A seed or
+/// push failure withdraws the agents announcement it followed; the project
+/// and the code repository stand, and the printed JSON says what landed.
+#[allow(clippy::too_many_arguments)]
+async fn create_with_repositories(
+    client: &BuzzClient,
+    slug: &str,
+    name: Option<&str>,
+    description: Option<&str>,
+    channel: Option<&str>,
+    visibility: Option<&str>,
+    access: &str,
+    invited: &[String],
+) -> Result<(), CliError> {
+    use buzz_core::project_pack_source::{build_project_pack_source, PackPin, PACK_PATH_ROOT};
+    use serde_json::json;
+
+    let (code_id, agents_id) = project_repository_ids(slug)?;
+    let caller = client.keys().public_key().to_hex();
+    let coordinate = format!("30621:{caller}:{slug}");
+    if let Some(ch) = channel {
+        crate::validate::validate_uuid(ch)?;
+    }
+    if let Some(vis) = visibility {
+        validate_visibility(vis)?;
+    }
+    let invites = parse_member_args(invited, &caller)?;
+    // The seed's inputs are resolved before anything is published.
+    let templates = crate::commands::pack::resolve_templates_dir(None).ok_or_else(|| {
+        CliError::Usage(
+            "no template catalog to seed the agents repository from: set BUZZ_TEMPLATES_DIR or \
+             run from a Beekeeper checkout (personas/templates); nothing was created"
+                .to_owned(),
+        )
+    })?;
+    let catalog = buzz_persona::template::TemplateCatalog::load(&templates, "cli")
+        .map_err(|e| CliError::Usage(format!("template catalog: {e}")))?;
+
+    // ── Preflight ─────────────────────────────────────────────────────────
+    if fetch_own_project(client, slug).await?.is_some() {
+        return Err(CliError::Conflict(format!(
+            "project {slug:?} already exists; use 'bee projects update' to modify it"
+        )));
+    }
+    let announced = parse_events(
+        &client
+            .query(&json!({
+                "kinds": [KIND_GIT_REPO_ANNOUNCEMENT],
+                "#d": [code_id, agents_id],
+                "limit": 16,
+            }))
+            .await?,
+    )?;
+    if let Some(refusal) = taken_repository_refusal(&announced, &caller, &[&code_id, &agents_id]) {
+        return Err(CliError::Conflict(refusal));
+    }
+    let existing_ids: Vec<String> = announced
+        .iter()
+        .filter_map(|event| {
+            event
+                .tags
+                .iter()
+                .find(|tag| tag.as_slice().first().map(String::as_str) == Some("d"))
+                .and_then(|tag| tag.as_slice().get(1).cloned())
+        })
+        .collect();
+
+    // ── The project head, without members yet ─────────────────────────────
+    let mut tags: Vec<Tag> = vec![make_tag(&["d", slug])?];
+    if let Some(n) = name {
+        tags.push(make_tag(&["name", n])?);
+    }
+    if let Some(d) = description {
+        tags.push(make_tag(&["description", d])?);
+    }
+    if let Some(ch) = channel {
+        tags.push(make_tag(&["buzz-channel", ch])?);
+    }
+    if let Some(vis) = visibility {
+        tags.push(make_tag(&["buzz-visibility", vis])?);
+    }
+    tags.push(make_tag(&["buzz-access", access])?);
+    for (pubkey, role) in &invites {
+        tags.push(make_tag(&["p", pubkey, "", role])?);
+    }
+    let head = client
+        .sign_event(build_project_with_tags("", tags.clone()).map_err(crate::validate::sdk_err)?)?;
+    client.submit_event(head.clone()).await?;
+
+    // ── The two announcements ─────────────────────────────────────────────
+    let relay = client.relay_url().trim_end_matches('/').to_string();
+    let code_url = format!("{relay}/git/{caller}/{code_id}");
+    let agents_url = format!("{relay}/git/{caller}/{agents_id}");
+    let mut announced_now: Vec<Option<String>> = Vec::new();
+    for (id, repo_name, desc, url) in [
+        (
+            &code_id,
+            name.unwrap_or(slug).to_string(),
+            "This project's code.",
+            &code_url,
+        ),
+        (
+            &agents_id,
+            format!("{} agents", name.unwrap_or(slug)),
+            "This project's agent team and plans: roles/ and plans/, each with an archive/ for \
+             what is retired. Beekeeper's role source (kind:30624, path `.`).",
+            &agents_url,
+        ),
+    ] {
+        if existing_ids.iter().any(|existing| existing == id) {
+            announced_now.push(None);
+            continue;
+        }
+        let builder = crate::commands::repos::build_create_announcement(
+            id,
+            Some(&repo_name),
+            Some(desc),
+            &[url.to_string()],
+            None,
+            &[],
+            None,
+            Some(&coordinate),
+            &[],
+        )?;
+        let event = client.sign_event(builder)?;
+        client.submit_event(event.clone()).await?;
+        announced_now.push(Some(event.id.to_hex()));
+    }
+    let code_announcement = announced_now[0].clone();
+    let agents_announcement = announced_now[1].clone();
+
+    // ── Seed and push the agents repository ───────────────────────────────
+    let seed =
+        std::env::temp_dir().join(format!("bee-agents-seed-{}", uuid::Uuid::new_v4().simple()));
+    buzz_persona::seed::write_agents_repo_seed(&seed, &catalog, slug)
+        .map_err(|e| CliError::Other(format!("seed: {e}")))?;
+    let seeded = super::packs::seed_packs_repository(&seed, PACK_PATH_ROOT, &agents_url);
+    std::fs::remove_dir_all(&seed).ok();
+    let seeded = match seeded {
+        Ok(seeded) => seeded,
+        Err(error) => {
+            let (withdrawn, withdrawal_error) = if agents_announcement.is_some() {
+                super::packs::withdraw_repo_announcement(client, &caller, &agents_id).await
+            } else {
+                (None, None)
+            };
+            eprintln!(
+                "{}",
+                json!({
+                    "step": "seed",
+                    "project": coordinate,
+                    "code_repo": format!("30617:{caller}:{code_id}"),
+                    "agents_repo": format!("30617:{caller}:{agents_id}"),
+                    "seed_error": error.to_string(),
+                    "agents_announcement_withdrawn_event_id": withdrawn,
+                    "agents_announcement_withdrawal_error": withdrawal_error,
+                    "note": "the project and its code repository exist; the agents repository was not seeded. Fix the push and finish with `bee packs init --project <coordinate>`.",
+                })
+            );
+            return Err(error);
+        }
+    };
+
+    // ── The source, then the head naming both repositories ────────────────
+    let draft = build_project_pack_source(
+        &coordinate,
+        &format!("30617:{caller}:{agents_id}"),
+        &PackPin::Ref(seeded.pushed_ref.clone()),
+        Some(PACK_PATH_ROOT),
+        Some("seeded by bee projects create from this build's shipped role templates"),
+    )
+    .map_err(CliError::Usage)?;
+    let source_tags: Vec<Tag> = draft
+        .tags
+        .iter()
+        .map(|tag| {
+            Tag::parse(tag.clone())
+                .map_err(|error| CliError::Other(format!("invalid tag: {error}")))
+        })
+        .collect::<Result<_, _>>()?;
+    let source = client.sign_event(
+        EventBuilder::new(
+            Kind::Custom(buzz_core::kind::KIND_PROJECT_PACK_SOURCE as u16),
+            draft.content,
+        )
+        .tags(source_tags),
+    )?;
+    client.submit_event(source.clone()).await?;
+
+    for id in [&code_id, &agents_id] {
+        let member = ProjectMemberCoord::parse_full(&format!("30617:{caller}:{id}"))
+            .map_err(|e| CliError::Other(format!("member coordinate: {e}")))?;
+        let parts = member.to_tag_parts();
+        let parts_ref: Vec<&str> = parts.iter().map(String::as_str).collect();
+        tags.push(
+            Tag::parse(parts_ref.iter().copied())
+                .map_err(|e| CliError::Other(format!("member tag construction failed: {e}")))?,
+        );
+    }
+    let republished = client.sign_event(rebuild_project(
+        "",
+        tags,
+        next_timestamp(&head, Timestamp::now())?,
+    )?)?;
+    client.submit_event(republished.clone()).await?;
+
+    println!(
+        "{}",
+        json!({
+            "project": coordinate,
+            "event_id": republished.id.to_hex(),
+            "code_repo": format!("30617:{caller}:{code_id}"),
+            "code_repo_existed": code_announcement.is_none(),
+            "agents_repo": format!("30617:{caller}:{agents_id}"),
+            "agents_repo_existed": agents_announcement.is_none(),
+            "commit": seeded.commit,
+            "pushed_ref": seeded.pushed_ref,
+            "pack_source_event_id": source.id.to_hex(),
+            "path": PACK_PATH_ROOT,
+        })
+    );
+    Ok(())
 }
 
 /// `bee projects get`
@@ -1171,6 +1456,60 @@ mod tests {
     fn validate_project_slug_rejects_over_1024() {
         let long = "a".repeat(1025);
         assert!(validate_project_slug(&long).is_err());
+    }
+
+    /// Spec § 4.11: without `--repo` the slug names the code repository and
+    /// `<slug>-beekeeper-agents` the agents one, so it must be a repository
+    /// id; a colon-bearing project slug is a project, not a repository.
+    #[test]
+    fn a_project_without_repos_creates_two_ids_from_a_repository_shaped_slug() {
+        assert_eq!(
+            project_repository_ids("tank-loop").unwrap(),
+            (
+                "tank-loop".to_string(),
+                "tank-loop-beekeeper-agents".to_string()
+            )
+        );
+        assert!(project_repository_ids("a:b").is_err());
+        assert!(project_repository_ids(&"x".repeat(65)).is_err());
+    }
+
+    /// An id another key already announced refuses the create by name; the
+    /// caller's own announcement is reused, not a collision.
+    #[test]
+    fn a_repository_id_taken_by_another_key_is_refused_by_name() {
+        use nostr::{EventBuilder, Keys, Kind, Tag};
+        let caller = Keys::generate();
+        let other = Keys::generate();
+        let announce = |keys: &Keys, id: &str| {
+            EventBuilder::new(Kind::Custom(30617), "")
+                .tags(vec![
+                    Tag::parse(vec!["d".to_string(), id.to_string()]).unwrap()
+                ])
+                .sign_with_keys(keys)
+                .unwrap()
+        };
+        let caller_hex = caller.public_key().to_hex();
+        let ids = ["demo", "demo-beekeeper-agents"];
+        assert_eq!(
+            taken_repository_refusal(&[announce(&caller, "demo")], &caller_hex, &ids),
+            None
+        );
+        let refusal = taken_repository_refusal(
+            &[announce(&other, "demo-beekeeper-agents")],
+            &caller_hex,
+            &ids,
+        )
+        .expect("refused");
+        assert!(refusal.contains("demo-beekeeper-agents"), "{refusal}");
+        assert!(
+            refusal.contains(&other.public_key().to_hex()[..8]),
+            "{refusal}"
+        );
+        assert_eq!(
+            taken_repository_refusal(&[announce(&other, "unrelated")], &caller_hex, &ids),
+            None
+        );
     }
 
     #[test]

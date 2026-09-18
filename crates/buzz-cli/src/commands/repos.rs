@@ -321,7 +321,7 @@ fn validate_project_coordinate(coordinate: &str) -> Result<String, CliError> {
 /// membership are the relay's authority at git-access time, the same posture
 /// as `repos bind`.
 #[allow(clippy::too_many_arguments)]
-fn build_create_announcement(
+pub(crate) fn build_create_announcement(
     repo_id: &str,
     name: Option<&str>,
     description: Option<&str>,

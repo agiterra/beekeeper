@@ -706,7 +706,7 @@ pub async fn cmd_init(client: &BuzzClient, request: &PackInitRequest<'_>) -> Res
 /// Returns `(withdrawn_event_id, error)`, exactly one `Some`: a failed
 /// withdrawal is reported, not retried, and `cmd_init` already has the
 /// coordinate to hand the operator for a manual `bee repos delete`.
-async fn withdraw_repo_announcement(
+pub(crate) async fn withdraw_repo_announcement(
     client: &BuzzClient,
     owner: &str,
     repo_id: &str,
@@ -737,11 +737,11 @@ async fn withdraw_repo_announcement(
 }
 
 /// What the seed step produced.
-struct SeededPacks {
+pub(crate) struct SeededPacks {
     /// The commit that was pushed.
-    commit: String,
+    pub(crate) commit: String,
     /// The ref it was pushed to.
-    pushed_ref: String,
+    pub(crate) pushed_ref: String,
 }
 
 /// Build one signed commit holding the packs and push it.
@@ -755,7 +755,7 @@ struct SeededPacks {
 ///
 /// `git` is invoked as a subprocess, as `bee git setup`'s own checks do, so the
 /// credential helper the relay requires is the one git already knows about.
-fn seed_packs_repository(
+pub(crate) fn seed_packs_repository(
     seed: &Path,
     path: &str,
     clone_url: &str,

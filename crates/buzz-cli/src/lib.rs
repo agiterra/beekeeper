@@ -1798,16 +1798,22 @@ impl ProjectVisibility {
 
 #[derive(Subcommand)]
 pub enum ProjectsCmd {
-    /// Create a new multi-repo project (NIP-MP kind:30621)
+    /// Create a new project (NIP-MP kind:30621)
     ///
-    /// Requires at least one --repo. Fails with Conflict if the project already exists.
+    /// Without --repo, creates the project's two repositories with it, as the
+    /// desktop does (spec § 4.11): `<slug>` for code, empty, and
+    /// `<slug>-beekeeper-agents` seeded from this build's shipped role
+    /// templates and set as the project's role source. With --repo, only the
+    /// project is created, naming the repositories given. Fails with Conflict
+    /// if the project, or a repository id it would create, already exists.
     Create {
-        /// Project identifier (slug), up to 1024 bytes
+        /// Project identifier (slug), up to 1024 bytes; without --repo it must
+        /// also be a valid repository id (1–64 of [A-Za-z0-9._-])
         slug: String,
         /// Member repository coordinate: bare Buzz repo id (e.g. `buzz`) or full
         /// `30617:<owner-hex>:<repo-d>` for cross-owner or colon-bearing repo ids.
-        /// At least one --repo is required.
-        #[arg(long = "repo", required = true)]
+        /// Repeatable. Omit to create the project's own repositories.
+        #[arg(long = "repo")]
         repo: Vec<String>,
         /// Display name (≤256 bytes)
         #[arg(long)]

@@ -971,6 +971,12 @@ Open, to be settled before the slice that needs them:
    later call.
 9. Whether `workspace.agents_repo: write` should distinguish `plans/` from
    `roles/` (P4).
+10. The project-team setup flow (`PROJECT_TEAM_SETUP_IMPL.md`) still authors
+    the pack layout into a draft and publishes `<slug>-packs-<hex>` at a sha;
+    a project created today has a source, so that publication refuses. The
+    flow that fits § 4.11 is a `project-setup` seat with `agents_repo: write`
+    editing `roles/` in its clone and pushing to `main` — a redesign of
+    setup, not a retarget (P5).
 
 ## 7. Phased delivery
 
@@ -1187,6 +1193,11 @@ C are independent lanes until C3, which needs `team.yml` (A3) for agent names.
   `--repo` runs the creation sequence (refusing a slug that is not a valid
   repository id). Tests: publication leaves 30624 untouched; `bee projects
   create demo` yields both repositories.
+  *Status 2026-09-18: built in part (ledger 163). The CLI half is built.
+  Setup publication needed no change: it already refuses a project with a
+  source, which every project now has from creation, so it cannot re-pin
+  an agents repository; retargeting it is a redesign of the setup flow,
+  recorded as § 6 item 10. The live proof is still owed.*
 
 ### Lanes and file ownership (for the build)
 

@@ -49,7 +49,7 @@ on 2026-09-09, with `just ci` and `just test` green on that exact commit
 | Revealed-redaction badge as an icon; a streaming transcript resolves every marker | Andy | landed 2026-09-13 as `343ea8bd9`, included in current main | ledger § "Fixed 2026-09-13 — the revealed-redaction badge is an icon" |
 | A Solo session's goal is one line: summarized by the naming model, clamped with a chevron | Andy | landed 2026-09-14 as `3fde2db15` | ledger § "Fixed 2026-09-14 — a Solo session's goal is one line" |
 | The Dashboard shows the relay's machine (CPU, memory, disk) from `GET /health/system`, stewards only | Andy | landed 2026-09-14; on hive since 2026-09-18 (image `71efd0da1`), live check owed | ledger § "Built 2026-09-14 — the Dashboard shows the relay's machine" |
-| Project teams, composable roles and project actions | Andy | 2026-09-18: A1–A4, C1–C6 built (ledger 142–148, 150–156) and on hive since 00:35Z; live runs owed. **Pivot the same day**: roles and plans move to `<slug>-beekeeper-agents` (spec § 4.11). P0–P4 built (ledger 158–162): templates, creation of both repositories, the provider reads the agents repository, seats granted it; P5 to build | [`PROJECT_TEAMS_AND_ACTIONS_SPEC.md`](PROJECT_TEAMS_AND_ACTIONS_SPEC.md), ledger 141, 158, D18–D19 |
+| Project teams, composable roles and project actions | Andy | 2026-09-18: A1–A4, C1–C6 built (ledger 142–148, 150–156) and on hive since 00:35Z; live runs owed. **Pivot the same day**: roles and plans move to `<slug>-beekeeper-agents` (spec § 4.11). P0–P5 built (ledger 158–163); live proofs owed; setup-flow redesign open (spec § 6 item 10) | [`PROJECT_TEAMS_AND_ACTIONS_SPEC.md`](PROJECT_TEAMS_AND_ACTIONS_SPEC.md), ledger 141, 158, D18–D19 |
 | Project To-Do lists: kind 44248, personal/project visibility, pins, `bee todos`, Desktop tab + sidebar rows, Mobile page | Andy with Opus | 2026-09-17: on `main` (`0cbfcf296`); relay, CLI, Desktop, Mobile (iOS 26.5 sim) verified live locally | [`nips/NIP-TD.md`](nips/NIP-TD.md), ledger 149 |
 | Delegated agent-directory visibility follow-up | unassigned | "can resume separately on main" (Astra, 2026-09-09) | ledger § "September 9 main published" |
 | This map, the ledger split and its size gate | Fable | landed 2026-09-11 (`f80781969`); lead pack landed on `agiterra-packs` (`5f4ae76fa`) | `AGENTS.md` top block; `scripts/check-current-state-size.mjs` |
@@ -149,8 +149,9 @@ separates publication, installation and provider-confirmed lead startup.
 5. The lead pack is already published in `agiterra-packs` at `5f4ae76fa`.
    Running seats retain their staged revision; use `bee packs status` to inspect
    a project's source before claiming that a live seat has the new instructions.
-6. Project teams spec: build P1–P5 of the agents-repository pivot (spec § 7
-   Part P), then run the live proofs on the installed app (ledger 150–156).
+6. Project teams spec: the pivot is built (ledger 158–163); rebuild and
+   install the app, create a project on hive, run the live proofs
+   (ledger 150–156, 160–163).
 7. When Brian resumes automatic context, run the hook-marker experiment in the
    ledger's September 10 section. Collaborative workspace plan steps 5 and 6
    remain separate.
