@@ -332,6 +332,21 @@ and the run record, the operator's host executes after approval, and an
 approval. Full contract, open questions and slices:
 `docs/PROJECT_TEAMS_AND_ACTIONS_SPEC.md`; survey evidence is ledger 141.
 
+**D19. A project's roles and plans live in their own repository,
+`<slug>-beekeeper-agents`, created with the project (Andy, 2026-09-18).**
+Amends D18's "under `beekeeper/roles/`": in testing, agent instructions and
+plans inside the code repository — even sparse-checked-out and read-fenced —
+cost agents time discovering them and let stale roles or plans steer
+unrelated work. The agents repository holds `roles/` and `plans/`, each with
+an `archive/`, so a role granted access (`team.yml`
+`workspace.agents_repo: read | write`) can tell what is in force from what
+is retained; the code repository carries no Beekeeper files, and the
+sparse exclusion, `Read` denial and branch override of spec § 4.9–4.10 are
+retired. The seed references the shipped roles as versioned templates rather
+than copying them; the project's own agents repository is pinned by
+`ref: refs/heads/main`. Contract: spec § 1 item 5 and § 4.11; slices § 7
+Part P; ledger 158.
+
 
 ## 4. Slices
 

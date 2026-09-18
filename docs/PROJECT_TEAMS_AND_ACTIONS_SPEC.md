@@ -31,12 +31,30 @@ Each was a question with alternatives; the chosen answer is quoted.
    Otherwise users can use `@latest`. Old ones may be flagged as deprecated,
    future users can always clone the files into their own projects where
    necessary." Rejected: a relay-hosted base packs repo; a GitHub repo.
-2. **Where a project's roles live.** "In the project repo." Rejected: keep the
-   sibling packs repo as the only form. Sibling packs repos keep working (§ 4.8).
+2. ~~**Where a project's roles live.** "In the project repo." Rejected: keep the
+   sibling packs repo as the only form.~~ Superseded 2026-09-18 by item 5: a
+   project's roles and plans live in their own repository. Sibling packs
+   repos keep working (§ 4.8).
 3. **Where actions run.** "Relay triggers, host executes — for now user should
    approve all triggered actions unless they allow future executions with a
    checkbox." Rejected: a desktop-local scheduler; running scripts on the relay.
 4. **Deliverable.** This spec; no product code in the drafting session.
+5. **Roles and plans leave the code repository (Andy, 2026-09-18).** "In our
+   testing we found that keeping both plans and agent instructions within the
+   repository, even if filtered out, can lead to the agent wasting time
+   discovering the instructions or reading the plans, or worse being
+   influenced by out of date roles/plans which are irrelevant to the task at
+   hand." Creating a project auto-creates two relay repositories: `<slug>`
+   for code, empty, and `<slug>-beekeeper-agents` for roles and plans, laid
+   out as `roles/` and `plans/`, each with an `archive/`, so the few roles
+   that may read them know what is in force and what is kept for posterity.
+   Answers given while planning the same day: everything Beekeeper-specific
+   leaves the code repository (`team.yml`, skills and `actions.yml`
+   included); the seed references the shipped roles by include rather than
+   copying their text; the project's own agents repository is pinned by
+   `ref: refs/heads/main`; the spec is amended first, then built slice by
+   slice. § 4.11 is the contract; § 4.9 and § 4.10 are struck; § 7 Part P
+   lists the slices.
 
 ## 2. What exists today, and what does not
 
@@ -199,6 +217,11 @@ re-check Andy's project-manager example wants).
 
 ### 4.1 Layout
 
+**Superseded 2026-09-18 (§ 1 item 5).** The layout below put the team inside
+the code repository; the team now lives in the project's own agents
+repository, § 4.11, whose root plays the part `beekeeper/` played here. The
+file formats (§ 4.2–4.4) are unchanged. Kept for the record:
+
 ```
 beekeeper/
   team.yml
@@ -249,8 +272,9 @@ file stem, which must pass `is_valid_role_slug` (`persona.rs:64`);
 `description` from the role's own first line of prose (a template's opening
 line describes the template, not the role), falling back to the expanded
 body, and refusing when neither has one. `skills:` paths
-are relative to `beekeeper/`; skills under `roles/<role>/skills/` are claimed
-by that role automatically.
+are relative to the team root (the agents repository's root since 2026-09-18,
+§ 4.11); skills under `roles/<role>/skills/` are claimed by that role
+automatically.
 
 ```markdown
 ---
@@ -275,7 +299,7 @@ the validator warns "looks like an include but is not on its own line".
 | Form | Meaning |
 | --- | --- |
 | `![[beekeeper/<template>@<range>]]` | a shipped template; the `@` part is required, there is no implicit latest |
-| `![[./<path>]]` | a project file relative to `beekeeper/`; must stay inside it (the `PathEscape` rule, `pack.rs:44`) |
+| `![[./<path>]]` | a project file relative to the team root; must stay inside it (the `PathEscape` rule, `pack.rs:44`) |
 | `![[roles/<role>]]` | another project role's **resolved body**; its frontmatter and skills are not inherited |
 
 Why not Andy's draft `[@…]` / `[!…]`: `[@key]` is a pandoc citation and
@@ -380,6 +404,14 @@ resolved artifact = the staged directory; staged execution revision =
 
 ### 4.7 The 30624 pin when roles ride with the code
 
+*Amended 2026-09-18: read `repo` as the project's own agents repository and
+`path` as `.` (its root). The argument below holds for it unchanged — its
+founders are the project's owners and its push gate is the project roster
+(`crates/buzz-core/src/repository_founders.rs:1-42`; a seat pushes with its
+owner's tier, `crates/buzz-relay/src/api/git/policy_gate_tests.rs:285`) — so
+the project's agents repository is pinned by `ref: refs/heads/main`. Only
+third-party or shared packs repositories keep decision 8's immutable sha.*
+
 `repo` = the project's **code** repository coordinate, `path` = `beekeeper`,
 pin `ref: refs/heads/<default>` by default; `sha` stays available for a
 release train. Decision 8 of `PROJECT_TEAM_SETUP_IMPL.md` preferred an
@@ -413,7 +445,15 @@ The ladder order is unchanged; the session-checkout rung also learns
 `beekeeper/roles/<role>.md`. `bee packs init` keeps seeding the pack layout;
 `--layout flat` arrives in slice A3.
 
-### 4.9 Worktrees: main's roles by default, a branch may override
+### 4.9 ~~Worktrees: main's roles by default, a branch may override~~
+
+**Struck 2026-09-18 (§ 1 item 5).** A seat's code branch cannot override a
+role that lives in another repository; `packs_cache/branch_override.rs`
+already answered `OtherRepository` for that case (`:95-113`) and slice P3
+removes it. What stays is the last bullet's second half: the host compares a
+running seat's `composeRef.digest` / `packRef.sha` with what the pin would
+stage now and offers **Restart with current definition** (ledger 146).
+Kept for the record:
 
 A seat runs in a linked worktree the host cuts from the project checkout on
 its own branch (`desktop/src-tauri/src/coding_sessions/worktree.rs:596`,
@@ -458,7 +498,16 @@ worktree's branch specifically overrides a role's definition.
   restarts automatically is not v1 (§ 6). If the host cannot resolve one
   side (packs cache unreachable), the card says "unknown", not "current".
 
-### 4.10 Seats do not see the roles directory
+### 4.10 ~~Seats do not see the roles directory~~
+
+**Struck 2026-09-18 (§ 1 item 5).** The observation below stands; it is now
+answered by keeping roles and plans out of the code repository altogether
+(§ 4.11), which also removes the discovery cost and stale-plan influence the
+in-repo layout showed in testing. The sparse exclusion, the `hideRoles`
+plumbing, the Claude `Read` denial and `workspace.roles_visible` are removed
+in slice P3; `workspace.agents_repo` (§ 4.11) replaces the opt-in. The
+"Rejected" paragraph's two reasons — the branch override and review-with-
+the-code — were outweighed by that cost. Kept for the record:
 
 Observed by Andy (2026-09-16): an instantiated agent that finds the other
 roles' instructions while searching the repository gets confused about its
@@ -510,11 +559,127 @@ possible — and removes them from every seat's working copy.
   the-code property; telling agents not to read the directory has already
   failed in practice, which is the observation this section answers.
 
+### 4.11 The agents repository (2026-09-18)
+
+Every project owns a second relay-hosted repository, `<slug>-beekeeper-agents`,
+created with the project. It is the project's kind:30624 source, pinned
+`{repo: <agents>, ref: refs/heads/main, path: "."}`, and the only place the
+project's roles, team manifest, skills, actions and plans live. The code
+repository `<slug>` carries no Beekeeper files.
+
+```
+<slug>-beekeeper-agents/
+  README.md                         # the layout and the archive rule, for people and agents
+  team.yml                          # beekeeper-team/v1 (§ 4.2; `workspace.agents_repo` replaces `roles_visible`)
+  actions.yml                       # buzz-project-actions/v1 (§ 5.1), moved here unchanged
+  roles/<role>.md                   # in force (§ 4.3, § 4.4)
+  roles/<role>/skills/<s>/SKILL.md
+  roles/archive/<role>.md           # retained; never hireable, never includable
+  skills/<s>/SKILL.md               # shared by every role
+  plans/<plan>.md                   # in force; markdown, optional frontmatter {title, status}
+  plans/archive/<plan>.md           # retained
+```
+
+- **Archive.** `archive` is a reserved role slug and plan name. The composer
+  refuses `roles/archive/*` as a role source and `![[roles/archive/x]]` as an
+  include; `team.yml` may not name an archived role; `bee packs status` and
+  the Roles tab list archived roles under "archived (not hireable)". Plans
+  have no parser in this spec: the convention, the access grant and the
+  briefing sentence are the product.
+- **Seed by reference.** Creation seeds one `roles/<role>.md` per shipped
+  role, each an include of the shipped role's template plus the three shared
+  templates, and nothing else:
+
+  ```markdown
+  ---
+  description: "Coordinates authorized work, resolves decisions and reports coherent outcomes."
+  ---
+  ![[beekeeper/lead@^1.0.0]]
+  ![[beekeeper/working-contract@^1.0.0]]
+  ![[beekeeper/memory@^1.0.0]]
+  ![[beekeeper/project-pulse@^1.0.0]]
+  ```
+
+  This needs the eight shipped roles as templates
+  (`personas/templates/<role>/<semver>/TEMPLATE.md` carrying the role's own
+  paragraph and its `skills/`). The shipped packs under `personas/roles/`
+  stay for rung 4 and legacy packs repositories, their persona bodies
+  reduced to the same include lines; a test pins that the composed shipped
+  lead is byte-identical to today's. The caret range is decision 1 made
+  concrete: a project takes Beekeeper's minor revisions at the next hire and
+  opts into a major one by editing the line. `team.yml` is seeded with the
+  eight roles and `lead: lead`; `actions.yml` with an empty list; `plans/`
+  and both `archive/` directories with a `.gitkeep`.
+- **Creation.** One host command, `project_agents_init`, built from the
+  pieces `bee packs init` and **Create packs repository** already use
+  (`desktop/src-tauri/src/managed_agents/packs_repo.rs:322,476,660`):
+  (1) preflight both repository ids community-wide (`kinds: [30617], "#d"`,
+  any author — ids are one namespace per community,
+  `crates/buzz-db/src/git_repo.rs:31-40`) and refuse naming the taken id;
+  (2) publish the 30621; (3) announce 30617 `<slug>`, empty, with the
+  `project` back-reference; (4) announce 30617 `<slug>-beekeeper-agents`;
+  (5) seed and push `refs/heads/main`; (6) publish the 30624; (7) republish
+  the 30621 with both `a` references. A failure after (2) leaves the project
+  with a disclosed gap ("agents repository not created: <reason>") and one
+  idempotent **Finish setup** action in Project settings that reuses whatever
+  already landed — the retry coordinator `PROJECT_TEAM_SETUP_IMPL.md:198-200`
+  says `project_packs_init` cannot be. `default_agents_repo_id` keeps the
+  18-byte suffix whole inside the 64-byte id (slug head ≤ 46), as
+  `default_packs_repo_id` does for `-packs` (`packs_repo.rs:248-271`). A
+  `TakenByOther` from the relay's reserve is surfaced verbatim; nothing is
+  renamed silently.
+- **`path: "."`** becomes a legal 30624 path meaning the repository root in
+  both validators (`crates/buzz-core/src/project_pack_source.rs:613`,
+  `desktop/src-tauri/src/managed_agents/packs_cache.rs:258`); `pack_ref_path`
+  yields `roles/<role>` for it, which still ends in `/<role>`
+  (`coding_session_payload.rs:1506`). `DEFAULT_FLAT_PATH` becomes `.`.
+- **The host** already clones the 30624 source into its packs cache and
+  stages every seat from a composed copy (§ 4.5); nothing changes but the
+  root.
+- **The provider** verifies `actions.yml` (§ 5.6) and resolves agent names
+  through `team.yml` (§ 5.7) from the agents repository, not the code
+  checkout. `ProjectsFile` gains `agentsRepos: {<coord>: {path, ref}}` — the
+  packs-cache checkout and the pinned ref — written by the desktop beside
+  `projects`. Before verifying, the provider fetches that checkout with the
+  auth it already uses for C6 worktrees and reads
+  `git show refs/remotes/origin/<ref>:actions.yml`; when the fetch fails it
+  reads the last fetched tip and the refusal or receipt says "as fetched at
+  <time>". No working-copy reads. Refusal codes keep their names;
+  `ACTION_CHECKOUT_NOT_RECORDED` names the agents repository. `run_on_host`
+  still runs in the code checkout (§ 5.6).
+- **Seats** see the agents repository only when their role says so.
+  `team.yml` `roles.<role>.workspace.agents_repo: none | read | write`
+  (default `none`) replaces `roles_visible`. For `read` or `write` the host
+  clones the repository from its packs cache to `<repo>.worktrees/<seat
+  slug>-agents` with `origin` set to the relay clone URL, records it on the
+  seat's worktree record so disposal removes it (ledger 137), and
+  `seat_role_briefing` gains one paragraph: where the clone is; that
+  `plans/` and `roles/` hold what is in force and `*/archive/` is history not
+  to be read unless a current document points there; and whether this seat
+  may push (`write`: commit on `main` and push; the relay's gate decides,
+  and a seat carries its owner's tier). On Claude the existing write fence
+  keeps `read` honest — the clone is outside the working directory and the
+  nest — and `write` adds the clone to the allowed roots; on Codex the
+  briefing is the whole fence, as today (`agent_fence.rs:98`). Solo sessions
+  get nothing; nothing changes for them.
+- **Project-team setup** publishes into the project's agents repository:
+  the candidate ref `setup/<id>` as today, adoption is a fast-forward of
+  `main` to it, and no 30624 sha is written while the pin is a `ref`. The
+  setup actor's grant is `agents_repo: write`.
+- **Retired.** The sparse exclusion, `hideRoles`, the `Read` denial,
+  `roles_visible` and `branch_override.rs` (§ 4.9, § 4.10). The
+  definition-drift comparison and **Restart with current definition** stay.
+
+Open (§ 6 items 7–9): the community-wide id namespace, a plan schema, and
+whether `write` should distinguish `plans/` from `roles/`.
+
 ## 5. Part C — agent types and project actions
 
 ### 5.1 An action is a workflow definition
 
-`beekeeper/actions.yml` is a list of `WorkflowDef` entries plus two top-level
+`actions.yml` — at the root of the project's agents repository since
+2026-09-18 (§ 4.11; `beekeeper/actions.yml` in the code repository until
+slice P3 lands) — is a list of `WorkflowDef` entries plus two top-level
 keys, `schema` and `timezone`. Three new `TriggerDef` variants: `ref_updated
 {ref glob, repository?}`, `ci_result {check, conclusion[]}`, `manual`. Three
 new `ActionDef` variants: `run_on_host`, `wake_agent`, `hire_agent`. A
@@ -704,8 +869,9 @@ New `crates/buzz-session-provider/src/action_steps.rs` and
 Before executing, the host checks: the 46013's signer equals the witnessed
 relay `self` (`ci_result_listener.rs:100-114`); its `a` names a project this
 host serves; and its `definitionHash` equals the hash of the entry the host
-compiles from `beekeeper/actions.yml` in its **own** checkout, else refuse
-`ACTION_DEFINITION_DRIFT`. The 46013 carries no command text: the relay
+compiles from `actions.yml` in its **own** fetched copy of the project's
+agents repository (§ 4.11; `beekeeper/actions.yml` in the code checkout
+until slice P3), else refuse `ACTION_DEFINITION_DRIFT`. The 46013 carries no command text: the relay
 cannot inject a command the repository does not contain.
 
 - **Checkout.** The project's recorded repository folder
@@ -791,10 +957,20 @@ Open, to be settled before the slice that needs them:
    custody outside the desktop (after C5).
 5. Whether a project policy may restart a seat automatically when its
    definition changes, instead of waiting for the click (§ 4.9; after A4).
-6. Whether Solo sessions, which run in the operator's own checkout where
+6. ~~Whether Solo sessions, which run in the operator's own checkout where
    the sparse exclusion does not apply, should get the Claude `Read` denial
    of § 4.10 as a per-project setting. It is the only lever there; Codex Solo
-   sessions would have none.
+   sessions would have none.~~ Moot since 2026-09-18: the code repository
+   holds no roles (§ 4.11).
+7. Repository ids are one namespace per community, so two owners' projects
+   named alike collide on `<slug>` and on `<slug>-beekeeper-agents`; § 4.11
+   refuses and names the id. A per-owner suffix, as setup publication's
+   12-hex digest, is the alternative (P1).
+8. Plans have no schema in § 4.11; whether `plans/<plan>.md` frontmatter
+   (`status: in-force | superseded`) should replace the directory move is a
+   later call.
+9. Whether `workspace.agents_repo: write` should distinguish `plans/` from
+   `roles/` (P4).
 
 ## 7. Phased delivery
 
@@ -827,6 +1003,8 @@ C are independent lanes until C3, which needs `team.yml` (A3) for agent names.
   edit does not. Proof: a repo-resident `beekeeper/roles/builder.md` seats a
   builder whose 44223 `packRef.path` is `beekeeper/roles/builder`, and
   `find` in its worktree lists no role file.
+  *Superseded in part 2026-09-18: the sparse exclusion, the `Read` denial and
+  the branch override are removed by slice P3 (§ 4.11).*
 - **A3 — `team.yml` and publication ergonomics.** `crates/buzz-persona/src/
   team.rs`, Roles page reads `team.yml` (advisory hints shown as advisory),
   `packs_repo.rs` / `packs_cli.rs` (`init --layout flat`, `clone-template`),
@@ -835,6 +1013,8 @@ C are independent lanes until C3, which needs `team.yml` (A3) for agent names.
   Roles tab. Tests: schema refusals; an agent naming an unknown role refuses;
   clone-template round-trips bytes; a `roles_visible` role's worktree keeps
   `beekeeper/`.
+  *Superseded in part 2026-09-18: `roles_visible` becomes
+  `workspace.agents_repo` in slice P4 (§ 4.11).*
 - **A4 — wire provenance.** `coding_session_payload.rs` (`composeRef`,
   closed-set amendment and its decode test), the provider's 44223 publisher,
   `skills.rs:335` (bundle manifest), `pack_revisions.rs` (template-drift row
@@ -939,6 +1119,52 @@ C are independent lanes until C3, which needs `team.yml` (A3) for agent names.
   values, at least four bytes long; encoded or split secrets, and secrets a
   command prints from anywhere else, are not caught — which is why upload is
   off by default.*
+
+### Part P — the agents repository (2026-09-18)
+
+- **P0 — this amendment.** § 1 item 5, § 4.11, the strikes, ledger 158,
+  the map, D19.
+- **P1 — creation.** `project_agents_init` (`packs_repo.rs`), the desktop
+  "New project" sequence and preflight, **Finish setup**, `path: "."` in
+  both validators and `pack_ref_path`, `DEFAULT_FLAT_PATH = "."`, NIP-PK.
+  Tests: seed and push against the stub relay; a failure after the 30621
+  leaves a disclosed gap and Finish setup completes idempotently;
+  `TakenByOther` surfaces the id; both validators accept `.` and refuse
+  `./x` and `..`; `pack_ref_path(".", "lead") == "roles/lead"`. Proof: a
+  project created on hive from the installed app shows both ids in `bee
+  repos list`, the ref pin in `bee packs get-source`, eight green roles in
+  `bee packs status`.
+- **P2 — templates and the seed.** `personas/templates/<role>/1.0.0/` for
+  the eight shipped roles, thin `personas/roles/*/personas/*.persona.md`,
+  the seed writer, `archive` refusals in the composer, `agents_repo` in
+  `team.rs`, `bee packs init` defaults (`-beekeeper-agents`, flat at `.`),
+  `bee pack clone-template --into .`. Tests: composed shipped lead equals
+  today's bytes; a seeded `roles/lead.md` composes with the five lead skills;
+  `roles/archive/lead.md` refuses as a source and as an include; `team.yml`
+  naming an archived role refuses.
+- **P3 — the readers.** `ACTIONS_YML = "actions.yml"`, `ProjectsFile.
+  agentsRepos`, fetch-then-`git show` in `action_steps.rs` and
+  `action_route.rs`, the desktop projects view field, `bee actions` default
+  file at the cwd root, removal of the sparse exclusion, `hideRoles`, the
+  `Read` rule and `branch_override.rs`, UI copy naming
+  `beekeeper/actions.yml`. Tests: verification reads the agents checkout's
+  fetched tip and never the code checkout; a missing `agentsRepos` entry
+  refuses naming the agents repository; a failed fetch discloses the time;
+  worktree and fence tests drop their § 4.10 assertions. Proof: `bee actions
+  publish` from the agents clone; a manual run executes on this host.
+- **P4 — seat access.** The agents clone beside the seat worktree, recorded
+  and disposed with it; `agentsRepoForSeat` in
+  `codingSessionSeatWorkspace.ts`; the briefing paragraph; the fence's
+  allowed roots for `write`; the Roles tab discloses each role's access.
+  Tests: `read` finds the clone and the paragraph; `none` gets neither;
+  disposal removes the clone; a `read` seat's write is refused by the fence
+  on Claude. Proof: a lead with `write` adds `plans/first.md` and pushes;
+  the relay admits it under the owner's tier.
+- **P5 — setup publication and CLI parity.** Setup publication targets the
+  30624 repository and fast-forwards `main`; `bee projects create` without
+  `--repo` runs the creation sequence (refusing a slug that is not a valid
+  repository id). Tests: publication leaves 30624 untouched; `bee projects
+  create demo` yields both repositories.
 
 ### Lanes and file ownership (for the build)
 
