@@ -6,8 +6,11 @@ import { relayClient } from "@/shared/api/relayClient";
 import {
   addProjectMembers,
   createProjectContainer,
+  initProjectRepositories,
+  projectRepositoryIds,
   publishProjectContainer,
   removeProjectMembers,
+  repositoryIdTakenRefusal,
 } from "./useCreateProjectContainer.ts";
 
 const OWNER = "a".repeat(64);
@@ -312,7 +315,7 @@ async function withCreationRead(eventsOrError, run) {
   }
 }
 
-test("create checks the exact owned head and address tombstone in one bounded batch", async () => {
+test("create checks the exact owned head, the address tombstone and both repository ids in one bounded batch", async () => {
   await withCreationRead([], async ({ filters, signedEvents }) => {
     await createProjectContainer({ name: "  Skunkworks  " });
     assert.deepEqual(filters, [
@@ -324,11 +327,119 @@ test("create checks the exact owned head and address tombstone in one bounded ba
           "#a": [`30621:${OWNER}:skunkworks`],
           limit: 1,
         },
+        {
+          kinds: [30617],
+          "#d": ["skunkworks", "skunkworks-beekeeper-agents"],
+          limit: 16,
+        },
       ],
     ]);
     assert.equal(signedEvents.length, 1);
     assert.deepEqual(tagValues(signedEvents[0], "name"), ["Skunkworks"]);
   });
+});
+
+test("create refuses a repository id another key already announced, before signing anything", async () => {
+  const taken = {
+    id: "x".repeat(64),
+    kind: 30617,
+    pubkey: MEMBER_A,
+    tags: [["d", "skunkworks-beekeeper-agents"]],
+    content: "",
+    created_at: 1,
+    sig: "sig",
+  };
+  await withCreationRead([taken], async ({ signedEvents }) => {
+    await assert.rejects(
+      createProjectContainer({ name: "Skunkworks" }),
+      /Repository id "skunkworks-beekeeper-agents" is already taken in this community by bbbbbbbb/,
+    );
+    assert.equal(signedEvents.length, 0, "nothing was signed");
+  });
+  // The owner's own announcement is not a collision: it is reused.
+  assert.equal(
+    repositoryIdTakenRefusal(
+      [{ pubkey: OWNER, tags: [["d", "skunkworks"]] }],
+      OWNER,
+      ["skunkworks", "skunkworks-beekeeper-agents"],
+    ),
+    null,
+  );
+  assert.deepEqual(projectRepositoryIds("skunkworks"), {
+    code: "skunkworks",
+    agents: "skunkworks-beekeeper-agents",
+  });
+});
+
+test("initProjectRepositories runs the host command and adds forward refs for the repositories that exist", async () => {
+  const stubs = setupStubs();
+  const previousInvoke = globalThis.window.__TAURI_INTERNALS__.invoke;
+  const calls = [];
+  globalThis.window.__TAURI_INTERNALS__.invoke = async (command, args) => {
+    if (command === "project_agents_init") {
+      calls.push(args);
+      return {
+        projectRef: args.projectRef,
+        codeRepoRef: `30617:${OWNER}:skunkworks`,
+        codeRepoId: "skunkworks",
+        codeAnnouncementEventId: "c".repeat(64),
+        codeRepoExisted: false,
+        agentsRepoRef: `30617:${OWNER}:skunkworks-beekeeper-agents`,
+        agentsRepoId: "skunkworks-beekeeper-agents",
+        agentsCloneUrl:
+          "https://hive.example/git/x/skunkworks-beekeeper-agents",
+        agentsAnnouncementEventId: "d".repeat(64),
+        agentsRepoExisted: false,
+        branch: "main",
+        roles: ["builder", "lead"],
+        seedCommitSha: "e".repeat(40),
+        seedError: null,
+        seedSkipped: false,
+        pushed: true,
+        pushError: null,
+        pushRecordEventId: null,
+        sourceEventId: "f".repeat(64),
+        sourceExisted: false,
+        publicationError: null,
+        commitIdentityName: "Owner",
+        commitIdentityEmail: "aaaaaaaa@beekeeper.local",
+        agentsAnnouncementWithdrawnEventId: null,
+        agentsAnnouncementWithdrawalError: null,
+        complete: true,
+        gap: null,
+      };
+    }
+    return previousInvoke(command, args);
+  };
+  try {
+    const project = {
+      id: "p",
+      dtag: "skunkworks",
+      owner: OWNER,
+      name: "Skunkworks",
+      description: "",
+      createdAt: 1,
+      address: `30621:${OWNER}:skunkworks`,
+      repoAddrs: [],
+      agentAddrs: [],
+      channelIds: [],
+      visibility: "public",
+      members: [],
+      icon: null,
+      color: null,
+    };
+    const result = await initProjectRepositories(project);
+    assert.equal(result.complete, true);
+    assert.deepEqual(calls, [{ projectRef: project.address }]);
+    const republished = stubs.signedEvents.at(-1);
+    assert.equal(republished.kind, 30621);
+    assert.deepEqual(tagValues(republished, "a"), [
+      `30617:${OWNER}:skunkworks`,
+      `30617:${OWNER}:skunkworks-beekeeper-agents`,
+    ]);
+  } finally {
+    stubs.teardown();
+  }
 });
 
 test("create refuses an old owned head without signing an overwrite", async () => {
@@ -443,7 +554,7 @@ for (const [label, head] of [
       const create = createProjectContainer({ name: "Skunkworks" });
       if (head) await assert.rejects(create, /already have a project/);
       else await create;
-      assert.equal(fallbacks.length, 2);
+      assert.equal(fallbacks.length, 3);
       assert.deepEqual(fallbacks[0], {
         kinds: [30621],
         authors: [OWNER],
@@ -455,6 +566,11 @@ for (const [label, head] of [
         authors: [OWNER],
         "#a": [`30621:${OWNER}:skunkworks`],
         limit: 1,
+      });
+      assert.deepEqual(fallbacks[2], {
+        kinds: [30617],
+        "#d": ["skunkworks", "skunkworks-beekeeper-agents"],
+        limit: 16,
       });
       assert.equal(stubs.signedEvents.length, head ? 0 : 1);
     } finally {

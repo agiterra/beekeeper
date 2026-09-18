@@ -62,6 +62,7 @@ import {
 } from "./ProjectSidebarDnd";
 import { useProjectSessionFilters } from "../lib/projectSessionFilterStorage";
 import { useCreateProjectContainerMutation } from "../useCreateProjectContainer";
+import { toastCreateProjectOutcome } from "../lib/toastCreateProjectOutcome";
 import { publishTodoOp } from "@/features/project-todos/lib/todoMutations";
 import { newTodoId } from "@/features/project-todos/lib/todoOp";
 import { usePinnedTodoListsIndex } from "@/features/project-todos/lib/todoSidebarIndex";
@@ -619,7 +620,8 @@ export function ProjectSidebarSections({
       <CreateProjectContainerDialog
         isCreating={createContainerMutation.isPending}
         onCreate={async (input) => {
-          await createContainerMutation.mutateAsync(input);
+          const outcome = await createContainerMutation.mutateAsync(input);
+          toastCreateProjectOutcome(outcome);
         }}
         onOpenChange={setCreateContainerOpen}
         open={createContainerOpen}

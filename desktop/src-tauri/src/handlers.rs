@@ -213,6 +213,7 @@ pub(crate) fn invoke_handler(
         managed_agents::actor_seats::stage_coding_session_actor_seat,
         managed_agents::actor_seats::preview_coding_session_seat_pack,
         managed_agents::packs_repo::project_packs_init,
+        managed_agents::agents_repo::project_agents_init,
         managed_agents::project_team_setup::project_team_setup_get,
         managed_agents::project_team_setup::project_team_setup_prepare,
         managed_agents::project_team_setup::project_team_setup_validate,

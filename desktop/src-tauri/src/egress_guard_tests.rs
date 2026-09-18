@@ -278,6 +278,8 @@ const EVENTS_INVENTORY: &[(&str, usize, usize)] = &[
     ("src/archive/mod_tests.rs", 1, 0),
     ("src/managed_agents/persona_events/tests.rs", 1, 0),
     ("src/managed_agents/packs_repo_tests.rs", 1, 0),
+    // Same stub-relay shape: a mock `/events` route the tests post to.
+    ("src/managed_agents/agents_repo_tests.rs", 1, 0),
     // Incoming mock-relay route only; setup publishing reuses guarded submit.rs.
     (
         "src/managed_agents/project_team_setup_launch_tests.rs",

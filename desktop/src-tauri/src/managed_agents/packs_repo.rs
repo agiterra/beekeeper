@@ -103,7 +103,10 @@ fn pubkey_short(pubkey_hex: &str) -> String {
 /// the relay. A read failure or no profile falls back exactly as an empty
 /// profile would — a git commit must never block on the profile query, and
 /// never has less to say than "the key's own name" when the query fails.
-async fn resolve_app_commit_identity(state: &AppState, pubkey_hex: &str) -> (String, String) {
+pub(crate) async fn resolve_app_commit_identity(
+    state: &AppState,
+    pubkey_hex: &str,
+) -> (String, String) {
     let events = crate::relay::query_relay(
         state,
         &[serde_json::json!({ "kinds": [0], "authors": [pubkey_hex], "limit": 1 })],
@@ -121,10 +124,10 @@ async fn resolve_app_commit_identity(state: &AppState, pubkey_hex: &str) -> (Str
 const KIND_PROJECT_PACK_SOURCE: u16 = buzz_core_pkg::kind::KIND_PROJECT_PACK_SOURCE as u16;
 
 /// Kind of a NIP-34 git repository announcement.
-const KIND_REPO_ANNOUNCEMENT: u16 = 30617;
+pub(crate) const KIND_REPO_ANNOUNCEMENT: u16 = 30617;
 
 /// Kind of the relay-derived ref state a push produces (`buzz_core::kind`).
-const KIND_REPO_REF_STATE: u16 = 30618;
+pub(crate) const KIND_REPO_REF_STATE: u16 = 30618;
 
 /// Schema string in a 30624's content, as `buzz-core` declares it.
 const PACK_SOURCE_SCHEMA: &str = buzz_core_pkg::project_pack_source::PROJECT_PACK_SOURCE_SCHEMA;
@@ -133,7 +136,7 @@ const PACK_SOURCE_SCHEMA: &str = buzz_core_pkg::project_pack_source::PROJECT_PAC
 pub const PACKS_REPO_SUFFIX: &str = "-packs";
 
 /// Branch the seeded repository publishes.
-const SEED_BRANCH: &str = "main";
+pub(crate) const SEED_BRANCH: &str = "main";
 
 /// Message on the one commit the seed writes.
 const SEED_COMMIT_MESSAGE: &str = "seed role packs from the shipped defaults";
@@ -246,6 +249,13 @@ pub fn parse_project_coordinate(coordinate: &str) -> Result<(String, String), St
 /// up should not have to invent is a name — and a derived id makes the
 /// repository findable from the project alone.
 pub fn default_packs_repo_id(project_slug: &str) -> Result<String, String> {
+    default_repo_id(project_slug, PACKS_REPO_SUFFIX)
+}
+
+/// `<slug><suffix>`, sanitized to `[a-z0-9._-]` and bounded to 64 bytes
+/// with the suffix kept whole: a truncated suffix would collide with the
+/// project's own code repository.
+pub fn default_repo_id(project_slug: &str, suffix: &str) -> Result<String, String> {
     let slug: String = project_slug
         .trim()
         .to_ascii_lowercase()
@@ -265,9 +275,9 @@ pub fn default_packs_repo_id(project_slug: &str) -> Result<String, String> {
     // The suffix must survive the length bound rather than be truncated away:
     // a repository called `<slug>` instead of `<slug>-packs` would collide
     // with the project's own code repository.
-    let room = 64 - PACKS_REPO_SUFFIX.len();
+    let room = 64usize.saturating_sub(suffix.len());
     let head: String = slug.chars().take(room).collect();
-    Ok(format!("{}{PACKS_REPO_SUFFIX}", head.trim_end_matches('-')))
+    Ok(format!("{}{suffix}", head.trim_end_matches('-')))
 }
 
 /// The name a packs repository's kind:30617 carries: whatever the caller
@@ -387,10 +397,29 @@ fn build_announcement(
     name: &str,
     clone_url: &str,
 ) -> Result<nostr::Event, String> {
+    build_repo_announcement(
+        keys,
+        repo_id,
+        project,
+        name,
+        "Role packs for this project's agent seats. Seeded from Beekeeper's shipped defaults.",
+        clone_url,
+    )
+}
+
+/// Build a kind:30617 announcement for a repository this host creates
+/// inside `project`: `d`, `name`, `description`, `clone`, and the project
+/// back reference.
+pub(crate) fn build_repo_announcement(
+    keys: &Keys,
+    repo_id: &str,
+    project: &str,
+    name: &str,
+    description: &str,
+    clone_url: &str,
+) -> Result<nostr::Event, String> {
     let name = name.to_string();
-    let description =
-        "Role packs for this project's agent seats. Seeded from Beekeeper's shipped defaults."
-            .to_string();
+    let description = description.to_string();
     let tags = vec![
         Tag::parse(vec!["d".to_string(), repo_id.to_string()])
             .map_err(|error| format!("invalid d tag: {error}"))?,
@@ -657,7 +686,7 @@ async fn project_packs_init_with_paths(
 /// `Some`: a tombstone failure is reported, not retried, and the caller
 /// already has the coordinate (`ProjectPacksInit::repo_ref`) to hand a
 /// founder for a manual `bee repos delete`.
-async fn withdraw_announcement(
+pub(crate) async fn withdraw_announcement(
     state: &AppState,
     keys: &Keys,
     repo_id: &str,
@@ -696,7 +725,11 @@ async fn withdraw_announcement(
 /// A failure to read is reported as `None`, not as a failed init: the push
 /// landed either way, and the record is an observation about it rather than
 /// part of it.
-async fn read_push_record_id(state: &AppState, owner: &str, repo_id: &str) -> Option<String> {
+pub(crate) async fn read_push_record_id(
+    state: &AppState,
+    owner: &str,
+    repo_id: &str,
+) -> Option<String> {
     let filter = serde_json::json!({
         "kinds": [KIND_REPO_REF_STATE],
         "#d": [repo_id],

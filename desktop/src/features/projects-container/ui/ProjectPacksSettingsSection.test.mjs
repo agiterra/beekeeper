@@ -82,8 +82,9 @@ test("a sha-pinned source shows the short sha, not the ref", () => {
   assert.doesNotMatch(markup, /refs\/heads/);
 });
 
-test("the project owner sees both founder actions", () => {
+test("the project owner sees the repositories action and both founder actions", () => {
   const markup = render({ self: OWNER });
+  assert.match(markup, /data-testid="project-agents-init-open"/);
   assert.match(markup, /data-testid="project-packs-create-repo-open"/);
   assert.match(markup, /data-testid="project-packs-use-existing-open"/);
   assert.doesNotMatch(markup, /data-testid="project-packs-readonly-note"/);
@@ -96,6 +97,7 @@ test("a stranger sees the read-only sentence, and neither founder action", () =>
     markup,
     /Only this project&#x27;s repository founders or its owner can set the pack source\./,
   );
+  assert.doesNotMatch(markup, /data-testid="project-agents-init-open"/);
   assert.doesNotMatch(markup, /data-testid="project-packs-create-repo-open"/);
   assert.doesNotMatch(markup, /data-testid="project-packs-use-existing-open"/);
 });

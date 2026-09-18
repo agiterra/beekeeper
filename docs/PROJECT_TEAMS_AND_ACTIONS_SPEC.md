@@ -1134,6 +1134,12 @@ C are independent lanes until C3, which needs `team.yml` (A3) for agent names.
   project created on hive from the installed app shows both ids in `bee
   repos list`, the ref pin in `bee packs get-source`, eight green roles in
   `bee packs status`.
+  *Status 2026-09-18: built (ledger 160), after P2. Amendments: the
+  preflight also reads the project's 30624 and refuses a project already
+  pointed at another repository; the announcement withdrawn after a failed
+  seed keeps its id on the result beside the withdrawal; a repository step
+  that does not land is a disclosed gap on a created project, never a
+  failed create. The live proof is still owed.*
 - **P2 — templates and the seed.** `personas/templates/<role>/1.0.0/` for
   the eight shipped roles, thin `personas/roles/*/personas/*.persona.md`,
   the seed writer, `archive` refusals in the composer, `agents_repo` in

@@ -3,9 +3,18 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { relayClient } from "@/shared/api/relayClient";
 import { signRelayEvent } from "@/shared/api/tauri";
 import { getIdentity } from "@/shared/api/tauriIdentity";
-import { KIND_DELETION, KIND_PROJECT } from "@/shared/constants/kinds";
+import {
+  KIND_DELETION,
+  KIND_PROJECT,
+  KIND_REPO_ANNOUNCEMENT,
+} from "@/shared/constants/kinds";
 
 import { projectContainersQueryKey, type ProjectContainer } from "./hooks";
+import {
+  defaultAgentsRepoId,
+  projectAgentsInit,
+  type ProjectAgentsInitResult,
+} from "./lib/projectAgentsInit";
 import {
   eventToProjectContainer,
   GENERAL_PROJECT_DTAG,
@@ -123,7 +132,43 @@ export async function publishProjectContainer(input: {
   return project;
 }
 
-/** Create a project after checking its exact owned coordinate on the relay. */
+/**
+ * The two repository ids a project creates with it (spec § 4.11): the code
+ * repository `<slug>` and the agents repository `<slug>-beekeeper-agents`.
+ */
+export function projectRepositoryIds(dtag: string): {
+  code: string;
+  agents: string;
+} {
+  return { code: dtag, agents: defaultAgentsRepoId(dtag) };
+}
+
+/**
+ * The refusal when a repository id the project would create is already
+ * announced by another key, or `null`. Repository ids are one namespace per
+ * community (`buzz-db`'s `ReserveOutcome::TakenByOther`), so this is read
+ * before the project is published: a project whose repositories can never
+ * be created is not a project worth publishing.
+ */
+export function repositoryIdTakenRefusal(
+  announcements: { pubkey: string; tags: string[][] }[],
+  ownerPubkey: string,
+  ids: string[],
+): string | null {
+  for (const event of announcements) {
+    const author = event.pubkey.toLowerCase();
+    if (author === ownerPubkey) continue;
+    const id = event.tags.find((tag) => tag[0] === "d")?.[1];
+    if (id === undefined || !ids.includes(id)) continue;
+    return `Repository id "${id}" is already taken in this community by ${author.slice(0, 8)}…; repository ids are one namespace per community, so choose another project name.`;
+  }
+  return null;
+}
+
+/**
+ * Create a project after checking its exact owned coordinate, and both
+ * repository ids it will create, on the relay.
+ */
 export async function createProjectContainer(
   input: CreateProjectContainerInput,
 ): Promise<ProjectContainer> {
@@ -135,12 +180,15 @@ export async function createProjectContainer(
   if (!dtag) {
     throw new Error("Project name must include letters or numbers.");
   }
+  const repositoryIds = projectRepositoryIds(dtag);
 
   const identity = await getIdentity();
   const ownerPubkey = identity.pubkey.toLowerCase();
   // This is an explicit action, not project discovery. Read only the address
   // being created through the existing HTTP batch/admission path; broad WS
   // discovery can spend several read-budget windows before a write starts.
+  // The two repository ids are read community-wide (any author): a hit by
+  // another key refuses the whole create.
   const existing = await relayClient.fetchEventsBatch([
     { kinds: [KIND_PROJECT], authors: [ownerPubkey], "#d": [dtag], limit: 1 },
     {
@@ -149,7 +197,20 @@ export async function createProjectContainer(
       "#a": [`${KIND_PROJECT}:${ownerPubkey}:${dtag}`],
       limit: 1,
     },
+    {
+      kinds: [KIND_REPO_ANNOUNCEMENT],
+      "#d": [repositoryIds.code, repositoryIds.agents],
+      limit: 16,
+    },
   ]);
+  const taken = repositoryIdTakenRefusal(
+    existing.filter((event) => event.kind === KIND_REPO_ANNOUNCEMENT),
+    ownerPubkey,
+    [repositoryIds.code, repositoryIds.agents],
+  );
+  if (taken !== null) {
+    throw new Error(taken);
+  }
   const deletions = existing.filter((event) => event.kind === KIND_DELETION);
   for (const event of existing) {
     if (
@@ -180,6 +241,49 @@ export async function createProjectContainer(
     color: input.color,
   });
 }
+
+/**
+ * Create, or finish creating, the project's repositories (spec § 4.11): one
+ * host call, then a best-effort forward reference from the project head to
+ * each repository that exists. The host's `complete`/`gap` verdict is
+ * returned as is; the caller decides how to show it.
+ */
+export async function initProjectRepositories(
+  project: ProjectContainer,
+): Promise<ProjectAgentsInitResult> {
+  const result = await projectAgentsInit({ projectRef: project.address });
+  const identity = await getIdentity();
+  if (project.owner === identity.pubkey.toLowerCase()) {
+    const repoAddrs = [
+      result.codeRepoExisted || result.codeAnnouncementEventId !== null
+        ? result.codeRepoRef
+        : null,
+      result.agentsRepoExisted ||
+      (result.agentsAnnouncementEventId !== null &&
+        result.agentsAnnouncementWithdrawnEventId === null)
+        ? result.agentsRepoRef
+        : null,
+    ].filter((addr): addr is string => addr !== null);
+    if (repoAddrs.length > 0) {
+      try {
+        await addProjectMembers(project, { repoAddrs });
+      } catch {
+        // Each repository's own `project` back-reference still associates
+        // it; the owner-curated forward ref is best-effort.
+      }
+    }
+  }
+  return result;
+}
+
+/** What creating a project produced: the head, and its repositories' fate. */
+export type CreateProjectContainerOutcome = {
+  project: ProjectContainer;
+  /** The host's report, or `null` when the command itself failed. */
+  repositories: ProjectAgentsInitResult | null;
+  /** The command's own words when it threw (a refusal, no host, …). */
+  repositoriesError: string | null;
+};
 
 /**
  * Republish a project the current identity owns with additional member
@@ -247,8 +351,29 @@ export function useCreateProjectContainerMutation() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: createProjectContainer,
-    onSuccess: (project) => {
+    mutationFn: async (
+      input: CreateProjectContainerInput,
+    ): Promise<CreateProjectContainerOutcome> => {
+      const project = await createProjectContainer(input);
+      // The project exists once its head is published; the repositories
+      // are a second step whose failure is disclosed, not a failed create
+      // (Finish setup in Project settings re-runs it).
+      try {
+        return {
+          project,
+          repositories: await initProjectRepositories(project),
+          repositoriesError: null,
+        };
+      } catch (thrown) {
+        return {
+          project,
+          repositories: null,
+          repositoriesError:
+            thrown instanceof Error ? thrown.message : String(thrown),
+        };
+      }
+    },
+    onSuccess: ({ project }) => {
       // Prefix-matched: the containers query is keyed per relay.
       queryClient.setQueriesData<ProjectContainer[]>(
         { queryKey: projectContainersQueryKey },

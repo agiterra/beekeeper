@@ -33,6 +33,7 @@ import {
   useCreateProjectContainerMutation,
 } from "../useCreateProjectContainer";
 import { useCreateProjectRepoMutation } from "../useCreateProjectRepo";
+import { toastCreateProjectOutcome } from "../lib/toastCreateProjectOutcome";
 import {
   ensureRealProject,
   useGeneralProjectRefResolver,
@@ -290,7 +291,8 @@ export function ProjectsScreenCreateDialogs({
       <CreateProjectContainerDialog
         isCreating={createProjectMutation.isPending}
         onCreate={async (input) => {
-          await createProjectMutation.mutateAsync(input);
+          const outcome = await createProjectMutation.mutateAsync(input);
+          toastCreateProjectOutcome(outcome);
         }}
         onOpenChange={(open) => {
           if (!open) onClose();

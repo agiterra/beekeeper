@@ -397,6 +397,15 @@ type E2eConfig = {
      */
     projectPacksInitByProject?: Record<string, Record<string, unknown>>;
     /**
+     * Answer overrides for `project_agents_init`, the "create the project's
+     * repositories" host command
+     * (`desktop/src/features/projects-container/lib/projectAgentsInit.ts`),
+     * keyed by `projectRef`. Opt-in, like `projectPacksInitByProject`:
+     * unconfigured, the command throws and the create flow discloses the
+     * gap rather than a fabricated success.
+     */
+    projectAgentsInitByProject?: Record<string, Record<string, unknown>>;
+    /**
      * Answer overrides for `compare_project_pack_revisions`, keyed by the
      * requested sha. Opt-in, like the tables above: a sha with no entry here
      * keeps `handleCompareProjectPackRevisions`'s own default (`current` for
@@ -1560,6 +1569,8 @@ declare global {
       repoId?: string;
       name?: string;
     }[];
+    /** Every `project_agents_init` payload, verbatim. */
+    __BUZZ_E2E_PROJECT_AGENTS_INIT_CALLS__?: { projectRef?: string }[];
     __BUZZ_E2E_PROJECT_REPO_SYNC_STATUS__?: {
       local_path: string | null;
       local_branch: string | null;
@@ -13430,6 +13441,18 @@ export function maybeInstallE2eTauriMocks() {
         window.__BUZZ_E2E_PROJECT_PACKS_INIT_CALLS__.push({ ...input });
         const projectRef = input.projectRef;
         const byProject = activeConfig?.mock?.projectPacksInitByProject;
+        const result = projectRef ? byProject?.[projectRef] : undefined;
+        if (!result) {
+          throw new Error(`Unsupported mocked Tauri command: ${command}`);
+        }
+        return result;
+      }
+      case "project_agents_init": {
+        const input = (payload ?? {}) as { projectRef?: string };
+        window.__BUZZ_E2E_PROJECT_AGENTS_INIT_CALLS__ ??= [];
+        window.__BUZZ_E2E_PROJECT_AGENTS_INIT_CALLS__.push({ ...input });
+        const projectRef = input.projectRef;
+        const byProject = activeConfig?.mock?.projectAgentsInitByProject;
         const result = projectRef ? byProject?.[projectRef] : undefined;
         if (!result) {
           throw new Error(`Unsupported mocked Tauri command: ${command}`);
