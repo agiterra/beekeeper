@@ -609,7 +609,13 @@ repository `<slug>` carries no Beekeeper files.
   concrete: a project takes Beekeeper's minor revisions at the next hire and
   opts into a major one by editing the line. `team.yml` is seeded with the
   eight roles and `lead: lead`; `actions.yml` with an empty list; `plans/`
-  and both `archive/` directories with a `.gitkeep`.
+  and both `archive/` directories with a `.gitkeep`. `team.yml` also
+  lists one default agent per role — the slug in title case, the lead
+  persistent, every other role ephemeral — and creation **installs them**:
+  one managed identity per role, minted with the owner's attestation and
+  associated with the project, into the team "Project team <coord>"
+  (ledger 164). Finish repository setup installs them for a project that
+  has none.
 - **Creation.** One host command, `project_agents_init`, built from the
   pieces `bee packs init` and **Create packs repository** already use
   (`desktop/src-tauri/src/managed_agents/packs_repo.rs:322,476,660`):

@@ -16,6 +16,7 @@ mod backend;
 pub(crate) mod config_bridge;
 pub(crate) mod crew_roles;
 pub(crate) mod custom_harnesses;
+pub(crate) mod default_agents;
 mod definition_validation;
 mod discovery;
 pub(crate) mod effective_config;

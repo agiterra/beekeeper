@@ -129,6 +129,13 @@ pub struct ProjectAgentsInit {
     pub complete: bool,
     /// One sentence naming what is missing when `complete` is `false`.
     pub gap: Option<String>,
+    /// The project's default agents this computer installed from the
+    /// seeded team, in role order (spec § 4.11). Empty when the seed did
+    /// not land or the install failed — see `agents_error`.
+    pub agents_installed: Vec<crate::managed_agents::default_agents::InstalledDefaultAgent>,
+    /// Why no agents were installed, when `agents_installed` is empty after
+    /// a seed that landed.
+    pub agents_error: Option<String>,
 }
 
 impl ProjectAgentsInit {
@@ -168,6 +175,8 @@ impl ProjectAgentsInit {
             agents_announcement_withdrawal_error: None,
             complete: false,
             gap: None,
+            agents_installed: Vec::new(),
+            agents_error: None,
         }
     }
 
@@ -239,7 +248,7 @@ pub async fn project_agents_init(
 ) -> Result<ProjectAgentsInit, String> {
     let catalog = packs_cache::template_catalog(&app);
     let packs_root = packs_cache::packs_root(&app)?;
-    let result =
+    let mut result =
         project_agents_init_with_paths(&state, project_ref, catalog, packs_root.clone()).await?;
     if result.pushed {
         // The provider reads `actions.yml` from this clone from now on
@@ -259,6 +268,34 @@ pub async fn project_agents_init(
                 %error,
                 "the agents repository was created but this host could not record its clone"
             );
+        }
+        // The project's default agents: one identity per seeded role
+        // (spec § 4.11). Blocking work — git and the composer — off the
+        // async runtime. A failure is disclosed on the result, never a
+        // failed create.
+        let source = packs_cache::ProjectPackSource {
+            repo: result.agents_repo_ref.clone(),
+            git_ref: Some(format!("refs/heads/{}", result.branch)),
+            sha: None,
+            path: PACK_PATH_ROOT.to_string(),
+        };
+        let project = result.project_ref.clone();
+        let install_app = app.clone();
+        let installed = tokio::task::spawn_blocking(move || {
+            use tauri::Manager;
+            let state = install_app.state::<AppState>();
+            crate::managed_agents::default_agents::install_default_agents(
+                &install_app,
+                &state,
+                &project,
+                &source,
+            )
+        })
+        .await
+        .map_err(|error| format!("installing the default agents did not finish: {error}"))?;
+        match installed {
+            Ok(agents) => result.agents_installed = agents,
+            Err(error) => result.agents_error = Some(error),
         }
     }
     Ok(result)

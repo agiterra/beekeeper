@@ -299,7 +299,7 @@ pub fn resolved_repo_name(name: Option<&str>, repo_id: &str) -> String {
 /// Deliberately not a `cp -R`: a symlink in the shipped packs would otherwise
 /// be seeded into a repository other people clone, pointing at a path on the
 /// machine that happened to publish it.
-fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
+pub(crate) fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
     std::fs::create_dir_all(to).map_err(|error| format!("create {}: {error}", to.display()))?;
     let entries =
         std::fs::read_dir(from).map_err(|error| format!("read {}: {error}", from.display()))?;

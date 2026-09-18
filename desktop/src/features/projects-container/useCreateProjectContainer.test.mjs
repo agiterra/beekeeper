@@ -407,6 +407,8 @@ test("initProjectRepositories runs the host command and adds forward refs for th
         agentsAnnouncementWithdrawalError: null,
         complete: true,
         gap: null,
+        agentsInstalled: [],
+        agentsError: null,
       };
     }
     return previousInvoke(command, args);

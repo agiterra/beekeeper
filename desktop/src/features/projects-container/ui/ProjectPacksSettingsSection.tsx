@@ -335,6 +335,14 @@ function ProjectAgentsInitAction({
                   ? "already set"
                   : (result.publicationError ?? "not set")}
             </dd>
+            <dt className="text-muted-foreground">agents</dt>
+            <dd className="truncate" data-testid="project-agents-init-agents">
+              {result.agentsInstalled.length > 0
+                ? result.agentsInstalled
+                    .map((agent) => `${agent.name} (${agent.role})`)
+                    .join(", ")
+                : (result.agentsError ?? "none installed")}
+            </dd>
           </dl>
         </div>
       ) : null}

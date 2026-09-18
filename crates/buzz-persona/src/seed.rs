@@ -206,8 +206,41 @@ fn team_yml(name: &str, lead: &str, roles: &[&Template]) -> String {
     for template in roles {
         out.push_str(&format!("  {}: {{}}\n", template.name));
     }
-    out.push_str("agents: []\n");
+    // One default agent per role (spec § 4.11): the host mints the
+    // identities when the project is created; these are the names it uses
+    // and the names `actions.yml` may route to. The lead is persistent;
+    // every other role is hired per task.
+    out.push_str("agents:\n");
+    for template in roles {
+        let lifetime = if template.name == DEFAULT_LEAD {
+            "persistent"
+        } else {
+            "ephemeral"
+        };
+        out.push_str(&format!(
+            "  - {{ name: {}, role: {}, lifetime: {lifetime} }}\n",
+            yaml_string(&agent_display_name(&template.name)),
+            template.name
+        ));
+    }
     out
+}
+
+/// The default agent name for a role: the slug in title case
+/// (`project-setup` → `Project Setup`), which is what the shipped packs call
+/// their personas.
+pub fn agent_display_name(role: &str) -> String {
+    role.split('-')
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn readme(name: &str) -> String {
@@ -357,6 +390,22 @@ mod tests {
             team.role("lead").workspace.agents_repo,
             AgentsRepoAccess::None
         );
+        let agents: Vec<(&str, &str, bool)> = team
+            .agents
+            .iter()
+            .map(|a| {
+                (
+                    a.name.as_str(),
+                    a.role.as_str(),
+                    a.lifetime == crate::team::AgentLifetime::Persistent,
+                )
+            })
+            .collect();
+        assert_eq!(
+            agents,
+            vec![("Builder", "builder", false), ("Lead", "lead", true)]
+        );
+        assert_eq!(agent_display_name("project-setup"), "Project Setup");
 
         let composed = compose_role(
             &RoleSource::Flat {

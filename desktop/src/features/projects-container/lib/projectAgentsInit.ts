@@ -54,7 +54,37 @@ export type ProjectAgentsInitResult = {
   complete: boolean;
   /** One sentence naming what is missing when `complete` is `false`. */
   gap: string | null;
+  /**
+   * The project's default agents this computer installed from the seeded
+   * team (spec § 4.11), in role order. Empty when the seed did not land or
+   * the install failed — see `agentsError`.
+   */
+  agentsInstalled: InstalledDefaultAgent[];
+  /** Why no agents were installed, when the seed landed and none were. */
+  agentsError: string | null;
 };
+
+/** One default agent the create installed. */
+export type InstalledDefaultAgent = {
+  role: string;
+  name: string;
+  pubkey: string;
+  /** Found already installed and refreshed rather than minted. */
+  refreshed: boolean;
+};
+
+function isInstalledDefaultAgent(
+  value: unknown,
+): value is InstalledDefaultAgent {
+  if (typeof value !== "object" || value === null) return false;
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.role === "string" &&
+    typeof record.name === "string" &&
+    typeof record.pubkey === "string" &&
+    typeof record.refreshed === "boolean"
+  );
+}
 
 function isOptionalString(value: unknown): value is string | null {
   return value === null || typeof value === "string";
@@ -93,7 +123,10 @@ function isProjectAgentsInitResult(
     isOptionalString(record.agentsAnnouncementWithdrawnEventId) &&
     isOptionalString(record.agentsAnnouncementWithdrawalError) &&
     typeof record.complete === "boolean" &&
-    isOptionalString(record.gap)
+    isOptionalString(record.gap) &&
+    Array.isArray(record.agentsInstalled) &&
+    record.agentsInstalled.every(isInstalledDefaultAgent) &&
+    isOptionalString(record.agentsError)
   );
 }
 
@@ -177,7 +210,13 @@ export function describeAgentsSetup(result: ProjectAgentsInitResult): string {
       : result.seedCommitSha
         ? `seeded as ${result.commitIdentityName}, commit ${result.seedCommitSha.slice(0, 8)}`
         : "seeded";
-    return `Repositories ready: ${result.codeRepoId} (code) and ${result.agentsRepoId} (${seed}); the project's roles come from ${result.agentsRepoId} on ${result.branch}.`;
+    const agents =
+      result.agentsInstalled.length > 0
+        ? ` ${result.agentsInstalled.length} default agents installed: ${result.agentsInstalled.map((agent) => agent.name).join(", ")}.`
+        : result.agentsError
+          ? ` No default agents were installed: ${result.agentsError}.`
+          : "";
+    return `Repositories ready: ${result.codeRepoId} (code) and ${result.agentsRepoId} (${seed}); the project's roles come from ${result.agentsRepoId} on ${result.branch}.${agents}`;
   }
   return `Not finished: ${result.gap ?? "unknown"}. Finish setup from Project settings → Packs.`;
 }

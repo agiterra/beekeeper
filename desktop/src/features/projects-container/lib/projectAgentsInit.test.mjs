@@ -38,6 +38,16 @@ const COMPLETE = {
   agentsAnnouncementWithdrawalError: null,
   complete: true,
   gap: null,
+  agentsInstalled: [
+    {
+      role: "builder",
+      name: "Builder",
+      pubkey: "1".repeat(64),
+      refreshed: false,
+    },
+    { role: "lead", name: "Lead", pubkey: "2".repeat(64), refreshed: false },
+  ],
+  agentsError: null,
 };
 
 test("decodeProjectAgentsInitResult accepts the host's answer and refuses a malformed one", () => {
@@ -67,7 +77,23 @@ test("defaultAgentsRepoId keeps the suffix whole inside 64 characters, as the ho
 test("describeAgentsSetup prints the host's verdict, not a happier one", () => {
   assert.equal(
     describeAgentsSetup(COMPLETE),
-    "Repositories ready: demo (code) and demo-beekeeper-agents (seeded as Beekeeper aaaaaaaa, commit eeeeeeee); the project's roles come from demo-beekeeper-agents on main.",
+    "Repositories ready: demo (code) and demo-beekeeper-agents (seeded as Beekeeper aaaaaaaa, commit eeeeeeee); the project's roles come from demo-beekeeper-agents on main. 2 default agents installed: Builder, Lead.",
+  );
+  assert.match(
+    describeAgentsSetup({
+      ...COMPLETE,
+      agentsInstalled: [],
+      agentsError: "no packs cache",
+    }),
+    /No default agents were installed: no packs cache\./,
+  );
+  assert.throws(
+    () =>
+      decodeProjectAgentsInitResult({
+        ...COMPLETE,
+        agentsInstalled: [{ role: "lead" }],
+      }),
+    /malformed/,
   );
   assert.match(
     describeAgentsSetup({
