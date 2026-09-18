@@ -17,7 +17,7 @@ unknown and both links are kept. "Ledger §" means a heading in
 | Surface | Observed | How |
 | --- | --- | --- |
 | `main` on the relay and on GitHub | `19b23b9d9`, checked 2026-09-16 13:30 EDT on both remotes by `ls-remote`; the seat-isolation stack (ledger 131–134), the five 135 fixes (136–139) and the readiness gate fix (140) landed, each after a green pre-push floor. The hot checkout's local `main` has lagged before; read the remote, not a local ref | `git fetch origin main` then `git rev-parse FETCH_HEAD`; `GIT_TERMINAL_PROMPT=0 git ls-remote upstream refs/heads/main` |
-| Relay at hive.agiterra.org | `build_time` `2026-09-12T00:05:56Z`, checked 2026-09-13; `software_commit` is `unknown`, a disclosed non-answer from the stale deployer (ledger §3a, "hive's `software_commit` is `unknown`") | `curl -s -H 'Accept: application/nostr+json' https://hive.agiterra.org/ \| jq '{software_commit, build_time}'` |
+| Relay at hive.agiterra.org | `build_time` `2026-09-18T00:31:49Z`, image `71efd0da1` (C6), checked 2026-09-18; `software_commit` is `unknown`, a disclosed non-answer from the stale deployer (ledger §3a) | `curl -s -H 'Accept: application/nostr+json' https://hive.agiterra.org/ \| jq '{software_commit, build_time}'` |
 | Installed Mac dev bundle | `/Users/brian/Applications/Beekeeper Dev.app`, running `19b23b9d9`; bundled CLI says `bee 0.1.0 (19b23b9d)` built `2026-09-16T17:15:59Z`; signature verified and app relaunched 2026-09-16 13:30 EDT. The seat-bundles experiment passed on `1459c1186` (ledger 135); the hire fixes were exercised live on `7fcc45a04` (ledger 136 addendum); the readiness fix (140) is installed but not yet exercised live; the walkthrough UI acceptance and the hiring rollout's live association step remain pending | `scripts/app-from.sh 19b23b9d9`; installed `bee --version`; `codesign --verify --deep --strict`; [walkthrough evidence](history/2026-09-13-tank-loop-walkthrough.md) |
 | Windows | unavailable: Brian no longer has the Windows machine (2026-09-09). Native Windows agent setup and cross-account acceptance are deferred, not done | ledger § "September 9 checkpoint published; Windows testing deferred" |
 | Mobile | not independently checked for this map. Last recorded claim: the phone drops a deleted session only on its next channel refresh (Andy, 2026-09-11) | ledger § "Fixed 2026-09-11 — Discard deletes a never-started session" |
@@ -48,8 +48,8 @@ on 2026-09-09, with `just ci` and `just test` green on that exact commit
 | Founded-session fixes: Discard deletes, project filing | Andy | landed on `main` 2026-09-11 | ledger § "Fixed 2026-09-11 —" (two items) |
 | Revealed-redaction badge as an icon; a streaming transcript resolves every marker | Andy | landed 2026-09-13 as `343ea8bd9`, included in current main | ledger § "Fixed 2026-09-13 — the revealed-redaction badge is an icon" |
 | A Solo session's goal is one line: summarized by the naming model, clamped with a chevron | Andy | landed 2026-09-14 as `3fde2db15` | ledger § "Fixed 2026-09-14 — a Solo session's goal is one line" |
-| The Dashboard shows the relay's machine (CPU, memory, disk) from `GET /health/system`, stewards only | Andy | landing 2026-09-14 on `feat/relay-health`; hive shows it once the relay redeploys | ledger § "Built 2026-09-14 — the Dashboard shows the relay's machine" |
-| Project teams, composable roles and project actions | Andy | 2026-09-17: A1–A4, C1–C6 built (ledger 142–148, 150–156); relay redeploy and live runs owed | [`PROJECT_TEAMS_AND_ACTIONS_SPEC.md`](PROJECT_TEAMS_AND_ACTIONS_SPEC.md), ledger 141, D18 |
+| The Dashboard shows the relay's machine (CPU, memory, disk) from `GET /health/system`, stewards only | Andy | landed 2026-09-14; on hive since 2026-09-18 (image `71efd0da1`), live check owed | ledger § "Built 2026-09-14 — the Dashboard shows the relay's machine" |
+| Project teams, composable roles and project actions | Andy | 2026-09-18: A1–A4, C1–C6 built (ledger 142–148, 150–156) and on hive since 00:35Z; live runs owed | [`PROJECT_TEAMS_AND_ACTIONS_SPEC.md`](PROJECT_TEAMS_AND_ACTIONS_SPEC.md), ledger 141, D18 |
 | Project To-Do lists: kind 44248, personal/project visibility, pins, `bee todos`, Desktop tab + sidebar rows, Mobile page | Andy with Opus | 2026-09-17: on `main` (`0cbfcf296`); relay, CLI, Desktop, Mobile (iOS 26.5 sim) verified live locally | [`nips/NIP-TD.md`](nips/NIP-TD.md), ledger 149 |
 | Delegated agent-directory visibility follow-up | unassigned | "can resume separately on main" (Astra, 2026-09-09) | ledger § "September 9 main published" |
 | This map, the ledger split and its size gate | Fable | landed 2026-09-11 (`f80781969`); lead pack landed on `agiterra-packs` (`5f4ae76fa`) | `AGENTS.md` top block; `scripts/check-current-state-size.mjs` |
@@ -147,8 +147,8 @@ separates publication, installation and provider-confirmed lead startup.
 5. The lead pack is already published in `agiterra-packs` at `5f4ae76fa`.
    Running seats retain their staged revision; use `bee packs status` to inspect
    a project's source before claiming that a live seat has the new instructions.
-6. Project teams spec: every slice built (row above); redeploy the relay,
-   then run the live proofs on the installed app (ledger 150–156 list them).
+6. Project teams spec: every slice built and on hive (row above); run the
+   live proofs on the installed app (ledger 150–156 list them).
 7. When Brian resumes automatic context, run the hook-marker experiment in the
    ledger's September 10 section. Collaborative workspace plan steps 5 and 6
    remain separate.
