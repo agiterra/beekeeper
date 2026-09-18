@@ -72,6 +72,20 @@ async fn wait_for_method(log: &Path, method: &str) -> bool {
     false
 }
 
+/// Wait (bounded) until the fake adapter has logged `method` `count` times.
+/// The provider reports `TurnStarted` when it *sends* the prompt; the adapter
+/// logs the method when it *receives* it, so a count read straight after the
+/// pump can trail by one under load (CI pipelines 171 and 174, 2026-09-17).
+async fn wait_for_method_count(log: &Path, method: &str, count: usize) -> bool {
+    for _ in 0..200 {
+        if methods(log).iter().filter(|seen| *seen == method).count() >= count {
+            return true;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    false
+}
+
 /// Every ACP method the fake adapter was asked for, in order.
 fn methods(log: &Path) -> Vec<String> {
     std::fs::read_to_string(log)
@@ -3069,13 +3083,18 @@ async fn a_same_body_transfer_stops_the_old_claimants_queued_turn_too() {
         .await
         .expect("the successor's turn");
     pump_until_turn_started(&mut provider).await;
+    assert!(
+        wait_for_method_count(&log, "session/prompt", prompts_before + 1).await,
+        "and the new claimant's turn does reach the runtime: {:?}",
+        methods(&log)
+    );
     assert_eq!(
         methods(&log)
             .iter()
             .filter(|method| *method == "session/prompt")
             .count(),
         prompts_before + 1,
-        "and the new claimant's turn does reach the runtime: {:?}",
+        "exactly one more prompt, the successor's: {:?}",
         methods(&log)
     );
 
