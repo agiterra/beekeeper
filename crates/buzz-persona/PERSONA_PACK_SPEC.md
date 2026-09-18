@@ -1167,12 +1167,25 @@ personas/templates/<name>/<semver>/skills/<skill>/SKILL.md   (optional)
 ```
 
 `TEMPLATE.md` carries frontmatter `name`, `version`, `description`, optional
-`deprecated: "<reason>"` and optional `skills: [./skills/<s>/]`; the body is
-the fragment. Unknown keys are refused. The directory names must equal
-`name` and `version`. A template is a leaf: it may not contain an include
-directive. A new version directory is added only when the text or skills
-change between app releases; identical bytes under two versions is a
-`validate_catalog` warning.
+`deprecated: "<reason>"`, optional `kind: fragment | role` (`fragment` when
+absent) and optional `skills: [./skills/<s>/]`; the body is the fragment.
+Unknown keys are refused. The directory names must equal `name` and
+`version`. A template is a leaf: it may not contain an include directive. A
+new version directory is added only when the text or skills change between
+app releases; identical bytes under two versions is a `validate_catalog`
+warning.
+
+**Role templates (2026-09-18, spec § 4.11).** Every shipped role is a
+`kind: role` template — its own paragraph and its skills — and the shipped
+pack under `personas/roles/<role>/` is thin: a persona of two include lines,
+`![[beekeeper/<role>@^1.0.0]]` and `![[beekeeper/working-contract@^1.0.0]]`,
+with no skills of its own. `TemplateCatalog::role_templates` lists the newest
+current version of each; `buzz-persona::seed::write_agents_repo_seed` writes
+a project's agents repository from them (one `roles/<role>.md` per role
+template, each an include of the template plus the three shared fragments,
+`team.yml`, `actions.yml`, `plans/`, both `archive/` directories). The
+composed thin pack is byte-identical to the persona it replaced
+(`tests/shipped_templates.rs`, against `tests/fixtures/`).
 
 Ranges: `@1.2.0` is exact (not the caret the `semver` crate would read),
 `@^1.0.0` and `@~1.1` are `semver` requirements, `@latest` is the highest
@@ -1195,24 +1208,32 @@ Cycles over `roles/<role>` refuse naming the chain; the chain may be at most
 8 deep; the expanded body may not exceed `MAX_BODY_BYTES`; a skill name
 provided by two sources refuses; a missing template, version or file
 refuses. Templates' skills join the role's own in the staged pack.
+`roles/archive/<role>` is refused as an include: what is under an `archive/`
+directory is retired, never in force (`ComposeError::ArchivedInclude`).
 
 ### Flat role sources
 
-Besides a pack directory, the composer reads a flat project layout:
+Besides a pack directory, the composer reads a flat project layout — the
+project's agents repository, at its root (`path: "."` on the kind:30624):
 
 ```
 <root>/roles/<role>.md                 # optional persona frontmatter; body
 <root>/roles/<role>/skills/<s>/SKILL.md # role-private, auto-claimed
+<root>/roles/archive/<role>.md          # retired: listed, never composed
 <root>/skills/<s>/SKILL.md              # shared: every role
+<root>/plans/<plan>.md, plans/archive/  # plans in force / retired (no parser)
 ```
 
 An optional `<root>/team.yml` (`schema: beekeeper-team/v1`; `name`,
 `version`, `lead`, `roles.<role>.{file, runtime, model,
-workspace.roles_visible}`, `agents[{name, role, lifetime}]`) names the
-synthesized pack and fills in advisory facts the role file leaves unsaid; a
-role file composes whether or not the manifest lists it, and a manifest that
-is present and invalid refuses every composition from that root
-(`buzz-persona::team`).
+workspace.agents_repo: none | read | write}`, `agents[{name, role,
+lifetime}]`) names the synthesized pack and fills in advisory facts the role
+file leaves unsaid; a role file composes whether or not the manifest lists
+it, and a manifest that is present and invalid refuses every composition
+from that root (`buzz-persona::team`). `archive` is reserved: not a role
+key, not a role file's parent (`team::is_archived_path`). `compose::
+archived_role_files` lists the retired roles so a reader can say "archived
+(not hireable)".
 
 A flat role's frontmatter, when present, is the same closed key set as a
 `.persona.md`. `name`, `display_name` and `role` default from the file stem,

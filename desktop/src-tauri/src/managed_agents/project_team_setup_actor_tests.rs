@@ -38,7 +38,29 @@ fn real_shipped_bytes_and_identity_survive_interrupted_store_save_and_app_update
         pack::digest(&shipped.join(pack::ROLE)).expect("source digest")
     );
     let actual = pack::validate(&path).expect("actual persona");
-    assert!(!actual.skills.is_empty());
+    // The shipped pack is thin since 2026-09-18 (spec § 4.11): its text and
+    // skills live in the role template, so the copy carries no skills of its
+    // own and composes with them against the shipped catalog — which is how
+    // the host stages the setup seat from it.
+    assert!(actual.skills.is_empty());
+    let catalog =
+        buzz_persona_pkg::template::TemplateCatalog::load(&shipped.join("../templates"), "test")
+            .expect("the shipped catalog loads");
+    let composed = buzz_persona_pkg::compose::compose_role(
+        &buzz_persona_pkg::compose::RoleSource::Pack {
+            dir: path.clone(),
+            role: pack::ROLE.to_owned(),
+            persona: None,
+        },
+        &catalog,
+        &buzz_persona_pkg::compose::ComposeOptions::local("personas/roles/project-setup"),
+    )
+    .expect("the copied setup pack composes");
+    assert!(!composed.skills.is_empty());
+    assert!(composed
+        .persona
+        .prompt
+        .contains("Turn the project's intent into useful, versioned working procedures."));
     assert_eq!(first.pack_ref.repo, "app:shipped");
     let before = std::fs::read(root.path().join("setup-actor.enc")).expect("receipt");
     // No instance save happened. A new app build may ship different packs or no old resources.

@@ -6,7 +6,7 @@
     "project-setup"
   ],
   "name": "Team Project Setup",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Establishes project-owned role procedures from intent and observed project facts.",
   "personas": [
     "personas/project-setup.persona.md"

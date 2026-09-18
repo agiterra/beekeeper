@@ -559,9 +559,31 @@ fn a_pack_path_may_only_name_a_place_inside_the_checkout() {
         validate_pack_path("/personas/roles/").expect("trimmed"),
         "personas/roles"
     );
-    for bad in ["../etc", "personas/../../etc", "personas/-flag", "a//b"] {
+    for bad in [
+        "../etc",
+        "personas/../../etc",
+        "personas/-flag",
+        "a//b",
+        "./roles",
+        "roles/.",
+    ] {
         assert!(validate_pack_path(bad).is_err(), "{bad} must be refused");
     }
+    // The root — the agents repository's layout — is legal and joins to
+    // `roles/<role>` for a flat role, the bare role for a pack.
+    assert_eq!(validate_pack_path(".").expect("root"), ".");
+    assert_eq!(validate_pack_path("/./").expect("root, trimmed"), ".");
+    let flat = RoleSource::Flat {
+        root: PathBuf::from("/cache"),
+        role: "lead".into(),
+    };
+    assert_eq!(pack_ref_path(&flat, "."), "roles/lead");
+    let pack = RoleSource::Pack {
+        dir: PathBuf::from("/cache/lead"),
+        role: "lead".into(),
+        persona: None,
+    };
+    assert_eq!(pack_ref_path(&pack, "."), "lead");
 }
 
 #[test]

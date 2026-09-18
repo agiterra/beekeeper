@@ -2,7 +2,7 @@
   "$schema": "https://open-plugin-spec.org/schema/v1/plugin.json",
   "id": "com.beekeeper.crew.lead",
   "name": "Team Lead",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Coordinates authorized work, resolves decisions and reports coherent outcomes.",
   "keywords": [
     "team",

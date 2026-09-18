@@ -2,7 +2,7 @@
   "$schema": "https://open-plugin-spec.org/schema/v1/plugin.json",
   "id": "com.beekeeper.crew.architect",
   "name": "Team Architect",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Examines a proposed structure against the goal, constraints and evidence.",
   "keywords": [
     "team",

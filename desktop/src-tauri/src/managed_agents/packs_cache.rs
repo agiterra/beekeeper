@@ -260,6 +260,10 @@ pub fn validate_pack_path(value: &str) -> Result<String, String> {
     if path.is_empty() {
         return Ok(DEFAULT_PACK_PATH.to_string());
     }
+    // The repository root: the agents repository's layout (spec § 4.11).
+    if path == buzz_core_pkg::project_pack_source::PACK_PATH_ROOT {
+        return Ok(path.to_string());
+    }
     let segments: Vec<&str> = path.split('/').collect();
     let acceptable = segments.iter().all(|segment| {
         !segment.is_empty()
@@ -700,6 +704,11 @@ pub fn locate_role_source(checkout: &Path, path: &str, role: &str) -> Option<Rol
 /// flat form's `.md` is implied (spec § 4.6).
 pub fn pack_ref_path(source: &RoleSource, path: &str) -> String {
     let path = path.trim_matches('/');
+    let path = if buzz_core_pkg::project_pack_source::is_root_pack_path(path) {
+        ""
+    } else {
+        path
+    };
     match source {
         RoleSource::Pack { role, .. } if path.is_empty() => role.clone(),
         RoleSource::Pack { role, .. } => format!("{path}/{role}"),

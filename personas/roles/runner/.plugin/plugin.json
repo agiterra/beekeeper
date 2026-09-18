@@ -2,7 +2,7 @@
   "$schema": "https://open-plugin-spec.org/schema/v1/plugin.json",
   "id": "com.beekeeper.crew.runner",
   "name": "Team Runner",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Runs assigned checks and reports their actual completion and evidence.",
   "keywords": [
     "team",

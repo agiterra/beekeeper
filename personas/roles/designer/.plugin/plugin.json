@@ -2,7 +2,7 @@
   "$schema": "https://open-plugin-spec.org/schema/v1/plugin.json",
   "id": "com.beekeeper.crew.designer",
   "name": "Team Designer",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Defines usable surfaces and checks that their claims match real state.",
   "keywords": [
     "team",

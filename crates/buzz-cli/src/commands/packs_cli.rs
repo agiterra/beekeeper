@@ -44,30 +44,38 @@ pub enum PacksCmd {
         #[arg(long)]
         if_unset: bool,
     },
-    /// Announce a packs repository for a project, seed it, and point the
-    /// project at the commit that landed
+    /// Announce the project's agents repository, seed it, and point the
+    /// project at it
     #[command(
-        after_help = "Three steps in one, the same three the desktop app's \"Create packs repository\" performs:\n  1. announce 30617 `<slug>-packs` under your key, inside the project\n  2. seed it from the role packs on disk with one signed commit, pushed to refs/heads/main\n  3. publish the 30624 pinned to the sha that actually landed\n\nA failure at any step stops the sequence and prints what already landed — nothing ever points at a repository with no packs in it. Requires the git credential helper (`just install-git-credentials`)."
+        after_help = "Three steps in one, the same three the desktop app performs when it creates a project:\n  1. announce 30617 `<slug>-beekeeper-agents` under your key, inside the project\n  2. seed it — by default the flat layout (`team.yml`, `roles/<role>.md` including this build's shipped role templates by reference, `plans/`, both `archive/`s) — with one signed commit pushed to refs/heads/main\n  3. publish the 30624: `ref: refs/heads/main, path: .` for the flat layout, or the sha that landed for --layout pack\n\nA failure at any step stops the sequence and prints what already landed — nothing ever points at a repository with no roles in it. Requires the git credential helper (`just install-git-credentials`)."
     )]
     Init {
         /// Project coordinate `30621:<owner-hex>:<slug>`
         #[arg(long)]
         project: String,
-        /// Repository id to announce (default: `<project-slug>-packs`)
+        /// Repository id to announce (default: `<project-slug>-beekeeper-agents`
+        /// for --layout flat, `<project-slug>-packs` for --layout pack)
         #[arg(long)]
         repo_id: Option<String>,
-        /// Role packs to seed from (default: the nearest personas/roles)
+        /// Seed from this directory instead of writing the seed: a team root
+        /// for --layout flat, a directory of role packs for --layout pack
+        /// (default for pack: the nearest personas/roles)
         #[arg(long)]
         from: Option<PathBuf>,
         /// Directory inside the repository to write them to (default:
-        /// personas/roles for --layout pack, beekeeper for --layout flat)
+        /// `.` for --layout flat, personas/roles for --layout pack)
         #[arg(long)]
         path: Option<String>,
-        /// The layout of the seed directory: `pack` (one pack directory per
-        /// role, the shipped layout) or `flat` (`roles/<role>.md`, `team.yml`,
-        /// `skills/` — the layout a project keeps beside its code)
-        #[arg(long, default_value = "pack")]
+        /// The layout to seed: `flat` (`roles/<role>.md`, `team.yml`,
+        /// `plans/` — the agents repository) or `pack` (one pack directory
+        /// per role, the shipped layout)
+        #[arg(long, default_value = "flat")]
         layout: String,
+        /// Path to the template catalog the flat seed references. Defaults
+        /// to `$BUZZ_TEMPLATES_DIR`, then the nearest `personas/templates`
+        /// above the working directory
+        #[arg(long)]
+        templates: Option<PathBuf>,
         /// Print the plan and touch nothing
         #[arg(long)]
         dry_run: bool,
@@ -151,6 +159,7 @@ pub(crate) async fn dispatch(sub: PacksCmd, client: &BuzzClient) -> Result<(), C
             from,
             path,
             layout,
+            templates,
             dry_run,
         } => {
             let layout = super::packs::PackLayout::parse(&layout)?;
@@ -162,6 +171,7 @@ pub(crate) async fn dispatch(sub: PacksCmd, client: &BuzzClient) -> Result<(), C
                     from: from.as_deref(),
                     path: path.as_deref(),
                     layout,
+                    templates: templates.as_deref(),
                     dry_run,
                 },
             )

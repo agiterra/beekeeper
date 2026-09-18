@@ -67,14 +67,16 @@ fields:
   roles, in either of two layouts a host reads: one **pack directory per
   role** (`<path>/<role>/.plugin/plugin.json`, the shipped layout), or the
   **flat team layout** (`<path>/roles/<role>.md`, `<path>/team.yml`,
-  `<path>/skills/`) a project keeps beside its code
-  (`docs/PROJECT_TEAMS_AND_ACTIONS_SPEC.md` § 4). Defaults to
-  `personas/roles`; a project whose team rides with its code names the
-  code repository as `repo` and `beekeeper` as `path`, pinned by `ref` to
-  its default branch (spec § 4.7). Absolute paths, `..`
-  segments, backslashes and colons are refused: a host joins this value to a
-  tree it fetched over the network, so a path that escapes is a path that reads
-  the operator's disk.
+  `<path>/skills/`, `<path>/plans/`) — the project's **agents repository**
+  (`docs/PROJECT_TEAMS_AND_ACTIONS_SPEC.md` § 4.11). Defaults to
+  `personas/roles`. Exactly `.` names the repository root: the project's own
+  agents repository, `<slug>-beekeeper-agents`, keeps its team there and is
+  pinned by `ref` to `refs/heads/main` (spec § 4.7 as amended 2026-09-18 —
+  its founders are the project's owners and its push gate is the roster);
+  third-party packs repositories keep the immutable sha. Absolute paths,
+  `..` segments, `./x`, backslashes and colons are refused: a host joins this
+  value to a tree it fetched over the network, so a path that escapes is a
+  path that reads the operator's disk.
 
 Unknown tag names are **refused, not ignored**. This kind has no signed history
 to protect, and a silently dropped tag on a record that decides which code a
@@ -276,14 +278,20 @@ bee packs set-source --project 30621:<owner-hex>:agiterra \
 bee sessions explain pack
 ```
 
-`bee packs init` is the setup path, and does the same three steps as the app's
-**Create packs repository**, in the order that makes them safe: announce the
-`30617` (`<slug>-packs`, under the signer's key, with the project
-back-reference) so the relay's git gate will admit the push; seed it from the
-role packs on disk with one DCO-signed commit pushed to `refs/heads/main`; then
-publish the 30624 **pinned to the sha that actually landed**. A failure at any
-step stops the sequence and prints what already landed, so nothing ever points
-at a repository with no packs in it. A project that already has a pack source is
+`bee packs init` is the setup path, and does the same three steps as the app
+does when it creates a project, in the order that makes them safe: announce
+the `30617` (`<slug>-beekeeper-agents` for the default flat layout,
+`<slug>-packs` for `--layout pack`, under the signer's key, with the project
+back-reference) so the relay's git gate will admit the push; seed it — the
+flat layout is *written* from this build's shipped role templates, one
+`roles/<role>.md` per role each an include of `beekeeper/<role>@^1.0.0` and
+the shared fragments, plus `team.yml`, `actions.yml`, `plans/` and both
+`archive/` directories; the pack layout is copied from role packs on disk —
+with one DCO-signed commit pushed to `refs/heads/main`; then publish the
+30624: **`ref: refs/heads/main, path: .`** for the flat layout, **the sha
+that actually landed** for the pack layout. A failure at any step stops the
+sequence and prints what already landed, so nothing ever points at a
+repository with no roles in it. A project that already has a pack source is
 refused — replacing one re-points every seat on the project, and that is a
 deliberate `set-source`.
 

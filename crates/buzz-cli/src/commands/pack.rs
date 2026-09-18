@@ -2,7 +2,7 @@
 //!
 //! These commands operate on local pack directories. No relay connection needed.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use buzz_persona::compose::{compose_role, write_staged_pack, ComposeOptions, RoleSource};
 use buzz_persona::template::{TemplateCatalog, TemplateRange};
@@ -153,6 +153,33 @@ pub fn cmd_inspect(path: &str) -> Result<(), CliError> {
     Ok(())
 }
 
+/// Where this process finds the shipped template catalog: `explicit` when
+/// given, else `$BUZZ_TEMPLATES_DIR`, else the nearest `personas/templates`
+/// at or above the working directory (a Beekeeper checkout). `None` when
+/// none of those is a directory — the caller decides whether that refuses
+/// or composes against an empty catalog.
+pub(crate) fn resolve_templates_dir(explicit: Option<&Path>) -> Option<PathBuf> {
+    if let Some(dir) = explicit {
+        return Some(dir.to_path_buf());
+    }
+    if let Some(dir) = std::env::var_os("BUZZ_TEMPLATES_DIR") {
+        let dir = PathBuf::from(dir);
+        if dir.is_dir() {
+            return Some(dir);
+        }
+    }
+    let mut cursor = std::env::current_dir().ok()?;
+    loop {
+        let candidate = cursor.join("personas").join("templates");
+        if candidate.is_dir() {
+            return Some(candidate);
+        }
+        if !cursor.pop() {
+            return None;
+        }
+    }
+}
+
 /// Run `bee pack compose <path> --role <role> [--templates <dir>] [--out <dir>]`.
 ///
 /// `path` is a pack directory when it holds `.plugin/plugin.json`, otherwise
@@ -172,8 +199,8 @@ pub fn cmd_compose(
     if !source_dir.is_dir() {
         return Err(CliError::Usage(format!("not a directory: {path}")));
     }
-    let catalog = match templates {
-        Some(dir) => TemplateCatalog::load(dir, app_version)
+    let catalog = match resolve_templates_dir(templates) {
+        Some(dir) => TemplateCatalog::load(&dir, app_version)
             .map_err(|e| CliError::Usage(format!("template catalog: {e}")))?,
         None => TemplateCatalog::empty(app_version),
     };
@@ -214,7 +241,7 @@ pub fn cmd_compose(
     Ok(())
 }
 
-/// Run `bee pack clone-template <name>@<range> --templates <dir> --into <root>`.
+/// Run `bee pack clone-template <name>@<range> [--templates <dir>] [--into <root>]`.
 ///
 /// Spec § 3.2: a project that wants to own a shipped template's text copies
 /// it. The template's body — everything after its frontmatter — lands at
@@ -229,14 +256,21 @@ pub fn cmd_compose(
 /// range this catalog cannot satisfy with the composer's own sentence.
 pub fn cmd_clone_template(
     spec: &str,
-    templates: &Path,
+    templates: Option<&Path>,
     into: &Path,
     force: bool,
 ) -> Result<(), CliError> {
     let (name, range) = spec
         .split_once('@')
         .ok_or_else(|| CliError::Usage(format!("expected <name>@<range>, got {spec:?}")))?;
-    let catalog = TemplateCatalog::load(templates, "clone")
+    let templates = resolve_templates_dir(templates).ok_or_else(|| {
+        CliError::Usage(
+            "no template catalog: pass --templates <dir>, set BUZZ_TEMPLATES_DIR, or run from a \
+             Beekeeper checkout (personas/templates)"
+                .to_owned(),
+        )
+    })?;
+    let catalog = TemplateCatalog::load(&templates, "clone")
         .map_err(|e| CliError::Usage(format!("template catalog: {e}")))?;
     let range = TemplateRange::parse(name, range).map_err(|e| CliError::Usage(e.to_string()))?;
     let resolved = catalog
@@ -352,19 +386,20 @@ mod tests {
             "---\nname: recall\ndescription: r\n---\nrecall\n",
         );
         let into = tmp.path().join("beekeeper");
-        cmd_clone_template("memory@latest", &templates, &into, false).unwrap();
+        cmd_clone_template("memory@latest", Some(&templates), &into, false).unwrap();
         assert_eq!(
             std::fs::read_to_string(into.join("templates/memory.md")).unwrap(),
             "Recall first.\n",
             "the body only: frontmatter would be inserted into a prompt"
         );
         assert!(into.join("skills/recall/SKILL.md").is_file());
-        let again = cmd_clone_template("memory@latest", &templates, &into, false).unwrap_err();
+        let again =
+            cmd_clone_template("memory@latest", Some(&templates), &into, false).unwrap_err();
         assert!(again.to_string().contains("--force"), "{again}");
-        cmd_clone_template("memory@^1.0.0", &templates, &into, true).unwrap();
-        let missing = cmd_clone_template("memory@^9", &templates, &into, true).unwrap_err();
+        cmd_clone_template("memory@^1.0.0", Some(&templates), &into, true).unwrap();
+        let missing = cmd_clone_template("memory@^9", Some(&templates), &into, true).unwrap_err();
         assert!(missing.to_string().contains("matches none"), "{missing}");
-        let bad = cmd_clone_template("memory", &templates, &into, true).unwrap_err();
+        let bad = cmd_clone_template("memory", Some(&templates), &into, true).unwrap_err();
         assert!(bad.to_string().contains("<name>@<range>"), "{bad}");
     }
 
@@ -375,7 +410,18 @@ mod tests {
         assert_eq!(PackLayout::parse("flat").unwrap(), PackLayout::Flat);
         assert!(PackLayout::parse("nested").is_err());
         assert_eq!(PackLayout::Pack.default_path(), "personas/roles");
-        assert_eq!(PackLayout::Flat.default_path(), "beekeeper");
+        assert_eq!(PackLayout::Flat.default_path(), ".");
+        assert_eq!(PackLayout::Pack.default_suffix(), "-packs");
+        assert_eq!(PackLayout::Flat.default_suffix(), "-beekeeper-agents");
+        // The suffix survives the 64-byte bound; the slug head is what yields.
+        let long = "x".repeat(70);
+        let id = crate::commands::packs::default_repo_id(&long, "-beekeeper-agents");
+        assert_eq!(id.len(), 64);
+        assert!(id.ends_with("-beekeeper-agents"));
+        assert_eq!(
+            crate::commands::packs::default_repo_id("tank-loop", "-beekeeper-agents"),
+            "tank-loop-beekeeper-agents"
+        );
         let tmp = tempfile::tempdir().unwrap();
         let flat = tmp.path().join("flat");
         write(&flat.join("roles/lead.md"), "Lead.\n");

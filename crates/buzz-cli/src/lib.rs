@@ -2515,14 +2515,16 @@ pub enum PackCmd {
     /// Compose one role: expand its `![[…]]` includes against a template
     /// catalog and print the resulting persona and its compose.json
     Compose {
-        /// Path to the role source: a pack directory, or a flat
-        /// `beekeeper/` directory holding `roles/<role>.md`
+        /// Path to the role source: a pack directory, or a team root (an
+        /// agents repository) holding `roles/<role>.md`
         path: String,
         /// The role slug to compose
         #[arg(long)]
         role: String,
         /// Path to a template catalog (`<name>/<semver>/TEMPLATE.md`).
-        /// Without one, `![[beekeeper/…]]` includes refuse.
+        /// Defaults to `$BUZZ_TEMPLATES_DIR`, then the nearest
+        /// `personas/templates` above the working directory; without any,
+        /// `![[beekeeper/…]]` includes refuse.
         #[arg(long)]
         templates: Option<PathBuf>,
         /// The app version the catalog belongs to, recorded in compose.json
@@ -2538,12 +2540,15 @@ pub enum PackCmd {
         /// The template to clone: `<name>@<range>`, e.g. `memory@1.2.0` or
         /// `memory@latest`
         template: String,
-        /// Path to the template catalog (`<name>/<semver>/TEMPLATE.md`)
-        #[arg(long, env = "BUZZ_TEMPLATES_DIR")]
-        templates: PathBuf,
-        /// The project's team root, e.g. `beekeeper/`; the text lands in
-        /// `<into>/templates/<name>.md` and skills in `<into>/skills/`
+        /// Path to the template catalog (`<name>/<semver>/TEMPLATE.md`).
+        /// Defaults to `$BUZZ_TEMPLATES_DIR`, then the nearest
+        /// `personas/templates` above the working directory
         #[arg(long)]
+        templates: Option<PathBuf>,
+        /// The team root — the agents repository's root, the default `.`;
+        /// the text lands in `<into>/templates/<name>.md` and skills in
+        /// `<into>/skills/`
+        #[arg(long, default_value = ".")]
         into: PathBuf,
         /// Overwrite files the project already has at those paths
         #[arg(long)]
@@ -4983,7 +4988,7 @@ async fn run(cli: Cli) -> Result<(), CliError> {
                 templates,
                 into,
                 force,
-            } => commands::pack::cmd_clone_template(template, templates, into, *force),
+            } => commands::pack::cmd_clone_template(template, templates.as_deref(), into, *force),
         };
     }
 
@@ -5495,30 +5500,49 @@ mod tests {
 
     #[test]
     fn every_shipped_role_persona_can_consume_a_signed_operation_wake() {
-        let roles = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../personas/roles");
+        // A shipped pack is thin since 2026-09-18 (two include lines); what a
+        // seat reads is the pack composed against the shipped catalog, so
+        // that is what this checks.
+        let personas = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../personas");
+        let catalog =
+            buzz_persona::template::TemplateCatalog::load(&personas.join("templates"), "test")
+                .expect("the shipped catalog loads");
         let mut checked = 0;
-        for role in std::fs::read_dir(&roles).expect("read shipped role packs") {
-            let persona_dir = role.expect("role directory").path().join("personas");
-            for persona in std::fs::read_dir(persona_dir).into_iter().flatten() {
-                let path = persona.expect("persona file").path();
-                if path.extension().and_then(|extension| extension.to_str()) != Some("md") {
-                    continue;
-                }
-                let body = std::fs::read_to_string(&path).expect("read role persona");
-                let body = body.split_whitespace().collect::<Vec<_>>().join(" ");
-                assert!(
-                    body.contains("$BEE sessions operation get --id <operationId>")
-                        || body.contains("bee sessions operation get --id <operationId>"),
-                    "{} does not teach the exact pointer fetch command",
-                    path.display()
-                );
-                assert!(
-                    body.contains("`operations[0].canonical` is `true`"),
-                    "{} does not fail closed on a noncanonical operation",
-                    path.display()
-                );
-                checked += 1;
-            }
+        for role in std::fs::read_dir(personas.join("roles")).expect("read shipped role packs") {
+            let dir = role.expect("role directory").path();
+            let role = dir
+                .file_name()
+                .and_then(|name| name.to_str())
+                .expect("role directory name")
+                .to_owned();
+            let composed = buzz_persona::compose::compose_role(
+                &buzz_persona::compose::RoleSource::Pack {
+                    dir: dir.clone(),
+                    role: role.clone(),
+                    persona: None,
+                },
+                &catalog,
+                &buzz_persona::compose::ComposeOptions::local(format!("personas/roles/{role}")),
+            )
+            .unwrap_or_else(|error| panic!("{role} composes: {error}"));
+            let body = composed
+                .persona
+                .prompt
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
+            assert!(
+                body.contains("$BEE sessions operation get --id <operationId>")
+                    || body.contains("bee sessions operation get --id <operationId>"),
+                "{} does not teach the exact pointer fetch command",
+                dir.display()
+            );
+            assert!(
+                body.contains("`operations[0].canonical` is `true`"),
+                "{} does not fail closed on a noncanonical operation",
+                dir.display()
+            );
+            checked += 1;
         }
         assert!(checked > 0, "no shipped role personas were checked");
     }

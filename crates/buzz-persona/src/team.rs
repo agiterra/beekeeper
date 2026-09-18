@@ -1,4 +1,5 @@
-//! `beekeeper/team.yml`: the project's team manifest (spec § 4.2).
+//! `team.yml` at the team root — the project's agents repository since
+//! 2026-09-18 (spec § 4.2, § 4.11).
 //!
 //! The manifest names the project's roles and the advisory shape of the
 //! agents that fill them. It is a *manifest*, not a gate: a role file under
@@ -10,12 +11,15 @@
 //! - which role is hired first (`lead`, D14);
 //! - per role, an alternative `file`, advisory `runtime` and `model` that
 //!   fill in when the role file's own frontmatter is silent, and
-//!   `workspace.roles_visible` — whether a seat in that role may see the
-//!   `beekeeper/` directory in its worktree (spec § 4.10);
+//!   `workspace.agents_repo` — whether a seat in that role gets the
+//!   project's agents repository beside its worktree, read-only or
+//!   writable (spec § 4.11);
 //! - advisory agent names and lifetimes (`agents`), which `actions.yml`
 //!   refers to by name (Part C).
 //!
 //! Unknown keys are refused, so a typo cannot silently mean the default.
+//! `archive` is reserved: `roles/archive/` holds retired role files, which
+//! the manifest may not name and the composer never reads (spec § 4.11).
 
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
@@ -29,6 +33,10 @@ pub const TEAM_YML: &str = "team.yml";
 
 /// The one schema this parser reads.
 pub const TEAM_SCHEMA: &str = "beekeeper-team/v1";
+
+/// The directory under `roles/` (and `plans/`) that holds retired files:
+/// never a role slug, never a role file's parent, never included.
+pub const ARCHIVE_DIR: &str = "archive";
 
 /// Largest manifest this parser reads, in bytes.
 pub const MAX_TEAM_YML_BYTES: u64 = 256 * 1024;
@@ -57,15 +65,30 @@ pub enum AgentLifetime {
     Ephemeral,
 }
 
+/// How much of the project's agents repository a seat in a role gets
+/// (spec § 4.11). The grant is about the seat's working copy; the relay's
+/// push gate, not this value, decides whether a push lands.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AgentsRepoAccess {
+    /// No clone beside the worktree and no briefing paragraph (the default).
+    #[default]
+    None,
+    /// A clone the seat may read; its write fence keeps it read-only.
+    Read,
+    /// A clone the seat may commit to and push from.
+    Write,
+}
+
 /// Per-role workspace facts.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
 pub struct TeamWorkspace {
-    /// Whether a seat in this role may see the `beekeeper/` directory in
-    /// its worktree. Default `false`: every seat's tree omits it (spec
-    /// § 4.10). A role whose job is to author roles opts in.
+    /// Whether a seat in this role gets the project's agents repository
+    /// beside its worktree, and whether it may write there. Default
+    /// `none`. A role whose job is to keep plans or evolve roles opts in.
     #[serde(default)]
-    pub roles_visible: bool,
+    pub agents_repo: AgentsRepoAccess,
 }
 
 /// One role's manifest entry.
@@ -180,6 +203,11 @@ pub fn parse_team_yml(content: &str, path: &Path) -> Result<TeamManifest, TeamEr
                 "roles.{role}: a role is 1-64 bytes of [a-z0-9-]"
             )));
         }
+        if role == ARCHIVE_DIR {
+            return Err(invalid(format!(
+                "roles.{role}: {ARCHIVE_DIR:?} is reserved for retired role files under roles/{ARCHIVE_DIR}/"
+            )));
+        }
         if let Some(file) = entry.file.as_deref() {
             let rel = Path::new(file);
             if file.trim().is_empty()
@@ -189,6 +217,12 @@ pub fn parse_team_yml(content: &str, path: &Path) -> Result<TeamManifest, TeamEr
             {
                 return Err(invalid(format!(
                     "roles.{role}.file must be a relative path inside the team root, got {file:?}"
+                )));
+            }
+            if is_archived_path(file) {
+                return Err(invalid(format!(
+                    "roles.{role}.file names a retired file under an {ARCHIVE_DIR}/ directory, got {file:?}; \
+                     move it out of the archive to put it in force"
                 )));
             }
         }
@@ -225,6 +259,14 @@ pub fn parse_team_yml(content: &str, path: &Path) -> Result<TeamManifest, TeamEr
         }
     }
     Ok(manifest)
+}
+
+/// Whether a team-root-relative path has an `archive` segment: a retired
+/// role or plan, never in force.
+pub fn is_archived_path(rel: &str) -> bool {
+    Path::new(rel.trim())
+        .components()
+        .any(|c| matches!(c, Component::Normal(name) if name == ARCHIVE_DIR))
 }
 
 /// Read `<root>/team.yml` when it exists.
@@ -267,7 +309,7 @@ roles:
     file: roles/project-manager.md
     runtime: claude
     model: anthropic:claude-sonnet-5
-    workspace: { roles_visible: true }
+    workspace: { agents_repo: write }
   builder: {}
 agents:
   - { name: Keystone, role: project-manager, lifetime: persistent }
@@ -275,7 +317,7 @@ agents:
 "#;
 
     fn parse(text: &str) -> Result<TeamManifest, TeamError> {
-        parse_team_yml(text, Path::new("beekeeper/team.yml"))
+        parse_team_yml(text, Path::new("agents/team.yml"))
     }
 
     #[test]
@@ -284,8 +326,14 @@ agents:
         assert_eq!(team.name.as_deref(), Some("tank-loop"));
         assert_eq!(team.version, "0.3.0");
         assert_eq!(team.lead.as_deref(), Some("project-manager"));
-        assert!(team.role("project-manager").workspace.roles_visible);
-        assert!(!team.role("builder").workspace.roles_visible);
+        assert_eq!(
+            team.role("project-manager").workspace.agents_repo,
+            AgentsRepoAccess::Write
+        );
+        assert_eq!(
+            team.role("builder").workspace.agents_repo,
+            AgentsRepoAccess::None
+        );
         assert_eq!(team.role_file("builder"), "roles/builder.md");
         assert_eq!(
             team.role_file("project-manager"),
@@ -353,6 +401,29 @@ agents:
         assert!(parse(&absolute).is_err());
         let bad_lifetime = GOOD.replace("lifetime: ephemeral", "lifetime: forever");
         assert!(parse(&bad_lifetime).is_err());
+        let bad_access = GOOD.replace("agents_repo: write", "agents_repo: all");
+        assert!(parse(&bad_access).is_err());
+        // The old key is gone, not silently accepted.
+        let old_key = GOOD.replace("agents_repo: write", "roles_visible: true");
+        assert!(parse(&old_key).is_err());
+    }
+
+    #[test]
+    fn archive_is_reserved_as_a_role_and_as_a_role_file_parent() {
+        let reserved = GOOD.replace("  builder: {}", "  archive: {}");
+        assert!(parse(&reserved)
+            .unwrap_err()
+            .to_string()
+            .contains("reserved"));
+        let retired = GOOD.replace(
+            "file: roles/project-manager.md",
+            "file: roles/archive/project-manager.md",
+        );
+        assert!(parse(&retired).unwrap_err().to_string().contains("retired"));
+        assert!(is_archived_path("roles/archive/lead.md"));
+        assert!(is_archived_path("plans/archive/q3.md"));
+        assert!(!is_archived_path("roles/lead.md"));
+        assert!(!is_archived_path("roles/archived-lead.md"));
     }
 
     #[test]

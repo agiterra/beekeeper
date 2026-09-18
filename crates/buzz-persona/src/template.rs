@@ -22,6 +22,13 @@
 //!
 //! Identical bytes under two versions is a validator warning, not a refusal:
 //! [`validate_catalog`] reports it so the catalog does not grow by habit.
+//!
+//! A template is either a **fragment** (a paragraph roles share:
+//! `working-contract`, `memory`) or a **role** (`kind: role`: a whole
+//! shipped role's own paragraph and skills, which a project's seeded
+//! `roles/<role>.md` includes rather than copies — spec § 4.11). The kind
+//! changes nothing about resolution; it tells the seed writer which templates
+//! are roles.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -91,11 +98,25 @@ pub enum TemplateError {
     },
 }
 
+/// What a template is for: a paragraph roles share, or a whole shipped role.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TemplateKind {
+    /// A paragraph a role includes beside its own text (the default).
+    #[default]
+    Fragment,
+    /// A shipped role's own paragraph and skills; a seeded project role is
+    /// one include of this plus the shared fragments.
+    Role,
+}
+
 /// One version of one template, read from its `TEMPLATE.md`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Template {
     /// Frontmatter `name`, equal to the parent directory's name.
     pub name: String,
+    /// Frontmatter `kind`; `fragment` when absent.
+    pub kind: TemplateKind,
     /// Frontmatter `version`, equal to this directory's name.
     pub version: semver::Version,
     /// Frontmatter `description`, trimmed.
@@ -120,6 +141,8 @@ struct TemplateFrontmatter {
     description: Option<String>,
     #[serde(default)]
     deprecated: Option<String>,
+    #[serde(default)]
+    kind: TemplateKind,
     #[serde(default)]
     skills: Vec<String>,
 }
@@ -252,6 +275,21 @@ impl TemplateCatalog {
     /// Every version of `name`, ascending, or an empty slice.
     pub fn versions(&self, name: &str) -> &[Template] {
         self.templates.get(name).map(Vec::as_slice).unwrap_or(&[])
+    }
+
+    /// The newest non-deprecated version of every `kind: role` template,
+    /// ascending by name: the roles a seeded project starts with. A role
+    /// template whose every version is deprecated is not offered.
+    pub fn role_templates(&self) -> Vec<&Template> {
+        self.templates
+            .values()
+            .filter_map(|versions| {
+                versions
+                    .iter()
+                    .rev()
+                    .find(|t| t.kind == TemplateKind::Role && t.deprecated.is_none())
+            })
+            .collect()
     }
 
     /// Resolve `name@range` against this catalog.
@@ -435,6 +473,7 @@ pub fn read_template(
         .unwrap_or_else(|| PathBuf::from("."));
     Ok(Template {
         name,
+        kind: parsed.kind,
         version,
         description,
         deprecated,
@@ -667,6 +706,44 @@ mod tests {
         );
         let error = TemplateCatalog::load(dir.path(), "x").unwrap_err();
         assert!(matches!(error, TemplateError::Parse { .. }), "{error}");
+    }
+
+    #[test]
+    fn a_template_is_a_fragment_unless_it_says_it_is_a_role() {
+        let dir = tempfile::tempdir().unwrap();
+        write(
+            &dir.path().join("memory/1.0.0").join(TEMPLATE_MD),
+            &template_md("memory", "1.0.0", None, "Remember.\n"),
+        );
+        write(
+            &dir.path().join("lead/1.0.0").join(TEMPLATE_MD),
+            "---\nname: lead\nversion: 1.0.0\ndescription: Leads.\nkind: role\n---\nLead.\n",
+        );
+        write(
+            &dir.path().join("lead/2.0.0").join(TEMPLATE_MD),
+            "---\nname: lead\nversion: 2.0.0\ndescription: Leads.\nkind: role\ndeprecated: no\n---\nLead again.\n",
+        );
+        write(
+            &dir.path().join("runner/1.0.0").join(TEMPLATE_MD),
+            "---\nname: runner\nversion: 1.0.0\ndescription: Runs.\nkind: role\ndeprecated: gone\n---\nRun.\n",
+        );
+        let catalog = TemplateCatalog::load(dir.path(), "0.4.2").unwrap();
+        assert_eq!(catalog.versions("memory")[0].kind, TemplateKind::Fragment);
+        assert_eq!(catalog.versions("lead")[0].kind, TemplateKind::Role);
+        // The newest *current* role version is offered; a wholly deprecated
+        // role is not.
+        let roles: Vec<(&str, String)> = catalog
+            .role_templates()
+            .iter()
+            .map(|t| (t.name.as_str(), t.version.to_string()))
+            .collect();
+        assert_eq!(roles, vec![("lead", "1.0.0".to_owned())]);
+
+        write(
+            &dir.path().join("odd/1.0.0").join(TEMPLATE_MD),
+            "---\nname: odd\nversion: 1.0.0\ndescription: Odd.\nkind: overlay\n---\nOdd.\n",
+        );
+        assert!(TemplateCatalog::load(dir.path(), "0.4.2").is_err());
     }
 
     #[test]

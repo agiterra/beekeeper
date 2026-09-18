@@ -30,6 +30,7 @@ use sha2::{Digest, Sha256};
 use crate::merge::{HooksData, TriggersData};
 use crate::pack::{self, LoadedPack, LoadedPersona, PackError};
 use crate::persona::{self, is_valid_role_slug, PersonaConfig, PersonaError, MAX_BODY_BYTES};
+use crate::team::{is_archived_path, AgentsRepoAccess, ARCHIVE_DIR};
 use crate::template::{TemplateCatalog, TemplateError, TemplateRange, TEMPLATE_INCLUDE_PREFIX};
 
 /// Schema of `compose.json`, the provenance record beside a staged pack.
@@ -81,6 +82,14 @@ pub enum ComposeError {
 
     #[error("role slug {role:?} must be 1-64 bytes of [a-z0-9-]")]
     InvalidRoleSlug { role: String },
+
+    #[error(
+        "{role:?} is reserved: roles/{role}/ holds retired role files, which are never composed"
+    )]
+    ReservedRole { role: String },
+
+    #[error("{path}: include {directive:?} names a retired role under roles/{ARCHIVE_DIR}/; move it out of the archive to include it")]
+    ArchivedInclude { path: PathBuf, directive: String },
 
     #[error("include cycle: {chain}")]
     Cycle { chain: String },
@@ -300,9 +309,13 @@ pub struct ComposedRole {
     /// The synthesized manifest id and version.
     pub pack_id: String,
     pub pack_version: String,
-    /// Whether a seat in this role may see the `beekeeper/` directory in
-    /// its worktree (`team.yml` `workspace.roles_visible`, spec § 4.10).
-    /// `false` for a pack source and for a flat root with no manifest.
+    /// How much of the project's agents repository a seat in this role
+    /// gets (`team.yml` `workspace.agents_repo`, spec § 4.11). `None` for a
+    /// pack source and for a flat root with no manifest.
+    pub agents_repo: AgentsRepoAccess,
+    /// `agents_repo != None`. Transitional: the host's seat cut still reads
+    /// this name until slice P4 replaces the sparse exclusion it drove
+    /// (spec § 4.10, struck).
     pub roles_visible: bool,
     /// The persona as it will be written: frontmatter fields with the body
     /// fully expanded and `skills` rewritten to the staged layout.
@@ -372,6 +385,11 @@ pub fn compose_role(
 ) -> Result<ComposedRole, ComposeError> {
     if !is_valid_role_slug(source.role()) {
         return Err(ComposeError::InvalidRoleSlug {
+            role: source.role().to_owned(),
+        });
+    }
+    if source.role() == ARCHIVE_DIR {
+        return Err(ComposeError::ReservedRole {
             role: source.role().to_owned(),
         });
     }
@@ -449,12 +467,13 @@ pub fn compose_role(
             .unwrap_or_else(|| "0.0.0".to_owned()),
         RoleSource::Flat { .. } => draft.pack_version,
     };
-    let roles_visible = draft.roles_visible;
+    let agents_repo = draft.agents_repo;
 
     let mut composed = ComposedRole {
         pack_id,
         pack_version,
-        roles_visible,
+        agents_repo,
+        roles_visible: agents_repo != AgentsRepoAccess::None,
         persona,
         skills,
         provenance: ComposeProvenance {
@@ -537,7 +556,28 @@ struct RoleDraft {
     skills: Vec<SkillSource>,
     pack_id: String,
     pack_version: String,
-    roles_visible: bool,
+    agents_repo: AgentsRepoAccess,
+}
+
+/// The retired roles under `<root>/roles/archive/`, by file stem, sorted:
+/// listed so a reader can say "archived (not hireable)", never composed.
+pub fn archived_role_files(root: &Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(root.join(FLAT_ROLES_DIR).join(ARCHIVE_DIR)) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = entries
+        .flatten()
+        .filter(|entry| entry.path().is_file())
+        .filter_map(|entry| {
+            entry
+                .file_name()
+                .to_str()?
+                .strip_suffix(".md")
+                .map(str::to_owned)
+        })
+        .collect();
+    names.sort();
+    names
 }
 
 fn load_draft(source: &RoleSource) -> Result<RoleDraft, ComposeError> {
@@ -575,7 +615,7 @@ fn load_draft(source: &RoleSource) -> Result<RoleDraft, ComposeError> {
                 skills,
                 pack_id: loaded.manifest.id.clone(),
                 pack_version: loaded.manifest.version.clone(),
-                roles_visible: false,
+                agents_repo: AgentsRepoAccess::None,
             })
         }
         RoleSource::Flat { root, role } => {
@@ -661,7 +701,7 @@ fn load_draft(source: &RoleSource) -> Result<RoleDraft, ComposeError> {
                 skills,
                 pack_id,
                 pack_version,
-                roles_visible: entry.workspace.roles_visible,
+                agents_repo: entry.workspace.agents_repo,
             })
         }
     }
@@ -833,6 +873,12 @@ impl ComposeState<'_> {
 
         if let Some(role) = directive.strip_prefix("roles/") {
             let role = role.trim().trim_end_matches(".md");
+            if role == ARCHIVE_DIR || is_archived_path(role) {
+                return Err(ComposeError::ArchivedInclude {
+                    path: path.to_path_buf(),
+                    directive: directive.to_owned(),
+                });
+            }
             if !is_valid_role_slug(role) {
                 return Err(ComposeError::InvalidDirective {
                     path: path.to_path_buf(),
@@ -1641,6 +1687,33 @@ mod tests {
     }
 
     #[test]
+    fn archived_roles_are_listed_never_composed_and_never_included() {
+        let tmp = tempfile::tempdir().unwrap();
+        let catalog = TemplateCatalog::empty("x");
+        let root = tmp.path().join("agents");
+        flat_root(&root);
+        write(&root.join("roles/archive/old-lead.md"), "Once led.\n");
+        write(&root.join("roles/archive/scout.md"), "Once scouted.\n");
+        write(&root.join("roles/archive.md"), "Not a role.\n");
+        write(
+            &root.join("roles/builder.md"),
+            "![[roles/archive/old-lead]]\nBuild.\n",
+        );
+        assert_eq!(archived_role_files(&root), vec!["old-lead", "scout"]);
+        assert!(matches!(
+            compose_flat(&root, "archive", &catalog).unwrap_err(),
+            ComposeError::ReservedRole { .. }
+        ));
+        let error = compose_flat(&root, "builder", &catalog).unwrap_err();
+        assert!(
+            matches!(error, ComposeError::ArchivedInclude { .. }),
+            "{error}"
+        );
+        assert!(error.to_string().contains("retired"), "{error}");
+        assert!(archived_role_files(tmp.path()).is_empty());
+    }
+
+    #[test]
     fn an_unknown_role_and_a_bad_slug_refuse() {
         let tmp = tempfile::tempdir().unwrap();
         let catalog = TemplateCatalog::empty("x");
@@ -1663,7 +1736,7 @@ mod tests {
         let root = tmp.path().join("beekeeper");
         write(
             &root.join("team.yml"),
-            "schema: beekeeper-team/v1\nname: tank-loop\nversion: 0.3.0\nlead: pm\nroles:\n  pm:\n    file: roles/manager.md\n    runtime: claude\n    model: anthropic:claude-sonnet-5\n    workspace: { roles_visible: true }\n  builder:\n    runtime: codex\nagents:\n  - { name: Keystone, role: pm, lifetime: persistent }\n",
+            "schema: beekeeper-team/v1\nname: tank-loop\nversion: 0.3.0\nlead: pm\nroles:\n  pm:\n    file: roles/manager.md\n    runtime: claude\n    model: anthropic:claude-sonnet-5\n    workspace: { agents_repo: write }\n  builder:\n    runtime: codex\nagents:\n  - { name: Keystone, role: pm, lifetime: persistent }\n",
         );
         write(&root.join("roles").join("manager.md"), "Manage.\n");
         write(
@@ -1682,6 +1755,7 @@ mod tests {
             pm.persona.model.as_deref(),
             Some("anthropic:claude-sonnet-5")
         );
+        assert_eq!(pm.agents_repo, AgentsRepoAccess::Write);
         assert!(pm.roles_visible);
         let builder = compose_flat(&root, "builder", &catalog).unwrap();
         assert_eq!(
@@ -1689,11 +1763,13 @@ mod tests {
             Some("claude"),
             "the role file's own frontmatter wins over the advisory value"
         );
+        assert_eq!(builder.agents_repo, AgentsRepoAccess::None);
         assert!(!builder.roles_visible);
         // A role the manifest does not list still composes from its file.
         write(&root.join("roles").join("verifier.md"), "Verify.\n");
         let verifier = compose_flat(&root, "verifier", &catalog).unwrap();
         assert_eq!(verifier.pack_id, "project:tank-loop");
+        assert_eq!(verifier.agents_repo, AgentsRepoAccess::None);
         assert!(!verifier.roles_visible);
         // The caller's pack id overrides the manifest's; the version does not
         // fall back to the placeholder when the manifest has one.

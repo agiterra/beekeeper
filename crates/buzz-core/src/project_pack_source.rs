@@ -107,6 +107,15 @@ pub const MAX_PACK_SOURCE_CONTENT_BYTES: usize = 2048;
 pub const MAX_PACK_SOURCE_NOTE_BYTES: usize = 512;
 /// Hard ceiling on the `path` tag value.
 pub const MAX_PACK_PATH_BYTES: usize = 200;
+
+/// The `path` value naming the repository root: the layout of a project's
+/// agents repository (`roles/`, `team.yml` at the top; spec § 4.11).
+pub const PACK_PATH_ROOT: &str = ".";
+
+/// Whether a validated `path` names the repository root.
+pub fn is_root_pack_path(path: &str) -> bool {
+    path.trim().trim_end_matches('/') == PACK_PATH_ROOT
+}
 /// Hard ceiling on the `ref` tag value.
 pub const MAX_PACK_REF_BYTES: usize = 200;
 
@@ -216,6 +225,9 @@ impl ProjectPackSource {
     /// ways. `None` when `role` is not a role slug.
     pub fn role_path(&self, role: &str) -> Option<String> {
         crate::coding_session_lifecycle_command::validate_role_slug(role).ok()?;
+        if is_root_pack_path(&self.path) {
+            return Some(role.to_string());
+        }
         Some(format!("{}/{role}", self.path))
     }
 
@@ -609,9 +621,14 @@ fn validate_ref_name(value: &str) -> Result<String, String> {
 /// Refuses anything that could leave the checkout: an absolute path, a `..`
 /// segment, a Windows separator, a drive letter's colon. A host takes this
 /// value and joins it to a directory it fetched over the network, so a path
-/// that escapes is a path that reads the operator's disk.
+/// that escapes is a path that reads the operator's disk. Exactly
+/// [`PACK_PATH_ROOT`] names the repository's root — the project's own agents
+/// repository keeps its roles there (spec § 4.11).
 fn validate_pack_path(value: &str) -> Result<String, String> {
     let candidate = value.trim().trim_end_matches('/');
+    if candidate == PACK_PATH_ROOT {
+        return Ok(PACK_PATH_ROOT.to_string());
+    }
     if candidate.is_empty() || candidate.len() > MAX_PACK_PATH_BYTES {
         return Err(format!(
             "pack source path must be 1..={MAX_PACK_PATH_BYTES} bytes (got {} bytes)",

@@ -1,15 +1,24 @@
 //! The shipped catalog under `personas/templates` and the shipped role packs
 //! under `personas/roles` are real inputs to the composer, and this pins
-//! them: the catalog loads and validates clean, every shipped role composes
-//! from its pack byte-for-byte (no includes yet — spec slice A5 adds them),
-//! and the `working-contract` template is exactly the paragraph those roles
-//! repeat today, so A5 can replace it without changing a single seat's
-//! instructions.
+//! them. Since 2026-09-18 (spec § 4.11) every shipped role is a `kind: role`
+//! template plus a thin pack of two include lines, and a project's seeded
+//! `roles/<role>.md` is an include of the same template. Three things must
+//! stay true:
+//!
+//! - the catalog loads and validates clean, with the eight roles and the
+//!   three shared fragments;
+//! - every thin pack composes to **exactly the bytes its persona had before
+//!   it was thinned** (`tests/fixtures/shipped-roles-2026-09-18/`), skills
+//!   included, so no seat's instructions changed when the text moved;
+//! - the seed writer, given this catalog, yields roles that compose with
+//!   the template's skills and the role's own paragraph.
 
 use std::path::{Path, PathBuf};
 
 use buzz_persona::compose::{compose_role, write_staged_pack, ComposeOptions, RoleSource};
-use buzz_persona::template::{validate_catalog, TemplateCatalog, TemplateRange};
+use buzz_persona::persona::parse_persona_md;
+use buzz_persona::seed::{write_agents_repo_seed, SHARED_FRAGMENTS};
+use buzz_persona::template::{validate_catalog, TemplateCatalog, TemplateKind, TemplateRange};
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -27,6 +36,16 @@ fn shipped_roles() -> PathBuf {
     repo_root().join("personas").join("roles")
 }
 
+/// The persona files as they were before the roles became templates: the
+/// bytes a seat received on 2026-09-17.
+fn fixture(role: &str) -> buzz_persona::persona::PersonaConfig {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/shipped-roles-2026-09-18")
+        .join(format!("{role}.persona.md"));
+    let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    parse_persona_md(&text).unwrap_or_else(|e| panic!("{role} fixture: {e}"))
+}
+
 const SHIPPED_ROLES: [&str; 8] = [
     "architect",
     "builder",
@@ -42,7 +61,22 @@ const SHIPPED_ROLES: [&str; 8] = [
 fn the_shipped_catalog_loads_and_validates_clean() {
     let catalog = TemplateCatalog::load(&shipped_templates(), "test").expect("catalog loads");
     let names: Vec<&str> = catalog.names().collect();
-    assert_eq!(names, vec!["memory", "project-pulse", "working-contract"]);
+    assert_eq!(
+        names,
+        vec![
+            "architect",
+            "builder",
+            "designer",
+            "lead",
+            "memory",
+            "poker",
+            "project-pulse",
+            "project-setup",
+            "runner",
+            "verifier",
+            "working-contract",
+        ]
+    );
     for name in &names {
         let latest = catalog
             .resolve(name, &TemplateRange::Latest)
@@ -50,6 +84,21 @@ fn the_shipped_catalog_loads_and_validates_clean() {
         assert!(latest.warning.is_none(), "{name}@latest is deprecated");
         assert!(!latest.template.description.is_empty());
         assert!(!latest.template.body.trim().is_empty());
+        let expected_kind = if SHIPPED_ROLES.contains(name) {
+            TemplateKind::Role
+        } else {
+            TemplateKind::Fragment
+        };
+        assert_eq!(latest.template.kind, expected_kind, "{name}");
+    }
+    let roles: Vec<&str> = catalog
+        .role_templates()
+        .iter()
+        .map(|t| t.name.as_str())
+        .collect();
+    assert_eq!(roles, SHIPPED_ROLES);
+    for fragment in SHARED_FRAGMENTS {
+        assert!(names.contains(&fragment), "the seed needs {fragment}");
     }
     let report = validate_catalog(&shipped_templates());
     assert!(!report.has_errors(), "{:?}", report.diagnostics);
@@ -57,33 +106,8 @@ fn the_shipped_catalog_loads_and_validates_clean() {
 }
 
 #[test]
-fn the_working_contract_template_is_the_paragraph_every_shipped_role_repeats() {
-    let catalog = TemplateCatalog::load(&shipped_templates(), "test").expect("catalog loads");
-    let template = catalog
-        .resolve("working-contract", &TemplateRange::Latest)
-        .expect("working-contract@latest")
-        .template;
-    for role in SHIPPED_ROLES {
-        let persona = std::fs::read_to_string(
-            shipped_roles()
-                .join(role)
-                .join("personas")
-                .join(format!("{role}.persona.md")),
-        )
-        .expect("persona file");
-        let section = persona
-            .find("## Working contract")
-            .map(|at| &persona[at..])
-            .unwrap_or_else(|| panic!("{role} has no Working contract section"));
-        assert_eq!(
-            section, template.body,
-            "{role}'s working contract differs from the template"
-        );
-    }
-}
-
-#[test]
-fn every_shipped_role_composes_from_its_pack_byte_identical_and_restages_as_a_valid_pack() {
+fn every_thin_shipped_pack_composes_to_the_bytes_its_persona_had_before_and_restages_as_a_valid_pack(
+) {
     let catalog = TemplateCatalog::load(&shipped_templates(), "test").expect("catalog loads");
     let staging = tempfile::tempdir().expect("tempdir");
     for role in SHIPPED_ROLES {
@@ -99,15 +123,26 @@ fn every_shipped_role_composes_from_its_pack_byte_identical_and_restages_as_a_va
             &ComposeOptions::local(format!("personas/roles/{role}")),
         )
         .unwrap_or_else(|e| panic!("{role}: {e}"));
-        let original = buzz_persona::resolve::resolve_persona_by_name(&dir, role)
-            .unwrap_or_else(|e| panic!("{role}: {e}"));
+        let before = fixture(role);
         assert_eq!(
-            composed.persona.prompt, original.system_prompt,
-            "{role} body changed"
+            composed.persona.prompt, before.prompt,
+            "{role}: the composed body is not the 2026-09-17 bytes"
         );
-        assert!(
-            composed.provenance.includes.is_empty(),
-            "{role} has no includes yet"
+        assert_eq!(composed.persona.description, before.description, "{role}");
+        assert_eq!(composed.persona.display_name, before.display_name, "{role}");
+        let refs: Vec<&str> = composed
+            .provenance
+            .includes
+            .iter()
+            .map(|i| i.reference.as_str())
+            .collect();
+        assert_eq!(
+            refs,
+            vec![
+                format!("beekeeper/{role}@^1.0.0"),
+                "beekeeper/working-contract@^1.0.0".to_owned()
+            ],
+            "{role} includes"
         );
         assert!(
             composed.provenance.warnings.is_empty(),
@@ -119,14 +154,80 @@ fn every_shipped_role_composes_from_its_pack_byte_identical_and_restages_as_a_va
         write_staged_pack(&composed, &dest).unwrap_or_else(|e| panic!("{role}: {e}"));
         let staged = buzz_persona::resolve::resolve_persona_by_name(&dest, role)
             .unwrap_or_else(|e| panic!("{role} staged: {e}"));
-        assert_eq!(staged.system_prompt, original.system_prompt);
+        assert_eq!(staged.system_prompt, before.prompt);
         assert_eq!(staged.role.as_deref(), Some(role));
-        let mut expected_skills = original.skills.clone();
+        let mut expected_skills: Vec<String> = before
+            .skills
+            .iter()
+            .map(|s| {
+                s.trim_start_matches("./skills/")
+                    .trim_end_matches('/')
+                    .to_owned()
+            })
+            .collect();
         expected_skills.sort();
         let mut staged_skills = staged.skills.clone();
         staged_skills.sort();
         assert_eq!(staged_skills, expected_skills, "{role} skills changed");
+        for skill in &staged_skills {
+            assert!(
+                dest.join("skills").join(skill).join("SKILL.md").is_file(),
+                "{role}: staged skill {skill} has no SKILL.md"
+            );
+        }
         let report = buzz_persona::validate::validate_pack(&dest);
         assert!(!report.has_errors(), "{role}: {:?}", report.diagnostics);
+    }
+}
+
+#[test]
+fn the_seed_of_the_shipped_catalog_composes_every_role_by_reference() {
+    let catalog = TemplateCatalog::load(&shipped_templates(), "test").expect("catalog loads");
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path().join("demo-beekeeper-agents");
+    let report = write_agents_repo_seed(&root, &catalog, "demo").expect("seed");
+    assert_eq!(report.roles, SHIPPED_ROLES);
+    assert_eq!(report.lead, "lead");
+    for role in SHIPPED_ROLES {
+        let composed = compose_role(
+            &RoleSource::Flat {
+                root: root.clone(),
+                role: role.to_owned(),
+            },
+            &catalog,
+            &ComposeOptions::local(format!("roles/{role}")),
+        )
+        .unwrap_or_else(|e| panic!("seeded {role}: {e}"));
+        let before = fixture(role);
+        // The seeded role carries the shipped role's whole text — the
+        // paragraph and the working contract — plus the two extra fragments.
+        assert!(
+            composed.persona.prompt.contains(before.prompt.trim()),
+            "seeded {role} lost the shipped text"
+        );
+        assert_eq!(composed.persona.description, before.description);
+        let mut skills: Vec<String> = composed.skills.iter().map(|s| s.name.clone()).collect();
+        skills.sort();
+        let mut expected: Vec<String> = before
+            .skills
+            .iter()
+            .map(|s| {
+                s.trim_start_matches("./skills/")
+                    .trim_end_matches('/')
+                    .to_owned()
+            })
+            .collect();
+        expected.sort();
+        assert_eq!(skills, expected, "seeded {role} skills");
+        assert_eq!(composed.pack_id, "project:demo");
+        assert!(
+            composed.provenance.warnings.is_empty(),
+            "{:?}",
+            composed.provenance.warnings
+        );
+        assert_eq!(
+            composed.provenance.includes.len(),
+            1 + SHARED_FRAGMENTS.len()
+        );
     }
 }

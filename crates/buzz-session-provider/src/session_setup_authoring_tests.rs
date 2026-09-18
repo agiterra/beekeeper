@@ -109,10 +109,29 @@ async fn setup_first_turn_reaches_real_child_with_draft_cwd_brief_and_shipped_ro
     );
     std::fs::write(draft.join("PROJECT_TEAM_SETUP.md"), &brief).expect("host brief");
     std::fs::write(scope.join("setup-actor.enc"), "private receipt").expect("receipt");
-    let pack = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../personas/roles/project-setup")
+    // The shipped pack is thin since 2026-09-18 — two include lines whose
+    // text and skills live in the shipped template catalog — and a host
+    // never hands the provider a pack it has not composed. Compose it the way
+    // the host stages it, into a directory the seat keeps for its life.
+    let shipped = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
         .canonicalize()
-        .expect("shipped setup role");
+        .expect("repository root");
+    let pack = temp.path().join("staged/project-setup");
+    let catalog =
+        buzz_persona::template::TemplateCatalog::load(&shipped.join("personas/templates"), "test")
+            .expect("the shipped catalog loads");
+    let composed = buzz_persona::compose::compose_role(
+        &buzz_persona::compose::RoleSource::Pack {
+            dir: shipped.join("personas/roles/project-setup"),
+            role: "project-setup".into(),
+            persona: None,
+        },
+        &catalog,
+        &buzz_persona::compose::ComposeOptions::local("personas/roles/project-setup"),
+    )
+    .expect("the shipped setup role composes");
+    buzz_persona::compose::write_staged_pack(&composed, &pack).expect("staged pack");
     // The seat's skills live in its own bundle, outside the draft it writes
     // into — the child reads them by absolute path, as its briefing names them.
     let bundle_dir = crate::session::seat_bundle_dir(

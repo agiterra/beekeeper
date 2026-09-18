@@ -259,6 +259,59 @@ fn a_cache_directory_name_is_owner_prefixed_so_two_owners_never_collide() {
     assert_eq!(pack_cache_dir_name(&project()), None);
 }
 
+/// `path: "."` is the repository root — the agents repository's layout —
+/// and a role's path there is the bare role; `./x` and `..` stay refused.
+#[test]
+fn the_root_path_is_legal_and_joins_to_the_bare_role() {
+    let draft = build_project_pack_source(
+        &project(),
+        &repo(),
+        &PackPin::Ref("refs/heads/main".into()),
+        Some("."),
+        None,
+    )
+    .expect("root path");
+    assert!(
+        draft
+            .tags
+            .contains(&vec!["path".to_string(), ".".to_string()]),
+        "the root is written explicitly, it is not the default: {:?}",
+        draft.tags
+    );
+    let decoded = decode_project_pack_source(&signed_draft(&draft)).expect("decodes");
+    assert_eq!(decoded.path(), PACK_PATH_ROOT);
+    assert!(is_root_pack_path(decoded.path()));
+    assert_eq!(decoded.role_path("lead").as_deref(), Some("lead"));
+    assert_eq!(
+        build_project_pack_source(
+            &project(),
+            &repo(),
+            &PackPin::Ref("refs/heads/main".into()),
+            Some("./"),
+            None
+        )
+        .expect("a trailing slash is trimmed")
+        .tags
+        .iter()
+        .find(|t| t[0] == "path")
+        .map(|t| t[1].as_str()),
+        Some(".")
+    );
+    for bad in ["./roles", "roles/.", "..", "./.."] {
+        assert!(
+            build_project_pack_source(
+                &project(),
+                &repo(),
+                &PackPin::Ref("refs/heads/main".into()),
+                Some(bad),
+                None
+            )
+            .is_err(),
+            "{bad} must be refused"
+        );
+    }
+}
+
 /// A role that is not a role slug gets no path — the join never invents one.
 #[test]
 fn role_path_refuses_a_value_that_is_not_a_role_slug() {

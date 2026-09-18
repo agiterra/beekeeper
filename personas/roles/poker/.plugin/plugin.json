@@ -2,7 +2,7 @@
   "$schema": "https://open-plugin-spec.org/schema/v1/plugin.json",
   "id": "com.beekeeper.crew.poker",
   "name": "Team Poker",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Exercises the actual workflow and reports reproducible gaps between claims and behavior.",
   "keywords": [
     "team",

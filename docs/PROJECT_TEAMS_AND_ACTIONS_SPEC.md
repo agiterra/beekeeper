@@ -1142,6 +1142,12 @@ C are independent lanes until C3, which needs `team.yml` (A3) for agent names.
   today's bytes; a seeded `roles/lead.md` composes with the five lead skills;
   `roles/archive/lead.md` refuses as a source and as an include; `team.yml`
   naming an archived role refuses.
+  *Status 2026-09-18: built first (ledger 159), because P1's seed includes
+  these templates. Amendments: `path: "."` and its validators landed here
+  rather than in P1, since the CLI writes it; the desktop's
+  `DEFAULT_FLAT_PATH` waits for P3, which removes the sparse exclusion that
+  spells it; `ComposedRole.roles_visible` stays as `agents_repo != none`
+  until P3/P4 replace the chain that reads it.*
 - **P3 — the readers.** `ACTIONS_YML = "actions.yml"`, `ProjectsFile.
   agentsRepos`, fetch-then-`git show` in `action_steps.rs` and
   `action_route.rs`, the desktop projects view field, `bee actions` default

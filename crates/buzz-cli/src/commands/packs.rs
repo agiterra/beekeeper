@@ -23,9 +23,11 @@ use serde_json::{json, Value};
 
 use buzz_core::kind::{KIND_GIT_REPO_ANNOUNCEMENT, KIND_PROJECT_PACK_SOURCE};
 use buzz_core::project_pack_source::{
-    build_conditional_project_pack_source, build_project_pack_source, PackPin, DEFAULT_PACK_PATH,
-    PACK_SOURCE_WORD_CHECKOUT, PACK_SOURCE_WORD_REPOSITORY, PACK_SOURCE_WORD_SHIPPED,
+    build_conditional_project_pack_source, build_project_pack_source, is_root_pack_path, PackPin,
+    DEFAULT_PACK_PATH, PACK_PATH_ROOT, PACK_SOURCE_WORD_CHECKOUT, PACK_SOURCE_WORD_REPOSITORY,
+    PACK_SOURCE_WORD_SHIPPED,
 };
+use buzz_persona::template::TemplateCatalog;
 use buzz_sdk::build_delete_addressable;
 
 use crate::client::BuzzClient;
@@ -297,11 +299,19 @@ pub async fn cmd_status(
 /// this CLI cannot see which templates the desktop build ships.
 fn compose_status(cache_dir: &Path, path: &str, role: &str, templates: Option<&Path>) -> Value {
     use buzz_persona::compose::{compose_role, ComposeOptions, RoleSource, FLAT_ROLES_DIR};
-    use buzz_persona::template::TemplateCatalog;
     let mut root = cache_dir.to_path_buf();
-    for segment in path.split('/').filter(|segment| !segment.is_empty()) {
+    for segment in path
+        .split('/')
+        .filter(|segment| !segment.is_empty() && *segment != PACK_PATH_ROOT)
+    {
         root.push(segment);
     }
+    // `path: .` — the agents repository — joins to nothing.
+    let prefix = if is_root_pack_path(path) {
+        String::new()
+    } else {
+        format!("{}/", path.trim_matches('/'))
+    };
     let (source, source_path, layout) = if root
         .join(role)
         .join(".plugin")
@@ -314,7 +324,7 @@ fn compose_status(cache_dir: &Path, path: &str, role: &str, templates: Option<&P
                 role: role.to_owned(),
                 persona: None,
             },
-            format!("{path}/{role}"),
+            format!("{prefix}{role}"),
             "pack",
         )
     } else if root
@@ -327,14 +337,14 @@ fn compose_status(cache_dir: &Path, path: &str, role: &str, templates: Option<&P
                 root: root.clone(),
                 role: role.to_owned(),
             },
-            format!("{path}/{FLAT_ROLES_DIR}/{role}"),
+            format!("{prefix}{FLAT_ROLES_DIR}/{role}"),
             "flat",
         )
     } else {
         return json!({
             "ok": false,
             "layout": Value::Null,
-            "reason": format!("the cache holds neither {path}/{role}/ nor {path}/{FLAT_ROLES_DIR}/{role}.md"),
+            "reason": format!("the cache holds neither {prefix}{role}/ nor {prefix}{FLAT_ROLES_DIR}/{role}.md"),
             "templates": templates.map(|dir| dir.display().to_string()),
         });
     };
@@ -377,13 +387,29 @@ fn compose_status(cache_dir: &Path, path: &str, role: &str, templates: Option<&P
     }
 }
 
-/// The two layouts a role source comes in (spec § 4.8).
+/// The two layouts a role source comes in (spec § 4.8, § 4.11).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PackLayout {
     /// One pack directory per role: `<path>/<role>/.plugin/plugin.json`.
     Pack,
-    /// The flat team layout: `<path>/roles/<role>.md`, `<path>/team.yml`.
+    /// The flat team layout: `<path>/roles/<role>.md`, `<path>/team.yml` —
+    /// the agents repository, at its root.
     Flat,
+}
+
+/// The suffix the project's agents repository id carries (spec § 4.11).
+pub const AGENTS_REPO_SUFFIX: &str = "-beekeeper-agents";
+
+/// The suffix a pack-layout packs repository id carries.
+pub const PACKS_REPO_SUFFIX: &str = "-packs";
+
+/// `<slug><suffix>`, keeping the suffix whole inside the 64-byte repository
+/// id — a truncated suffix would collide with the project's own code
+/// repository. The same rule as the desktop host's `default_packs_repo_id`.
+pub fn default_repo_id(project_slug: &str, suffix: &str) -> String {
+    let room = 64usize.saturating_sub(suffix.len());
+    let head: String = project_slug.chars().take(room).collect();
+    format!("{}{suffix}", head.trim_end_matches('-'))
 }
 
 impl PackLayout {
@@ -405,7 +431,15 @@ impl PackLayout {
     pub fn default_path(self) -> &'static str {
         match self {
             Self::Pack => DEFAULT_PACK_PATH,
-            Self::Flat => "beekeeper",
+            Self::Flat => PACK_PATH_ROOT,
+        }
+    }
+
+    /// The repository id suffix a source of this layout defaults to.
+    pub fn default_suffix(self) -> &'static str {
+        match self {
+            Self::Pack => PACKS_REPO_SUFFIX,
+            Self::Flat => AGENTS_REPO_SUFFIX,
         }
     }
 
@@ -422,31 +456,39 @@ impl PackLayout {
 pub struct PackInitRequest<'a> {
     /// Project coordinate `30621:<owner-hex>:<slug>`.
     pub project: &'a str,
-    /// Repository id to announce. Defaults to `<project slug>-packs`.
+    /// Repository id to announce. Defaults to `<project slug>` plus the
+    /// layout's suffix.
     pub repo_id: Option<&'a str>,
-    /// Directory of role packs to seed from. Defaults to the nearest
-    /// `personas/roles` at or above the working directory.
+    /// Directory to seed from. For the pack layout, defaults to the nearest
+    /// `personas/roles` at or above the working directory; for the flat
+    /// layout, `None` means "write the seed" (`buzz_persona::seed`).
     pub from: Option<&'a Path>,
     /// Directory inside the repository to write the packs to.
     pub path: Option<&'a str>,
     /// The layout of the seed directory, which also picks the default path.
     pub layout: PackLayout,
+    /// The template catalog the flat seed references; resolved as
+    /// `bee pack compose` resolves it when `None`.
+    pub templates: Option<&'a Path>,
     /// Print the plan and touch nothing.
     pub dry_run: bool,
 }
 
-/// `bee packs init` — announce a packs repository, seed it, and point the
-/// project at the commit that landed.
+/// `bee packs init` — announce the project's agents repository (or a packs
+/// repository), seed it, and point the project at it.
 ///
-/// The same three steps the app's **Create packs repository** performs, in the
+/// The same three steps the app performs when it creates a project, in the
 /// same order and against the same contract, so a team that never opens the
 /// desktop app gets the identical result.
 ///
 /// **Ordering is the safety property.** The announcement must land before the
 /// push (the relay's git gate reads it), and the kind:30624 must land *after*
-/// the push, pinned to the sha that actually arrived. A failure at any step
-/// stops the sequence and prints what already landed, so nothing points at a
-/// repository that has no packs in it.
+/// the push. The flat layout — the project's own agents repository — is
+/// pinned `ref: refs/heads/main` (spec § 4.7 as amended 2026-09-18: its
+/// founders are the project's owners and its push gate is the roster); the
+/// pack layout keeps decision 8's immutable sha. A failure at any step stops
+/// the sequence and prints what already landed, so nothing points at a
+/// repository that has no roles in it.
 ///
 /// # Errors
 /// [`CliError::Usage`] for a malformed coordinate, a seed directory that does
@@ -462,13 +504,36 @@ pub async fn cmd_init(client: &BuzzClient, request: &PackInitRequest<'_>) -> Res
         .to_string();
     let repo_id = match request.repo_id {
         Some(id) => id.to_string(),
-        None => format!("{slug}-packs"),
+        None => default_repo_id(&slug, request.layout.default_suffix()),
     };
     let path = request
         .path
         .unwrap_or(request.layout.default_path())
         .to_string();
-    let seed = resolve_seed_dir(request.from)?;
+    // The flat seed is written, not copied: one include per shipped role
+    // template, resolved against this build's catalog.
+    let seed_is_written = matches!((request.layout, request.from), (PackLayout::Flat, None));
+    let seed = match (request.layout, request.from) {
+        (PackLayout::Flat, None) => {
+            let templates = crate::commands::pack::resolve_templates_dir(request.templates)
+                .ok_or_else(|| {
+                    CliError::Usage(
+                        "no template catalog to seed from: pass --templates <dir>, set \
+                         BUZZ_TEMPLATES_DIR, run from a Beekeeper checkout, or pass --from <dir> \
+                         naming a team root to copy"
+                            .to_owned(),
+                    )
+                })?;
+            let catalog = TemplateCatalog::load(&templates, "cli")
+                .map_err(|e| CliError::Usage(format!("template catalog: {e}")))?;
+            let written = std::env::temp_dir()
+                .join(format!("bee-agents-seed-{}", uuid::Uuid::new_v4().simple()));
+            buzz_persona::seed::write_agents_repo_seed(&written, &catalog, &slug)
+                .map_err(|e| CliError::Usage(format!("seed: {e}")))?;
+            written
+        }
+        _ => resolve_seed_dir(request.from)?,
+    };
     let roles = request.layout.roles_in(&seed);
     if roles.is_empty() {
         return Err(CliError::Usage(match request.layout {
@@ -523,7 +588,10 @@ pub async fn cmd_init(client: &BuzzClient, request: &PackInitRequest<'_>) -> Res
     // Step 1 — announce the repository inside the project.
     let announce = crate::commands::repos::build_packs_repo_announcement(
         &repo_id,
-        &format!("{slug} packs"),
+        &match request.layout {
+            PackLayout::Flat => format!("{slug} agents"),
+            PackLayout::Pack => format!("{slug} packs"),
+        },
         &clone_url,
         &coordinate,
     )?;
@@ -532,7 +600,11 @@ pub async fn cmd_init(client: &BuzzClient, request: &PackInitRequest<'_>) -> Res
     let announce_response = client.submit_event(announce_event).await?;
 
     // Step 2 — seed it with one signed commit and push.
-    let seeded = match seed_packs_repository(&seed, &path, &clone_url) {
+    let seeded = seed_packs_repository(&seed, &path, &clone_url);
+    if seed_is_written {
+        std::fs::remove_dir_all(&seed).ok();
+    }
+    let seeded = match seeded {
         Ok(seeded) => seeded,
         Err(error) => {
             // The announcement promised a repository with packs in it; a
@@ -570,13 +642,24 @@ pub async fn cmd_init(client: &BuzzClient, request: &PackInitRequest<'_>) -> Res
         }
     };
 
-    // Step 3 — point the project at the commit that actually landed.
+    // Step 3 — point the project at what landed: the branch for the
+    // project's own agents repository, the exact commit for a packs one.
+    let pin = match request.layout {
+        PackLayout::Flat => PackPin::Ref(seeded.pushed_ref.clone()),
+        PackLayout::Pack => PackPin::Sha(seeded.commit.clone()),
+    };
+    let note = match request.layout {
+        PackLayout::Flat if request.from.is_none() => {
+            "seeded by bee packs init from this build's shipped role templates".to_owned()
+        }
+        _ => format!("seeded by bee packs init from {}", seed.display()),
+    };
     let draft = build_project_pack_source(
         &coordinate,
         &repo_coordinate,
-        &PackPin::Sha(seeded.commit.clone()),
+        &pin,
         Some(&path),
-        Some(&format!("seeded by bee packs init from {}", seed.display())),
+        Some(&note),
     )
     .map_err(CliError::Usage)?;
     let tags: Vec<Tag> = draft
