@@ -267,6 +267,9 @@ pub enum ActionDef {
         /// Output capture limits.
         #[serde(default)]
         capture: Option<HostCapture>,
+        /// Where the command runs; defaults to the checkout as it is.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        checkout: Option<HostCheckout>,
     },
 }
 
@@ -291,6 +294,20 @@ pub struct HireSession {
     pub agent: String,
 }
 
+/// Where a `run_on_host` command runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum HostCheckout {
+    /// The project's recorded repository folder as it is: whatever is
+    /// checked out, dirty or not. The result records `headSha` and `dirty`.
+    #[default]
+    Current,
+    /// A fresh detached worktree at the commit the trigger names —
+    /// `ref_updated`'s `after` or `ci_result`'s `commit` — removed after the
+    /// run. Refused at save time for triggers that name no commit.
+    TriggeringCommit,
+}
+
 /// Output capture limits for a `run_on_host` step.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -301,6 +318,12 @@ pub struct HostCapture {
     /// Bytes of full output kept on the host's disk.
     #[serde(default)]
     pub artifact_max_bytes: Option<u64>,
+    /// Upload the scrubbed logs to the relay's media store and carry their
+    /// URLs on the result, so every channel member can read them. Off by
+    /// default: only the host's own secrets are scrubbed, and a log can
+    /// print others.
+    #[serde(default)]
+    pub upload: Option<bool>,
 }
 
 /// One `run_on_host` step with defaults applied and limits checked.
@@ -320,6 +343,10 @@ pub struct ResolvedRunOnHost {
     pub tail_bytes: u64,
     /// Artifact ceiling.
     pub artifact_max_bytes: u64,
+    /// Whether to upload the scrubbed logs after the run.
+    pub upload: bool,
+    /// Where the command runs.
+    pub checkout: HostCheckout,
 }
 
 /// Apply defaults to a `run_on_host` step and refuse anything outside the
@@ -333,6 +360,7 @@ pub fn resolve_run_on_host(action: &ActionDef) -> Result<ResolvedRunOnHost, Work
         env,
         env_from_host,
         capture,
+        checkout,
     } = action
     else {
         return Err(WorkflowError::InvalidDefinition(
@@ -441,6 +469,8 @@ pub fn resolve_run_on_host(action: &ActionDef) -> Result<ResolvedRunOnHost, Work
         env_from_host,
         tail_bytes,
         artifact_max_bytes,
+        upload: capture.upload.unwrap_or(false),
+        checkout: checkout.unwrap_or_default(),
     })
 }
 
@@ -582,7 +612,19 @@ impl WorkflowDef {
             }
 
             if matches!(step.action, ActionDef::RunOnHost { .. }) {
-                resolve_run_on_host(&step.action)?;
+                let resolved = resolve_run_on_host(&step.action)?;
+                if resolved.checkout == HostCheckout::TriggeringCommit
+                    && !matches!(
+                        self.trigger,
+                        TriggerDef::RefUpdated { .. } | TriggerDef::CiResult { .. }
+                    )
+                {
+                    return Err(WorkflowError::InvalidDefinition(format!(
+                        "step '{}': checkout: triggering_commit needs a ref_updated or ci_result \
+                         trigger, which names the commit",
+                        step.id
+                    )));
+                }
             }
             if let ActionDef::HireAgent {
                 role,

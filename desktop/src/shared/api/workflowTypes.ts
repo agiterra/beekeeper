@@ -87,6 +87,13 @@ export type WorkflowHostStepDisposition =
  * how it ended, and the event ids that prove each transition. Event ids and
  * the claiming host are lowercase hex; timestamps are RFC 3339 strings.
  */
+export type WorkflowHostStepArtifact = {
+  name: string;
+  url: string;
+  sha256: string;
+  bytes: number;
+};
+
 export type WorkflowHostStep = {
   runId: string;
   stepId: string;
@@ -113,6 +120,8 @@ export type WorkflowHostStep = {
   routedCommandId: string | null;
   /** For a `hire_agent` step: the role the hire asked for. */
   routedHiredRole: string | null;
+  /** The scrubbed logs the host uploaded, when the step asked for it. */
+  artifacts: WorkflowHostStepArtifact[];
   exitedAt: string | null;
   createdAt: string;
 };

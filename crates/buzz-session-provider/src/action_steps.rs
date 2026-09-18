@@ -39,10 +39,14 @@ use buzz_core::kind::{KIND_HOST_STEP_CLAIM, KIND_HOST_STEP_RESULT};
 
 /// What a verified, prepared request will do once claimed.
 enum StepPlan {
-    /// Run a command in the checkout.
+    /// Run a command in the checkout — or, when the step asks, in a fresh
+    /// worktree at the triggering commit.
     Command {
         checkout: PathBuf,
         prepared: PreparedCommand,
+        spec: ResolvedRunOnHost,
+        /// The commit to cut a worktree at, when `spec.checkout` asks for it.
+        triggering_commit: Option<String>,
     },
     /// Deliver a brief to an open execution on this computer.
     Wake {
@@ -109,6 +113,10 @@ use crate::Provider;
 
 /// The project's recorded repository folder is not in the projects file.
 pub const ACTION_CHECKOUT_NOT_RECORDED: &str = "ACTION_CHECKOUT_NOT_RECORDED";
+/// `checkout: triggering_commit`, but the trigger named no commit.
+pub const ACTION_NO_TRIGGER_COMMIT: &str = "ACTION_NO_TRIGGER_COMMIT";
+/// The triggering commit is not in the checkout even after a fetch.
+pub const ACTION_COMMIT_UNAVAILABLE: &str = "ACTION_COMMIT_UNAVAILABLE";
 /// The checkout has no `beekeeper/actions.yml`.
 pub const ACTION_FILE_MISSING: &str = "ACTION_FILE_MISSING";
 /// The checkout's `beekeeper/actions.yml` does not compile.
@@ -317,6 +325,7 @@ pub fn lost_on_restart_result(record: &ActionStepRecord, claim_event_id: &str) -
         truncated: false,
         artifact_path: None,
         routed: None,
+        artifacts: Vec::new(),
     }
 }
 
@@ -345,6 +354,7 @@ pub fn refused_result(
         truncated: false,
         artifact_path: None,
         routed: None,
+        artifacts: Vec::new(),
     }
 }
 
@@ -401,6 +411,7 @@ pub fn exited_result(
         truncated: outcome.truncated,
         artifact_path: Some(outcome.artifact_path.display().to_string()),
         routed: None,
+        artifacts: Vec::new(),
     }
 }
 
@@ -559,7 +570,14 @@ impl Provider {
                 outcome,
                 head_sha,
                 dirty,
-            } => self.handle_host_step_finished(&requested_event_id, &outcome, head_sha, dirty),
+                artifacts,
+            } => self.handle_host_step_finished(
+                &requested_event_id,
+                &outcome,
+                head_sha,
+                dirty,
+                artifacts,
+            ),
         }
     }
 
@@ -600,10 +618,28 @@ impl Provider {
         let plan = match verify_request(&request, &projects.projects).and_then(|verified| {
             match verified.action {
                 VerifiedAction::Command(spec) => {
+                    // Spec § 7 C6: a step that runs at the triggering commit
+                    // needs a trigger that named one.
+                    let triggering_commit = match spec.checkout {
+                        buzz_workflow::schema::HostCheckout::Current => None,
+                        buzz_workflow::schema::HostCheckout::TriggeringCommit => Some(
+                            host_command::triggering_commit(&request.trigger_context).ok_or_else(
+                                || HostStepRefusal {
+                                    code: ACTION_NO_TRIGGER_COMMIT.to_owned(),
+                                    message: "checkout: triggering_commit, but this run's trigger \
+                                              names no commit (a deleted ref, or a trigger \
+                                              without one)"
+                                        .into(),
+                                },
+                            )?,
+                        ),
+                    };
                     host_command::prepare(&spec, &verified.checkout, &host_env)
                         .map(|prepared| StepPlan::Command {
                             checkout: verified.checkout,
                             prepared,
+                            spec,
+                            triggering_commit,
                         })
                         .map_err(|refusal| HostStepRefusal {
                             code: refusal.code,
@@ -803,9 +839,21 @@ impl Provider {
             .mark_claimed(requested_event_id, &claim_event_id)?;
 
         match plan {
-            StepPlan::Command { checkout, prepared } => {
-                self.spawn_host_step(requested_event_id, checkout, prepared)
-                    .await
+            StepPlan::Command {
+                checkout,
+                prepared,
+                spec,
+                triggering_commit,
+            } => {
+                self.spawn_host_step(
+                    requested_event_id,
+                    &claim_event_id,
+                    checkout,
+                    prepared,
+                    spec,
+                    triggering_commit,
+                )
+                .await
             }
             StepPlan::Hire {
                 agent,
@@ -1021,8 +1069,11 @@ impl Provider {
     async fn spawn_host_step(
         &mut self,
         requested_event_id: &str,
+        claim_event_id: &str,
         checkout: PathBuf,
         prepared: PreparedCommand,
+        spec: ResolvedRunOnHost,
+        triggering_commit: Option<String>,
     ) -> anyhow::Result<()> {
         let Some(record) = self.action_steps.record(requested_event_id).cloned() else {
             return Ok(());
@@ -1035,6 +1086,67 @@ impl Provider {
             return Ok(());
         };
         let artifact_dir = self.action_artifact_dir(&record.run_id, &record.step_id);
+        // Spec § 7 C6: run in a fresh detached worktree at the triggering
+        // commit when asked. Cut after the claim (it costs a fetch and a
+        // checkout), re-prepared against the worktree so the working
+        // directory and its escape check are resolved there.
+        let (prepared, run_dir, worktree) = match &triggering_commit {
+            None => (prepared, checkout.clone(), None),
+            Some(commit) => {
+                let worktree = artifact_dir.join("worktree");
+                if let Err(error) = host_command::cut_worktree(&checkout, commit, &worktree).await {
+                    let refusal = HostStepRefusal {
+                        code: ACTION_COMMIT_UNAVAILABLE.to_owned(),
+                        message: error,
+                    };
+                    tracing::warn!(
+                        target: "csp::actions",
+                        %requested_event_id,
+                        "refusing a host step after claiming it: {}",
+                        refusal.message
+                    );
+                    let result = crate::action_route::route_refused_result(
+                        &record,
+                        claim_event_id,
+                        &refusal,
+                    );
+                    self.report_host_step_result(requested_event_id, result)?;
+                    self.action_steps
+                        .mark_refused(requested_event_id, &refusal.code)?;
+                    return Ok(());
+                }
+                let host_env: HashMap<String, String> = std::env::vars().collect();
+                match host_command::prepare(&spec, &worktree, &host_env) {
+                    Ok(prepared) => (prepared, worktree.clone(), Some(worktree)),
+                    Err(refusal) => {
+                        host_command::remove_worktree(&checkout, &worktree).await;
+                        let refusal = HostStepRefusal {
+                            code: refusal.code,
+                            message: refusal.message,
+                        };
+                        let result = crate::action_route::route_refused_result(
+                            &record,
+                            claim_event_id,
+                            &refusal,
+                        );
+                        self.report_host_step_result(requested_event_id, result)?;
+                        self.action_steps
+                            .mark_refused(requested_event_id, &refusal.code)?;
+                        return Ok(());
+                    }
+                }
+            }
+        };
+        let uploader = if spec.upload {
+            crate::artifact_upload::ArtifactUploader::new(
+                &self.config.relay_url,
+                self.config.keys.clone(),
+                self.config.auth_tag.as_ref(),
+            )
+        } else {
+            None
+        };
+        let secrets = prepared.secrets.clone();
         let command = host_command::spawn(prepared, &artifact_dir).await?;
         self.action_steps
             .mark_running(requested_event_id, command.pid, now_secs())?;
@@ -1047,15 +1159,57 @@ impl Provider {
             "running a host step"
         );
         let requested_event_id = requested_event_id.to_owned();
+        let upload_wanted = spec.upload;
         tokio::spawn(async move {
             let outcome = command.wait().await;
-            let (head_sha, dirty) = host_command::git_head_and_dirty(&checkout).await;
+            let (head_sha, dirty) = host_command::git_head_and_dirty(&run_dir).await;
+            if let Some(worktree) = &worktree {
+                host_command::remove_worktree(&checkout, worktree).await;
+            }
+            let mut artifacts = Vec::new();
+            if upload_wanted {
+                match &uploader {
+                    Some(uploader) => {
+                        for name in [host_command::STDOUT_LOG, host_command::STDERR_LOG] {
+                            let path = outcome.artifact_path.join(name);
+                            let bytes = match tokio::fs::read(&path).await {
+                                Ok(bytes) => bytes,
+                                Err(error) => {
+                                    tracing::warn!(
+                                        target: "csp::actions",
+                                        %requested_event_id,
+                                        log = name,
+                                        "log not uploaded, could not be read: {error}"
+                                    );
+                                    continue;
+                                }
+                            };
+                            let scrubbed = host_command::scrub_bytes(&bytes, &secrets);
+                            match uploader.upload_log(name, scrubbed).await {
+                                Ok(artifact) => artifacts.push(artifact),
+                                Err(error) => tracing::warn!(
+                                    target: "csp::actions",
+                                    %requested_event_id,
+                                    log = name,
+                                    "log not uploaded: {error}"
+                                ),
+                            }
+                        }
+                    }
+                    None => tracing::warn!(
+                        target: "csp::actions",
+                        %requested_event_id,
+                        "logs not uploaded: the relay URL has no authority to upload to"
+                    ),
+                }
+            }
             let _ = reporter
                 .send(ActionStepEvent::Finished {
                     requested_event_id,
                     outcome: Box::new(outcome),
                     head_sha,
                     dirty,
+                    artifacts,
                 })
                 .await;
         });
@@ -1068,6 +1222,7 @@ impl Provider {
         outcome: &HostCommandOutcome,
         head_sha: Option<String>,
         dirty: Option<bool>,
+        artifacts: Vec<buzz_core::host_step::HostStepArtifact>,
     ) -> anyhow::Result<()> {
         let Some(record) = self.action_steps.record(requested_event_id).cloned() else {
             return Ok(());
@@ -1080,7 +1235,8 @@ impl Provider {
             );
             return Ok(());
         };
-        let result = exited_result(&record, claim_event_id, outcome, head_sha, dirty);
+        let mut result = exited_result(&record, claim_event_id, outcome, head_sha, dirty);
+        result.artifacts = artifacts;
         self.action_steps
             .mark_exited(requested_event_id, result.clone())?;
         tracing::info!(

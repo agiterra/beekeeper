@@ -66,6 +66,7 @@ function hostStep(overrides = {}) {
     routedAgent: null,
     routedCommandId: null,
     routedHiredRole: null,
+    artifacts: [],
     exitedAt: null,
     createdAt: new Date((NOW - 80) * 1_000).toISOString(),
     ...overrides,

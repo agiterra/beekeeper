@@ -97,6 +97,27 @@ export function ProjectActionRunRow({
             · host steps unreadable: {entry.hostStepsError}
           </span>
         ) : null}
+        {entry.hostSteps.some((step) => step.artifacts.length > 0) ? (
+          <span className="text-muted-foreground">
+            {" · logs: "}
+            {entry.hostSteps
+              .flatMap((step) => step.artifacts)
+              .map((artifact, index) => (
+                <React.Fragment key={artifact.url}>
+                  {index > 0 ? ", " : null}
+                  <a
+                    className="underline"
+                    data-testid="project-action-artifact"
+                    href={artifact.url}
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    {artifact.name}
+                  </a>
+                </React.Fragment>
+              ))}
+          </span>
+        ) : null}
       </span>
       {pending ? (
         <span className="ml-auto flex items-center gap-2">

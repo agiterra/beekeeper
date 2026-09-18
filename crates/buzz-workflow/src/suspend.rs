@@ -402,6 +402,7 @@ mod tests {
             truncated: false,
             artifact_path: None,
             routed: None,
+            artifacts: Vec::new(),
         };
         let output = host_step_output(&result);
         assert_eq!(output["exit_code"], 1);

@@ -394,6 +394,84 @@ pub async fn run(
     Ok(command.wait().await)
 }
 
+/// The commit a request's trigger names, when it names one: `ref_updated`'s
+/// `after`, else `ci_result`'s `commit`. A deleted ref has an empty (or
+/// all-zero) `after` and names nothing.
+pub fn triggering_commit(trigger_context: &serde_json::Value) -> Option<String> {
+    ["after", "commit"]
+        .iter()
+        .filter_map(|key| {
+            trigger_context
+                .get(*key)
+                .and_then(serde_json::Value::as_str)
+        })
+        .map(str::trim)
+        .find(|value| value.len() == 40 && value.bytes().all(|b| b.is_ascii_hexdigit()))
+        .map(|value| value.to_ascii_lowercase())
+        // Git's own spelling of "no commit" on a deleted ref, should a
+        // context ever carry it instead of the empty string.
+        .filter(|value| value.bytes().any(|b| b != b'0'))
+}
+
+/// Cut a detached worktree of `checkout` at `commit` under `dir`, fetching
+/// first when the commit is not yet local (the push went to the relay, and
+/// this checkout may not have pulled it). Refused when the commit is still
+/// unknown after the fetch.
+pub async fn cut_worktree(checkout: &Path, commit: &str, dir: &Path) -> Result<(), String> {
+    let spec = format!("{commit}^{{commit}}");
+    if git_output(checkout, &["cat-file", "-e", &spec])
+        .await
+        .is_none()
+    {
+        // Fetch everything the checkout's remotes offer; a specific-object
+        // fetch needs a remote name this host may not have recorded.
+        let _ = git_output(checkout, &["fetch", "--quiet", "--all"]).await;
+        if git_output(checkout, &["cat-file", "-e", &spec])
+            .await
+            .is_none()
+        {
+            return Err(format!(
+                "commit {commit} is not in {} even after fetching its remotes",
+                checkout.display()
+            ));
+        }
+    }
+    if let Some(parent) = dir.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
+    }
+    let dir_text = dir.to_string_lossy().into_owned();
+    git_output(
+        checkout,
+        &["worktree", "add", "--detach", "--quiet", &dir_text, commit],
+    )
+    .await
+    .map(|_| ())
+    .ok_or_else(|| {
+        format!(
+            "git worktree add at {commit} failed under {}",
+            dir.display()
+        )
+    })
+}
+
+/// Remove a worktree [`cut_worktree`] made. Best effort; the directory is
+/// under the host's own state and a leftover is disclosed in the log.
+pub async fn remove_worktree(checkout: &Path, dir: &Path) {
+    let dir_text = dir.to_string_lossy().into_owned();
+    if git_output(checkout, &["worktree", "remove", "--force", &dir_text])
+        .await
+        .is_none()
+    {
+        tracing::warn!(
+            target: "csp::actions",
+            worktree = %dir.display(),
+            "could not remove the action's worktree; it stays under the host's state directory"
+        );
+    }
+}
+
 /// `git rev-parse HEAD` and whether `git status --porcelain` is non-empty,
 /// each `None` when git could not answer within a bounded time.
 pub async fn git_head_and_dirty(checkout: &Path) -> (Option<String>, Option<bool>) {
@@ -484,14 +562,30 @@ pub fn recut(text: String, max: usize) -> (String, bool) {
     (text[start..].to_owned(), true)
 }
 
-/// Replace every secret in `text` with [`SCRUBBED`].
+/// Secrets shorter than this are not scrubbed: replacing every `1` or `ab`
+/// in a log would destroy it while hiding nothing worth hiding. Disclosed
+/// in the spec's scrubbing audit (ledger 156).
+pub const MIN_SCRUB_SECRET_BYTES: usize = 4;
+
+/// Replace every occurrence of each secret in `text` with [`SCRUBBED`].
+///
+/// Exact substrings only: a secret that a command printed encoded (base64,
+/// URL-escaped, split across lines) is not recognised. That is the audit's
+/// stated limit, not a promise this function cannot keep.
 pub fn scrub(mut text: String, secrets: &[String]) -> String {
     for secret in secrets {
-        if !secret.is_empty() && text.contains(secret.as_str()) {
+        if secret.len() >= MIN_SCRUB_SECRET_BYTES && text.contains(secret.as_str()) {
             text = text.replace(secret.as_str(), SCRUBBED);
         }
     }
     text
+}
+
+/// Scrub a whole log file's bytes for upload: decoded lossily, scrubbed as
+/// text, re-encoded. A log that is not UTF-8 loses its invalid bytes, which
+/// is the price of never uploading a secret that straddles them.
+pub fn scrub_bytes(bytes: &[u8], secrets: &[String]) -> Vec<u8> {
+    scrub(String::from_utf8_lossy(bytes).into_owned(), secrets).into_bytes()
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -631,6 +725,8 @@ mod tests {
             env_from_host: Vec::new(),
             tail_bytes: 64,
             artifact_max_bytes: 128,
+            upload: false,
+            checkout: buzz_workflow::schema::HostCheckout::Current,
         }
     }
 
@@ -742,6 +838,8 @@ mod tests {
             env_from_host: vec!["BUZZ_PRIVATE_KEY".into()],
             tail_bytes: 64,
             artifact_max_bytes: 1024,
+            upload: false,
+            checkout: buzz_workflow::schema::HostCheckout::Current,
         };
         let mut host_env = HashMap::new();
         host_env.insert("BUZZ_PRIVATE_KEY".to_owned(), "nsec".to_owned());
@@ -841,5 +939,113 @@ mod tests {
         // tempdir under /tmp has none.)
         let (head, _) = git_head_and_dirty(not_a_repo.path()).await;
         assert!(head.is_none() || head.as_deref().map(str::len) == Some(40));
+    }
+
+    #[test]
+    fn short_secrets_are_not_scrubbed_and_bytes_scrub_like_text() {
+        let secrets = vec!["ab".to_owned(), "s3cr3t-value".to_owned()];
+        let text = scrub("ab s3cr3t-value ab".to_owned(), &secrets);
+        assert_eq!(
+            text,
+            format!("ab {SCRUBBED} ab"),
+            "a 2-byte value must not erase every ab"
+        );
+        let bytes = scrub_bytes(b"token=s3cr3t-value\n", &secrets);
+        assert_eq!(bytes, format!("token={SCRUBBED}\n").into_bytes());
+    }
+
+    #[test]
+    fn the_triggering_commit_is_after_then_commit_and_must_be_a_sha() {
+        let sha = "a".repeat(40);
+        assert_eq!(
+            triggering_commit(&serde_json::json!({ "after": sha, "commit": "b" })),
+            Some(sha.clone())
+        );
+        assert_eq!(
+            triggering_commit(&serde_json::json!({ "commit": sha })),
+            Some(sha.clone())
+        );
+        assert_eq!(
+            triggering_commit(&serde_json::json!({ "after": "0".repeat(40) })),
+            None,
+            "a deleted ref names no commit"
+        );
+        assert_eq!(
+            triggering_commit(&serde_json::json!({ "after": "main" })),
+            None
+        );
+        assert_eq!(triggering_commit(&serde_json::json!({})), None);
+    }
+
+    async fn git(dir: &Path, args: &[&str]) -> String {
+        let out = tokio::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@example")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@example")
+            .output()
+            .await
+            .expect("git");
+        assert!(
+            out.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).trim().to_owned()
+    }
+
+    #[tokio::test]
+    async fn a_worktree_is_cut_at_the_commit_and_removed_after() {
+        let repo = tempfile::tempdir().expect("tempdir");
+        git(repo.path(), &["init", "-q", "-b", "main"]).await;
+        tokio::fs::write(repo.path().join("f"), "one")
+            .await
+            .expect("write");
+        git(repo.path(), &["add", "f"]).await;
+        git(repo.path(), &["commit", "-q", "-m", "one"]).await;
+        let first = git(repo.path(), &["rev-parse", "HEAD"]).await;
+        tokio::fs::write(repo.path().join("f"), "two")
+            .await
+            .expect("write");
+        git(repo.path(), &["commit", "-q", "-am", "two"]).await;
+
+        let worktree = tempfile::tempdir().expect("tempdir").path().join("wt");
+        cut_worktree(repo.path(), &first, &worktree)
+            .await
+            .expect("cut");
+        assert_eq!(
+            tokio::fs::read_to_string(worktree.join("f"))
+                .await
+                .expect("read"),
+            "one",
+            "the worktree holds the older commit, not HEAD"
+        );
+        let (head, dirty) = git_head_and_dirty(&worktree).await;
+        assert_eq!(head.as_deref(), Some(first.as_str()));
+        assert_eq!(dirty, Some(false));
+
+        remove_worktree(repo.path(), &worktree).await;
+        assert!(!worktree.exists(), "the worktree is removed after the run");
+        let list = git(repo.path(), &["worktree", "list"]).await;
+        assert_eq!(
+            list.lines().count(),
+            1,
+            "only the checkout itself remains: {list}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unknown_commit_refuses_the_cut() {
+        let repo = tempfile::tempdir().expect("tempdir");
+        git(repo.path(), &["init", "-q", "-b", "main"]).await;
+        git(repo.path(), &["commit", "-q", "--allow-empty", "-m", "one"]).await;
+        let worktree = tempfile::tempdir().expect("tempdir").path().join("wt");
+        let error = cut_worktree(repo.path(), &"f".repeat(40), &worktree)
+            .await
+            .expect_err("unknown commit");
+        assert!(error.contains("even after fetching"), "{error}");
+        assert!(!worktree.exists());
     }
 }

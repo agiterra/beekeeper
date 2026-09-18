@@ -179,6 +179,20 @@ pub struct HostStepRouted {
     pub hired_role: Option<String>,
 }
 
+/// One uploaded log of a `run_on_host` step.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct HostStepArtifact {
+    /// `stdout.log` or `stderr.log`.
+    pub name: String,
+    /// Where the relay serves it.
+    pub url: String,
+    /// Lowercase hex SHA-256 of the uploaded (scrubbed) bytes.
+    pub sha256: String,
+    /// Size of the uploaded bytes.
+    pub bytes: u64,
+}
+
 /// Content of a host-signed kind:46023 result.
 ///
 /// Tags: `d` = `<runId>:<stepId>`, `e` = the requested event id, `h` =
@@ -236,6 +250,9 @@ pub struct HostStepResult {
     /// `run_on_host` result and on a refusal.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub routed: Option<HostStepRouted>,
+    /// The scrubbed logs the host uploaded, when the step asked for it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub artifacts: Vec<HostStepArtifact>,
 }
 
 /// Content of the relay-signed kind:46014 echo.
@@ -537,6 +554,14 @@ fn validate_result(result: &HostStepResult) -> Result<(), String> {
     if let Some(path) = &result.artifact_path {
         validate_nonempty_bounded("host step artifact path", path, MAX_HOST_STEP_TEXT_BYTES)?;
     }
+    if result.artifacts.len() > 8 {
+        return Err("a host step result carries at most 8 artifacts".into());
+    }
+    for artifact in &result.artifacts {
+        validate_nonempty_bounded("host step artifact name", &artifact.name, 64)?;
+        validate_nonempty_bounded("host step artifact url", &artifact.url, 2048)?;
+        validate_hex64("host step artifact sha256", &artifact.sha256)?;
+    }
     if let Some(routed) = &result.routed {
         if result.disposition == HostStepDisposition::Refused {
             return Err("a refused host step cannot also be routed".into());
@@ -689,6 +714,7 @@ mod tests {
             truncated: false,
             artifact_path: Some("/tmp/actions/run/build".into()),
             routed: None,
+            artifacts: Vec::new(),
         }
     }
 

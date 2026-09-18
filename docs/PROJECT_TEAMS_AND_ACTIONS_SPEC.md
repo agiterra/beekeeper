@@ -928,6 +928,17 @@ C are independent lanes until C3, which needs `team.yml` (A3) for agent names.
   is still owed.*
 - **C6 — worktree at the triggering commit; artifact upload; `env_from_host`
   scrubbing audit.**
+  *Status 2026-09-17: built (ledger 156). Both are opt-in per step:
+  `run_on_host.checkout: triggering_commit` (refused at save time unless the
+  trigger is `ref_updated` or `ci_result`, and at run time when the trigger
+  named no commit or the commit is unknown after a fetch) cuts a detached
+  worktree under the host's state directory and removes it after the run;
+  `capture.upload: true` uploads the scrubbed logs to the relay's media store
+  and carries their URLs and hashes on the result. The audit's finding is
+  the scrubber's limit: exact substrings of this host's `env_from_host`
+  values, at least four bytes long; encoded or split secrets, and secrets a
+  command prints from anywhere else, are not caught — which is why upload is
+  off by default.*
 
 ### Lanes and file ownership (for the build)
 

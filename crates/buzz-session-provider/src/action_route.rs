@@ -305,6 +305,7 @@ pub fn routed_result(
         truncated: false,
         artifact_path: None,
         routed: Some(routed),
+        artifacts: Vec::new(),
     }
 }
 
@@ -333,6 +334,7 @@ pub fn route_refused_result(
         truncated: false,
         artifact_path: None,
         routed: None,
+        artifacts: Vec::new(),
     }
 }
 

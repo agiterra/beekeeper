@@ -348,6 +348,12 @@ fn host_step_json(step: &buzz_db::workflow::HostStepRecord) -> Value {
             .and_then(|result| result.get("routed"))
             .and_then(|routed| routed.get("commandId"))
             .and_then(Value::as_str),
+        "artifacts": step
+            .result
+            .as_ref()
+            .and_then(|result| result.get("artifacts"))
+            .cloned()
+            .unwrap_or_else(|| Value::Array(Vec::new())),
         "routed_hired_role": step
             .result
             .as_ref()

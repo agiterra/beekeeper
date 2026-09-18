@@ -49,7 +49,7 @@ on 2026-09-09, with `just ci` and `just test` green on that exact commit
 | Revealed-redaction badge as an icon; a streaming transcript resolves every marker | Andy | landed 2026-09-13 as `343ea8bd9`, included in current main | ledger § "Fixed 2026-09-13 — the revealed-redaction badge is an icon" |
 | A Solo session's goal is one line: summarized by the naming model, clamped with a chevron | Andy | landed 2026-09-14 as `3fde2db15` | ledger § "Fixed 2026-09-14 — a Solo session's goal is one line" |
 | The Dashboard shows the relay's machine (CPU, memory, disk) from `GET /health/system`, stewards only | Andy | landing 2026-09-14 on `feat/relay-health`; hive shows it once the relay redeploys | ledger § "Built 2026-09-14 — the Dashboard shows the relay's machine" |
-| Project teams, composable roles and project actions | Andy | 2026-09-17: A1–A4, C1–C5 built (ledger 142–148, 150–155); relay redeploy and live runs owed | [`PROJECT_TEAMS_AND_ACTIONS_SPEC.md`](PROJECT_TEAMS_AND_ACTIONS_SPEC.md), ledger 141, D18 |
+| Project teams, composable roles and project actions | Andy | 2026-09-17: A1–A4, C1–C6 built (ledger 142–148, 150–156); relay redeploy and live runs owed | [`PROJECT_TEAMS_AND_ACTIONS_SPEC.md`](PROJECT_TEAMS_AND_ACTIONS_SPEC.md), ledger 141, D18 |
 | Project To-Do lists: kind 44248, personal/project visibility, pins, `bee todos`, Desktop tab + sidebar rows, Mobile page | Andy with Opus | 2026-09-17: on `main` (`0cbfcf296`); relay, CLI, Desktop, Mobile (iOS 26.5 sim) verified live locally | [`nips/NIP-TD.md`](nips/NIP-TD.md), ledger 149 |
 | Delegated agent-directory visibility follow-up | unassigned | "can resume separately on main" (Astra, 2026-09-09) | ledger § "September 9 main published" |
 | This map, the ledger split and its size gate | Fable | landed 2026-09-11 (`f80781969`); lead pack landed on `agiterra-packs` (`5f4ae76fa`) | `AGENTS.md` top block; `scripts/check-current-state-size.mjs` |
@@ -147,8 +147,8 @@ separates publication, installation and provider-confirmed lead startup.
 5. The lead pack is already published in `agiterra-packs` at `5f4ae76fa`.
    Running seats retain their staged revision; use `bee packs status` to inspect
    a project's source before claiming that a live seat has the new instructions.
-6. Project teams spec: A1–A4, C1–C5 built (row above); redeploy the relay,
-   run a live hire, restart, host action, push, wake, autorun, then C6.
+6. Project teams spec: every slice built (row above); redeploy the relay,
+   then run the live proofs on the installed app (ledger 150–156 list them).
 7. When Brian resumes automatic context, run the hook-marker experiment in the
    ledger's September 10 section. Collaborative workspace plan steps 5 and 6
    remain separate.
