@@ -102,7 +102,8 @@ export type CodingSessionSeatPackPreview = {
    * seat in this role keeps `beekeeper/` in its worktree. Absent from a host
    * too old to say, which a caller reads as `false` — hidden.
    */
-  rolesVisible?: boolean;
+  /** `team.yml` `workspace.agents_repo` for the seat's role (spec § 4.11). */
+  agentsRepo?: "none" | "read" | "write";
 };
 
 /**

@@ -99,7 +99,7 @@ pub(crate) fn plan_seat_pack(
                     warnings: pack.warnings,
                     compose_digest: Some(pack.digest),
                     source_kind: Some(source_kind),
-                    roles_visible: pack.roles_visible,
+                    agents_repo: pack.agents_repo,
                 }
             }
             Err(reason) => refused_plan(Some(role), packs_cache::HIRE_PACK_UNAVAILABLE, reason),
@@ -181,7 +181,7 @@ pub(crate) fn plan_seat_pack(
                     warnings: Vec::new(),
                     compose_digest: None,
                     source_kind: Some("local".to_string()),
-                    roles_visible: false,
+                    agents_repo: packs_cache::AgentsRepoAccess::None,
                 };
             };
             let (key, provenance) = match (&origin, &pack_ref) {
@@ -220,7 +220,7 @@ pub(crate) fn plan_seat_pack(
             warnings: Vec::new(),
             compose_digest: None,
             source_kind: None,
-            roles_visible: false,
+            agents_repo: packs_cache::AgentsRepoAccess::None,
         },
     }
 }
@@ -239,7 +239,7 @@ fn refused_plan(role: Option<String>, refusal: &str, reason: String) -> SeatPack
         warnings: Vec::new(),
         compose_digest: None,
         source_kind: None,
-        roles_visible: false,
+        agents_repo: packs_cache::AgentsRepoAccess::None,
     }
 }
 
@@ -277,7 +277,7 @@ fn stage_local_plan(
             warnings: staged.warnings,
             compose_digest: Some(staged.digest),
             source_kind: Some(provenance_kind.to_string()),
-            roles_visible: staged.roles_visible,
+            agents_repo: staged.agents_repo,
         },
         Err(reason) => refused_plan(
             Some(role.to_string()),

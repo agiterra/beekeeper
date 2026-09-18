@@ -17,6 +17,7 @@
  * here — a borrowed worker, another computer's agent — is listed apart as
  * `nonProjectAgents` and never counted as the role's agent.
  */
+import type { AgentsRepoAccess } from "@/shared/api/types/rolePacks";
 import type { ProjectCodingSessionShelfEntry } from "@/features/projects-container/lib/projectCodingSessionShelf";
 import {
   normalizeProjectRef,
@@ -92,6 +93,14 @@ export type RoleRow = {
   packRef: RolePackRef | null;
   skills: RolePackSkill[];
   refusal: string | null;
+  /**
+   * `team.yml` `workspace.agents_repo` (spec § 4.11): whether a seat in this
+   * role gets the project's agents repository, and whether it may write
+   * there. `null` for a row with no pack.
+   */
+  agentsRepo: AgentsRepoAccess | null;
+  /** A retired role under `roles/archive/`: shown, never hireable. */
+  archived: boolean;
   /** Inside a project: this project's agents whose primary role this is. */
   agents: RoleAgentChip[];
   /**
@@ -192,6 +201,8 @@ function roleRow(
       packRef: null,
       skills: [],
       refusal: null,
+      agentsRepo: null,
+      archived: false,
       agents,
       nonProjectAgents,
       seats,
@@ -209,6 +220,8 @@ function roleRow(
     packRef: pack.packRef,
     skills: pack.skills,
     refusal: pack.refusal,
+    agentsRepo: pack.agentsRepo ?? "none",
+    archived: pack.archived === true,
     agents,
     nonProjectAgents,
     seats,

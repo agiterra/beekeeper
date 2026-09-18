@@ -9337,6 +9337,7 @@ fn seat_skills(
             bundle_dir: session::seat_bundle_dir(state_dir, session_id),
             pack_ref: seat.pack_ref.clone(),
             compose_ref: seat_compose_ref(pack_dir),
+            agents_checkout: seat.agents_checkout.clone(),
         })
 }
 

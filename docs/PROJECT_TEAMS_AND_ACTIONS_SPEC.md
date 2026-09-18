@@ -1177,6 +1177,11 @@ C are independent lanes until C3, which needs `team.yml` (A3) for agent names.
   disposal removes the clone; a `read` seat's write is refused by the fence
   on Claude. Proof: a lead with `write` adds `plans/first.md` and pushes;
   the relay admits it under the owner's tier.
+  *Status 2026-09-18: built (ledger 162). Amendments: the clone is cut by
+  the seat-staging command, which has the worktree in hand, and a granted
+  role that cannot have its clone is refused a seat; the clone is recorded
+  on the seat's worktree record and removed with it. The live proof is
+  still owed.*
 - **P5 — setup publication and CLI parity.** Setup publication targets the
   30624 repository and fast-forwards `main`; `bee projects create` without
   `--repo` runs the creation sequence (refusing a slug that is not a valid

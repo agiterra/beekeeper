@@ -50,7 +50,9 @@ mod lock;
 pub(crate) use lock::lock_workdir_store;
 #[path = "workdir_store_agents.rs"]
 mod agents;
-pub(crate) use agents::{record_agents_repo, CodingSessionAgentsRepo, CodingSessionAgentsRepoView};
+pub(crate) use agents::{
+    attach_agents_clone, record_agents_repo, CodingSessionAgentsRepo, CodingSessionAgentsRepoView,
+};
 
 /// Current on-disk schema version of the desktop's own record.
 ///
@@ -135,6 +137,9 @@ pub(crate) struct CodingSessionSeatWorktree {
     /// contributes no override, which is exactly today's behaviour.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
+    /// The seat's agents-repository clone beside this tree (spec § 4.11), removed with it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agents_clone: Option<PathBuf>,
 }
 
 /// One worktree this host removed, and why it was allowed to.
@@ -627,6 +632,7 @@ pub(crate) fn migrate_pending_worktrees(store: &mut CodingSessionWorkdirStore) -
                 repo_root,
                 created_at: now_iso(),
                 session_id: None,
+                agents_clone: None,
             },
         );
         migrated += 1;

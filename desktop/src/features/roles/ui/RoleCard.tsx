@@ -366,6 +366,28 @@ export function RoleCard({
         >
           {version.text}
         </span>
+        {role.archived ? (
+          <span
+            className="shrink-0 rounded-md border border-border/70 px-1.5 py-0.5 font-mono text-2xs text-muted-foreground"
+            data-testid={`role-archived-${slug}`}
+            title="Under roles/archive/: kept for history, not hireable"
+          >
+            archived
+          </span>
+        ) : null}
+        {role.agentsRepo && role.agentsRepo !== "none" ? (
+          <span
+            className="shrink-0 rounded-md border border-border/70 px-1.5 py-0.5 font-mono text-2xs text-muted-foreground"
+            data-testid={`role-agents-repo-${slug}`}
+            title={
+              role.agentsRepo === "write"
+                ? "Seats in this role get the project's agents repository beside their worktree and may push to it"
+                : "Seats in this role get a read-only clone of the project's agents repository beside their worktree"
+            }
+          >
+            agents repo: {role.agentsRepo}
+          </span>
+        ) : null}
       </header>
       {role.description ? (
         <p

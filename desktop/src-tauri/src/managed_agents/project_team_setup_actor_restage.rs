@@ -52,7 +52,7 @@ pub(super) fn preview(
         warnings: Vec::new(),
         compose_digest: None,
         source_kind: Some("shipped".to_string()),
-        roles_visible: true,
+        agents_repo: crate::managed_agents::packs_cache::AgentsRepoAccess::Write,
     })
 }
 

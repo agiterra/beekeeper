@@ -670,6 +670,7 @@ fn record_created_worktree(
             repo_root: PathBuf::from(&created.repo_root),
             created_at: now_iso(),
             session_id: session_id.map(str::to_owned),
+            agents_clone: None,
         },
     )?;
     store.version = WORKDIR_STORE_VERSION;
@@ -739,6 +740,7 @@ pub async fn record_coding_session_worktree(
             repo_root: resolved.root,
             created_at: now_iso(),
             session_id,
+            agents_clone: None,
         },
     )?;
     store.version = WORKDIR_STORE_VERSION;
@@ -780,6 +782,20 @@ pub(crate) fn remove_recorded_seat_worktree(
         return Err(format!("this host has no worktree recorded for {key}"));
     };
     remove_worktree(&entry.repo_root, &entry.path)?;
+    // The seat's agents clone goes with its tree (spec § 4.11). A clone that
+    // will not go is disclosed, never a reason to keep the tree.
+    if let Some(clone) = &entry.agents_clone {
+        if clone.join(".git").is_dir() {
+            if let Err(error) = std::fs::remove_dir_all(clone) {
+                tracing::warn!(
+                    target: "worktree",
+                    clone = %clone.display(),
+                    %error,
+                    "the seat's agents clone could not be removed with its worktree"
+                );
+            }
+        }
+    }
     // Recorded only after the directory is actually gone, so the record is a
     // fact about what happened rather than an intention that may still fail.
     store.record_prune(&key, &entry, reason);

@@ -99,6 +99,29 @@ pub struct ActorSeat {
     /// staged before this key existed.
     #[serde(default)]
     pub pack_ref: Option<PackRef>,
+    /// This host's clone of the project's agents repository cut for this
+    /// seat, and whether it may write there (spec § 4.11). Host-local, like
+    /// `pack_dir`; it reaches the seat as a briefing paragraph and, on
+    /// Claude, as a write-fence rule when the access is `read`.
+    #[serde(default)]
+    pub agents_checkout: Option<SeatAgentsCheckout>,
+}
+
+/// A seat's clone of the project's agents repository.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SeatAgentsCheckout {
+    /// Absolute path of the clone.
+    pub path: PathBuf,
+    /// `read` or `write`, as the role's `team.yml` entry granted it.
+    pub access: String,
+}
+
+impl SeatAgentsCheckout {
+    /// Whether the seat may commit and push there.
+    pub fn writable(&self) -> bool {
+        self.access.trim().eq_ignore_ascii_case("write")
+    }
 }
 
 // The whole point of this type is that its second field never appears in a log

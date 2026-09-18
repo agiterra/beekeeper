@@ -313,10 +313,6 @@ pub struct ComposedRole {
     /// gets (`team.yml` `workspace.agents_repo`, spec § 4.11). `None` for a
     /// pack source and for a flat root with no manifest.
     pub agents_repo: AgentsRepoAccess,
-    /// `agents_repo != None`. Transitional: the host's seat cut still reads
-    /// this name until slice P4 replaces the sparse exclusion it drove
-    /// (spec § 4.10, struck).
-    pub roles_visible: bool,
     /// The persona as it will be written: frontmatter fields with the body
     /// fully expanded and `skills` rewritten to the staged layout.
     pub persona: PersonaConfig,
@@ -473,7 +469,6 @@ pub fn compose_role(
         pack_id,
         pack_version,
         agents_repo,
-        roles_visible: agents_repo != AgentsRepoAccess::None,
         persona,
         skills,
         provenance: ComposeProvenance {
@@ -1756,7 +1751,6 @@ mod tests {
             Some("anthropic:claude-sonnet-5")
         );
         assert_eq!(pm.agents_repo, AgentsRepoAccess::Write);
-        assert!(pm.roles_visible);
         let builder = compose_flat(&root, "builder", &catalog).unwrap();
         assert_eq!(
             builder.persona.runtime.as_deref(),
@@ -1764,13 +1758,11 @@ mod tests {
             "the role file's own frontmatter wins over the advisory value"
         );
         assert_eq!(builder.agents_repo, AgentsRepoAccess::None);
-        assert!(!builder.roles_visible);
         // A role the manifest does not list still composes from its file.
         write(&root.join("roles").join("verifier.md"), "Verify.\n");
         let verifier = compose_flat(&root, "verifier", &catalog).unwrap();
         assert_eq!(verifier.pack_id, "project:tank-loop");
         assert_eq!(verifier.agents_repo, AgentsRepoAccess::None);
-        assert!(!verifier.roles_visible);
         // The caller's pack id overrides the manifest's; the version does not
         // fall back to the placeholder when the manifest has one.
         let overridden = compose_role(

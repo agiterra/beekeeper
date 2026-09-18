@@ -108,6 +108,17 @@ pub struct ActorSeatEntry {
     /// a proof of the wrong thing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pack_ref: Option<crate::managed_agents::packs_cache::PackRef>,
+    /// `team.yml` `workspace.agents_repo` for the seat's role (spec § 4.11).
+    /// Omitted when `none`, so a seat with no grant keeps the file shape the
+    /// provider's read contract pins.
+    #[serde(default, skip_serializing_if = "agents_repo_is_none")]
+    pub agents_repo: packs_cache::AgentsRepoAccess,
+    /// This host's clone of the project's agents repository cut for this
+    /// seat, and how the seat may use it (spec § 4.11). `None` when the role
+    /// grants no access. The provider reads it for the briefing and, on
+    /// Claude, the write fence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agents_checkout: Option<SeatAgentsCheckout>,
 }
 
 /// What one staging call did, for a caller that has to be honest about it.
@@ -381,6 +392,8 @@ pub(crate) fn build_actor_seat_entry(
             .map(str::to_string),
         pack_dir,
         persona_id,
+        agents_repo: packs_cache::AgentsRepoAccess::None,
+        agents_checkout: None,
         // A pack that was not staged cannot be described. `packRef` rides
         // exactly the pack it names or it does not ride at all.
         pack_ref: pack_ref.filter(|_| pack_present),
@@ -588,11 +601,24 @@ pub struct SeatPackPreview {
     /// `local`. `null` when nothing was staged.
     #[serde(default)]
     pub source_kind: Option<String>,
-    /// `team.yml` `workspace.agents_repo != none` for this role (spec
-    /// § 4.11), under its pre-pivot name until P4 renames the wire field.
-    /// `false` when nothing was staged or the source has no manifest.
+    /// `team.yml` `workspace.agents_repo` for this role (spec § 4.11).
+    /// `None` when nothing was staged or the source has no manifest.
     #[serde(default)]
-    pub roles_visible: bool,
+    pub agents_repo: packs_cache::AgentsRepoAccess,
+}
+
+fn agents_repo_is_none(access: &packs_cache::AgentsRepoAccess) -> bool {
+    *access == packs_cache::AgentsRepoAccess::None
+}
+
+/// Where a seat's agents-repository clone is and what it may do there.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SeatAgentsCheckout {
+    /// Absolute path of the clone, beside the seat's worktree.
+    pub path: PathBuf,
+    /// `read` or `write`, as `team.yml` granted it.
+    pub access: packs_cache::AgentsRepoAccess,
 }
 
 // The staging rule itself lives in `seat_pack_plan.rs`; re-exported so every
@@ -762,21 +788,46 @@ pub async fn stage_coding_session_actor_seat(
         ) {
             return Err(refusal);
         }
+        let source: Option<packs_cache::ProjectPackSource> = pack_source.map(Into::into);
         let plan = plan_seat_pack(
             &app,
             &state,
             &records,
             record,
             role.as_deref(),
-            pack_source.map(Into::into),
+            source.clone(),
             checkout
                 .as_deref()
                 .map(str::trim)
                 .filter(|checkout| !checkout.is_empty())
                 .map(Path::new),
         );
-        let _ = worktree;
-        seat_entry_for_plan(record, &relay_url, plan)?
+        let mut entry = seat_entry_for_plan(record, &relay_url, plan)?;
+        // The role's grant to the agents repository (spec § 4.11): a clone
+        // beside the seat's worktree, recorded for the provider and for
+        // disposal. A role that needs it and cannot have it is not seated.
+        let worktree = worktree
+            .as_deref()
+            .map(str::trim)
+            .filter(|worktree| !worktree.is_empty())
+            .map(Path::new);
+        if entry.agents_repo != packs_cache::AgentsRepoAccess::None {
+            let (Some(source), Some(worktree)) = (source.as_ref(), worktree) else {
+                return Err(format!(
+                    "this role is granted the agents repository ({:?}) but the seat has no \
+                     worktree to put a clone beside, or no project source to clone",
+                    entry.agents_repo
+                ));
+            };
+            let clone = crate::managed_agents::seat_agents_clone::cut_seat_agents_clone(
+                &app, &state, source, worktree,
+            )?;
+            entry.agents_checkout = Some(SeatAgentsCheckout {
+                path: clone,
+                access: entry.agents_repo,
+            });
+        }
+        entry
     };
     let staged = StagedActorSeat::of(&entry);
     mutate_actor_seats_file(&path, |file| stage_actor_seat(file, &command_id, entry))?;
@@ -819,7 +870,7 @@ pub(crate) fn seat_entry_for_plan(
             None => refusal,
         });
     }
-    build_actor_seat_entry(
+    let mut entry = build_actor_seat_entry(
         &record.pubkey,
         &record.private_key_nsec,
         record.auth_tag.as_deref(),
@@ -830,7 +881,9 @@ pub(crate) fn seat_entry_for_plan(
             .or(Some(record.name.as_str())),
         plan.pack_dir.map(PathBuf::from).zip(plan.persona_id),
         plan.pack_ref,
-    )
+    )?;
+    entry.agents_repo = plan.agents_repo;
+    Ok(entry)
 }
 
 /// Drop a staged seat. Succeeds when the provider already consumed it.

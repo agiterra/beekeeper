@@ -189,6 +189,9 @@ pub struct SeatSkills {
     /// host staged a composed pack; mirrored into the manifest and the
     /// 44223's `composeRef` (spec § 4.6).
     pub compose_ref: Option<buzz_core::coding_session_payload::ComposeRef>,
+    /// The seat's clone of the project's agents repository, when its role
+    /// is granted one (spec § 4.11).
+    pub agents_checkout: Option<crate::actor_seats::SeatAgentsCheckout>,
 }
 
 pub use buzz_core::coding_session_seat_bundle::{SEAT_BUNDLES_DIR, SEAT_BUNDLE_SKILLS_DIR};
@@ -1084,6 +1087,8 @@ pub struct SeatRoleBriefing {
     /// The briefing says which, because "outside your working directory" is
     /// either true or a lie about where the seat's own files are.
     pub bundle_dir: Option<PathBuf>,
+    /// The seat's clone of the project's agents repository, when granted.
+    pub agents_checkout: Option<crate::actor_seats::SeatAgentsCheckout>,
 }
 
 /// One skill the seat can read, and where.
@@ -1420,6 +1425,7 @@ fn materialize_seat_skills_in(
         prompt: persona.system_prompt.trim().to_owned(),
         skills: files,
         bundle_dir: (!in_tree).then(|| skills.bundle_dir.clone()),
+        agents_checkout: skills.agents_checkout.clone(),
     })
 }
 
@@ -1497,15 +1503,22 @@ async fn start_agent(
         .as_ref()
         .filter(|_| request.target.driver == crate::agent_fence::CLAUDE_DRIVER)
     {
-        crate::agent_fence::install_seat_write_fence(&request.cwd, &seat.actor_pubkey).map_err(
-            |error| CreateFailure {
+        // A read-only agents clone is fenced too (spec § 4.11).
+        let read_only: Vec<PathBuf> = request
+            .seat_skills
+            .as_ref()
+            .and_then(|skills| skills.agents_checkout.as_ref())
+            .filter(|agents| !agents.writable())
+            .map(|agents| vec![agents.path.clone()])
+            .unwrap_or_default();
+        crate::agent_fence::install_seat_write_fence(&request.cwd, &seat.actor_pubkey, &read_only)
+            .map_err(|error| CreateFailure {
                 code: PROVIDER_UNAVAILABLE,
                 message: format!(
                     "could not fence the seat's file tools out of the operator's directories: \
                      {error}"
                 ),
-            },
-        )?;
+            })?;
     }
 
     // The adapter inherits this process's environment plus the descriptor's
@@ -1765,7 +1778,32 @@ fn seat_role_briefing(role: &str, pack: &SeatRoleBriefing) -> String {
             ),
         });
     }
+    if let Some(agents) = &pack.agents_checkout {
+        text.push_str(&agents_checkout_briefing(agents));
+    }
     text
+}
+
+/// The paragraph a seat granted the project's agents repository receives
+/// (spec § 4.11): where the clone is, what is in force and what is retired,
+/// and whether this seat may push.
+fn agents_checkout_briefing(agents: &crate::actor_seats::SeatAgentsCheckout) -> String {
+    let path = agents.path.display();
+    let mode = if agents.writable() {
+        "You may commit there and push to main; the relay's push gate decides whether your \
+         push lands, and a seat pushes with its owner's tier. Commit plans and role edits there, \
+         never in the code repository."
+    } else {
+        "It is read-only for this seat: read it, do not edit it. On Claude Code the file \
+         tools refuse writes there by permission rule; on any other harness this sentence is the \
+         whole fence."
+    };
+    format!(
+        "\n\nThe project's agents repository is checked out at {path}, beside your working \
+         directory. `plans/` holds the plans in force and `roles/` the team's role definitions; \
+         `plans/archive/` and `roles/archive/` are retained for history and are not in force — \
+         do not read them unless a current document points you there. {mode}"
+    )
 }
 
 /// Why one [`open_agent_session`] did not produce a session.
@@ -3974,6 +4012,7 @@ done
             bundle_dir: bundle_dir.clone(),
             pack_ref: None,
             compose_ref: None,
+            agents_checkout: None,
         });
         manager.create(create).await.expect("create");
 
@@ -4023,6 +4062,7 @@ done
             bundle_dir: bundle_dir.clone(),
             pack_ref: None,
             compose_ref: None,
+            agents_checkout: None,
         });
         manager.create(create).await.expect("seated create");
         manager.shutdown("s1");
@@ -4182,6 +4222,7 @@ done
             bundle_dir: bundle_dir.clone(),
             pack_ref: None,
             compose_ref: None,
+            agents_checkout: None,
         });
 
         let failure = manager.create(create).await.expect_err("the spawn fails");
@@ -4205,6 +4246,7 @@ done
                 bundle_dir: bundle(dir.path(), "unreadable-pack-session"),
                 pack_ref: None,
                 compose_ref: None,
+                agents_checkout: None,
             },
             dir.path(),
         )
@@ -4231,6 +4273,7 @@ done
                 bundle_dir: bundle_dir.clone(),
                 pack_ref: None,
                 compose_ref: None,
+                agents_checkout: None,
             },
             dir.path(),
         )
@@ -4264,6 +4307,7 @@ done
             bundle_dir: bundle(dir.path(), session),
             pack_ref: None,
             compose_ref: None,
+            agents_checkout: None,
         };
 
         materialize_seat_skills(&skills("session-one"), &one).expect("seat one");
@@ -4423,6 +4467,7 @@ done
             bundle_dir: bundle_dir.clone(),
             pack_ref: None,
             compose_ref: None,
+            agents_checkout: None,
         };
         let briefing = materialize_seat_skills(&skills, &workdir).expect("materialize");
 
@@ -4480,6 +4525,7 @@ done
             bundle_dir: bundle_dir.clone(),
             pack_ref: None,
             compose_ref: None,
+            agents_checkout: None,
         };
 
         let briefing =
@@ -4500,6 +4546,45 @@ done
             text.contains("materialized in this working directory"),
             "the briefing must not claim a bundle that was not written: {text}"
         );
+    }
+
+    /// Spec § 4.11: a seat granted the agents repository is told where its
+    /// clone is, that `archive/` is history, and whether it may push; a seat
+    /// granted nothing hears nothing about it.
+    #[test]
+    fn the_briefing_names_the_agents_clone_and_its_access() {
+        let base = SeatRoleBriefing {
+            display_name: "Lead".into(),
+            prompt: "Lead.".into(),
+            skills: Vec::new(),
+            bundle_dir: None,
+            agents_checkout: None,
+        };
+        assert!(!seat_role_briefing("lead", &base).contains("agents repository"));
+
+        let read = SeatRoleBriefing {
+            agents_checkout: Some(crate::actor_seats::SeatAgentsCheckout {
+                path: PathBuf::from("/src/proj.worktrees/lane-agents"),
+                access: "read".into(),
+            }),
+            ..base.clone()
+        };
+        let text = seat_role_briefing("lead", &read);
+        assert!(text.contains("/src/proj.worktrees/lane-agents"), "{text}");
+        assert!(text.contains("`plans/archive/` and `roles/archive/` are retained for history"));
+        assert!(text.contains("read-only for this seat"), "{text}");
+        assert!(!text.contains("push to main"), "{text}");
+
+        let write = SeatRoleBriefing {
+            agents_checkout: Some(crate::actor_seats::SeatAgentsCheckout {
+                path: PathBuf::from("/src/proj.worktrees/lane-agents"),
+                access: "write".into(),
+            }),
+            ..base
+        };
+        let text = seat_role_briefing("lead", &write);
+        assert!(text.contains("push to main"), "{text}");
+        assert!(!text.contains("read-only for this seat"), "{text}");
     }
 
     /// Only `1` turns the comparison switch on; the bundle is the default in
@@ -4560,6 +4645,7 @@ done
             pack_dir: None,
             persona_id: None,
             pack_ref: None,
+            agents_checkout: None,
         }
         .post_fence_env(Some("lead"));
         manager.create(create).await.expect("create");
@@ -6372,6 +6458,7 @@ mod seat_skill_materialization_tests {
             bundle_dir,
             pack_ref: None,
             compose_ref: None,
+            agents_checkout: None,
         }
     }
 

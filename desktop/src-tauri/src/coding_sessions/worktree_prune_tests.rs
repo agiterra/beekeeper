@@ -81,6 +81,7 @@ fn seat_record(repo: &Path, path: &Path, branch: &str) -> CodingSessionSeatWorkt
         repo_root: repo.to_path_buf(),
         created_at: "2026-09-02T19:00:00Z".to_string(),
         session_id: None,
+        agents_clone: None,
     }
 }
 

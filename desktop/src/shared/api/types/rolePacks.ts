@@ -71,12 +71,20 @@ export type RolePackSummary = {
   /** The staged composition's `sha256:…` digest, or `null` when nothing was staged. */
   composeDigest: string | null;
   /**
-   * `team.yml` `workspace.roles_visible` for this role (spec § 4.10): a seat
-   * in this role keeps `beekeeper/` in its worktree. `false` without a
-   * manifest.
+   * `team.yml` `workspace.agents_repo` for this role (spec § 4.11): whether a
+   * seat in this role gets the project's agents repository beside its
+   * worktree, and whether it may write there. `"none"` without a manifest.
    */
-  rolesVisible: boolean;
+  agentsRepo: AgentsRepoAccess;
+  /**
+   * A retired role under `roles/archive/` (spec § 4.11): listed so a reader
+   * sees it, never hireable; its `refusal` says so.
+   */
+  archived: boolean;
 };
+
+/** How much of the project's agents repository a seat in a role gets. */
+export type AgentsRepoAccess = "none" | "read" | "write";
 
 /**
  * How a reported sha relates to this machine's packs checkout `HEAD`, as

@@ -161,7 +161,7 @@ pub(crate) fn refused_seat_preview(
         warnings: Vec::new(),
         compose_digest: None,
         source_kind: None,
-        roles_visible: false,
+        agents_repo: crate::managed_agents::packs_cache::AgentsRepoAccess::None,
     }
 }
 

@@ -74,6 +74,39 @@ pub(crate) fn record_agents_repo(
     .map(|_| ())
 }
 
+/// Record the agents clone cut beside `worktree` on that tree's record, so
+/// disposal removes it with the tree. `Err` when no tree at that path is
+/// recorded — the clone still exists; the caller discloses it.
+pub(crate) fn attach_agents_clone(
+    app: &AppHandle,
+    state: &AppState,
+    worktree: &std::path::Path,
+    clone: &std::path::Path,
+) -> Result<(), String> {
+    let store = mutate(app, state, |store| {
+        if let Some(entry) = store
+            .worktrees
+            .values_mut()
+            .find(|entry| entry.path == worktree)
+        {
+            entry.agents_clone = Some(clone.to_path_buf());
+        }
+    })?;
+    if store
+        .worktrees
+        .values()
+        .any(|entry| entry.path == worktree && entry.agents_clone.as_deref() == Some(clone))
+    {
+        Ok(())
+    } else {
+        Err(format!(
+            "no worktree is recorded at {}, so the agents clone at {} could not be attached to one",
+            worktree.display(),
+            clone.display()
+        ))
+    }
+}
+
 /// The provider's view of the record: path and ref, by project.
 pub(super) fn view_of(
     records: &BTreeMap<String, CodingSessionAgentsRepo>,

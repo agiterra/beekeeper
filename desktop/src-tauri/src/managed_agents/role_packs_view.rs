@@ -93,9 +93,13 @@ pub struct RolePackSummary {
     /// The staged composition's `sha256:…` digest, or `null` when nothing
     /// could be staged.
     pub compose_digest: Option<String>,
-    /// `team.yml` `workspace.roles_visible` for this role (spec § 4.10):
-    /// a seat in this role keeps `beekeeper/` in its worktree.
-    pub roles_visible: bool,
+    /// `team.yml` `workspace.agents_repo` for this role (spec § 4.11): whether
+    /// a seat in this role gets the project's agents repository beside its
+    /// worktree, and whether it may write there.
+    pub agents_repo: packs_cache::AgentsRepoAccess,
+    /// A retired role under `roles/archive/`: listed so a reader sees it,
+    /// never hireable, never composed (spec § 4.11).
+    pub archived: bool,
 }
 
 /// The project rung, after the packs repository has been synced — or not.
@@ -174,7 +178,8 @@ pub(crate) fn walk_role_pack_ladder(ladder: &RolePackLadder<'_>) -> Vec<RolePack
         .chain(shipped.keys())
         .collect();
 
-    roles
+    let archived = archived_rows(&ladder.project, &roles);
+    let mut rows: Vec<RolePackSummary> = roles
         .into_iter()
         .filter_map(|role| {
             // The local rungs, in staging's order.
@@ -204,6 +209,47 @@ pub(crate) fn walk_role_pack_ladder(ladder: &RolePackLadder<'_>) -> Vec<RolePack
                 ladder.catalog,
                 ladder.packs_root,
             ))
+        })
+        .collect();
+    rows.extend(archived);
+    rows
+}
+
+/// The retired roles of a synced flat source (`roles/archive/<role>.md`,
+/// spec § 4.11): one row each, refused as archived, so the Roles page can
+/// say what is kept for history without offering to hire it. A retired
+/// role that a live row also names is not listed twice.
+fn archived_rows(rung: &ProjectRung, live: &BTreeSet<&String>) -> Vec<RolePackSummary> {
+    let ProjectRung::Synced { checkout, path, .. } = rung else {
+        return Vec::new();
+    };
+    let mut root = checkout.clone();
+    for segment in path
+        .split('/')
+        .filter(|segment| !segment.is_empty() && *segment != ".")
+    {
+        root.push(segment);
+    }
+    buzz_persona_pkg::compose::archived_role_files(&root)
+        .into_iter()
+        .filter(|role| !live.iter().any(|live| *live == role))
+        .map(|role| RolePackSummary {
+            display_name: role.clone(),
+            description: "retired: kept under roles/archive/ for history".to_string(),
+            summary: String::new(),
+            version: None,
+            origin: SeatPackOrigin::Project,
+            pack_dir: String::new(),
+            pack_ref: None,
+            skills: Vec::new(),
+            refusal: Some(format!(
+                "archived (not hireable): move roles/archive/{role}.md to roles/{role}.md to put it in force"
+            )),
+            warnings: Vec::new(),
+            compose_digest: None,
+            agents_repo: packs_cache::AgentsRepoAccess::None,
+            archived: true,
+            role,
         })
         .collect()
 }
@@ -491,7 +537,8 @@ fn summarize(
                 }),
                 warnings: Vec::new(),
                 compose_digest: None,
-                roles_visible: false,
+                agents_repo: packs_cache::AgentsRepoAccess::None,
+                archived: false,
             };
         }
     };
@@ -536,7 +583,8 @@ fn summarize(
                 refusal,
                 warnings: staged.warnings.clone(),
                 compose_digest: Some(staged.digest.clone()),
-                roles_visible: staged.roles_visible,
+                agents_repo: staged.agents_repo,
+                archived: false,
             }
         }
         Err(error) => {
@@ -554,7 +602,8 @@ fn summarize(
                 refusal: refusal.or(Some(unreadable)),
                 warnings: staged.warnings.clone(),
                 compose_digest: Some(staged.digest.clone()),
-                roles_visible: staged.roles_visible,
+                agents_repo: staged.agents_repo,
+                archived: false,
             }
         }
     }

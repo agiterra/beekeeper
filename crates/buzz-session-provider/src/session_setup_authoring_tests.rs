@@ -177,6 +177,7 @@ async fn setup_first_turn_reaches_real_child_with_draft_cwd_brief_and_shipped_ro
                 bundle_dir: bundle_dir.clone(),
                 pack_ref: None,
                 compose_ref: None,
+                agents_checkout: None,
             }),
             media: None,
             idle_timeout: Duration::from_secs(5),

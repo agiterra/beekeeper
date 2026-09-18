@@ -43,6 +43,7 @@ use crate::commands::project_git_exec::{run_git, validate_clone_url, GitAuthConf
 /// The composer's source and provenance types, re-exported so the planner,
 /// the Roles view and this module name one vocabulary.
 pub use buzz_persona_pkg::compose::{RoleSource, SourceProvenance};
+pub use buzz_persona_pkg::team::AgentsRepoAccess;
 pub use buzz_persona_pkg::template::TemplateCatalog;
 
 /// Where this build ships its role templates, relative to the resource root
@@ -156,9 +157,9 @@ pub struct StagedProjectPack {
     /// What the composer wanted said: a deprecated template, a mid-line
     /// `![[`. Never a refusal — those are `Err`.
     pub warnings: Vec<String>,
-    /// Whether a seat in this role may see the `beekeeper/` directory in its
-    /// worktree (`team.yml` `workspace.roles_visible`, spec § 4.10).
-    pub roles_visible: bool,
+    /// `team.yml` `workspace.agents_repo` for this role (spec § 4.11): whether
+    /// a seat gets the agents repository beside its worktree, and how.
+    pub agents_repo: AgentsRepoAccess,
 }
 
 /// A composed pack staged under the packs cache from any rung.
@@ -172,9 +173,9 @@ pub struct StagedComposedPack {
     pub digest: String,
     /// The composer's warnings, verbatim.
     pub warnings: Vec<String>,
-    /// `team.yml` `workspace.roles_visible` for this role; `false` without
-    /// a manifest or for a pack source.
-    pub roles_visible: bool,
+    /// `team.yml` `workspace.agents_repo` for this role; `None` without a
+    /// manifest or for a pack source.
+    pub agents_repo: AgentsRepoAccess,
 }
 
 /// Split `30617:<owner-hex>:<id>` into its owner and repository id.
@@ -787,7 +788,7 @@ pub fn stage_composed_pack(
         persona: composed.role().to_string(),
         digest: composed.provenance.digest,
         warnings: composed.provenance.warnings,
-        roles_visible: composed.roles_visible,
+        agents_repo: composed.agents_repo,
     })
 }
 
@@ -841,7 +842,7 @@ pub fn stage_project_role_pack(
         persona: staged.persona,
         digest: staged.digest,
         warnings: staged.warnings,
-        roles_visible: staged.roles_visible,
+        agents_repo: staged.agents_repo,
     })
 }
 

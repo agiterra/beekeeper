@@ -370,6 +370,9 @@ fn compose_status(cache_dir: &Path, path: &str, role: &str, templates: Option<&P
             "includes": composed.provenance.includes,
             "warnings": composed.provenance.warnings,
             "skills": composed.skills.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(),
+            "agents_repo": composed.agents_repo,
+            // Retired roles under roles/archive/ (spec § 4.11): listed, never hireable.
+            "archived": buzz_persona::compose::archived_role_files(&root),
             "templates": templates.map(|dir| dir.display().to_string()),
             "note": if templates.is_none() {
                 "no template catalog was given; pass --templates or set BUZZ_TEMPLATES_DIR to \

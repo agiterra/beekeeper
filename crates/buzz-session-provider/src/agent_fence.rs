@@ -753,12 +753,22 @@ pub(crate) struct InstalledWriteFence {
 /// layout, the settings file written, the file excluded from `git status`.
 /// An exclude failure is logged, not fatal — the fence is on disk regardless,
 /// and a seat whose pushes are refused with a reason is not a seat that lies.
+/// The rules that deny a directory the seat may read but not write — its
+/// read-only agents clone (spec § 4.11) — whole, like a protected root.
+pub(crate) fn read_only_root_rules(roots: &[PathBuf]) -> Vec<String> {
+    roots.iter().map(|root| rule_for(root, true)).collect()
+}
+
 pub(crate) fn install_seat_write_fence(
     cwd: &Path,
     actor_pubkey: &str,
+    read_only_roots: &[PathBuf],
 ) -> std::io::Result<InstalledWriteFence> {
     let layout = WriteFenceLayout::from_host(cwd, actor_pubkey)?;
-    let rules = write_fence_rules(&layout)?;
+    let mut rules = write_fence_rules(&layout)?;
+    for rule in read_only_root_rules(read_only_roots) {
+        push_rule(&mut rules, rule);
+    }
     let outcome = install_write_fence(&layout, &rules)?;
     let settings_file = layout.cwd.join(WRITE_FENCE_SETTINGS_FILE);
     let exclude = match exclude_write_fence_file(cwd) {
@@ -1060,6 +1070,7 @@ mod tests {
             pack_dir: None,
             persona_id: None,
             pack_ref: None,
+            agents_checkout: None,
         };
         let bee = crate::seat_bee::SeatBee {
             path: std::path::PathBuf::from("/Applications/Beekeeper.app/Contents/MacOS/bee"),
@@ -1553,7 +1564,7 @@ mod tests {
             .map(PathBuf::from)
             .unwrap_or_else(|| dir.path().join("work"));
         std::fs::create_dir_all(&cwd).expect("cwd");
-        let installed = install_seat_write_fence(&cwd, &seat_pubkey()).expect("install");
+        let installed = install_seat_write_fence(&cwd, &seat_pubkey(), &[]).expect("install");
         println!("settings file: {}", installed.settings_file.display());
         println!(
             "outcome: {:?}, exclude: {:?}",
@@ -1562,6 +1573,18 @@ mod tests {
         for rule in &installed.rules {
             println!("{rule}");
         }
+    }
+
+    /// A read-only agents clone (spec § 4.11) is denied whole, in the same
+    /// spelling as a protected root; a writable one adds no rule.
+    #[test]
+    fn a_read_only_agents_clone_is_fenced_whole() {
+        let clone = PathBuf::from("/src/proj.worktrees/lane-agents");
+        assert_eq!(
+            read_only_root_rules(std::slice::from_ref(&clone)),
+            vec!["Edit(//src/proj.worktrees/lane-agents/**)".to_owned()]
+        );
+        assert!(read_only_root_rules(&[]).is_empty());
     }
 
     /// The seated briefing states the boundary in words too: on codex it is
