@@ -2,7 +2,7 @@
 //!
 //! The relay stores a workflow definition as canonical JSON and its SHA-256 in
 //! `workflows.definition_hash`. A host that receives a kind:46013 request
-//! recompiles the same entry from the project's own `beekeeper/actions.yml`
+//! recompiles the same entry from the project's own `actions.yml` (its agents repository)
 //! and compares hashes before it runs anything — so the two sides must hash
 //! **exactly** the same bytes. Those bytes are `serde_json::to_string` of the
 //! `serde_json::Value` parsed from the definition's canonical JSON (the relay's

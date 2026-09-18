@@ -599,7 +599,6 @@ test("the lead's create runs in the worktree the launch cut for it", async () =>
       workdir: "/Users/b/Projects/bk/bk",
       name: "ui-lead",
       source: "main",
-      hideRoles: true,
     },
   ]);
   assert.equal(workdir, "/Users/b/Projects/bk/bk-ui-lead");

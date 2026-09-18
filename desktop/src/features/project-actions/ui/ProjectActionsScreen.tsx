@@ -3,20 +3,24 @@ import { useFeatureEnabled } from "@/shared/features";
 import { Skeleton } from "@/shared/ui/skeleton";
 
 import { useProjectActions } from "../lib/useProjectActions";
+import { useRecordProjectAgentsRepo } from "../lib/useRecordProjectAgentsRepo";
 import { ProjectActionCard } from "./ProjectActionCard";
 
 export const PROJECT_ACTIONS_MISSING =
   "This project is not readable from here.";
 
 /**
- * `/projects/$projectId/actions` — the project's `beekeeper/actions.yml`
- * entries as the relay holds them (kind:30620 definitions that name this
- * project), each with its latest runs and what their records prove.
+ * `/projects/$projectId/actions` — the project's `actions.yml` entries (the
+ * agents repository's root, spec § 4.11) as the relay holds them (kind:30620
+ * definitions that name this project), each with its latest runs and what
+ * their records prove. Opening the tab also records this computer's clone
+ * of the agents repository for the provider, which reads the file from it.
  */
 export function ProjectActionsScreen({ projectId }: { projectId: string }) {
   const { project, actions, isLoading, error, refresh } =
     useProjectActions(projectId);
   const pulseEnabled = useFeatureEnabled("project-pulse");
+  const agentsRepo = useRecordProjectAgentsRepo(project?.address ?? null);
 
   if (!project) {
     return (
@@ -51,6 +55,14 @@ export function ProjectActionsScreen({ projectId }: { projectId: string }) {
           Could not read this project's actions: {error}
         </p>
       ) : null}
+      {agentsRepo.note ? (
+        <p
+          className="mb-3 text-xs text-muted-foreground"
+          data-testid="project-actions-agents-repo-note"
+        >
+          {agentsRepo.note}
+        </p>
+      ) : null}
       {isLoading ? (
         <div className="space-y-3" data-testid="project-actions-loading">
           <Skeleton className="h-24 w-full rounded-xl" />
@@ -63,9 +75,8 @@ export function ProjectActionsScreen({ projectId }: { projectId: string }) {
         >
           <p>No actions are published for this project.</p>
           <p className="mt-2">
-            Publish the repository's{" "}
-            <code className="font-mono text-xs">beekeeper/actions.yml</code>{" "}
-            with{" "}
+            Publish the agents repository&apos;s{" "}
+            <code className="font-mono text-xs">actions.yml</code> with{" "}
             <code className="break-all font-mono text-xs">
               bee actions publish --project {project.address} --channel
               &lt;channel uuid&gt;

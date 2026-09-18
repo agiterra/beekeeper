@@ -588,10 +588,9 @@ pub struct SeatPackPreview {
     /// `local`. `null` when nothing was staged.
     #[serde(default)]
     pub source_kind: Option<String>,
-    /// Whether a seat in this role may see the `beekeeper/` directory in its
-    /// worktree (`team.yml` `workspace.roles_visible`, spec § 4.10); the
-    /// worktree cut reads it to decide `hide_roles`. `false` when nothing
-    /// was staged or the source has no manifest.
+    /// `team.yml` `workspace.agents_repo != none` for this role (spec
+    /// § 4.11), under its pre-pivot name until P4 renames the wire field.
+    /// `false` when nothing was staged or the source has no manifest.
     #[serde(default)]
     pub roles_visible: bool,
 }
@@ -684,11 +683,9 @@ pub async fn preview_coding_session_seat_pack(
         .map(str::trim)
         .filter(|checkout| !checkout.is_empty())
         .map(Path::new);
-    let worktree = worktree
-        .as_deref()
-        .map(str::trim)
-        .filter(|worktree| !worktree.is_empty())
-        .map(Path::new);
+    // `worktree` is accepted for the older client shape and read by nothing:
+    // the branch override it fed is struck (spec § 4.9, 2026-09-18).
+    let _ = worktree;
     Ok(plan_seat_pack(
         &app,
         &state,
@@ -697,7 +694,6 @@ pub async fn preview_coding_session_seat_pack(
         role.as_deref(),
         pack_source.map(Into::into),
         checkout,
-        worktree,
     ))
 }
 
@@ -778,12 +774,8 @@ pub async fn stage_coding_session_actor_seat(
                 .map(str::trim)
                 .filter(|checkout| !checkout.is_empty())
                 .map(Path::new),
-            worktree
-                .as_deref()
-                .map(str::trim)
-                .filter(|worktree| !worktree.is_empty())
-                .map(Path::new),
         );
+        let _ = worktree;
         seat_entry_for_plan(record, &relay_url, plan)?
     };
     let staged = StagedActorSeat::of(&entry);

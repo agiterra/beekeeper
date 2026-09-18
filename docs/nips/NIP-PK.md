@@ -212,8 +212,9 @@ so. A host stages from the first rung that answers, in order:
    names one, it is the **only** rung consulted: a role the repository does
    not hold is refused, never quietly served from below;
 2. with no kind:30624, the session checkout's own `personas/roles/<role>/`
-   pack or `beekeeper/roles/<role>.md` flat file (no overlay: the checkout
-   answers whole or not at all);
+   pack (no overlay: the checkout answers whole or not at all; the flat
+   `beekeeper/roles/<role>.md` rung was struck 2026-09-18 — a code checkout
+   holds no team, spec § 4.11);
 3. a pack installed on this computer for the role;
 4. the packs the running app's own build bundles.
 
@@ -253,10 +254,12 @@ A host resolving a seat:
    result as an ordinary pack under the packs cache, keyed by the
    composition's content digest, so the seat's directory never changes
    underneath it while the checkout moves;
-5. when the seat's own worktree belongs to this repository and its `HEAD`
+5. ~~when the seat's own worktree belongs to this repository and its `HEAD`
    composes the role differently from the pinned commit, stages that
    composition instead — the branch override (spec § 4.9) — and stamps the
-   branch commit as `sha`; uncommitted edits are disclosed, never in effect;
+   branch commit as `sha`; uncommitted edits are disclosed, never in effect;~~
+   struck 2026-09-18: a seat's code branch cannot override a role that lives
+   in the agents repository (spec § 4.11), so the pin is the whole answer;
 6. publishes the resulting `packRef` on the seat's 44223. For the flat
    layout `path` is `<path>/roles/<role>`, the `.md` implied.
 

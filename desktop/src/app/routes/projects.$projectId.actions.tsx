@@ -12,7 +12,7 @@ const ProjectActionsScreen = React.lazy(async () => {
 });
 
 /**
- * The project's Actions tab: the `beekeeper/actions.yml` entries published
+ * The project's Actions tab: the agents repository's `actions.yml` entries published
  * for this project, each with its latest runs and what the relay's records
  * prove about them (approvals, host claims, exits).
  */

@@ -313,23 +313,23 @@ fn a_flat_role_file_is_located_after_a_pack_directory() {
     let root = scratch_root();
     let checkout = root.join("checkout");
     write(
-        &checkout.join(DEFAULT_FLAT_PATH).join("roles/builder.md"),
+        &checkout.join("agents").join("roles/builder.md"),
         "You build, flat.\n",
     );
     assert_eq!(
-        locate_role_source(&checkout, DEFAULT_FLAT_PATH, "builder"),
+        locate_role_source(&checkout, "agents", "builder"),
         Some(RoleSource::Flat {
-            root: checkout.join(DEFAULT_FLAT_PATH),
+            root: checkout.join("agents"),
             role: "builder".to_owned(),
         })
     );
-    assert!(locate_role_source(&checkout, DEFAULT_FLAT_PATH, "runner").is_none());
+    assert!(locate_role_source(&checkout, "agents", "runner").is_none());
     assert!(
-        locate_role_source(&checkout, DEFAULT_FLAT_PATH, "../builder").is_none(),
+        locate_role_source(&checkout, "agents", "../builder").is_none(),
         "a traversing role is not a role slug"
     );
     // A pack directory beside the flat file wins, byte for byte the old rule.
-    let pack = checkout.join(DEFAULT_FLAT_PATH).join("builder");
+    let pack = checkout.join("agents").join("builder");
     write(
         &pack.join(".plugin/plugin.json"),
         r#"{"id":"com.test.builder","name":"builder","version":"0.1.0","personas":["personas/builder.persona.md"]}"#,
@@ -339,7 +339,7 @@ fn a_flat_role_file_is_located_after_a_pack_directory() {
         "---\nname: builder\ndisplay_name: builder\ndescription: The builder.\nrole: builder\n---\nPacked.\n",
     );
     assert!(matches!(
-        locate_role_source(&checkout, DEFAULT_FLAT_PATH, "builder"),
+        locate_role_source(&checkout, "agents", "builder"),
         Some(RoleSource::Pack { .. })
     ));
     assert_eq!(
@@ -348,9 +348,9 @@ fn a_flat_role_file_is_located_after_a_pack_directory() {
                 root: checkout.clone(),
                 role: "builder".into()
             },
-            DEFAULT_FLAT_PATH
+            "agents"
         ),
-        "beekeeper/roles/builder"
+        "agents/roles/builder"
     );
     assert_eq!(
         pack_ref_path(
@@ -458,7 +458,7 @@ fn a_project_source_with_a_flat_role_stages_it_and_names_its_path() {
     let root = scratch_root();
     let (origin, _first, _second) = packs_repo(&root);
     write(
-        &origin.dir.join("beekeeper/roles/verifier.md"),
+        &origin.dir.join("roles/verifier.md"),
         "---\ndescription: Verifies.\n---\nYou verify, flat.\n",
     );
     git(&["add", "--all"], &origin.dir);
@@ -468,7 +468,7 @@ fn a_project_source_with_a_flat_role_stages_it_and_names_its_path() {
     let packs_root = root.join("cache");
     let url = origin.dir.to_string_lossy().to_string();
     let mut project = source(REPO, None, Some(&third));
-    project.path = DEFAULT_FLAT_PATH.to_string();
+    project.path = ".".to_string();
     // `stage_project_role_pack` builds the clone URL from the relay base;
     // hand it the origin's parent so `<base>/git/<owner>/<id>` is not
     // what is cloned — instead exercise the pieces it composes.
@@ -476,13 +476,9 @@ fn a_project_source_with_a_flat_role_stages_it_and_names_its_path() {
     let checkout = packs_checkout_dir(&packs_root, &owner, &id);
     let sha = sync_packs_checkout(&checkout, &url, &project, &auth).expect("sync");
     assert_eq!(sha, third);
-    let located =
-        locate_role_source(&checkout, DEFAULT_FLAT_PATH, "verifier").expect("flat verifier");
+    let located = locate_role_source(&checkout, ".", "verifier").expect("flat verifier");
     assert!(matches!(located, RoleSource::Flat { .. }));
-    assert_eq!(
-        pack_ref_path(&located, DEFAULT_FLAT_PATH),
-        "beekeeper/roles/verifier"
-    );
+    assert_eq!(pack_ref_path(&located, "."), "roles/verifier");
     let staged = stage_composed_pack(
         &packs_root,
         &format!("{}-{sha}", pack_cache_dir_name(&owner, &id)),
@@ -492,7 +488,7 @@ fn a_project_source_with_a_flat_role_stages_it_and_names_its_path() {
             kind: "repository".into(),
             repo: Some(REPO.into()),
             sha: Some(sha.clone()),
-            path: "beekeeper/roles/verifier".into(),
+            path: "roles/verifier".into(),
         },
     )
     .expect("staged");
@@ -506,7 +502,7 @@ fn a_project_source_with_a_flat_role_stages_it_and_names_its_path() {
     .expect("json");
     assert_eq!(provenance["source"]["kind"], "repository");
     assert_eq!(provenance["source"]["sha"], sha);
-    assert_eq!(provenance["source"]["path"], "beekeeper/roles/verifier");
+    assert_eq!(provenance["source"]["path"], "roles/verifier");
     std::fs::remove_dir_all(&root).ok();
 }
 

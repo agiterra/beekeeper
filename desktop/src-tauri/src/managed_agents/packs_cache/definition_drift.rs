@@ -1,11 +1,13 @@
-//! Spec § 4.9, second half: has a running seat's role definition drifted from
-//! what this host would stage for it now?
+//! Has a running seat's role definition drifted from what this host would
+//! stage for it now? (Spec § 4.9's surviving half; the branch override that
+//! section also described is struck since 2026-09-18 — a seat's code branch
+//! cannot override a role that lives in the agents repository, § 4.11.)
 //!
 //! A running execution keeps the instructions it was staged with (the vision:
 //! "an active execution does not silently change instructions"). This module
 //! answers, for one seat, whether the *current* resolution of its role — the
-//! project's pinned `main`, or the seat's own branch when that overrides —
-//! composes to different bytes than the commit the seat's `packRef` names.
+//! project's pinned source — composes to different bytes than the commit the
+//! seat's `packRef` names.
 //! The card built on it says **Definition changed** with the cause, and
 //! offers a restart; it never restarts anything itself.
 //!
@@ -14,21 +16,19 @@
 //! - `Current`: the seat runs what would be staged now (same digest).
 //! - `Changed`: the digests differ; `cause` says what moved.
 //! - `Unknown`: this host cannot compose one side — the packs cache does not
-//!   hold the seat's commit, the source cannot be synced, the branch check
-//!   cannot run — and `reason` says which. Unknown is not "current".
+//!   hold the seat's commit, the source cannot be synced — and `reason` says
+//!   which. Unknown is not "current".
 
 use std::path::Path;
 
 use serde::Serialize;
 
-use crate::commands::project_git_exec::GitAuthConfig;
+use crate::commands::project_git_exec::{run_git, run_git_bytes, GitAuthConfig};
 
-use super::branch_override::materialize_commit_tree;
 use super::{
-    branch_role_override, locate_role_source, pack_cache_dir_name, pack_ref_path,
-    packs_checkout_dir, parse_repo_coordinate, stage_composed_pack, stage_project_role_pack,
-    validate_pack_path, BranchOverride, ProjectPackSource, SourceProvenance, TemplateCatalog,
-    UNCOMMITTED_ROLE_EDITS,
+    locate_role_source, pack_cache_dir_name, pack_ref_path, packs_checkout_dir,
+    parse_repo_coordinate, stage_composed_pack, stage_project_role_pack, validate_pack_path,
+    ProjectPackSource, SourceProvenance, TemplateCatalog,
 };
 
 /// The directory under the packs cache holding materialized trees of commits
@@ -55,11 +55,11 @@ pub struct DefinitionDrift {
     pub state: DefinitionDriftState,
     /// The commit the seat's instructions came from (its `packRef.sha`).
     pub seat_sha: String,
-    /// The commit the current resolution comes from: `main`'s pin, or the
-    /// seat's branch when that overrides. `null` when unknown.
+    /// The commit the current resolution comes from: the source's pin.
+    /// `null` when unknown.
     pub current_sha: Option<String>,
-    /// Where the current resolution comes from: `repository` or
-    /// `branch-override`. `null` when unknown.
+    /// Where the current resolution comes from: `repository`. `null` when
+    /// unknown. (`branch-override` was a value until 2026-09-18.)
     pub current_source_kind: Option<String>,
     /// The current composition's digest, `null` when unknown.
     pub current_digest: Option<String>,
@@ -91,23 +91,18 @@ impl DefinitionDrift {
 }
 
 /// Compare a seat's staged definition (`seat_sha`, from its `packRef`) with
-/// what this host would stage for `role` now.
-///
-/// `seat_worktree` is the seat's own tree when the host knows it; with it the
-/// § 4.9 branch override is part of "now". Without it, "now" is `main`'s pin
-/// — which is what a provider-restart restage stages too (ledger 145).
+/// what this host would stage for `role` now: the source's pin, which is
+/// what a provider-restart restage stages too (ledger 145).
 ///
 /// Never errors: every failure is an `Unknown` with its reason, because the
 /// card must render something truthful for a seat whose history this
 /// computer cannot see.
-#[allow(clippy::too_many_arguments)] // Every argument is a fact the comparison reads.
 pub fn definition_drift(
     packs_root: &Path,
     relay_http_base: &str,
     source: &ProjectPackSource,
     role: &str,
     seat_sha: &str,
-    seat_worktree: Option<&Path>,
     auth: &GitAuthConfig,
     catalog: &TemplateCatalog,
 ) -> DefinitionDrift {
@@ -131,70 +126,27 @@ pub fn definition_drift(
                 )
             }
         };
-    definition_drift_against(
-        packs_root,
-        relay_http_base,
-        source,
-        role,
-        &seat_sha,
-        seat_worktree,
-        &current,
-        auth,
-        catalog,
-    )
+    definition_drift_against(packs_root, source, role, &seat_sha, &current, auth, catalog)
 }
 
 /// The comparison half of [`definition_drift`], given `main`'s current
 /// composition already staged. Split out so a test can supply a composition
 /// from a scratch repository, which the staging half's relay-URL check
 /// would refuse.
-#[allow(clippy::too_many_arguments)] // Every argument is a fact the comparison reads.
 pub fn definition_drift_against(
     packs_root: &Path,
-    relay_http_base: &str,
     source: &ProjectPackSource,
     role: &str,
     seat_sha: &str,
-    seat_worktree: Option<&Path>,
     current: &super::StagedProjectPack,
     auth: &GitAuthConfig,
     catalog: &TemplateCatalog,
 ) -> DefinitionDrift {
     let seat_sha = seat_sha.to_string();
     let mut warnings = current.warnings.clone();
-    let mut current_sha = current.pack_ref.sha.clone();
-    let mut current_digest = current.digest.clone();
-    let mut current_kind = "repository".to_string();
-
-    // 2. The seat's own branch, when the host knows its tree.
-    if let Some(worktree) = seat_worktree {
-        match branch_role_override(
-            packs_root,
-            relay_http_base,
-            source,
-            role,
-            worktree,
-            &current.pack_ref.sha,
-            &current.digest,
-            auth,
-            catalog,
-        ) {
-            Ok(check) => {
-                if check.dirty {
-                    warnings.push(UNCOMMITTED_ROLE_EDITS.to_string());
-                }
-                if let BranchOverride::Overridden { sha, staged, .. } = check.decision {
-                    current_sha = sha;
-                    current_digest = staged.digest;
-                    current_kind = super::BRANCH_OVERRIDE_KIND.to_string();
-                    warnings.extend(staged.warnings);
-                }
-            }
-            Err(reason) => warnings.push(format!(
-                "could not check the seat's worktree for a role override; comparing against main: {reason}"
-            )),
-        }
-    }
+    let current_sha = current.pack_ref.sha.clone();
+    let current_digest = current.digest.clone();
+    let current_kind = "repository".to_string();
 
     // 3. The seat's own composition: the same commit means the same bytes.
     if seat_sha == current_sha {
@@ -243,19 +195,11 @@ pub fn definition_drift_against(
             warnings,
         };
     }
-    let cause = if current_kind == super::BRANCH_OVERRIDE_KIND {
-        format!(
-            "this seat's branch changed the {role} definition ({} → {})",
-            short(&seat_sha),
-            short(&current_sha)
-        )
-    } else {
-        format!(
-            "main moved {} → {} and changed the {role} definition",
-            short(&seat_sha),
-            short(&current_sha)
-        )
-    };
+    let cause = format!(
+        "main moved {} → {} and changed the {role} definition",
+        short(&seat_sha),
+        short(&current_sha)
+    );
     DefinitionDrift {
         state: DefinitionDriftState::Changed,
         seat_sha,
@@ -308,4 +252,67 @@ fn compose_at_commit(
         },
     )?;
     Ok((staged.digest, staged.warnings))
+}
+
+/// Write every file under `<sha>:<path>` into `<dest>/<path>/…`, byte for
+/// byte, from the objects of the repository at `worktree` (any checkout or
+/// worktree of it; the packs cache included).
+///
+/// Idempotent: a destination that already holds the commit's tree is left
+/// alone (a commit's tree cannot change), so the second seat cut on the same
+/// branch commit reads what the first one wrote.
+///
+/// # Errors
+/// A sentence when the repository does not hold `sha` (`ls-tree` refuses),
+/// when a listed path would escape `dest`, or on a filesystem failure.
+pub(super) fn materialize_commit_tree(
+    worktree: &Path,
+    sha: &str,
+    path: &str,
+    dest: &Path,
+    auth: &GitAuthConfig,
+) -> Result<(), String> {
+    let marker = dest.join(".materialized");
+    if marker.is_file() {
+        return Ok(());
+    }
+    let listing = run_git(
+        &["ls-tree", "-r", "--name-only", "-z", sha, "--", path],
+        Some(worktree),
+        auth,
+    )?;
+    let files: Vec<&str> = listing
+        .split('\0')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .collect();
+    for file in &files {
+        // Every name came from git's own listing of this commit, but the path
+        // is still confined: nothing outside `dest` may be written.
+        if Path::new(file)
+            .components()
+            .any(|c| !matches!(c, std::path::Component::Normal(_)))
+        {
+            return Err(format!(
+                "refusing to materialize a traversing path from git: {file:?}"
+            ));
+        }
+        let bytes = run_git_bytes(
+            &["show", &format!("{sha}:{file}")],
+            Some(worktree),
+            auth,
+            &[],
+        )?;
+        let target = dest.join(file);
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| format!("create {}: {error}", parent.display()))?;
+        }
+        std::fs::write(&target, bytes)
+            .map_err(|error| format!("write {}: {error}", target.display()))?;
+    }
+    std::fs::create_dir_all(dest).map_err(|error| format!("create {}: {error}", dest.display()))?;
+    std::fs::write(&marker, format!("{sha}\n"))
+        .map_err(|error| format!("write {}: {error}", marker.display()))?;
+    Ok(())
 }

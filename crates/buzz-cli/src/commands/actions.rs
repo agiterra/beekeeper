@@ -1,4 +1,5 @@
-//! `bee actions` — a project's `beekeeper/actions.yml`, published one
+//! `bee actions` — a project's `actions.yml` (the agents repository's root,
+//! spec § 4.11), published one
 //! kind:30620 per entry (`docs/PROJECT_TEAMS_AND_ACTIONS_SPEC.md` § 5.1).
 //!
 //! The file is parsed with [`buzz_workflow::parse_actions_yml`], the same

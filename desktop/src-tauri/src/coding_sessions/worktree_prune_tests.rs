@@ -259,7 +259,14 @@ fn the_projects_view_is_byte_identical_to_what_it_was_before_the_record() {
     keys.sort();
     assert_eq!(
         keys,
-        vec!["channels", "pending", "projects", "sessions", "version"]
+        vec![
+            "agentsRepos",
+            "channels",
+            "pending",
+            "projects",
+            "sessions",
+            "version"
+        ]
     );
 }
 

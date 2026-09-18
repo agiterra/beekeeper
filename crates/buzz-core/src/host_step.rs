@@ -4,7 +4,7 @@
 //! A `run_on_host` workflow step does not run on the relay. The relay suspends
 //! the run and publishes a kind:46013 request; an operator's session provider
 //! claims it with a kind:46022, executes the command it recompiles from the
-//! project's own `beekeeper/actions.yml`, and publishes a kind:46023 result;
+//! project's own `actions.yml` (the agents repository's root), and publishes a kind:46023 result;
 //! the relay records the result, echoes it as kind:46014 and resumes the run.
 //!
 //! The request carries **no command text**. The host verifies that the
@@ -68,7 +68,7 @@ pub struct HostStepRequested {
     /// Canonical lowercase UUID of the workflow definition.
     pub workflow_id: String,
     /// The definition's name, which is how the host finds the entry in its
-    /// own `beekeeper/actions.yml`.
+    /// own `actions.yml` (the agents repository's root).
     pub workflow_name: String,
     /// The suspended step's id.
     pub step_id: String,

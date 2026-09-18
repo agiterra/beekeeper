@@ -314,13 +314,11 @@ fn checkout_candidates(checkout: Option<&Path>) -> BTreeMap<String, Candidate> {
     let Some(checkout) = checkout else {
         return BTreeMap::new();
     };
-    // The pack layout under `personas/roles`, then the flat layout under
-    // `beekeeper/roles`: the two places `plan_seat_pack` looks, in its order.
+    // The pack layout under `personas/roles`, the one place `plan_seat_pack`
+    // looks in a code checkout (a flat team lives in the agents repository
+    // since 2026-09-18, spec § 4.11).
     let mut out = BTreeMap::new();
-    for path in [
-        packs_cache::DEFAULT_PACK_PATH,
-        packs_cache::DEFAULT_FLAT_PATH,
-    ] {
+    for path in [packs_cache::DEFAULT_PACK_PATH] {
         let mut parent = checkout.to_path_buf();
         for segment in path.split('/').filter(|segment| !segment.is_empty()) {
             parent.push(segment);

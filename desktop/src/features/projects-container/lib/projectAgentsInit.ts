@@ -127,6 +127,30 @@ export async function projectAgentsInit(input: {
 }
 
 /**
+ * Sync this computer's clone of the project's agents repository and record
+ * it for the provider, which reads `actions.yml` and `team.yml` from its
+ * fetched tip (spec § 4.11). Resolves `false` when the source is not an
+ * agents repository (its path is not the repository root, or it pins a sha
+ * rather than a branch) — nothing recorded, and the caller says so.
+ */
+export async function recordProjectAgentsRepo(input: {
+  projectRef: string;
+  repo: string;
+  ref: string | null;
+  sha: string | null;
+  path: string;
+}): Promise<boolean> {
+  const recorded = await invokeTauri<unknown>("record_project_agents_repo", {
+    projectRef: input.projectRef,
+    repo: input.repo,
+    gitRef: input.ref,
+    sha: input.sha,
+    path: input.path,
+  });
+  return recorded === true;
+}
+
+/**
  * `<slug>-beekeeper-agents`, derived exactly as the host derives it
  * (`agents_repo.rs`'s `default_agents_repo_id`): lowercased, sanitized to
  * `[a-z0-9._-]`, the suffix kept whole inside the 64-byte bound.

@@ -48,6 +48,9 @@ use crate::util::now_iso;
 #[path = "workdir_store_lock.rs"]
 mod lock;
 pub(crate) use lock::lock_workdir_store;
+#[path = "workdir_store_agents.rs"]
+mod agents;
+pub(crate) use agents::{record_agents_repo, CodingSessionAgentsRepo, CodingSessionAgentsRepoView};
 
 /// Current on-disk schema version of the desktop's own record.
 ///
@@ -248,6 +251,9 @@ pub(crate) struct CodingSessionWorkdirStore {
     /// carrying one and simply does not show it.
     #[serde(default)]
     pub pruned: BTreeMap<String, CodingSessionPrunedWorktree>,
+    /// By project coordinate. See [`CodingSessionAgentsRepo`].
+    #[serde(default)]
+    pub agents_repos: BTreeMap<String, CodingSessionAgentsRepo>,
 }
 
 impl Default for CodingSessionWorkdirStore {
@@ -262,6 +268,7 @@ impl Default for CodingSessionWorkdirStore {
             assignment_inputs: BTreeMap::new(),
             worktree_parents: BTreeMap::new(),
             pruned: BTreeMap::new(),
+            agents_repos: BTreeMap::new(),
         }
     }
 }
@@ -299,6 +306,10 @@ pub(crate) struct CodingSessionProjectsView {
     /// Additive: a provider that predates it ignores the key, and a host that
     /// predates it writes no key, which reads as no override at all.
     pub sessions: BTreeMap<String, PathBuf>,
+    /// Where the provider reads each project's `actions.yml` and `team.yml`
+    /// (spec § 4.11): this host's clone of the agents repository and the
+    /// pinned ref, by project coordinate. Additive, like `sessions`.
+    pub agents_repos: BTreeMap<String, CodingSessionAgentsRepoView>,
 }
 
 /// Whether a candidate path is usable as a working directory.
@@ -508,6 +519,7 @@ impl CodingSessionWorkdirStore {
                 .iter()
                 .map(|(key, entry)| (key.clone(), entry.path.clone()))
                 .collect(),
+            agents_repos: agents::view_of(&self.agents_repos),
             sessions: self
                 .worktrees
                 .values()

@@ -33,7 +33,6 @@ pub(crate) fn plan_seat_pack(
     role: Option<&str>,
     pack_source: Option<packs_cache::ProjectPackSource>,
     checkout: Option<&Path>,
-    worktree: Option<&Path>,
 ) -> SeatPackPreview {
     let role = role
         .map(str::trim)
@@ -62,40 +61,32 @@ pub(crate) fn plan_seat_pack(
         });
         return match staged {
             Ok(mut pack) => {
-                // Spec § 4.9: `main`'s roles by default; the seat's own branch
-                // overrides this role only by a committed change to what it
-                // reads. A check that cannot run is a warning, not an
-                // override, and never a refusal.
-                let mut source_kind = "repository".to_string();
-                if let Some(worktree) = worktree {
-                    match branch_override_for(app, state, &source, &role, worktree, &pack, &catalog)
-                    {
-                        Ok(check) => {
-                            if check.dirty {
-                                pack.warnings
-                                    .push(packs_cache::UNCOMMITTED_ROLE_EDITS.to_string());
-                            }
-                            if let packs_cache::BranchOverride::Overridden {
-                                sha,
-                                staged,
-                                pack_ref_path,
-                            } = check.decision
+                // The provider reads `actions.yml` from the same clone the seat
+                // was staged from (spec § 4.11). Best-effort; the seat stages
+                // either way.
+                if let (true, Some(ref_name)) = (
+                    buzz_core_pkg::project_pack_source::is_root_pack_path(&source.path),
+                    source.git_ref.as_deref(),
+                ) {
+                    if let Ok((owner, id)) = packs_cache::parse_repo_coordinate(&source.repo) {
+                        if let Ok(root) = packs_cache::packs_root(app) {
+                            if let Err(error) =
+                                crate::coding_sessions::workdir_store::record_agents_repo(
+                                    app,
+                                    state,
+                                    &record.project_ref.clone().unwrap_or_default(),
+                                    packs_cache::packs_checkout_dir(&root, &owner, &id),
+                                    ref_name,
+                                )
                             {
-                                pack.dir = staged.dir;
-                                pack.persona = staged.persona;
-                                pack.digest = staged.digest;
-                                pack.warnings.extend(staged.warnings);
-                                pack.roles_visible = staged.roles_visible;
-                                pack.pack_ref.sha = sha;
-                                pack.pack_ref.path = pack_ref_path;
-                                source_kind = packs_cache::BRANCH_OVERRIDE_KIND.to_string();
+                                pack.warnings.push(format!(
+                                    "this host could not record the agents repository for the provider: {error}"
+                                ));
                             }
                         }
-                        Err(reason) => pack.warnings.push(format!(
-                            "could not check this worktree for a role override, so main's definition is in effect: {reason}"
-                        )),
                     }
                 }
+                let source_kind = "repository".to_string();
                 SeatPackPreview {
                     pack_staged: true,
                     origin: SeatPackOrigin::Project,
@@ -121,13 +112,11 @@ pub(crate) fn plan_seat_pack(
     // rung answers, the seat runs a *composed* copy staged under the packs
     // cache (spec § 4.5), never the rung's own directory.
     if let Some((role, checkout)) = role.as_deref().zip(checkout) {
+        // Only the pack layout: since 2026-09-18 a code checkout holds no
+        // flat team (spec § 4.11).
         let located =
             packs_cache::locate_role_source(checkout, packs_cache::DEFAULT_PACK_PATH, role)
-                .map(|source| (source, packs_cache::DEFAULT_PACK_PATH))
-                .or_else(|| {
-                    packs_cache::locate_role_source(checkout, packs_cache::DEFAULT_FLAT_PATH, role)
-                        .map(|source| (source, packs_cache::DEFAULT_FLAT_PATH))
-                });
+                .map(|source| (source, packs_cache::DEFAULT_PACK_PATH));
         if let Some((source, path)) = located {
             let provenance =
                 packs_cache::SourceProvenance::local(packs_cache::pack_ref_path(&source, path));
@@ -296,30 +285,4 @@ fn stage_local_plan(
             reason,
         ),
     }
-}
-
-/// Run the § 4.9 check for one project-staged seat.
-fn branch_override_for(
-    app: &AppHandle,
-    state: &AppState,
-    source: &packs_cache::ProjectPackSource,
-    role: &str,
-    worktree: &Path,
-    main: &packs_cache::StagedProjectPack,
-    catalog: &packs_cache::TemplateCatalog,
-) -> Result<packs_cache::BranchOverrideCheck, String> {
-    let root = packs_cache::packs_root(app)?;
-    let auth = crate::commands::project_git_exec::build_git_auth_config(state)?;
-    let relay_http = crate::relay::relay_http_base_url(&relay_ws_url_with_override(state));
-    packs_cache::branch_role_override(
-        &root,
-        &relay_http,
-        source,
-        role,
-        worktree,
-        &main.pack_ref.sha,
-        &main.digest,
-        &auth,
-        catalog,
-    )
 }

@@ -1813,6 +1813,10 @@ pub struct ProjectsFile {
     pub projects: BTreeMap<String, PathBuf>,
     /// Fallback directory per channel.
     pub channels: BTreeMap<Uuid, PathBuf>,
+    /// This host's clone of each project's agents repository and the ref
+    /// its kind:30624 pins (spec § 4.11), by project coordinate. Where
+    /// `actions.yml` and `team.yml` are read from — never from `projects`.
+    pub agents_repos: BTreeMap<String, crate::agents_checkout::AgentsRepoRecord>,
     /// Directory holding one-shot per-command hint files, beside the projects
     /// file itself. Never part of the file's own JSON.
     #[serde(skip)]
@@ -2416,6 +2420,7 @@ mod tests {
                 .into_iter()
                 .collect(),
             channels: [(channel, channel_dir.clone())].into_iter().collect(),
+            agents_repos: BTreeMap::new(),
             hints_dir: None,
         };
         let content = create_content("create-1", &format!("\"{project_ref}\""), AUTHORITY);

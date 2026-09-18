@@ -37,7 +37,7 @@ const PATH_TABS: readonly PathTab[] = [
   // Agents: who is working here and why. It replaced Contributors, whose
   // path now redirects here.
   { id: "agents", label: "Agents", to: "/projects/$projectId/agents" },
-  // Actions: the project's `beekeeper/actions.yml` entries as the relay holds
+  // Actions: the agents repository's `actions.yml` entries as the relay holds
   // them, their runs, and the approvals and host steps each run proves.
   { id: "actions", label: "Actions", to: "/projects/$projectId/actions" },
   // The tab reads "Roles" — the page answers "what is this role for, which

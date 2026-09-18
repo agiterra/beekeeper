@@ -411,10 +411,6 @@ pub(crate) async fn restage_actor_seats_for_provider(
             Some(request.role.as_str()),
             pack_source,
             None,
-            // A restage re-resolves `main`'s definition: the custody file
-            // does not record the seat's worktree, so the § 4.9 branch
-            // override is not re-checked here. Disclosed in ledger 145.
-            None,
         );
         resolved_packs.insert(key, Ok(plan));
     }

@@ -308,22 +308,6 @@ pub(crate) const WRITE_FENCE_EXCLUDE_LINE: &str = ".claude/settings.local.json";
 /// [`WRITE_FENCE_SETTINGS_FILE`] for why it is the only one that works.
 const WRITE_FENCE_RULE_TOOL: &str = "Edit";
 
-/// The tool the read fence is written against.
-///
-/// Spec § 4.10: a seat that finds the other roles' instructions while
-/// searching the repository confuses itself about its own role. The seat's
-/// worktree is cut without `beekeeper/` (the desktop's sparse checkout), and
-/// this rule is the second layer on Claude Code: the `Read` tool refuses the
-/// directory even where it is present. Its limits are the write fence's —
-/// the file tools are governed, `Bash` is not, and whether `Grep` and `Glob`
-/// honour a `Read` denial is **not yet measured** against the installed
-/// adapter, so the spec does not claim it.
-const READ_FENCE_RULE_TOOL: &str = "Read";
-
-/// The directory under the seat's working directory the read fence denies:
-/// the project's team definitions.
-pub(crate) const READ_FENCED_ROLES_DIR: &str = "beekeeper";
-
 /// The file-editing tools whose stale rules are pruned when they would fence
 /// the seat out of its own tree. Claude Code applies `Edit` rules to all four.
 const FILE_EDIT_TOOLS: &[&str] = &["Edit", "Write", "MultiEdit", "NotebookEdit"];
@@ -515,17 +499,7 @@ pub(crate) fn write_fence_rules(layout: &WriteFenceLayout) -> std::io::Result<Ve
     if let Some(app_data_dir) = &layout.app_data_dir {
         deny_root(app_data_dir, &protected, &mut rules)?;
     }
-    push_rule(&mut rules, roles_read_fence_rule(&layout.cwd));
     Ok(rules)
-}
-
-/// `Read(//<cwd>/beekeeper/**)`: the one rule the fence writes *inside* the
-/// seat's own tree, deliberately — see [`READ_FENCE_RULE_TOOL`].
-pub(crate) fn roles_read_fence_rule(cwd: &Path) -> String {
-    format!(
-        "{READ_FENCE_RULE_TOOL}(//{}/{READ_FENCED_ROLES_DIR}/**)",
-        absolute_pattern_path(cwd)
-    )
 }
 
 /// Deny `root`, or — when a protected directory lies under it — its other
@@ -1164,79 +1138,10 @@ mod tests {
         rule_for(path, true)
     }
 
-    /// Spec § 4.10, second layer: every fence carries exactly one `Read`
-    /// rule, for the seat's own `beekeeper/`, and the installed file keeps it
-    /// beside the write rules across a rewrite.
-    #[test]
-    fn the_fence_denies_reading_the_roles_directory_under_the_seat() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let home = dir.path().join("home");
-        let cwd = dir.path().join("work").join("seat-tree");
-        std::fs::create_dir_all(&cwd).expect("cwd");
-        let layout = WriteFenceLayout::new(&cwd, &home, None, &seat_pubkey());
-        let rules = write_fence_rules(&layout).expect("rules");
-        let read_rules: Vec<&String> = rules
-            .iter()
-            .filter(|rule| rule.starts_with(READ_FENCE_RULE_TOOL))
-            .collect();
-        assert_eq!(read_rules, vec![&roles_read_fence_rule(&cwd)]);
-        assert_eq!(
-            roles_read_fence_rule(&cwd),
-            format!(
-                "Read(//{}/beekeeper/**)",
-                cwd.to_string_lossy().trim_start_matches('/')
-            )
-        );
-        assert!(
-            !rule_covers(&roles_read_fence_rule(&cwd), &cwd),
-            "a Read rule is not a file-tool rule and never counts as covering the seat"
-        );
-        assert_seat_tree_untouched(&rules, &[cwd.as_path()]);
-
-        install_write_fence(&layout, &rules).expect("install");
-        let written: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(cwd.join(WRITE_FENCE_SETTINGS_FILE)).expect("settings"),
-        )
-        .expect("json");
-        let deny: Vec<&str> = written["permissions"]["deny"]
-            .as_array()
-            .expect("deny")
-            .iter()
-            .filter_map(|v| v.as_str())
-            .collect();
-        assert!(
-            deny.contains(&roles_read_fence_rule(&cwd).as_str()),
-            "{deny:?}"
-        );
-        // A second install — the next spawn — keeps it, once.
-        install_write_fence(&layout, &rules).expect("install again");
-        let again: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(cwd.join(WRITE_FENCE_SETTINGS_FILE)).expect("settings"),
-        )
-        .expect("json");
-        let count = again["permissions"]["deny"]
-            .as_array()
-            .expect("deny")
-            .iter()
-            .filter(|v| v.as_str() == Some(roles_read_fence_rule(&cwd).as_str()))
-            .count();
-        assert_eq!(count, 1);
-    }
-
     /// Every rule must leave the seat's own directories alone: nothing may
     /// cover them, and nothing may name them.
     fn assert_seat_tree_untouched(rules: &[String], protected: &[&Path]) {
         for rule in rules {
-            // The read fence names `<cwd>/beekeeper/**` on purpose (spec
-            // § 4.10); it is the one rule allowed to point inside the tree,
-            // and it governs `Read`, never a file-editing tool.
-            if rule.starts_with(READ_FENCE_RULE_TOOL) {
-                assert!(
-                    rule.ends_with(&format!("/{READ_FENCED_ROLES_DIR}/**)")),
-                    "a Read rule may only name the roles directory: {rule}"
-                );
-                continue;
-            }
             for path in protected {
                 assert!(
                     !rule_covers(rule, path),

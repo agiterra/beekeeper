@@ -98,7 +98,7 @@ pub struct ActionStepRecord {
     pub requested_event_id: String,
     /// Full kind:30621 project coordinate the step runs for.
     pub project: String,
-    /// The action's name in `beekeeper/actions.yml`.
+    /// The action's name in `actions.yml` (the agents repository's root).
     pub workflow_name: String,
     /// Canonical lowercase UUID of the channel every event about the step
     /// is tagged with.

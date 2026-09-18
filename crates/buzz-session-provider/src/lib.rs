@@ -35,6 +35,7 @@ pub mod action_step_store;
 pub mod action_steps;
 pub mod actor_seats;
 mod agent_fence;
+pub mod agents_checkout;
 mod artifact_upload;
 pub mod attachments;
 pub mod authority;

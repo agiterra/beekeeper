@@ -213,6 +213,25 @@ fn the_provider_view_carries_paths_and_nothing_else() {
         Some(&PathBuf::from("/src/one-shot")),
     );
 
+    // The agents repository record reaches the provider as path and ref,
+    // under the key names `buzz_session_provider::agents_checkout` parses.
+    let mut store = store_with_choices();
+    store.set_agents_repo(
+        PROJECT_REF,
+        PathBuf::from("/packs/aa-demo-beekeeper-agents"),
+        "refs/heads/main",
+    );
+    let view = store.projects_view();
+    let agents = view.agents_repos.get(PROJECT_REF).expect("recorded");
+    assert_eq!(
+        agents.path,
+        PathBuf::from("/packs/aa-demo-beekeeper-agents")
+    );
+    assert_eq!(agents.ref_name, "refs/heads/main");
+    let encoded = serde_json::to_string(&view).expect("serialize");
+    assert!(encoded.contains(r#""agentsRepos""#), "{encoded}");
+    assert!(encoded.contains(r#""ref":"refs/heads/main""#), "{encoded}");
+
     // The desktop's memory of *when* a choice was made is UI state. The
     // provider resolves a cwd; it has no business knowing the rest.
     let encoded = serde_json::to_string(&view).expect("serialize");
@@ -236,7 +255,14 @@ fn the_provider_view_matches_the_key_names_the_provider_parses() {
     keys.sort();
     assert_eq!(
         keys,
-        vec!["channels", "pending", "projects", "sessions", "version"]
+        vec![
+            "agentsRepos",
+            "channels",
+            "pending",
+            "projects",
+            "sessions",
+            "version"
+        ]
     );
 }
 

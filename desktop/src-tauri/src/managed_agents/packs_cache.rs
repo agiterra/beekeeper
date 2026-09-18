@@ -45,12 +45,6 @@ use crate::commands::project_git_exec::{run_git, validate_clone_url, GitAuthConf
 pub use buzz_persona_pkg::compose::{RoleSource, SourceProvenance};
 pub use buzz_persona_pkg::template::TemplateCatalog;
 
-/// Where a project repository keeps its flat team layout
-/// (`<path>/roles/<role>.md`, `<path>/team.yml`): the `path` a kind:30624
-/// names for roles that ride with the code (spec § 4.7), and the second
-/// place the session-checkout rung looks (spec § 4.8).
-pub const DEFAULT_FLAT_PATH: &str = "beekeeper";
-
 /// Where this build ships its role templates, relative to the resource root
 /// and to a development checkout: `personas/templates`.
 pub const DEFAULT_TEMPLATES_PATH: &str = "personas/templates";
@@ -852,17 +846,10 @@ pub fn stage_project_role_pack(
 }
 
 #[cfg(test)]
-mod override_tests;
-#[cfg(test)]
 mod tests;
 
-mod branch_override;
 mod definition_drift;
 mod pack_bytes;
-pub use branch_override::{
-    branch_role_override, BranchOverride, BranchOverrideCheck, BRANCH_OVERRIDE_KIND,
-    UNCOMMITTED_ROLE_EDITS,
-};
 pub use definition_drift::{definition_drift, DefinitionDrift, DefinitionDriftState};
 
 #[cfg(test)]

@@ -918,7 +918,7 @@ pub const KIND_WORKFLOW_APPROVAL_GRANTED: u32 = 46011;
 pub const KIND_WORKFLOW_APPROVAL_DENIED: u32 = 46012;
 /// Relay-signed request for an operator's host to execute one `run_on_host`
 /// workflow step. Carries no command text: the host recompiles the step from
-/// the project's own `beekeeper/actions.yml` and refuses on hash drift.
+/// the project's own `actions.yml` (its agents repository) and refuses on hash drift.
 pub const KIND_WORKFLOW_HOST_STEP_REQUESTED: u32 = 46013;
 /// Relay-signed echo of the accepted host result for one `run_on_host` step,
 /// plus which host claimed it.

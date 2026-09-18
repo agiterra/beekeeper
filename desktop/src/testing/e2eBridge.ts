@@ -1571,6 +1571,8 @@ declare global {
     }[];
     /** Every `project_agents_init` payload, verbatim. */
     __BUZZ_E2E_PROJECT_AGENTS_INIT_CALLS__?: { projectRef?: string }[];
+    /** Every `record_project_agents_repo` payload, verbatim. */
+    __BUZZ_E2E_RECORD_AGENTS_REPO_CALLS__?: Record<string, unknown>[];
     __BUZZ_E2E_PROJECT_REPO_SYNC_STATUS__?: {
       local_path: string | null;
       local_branch: string | null;
@@ -13446,6 +13448,16 @@ export function maybeInstallE2eTauriMocks() {
           throw new Error(`Unsupported mocked Tauri command: ${command}`);
         }
         return result;
+      }
+      case "record_project_agents_repo": {
+        // The mock host has no packs cache to sync; "recorded" is the
+        // answer that keeps the Actions tab quiet, and the payload is kept
+        // so a spec can assert what was asked.
+        window.__BUZZ_E2E_RECORD_AGENTS_REPO_CALLS__ ??= [];
+        window.__BUZZ_E2E_RECORD_AGENTS_REPO_CALLS__.push({
+          ...((payload ?? {}) as Record<string, unknown>),
+        });
+        return true;
       }
       case "project_agents_init": {
         const input = (payload ?? {}) as { projectRef?: string };

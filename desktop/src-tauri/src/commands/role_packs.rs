@@ -145,9 +145,9 @@ pub async fn seat_definition_drift(
             warnings: Vec::new(),
         });
     };
-    let worktree = worktree
-        .map(|path| path.trim().to_owned())
-        .filter(|path| !path.is_empty());
+    // `worktree` is accepted for the older client shape and read by nothing:
+    // the branch override it fed is struck (spec § 4.9, 2026-09-18).
+    let _ = worktree;
     tokio::task::spawn_blocking(move || {
         use tauri::Manager;
         let state = app.state::<AppState>();
@@ -162,7 +162,6 @@ pub async fn seat_definition_drift(
             &source,
             &role,
             &seat_sha,
-            worktree.as_deref().map(std::path::Path::new),
             &auth,
             &catalog,
         ))

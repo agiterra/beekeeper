@@ -7,12 +7,10 @@ import {
   stageCodingSessionCreateHint,
 } from "@/shared/api/tauriCodingSessionWorkdirs";
 import { createCodingSessionWorktree } from "@/shared/api/tauriCodingSessionWorktrees";
-import { hideRolesForSeat } from "../lib/codingSessionSeatWorkspace";
 import { ensureActorChannelMembership } from "../lib/actorSeatChannelMembership";
 import {
   clearCodingSessionActorSeat,
   type CodingSessionSeatPackRef,
-  previewCodingSessionSeatPack,
   stageCodingSessionActorSeat,
 } from "../lib/codingSessionActorSeatCustody";
 import { fetchCodingSessionSeatPackSource } from "../lib/codingSessionSeatPackSource";
@@ -76,8 +74,6 @@ export type CodingSessionCrewLaunchHostDeps = {
   /** The launch sequence itself. Real by default; never faked in tests. */
   runLaunch: typeof launchCodingSessionCrew;
   createWorktree: typeof createCodingSessionWorktree;
-  /** See `hideRolesForSeat`; optional, and absent hides the directory. */
-  previewSeat?: typeof previewCodingSessionSeatPack;
   newSessionRef: typeof createCodingSessionSessionRef;
   newSeatCommandId: typeof createCodingSessionLifecycleCommandId;
   newTurnCommandId: typeof createCodingSessionCommandId;
@@ -113,7 +109,6 @@ export const DEFAULT_CODING_SESSION_CREW_LAUNCH_DEPS: CodingSessionCrewLaunchHos
   {
     runLaunch: launchCodingSessionCrew,
     createWorktree: createCodingSessionWorktree,
-    previewSeat: previewCodingSessionSeatPack,
     newSessionRef: createCodingSessionSessionRef,
     newSeatCommandId: createCodingSessionLifecycleCommandId,
     newTurnCommandId: createCodingSessionCommandId,
@@ -260,22 +255,6 @@ export function useCodingSessionCrewLaunch(input: {
         const launched = await deps.runLaunch(launchInput, {
           ensureChannel: current.ensureChannelId ?? undefined,
           createLeadWorktree: deps.createWorktree,
-          leadHidesRoles: async (seat) =>
-            (
-              await hideRolesForSeat(
-                {
-                  agentPubkey: seat.actor,
-                  role: seat.role,
-                  projectRef: launchInput.projectRef ?? null,
-                  requireProjectRef: launchInput.projectRef ?? null,
-                  newSelection: true,
-                },
-                {
-                  previewSeat: deps.previewSeat,
-                  fetchPackSource: deps.seatDeps.fetchPackSource,
-                },
-              )
-            ).hideRoles,
           newSessionRef: deps.newSessionRef,
           publishGenesis: async ({ channelId, sessionRef }) => {
             // Strict membership on 442xx: a provider that joins after the

@@ -1164,6 +1164,11 @@ C are independent lanes until C3, which needs `team.yml` (A3) for agent names.
   refuses naming the agents repository; a failed fetch discloses the time;
   worktree and fence tests drop their § 4.10 assertions. Proof: `bee actions
   publish` from the agents clone; a manual run executes on this host.
+  *Status 2026-09-18: built (ledger 161). Amendments: the missing-clone
+  refusal is its own code, `ACTION_AGENTS_REPO_NOT_RECORDED`, beside the
+  code-checkout one; the clone is recorded by the create command, by seat
+  staging, and by the Actions tab on open, which is how a project created
+  elsewhere reaches this computer's provider. The live proof is still owed.*
 - **P4 — seat access.** The agents clone beside the seat worktree, recorded
   and disposed with it; `agentsRepoForSeat` in
   `codingSessionSeatWorkspace.ts`; the briefing paragraph; the fence's

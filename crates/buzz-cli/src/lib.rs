@@ -298,7 +298,7 @@ enum Cmd {
     /// Create, trigger, and manage workflows
     #[command(subcommand)]
     Workflows(WorkflowsCmd),
-    /// Publish a project's `beekeeper/actions.yml` as workflows
+    /// Publish a project's `actions.yml` (the agents repository's root) as workflows
     #[command(subcommand)]
     Actions(ActionsCmd),
     /// Read the activity feed
@@ -1298,7 +1298,7 @@ pub enum WorkflowsCmd {
 
 #[derive(Subcommand)]
 pub enum ActionsCmd {
-    /// Publish every entry of `beekeeper/actions.yml` as a kind:30620 workflow
+    /// Publish every entry of the agents repository's `actions.yml` as a kind:30620 workflow
     #[command(
         after_help = "Each entry becomes one workflow whose id is derived from the project and \
 the entry's name, so publishing again updates the same workflows in place.\n\nExamples:\n  \
@@ -1312,7 +1312,8 @@ bee actions publish --project 30621:<owner-hex>:<id> --channel <UUID>\n  bee act
         /// Channel UUID the workflows are published into
         #[arg(long)]
         channel: String,
-        /// Path to the actions file (default: beekeeper/actions.yml; `-` for stdin)
+        /// Path to the actions file (default: actions.yml in the working
+        /// directory — the agents repository's root; `-` for stdin)
         #[arg(long)]
         file: Option<String>,
     },
@@ -1321,7 +1322,8 @@ bee actions publish --project 30621:<owner-hex>:<id> --channel <UUID>\n  bee act
         /// The project's kind:30621 coordinate (30621:<owner-hex>:<id>)
         #[arg(long)]
         project: String,
-        /// Path to the actions file (default: beekeeper/actions.yml; `-` for stdin)
+        /// Path to the actions file (default: actions.yml in the working
+        /// directory — the agents repository's root; `-` for stdin)
         #[arg(long)]
         file: Option<String>,
     },

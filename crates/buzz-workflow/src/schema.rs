@@ -245,7 +245,7 @@ pub enum ActionDef {
     /// Suspend the run and ask an operator's host to execute a command in the
     /// project's checkout. Every field is literal: the host never receives
     /// these values over the wire, it recompiles them from the project's own
-    /// `beekeeper/actions.yml` and refuses when the definition hash differs.
+    /// `actions.yml` (the agents repository's root) and refuses when the definition hash differs.
     RunOnHost {
         /// Program and arguments, exec-style (no shell).
         command: Vec<String>,

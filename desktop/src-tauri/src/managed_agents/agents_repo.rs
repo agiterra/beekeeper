@@ -239,7 +239,83 @@ pub async fn project_agents_init(
 ) -> Result<ProjectAgentsInit, String> {
     let catalog = packs_cache::template_catalog(&app);
     let packs_root = packs_cache::packs_root(&app)?;
-    project_agents_init_with_paths(&state, project_ref, catalog, packs_root).await
+    let result =
+        project_agents_init_with_paths(&state, project_ref, catalog, packs_root.clone()).await?;
+    if result.pushed {
+        // The provider reads `actions.yml` from this clone from now on
+        // (spec § 4.11). Best-effort: the repositories exist either way.
+        let viewer = state.signing_keys()?.public_key().to_hex();
+        let checkout =
+            packs_cache::packs_checkout_dir(&packs_root, &viewer, &result.agents_repo_id);
+        if let Err(error) = crate::coding_sessions::workdir_store::record_agents_repo(
+            &app,
+            &state,
+            &result.project_ref,
+            checkout,
+            &format!("refs/heads/{}", result.branch),
+        ) {
+            tracing::warn!(
+                target: "agents_repo",
+                %error,
+                "the agents repository was created but this host could not record its clone"
+            );
+        }
+    }
+    Ok(result)
+}
+
+/// Sync this host's clone of a project's agents repository and record where
+/// it is, so the provider's next host step reads `actions.yml` from its
+/// fetched tip (spec § 4.11). `Ok(false)` when the source is not an agents
+/// repository (its `path` is not the repository root) — nothing is recorded
+/// and the caller says so.
+#[tauri::command]
+pub async fn record_project_agents_repo(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    project_ref: String,
+    repo: String,
+    git_ref: Option<String>,
+    sha: Option<String>,
+    path: Option<String>,
+) -> Result<bool, String> {
+    let project = project_ref.trim().to_string();
+    parse_project_coordinate(&project)?;
+    let source = packs_cache::ProjectPackSource {
+        repo: repo.trim().to_string(),
+        git_ref: git_ref
+            .map(|value| value.trim().to_string())
+            .filter(|v| !v.is_empty()),
+        sha: sha
+            .map(|value| value.trim().to_string())
+            .filter(|v| !v.is_empty()),
+        path: packs_cache::validate_pack_path(path.as_deref().unwrap_or_default())?,
+    };
+    if !buzz_core_pkg::project_pack_source::is_root_pack_path(&source.path) {
+        return Ok(false);
+    }
+    let Some(ref_name) = source.git_ref.clone() else {
+        // A sha-pinned agents repository has no branch to fetch; the
+        // provider reads a ref's tip, so there is nothing honest to record.
+        return Ok(false);
+    };
+    let (owner, id) = packs_cache::parse_repo_coordinate(&source.repo)?;
+    let packs_root = packs_cache::packs_root(&app)?;
+    let checkout = packs_cache::packs_checkout_dir(&packs_root, &owner, &id);
+    let relay_http =
+        crate::relay::relay_http_base_url(&crate::relay::relay_ws_url_with_override(&state));
+    let clone_url = packs_cache::packs_clone_url(&relay_http, &owner, &id);
+    let auth = crate::commands::project_git_exec::build_git_auth_config(&state)?;
+    let sync_checkout = checkout.clone();
+    tokio::task::spawn_blocking(move || {
+        packs_cache::sync_packs_checkout(&sync_checkout, &clone_url, &source, &auth)
+    })
+    .await
+    .map_err(|error| format!("syncing the agents repository did not finish: {error}"))??;
+    crate::coding_sessions::workdir_store::record_agents_repo(
+        &app, &state, &project, checkout, &ref_name,
+    )?;
+    Ok(true)
 }
 
 /// [`project_agents_init`]'s body, taking the template catalog and the packs

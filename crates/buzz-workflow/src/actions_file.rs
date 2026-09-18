@@ -1,4 +1,6 @@
-//! `beekeeper/actions.yml`: a project's actions, each an ordinary workflow
+//! `actions.yml` at the root of the project's agents repository (spec
+//! § 4.11; `beekeeper/actions.yml` in the code repository before 2026-09-18):
+//! a project's actions, each an ordinary workflow
 //! definition (`docs/PROJECT_TEAMS_AND_ACTIONS_SPEC.md` § 5.1).
 //!
 //! The file is parsed in two places that must agree: `bee actions publish`
@@ -20,7 +22,7 @@ use crate::schema::{TriggerDef, WorkflowDef};
 /// Exact schema the file must name.
 pub const ACTIONS_SCHEMA: &str = "buzz-project-actions/v1";
 /// Where the file lives, relative to the project checkout.
-pub const ACTIONS_YML: &str = "beekeeper/actions.yml";
+pub const ACTIONS_YML: &str = "actions.yml";
 /// Ceiling on entries in one file.
 pub const MAX_ACTIONS: usize = 64;
 

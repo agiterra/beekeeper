@@ -3,8 +3,8 @@
 //! A `wake_agent` step is a host step like `run_on_host`: the relay parks the
 //! run and publishes a kind:46013 whose `stepKind` is `wake_agent` and whose
 //! `inputs` carry the earlier steps' outputs. This host recompiles the step
-//! from its own `beekeeper/actions.yml` (so the brief text never rides the
-//! wire), resolves the agent's name to a role through `beekeeper/team.yml`,
+//! from its own `actions.yml` (the agents repository's root) (so the brief text never rides the
+//! wire), resolves the agent's name to a role through `team.yml`,
 //! finds that role's open execution for the project **on this computer**,
 //! and delivers the brief as an ordinary boundary turn — a kind:44220 this
 //! provider signs and publishes, exactly as a team wake is delivered.
@@ -40,7 +40,7 @@ use crate::action_step_store::ActionStepRecord;
 use crate::gate_observer::ObservedGateRow;
 use crate::state::SessionRecord;
 
-/// The checkout has no `beekeeper/team.yml`, so an agent name resolves to
+/// The checkout has no `team.yml`, so an agent name resolves to
 /// nothing.
 pub const ROUTE_NO_TEAM: &str = "ROUTE_NO_TEAM";
 /// `team.yml` names no agent by that name.
@@ -61,26 +61,21 @@ pub const HIRE_BRIEF_TOO_LONG: &str = "HIRE_BRIEF_TOO_LONG";
 
 /// The `type` every routed brief carries, so the woken agent can recognise it.
 pub const ACTION_RESULT_TYPE: &str = "action_result";
-/// Where a flat project keeps its team manifest, relative to the checkout.
-pub const TEAM_ROOT: &str = "beekeeper";
-
-/// Resolve an agent name to its role through the checkout's `team.yml`.
-pub fn resolve_wake_role(checkout: &Path, agent: &str) -> Result<String, HostStepRefusal> {
-    let root = checkout.join(TEAM_ROOT);
-    let manifest = match buzz_persona::team::load_team(&root) {
-        Ok(Some(manifest)) => manifest,
-        Ok(None) => {
-            return Err(refusal(
-                ROUTE_NO_TEAM,
-                format!(
-                    "{} has no {TEAM_ROOT}/{} to resolve agent {agent:?} with",
-                    checkout.display(),
-                    buzz_persona::team::TEAM_YML
-                ),
-            ))
-        }
-        Err(error) => return Err(refusal(ROUTE_NO_TEAM, error.to_string())),
+/// Resolve an agent name to its role through the agents repository's
+/// `team.yml` (spec § 4.11), as this host read it from the fetched tip.
+pub fn resolve_wake_role(team_yml: Option<&str>, agent: &str) -> Result<String, HostStepRefusal> {
+    let Some(text) = team_yml else {
+        return Err(refusal(
+            ROUTE_NO_TEAM,
+            format!(
+                "the project's agents repository has no {} to resolve agent {agent:?} with",
+                buzz_persona::team::TEAM_YML
+            ),
+        ));
     };
+    let manifest =
+        buzz_persona::team::parse_team_yml(text, Path::new(buzz_persona::team::TEAM_YML))
+            .map_err(|error| refusal(ROUTE_NO_TEAM, error.to_string()))?;
     let wanted = agent.trim();
     manifest
         .agents
@@ -91,7 +86,7 @@ pub fn resolve_wake_role(checkout: &Path, agent: &str) -> Result<String, HostSte
             refusal(
                 ROUTE_UNKNOWN_AGENT,
                 format!(
-                    "{TEAM_ROOT}/{} names no agent {agent:?}",
+                    "the agents repository's {} names no agent {agent:?}",
                     buzz_persona::team::TEAM_YML
                 ),
             )
@@ -404,29 +399,24 @@ mod tests {
 
     #[test]
     fn an_agent_name_resolves_to_its_role_through_team_yml() {
-        let checkout = tempfile::tempdir().expect("tempdir");
-        let root = checkout.path().join(TEAM_ROOT);
-        std::fs::create_dir_all(&root).expect("mkdir");
         assert_eq!(
-            resolve_wake_role(checkout.path(), "Levain")
-                .unwrap_err()
-                .code,
+            resolve_wake_role(None, "Levain").unwrap_err().code,
             ROUTE_NO_TEAM
         );
-        std::fs::write(
-            root.join("team.yml"),
-            "schema: beekeeper-team/v1\nversion: 0.1.0\nroles:\n  builder: {}\nagents:\n  - name: Levain\n    role: builder\n    lifetime: persistent\n",
-        )
-        .expect("write");
+        let team = "schema: beekeeper-team/v1\nversion: 0.1.0\nroles:\n  builder: {}\nagents:\n  - name: Levain\n    role: builder\n    lifetime: persistent\n";
         assert_eq!(
-            resolve_wake_role(checkout.path(), "Levain").expect("role"),
+            resolve_wake_role(Some(team), "Levain").expect("role"),
             "builder"
         );
         assert_eq!(
-            resolve_wake_role(checkout.path(), "Nobody")
+            resolve_wake_role(Some(team), "Nobody").unwrap_err().code,
+            ROUTE_UNKNOWN_AGENT
+        );
+        assert_eq!(
+            resolve_wake_role(Some("schema: nope\n"), "Levain")
                 .unwrap_err()
                 .code,
-            ROUTE_UNKNOWN_AGENT
+            ROUTE_NO_TEAM
         );
     }
 

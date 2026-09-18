@@ -224,7 +224,7 @@ test("ordinary governed worktree creation remembers the checkout, not the new ex
   });
   assert.equal(host.result.ok, true, host.result.failureReason ?? "");
   assert.deepEqual(host.worktrees, [
-    { workdir: checkout, name: "fresh-work", source: "main", hideRoles: true },
+    { workdir: checkout, name: "fresh-work", source: "main" },
   ]);
   assert.deepEqual(host.hints, [
     { commandId: "csl-seat-1", path: "/tmp/trees/fresh-work" },

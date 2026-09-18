@@ -8,7 +8,7 @@
 //! 1. **Record** it in [`crate::action_step_store`] — a redelivery of a
 //!    request already recorded is answered from the record, never re-run.
 //! 2. **Verify** it against this host's own checkout: the project must be
-//!    in `ProjectsFile.projects`, `beekeeper/actions.yml` must compile, the
+//!    in `ProjectsFile.projects`, `actions.yml` (the agents repository's root) must compile, the
 //!    named entry's hash must equal the request's `definitionHash`, and the
 //!    indexed step must be the named `run_on_host` step. The request carries
 //!    no command text; only a checkout that agrees with the relay runs
@@ -113,13 +113,17 @@ use crate::Provider;
 
 /// The project's recorded repository folder is not in the projects file.
 pub const ACTION_CHECKOUT_NOT_RECORDED: &str = "ACTION_CHECKOUT_NOT_RECORDED";
+/// This host has no clone of the project's agents repository recorded.
+pub const ACTION_AGENTS_REPO_NOT_RECORDED: &str = "ACTION_AGENTS_REPO_NOT_RECORDED";
+/// The agents repository could not be read (no tip, git failure).
+pub const ACTION_AGENTS_REPO_UNREADABLE: &str = "ACTION_AGENTS_REPO_UNREADABLE";
 /// `checkout: triggering_commit`, but the trigger named no commit.
 pub const ACTION_NO_TRIGGER_COMMIT: &str = "ACTION_NO_TRIGGER_COMMIT";
 /// The triggering commit is not in the checkout even after a fetch.
 pub const ACTION_COMMIT_UNAVAILABLE: &str = "ACTION_COMMIT_UNAVAILABLE";
-/// The checkout has no `beekeeper/actions.yml`.
+/// The agents repository's tip has no `actions.yml`.
 pub const ACTION_FILE_MISSING: &str = "ACTION_FILE_MISSING";
-/// The checkout's `beekeeper/actions.yml` does not compile.
+/// The agents repository's `actions.yml` does not compile.
 pub const ACTION_FILE_INVALID: &str = "ACTION_FILE_INVALID";
 /// The file has no entry with the request's `workflowName`.
 pub const ACTION_UNKNOWN: &str = "ACTION_UNKNOWN";
@@ -183,13 +187,70 @@ fn refusal(code: &str, message: impl Into<String>) -> HostStepRefusal {
     }
 }
 
-/// Verify a request against this host's checkout, as § 5.6 requires.
+/// The project's `actions.yml` and `team.yml` as this host read them from
+/// the agents repository's fetched tip (spec § 4.11).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentsFiles {
+    /// `actions.yml`, verbatim.
+    pub actions_yml: String,
+    /// `team.yml`, when the tip has one.
+    pub team_yml: Option<String>,
+    /// Where the bytes came from, for messages: the short sha, and "as
+    /// fetched at …" when the fetch just now failed.
+    pub provenance: String,
+}
+
+/// Read the project's agents files for a request, or the refusal to publish.
+pub async fn load_agents_files(
+    projects: &ProjectsFile,
+    project: &str,
+) -> Result<AgentsFiles, HostStepRefusal> {
+    use crate::agents_checkout::{read_agents_file, AgentsReadError};
+    let Some(record) = projects.agents_repos.get(project) else {
+        return Err(refusal(
+            ACTION_AGENTS_REPO_NOT_RECORDED,
+            format!(
+                "this computer has no clone of the agents repository recorded for project \
+                 {project}; open the project's Actions tab or Finish repository setup under \
+                 Project settings → Packs on this computer"
+            ),
+        ));
+    };
+    let actions = match read_agents_file(record, ACTIONS_YML).await {
+        Ok(file) => file,
+        Err(AgentsReadError::FileMissing { sha, .. }) => {
+            return Err(refusal(
+                ACTION_FILE_MISSING,
+                format!(
+                    "the agents repository at {} has no {ACTIONS_YML}",
+                    short(&sha)
+                ),
+            ))
+        }
+        Err(error) => return Err(refusal(ACTION_AGENTS_REPO_UNREADABLE, error.to_string())),
+    };
+    let team_yml = match read_agents_file(record, buzz_persona::team::TEAM_YML).await {
+        Ok(file) => Some(file.text),
+        Err(AgentsReadError::FileMissing { .. }) => None,
+        Err(error) => return Err(refusal(ACTION_AGENTS_REPO_UNREADABLE, error.to_string())),
+    };
+    Ok(AgentsFiles {
+        provenance: actions.provenance(),
+        actions_yml: actions.text,
+        team_yml,
+    })
+}
+
+/// Verify a request against this host's own copy of the definition, as
+/// § 5.6 requires.
 ///
-/// Pure over the file system: `projects` is the loaded projects map. Every
-/// `Err` is the exact refusal the host publishes.
+/// Pure: `projects` is the loaded projects map (where `run_on_host` runs),
+/// `files` the agents repository's files as [`load_agents_files`] read them.
+/// Every `Err` is the exact refusal the host publishes.
 pub fn verify_request(
     request: &HostStepRequested,
     projects: &BTreeMap<String, PathBuf>,
+    files: &AgentsFiles,
 ) -> Result<VerifiedStep, HostStepRefusal> {
     let Some(checkout) = projects.get(&request.project) else {
         return Err(refusal(
@@ -201,24 +262,12 @@ pub fn verify_request(
             ),
         ));
     };
-    let path = checkout.join(ACTIONS_YML);
-    let text = match std::fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Err(refusal(
-                ACTION_FILE_MISSING,
-                format!("{} has no {ACTIONS_YML}", checkout.display()),
-            ));
-        }
-        Err(error) => {
-            return Err(refusal(
-                ACTION_FILE_INVALID,
-                format!("{} could not be read: {error}", path.display()),
-            ));
-        }
-    };
-    let entries = parse_actions_yml(&text, &request.project)
-        .map_err(|error| refusal(ACTION_FILE_INVALID, format!("{ACTIONS_YML}: {error}")))?;
+    let entries = parse_actions_yml(&files.actions_yml, &request.project).map_err(|error| {
+        refusal(
+            ACTION_FILE_INVALID,
+            format!("{ACTIONS_YML} ({}): {error}", files.provenance),
+        )
+    })?;
     let Some(entry) = entries
         .iter()
         .find(|entry| entry.name == request.workflow_name)
@@ -226,8 +275,8 @@ pub fn verify_request(
         return Err(refusal(
             ACTION_UNKNOWN,
             format!(
-                "{ACTIONS_YML} in this checkout has no action named {:?}",
-                request.workflow_name
+                "{ACTIONS_YML} in the agents repository ({}) has no action named {:?}",
+                files.provenance, request.workflow_name
             ),
         ));
     };
@@ -235,8 +284,9 @@ pub fn verify_request(
         return Err(refusal(
             ACTION_DEFINITION_DRIFT,
             format!(
-                "this checkout's actions.yml compiles to {}…, the relay's definition is {}…; \
-                 publish the file or check out the branch that matches",
+                "the agents repository's actions.yml ({}) compiles to {}…, the relay's definition \
+                 is {}…; publish the file or push the commit that matches",
+                files.provenance,
                 short(&entry.hash),
                 short(&request.definition_hash)
             ),
@@ -615,7 +665,10 @@ impl Provider {
         // open execution here, so a brief nobody can receive is never claimed.
         let projects = ProjectsFile::load(self.config.projects_file.as_deref());
         let host_env: HashMap<String, String> = std::env::vars().collect();
-        let plan = match verify_request(&request, &projects.projects).and_then(|verified| {
+        // The definition comes from the agents repository's fetched tip
+        // (spec § 4.11), read before the sync verification below.
+        let files = load_agents_files(&projects, &request.project).await;
+        let plan = match files.and_then(|files| verify_request(&request, &projects.projects, &files).map(|verified| (verified, files))).and_then(|(verified, files)| {
             match verified.action {
                 VerifiedAction::Command(spec) => {
                     // Spec § 7 C6: a step that runs at the triggering commit
@@ -648,7 +701,7 @@ impl Provider {
                 }
                 VerifiedAction::Hire { role, agent, brief } => {
                     let agent_role =
-                        crate::action_route::resolve_wake_role(&verified.checkout, &agent)?;
+                        crate::action_route::resolve_wake_role(files.team_yml.as_deref(), &agent)?;
                     let execution = crate::action_route::pick_open_execution(
                         self.state.sessions(),
                         &request.project,
@@ -691,7 +744,8 @@ impl Provider {
                     })
                 }
                 VerifiedAction::Wake { agent, brief } => {
-                    let role = crate::action_route::resolve_wake_role(&verified.checkout, &agent)?;
+                    let role =
+                        crate::action_route::resolve_wake_role(files.team_yml.as_deref(), &agent)?;
                     let execution = crate::action_route::pick_open_execution(
                         self.state.sessions(),
                         &request.project,
@@ -1292,14 +1346,16 @@ mod tests {
 
     const ACTIONS: &str = "schema: buzz-project-actions/v1\nactions:\n  - name: nightly\n    trigger: { on: manual }\n    steps:\n      - id: say\n        action: send_message\n        text: hi\n      - id: build\n        action: run_on_host\n        command: [\"true\"]\n";
 
-    fn checkout_with(actions: Option<&str>) -> tempfile::TempDir {
-        let dir = tempfile::tempdir().expect("tempdir");
-        if let Some(actions) = actions {
-            let path = dir.path().join(ACTIONS_YML);
-            std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
-            std::fs::write(path, actions).expect("write");
+    fn checkout_with(_actions: Option<&str>) -> tempfile::TempDir {
+        tempfile::tempdir().expect("tempdir")
+    }
+
+    fn files(actions: &str) -> AgentsFiles {
+        AgentsFiles {
+            actions_yml: actions.to_owned(),
+            team_yml: None,
+            provenance: "abcd1234".to_owned(),
         }
-        dir
     }
 
     fn request(hash: &str) -> HostStepRequested {
@@ -1331,7 +1387,8 @@ mod tests {
     fn a_matching_checkout_verifies_and_resolves_the_step() {
         let checkout = checkout_with(Some(ACTIONS));
         let projects = BTreeMap::from([(PROJECT.to_owned(), checkout.path().to_path_buf())]);
-        let verified = verify_request(&request(&real_hash()), &projects).expect("verified");
+        let verified =
+            verify_request(&request(&real_hash()), &projects, &files(ACTIONS)).expect("verified");
         assert_eq!(verified.checkout, checkout.path());
         match verified.action {
             VerifiedAction::Command(spec) => assert_eq!(spec.command, vec!["true".to_owned()]),
@@ -1341,7 +1398,8 @@ mod tests {
 
     #[test]
     fn an_unrecorded_checkout_is_refused_by_name() {
-        let refusal = verify_request(&request(&real_hash()), &BTreeMap::new()).unwrap_err();
+        let refusal =
+            verify_request(&request(&real_hash()), &BTreeMap::new(), &files(ACTIONS)).unwrap_err();
         assert_eq!(refusal.code, ACTION_CHECKOUT_NOT_RECORDED);
         assert!(refusal.message.contains("Repository folder"));
         let result = refused_result(&request(&real_hash()), &"ab".repeat(32), &refusal);
@@ -1353,49 +1411,73 @@ mod tests {
     fn definition_drift_names_both_hashes() {
         let checkout = checkout_with(Some(ACTIONS));
         let projects = BTreeMap::from([(PROJECT.to_owned(), checkout.path().to_path_buf())]);
-        let refusal = verify_request(&request(&"ab".repeat(32)), &projects).unwrap_err();
+        let refusal =
+            verify_request(&request(&"ab".repeat(32)), &projects, &files(ACTIONS)).unwrap_err();
         assert_eq!(refusal.code, ACTION_DEFINITION_DRIFT);
         assert!(refusal.message.contains(&real_hash()[..12]));
         assert!(refusal.message.contains("abababababab"));
+        assert!(
+            refusal.message.contains("abcd1234"),
+            "names where the bytes came from: {}",
+            refusal.message
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unrecorded_agents_repository_is_refused_by_name() {
+        let projects = ProjectsFile::default();
+        let refusal = load_agents_files(&projects, PROJECT).await.unwrap_err();
+        assert_eq!(refusal.code, ACTION_AGENTS_REPO_NOT_RECORDED);
+        assert!(refusal.message.contains("Finish repository setup"));
+        let mut projects = ProjectsFile::default();
+        projects.agents_repos.insert(
+            PROJECT.to_owned(),
+            crate::agents_checkout::AgentsRepoRecord {
+                path: std::env::temp_dir().join("no-such-agents-clone"),
+                ref_name: "refs/heads/main".into(),
+            },
+        );
+        assert_eq!(
+            load_agents_files(&projects, PROJECT)
+                .await
+                .unwrap_err()
+                .code,
+            ACTION_AGENTS_REPO_UNREADABLE
+        );
     }
 
     #[test]
-    fn a_missing_file_an_unknown_action_and_a_mismatched_step_are_refused() {
-        let missing = checkout_with(None);
-        let projects = BTreeMap::from([(PROJECT.to_owned(), missing.path().to_path_buf())]);
-        assert_eq!(
-            verify_request(&request(&real_hash()), &projects)
-                .unwrap_err()
-                .code,
-            ACTION_FILE_MISSING
-        );
-
+    fn an_unknown_action_a_mismatched_step_and_an_invalid_file_are_refused() {
         let checkout = checkout_with(Some(ACTIONS));
         let projects = BTreeMap::from([(PROJECT.to_owned(), checkout.path().to_path_buf())]);
         let mut unknown = request(&real_hash());
         unknown.workflow_name = "nope".into();
         assert_eq!(
-            verify_request(&unknown, &projects).unwrap_err().code,
+            verify_request(&unknown, &projects, &files(ACTIONS))
+                .unwrap_err()
+                .code,
             ACTION_UNKNOWN
         );
 
         let mut wrong_index = request(&real_hash());
         wrong_index.step_index = 0;
         assert_eq!(
-            verify_request(&wrong_index, &projects).unwrap_err().code,
+            verify_request(&wrong_index, &projects, &files(ACTIONS))
+                .unwrap_err()
+                .code,
             ACTION_STEP_MISMATCH
         );
         let mut wrong_id = request(&real_hash());
         wrong_id.step_id = "say".into();
         assert_eq!(
-            verify_request(&wrong_id, &projects).unwrap_err().code,
+            verify_request(&wrong_id, &projects, &files(ACTIONS))
+                .unwrap_err()
+                .code,
             ACTION_STEP_MISMATCH
         );
 
-        let invalid = checkout_with(Some("schema: nope\n"));
-        let projects = BTreeMap::from([(PROJECT.to_owned(), invalid.path().to_path_buf())]);
         assert_eq!(
-            verify_request(&request(&real_hash()), &projects)
+            verify_request(&request(&real_hash()), &projects, &files("schema: nope\n"))
                 .unwrap_err()
                 .code,
             ACTION_FILE_INVALID
