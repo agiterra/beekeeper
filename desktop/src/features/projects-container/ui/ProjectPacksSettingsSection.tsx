@@ -2,6 +2,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import * as React from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { managedAgentsQueryKey } from "@/features/agents/hooks";
 import { useIdentityQuery } from "@/shared/api/hooks";
 import { truncatePubkey } from "@/shared/lib/pubkey";
 import { Button } from "@/shared/ui/button";
@@ -163,6 +164,10 @@ export function ProjectPacksSettingsSection({
               onCancel={() => setActiveAction("none")}
               onRan={() => {
                 invalidateSource();
+                // Finish setup may have installed the project's agents.
+                void queryClient.invalidateQueries({
+                  queryKey: managedAgentsQueryKey,
+                });
               }}
               projectRef={project.address}
             />

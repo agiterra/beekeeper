@@ -169,6 +169,13 @@ pub(crate) fn install_default_agents(
     next_teams.push(result.team);
     save_teams(app, &next_teams)?;
     drop(_guard);
+    // The webview's managed-agent list re-reads only on this event while no
+    // agent is running (`useManagedAgentsQuery`); without it the new agents
+    // are on disk and absent from every picker until an unrelated refresh.
+    {
+        use tauri::Emitter;
+        let _ = app.emit("agents-data-changed", ());
+    }
 
     // Publish the associations, as the setup flow does after installing.
     let owner_hex = keys.public_key().to_hex();

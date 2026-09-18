@@ -9,6 +9,8 @@ import {
   KIND_REPO_ANNOUNCEMENT,
 } from "@/shared/constants/kinds";
 
+import { managedAgentsQueryKey } from "@/features/agents/hooks";
+
 import { projectContainersQueryKey, type ProjectContainer } from "./hooks";
 import {
   defaultAgentsRepoId,
@@ -373,7 +375,12 @@ export function useCreateProjectContainerMutation() {
         };
       }
     },
-    onSuccess: ({ project }) => {
+    onSuccess: ({ project, repositories }) => {
+      // The create installed the project's default agents on this computer;
+      // every agent picker reads the managed-agent list, so re-read it.
+      if (repositories && repositories.agentsInstalled.length > 0) {
+        void queryClient.invalidateQueries({ queryKey: managedAgentsQueryKey });
+      }
       // Prefix-matched: the containers query is keyed per relay.
       queryClient.setQueriesData<ProjectContainer[]>(
         { queryKey: projectContainersQueryKey },
