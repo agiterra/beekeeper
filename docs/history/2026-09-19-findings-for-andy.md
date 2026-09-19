@@ -3,7 +3,7 @@
 Compiled by Fable for Brian. Everything here was found by using the installed
 app against hive, not by reading code alone; each finding names its ledger
 item, which carries the evidence and `file:line`. Status is as of 2026-09-19
-14:00 EDT. Everything in section B is on `main`; the installed bundle is being rebuilt from `f14200948`. "Lane" means a fix is being built on a topic branch and will land
+14:25 EDT. Items 7–10 and 18 are on `main`; the bundle is being rebuilt from `6860e1574`. Everything in section B is on `main`; the installed bundle is being rebuilt from `f14200948`. "Lane" means a fix is being built on a topic branch and will land
 on `main` rebased; "open" means nobody owns it yet.
 
 ## A. Fixed and landed since 2026-09-16 (for awareness; review welcome)
@@ -36,7 +36,7 @@ on `main` rebased; "open" means nobody owns it yet.
 | 14 | **The Actions tab's empty state hands a person a CLI command with a placeholder** instead of a control or a pointer to where `actions.yml` lives. | 135 addendum / spec § 6 item 10 | `desktop/src/features/project-actions/ui/` |
 | 15 | **Two hires in the same second race the authority fold:** "authority receipt references a missing transition", answered by `seat-repair`. The fold treats a not-yet-visible transition as a failure instead of unknown-and-retry; the host could also serialize authority publications per session. | 136 addendum | `crates/buzz-cli/src/commands/sessions/operations_authority.rs:285` |
 | 16 | **A seat's process does not carry its own session reference**, so an identity seated in two sessions needs `--session-ref` on every send and each seat learns this by a failed call. | 136 addendum | provider seat env (`actor_seats.rs:195`), `bee sessions send` |
-| 18 | **A seat's agents clone is cut from the packs cache's local `main`, which never advances.** `sync_packs_checkout` fetches into `refs/remotes/origin/*` and checks out detached, so `git clone --branch main <cache>` yields the first-ever sync (`6405b21`) while the same hire's bundle came from `d148d54`; the clone's `team.yml` lacked the grant that seated it. | 172 | `desktop/src-tauri/src/managed_agents/seat_agents_clone.rs` (clone call); lane in flight |
+| 18 | **A seat's agents clone is cut from the packs cache's local `main`, which never advances.** `sync_packs_checkout` fetches into `refs/remotes/origin/*` and checks out detached, so `git clone --branch main <cache>` yields the first-ever sync (`6405b21`) while the same hire's bundle came from `d148d54`; the clone's `team.yml` lacked the grant that seated it. | 172 | **Landed** `6860e1574`: the clone lands on the staged commit (`git checkout -B <branch> <sha>`), reuse path advances an existing clone |
 | 17 | **Hive returned 502 for ~6 s at 11:47:47Z** and rate-gated the provider's catch-up burst after a relaunch ("relay rate gate blocked acknowledged publication"). Both recovered; worth knowing what restarted. | 171 | relay / ingress |
 
 ## D. What passed, so you know the ground is solid
