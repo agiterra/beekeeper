@@ -195,14 +195,16 @@ export function ProjectAgentsInitAction({
         </p>
       ) : null}
       <div className="flex gap-2">
-        <Button
-          data-testid="project-agents-init-run"
-          disabled={pending || workdirQuery.isLoading}
-          onClick={() => void handleRun()}
-          size="sm"
-        >
-          {pending ? "Running…" : result ? "Run again" : "Run"}
-        </Button>
+        {result?.complete ? null : (
+          <Button
+            data-testid="project-agents-init-run"
+            disabled={pending || workdirQuery.isLoading}
+            onClick={() => void handleRun()}
+            size="sm"
+          >
+            {pending ? "Running…" : result ? "Run again" : "Run"}
+          </Button>
+        )}
         <Button disabled={pending} onClick={onCancel} size="sm" variant="ghost">
           {result ? "Close" : "Cancel"}
         </Button>

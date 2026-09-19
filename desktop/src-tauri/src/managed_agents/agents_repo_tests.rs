@@ -216,8 +216,9 @@ mod against_a_stub_relay {
             "{:?}",
             result.gap
         );
-        // 30617 (code), 30617 (agents), 5 (withdrawal) — and nothing else.
-        assert_eq!(kinds_stored(&stored), vec![30617, 30617, 5]);
+        // 30617 (code) and its creation ref state, 30617 (agents) and its,
+        // 5 (withdrawal) — and nothing else.
+        assert_eq!(kinds_stored(&stored), vec![30617, 30618, 30617, 30618, 5]);
         std::fs::remove_dir_all(&root).ok();
     }
 
@@ -286,14 +287,15 @@ mod against_a_stub_relay {
             readme,
             "# Demo Project\n\nThis project's code. Roles and plans live in `demo-beekeeper-agents`.\n"
         );
-        // The relay holds a push record for each repository.
-        let records = stored_of_kind(&stored, 30618);
+        // The relay holds a push record for each repository, beside the
+        // `HEAD`-only record each announcement produced.
+        let records = pushed_records(&stored);
         assert_eq!(records.len(), 2, "{records:?}");
         assert!(result.complete, "{result:?}");
         assert_eq!(result.gap, None);
         assert_eq!(
             kinds_stored(&stored),
-            vec![30617, 30618, 30617, 30618, 30624]
+            vec![30617, 30618, 30618, 30617, 30618, 30618, 30624]
         );
 
         // Step 7 — the roster: every project agent, one 9010, as collaborators.
@@ -460,7 +462,7 @@ mod against_a_stub_relay {
         );
         assert_eq!(
             kinds_stored(&stored),
-            vec![30617, 30618, 30617, 30618, 30624]
+            vec![30617, 30618, 30618, 30617, 30618, 30618, 30624]
         );
         std::fs::remove_dir_all(&root).ok();
     }
@@ -571,8 +573,8 @@ mod against_a_stub_relay {
             vec![
                 announcement_json(&keys, "demo"),
                 announcement_json(&keys, "demo-beekeeper-agents"),
-                push_record_json("demo"),
-                push_record_json("demo-beekeeper-agents"),
+                push_record_json("demo", &"1".repeat(40)),
+                push_record_json("demo-beekeeper-agents", &"2".repeat(40)),
             ],
             None,
             Some(root.join("git")),
@@ -627,6 +629,58 @@ mod against_a_stub_relay {
         assert!(result.gap.is_none());
         // The test's own push stored one 30618; the run published only the 30624.
         assert_eq!(kinds_stored(&stored), vec![30618, 30624]);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// Ledger 176: the relay writes a `HEAD`-only kind:30618 when a
+    /// repository is announced, before any push. A code repository that
+    /// exists with only that record has no commits, so the seed must run —
+    /// the first Finish repository setup on RPG Test skipped it as "already
+    /// had commits" and recorded an unborn clone.
+    #[tokio::test]
+    async fn a_creation_only_ref_state_does_not_skip_the_code_seed() {
+        let root = scratch_root();
+        let catalog = catalog(&root);
+        let keys = Keys::generate();
+        let viewer = keys.public_key().to_hex();
+        let project = format!("30621:{viewer}:demo");
+        let (relay_url, stored) = spawn_stub_relay(
+            vec![
+                project_head_json(&keys, "demo", "Demo Project"),
+                announcement_json(&keys, "demo"),
+                creation_record_json("demo"),
+            ],
+            None,
+            Some(root.join("git")),
+        )
+        .await;
+        let state = stubbed_state(relay_url, keys).await;
+
+        let (result, recorded) = run_init(
+            &state,
+            &project,
+            catalog,
+            root.join("cache"),
+            root.join("repos"),
+            None,
+        )
+        .await;
+
+        assert!(result.code_repo_existed);
+        assert!(!result.code_seed_skipped, "{result:?}");
+        assert!(result.code_seed_commit_sha.is_some(), "{result:?}");
+        assert_eq!(result.code_seed_error, None);
+        let expected = root.join("repos").join("demo");
+        assert_eq!(recorded, vec![expected.clone()]);
+        let auth = build_test_git_auth_config().expect("auth");
+        let head = run_git(&["rev-parse", "HEAD"], Some(&expected), &auth).expect("head");
+        assert_eq!(
+            Some(head.trim()),
+            result.code_seed_commit_sha.as_deref(),
+            "the clone is born on the seed"
+        );
+        assert_eq!(pushed_records(&stored).len(), 2);
+        assert!(result.complete, "{result:?}");
         std::fs::remove_dir_all(&root).ok();
     }
 

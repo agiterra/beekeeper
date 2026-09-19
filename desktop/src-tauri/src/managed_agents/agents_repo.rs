@@ -678,8 +678,11 @@ pub(crate) async fn project_agents_init_with_paths(
             }
         }
     }
+    // Skipped only over a record that names a pushed `main`: the relay also
+    // writes a `HEAD`-only ref state at creation, which is not a commit
+    // (ledger 176).
     if code_existed
-        && read_push_record_id(state, &viewer, &code_repo_id)
+        && read_push_record_id(state, &viewer, &code_repo_id, SEED_BRANCH)
             .await
             .is_some()
     {
@@ -747,7 +750,9 @@ pub(crate) async fn project_agents_init_with_paths(
 
     // Step 4 — seed and push, unless the relay already holds the push.
     if agents_existed {
-        if let Some(record) = read_push_record_id(state, &viewer, &agents_repo_id).await {
+        if let Some(record) =
+            read_push_record_id(state, &viewer, &agents_repo_id, SEED_BRANCH).await
+        {
             result.seed_skipped = true;
             result.pushed = true;
             result.push_record_event_id = Some(record);
@@ -812,7 +817,7 @@ pub(crate) async fn project_agents_init_with_paths(
         }
         if result.pushed {
             result.push_record_event_id =
-                read_push_record_id(state, &viewer, &agents_repo_id).await;
+                read_push_record_id(state, &viewer, &agents_repo_id, SEED_BRANCH).await;
         }
     }
 

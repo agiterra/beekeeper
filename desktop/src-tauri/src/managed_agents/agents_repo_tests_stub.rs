@@ -58,7 +58,29 @@ pub(super) async fn spawn_stub_relay(
                         .and_then(serde_json::Value::as_str)
                         .unwrap_or("")
                         .to_string();
-                    store.lock().unwrap().push(event);
+                    // The real relay writes a `HEAD`-only kind:30618 the
+                    // moment a repository is announced (ledger 176); so
+                    // does this stub, so a seed that trusts any record
+                    // with the right `d` is caught here.
+                    let creation = (event.get("kind").and_then(serde_json::Value::as_u64)
+                        == Some(u64::from(KIND_REPO_ANNOUNCEMENT)))
+                    .then(|| {
+                        event
+                            .get("tags")
+                            .and_then(serde_json::Value::as_array)
+                            .and_then(|tags| {
+                                tags.iter().find_map(|tag| {
+                                    (tag.get(0).and_then(serde_json::Value::as_str) == Some("d"))
+                                        .then(|| tag.get(1).and_then(serde_json::Value::as_str))
+                                        .flatten()
+                                })
+                            })
+                            .map(creation_record_json)
+                    })
+                    .flatten();
+                    let mut store = store.lock().unwrap();
+                    store.push(event);
+                    store.extend(creation);
                     (
                         StatusCode::OK,
                         serde_json::json!({ "event_id": id, "accepted": true, "message": "" })
@@ -292,12 +314,14 @@ pub(super) fn git_smart_http(
                 &format!("refs/heads/{SEED_BRANCH}"),
             ])
             .env("GIT_DIR", &bare)
-            .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
-            .status()
-            .is_ok_and(|status| status.success());
-        if landed {
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string());
+        if let Some(sha) = landed {
             let mut stored = store.lock().unwrap();
+            // A creation record (`HEAD` only) does not count as the push.
             let already = stored.iter().any(|event| {
                 event.get("kind").and_then(serde_json::Value::as_u64)
                     == Some(u64::from(KIND_REPO_REF_STATE))
@@ -308,11 +332,14 @@ pub(super) fn git_smart_http(
                             tags.iter().any(|tag| {
                                 tag.get(0).and_then(serde_json::Value::as_str) == Some("d")
                                     && tag.get(1).and_then(serde_json::Value::as_str) == Some(id)
+                            }) && tags.iter().any(|tag| {
+                                tag.get(0).and_then(serde_json::Value::as_str)
+                                    == Some(&format!("refs/heads/{SEED_BRANCH}"))
                             })
                         })
             });
             if !already {
-                stored.push(push_record_json(id));
+                stored.push(push_record_json(id, &sha));
             }
         }
     }
@@ -341,15 +368,56 @@ pub(super) fn announcement_json(keys: &Keys, repo_id: &str) -> serde_json::Value
 }
 
 /// The relay-signed kind:30618 for `repo_id`, as the stub's git server
-/// stores it after a push.
-pub(super) fn push_record_json(repo_id: &str) -> serde_json::Value {
+/// stores it after a push: `d`, the pushed `main`, and `HEAD`.
+pub(super) fn push_record_json(repo_id: &str, sha: &str) -> serde_json::Value {
     let event = EventBuilder::new(Kind::Custom(KIND_REPO_REF_STATE), "")
         .tags(vec![
-            Tag::parse(vec!["d".to_string(), repo_id.to_string()]).unwrap()
+            Tag::parse(vec!["d".to_string(), repo_id.to_string()]).unwrap(),
+            Tag::parse(vec![format!("refs/heads/{SEED_BRANCH}"), sha.to_string()]).unwrap(),
+            Tag::parse(vec![
+                "HEAD".to_string(),
+                format!("ref: refs/heads/{SEED_BRANCH}"),
+            ])
+            .unwrap(),
         ])
         .sign_with_keys(&Keys::generate())
         .expect("sign");
     event_json(&event)
+}
+
+/// The relay-signed kind:30618 the relay writes when a repository is
+/// announced, before any push: `d` and `HEAD` only, no branch (ledger 176).
+pub(super) fn creation_record_json(repo_id: &str) -> serde_json::Value {
+    let event = EventBuilder::new(Kind::Custom(KIND_REPO_REF_STATE), "")
+        .tags(vec![
+            Tag::parse(vec!["d".to_string(), repo_id.to_string()]).unwrap(),
+            Tag::parse(vec![
+                "HEAD".to_string(),
+                format!("ref: refs/heads/{SEED_BRANCH}"),
+            ])
+            .unwrap(),
+        ])
+        .sign_with_keys(&Keys::generate())
+        .expect("sign");
+    event_json(&event)
+}
+
+/// The kind:30618 records in `stored` that name a pushed `main`.
+pub(super) fn pushed_records(stored: &Stored) -> Vec<serde_json::Value> {
+    stored_of_kind(stored, u64::from(KIND_REPO_REF_STATE))
+        .into_iter()
+        .filter(|event| {
+            event
+                .get("tags")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|tags| {
+                    tags.iter().any(|tag| {
+                        tag.get(0).and_then(serde_json::Value::as_str)
+                            == Some(&format!("refs/heads/{SEED_BRANCH}"))
+                    })
+                })
+        })
+        .collect()
 }
 
 /// The project's kind:30621 head by `keys`, named.

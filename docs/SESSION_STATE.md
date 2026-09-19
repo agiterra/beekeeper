@@ -14356,6 +14356,36 @@ removed from here.
        founded team session pre-fills that folder and the lead's worktree is
        cut from it.
 
+176. **The relay writes a `HEAD`-only kind:30618 ref state the moment a
+     repository is announced, so the code seed of RPG Test was skipped as
+     "already had commits" and the recorded clone was unborn (2026-09-19,
+     found by Andy on the first Finish repository setup on the `f1f85be60`
+     bundle).** Evidence: the panel said `code seed: already had commits` and
+     `Code cloned to ~/.beekeeper/REPOS/rpg-test and recorded`, yet `git log`
+     in that clone answered "your current branch 'main' does not have any
+     commits yet" and `ls-remote origin` listed no refs. On hive, `bee events
+     query --kinds 30618` holds three records: `rpg-test` at 1789818847 with
+     tags `d`, `HEAD ref: refs/heads/main`, `p` — the announcement's second —
+     and no branch; `rpg-test-beekeeper-agents` twice at 1789818849, one
+     `HEAD`-only and one with `refs/heads/main f027bd1c…`. Cause:
+     `read_push_record_id` (`desktop/src-tauri/src/managed_agents/packs_repo.rs`)
+     took any 30618 whose `d` matched, `limit: 1`, as "pushed"; for the agents
+     repository the newest of two same-second records happened to be the
+     pushed one. Fix: the read asks for ten and returns only a record carrying
+     `["refs/heads/<branch>", <sha>]` (`packs_repo.rs`, `read_push_record_id`,
+     all four callers pass `SEED_BRANCH`); the stub relay now writes the
+     creation record on every announcement and the push record with the
+     branch (`agents_repo_tests_stub.rs`, `creation_record_json`,
+     `push_record_json`), so the existing runs see what hive shows, and
+     `a_creation_only_ref_state_does_not_skip_the_code_seed` pins the
+     regression: an announced repository with only the creation record is
+     seeded, and the clone is born on the seed commit. Also from the same
+     panel: **Run again** was offered after a complete run; the button is
+     shown only while something is still missing
+     (`ProjectAgentsInitAction.tsx`). Owed: rerun Finish repository setup on
+     RPG Test from the rebuilt bundle — it must now seed `rpg-test`, fetch
+     `main` into the unborn clone, and report the commit.
+
 ## 3a. Environment facts that cost real time (do not rediscover)
 
 - **pnpm 11's answer to a stale workspace state is to DELETE `node_modules`,

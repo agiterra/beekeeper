@@ -650,7 +650,7 @@ async fn project_packs_init_with_paths(
     // rather than assert it: the id belongs to an event the relay signed, and
     // an id we made up would point a reader at nothing.
     let push_record_event_id = if !seed_or_push_failed {
-        read_push_record_id(state, &viewer, &repo_id).await
+        read_push_record_id(state, &viewer, &repo_id, SEED_BRANCH).await
     } else {
         None
     };
@@ -720,29 +720,44 @@ pub(crate) async fn withdraw_announcement(
     }
 }
 
-/// The relay-signed kind:30618 ref state for this repository, if it is there.
+/// The relay-signed kind:30618 ref state that proves `branch` was pushed to
+/// this repository, if it is there.
 ///
-/// A failure to read is reported as `None`, not as a failed init: the push
-/// landed either way, and the record is an observation about it rather than
-/// part of it.
+/// The relay writes a ref state at the repository's *creation* too — `HEAD`
+/// only, no branch — so a record with the right `d` proves nothing about
+/// commits (ledger 176: the code seed of RPG Test was skipped as "already
+/// had commits" over exactly that record, leaving an unborn clone). Only a
+/// record carrying `["refs/heads/<branch>", <sha>]` counts.
 pub(crate) async fn read_push_record_id(
     state: &AppState,
     owner: &str,
     repo_id: &str,
+    branch: &str,
 ) -> Option<String> {
     let filter = serde_json::json!({
         "kinds": [KIND_REPO_REF_STATE],
         "#d": [repo_id],
-        "limit": 1,
+        "limit": 10,
     });
+    let wanted = format!("refs/heads/{branch}");
     match crate::relay::query_relay(state, &[filter]).await {
-        Ok(events) => events.first().map(|event| event.id.to_hex()),
+        Ok(events) => events
+            .iter()
+            .find(|event| {
+                event.tags.iter().any(|tag| {
+                    let parts = tag.as_slice();
+                    parts.first().map(String::as_str) == Some(wanted.as_str())
+                        && parts.get(1).is_some_and(|sha| !sha.is_empty())
+                })
+            })
+            .map(|event| event.id.to_hex()),
         Err(error) => {
             tracing::debug!(
                 %owner,
                 %repo_id,
+                %branch,
                 %error,
-                "the packs repository pushed, but its ref-state record could not be read back"
+                "the repository pushed, but its ref-state record could not be read back"
             );
             None
         }
