@@ -189,7 +189,11 @@ impl DeadlineKind {
 struct AnswerStallWatch {
     /// `None` disables the watch entirely.
     timeout: Option<std::time::Duration>,
-    /// Whether top-level prose has been seen this turn.
+    /// Whether top-level prose has been seen since the last top-level tool
+    /// call opened. Prose *before* a tool call is narration ("I'll orient
+    /// first…"), not the answer: the agent still owes a response to the tool's
+    /// result, and silence there is the agent working or stuck mid-turn, not an
+    /// answer whose prompt response never came (ledger 166).
     answer_streamed: bool,
     /// Tool calls opened at the top level and not yet terminal.
     tools_in_flight: std::collections::HashSet<String>,
@@ -223,6 +227,8 @@ impl AnswerStallWatch {
                 match update.get("sessionUpdate").and_then(|k| k.as_str()) {
                     Some("agent_message_chunk") => self.answer_streamed = true,
                     Some("tool_call") => {
+                        // Whatever streamed before this was not the answer.
+                        self.answer_streamed = false;
                         if let Some(id) = update.get("toolCallId").and_then(|v| v.as_str()) {
                             self.tools_in_flight.insert(id.to_owned());
                         }
@@ -5741,6 +5747,42 @@ mod tests {
         assert!(
             matches!(result, Err(AcpError::IdleTimeout { .. })),
             "a tool still in flight must fall to the idle budget, got {result:?}"
+        );
+    }
+
+    /// Narration before a tool call is not the turn's answer either.
+    ///
+    /// Claude narrates ("I'll orient first…"), calls tools, and answers after
+    /// the results. A lead that went quiet right after its last tool result had
+    /// not answered anything, yet the watch — armed by the narration — closed
+    /// the turn at 120s and published "the answer above is complete" over a
+    /// turn that decided nothing (ledger 166). Silence there belongs to the
+    /// idle budget, and the disclosure it earns says the agent went quiet.
+    #[tokio::test]
+    async fn narration_before_a_tool_call_does_not_arm_the_stall_watch() {
+        let script = format!(
+            "echo '{}'; echo '{}'; echo '{}'; sleep 10",
+            top_level_prose(),
+            task_call_opened(),
+            task_call_completed(),
+        );
+        let mut client = spawn_script(&script).await;
+        client.set_answer_stall_timeout(Some(std::time::Duration::from_millis(100)));
+
+        let max_dur = std::time::Duration::from_secs(30);
+        let result = client
+            .read_until_response_with_idle_timeout(
+                "test",
+                999,
+                std::time::Duration::from_millis(400),
+                tokio::time::Instant::now() + max_dur,
+                max_dur,
+            )
+            .await;
+
+        assert!(
+            matches!(result, Err(AcpError::IdleTimeout { .. })),
+            "prose before the last tool call must not arm the stall watch, got {result:?}"
         );
     }
 
