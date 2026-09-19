@@ -115,8 +115,11 @@ export function codingSessionFoundedReadiness(input: {
     modelOverrideReason: input.modelOverrideReason,
     modelOverridden: input.modelOverridden,
     providerRefusal: input.providerRefusal,
+    // The gate itself knows what "Use roles" off bypasses (the role and
+    // pack facts) and what it never does (the checkout), so its verdict is
+    // passed through for every project team launch.
     projectReadiness:
-      team && input.projectRef && input.useRoles
+      team && input.projectRef
         ? {
             allowed: input.readinessGate.allowed,
             reason: input.readinessGate.reason,

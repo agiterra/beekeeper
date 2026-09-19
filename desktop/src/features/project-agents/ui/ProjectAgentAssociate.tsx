@@ -56,12 +56,18 @@ export function ProjectAgentAssociate({
   const mutateAsync = mutation.mutateAsync;
   const [confirming, setConfirming] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  // The association landed but the roster op did not: said here, in the
+  // host's words, because the agent is now a project agent that the relay
+  // will still refuse to let write.
+  const [rosterError, setRosterError] = React.useState<string | null>(null);
   const denied = access.kind === "denied" ? access.reason : null;
 
   async function confirm() {
     setError(null);
+    setRosterError(null);
     try {
-      await mutateAsync({ pubkey, projectRef });
+      const associated = await mutateAsync({ pubkey, projectRef });
+      setRosterError(associated.rosterError);
       setConfirming(false);
     } catch (cause) {
       setError(causeMessage(cause));
@@ -139,6 +145,16 @@ export function ProjectAgentAssociate({
           role="alert"
         >
           {error}
+        </p>
+      ) : null}
+      {rosterError ? (
+        <p
+          className="text-xs text-destructive"
+          data-testid="project-agent-associate-roster-error"
+          role="alert"
+        >
+          Associated, but not added to the project roster: {rosterError}. The
+          agent cannot write the project until it is.
         </p>
       ) : null}
     </div>

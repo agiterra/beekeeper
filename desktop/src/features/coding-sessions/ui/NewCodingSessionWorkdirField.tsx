@@ -15,15 +15,18 @@ import { cn } from "@/shared/lib/cn";
 /**
  * Where the session runs, chosen on this machine and never published.
  *
- * The default walks the same order the provider itself resolves in — the
- * project's remembered directory, then the channel's, then the most recently
- * used one — so the pre-filled value is the one the create would have used
- * anyway, made visible before it matters instead of after a failed receipt.
- */
-/**
- * The prefill priority: the project's remembered directory, the channel's,
- * the caller's fallback (a project repo's local checkout), then the most
- * recently used directory anywhere.
+ * A project session has exactly one honest prefill: the folder this computer
+ * recorded for the project (`byProject`, written by the project's create,
+ * Finish repository setup, or Project settings → This computer). Nothing
+ * else is offered for it — not the channel's folder, not a caller's guess,
+ * not the most recently used directory — because the first RPG Test team
+ * session (2026-09-19) pre-filled the MRU, which was another project's
+ * checkout, and the lead worked, committed and asked to record that folder
+ * as the project's. An empty field with a blocker naming Finish repository
+ * setup is the truth; a plausible path from elsewhere is not.
+ *
+ * Without a project the old order stands: the channel's remembered directory,
+ * the caller's fallback, then the most recently used directory anywhere.
  */
 export function preferredWorkdirPrefill({
   channelId,
@@ -36,8 +39,10 @@ export function preferredWorkdirPrefill({
   projectKey: string | null;
   state: Pick<CodingSessionWorkdirState, "byChannel" | "byProject" | "mru">;
 }): string {
+  if (projectKey) {
+    return state.byProject[projectKey]?.path ?? "";
+  }
   return (
-    (projectKey ? state.byProject[projectKey]?.path : null) ??
     (channelId ? state.byChannel[channelId]?.path : null) ??
     fallbackPath ??
     state.mru[0]?.path ??
@@ -153,9 +158,11 @@ export function NewCodingSessionWorkdirField({
   }, [onChange]);
 
   const problem = describeWorkdirProblem(value, validation);
-  const recents = (state?.mru ?? []).filter(
-    (entry) => entry.path !== value.trim(),
-  );
+  // Recents are other projects' folders as often as not; for a project
+  // session they are exactly the wrong thing to offer (see the prefill).
+  const recents = projectKey
+    ? []
+    : (state?.mru ?? []).filter((entry) => entry.path !== value.trim());
 
   return (
     <div className="flex flex-col gap-2">

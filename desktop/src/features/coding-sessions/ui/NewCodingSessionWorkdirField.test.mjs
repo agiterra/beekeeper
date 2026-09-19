@@ -97,6 +97,52 @@ async function mountField(value) {
   return { changes, unmount: () => mounted.unmount() };
 }
 
+test("a project session prefills the project's recorded folder and nothing else", async () => {
+  const { preferredWorkdirPrefill } = await import(
+    "./NewCodingSessionWorkdirField.tsx"
+  );
+  const state = {
+    byProject: {
+      [PROJECT_KEY]: { path: PROJECT_CHECKOUT, updatedAt: "2026-09-19" },
+    },
+    byChannel: {
+      [CHANNEL_ID]: { path: "/Users/x/Code/other", updatedAt: "2026-09-19" },
+    },
+    mru: [{ path: "/Users/x/Code/tankloop", lastUsedAt: "2026-09-19" }],
+  };
+  assert.equal(
+    preferredWorkdirPrefill({
+      channelId: CHANNEL_ID,
+      fallbackPath: "/Users/x/Code/scanned",
+      projectKey: PROJECT_KEY,
+      state,
+    }),
+    PROJECT_CHECKOUT,
+  );
+  // No folder recorded for the project: an empty field, not the channel's
+  // folder, not the caller's guess, not the MRU — which on 2026-09-19 was
+  // TankLoop's checkout and became the RPG Test lead's working tree.
+  assert.equal(
+    preferredWorkdirPrefill({
+      channelId: CHANNEL_ID,
+      fallbackPath: "/Users/x/Code/scanned",
+      projectKey: "30621:owner:rpg-test",
+      state,
+    }),
+    "",
+  );
+  // Without a project the old order stands.
+  assert.equal(
+    preferredWorkdirPrefill({
+      channelId: null,
+      fallbackPath: null,
+      projectKey: null,
+      state,
+    }),
+    "/Users/x/Code/tankloop",
+  );
+});
+
 test("a seeded workspace is never overwritten by the project's remembered checkout", async () => {
   const { changes, unmount } = await mountField(SEEDED_WORKSPACE);
 

@@ -370,9 +370,18 @@ export function useCodingSessionCrewLaunch(input: {
             // it cut one — not the checkout the form still holds.
             const seatWorkdir = workdir ?? current.workdir;
             if (seatWorkdir) {
+              // Exactly what the solo path stages
+              // (`useNewCodingSessionCreate.ts`): the project coordinate and
+              // the checkout to remember, so `byProject` is written when it
+              // was empty. The first RPG Test team session left it empty —
+              // only the MRU was recorded — and the next session pre-filled
+              // another project's checkout.
               await deps.stageCreateHint({
                 commandId,
                 path: seatWorkdir,
+                projectRef:
+                  current.rememberWorkspace === false ? null : projectRef,
+                rememberPath: current.workdir ?? seatWorkdir,
               });
               // What a person returns to is the checkout, never the worktree
               // that was made from it — otherwise the next session prefills a

@@ -202,6 +202,40 @@ pub(crate) fn install_default_agents(
     Ok(installed)
 }
 
+/// The pubkeys of every managed agent on this computer associated with
+/// `project_ref` — the installed defaults and any agent the Agents tab
+/// associated since — sorted and deduplicated. What creation and **Finish
+/// repository setup** put on the project's roster (ledger 173). Takes the
+/// store lock for the read.
+pub(crate) fn project_agent_pubkeys(
+    app: &AppHandle,
+    state: &AppState,
+    project_ref: &str,
+) -> Result<Vec<String>, String> {
+    let Some(project) = association::normalize_project_ref(project_ref) else {
+        return Err(association::ASSOCIATION_MALFORMED_PROJECT.to_string());
+    };
+    let _guard = state
+        .managed_agents_store_lock
+        .lock()
+        .map_err(|_| "managed-agent storage lock is unavailable".to_string())?;
+    let mut pubkeys: Vec<String> = load_managed_agents(app)?
+        .iter()
+        .filter(|record| {
+            record
+                .project_ref
+                .as_deref()
+                .and_then(association::normalize_project_ref)
+                .as_deref()
+                == Some(project.as_str())
+        })
+        .map(|record| record.pubkey.to_ascii_lowercase())
+        .collect();
+    pubkeys.sort();
+    pubkeys.dedup();
+    Ok(pubkeys)
+}
+
 /// The role slugs named by `<root>/roles/<role>.md`, sorted; `roles/archive/`
 /// is a directory and is skipped by construction.
 fn role_files(root: &std::path::Path) -> Vec<String> {

@@ -40,6 +40,13 @@ use serde::Deserialize;
 /// seat file this crate reads and the metadata it publishes cannot drift apart.
 pub use buzz_core::coding_session_payload::PackRef;
 
+/// The shell a seat's harness runs its terminal in: bash everywhere but
+/// Windows, where the harness picks its own. See [`ActorSeat::post_fence_env`].
+#[cfg(not(windows))]
+const SEAT_SHELL: Option<&str> = Some("/bin/bash");
+#[cfg(windows)]
+const SEAT_SHELL: Option<&str> = None;
+
 /// One agent seat's host-local credentials, as the desktop wrote them.
 #[derive(Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -213,6 +220,15 @@ impl ActorSeat {
     /// the same class of untruth as a forged transcript: a diff attributed to
     /// a person who did not write it.
     ///
+    /// *The shell*: `SHELL=/bin/bash` on every host but Windows. The Claude
+    /// harness runs its Terminal tool in `$SHELL`, and an operator's login
+    /// shell is usually zsh, whose `=word` filename expansion turns the
+    /// `echo ====` separators agents habitually write into a fatal
+    /// "command not found" that aborts the whole line with exit 1 — which is
+    /// how `bee --help` was reported failing in a seat while exiting 0 when
+    /// run alone (ledger 173). A seat's shell is the host's choice, not the
+    /// operator's habit, so it is set here rather than left to inheritance.
+    ///
     /// `role` is the role this execution was seated with, used as the name
     /// when the launcher staged no display name.
     pub fn post_fence_env(&self, role: Option<&str>) -> Vec<(String, String)> {
@@ -231,6 +247,9 @@ impl ActorSeat {
         env.push(("GIT_AUTHOR_EMAIL".to_owned(), email.clone()));
         env.push(("GIT_COMMITTER_NAME".to_owned(), name));
         env.push(("GIT_COMMITTER_EMAIL".to_owned(), email));
+        if let Some(shell) = SEAT_SHELL {
+            env.push(("SHELL".to_owned(), shell.to_owned()));
+        }
         env
     }
 
@@ -511,10 +530,31 @@ mod tests {
                 "GIT_AUTHOR_EMAIL",
                 "GIT_COMMITTER_NAME",
                 "GIT_COMMITTER_EMAIL",
+                #[cfg(not(windows))]
+                "SHELL",
             ]
         );
         assert_eq!(env[0].1, NSEC);
         assert_eq!(env[1].1, NSEC, "the NOSTR_PRIVATE_KEY mirror");
+    }
+
+    /// Ledger 173: a seat's Terminal ran in the operator's zsh, whose `=word`
+    /// expansion aborted every command line carrying an `echo ====`
+    /// separator, so `bee --help` was reported as a failed tool call. The
+    /// host names the shell; the operator's login shell is not inherited.
+    #[cfg(not(windows))]
+    #[test]
+    fn a_seat_runs_its_terminal_in_bash_not_the_operators_login_shell() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = write_seats(dir.path(), &seats_body("create-1"));
+        let file = ActorSeatsFile::load(Some(&path));
+        let seat = file.seat("create-1").expect("the seat is held here");
+        let env = seat.post_fence_env(Some("builder"));
+        let shell = env
+            .iter()
+            .find(|(key, _)| key == "SHELL")
+            .map(|(_, value)| value.as_str());
+        assert_eq!(shell, Some("/bin/bash"));
     }
 
     /// The `packRef` reaches the provider off the host-local file, and a seat

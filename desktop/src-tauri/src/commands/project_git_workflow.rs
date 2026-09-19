@@ -389,13 +389,88 @@ pub(crate) fn clone_project_repository_blocking(
             repo_dir.display()
         ));
     }
+    clone_into_dir(&repo_dir, clone_url, branch.as_deref(), auth)
+}
+
+/// Clone `clone_url` into exactly `repo_dir` (its parent created as needed),
+/// on `default_branch` when the remote has it, or reuse what is there.
+///
+/// The directory the project's folder is recorded as (ledger 174), so the
+/// name is the caller's, not derived from the URL as
+/// [`clone_project_repository_blocking`] derives it. An existing `repo_dir`
+/// is reused when it is a git checkout whose `origin` is `clone_url`
+/// (`cloned: false`); a checkout with an unborn `HEAD` — cloned while the
+/// repository was empty — is fetched and put on the branch first, so the
+/// caller's next `git worktree add` has a commit to cut from. Anything else
+/// at that path refuses by name; nothing is overwritten.
+pub fn clone_repository_to_dir(
+    repo_dir: &std::path::Path,
+    clone_url: &str,
+    default_branch: Option<&str>,
+    auth: &GitAuthConfig,
+) -> Result<ProjectRepoCloneResult, String> {
+    validate_local_clone_url(clone_url)?;
+    if !repo_dir.is_absolute() {
+        return Err(format!("{} is not an absolute path.", repo_dir.display()));
+    }
+    let branch = normalize_branch_option(default_branch);
+    if repo_dir.exists() {
+        if !is_checkout_of(repo_dir, clone_url) {
+            return Err(format!(
+                "{} already exists but is not a git checkout of {clone_url}.",
+                repo_dir.display()
+            ));
+        }
+        if run_git(&["rev-parse", "--verify", "HEAD"], Some(repo_dir), auth).is_err() {
+            if let Some(branch) = branch.as_deref() {
+                run_git(&["fetch", "--quiet", "origin"], Some(repo_dir), auth)?;
+                run_git(
+                    &[
+                        "checkout",
+                        "--quiet",
+                        "-B",
+                        branch,
+                        &format!("origin/{branch}"),
+                    ],
+                    Some(repo_dir),
+                    auth,
+                )?;
+            }
+        }
+        return Ok(ProjectRepoCloneResult {
+            path: repo_dir.display().to_string(),
+            cloned: false,
+            message: "Repository is already cloned.".to_string(),
+        });
+    }
+    if let Some(parent) = repo_dir.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("create {}: {error}", parent.display()))?;
+    }
+    clone_into_dir(repo_dir, clone_url, branch.as_deref(), auth)
+}
+
+/// Whether `repo_dir` is a git checkout whose `origin` is `clone_url`.
+pub fn is_checkout_of(repo_dir: &std::path::Path, clone_url: &str) -> bool {
+    repo_dir.join(".git").exists()
+        && super::project_repo_paths::checkout_remote_matches(repo_dir, "origin", clone_url)
+}
+
+/// `git clone` into a `repo_dir` that does not exist yet, retrying without
+/// the branch when the remote lacks it, and pointing an unborn `HEAD` at it.
+fn clone_into_dir(
+    repo_dir: &std::path::Path,
+    clone_url: &str,
+    branch: Option<&str>,
+    auth: &GitAuthConfig,
+) -> Result<ProjectRepoCloneResult, String> {
     let repo_path = repo_dir
         .to_str()
         .ok_or_else(|| "repository path is not UTF-8".to_string())?;
 
     let mut clone_args = vec!["clone"];
-    if let Some(ref branch) = branch {
-        clone_args.extend(["--branch", branch.as_str()]);
+    if let Some(branch) = branch {
+        clone_args.extend(["--branch", branch]);
     }
     clone_args.extend(["--end-of-options", clone_url, repo_path]);
     if let Err(error) = run_git(&clone_args, None, auth) {
@@ -408,13 +483,34 @@ pub(crate) fn clone_project_repository_blocking(
             auth,
         )?;
     }
-    align_unborn_head_branch(&repo_dir, branch.as_deref(), auth)?;
+    align_unborn_head_branch(repo_dir, branch, auth)?;
 
     Ok(ProjectRepoCloneResult {
         path: repo_dir.display().to_string(),
         cloned: true,
         message: format!("Cloned repository to {}.", repo_dir.display()),
     })
+}
+
+/// The folder new project checkouts go under when the community names no
+/// repositories folder: `default_repos_root_candidates()[0]`
+/// (`~/.beekeeper/REPOS`), as an absolute path. Creates nothing — the
+/// create-project dialog pre-fills `<this>/<slug>` from it.
+#[tauri::command]
+pub fn default_repos_root() -> Result<String, String> {
+    let root = default_repos_root_candidates()
+        .into_iter()
+        .next()
+        .ok_or_else(|| {
+            "this computer has no home directory to keep repositories under".to_string()
+        })?;
+    if !root.is_absolute() {
+        return Err(format!(
+            "the default repositories folder {} is not an absolute path",
+            root.display()
+        ));
+    }
+    Ok(root.display().to_string())
 }
 
 #[tauri::command]

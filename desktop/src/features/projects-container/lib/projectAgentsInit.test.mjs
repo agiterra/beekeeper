@@ -5,6 +5,9 @@ import {
   decodeProjectAgentsInitResult,
   defaultAgentsRepoId,
   describeAgentsSetup,
+  describeCheckoutOutcome,
+  describeCodeSeedOutcome,
+  describeRosterOutcome,
 } from "./projectAgentsInit.ts";
 
 const OWNER = "a".repeat(64);
@@ -48,10 +51,32 @@ const COMPLETE = {
     { role: "lead", name: "Lead", pubkey: "2".repeat(64), refreshed: false },
   ],
   agentsError: null,
+  codeSeedCommitSha: "9".repeat(40),
+  codeSeedSkipped: false,
+  codeSeedError: null,
+  checkoutPath: "/Users/x/Code/demo",
+  checkoutCloned: true,
+  checkoutError: null,
+  rosterAdded: ["1".repeat(64), "2".repeat(64)],
+  rosterError: null,
 };
 
 test("decodeProjectAgentsInitResult accepts the host's answer and refuses a malformed one", () => {
   assert.deepEqual(decodeProjectAgentsInitResult(COMPLETE), COMPLETE);
+  // The checkout and roster facts are part of the shape, not optional
+  // extras: a host that omits them is a host this reader cannot vouch for.
+  for (const field of ["checkoutPath", "checkoutCloned", "rosterAdded"]) {
+    const { [field]: _dropped, ...without } = COMPLETE;
+    assert.throws(
+      () => decodeProjectAgentsInitResult(without),
+      /malformed/,
+      field,
+    );
+  }
+  assert.throws(
+    () => decodeProjectAgentsInitResult({ ...COMPLETE, rosterAdded: [1] }),
+    /malformed/,
+  );
   assert.throws(
     () => decodeProjectAgentsInitResult({ ...COMPLETE, complete: "yes" }),
     /malformed/,
@@ -77,7 +102,7 @@ test("defaultAgentsRepoId keeps the suffix whole inside 64 characters, as the ho
 test("describeAgentsSetup prints the host's verdict, not a happier one", () => {
   assert.equal(
     describeAgentsSetup(COMPLETE),
-    "Repositories ready: demo (code) and demo-beekeeper-agents (seeded as Beekeeper aaaaaaaa, commit eeeeeeee); the project's roles come from demo-beekeeper-agents on main. 2 default agents installed: Builder, Lead.",
+    "Repositories ready: demo (code) and demo-beekeeper-agents (seeded as Beekeeper aaaaaaaa, commit eeeeeeee); the project's roles come from demo-beekeeper-agents on main. 2 default agents installed: Builder, Lead. Code cloned to /Users/x/Code/demo and recorded as this project's folder. 2 agents added to the project roster.",
   );
   assert.match(
     describeAgentsSetup({
@@ -113,6 +138,72 @@ test("describeAgentsSetup prints the host's verdict, not a happier one", () => {
   };
   assert.equal(
     describeAgentsSetup(gap),
-    "Not finished: agents repository demo-beekeeper-agents not seeded: no route to the relay. Finish setup from Project settings → Packs.",
+    "Not finished: agents repository demo-beekeeper-agents not seeded: no route to the relay. Finish setup from Project settings → Packs. Code cloned to /Users/x/Code/demo and recorded as this project's folder. 2 agents added to the project roster.",
+  );
+});
+
+test("the checkout, code seed and roster sentences say what the host did, or why not", () => {
+  assert.equal(
+    describeCheckoutOutcome({
+      checkoutPath: "/Users/x/Code/demo",
+      checkoutCloned: false,
+      checkoutError: null,
+    }),
+    "Code already checked out at /Users/x/Code/demo; recorded as this project's folder.",
+  );
+  assert.equal(
+    describeCheckoutOutcome({
+      checkoutPath: null,
+      checkoutCloned: false,
+      checkoutError: "/Users/x/Code/demo is a checkout of another repository",
+    }),
+    "No folder was recorded for this project: /Users/x/Code/demo is a checkout of another repository.",
+  );
+  assert.equal(
+    describeCheckoutOutcome({
+      checkoutPath: null,
+      checkoutCloned: false,
+      checkoutError: null,
+    }),
+    "No folder was recorded for this project: the host did not say why.",
+  );
+  assert.equal(
+    describeCodeSeedOutcome({
+      codeSeedCommitSha: "9".repeat(40),
+      codeSeedSkipped: false,
+      codeSeedError: null,
+    }),
+    "seeded, commit 99999999",
+  );
+  assert.equal(
+    describeCodeSeedOutcome({
+      codeSeedCommitSha: null,
+      codeSeedSkipped: true,
+      codeSeedError: null,
+    }),
+    "already had commits",
+  );
+  assert.equal(
+    describeCodeSeedOutcome({
+      codeSeedCommitSha: null,
+      codeSeedSkipped: false,
+      codeSeedError: "push rejected",
+    }),
+    "push rejected",
+  );
+  assert.equal(
+    describeRosterOutcome({ rosterAdded: ["1".repeat(64)], rosterError: null }),
+    "1 agent added to the project roster.",
+  );
+  assert.equal(
+    describeRosterOutcome({ rosterAdded: [], rosterError: null }),
+    "0 agents added to the project roster.",
+  );
+  assert.equal(
+    describeRosterOutcome({
+      rosterAdded: [],
+      rosterError: "restricted: project write access required",
+    }),
+    "0 agents added to the project roster. Roster error: restricted: project write access required.",
   );
 });

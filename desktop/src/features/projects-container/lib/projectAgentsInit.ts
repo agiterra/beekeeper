@@ -3,14 +3,18 @@
  *
  * The host command is `project_agents_init`
  * (`desktop/src-tauri/src/managed_agents/agents_repo.rs`): preflight both
- * ids community-wide, announce `<slug>` (empty) and
- * `<slug>-beekeeper-agents`, seed the latter from this build's shipped role
- * templates by reference, push `main`, and publish the kind:30624 pinned
- * `ref: refs/heads/main, path: .`. It is idempotent — **Finish setup** in
- * Project settings runs the same command, and whatever already exists under
- * the viewer's key is reused — and it never says "created" over a
- * repository the push did not fill: `complete` and `gap` are the host's own
- * verdict, and this reader prints them rather than composing a happier one.
+ * ids community-wide, announce `<slug>` and `<slug>-beekeeper-agents`, seed
+ * the code repository with one commit on `main` (a repository with no commit
+ * cannot host a worktree), seed the agents repository from this build's
+ * shipped role templates by reference, push `main`, publish the kind:30624
+ * pinned `ref: refs/heads/main, path: .`, clone `<slug>` under
+ * `checkoutParent` (or the host's default repos root) and record it as the
+ * project's folder, and put every project agent on the project roster as a
+ * collaborator. It is idempotent — **Finish repository setup** in Project
+ * settings runs the same command, and whatever already exists under the
+ * viewer's key is reused — and it never says "created" over a repository
+ * the push did not fill: `complete` and `gap` are the host's own verdict,
+ * and this reader prints them rather than composing a happier one.
  */
 import { invokeTauri } from "@/shared/api/tauri";
 
@@ -19,6 +23,9 @@ export const PROJECT_AGENTS_INIT_COMMAND = "project_agents_init";
 
 /** Suffix the agents repository id carries. */
 export const AGENTS_REPO_SUFFIX = "-beekeeper-agents";
+
+/** The host command that names the default repos root. */
+export const DEFAULT_REPOS_ROOT_COMMAND = "default_repos_root";
 
 /** Longest repository id the relay's git routes accept. */
 const REPO_ID_MAX_LENGTH = 64;
@@ -62,6 +69,25 @@ export type ProjectAgentsInitResult = {
   agentsInstalled: InstalledDefaultAgent[];
   /** Why no agents were installed, when the seed landed and none were. */
   agentsError: string | null;
+  /** The one commit the code repository was seeded with, or `null`. */
+  codeSeedCommitSha: string | null;
+  /** The code repository already had a commit, so no seed was pushed. */
+  codeSeedSkipped: boolean;
+  /** Why the code seed did not land, in the host's words. */
+  codeSeedError: string | null;
+  /**
+   * Where the project's code repository is checked out on this computer —
+   * the folder recorded as the project's, `null` when none was recorded.
+   */
+  checkoutPath: string | null;
+  /** The clone was made by this run; `false` with a path means it was reused. */
+  checkoutCloned: boolean;
+  /** Why no checkout was recorded, in the host's words. */
+  checkoutError: string | null;
+  /** Agent pubkeys this run put on the project roster as collaborators. */
+  rosterAdded: string[];
+  /** Why the roster op did not land, in the host's words. */
+  rosterError: string | null;
 };
 
 /** One default agent the create installed. */
@@ -126,7 +152,16 @@ function isProjectAgentsInitResult(
     isOptionalString(record.gap) &&
     Array.isArray(record.agentsInstalled) &&
     record.agentsInstalled.every(isInstalledDefaultAgent) &&
-    isOptionalString(record.agentsError)
+    isOptionalString(record.agentsError) &&
+    isOptionalString(record.codeSeedCommitSha) &&
+    typeof record.codeSeedSkipped === "boolean" &&
+    isOptionalString(record.codeSeedError) &&
+    isOptionalString(record.checkoutPath) &&
+    typeof record.checkoutCloned === "boolean" &&
+    isOptionalString(record.checkoutError) &&
+    Array.isArray(record.rosterAdded) &&
+    record.rosterAdded.every((pubkey) => typeof pubkey === "string") &&
+    isOptionalString(record.rosterError)
   );
 }
 
@@ -151,12 +186,33 @@ export function decodeProjectAgentsInitResult(
  */
 export async function projectAgentsInit(input: {
   projectRef: string;
+  /**
+   * The folder the code repository is cloned UNDER — the clone lands at
+   * `<checkoutParent>/<slug>`. Omitted or `null`, the host uses its default
+   * repos root (`defaultReposRoot`).
+   */
+  checkoutParent?: string | null;
 }): Promise<ProjectAgentsInitResult> {
   return decodeProjectAgentsInitResult(
     await invokeTauri(PROJECT_AGENTS_INIT_COMMAND, {
       projectRef: input.projectRef,
+      checkoutParent: input.checkoutParent ?? null,
     }),
   );
+}
+
+/**
+ * The host's default repos root — the folder a project's code repository is
+ * cloned under when no other is chosen (`~/.beekeeper/REPOS` on this build's
+ * `project_repo_paths.rs`). Throws off-host; callers fall back to naming the
+ * host default rather than inventing a path.
+ */
+export async function defaultReposRoot(): Promise<string> {
+  const root = await invokeTauri<unknown>(DEFAULT_REPOS_ROOT_COMMAND);
+  if (typeof root !== "string" || root.trim().length === 0) {
+    throw new Error("native default-repos-root adapter returned no path");
+  }
+  return root;
 }
 
 /**
@@ -204,6 +260,7 @@ export function defaultAgentsRepoId(projectSlug: string): string {
  * `gap` is the host's own words; nothing here softens them.
  */
 export function describeAgentsSetup(result: ProjectAgentsInitResult): string {
+  const tail = ` ${describeCheckoutOutcome(result)} ${describeRosterOutcome(result)}`;
   if (result.complete) {
     const seed = result.seedSkipped
       ? "already seeded"
@@ -216,7 +273,59 @@ export function describeAgentsSetup(result: ProjectAgentsInitResult): string {
         : result.agentsError
           ? ` No default agents were installed: ${result.agentsError}.`
           : "";
-    return `Repositories ready: ${result.codeRepoId} (code) and ${result.agentsRepoId} (${seed}); the project's roles come from ${result.agentsRepoId} on ${result.branch}.${agents}`;
+    return `Repositories ready: ${result.codeRepoId} (code) and ${result.agentsRepoId} (${seed}); the project's roles come from ${result.agentsRepoId} on ${result.branch}.${agents}${tail}`;
   }
-  return `Not finished: ${result.gap ?? "unknown"}. Finish setup from Project settings → Packs.`;
+  return `Not finished: ${result.gap ?? "unknown"}. Finish setup from Project settings → Packs.${tail}`;
+}
+
+/**
+ * Where the project's code lives on this computer after this run — cloned
+ * by it, reused, or not recorded and why. Never a path the host did not
+ * report.
+ */
+export function describeCheckoutOutcome(
+  result: Pick<
+    ProjectAgentsInitResult,
+    "checkoutPath" | "checkoutCloned" | "checkoutError"
+  >,
+): string {
+  if (result.checkoutPath) {
+    return result.checkoutCloned
+      ? `Code cloned to ${result.checkoutPath} and recorded as this project's folder.`
+      : `Code already checked out at ${result.checkoutPath}; recorded as this project's folder.`;
+  }
+  return `No folder was recorded for this project: ${result.checkoutError ?? "the host did not say why"}.`;
+}
+
+/** The code seed, in one clause: the commit, "already had commits", or the error. */
+export function describeCodeSeedOutcome(
+  result: Pick<
+    ProjectAgentsInitResult,
+    "codeSeedCommitSha" | "codeSeedSkipped" | "codeSeedError"
+  >,
+): string {
+  if (result.codeSeedCommitSha) {
+    return `seeded, commit ${result.codeSeedCommitSha.slice(0, 8)}`;
+  }
+  if (result.codeSeedSkipped) return "already had commits";
+  return result.codeSeedError ?? "not seeded";
+}
+
+/**
+ * The roster line: how many agents this run made project collaborators, or
+ * the host's reason none were. "0 agents added" is said only when nothing
+ * failed — an agent already on the roster is skipped, not added.
+ */
+export function describeRosterOutcome(
+  result: Pick<ProjectAgentsInitResult, "rosterAdded" | "rosterError">,
+): string {
+  const count = result.rosterAdded.length;
+  const added =
+    count === 1
+      ? "1 agent added to the project roster."
+      : `${count} agents added to the project roster.`;
+  if (result.rosterError) {
+    return `${added} Roster error: ${result.rosterError}.`;
+  }
+  return added;
 }

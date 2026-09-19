@@ -70,6 +70,57 @@ export function teamReadinessRequiredUnknownFact(
   );
 }
 
+/** A fact about where this project's code lives on this computer. */
+function isCheckoutFact(fact: TeamReadinessFact): boolean {
+  return fact.category === "checkout" || fact.code.startsWith("CHECKOUT_");
+}
+
+/**
+ * The gate a launch that does not use roles still passes: the checkout.
+ *
+ * "Use roles" off bypasses the role and pack facts — a person-led session
+ * with no seats runs on none of them — but never the checkout. Every seat a
+ * lead later hires gets a worktree cut from the project's recorded folder,
+ * and the first RPG Test team session (2026-09-19) got past this gate with
+ * roles off, ran in another project's checkout, and could not hire. So with
+ * roles off the checkout fact alone is read, and read fail-closed: a
+ * readiness that is loading, errored or absent cannot vouch for the folder.
+ */
+function checkoutOnlyLaunchGate(input: {
+  loading: boolean;
+  error: string | null;
+  readiness: TeamReadinessResponse | null;
+}): TeamReadinessLaunchGate {
+  if (input.loading) {
+    return {
+      allowed: false,
+      reason: "Checking where this project's code lives on this computer.",
+    };
+  }
+  if (input.error !== null) {
+    return {
+      allowed: false,
+      reason: `This computer could not confirm where this project's code lives: ${input.error}`,
+    };
+  }
+  if (input.readiness === null) {
+    return {
+      allowed: false,
+      reason:
+        "This computer could not confirm where this project's code lives because this project has not been checked.",
+    };
+  }
+  const checkoutProblem = input.readiness.facts.find(
+    (fact) =>
+      isCheckoutFact(fact) &&
+      (fact.state === "blocked" || fact.state === "unknown"),
+  );
+  if (checkoutProblem) {
+    return { allowed: false, reason: factReason(checkoutProblem) };
+  }
+  return { allowed: true, reason: null };
+}
+
 /** Fail closed for project team launches, while leaving non-project launches alone. */
 export function teamReadinessLaunchGate(input: {
   projectRef: string | null;
@@ -80,15 +131,16 @@ export function teamReadinessLaunchGate(input: {
   runtimeTarget?: NewCodingSessionTarget | null;
   /**
    * Whether the launch uses the project's role packs at all. A session led
-   * by the person, with no seats, needs no prepared roles: the checkout,
-   * the supervised provider and the role packs are what *seats* run on. When
-   * `false` the gate is open and the readiness facts are informational.
-   * Defaults to `true` so every existing caller keeps its gate.
+   * by the person, with no seats, needs no prepared roles: the supervised
+   * provider and the role packs are what *seats* run on. When `false` only
+   * the checkout fact gates (`checkoutOnlyLaunchGate`) and the other
+   * readiness facts are informational. Defaults to `true` so every existing
+   * caller keeps its full gate.
    */
   useRoles?: boolean;
 }): TeamReadinessLaunchGate {
   if (input.projectRef === null) return { allowed: true, reason: null };
-  if (input.useRoles === false) return { allowed: true, reason: null };
+  if (input.useRoles === false) return checkoutOnlyLaunchGate(input);
   if (input.loading) {
     return {
       allowed: false,
@@ -346,7 +398,7 @@ const COPY: Record<string, TeamReadinessBlockerCopy> = {
   CHECKOUT_NOT_RECORDED: {
     title: "This computer does not know where this project's code lives",
     action:
-      "Agents get their own worktree cut from that folder, so a session cannot start without it. Pick the folder below, or set it in Project settings → This computer.",
+      "Agents get their own worktree cut from that folder, so a session cannot start without it. Finish repository setup (Project settings → Packs) clones the project's repository and records it; or pick the folder below, or set it in Project settings → This computer.",
   },
   CHECKOUT_UNAVAILABLE: {
     title: "The recorded folder is not there any more",

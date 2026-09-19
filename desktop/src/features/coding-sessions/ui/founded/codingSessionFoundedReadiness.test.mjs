@@ -191,7 +191,7 @@ test("the goal and name readers gate Start and the busy sentence reaches readine
   );
 });
 
-test("project roles gate only when opted in on a project", () => {
+test("the project gate's verdict blocks a team launch whether or not roles are used", () => {
   const gated = codingSessionFoundedReadiness({
     ...READY,
     mode: "team",
@@ -205,6 +205,11 @@ test("project roles gate only when opted in on a project", () => {
       .sentence,
     "No checkout.",
   );
+  // Roles off: the gate itself decides what is bypassed (the role and pack
+  // facts) and what never is (the checkout — `teamReadinessLaunchGate`),
+  // so a refusal it hands back is a blocker here too. The first RPG Test
+  // team session (2026-09-19) started with roles off and no recorded
+  // folder because this arm used to drop the gate's verdict.
   const optedOut = codingSessionFoundedReadiness({
     ...READY,
     mode: "team",
@@ -215,13 +220,28 @@ test("project roles gate only when opted in on a project", () => {
     teamReadinessLoading: true,
   });
   assert.equal(
-    optedOut.readiness.blockers.some(
+    optedOut.readiness.blockers.find(
+      (entry) => entry.id === "project-readiness",
+    ).sentence,
+    "No checkout.",
+  );
+  // The "could not read readiness" unknown is a roles concern and stays off.
+  assert.equal(
+    optedOut.readiness.unknowns.some(
       (entry) => entry.id === "project-readiness",
     ),
     false,
   );
+  const optedOutAndFine = codingSessionFoundedReadiness({
+    ...READY,
+    mode: "team",
+    lead: AGENT,
+    projectRef: "30621:owner:beekeeper",
+    useRoles: false,
+    readinessGate: { allowed: true, reason: null },
+  });
   assert.equal(
-    optedOut.readiness.unknowns.some(
+    optedOutAndFine.readiness.blockers.some(
       (entry) => entry.id === "project-readiness",
     ),
     false,

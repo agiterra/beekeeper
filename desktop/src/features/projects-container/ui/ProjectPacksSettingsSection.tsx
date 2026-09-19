@@ -17,11 +17,6 @@ import {
   type ProjectPackSource,
 } from "../lib/projectPackSource";
 import {
-  describeAgentsSetup,
-  projectAgentsInit,
-  type ProjectAgentsInitResult,
-} from "../lib/projectAgentsInit";
-import {
   defaultPacksRepoId,
   describeSeedOutcome,
   packsRepoIdError,
@@ -30,6 +25,7 @@ import {
 } from "../lib/projectPacksInit";
 import { useProjectCapabilities } from "../lib/projectPermissions";
 import { useProjectRosterQuery } from "../lib/projectMembers";
+import { ProjectAgentsInitAction } from "./ProjectAgentsInitAction";
 
 export { projectPackSourceQueryKey };
 
@@ -170,6 +166,7 @@ export function ProjectPacksSettingsSection({
                 });
               }}
               projectRef={project.address}
+              projectSlug={project.dtag}
             />
           ) : null}
           {activeAction === "create" ? (
@@ -255,125 +252,6 @@ function ProjectPackSourceRow({
         </>
       ) : null}
     </dl>
-  );
-}
-
-/**
- * "Create the project's repositories" / "Finish repository setup" — runs
- * `project_agents_init` (spec § 4.11): announce `<slug>` and
- * `<slug>-beekeeper-agents`, seed the latter from this build's shipped role
- * templates by reference, push `main`, set the source. Idempotent, so the
- * same button finishes a create that stopped part-way. The host's own
- * `complete`/`gap` verdict is what this panel prints.
- */
-function ProjectAgentsInitAction({
-  onCancel,
-  onRan,
-  projectRef,
-}: {
-  onCancel: () => void;
-  onRan: () => void;
-  projectRef: string;
-}) {
-  const [pending, setPending] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
-  const [result, setResult] = React.useState<ProjectAgentsInitResult | null>(
-    null,
-  );
-
-  async function handleRun() {
-    setPending(true);
-    setError(null);
-    try {
-      const ran = await projectAgentsInit({ projectRef });
-      setResult(ran);
-      onRan();
-    } catch (thrown) {
-      setError(
-        thrown instanceof Error
-          ? thrown.message
-          : "Failed to create the project's repositories.",
-      );
-    } finally {
-      setPending(false);
-    }
-  }
-
-  return (
-    <div
-      className="flex flex-col gap-2 rounded-md border border-border/60 p-3"
-      data-testid="project-agents-init-panel"
-    >
-      <p className="text-xs text-muted-foreground">
-        Announces the code repository and the agents repository under your key,
-        seeds the agents repository from this app&apos;s shipped role templates
-        by reference (roles/, plans/, each with an archive/), pushes main, and
-        sets it as this project&apos;s role source. What already exists is
-        reused; what is missing is created.
-      </p>
-      {result ? (
-        <div
-          className="flex flex-col gap-1 text-xs"
-          data-testid="project-agents-init-result"
-        >
-          <p className={result.complete ? "" : "text-destructive"}>
-            {describeAgentsSetup(result)}
-          </p>
-          <dl className="grid grid-cols-[auto,1fr] gap-x-3 gap-y-0.5 font-mono text-2xs">
-            <dt className="text-muted-foreground">code</dt>
-            <dd className="truncate">{result.codeRepoRef}</dd>
-            <dt className="text-muted-foreground">agents</dt>
-            <dd className="truncate">{result.agentsRepoRef}</dd>
-            <dt className="text-muted-foreground">seed</dt>
-            <dd className="truncate">
-              {result.seedCommitSha
-                ? `${result.seedCommitSha.slice(0, 8)} (${result.roles.join(", ")})`
-                : result.seedSkipped
-                  ? "already on the relay"
-                  : (result.seedError ?? result.pushError ?? "not reached")}
-            </dd>
-            <dt className="text-muted-foreground">source</dt>
-            <dd className="truncate">
-              {result.sourceEventId
-                ? result.sourceEventId.slice(0, 8)
-                : result.sourceExisted
-                  ? "already set"
-                  : (result.publicationError ?? "not set")}
-            </dd>
-            <dt className="text-muted-foreground">agents</dt>
-            <dd className="truncate" data-testid="project-agents-init-agents">
-              {result.agentsInstalled.length > 0
-                ? result.agentsInstalled
-                    .map((agent) => `${agent.name} (${agent.role})`)
-                    .join(", ")
-                : (result.agentsError ?? "none installed")}
-            </dd>
-          </dl>
-        </div>
-      ) : null}
-      {error ? (
-        <p
-          className="text-xs text-destructive"
-          data-testid="project-agents-init-error"
-          role="alert"
-        >
-          {error}
-        </p>
-      ) : null}
-      <div className="flex gap-2">
-        <Button
-          data-testid="project-agents-init-run"
-          disabled={pending}
-          onClick={() => void handleRun()}
-          size="sm"
-        >
-          {pending ? "Running…" : result ? "Run again" : "Run"}
-        </Button>
-        <Button disabled={pending} onClick={onCancel} size="sm" variant="ghost">
-          {result ? "Close" : "Cancel"}
-        </Button>
-      </div>
-    </div>
   );
 }
 

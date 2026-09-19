@@ -138,6 +138,8 @@ Two additional rules complete the access grammar:
 
 Invites target **agents exactly like users**: an invited member is a pubkey, and whether that pubkey belongs to a person or an agent is invisible to this grammar. An agent invited into a project reads and writes under the same role rules as any member. Agent-side consent — an agent acknowledging or declining an invitation before acting inside a project — is future work; today an invite is effective the moment the roster carries it.
 
+Beekeeper's desktop applies this to the agents it manages for a project: an identity it mints for a project's role, or one its owner associates with the project, is put on the roster as `collaborator` by the owner's own kind 9010, so the seat's key reads and writes the project like any member. Dissociation removes it (kind 9011). Association alone never confers access; the roster op does.
+
 #### Member roles
 
 Element 4 of an invited-member `p` tag carries the member's **role**, mirroring the NIP-29 `39002` tag grammar:

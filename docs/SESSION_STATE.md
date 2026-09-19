@@ -13880,7 +13880,7 @@ they unblock, and the work item 109 measured but did not do.
    - **Not done / disclosed.** No live `bee packs init` against hive yet. The desktop's project-team setup still copies the thin shipped packs into its draft workspace (`project_team_setup.rs:259`), so a setup agent now edits include lines rather than prose until P5 retargets setup at the agents repository. `bee packs init` has no `--pin` flag: the layout decides.
 
 160. **P1 built: creating a project creates its two repositories, and Finish setup finishes what did not land (2026-09-18).** Spec § 4.11, § 7 P1. With the code that proves it:
-   - **Host command.** `project_agents_init` (`desktop/src-tauri/src/managed_agents/agents_repo.rs`, registered in `handlers.rs`), built from the packs-repo pieces now shared as `pub(crate)` (`build_repo_announcement`, `withdraw_announcement`, `read_push_record_id`, `resolve_app_commit_identity`, `default_repo_id`). Order: preflight both ids community-wide plus the project's 30624 — an id announced by *another* key refuses before anything is signed, naming the id and the owner (ids are one namespace per community, `crates/buzz-db/src/git_repo.rs` `TakenByOther`), and a project already pointed at a *different* repository refuses ("a deliberate `bee packs set-source`"); announce `<slug>` (empty, "This project's code."); announce `<slug>-beekeeper-agents`; seed it in the packs cache with `buzz_persona::seed::write_agents_repo_seed` (this build's catalog, `packs_cache::template_catalog`), one commit authored as this host's identity, push `refs/heads/main`; publish the 30624 `{ref: refs/heads/main, path: "."}` only once the push landed. **Idempotent**: what the viewer already announced is reused, a relay push record skips the seed, an existing source naming the agents repository is kept; a re-run publishes only what is missing. A seed or push failure after this run's own agents announcement withdraws that announcement (the code announcement stands — an empty code repository is what was promised) and the announcement's id stays on the result beside the withdrawal. The result carries every wire fact plus `complete` and one `gap` sentence; a screen never composes a happier one. Tests against a stub relay (`agents_repo_tests.rs`): the git-less push fails → withdrawal, no 30624, `gap` names the seed; another owner's id refuses with nothing signed; a re-run over both announcements and a push record publishes exactly one 30624; a project pointed elsewhere refuses.
+   - **Host command.** `project_agents_init` (`desktop/src-tauri/src/managed_agents/agents_repo.rs`, registered in `handlers.rs`), built from the packs-repo pieces now shared as `pub(crate)` (`build_repo_announcement`, `withdraw_announcement`, `read_push_record_id`, `resolve_app_commit_identity`, `default_repo_id`). Order: preflight both ids community-wide plus the project's 30624 — an id announced by *another* key refuses before anything is signed, naming the id and the owner (ids are one namespace per community, `crates/buzz-db/src/git_repo.rs` `TakenByOther`), and a project already pointed at a *different* repository refuses ("a deliberate `bee packs set-source`"); announce `<slug>` (empty, "This project's code."); announce `<slug>-beekeeper-agents`; seed it in the packs cache with `buzz_persona::seed::write_agents_repo_seed` (this build's catalog, `packs_cache::template_catalog`), one commit authored as this host's identity, push `refs/heads/main`; publish the 30624 `{ref: refs/heads/main, path: "."}` only once the push landed. **Idempotent**: what the viewer already announced is reused, a relay push record skips the seed, an existing source naming the agents repository is kept; a re-run publishes only what is missing. A seed or push failure after this run's own agents announcement withdraws that announcement (the code announcement stands — ~~an empty code repository is what was promised~~ struck 2026-09-19: the code repository is seeded with a README and cloned to the project's folder, item 175) and the announcement's id stays on the result beside the withdrawal. The result carries every wire fact plus `complete` and one `gap` sentence; a screen never composes a happier one. Tests against a stub relay (`agents_repo_tests.rs`): the git-less push fails → withdrawal, no 30624, `gap` names the seed; another owner's id refuses with nothing signed; a re-run over both announcements and a push record publishes exactly one 30624; a project pointed elsewhere refuses.
    - **Desktop create flow.** `createProjectContainer` (`desktop/src/features/projects-container/useCreateProjectContainer.ts`) reads the head, the tombstone and both repository ids in the one batch it already made and refuses before publishing when another key holds an id (`repositoryIdTakenRefusal`); the mutation then runs `initProjectRepositories` — the host command plus a best-effort `a` forward reference from the head to each repository that exists — and returns `{project, repositories, repositoriesError}`: **the project exists once its head is published; a repository step that did not land is a warning toast naming Finish setup, never a failed create** (`lib/toastCreateProjectOutcome.ts`, both call sites). Project settings → Packs gains "Create the project's repositories" / "Finish repository setup" (`ProjectAgentsInitAction`, `data-testid="project-agents-init-*"`), printing the host's verdict and the four wire facts; the legacy "Create packs repository" (a shared `-packs` repository, LANE-L30) and "Use an existing repository" stay. The e2e mock bridge answers `project_agents_init` from `projectAgentsInitByProject` and throws otherwise, so the create flow's disclosed gap is what the existing create-project e2e sees.
    - **Not done / disclosed.** No live create against hive yet. `bee projects create` still requires `--repo` (P5). The project-team setup flow still publishes `<slug>-packs-<hex>` (P5). Nothing yet lists archived roles or plans, and no seat sees the agents repository (P4); the provider still reads `beekeeper/actions.yml` from the code checkout (P3), so an action published from the agents repository is not verified there until P3 lands.
 
@@ -14221,6 +14221,140 @@ removed from here.
        cache had already been re-synced past once, is still owed. Andy
        authored the code this fixes (item 162) and should review it, same as
        169–171.
+
+173. **A seat's Terminal ran in the operator's zsh, so every command line with an
+     `echo ====` separator "failed", and `bee --help` was reported as a failed
+     tool call (2026-09-19, found by Andy on the installed `86dde1d3f` bundle,
+     RPG Test → "Action Rpg Design").** Evidence: the session's transcript
+     (provider outbox, session `1428f00c-3e1d-4044-b28b-ee4afa63c7ae`): the
+     three failed Terminal calls are `$BEE sessions hire --help 2>&1; echo
+     ======; …`, `… echo =====ASSIGN; …` and `… echo ====; …`, each answered
+     `Exit code 1` with the help text followed by `(eval):1: ====== not found`.
+     That marker is zsh's: `=word` is filename expansion of a command name,
+     and a failed expansion aborts the whole line. Run alone, the installed
+     sidecar's `bee --help`, `bee sessions hire --help` and `bee pulse update
+     --help` all exit 0 (checked 2026-09-19). The harness runs its Terminal
+     tool in `$SHELL` unless Claude Code's `defaultShell` setting says
+     otherwise, and the fence passes `SHELL` through untouched
+     (`crates/buzz-session-provider/src/agent_fence.rs`, the toolchain list).
+     Fix: the seat's post-fence environment names the shell — `SHELL=/bin/bash`
+     on every host but Windows (`crates/buzz-session-provider/src/actor_seats.rs:46`,
+     `:252`), pinned by
+     `a_seat_runs_its_terminal_in_bash_not_the_operators_login_shell`
+     (`:548`). A seat's shell is the host's choice, not the operator's login
+     habit. Not changed: `bee` itself, which was never wrong. Owed: the live
+     check that the bundled Claude Code honours `SHELL`; if it does not, the
+     nest's Claude settings get `{"defaultShell": "bash"}` instead.
+
+174. **A seat's own key could not write the project's Pulse: `bee pulse update`
+     was refused 403, because nothing ever put a project's agents on its
+     roster (2026-09-19, found by Andy on the installed `86dde1d3f` bundle,
+     RPG Test → "Action Rpg Design").** Evidence: the session transcript's
+     `$BEE pulse update --kind plan …` answered `Exit code 3 {"error":
+     "auth_error","message":"relay error 403: restricted: project write
+     access required — the project gate refused this write: only a member of
+     that project may write to it"}`, and `bee projects members rpg-test` on
+     hive listed the owner and one collaborator — none of the eight agents
+     `managed-agents.json` holds for the project. Cause: a seat runs as the
+     managed identity's own key (`crates/buzz-session-provider/src/actor_seats.rs`,
+     `post_fence_env`), the relay's gate for kinds 44240/44248 admits only
+     `event.pubkey` on a private project's roster as owner or collaborator
+     (`crates/buzz-relay/src/handlers/ingest.rs`, `admit_project_scoped_write`;
+     `crates/buzz-db/src/project_acl.rs`, `ProjectGate::admits_write`), and
+     creation only *associated* the identities it minted (item 164) — the
+     Agents tab said so: "This does not change project access." NIP-MP
+     already says invites target agents exactly like users; Beekeeper never
+     sent one. Andy's call (2026-09-19): roster membership, not a relay-side
+     inheritance of the owner's tier. Fix, with the code that proves it:
+     - **Roster helper.** `desktop/src-tauri/src/managed_agents/project_roster.rs`:
+       kind 9010 `["a", coord]` + one `["p", hex, "", role]` (arity four) per
+       member (`build_put_members_event`, `:60`), kind 9011 twin (`:90`),
+       `read_project_roster` (`:179`, newest 39010 by `d`, else the verified
+       head's `p` tags), `roster_write_refusal` (`:261`, creator or roster
+       owner only) and `ensure_project_agents_on_roster` (`:306`): read, skip
+       members already present, one 9010 for the rest, an outcome that never
+       fails its caller. Tag shapes pinned by
+       `the_put_op_carries_the_coordinate_and_one_arity_four_p_per_member`.
+     - **Creation and Finish repository setup.** `project_agents_init`
+       (`managed_agents/agents_repo.rs:453`) collects every managed agent of
+       the project (`default_agents.rs:210`, `project_agent_pubkeys`) and puts
+       the missing ones as `collaborator`; the result carries `rosterAdded`
+       and `rosterError`, and `complete` requires the roster step. Stub-relay
+       test: one run publishes exactly one 9010 naming both agents; a rerun
+       publishes none (`agents_repo_tests.rs`).
+     - **Association.** `associate_managed_agent_with_project`
+       (`desktop/src-tauri/src/commands/agent_project_association.rs:41,135`)
+       puts the agent after the association lands and returns
+       `rosterAdded`/`rosterError` (decoded by
+       `desktop/src/shared/api/tauriProjectAgents.ts:19-49`, shown by
+       `ProjectAgentAssociate.tsx:148`). Copy now tells the truth
+       (`projectAgentsCopy.ts:25,191`). NIP-MP records the rule.
+     - **Not done / disclosed.** No disassociate command exists in this
+       build, so `remove_project_agent` (9011) is built and unit-tested but
+       unreached. The relay gate, NIP-OA and `BUZZ_AUTH_TAG` are unchanged.
+       The roster read does not verify the 39010 signer against NIP-11
+       `self`; a wrong read at worst re-puts a member the relay upserts.
+       Live: RPG Test's agents join its roster the first time Finish
+       repository setup runs on the rebuilt bundle — owed.
+
+175. **The lead seat of a project's first team session was cut from another
+     project's checkout, worked there, and asked to record that folder as the
+     project's (2026-09-19, found by Andy on the installed `86dde1d3f`
+     bundle, RPG Test → "Action Rpg Design").** Evidence:
+     `coding-session-workdirs.json` had no `byProject` entry for
+     `…:rpg-test`, `pending["csl-bccb3946-…"]` =
+     `/Users/andy/Code/tankloop-wt-action-rpg-design-lead`, and `mru[0]` =
+     `/Users/andy/Code/tankloop` stamped 12:18:29Z, the hire's minute; the
+     seat committed `games/zelda-like/docs/PLAN.md` to a TankLoop branch,
+     every hire it issued was refused `HIRE_CHECKOUT_NOT_RECORDED` (item 136
+     working as designed), and its closing message told Andy to record the
+     TankLoop checkout as RPG Test's folder. Both relay repositories existed
+     (`bee repos list`: `rpg-test` "This project's code.", no commits). Three
+     causes, one fix each:
+     - **Nothing cloned the code repository.** `project_agents_init` announced
+       `<slug>` and left it "empty until someone pushes" (item 160). Now it
+       seeds `<slug>` with one `README.md` commit on `main`
+       (`managed_agents/agents_repo.rs:663`, `code_seed_readme` `:906`; a
+       repository with no commit cannot host a worktree), clones it to
+       `<parent>/<slug>` (`:828`, through `clone_repository_to_dir`,
+       `desktop/src-tauri/src/commands/project_git_workflow.rs:406`, which
+       reuses a matching checkout and refuses a non-checkout by name) and
+       records it as the project's checkout
+       (`coding_sessions/workdir_store/project.rs:35`,
+       `set_project_checkout`). The parent is what the New project dialog
+       asked for (`ProjectCheckoutFolderField.tsx`, pre-filled
+       `<default repository folder>/<slug>` from the community's
+       `reposDir` or the host's `default_repos_root`,
+       `project_git_workflow.rs:500`; the same value gets a second door in
+       Settings → Sessions, `DefaultRepositoryFolderCard.tsx`), and Finish
+       repository setup asks for it when nothing is recorded
+       (`ProjectAgentsInitAction.tsx:64-84`). Stub-relay tests: the clone
+       lands with `origin` on the relay and `main` checked out, the record is
+       written once, a rerun reuses it, a failed clone leaves the project
+       created with `checkoutError`, a recorded folder that is not a checkout
+       of `<slug>` is refused by name.
+     - **The founded "Where" field guessed.** `preferredWorkdirPrefill` walked
+       `byProject ?? byChannel ?? fallback ?? mru[0]`. For a project session
+       it now returns the recorded checkout or nothing, and offers no recents
+       (`desktop/src/features/coding-sessions/ui/NewCodingSessionWorkdirField.tsx:42-44,163`);
+       the founder reads `byProject` before its local-clone scan
+       (`ProjectCodingSessionFounder.tsx:176-213`). The launch gate applies
+       the checkout fact even with "Use roles" off, fail-closed while
+       readiness loads (`lib/teamReadinessModel.ts:89-125,143`,
+       `founded/codingSessionFoundedReadiness.ts:118-127`), naming Finish
+       repository setup in the remedy.
+     - **The team launch never recorded the folder.** It staged a bare hint
+       and bumped the MRU; it now passes `projectRef` and `rememberPath` as
+       the solo path does (`ui/useCodingSessionCrewLaunch.ts:373-385`), so
+       `byProject` is written when it was empty. The placeholder "falls back
+       to the most recent directory" is gone (`ProjectSettingsLocalSection.tsx:228`).
+     - **Not changed.** The lead-issued hire rule (item 136), the `-wt-`
+       sibling placement, `HIRE_NO_ROUTE`. The TankLoop branch
+       `action-rpg-design-lead` and its worktree keep the seat's plan and
+       briefs; moving them is Andy's call. Owed live: Finish repository
+       setup on RPG Test seeds, clones and records `rpg-test`; the next
+       founded team session pre-fills that folder and the lead's worktree is
+       cut from it.
 
 ## 3a. Environment facts that cost real time (do not rediscover)
 

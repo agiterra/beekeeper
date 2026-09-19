@@ -206,7 +206,11 @@ test("contextual governed launch stages the reused folder without remembering or
   });
   assert.equal(host.result.ok, true, host.result.failureReason ?? "");
   assert.deepEqual(host.worktrees, []);
-  assert.deepEqual(host.hints, [{ commandId: "csl-seat-1", path }]);
+  // A reused folder is pinned for the command but never remembered for the
+  // project: `projectRef` is null, exactly as the solo path stages it.
+  assert.deepEqual(host.hints, [
+    { commandId: "csl-seat-1", path, projectRef: null, rememberPath: path },
+  ]);
   assert.deepEqual(host.rememberedWorkdirs, []);
   assert.equal(host.of(44221).length, 1);
   host.teardown();
@@ -227,7 +231,42 @@ test("ordinary governed worktree creation remembers the checkout, not the new ex
     { workdir: checkout, name: "fresh-work", source: "main" },
   ]);
   assert.deepEqual(host.hints, [
-    { commandId: "csl-seat-1", path: "/tmp/trees/fresh-work" },
+    {
+      commandId: "csl-seat-1",
+      path: "/tmp/trees/fresh-work",
+      projectRef: null,
+      rememberPath: checkout,
+    },
+  ]);
+  assert.deepEqual(host.rememberedWorkdirs, [checkout]);
+  host.teardown();
+});
+
+test("a project team launch records the checkout as the project's folder, as the solo path does", async () => {
+  // The first RPG Test team session (2026-09-19) recorded only the MRU:
+  // `byProject` stayed empty, and the next session pre-filled another
+  // project's checkout. The hint now carries the project coordinate and the
+  // checkout (not the worktree cut from it), which is what writes
+  // `byProject` (`useNewCodingSessionCreate.ts` stages the same).
+  const checkout = "/repo/rpg-test";
+  const PROJECT_REF = `30621:${"3d3b7169".padEnd(64, "0")}:rpg-test`;
+  const host = await harness({
+    workdir: checkout,
+    launchInput: {
+      ...LAUNCH_INPUT,
+      projectRef: PROJECT_REF,
+      workdir: checkout,
+      leadWorktree: { name: "fresh-work", source: "main" },
+    },
+  });
+  assert.equal(host.result.ok, true, host.result.failureReason ?? "");
+  assert.deepEqual(host.hints, [
+    {
+      commandId: "csl-seat-1",
+      path: "/tmp/trees/fresh-work",
+      projectRef: PROJECT_REF,
+      rememberPath: checkout,
+    },
   ]);
   assert.deepEqual(host.rememberedWorkdirs, [checkout]);
   host.teardown();

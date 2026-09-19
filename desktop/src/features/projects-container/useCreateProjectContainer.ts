@@ -10,6 +10,7 @@ import {
 } from "@/shared/constants/kinds";
 
 import { managedAgentsQueryKey } from "@/features/agents/hooks";
+import { CODING_SESSION_WORKDIR_STATE_QUERY_KEY } from "@/shared/api/tauriCodingSessionWorkdirs";
 
 import { projectContainersQueryKey, type ProjectContainer } from "./hooks";
 import {
@@ -37,9 +38,16 @@ export type CreateProjectContainerInput = {
   icon?: string | null;
   /** Display tint (`#rrggbb`); absent/null publishes no `color` tag. */
   color?: string | null;
+  /**
+   * The folder the project's code repository is cloned UNDER on this
+   * computer (the clone lands at `<checkoutParent>/<slug>`); `null` or
+   * absent means the host's default repos root. Never published.
+   */
+  checkoutParent?: string | null;
 };
 
-function slugFromName(name: string): string {
+/** The project's `d` tag, as the create derives it from the typed name. */
+export function slugFromName(name: string): string {
   return name
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
@@ -252,8 +260,12 @@ export async function createProjectContainer(
  */
 export async function initProjectRepositories(
   project: ProjectContainer,
+  options: { checkoutParent?: string | null } = {},
 ): Promise<ProjectAgentsInitResult> {
-  const result = await projectAgentsInit({ projectRef: project.address });
+  const result = await projectAgentsInit({
+    projectRef: project.address,
+    checkoutParent: options.checkoutParent ?? null,
+  });
   const identity = await getIdentity();
   if (project.owner === identity.pubkey.toLowerCase()) {
     const repoAddrs = [
@@ -363,7 +375,9 @@ export function useCreateProjectContainerMutation() {
       try {
         return {
           project,
-          repositories: await initProjectRepositories(project),
+          repositories: await initProjectRepositories(project, {
+            checkoutParent: input.checkoutParent ?? null,
+          }),
           repositoriesError: null,
         };
       } catch (thrown) {
@@ -380,6 +394,14 @@ export function useCreateProjectContainerMutation() {
       // every agent picker reads the managed-agent list, so re-read it.
       if (repositories && repositories.agentsInstalled.length > 0) {
         void queryClient.invalidateQueries({ queryKey: managedAgentsQueryKey });
+      }
+      // The create cloned the code repository and recorded it as the
+      // project's folder; every view that renders the workdir store from
+      // the cache (item 167) must see the record.
+      if (repositories?.checkoutPath) {
+        void queryClient.invalidateQueries({
+          queryKey: CODING_SESSION_WORKDIR_STATE_QUERY_KEY,
+        });
       }
       // Prefix-matched: the containers query is keyed per relay.
       queryClient.setQueriesData<ProjectContainer[]>(

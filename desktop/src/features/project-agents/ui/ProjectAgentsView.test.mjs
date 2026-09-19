@@ -400,7 +400,7 @@ test("an assignment read that covered only part of the sessions says so, with a 
 test("copy: relationship sentences, association confirmation and instruction lines", () => {
   assert.equal(
     associateConfirmText("Bob", "Tank Loop", "builder"),
-    "Bob becomes a permanent Tank Loop Builder agent. Its history stays attributed to Bob. This does not change project access.",
+    "Bob becomes a permanent Tank Loop Builder agent. Its history stays attributed to Bob. Adds the agent to the project roster as a collaborator, so it can read and write the project (Pulse, to-dos) under its own key.",
   );
   assert.equal(
     relationshipText({

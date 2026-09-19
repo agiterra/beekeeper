@@ -565,7 +565,11 @@ Every project owns a second relay-hosted repository, `<slug>-beekeeper-agents`,
 created with the project. It is the project's kind:30624 source, pinned
 `{repo: <agents>, ref: refs/heads/main, path: "."}`, and the only place the
 project's roles, team manifest, skills, actions and plans live. The code
-repository `<slug>` carries no Beekeeper files.
+repository `<slug>` carries no Beekeeper files; it is seeded with one
+`README.md` commit on `main` (a repository with no commit cannot host a
+worktree), cloned to the project's folder on the creating computer and
+recorded as that project's checkout, and every seat is cut from it — never
+from another project's folder (2026-09-19, ledger 175).
 
 ```
 <slug>-beekeeper-agents/
@@ -625,10 +629,18 @@ repository `<slug>` carries no Beekeeper files.
   (1) preflight both repository ids community-wide (`kinds: [30617], "#d"`,
   any author — ids are one namespace per community,
   `crates/buzz-db/src/git_repo.rs:31-40`) and refuse naming the taken id;
-  (2) publish the 30621; (3) announce 30617 `<slug>`, empty, with the
-  `project` back-reference; (4) announce 30617 `<slug>-beekeeper-agents`;
-  (5) seed and push `refs/heads/main`; (6) publish the 30624; (7) republish
-  the 30621 with both `a` references. A failure after (2) leaves the project
+  (2) publish the 30621; (3) announce 30617 `<slug>` with the `project`
+  back-reference and seed it with a `README.md` on `refs/heads/main`
+  (~~empty~~ since 2026-09-19, ledger 175); (4) announce 30617
+  `<slug>-beekeeper-agents`; (5) seed and push `refs/heads/main`; (6) publish
+  the 30624; (7) republish the 30621 with both `a` references; (8) clone
+  `<slug>` under the folder the New project dialog asked for (pre-filled from
+  the community's repositories folder, else the host's default root) and
+  record it as the project's checkout; (9) put every project agent the host
+  installed on the roster as `collaborator` (kind 9010, signed by the owner),
+  so a seat's own key can write the project's Pulse and to-dos (ledger 174).
+  Finish repository setup repeats (8) and (9) for a project that predates
+  them. A failure after (2) leaves the project
   with a disclosed gap ("agents repository not created: <reason>") and one
   idempotent **Finish setup** action in Project settings that reuses whatever
   already landed — the retry coordinator `PROJECT_TEAM_SETUP_IMPL.md:198-200`
@@ -1154,7 +1166,12 @@ C are independent lanes until C3, which needs `team.yml` (A3) for agent names.
   pointed at another repository; the announcement withdrawn after a failed
   seed keeps its id on the result beside the withdrawal; a repository step
   that does not land is a disclosed gap on a created project, never a
-  failed create. The live proof is still owed.*
+  failed create. The live proof landed 2026-09-19 (ledger 171).
+  Amended 2026-09-19 after the first RPG Test session (ledger 174, 175):
+  the code repository is seeded, cloned to the folder the dialog asked for
+  and recorded as the project's checkout; the project's agents join the
+  roster as collaborators; a founded team session pre-fills only the
+  project's recorded checkout and refuses to start without one.*
 - **P2 — templates and the seed.** `personas/templates/<role>/1.0.0/` for
   the eight shipped roles, thin `personas/roles/*/personas/*.persona.md`,
   the seed writer, `archive` refusals in the composer, `agents_repo` in

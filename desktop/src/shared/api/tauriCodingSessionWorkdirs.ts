@@ -47,6 +47,16 @@ export type CodingSessionWorkdirValidation = {
   isAbsolute: boolean;
 };
 
+/**
+ * The React Query key every view that caches `getCodingSessionWorkdirState`
+ * reads through. A write to the store that does not invalidate it leaves a
+ * stale record on screen (item 167); the literal was copied into four files
+ * before this export existed, and they still spell it identically.
+ */
+export const CODING_SESSION_WORKDIR_STATE_QUERY_KEY = [
+  "coding-session-workdir-state",
+] as const;
+
 /** Read every remembered directory, MRU entry, and staged hint. */
 export async function getCodingSessionWorkdirState(): Promise<CodingSessionWorkdirState> {
   return invokeTauri<CodingSessionWorkdirState>(

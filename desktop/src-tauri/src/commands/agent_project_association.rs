@@ -2,12 +2,20 @@
 //!
 //! Distinct from borrowing, which this build does not support: it records the
 //! same local association project setup records, republishes the agent's
-//! kind:30177 (as a digest), and changes no relay ACL, channel membership or
-//! role. The local decision is the pure
+//! kind:30177 (as a digest), and changes no channel membership or role. The
+//! local decision is the pure
 //! [`crate::managed_agents::project_agent_association::decide_association`];
 //! the authority to make it is proved from signed project state by
 //! [`crate::managed_agents::project_association_authority`].
+//!
+//! Since ledger 173 the association also puts the agent on the project's
+//! roster as a collaborator (kind 9010, [`crate::managed_agents::project_roster`])
+//! when the viewer is the project's creator or an owner, so the agent can
+//! write Pulse and to-dos under its own key. The roster step's outcome is
+//! reported on the result beside the summary, never swallowed; the
+//! association itself lands either way.
 
+use serde::Serialize;
 use tauri::{AppHandle, Manager};
 
 use crate::{
@@ -19,13 +27,33 @@ use crate::{
             ASSOCIATION_MALFORMED_PROJECT,
         },
         project_association_authority::{read_association_authority, ASSOCIATION_IDENTITY_CHANGED},
-        save_managed_agents, ManagedAgentSummary,
+        project_roster, save_managed_agents, ManagedAgentSummary,
     },
     util::now_iso,
 };
 
+/// The associated agent's summary plus what the roster step did.
+///
+/// The summary's own fields are flattened in, so a reader of the previous
+/// shape (`ManagedAgentSummary`) still finds them; `rosterAdded` and
+/// `rosterError` are the two additions.
+#[derive(Debug, Clone, Serialize)]
+pub struct AssociateManagedAgentWithProjectResult {
+    #[serde(flatten)]
+    pub agent: ManagedAgentSummary,
+    /// The agent was put on the project's roster as a collaborator by this
+    /// call. `false` when it was already there, or when `rosterError` says
+    /// why it was not.
+    #[serde(rename = "rosterAdded")]
+    pub roster_added: bool,
+    /// Why the agent is not on the roster after this call, in words.
+    #[serde(rename = "rosterError")]
+    pub roster_error: Option<String>,
+}
+
 /// Associate the managed agent `pubkey` on this computer with the project
-/// `project_ref` (`30621:<owner>:<dtag>`), returning its summary.
+/// `project_ref` (`30621:<owner>:<dtag>`), returning its summary and the
+/// roster outcome.
 ///
 /// First proves, from the project's signed head and relay-signed roster, that
 /// the active signing identity is the project's creator or a current owner or
@@ -34,13 +62,15 @@ use crate::{
 /// agent without a primary role, and an agent already associated with another
 /// project. The same project is a no-op that returns the agent, and it too
 /// requires the authority check to pass. Records the project's visibility
-/// with the association.
+/// with the association. Then puts the agent on the project's roster as a
+/// collaborator — the relay admits that op only from the creator or an
+/// owner, so a collaborator's association reports `rosterError` instead.
 #[tauri::command]
 pub async fn associate_managed_agent_with_project(
     app: AppHandle,
     pubkey: String,
     project_ref: String,
-) -> Result<ManagedAgentSummary, String> {
+) -> Result<AssociateManagedAgentWithProjectResult, String> {
     if normalize_project_ref(&project_ref).is_none() {
         return Err(ASSOCIATION_MALFORMED_PROJECT.to_string());
     }
@@ -50,8 +80,14 @@ pub async fn associate_managed_agent_with_project(
     let visibility =
         read_association_authority(&app.state::<AppState>(), &project_ref, &keys).await?;
     let reader = keys.public_key();
-    tokio::task::spawn_blocking(move || {
-        let pubkey = pubkey.trim().to_string();
+    let store_app = app.clone();
+    let store_project = project_ref.clone();
+    let agent_pubkey = pubkey.trim().to_string();
+    let store_pubkey = agent_pubkey.clone();
+    let agent = tokio::task::spawn_blocking(move || {
+        let app = store_app;
+        let pubkey = store_pubkey;
+        let project_ref = store_project;
         let state = app.state::<AppState>();
         let _store_guard = state
             .managed_agents_store_lock
@@ -93,5 +129,19 @@ pub async fn associate_managed_agent_with_project(
         super::agents::summarize_from_disk(&app, &records[index], &runtimes)
     })
     .await
-    .map_err(|error| format!("spawn_blocking failed: {error}"))?
+    .map_err(|error| format!("spawn_blocking failed: {error}"))??;
+
+    // The association landed; the roster is reported, never a refusal of it.
+    let roster = project_roster::ensure_project_agents_on_roster(
+        &app.state::<AppState>(),
+        &keys,
+        &project_ref,
+        std::slice::from_ref(&agent_pubkey),
+    )
+    .await;
+    Ok(AssociateManagedAgentWithProjectResult {
+        agent,
+        roster_added: !roster.added.is_empty(),
+        roster_error: roster.error,
+    })
 }

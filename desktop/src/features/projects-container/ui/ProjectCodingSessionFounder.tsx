@@ -24,6 +24,7 @@ import {
 import type { CodingSessionTopicFoundingHostDeps } from "@/features/coding-sessions/ui/useCodingSessionTopicFounding";
 import { useProjectsQuery } from "@/features/projects/hooks";
 import { listProjectLocalRepositories } from "@/shared/api/projectGit";
+import { getCodingSessionWorkdirState } from "@/shared/api/tauriCodingSessionWorkdirs";
 import { useIdentityQuery } from "@/shared/api/hooks";
 
 import {
@@ -168,39 +169,48 @@ export function ProjectCodingSessionFounder({
     path: null,
     repoRef: null,
   });
+  const projectAddress = project?.address ?? null;
   React.useEffect(() => {
     let cancelled = false;
     const onlyRepo =
       projectRepos.length === 1 ? projectRepos[0].repoAddress : null;
-    if (projectRepos.length === 0) {
-      setCheckout({ settledFor: projectRepos, path: null, repoRef: null });
-      return;
-    }
     setCheckout({ settledFor: null, path: null, repoRef: onlyRepo });
-    void listProjectLocalRepositories({})
-      .then((localRepos) => {
-        if (cancelled) return;
-        const matched = matchProjectCwdRepo(projectRepos, localRepos);
+    // The folder this computer recorded for the project outranks any scan:
+    // it is what the create cloned, Finish repository setup recorded, or the
+    // person set. The repos-root scan only fills in when nothing is
+    // recorded, and still supplies the repoRef.
+    const recorded = projectAddress
+      ? getCodingSessionWorkdirState()
+          .then((state) => state.byProject[projectAddress]?.path ?? null)
+          .catch(() => null)
+      : Promise.resolve(null);
+    const scanned =
+      projectRepos.length === 0
+        ? Promise.resolve(null)
+        : listProjectLocalRepositories({}).catch(() => null);
+    void Promise.all([recorded, scanned]).then(([recordedPath, localRepos]) => {
+      if (cancelled) return;
+      if (localRepos === null) {
+        // Non-Tauri preview or command unavailable: the scan is unresolved
+        // and the repoRef is the synchronous single-repo case.
         setCheckout({
           settledFor: projectRepos,
-          path: matched?.path ?? null,
-          repoRef: selectLaunchRepoRef({ repos: projectRepos, localRepos }),
-        });
-      })
-      .catch(() => {
-        // Non-Tauri preview or command unavailable: the checkout stays
-        // unresolved and the repoRef is the synchronous single-repo case.
-        if (cancelled) return;
-        setCheckout({
-          settledFor: projectRepos,
-          path: null,
+          path: recordedPath,
           repoRef: onlyRepo,
         });
+        return;
+      }
+      const matched = matchProjectCwdRepo(projectRepos, localRepos);
+      setCheckout({
+        settledFor: projectRepos,
+        path: recordedPath ?? matched?.path ?? null,
+        repoRef: selectLaunchRepoRef({ repos: projectRepos, localRepos }),
       });
+    });
     return () => {
       cancelled = true;
     };
-  }, [projectRepos]);
+  }, [projectAddress, projectRepos]);
 
   const channelBuckets = React.useMemo(
     () => partitionChannels(projects, channelsQuery.data ?? []),

@@ -53,6 +53,7 @@ mod agents;
 pub(crate) use agents::{
     attach_agents_clone, record_agents_repo, CodingSessionAgentsRepo, CodingSessionAgentsRepoView,
 };
+pub(crate) mod project;
 
 /// Current on-disk schema version of the desktop's own record.
 ///

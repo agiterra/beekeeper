@@ -409,6 +409,14 @@ test("initProjectRepositories runs the host command and adds forward refs for th
         gap: null,
         agentsInstalled: [],
         agentsError: null,
+        codeSeedCommitSha: null,
+        codeSeedSkipped: true,
+        codeSeedError: null,
+        checkoutPath: `${args.checkoutParent ?? "/default/REPOS"}/skunkworks`,
+        checkoutCloned: true,
+        checkoutError: null,
+        rosterAdded: [],
+        rosterError: null,
       };
     }
     return previousInvoke(command, args);
@@ -432,7 +440,20 @@ test("initProjectRepositories runs the host command and adds forward refs for th
     };
     const result = await initProjectRepositories(project);
     assert.equal(result.complete, true);
-    assert.deepEqual(calls, [{ projectRef: project.address }]);
+    // No folder chosen: the host's default root, passed as `null`, never
+    // an invented path.
+    assert.deepEqual(calls, [
+      { projectRef: project.address, checkoutParent: null },
+    ]);
+    // The create dialog's folder row hands the PARENT through unchanged.
+    const chosen = await initProjectRepositories(project, {
+      checkoutParent: "/Users/x/Code",
+    });
+    assert.equal(chosen.checkoutPath, "/Users/x/Code/skunkworks");
+    assert.deepEqual(calls.at(-1), {
+      projectRef: project.address,
+      checkoutParent: "/Users/x/Code",
+    });
     const republished = stubs.signedEvents.at(-1);
     assert.equal(republished.kind, 30621);
     assert.deepEqual(tagValues(republished, "a"), [

@@ -17,6 +17,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Input } from "@/shared/ui/input";
 import { Switch } from "@/shared/ui/switch";
 
+import { DefaultRepositoryFolderCard } from "./DefaultRepositoryFolderCard";
 import {
   SettingsOptionGroup,
   SettingsOptionGroupList,
@@ -39,6 +40,13 @@ export function CodingSessionsSettingsPanel() {
         title="Hiring"
       >
         <CodingSessionHiringCard />
+      </SettingsOptionGroup>
+      <SettingsOptionGroup
+        data-testid="settings-project-repositories"
+        description="Where this computer clones a new project's code repository. Creating a project and Finish repository setup pre-fill their folder row from here; the same value is Edit community → Repositories folder."
+        title="Project repositories"
+      >
+        <DefaultRepositoryFolderCard />
       </SettingsOptionGroup>
       <SettingsOptionGroup
         data-testid="settings-coding-session-naming"

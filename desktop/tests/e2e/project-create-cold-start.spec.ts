@@ -5,6 +5,7 @@ import {
   LOCAL_BURST_CAPACITY,
   WRITE_RESERVE,
 } from "@/shared/api/relaySendBudget";
+import { MOCK_DEFAULT_REPOS_ROOT } from "@/testing/e2eBridge";
 import { installMockBridge } from "../helpers/bridge";
 
 const OWNER = "deadbeef".repeat(8);
@@ -33,6 +34,20 @@ test("cold-start Create checks the exact address without waiting for discovery's
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("project-group-general")).toBeVisible();
   await openCreate(page, "Cold Start Project");
+  // The folder row follows the name: `<default repository folder>/<slug>`,
+  // the host's default root here because the mock community sets none, and
+  // the helper line names the same destination.
+  const folder = page.getByTestId("project-checkout-folder");
+  await expect(folder).toHaveValue(
+    `${MOCK_DEFAULT_REPOS_ROOT}/cold-start-project`,
+  );
+  await expect(folder).toHaveAttribute(
+    "data-checkout-parent",
+    MOCK_DEFAULT_REPOS_ROOT,
+  );
+  await expect(page.getByTestId("project-checkout-folder-hint")).toContainText(
+    `cloned to ${MOCK_DEFAULT_REPOS_ROOT}/cold-start-project`,
+  );
   // Prove this is the saturated startup path rather than a warm-idle create.
   // No clock/budget resets: background discovery keeps using its real budget.
   await expect
@@ -71,6 +86,16 @@ test("cold-start Create checks the exact address without waiting for discovery's
               authors: [owner],
               "#a": [`30621:${owner}:cold-start-project`],
               limit: 1,
+            },
+            // The two repository ids the project will create, read
+            // community-wide in the same batch (spec § 4.11).
+            {
+              kinds: [30617],
+              "#d": [
+                "cold-start-project",
+                "cold-start-project-beekeeper-agents",
+              ],
+              limit: 16,
             },
           ])
         );

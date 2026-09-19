@@ -86,6 +86,7 @@ pub(crate) fn invoke_handler(
         get_project_repo_sync_status,
         list_project_local_repositories,
         clone_project_repository,
+        default_repos_root,
         create_project_remote_branch,
         delete_project_remote_branch,
         push_project_local_repository,

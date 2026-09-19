@@ -89,21 +89,85 @@ test("Unknown blocks a project team launch and preserves the exact source remedy
   );
 });
 
-test("a launch that does not use roles is not gated by project readiness", () => {
-  // A session led by the person, with no seats, runs on none of the things
-  // readiness checks: no checkout to record, no provider to supervise, no
-  // packs to install. The card is informational then, and Start is open.
+test("a launch that does not use roles is still refused CHECKOUT_NOT_RECORDED", () => {
+  // The first RPG Test team session (2026-09-19) started with "Use roles"
+  // off, which used to open the gate entirely; the lead ran in another
+  // project's checkout and could not hire (HIRE_CHECKOUT_NOT_RECORDED).
+  // Roles off bypasses the role and pack facts, never the checkout.
+  const checkoutFact = {
+    category: "checkout",
+    code: "CHECKOUT_NOT_RECORDED",
+    scope: "local",
+    state: "blocked",
+    summary: "No checkout is recorded for this project.",
+    remedy: "Finish repository setup, or choose a checkout for this project.",
+  };
   const response = readiness({
     status: "blocked",
     blockingCodes: ["CHECKOUT_NOT_RECORDED"],
+    facts: [checkoutFact],
+  });
+  const input = {
+    projectRef: response.projectRef,
+    loading: false,
+    error: null,
+    readiness: response,
+  };
+  assert.equal(teamReadinessLaunchGate(input).allowed, false);
+  assert.deepEqual(teamReadinessLaunchGate({ ...input, useRoles: false }), {
+    allowed: false,
+    reason: `${checkoutFact.summary} ${checkoutFact.remedy}`,
+  });
+  // Readiness that cannot vouch for the folder is not an open gate either:
+  // loading, errored and absent all fail closed, naming the checkout.
+  assert.equal(
+    teamReadinessLaunchGate({ ...input, readiness: null, useRoles: false })
+      .allowed,
+    false,
+  );
+  assert.match(
+    teamReadinessLaunchGate({ ...input, loading: true, useRoles: false })
+      .reason,
+    /where this project's code lives/,
+  );
+  assert.match(
+    teamReadinessLaunchGate({ ...input, error: "boom", useRoles: false })
+      .reason,
+    /could not confirm where this project's code lives: boom/,
+  );
+});
+
+test("a launch that does not use roles bypasses every fact but the checkout", () => {
+  // A session led by the person, with no seats, needs no prepared roles:
+  // the role and pack facts are informational then, and Start is open —
+  // provided this computer knows where the project's code lives.
+  const response = readiness({
+    status: "blocked",
+    blockingCodes: ["ROLE_PACKS_MISSING"],
     facts: [
       {
         category: "checkout",
-        code: "CHECKOUT_NOT_RECORDED",
+        code: "CHECKOUT_RECORDED",
+        scope: "local",
+        state: "ready",
+        summary: "Checkout recorded at /Users/x/Code/rpg-test.",
+        remedy: null,
+      },
+      {
+        category: "roles",
+        code: "ROLE_PACKS_MISSING",
         scope: "local",
         state: "blocked",
-        summary: "No checkout is recorded for this project",
-        remedy: "Choose a checkout for this project.",
+        summary: "No role packs.",
+        remedy: "Restore personas/roles.",
+      },
+      {
+        category: "provider",
+        code: "PROVIDER_NOT_RUNNING",
+        scope: "local",
+        state: "unknown",
+        summary: "No provider.",
+        remedy: null,
       },
     ],
   });
@@ -118,11 +182,10 @@ test("a launch that does not use roles is not gated by project readiness", () =>
     allowed: true,
     reason: null,
   });
-  // Unknown readiness is not a gate either when roles are off.
-  assert.equal(
-    teamReadinessLaunchGate({ ...input, readiness: null, useRoles: false })
-      .allowed,
-    true,
+  // No project, no gate — unchanged.
+  assert.deepEqual(
+    teamReadinessLaunchGate({ ...input, projectRef: null, useRoles: false }),
+    { allowed: true, reason: null },
   );
 });
 

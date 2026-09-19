@@ -22,7 +22,7 @@ import type {
 export const PROJECT_AGENTS_TITLE = "Agents";
 
 export const PROJECT_AGENTS_SUBTITLE =
-  "Who belongs to this project, with what primary role, and what they are doing. Seats and past work do not make an agent a member.";
+  "Who belongs to this project, with what primary role, and what they are doing. Association makes an agent a member — a collaborator on the project roster; seats and past work alone do not.";
 
 export const PROJECT_AGENTS_MISSING = "This project is not readable here.";
 
@@ -188,7 +188,7 @@ export function associateConfirmText(
   projectName: string,
   role: string,
 ): string {
-  return `${name} becomes a permanent ${projectName} ${titleCaseRole(role)} agent. Its history stays attributed to ${name}. This does not change project access.`;
+  return `${name} becomes a permanent ${projectName} ${titleCaseRole(role)} agent. Its history stays attributed to ${name}. Adds the agent to the project roster as a collaborator, so it can read and write the project (Pulse, to-dos) under its own key.`;
 }
 
 export const ASSOCIATE_CONFIRM = "Associate";

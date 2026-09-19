@@ -1,11 +1,12 @@
 //! Creating a project's two repositories, from inside the app (spec § 4.11).
 //!
-//! Every project owns a code repository, `<slug>`, empty at creation, and an
-//! agents repository, `<slug>-beekeeper-agents`, seeded with the team and
-//! pinned as the project's kind:30624 source (`ref: refs/heads/main`,
-//! `path: .`). [`project_agents_init`] is the whole sequence as one host
-//! command, run right after the desktop publishes the kind:30621, and again
-//! from **Finish setup** when any step did not land — it is idempotent: what
+//! Every project owns a code repository, `<slug>`, seeded with one commit so
+//! a worktree can be cut from it (ledger 174), and an agents repository,
+//! `<slug>-beekeeper-agents`, seeded with the team and pinned as the
+//! project's kind:30624 source (`ref: refs/heads/main`, `path: .`).
+//! [`project_agents_init`] is the whole sequence as one host command, run
+//! right after the desktop publishes the kind:30621, and again from
+//! **Finish setup** when any step did not land — it is idempotent: what
 //! already exists under the viewer's key is reused, never re-announced,
 //! re-seeded or re-pointed.
 //!
@@ -18,17 +19,32 @@
 //!    by the viewer is the existing repository, reused. A project that
 //!    already has a pack source naming a *different* repository refuses too:
 //!    re-pointing every seat is a deliberate `bee packs set-source`.
-//! 2. **Announce** the code repository — the announcement only; the
-//!    repository stays empty until someone pushes.
+//! 2. **Announce** the code repository, then **seed** it with one commit on
+//!    `refs/heads/main` — a `README.md` naming the project and where its
+//!    roles and plans live — and **push** it. A repository with no commit
+//!    cannot host a worktree (`git worktree add … HEAD` on an unborn `HEAD`
+//!    fails), which is what every seat is cut from. Skipped when the relay
+//!    already holds a push record for it. A failure here is disclosed and
+//!    the sequence continues: the announcement stands.
 //! 3. **Announce** the agents repository.
 //! 4. **Seed** it in this host's packs cache from this build's shipped role
 //!    templates by reference (`buzz_persona::seed`), one commit authored as
 //!    this host's identity, and **push** `refs/heads/main`. Skipped when the
 //!    relay already holds a push record for it. A seed or push failure after
 //!    this run's own announcement withdraws that announcement, as the packs
-//!    flow does; the code repository's announcement stands, since an empty
-//!    code repository is exactly what was promised.
+//!    flow does.
 //! 5. **Publish** the kind:30624 — only once the push landed.
+//! 6. **Clone** the seeded code repository to `<checkout parent>/<slug>` and
+//!    **record** it as the project's folder (`by_project`, ledger 174) — the
+//!    folder a founded session pre-fills and a lead's hires are cut from. A
+//!    folder already recorded is kept when it is a checkout of this
+//!    repository, and refused by name when it is not; nothing is
+//!    overwritten.
+//! 7. **Roster.** (In [`project_agents_init`], after the default agents are
+//!    installed.) Every managed agent associated with the project is put on
+//!    its roster as a collaborator in one kind 9010 (ledger 173), so a seat
+//!    running under the agent's own key may write Pulse and to-dos. Only the
+//!    project's creator or an owner may; otherwise the result says so.
 //!
 //! The result reports every wire fact and, when the sequence did not finish,
 //! one sentence (`gap`) saying what is missing, so a screen never says
@@ -36,17 +52,19 @@
 
 use std::path::{Path, PathBuf};
 
-use nostr::{EventBuilder, Keys, Kind, Tag};
+use nostr::{Event, EventBuilder, Keys, Kind, Tag};
 use serde::Serialize;
 use tauri::{AppHandle, State};
 
 use crate::app_state::AppState;
-use crate::commands::project_git_exec::run_git;
+use crate::commands::project_git_exec::{run_git, GitAuthConfig};
 use crate::managed_agents::packs_cache;
 use crate::managed_agents::packs_repo::{
     build_repo_announcement, default_repo_id, parse_project_coordinate, read_push_record_id,
     resolve_app_commit_identity, withdraw_announcement, KIND_REPO_ANNOUNCEMENT, SEED_BRANCH,
 };
+use crate::managed_agents::project_roster;
+use buzz_core_pkg::kind::KIND_PROJECT;
 use buzz_core_pkg::project_pack_source::{
     decode_project_pack_source, PACK_PATH_ROOT, PROJECT_PACK_SOURCE_SCHEMA,
 };
@@ -58,8 +76,11 @@ pub const AGENTS_REPO_SUFFIX: &str = "-beekeeper-agents";
 /// Kind of a project's pack-source record.
 const KIND_PROJECT_PACK_SOURCE: u16 = buzz_core_pkg::kind::KIND_PROJECT_PACK_SOURCE as u16;
 
-/// Message on the one commit the seed writes.
+/// Message on the one commit the agents seed writes.
 const SEED_COMMIT_MESSAGE: &str = "seed the team from Beekeeper's shipped role templates";
+
+/// Message on the one commit the code seed writes.
+const CODE_SEED_COMMIT_MESSAGE: &str = "seed the project's code repository";
 
 /// `<slug>-beekeeper-agents`, the suffix kept whole inside the 64-byte id.
 pub fn default_agents_repo_id(project_slug: &str) -> Result<String, String> {
@@ -82,6 +103,15 @@ pub struct ProjectAgentsInit {
     pub code_announcement_event_id: Option<String>,
     /// The code repository was already announced under the viewer's key.
     pub code_repo_existed: bool,
+    /// The code repository's seed commit (its `README.md` on `main`), or
+    /// `null` when seeding failed or was skipped.
+    pub code_seed_commit_sha: Option<String>,
+    /// The relay already held a push record for the code repository, so
+    /// nothing was seeded or pushed to it.
+    pub code_seed_skipped: bool,
+    /// The code seed's or its push's own words when the seed is not on the
+    /// relay.
+    pub code_seed_error: Option<String>,
     /// `30617:<viewer>:<slug>-beekeeper-agents`.
     pub agents_repo_ref: String,
     /// The agents repository's `d` tag.
@@ -125,7 +155,22 @@ pub struct ProjectAgentsInit {
     pub agents_announcement_withdrawn_event_id: Option<String>,
     /// The withdrawal's own words when the tombstone itself failed.
     pub agents_announcement_withdrawal_error: Option<String>,
-    /// Both repositories announced, the seed on the relay, the source set.
+    /// This host's checkout of the code repository, recorded as the
+    /// project's folder; `null` when there is none.
+    pub checkout_path: Option<String>,
+    /// `checkout_path` was cloned by this run — `false` when an existing
+    /// checkout was reused or was already recorded.
+    pub checkout_cloned: bool,
+    /// Why there is no recorded checkout, in words: the clone failed, the
+    /// record failed, or the recorded folder is not a checkout of this
+    /// repository (named, not overwritten).
+    pub checkout_error: Option<String>,
+    /// The agent pubkeys this run put on the project's roster.
+    pub roster_added: Vec<String>,
+    /// Why some project agents are not on the roster after this run.
+    pub roster_error: Option<String>,
+    /// Both repositories announced and seeded, the source set, the checkout
+    /// recorded, the roster complete.
     pub complete: bool,
     /// One sentence naming what is missing when `complete` is `false`.
     pub gap: Option<String>,
@@ -153,6 +198,9 @@ impl ProjectAgentsInit {
             code_repo_id: code_repo_id.to_string(),
             code_announcement_event_id: None,
             code_repo_existed: false,
+            code_seed_commit_sha: None,
+            code_seed_skipped: false,
+            code_seed_error: None,
             agents_repo_ref: format!("30617:{viewer}:{agents_repo_id}"),
             agents_repo_id: agents_repo_id.to_string(),
             agents_clone_url: agents_clone_url.to_string(),
@@ -173,6 +221,11 @@ impl ProjectAgentsInit {
             commit_identity_email: identity.1,
             agents_announcement_withdrawn_event_id: None,
             agents_announcement_withdrawal_error: None,
+            checkout_path: None,
+            checkout_cloned: false,
+            checkout_error: None,
+            roster_added: Vec::new(),
+            roster_error: None,
             complete: false,
             gap: None,
             agents_installed: Vec::new(),
@@ -180,15 +233,31 @@ impl ProjectAgentsInit {
         }
     }
 
+    /// The code repository holds its seed on the relay — pushed by this run
+    /// or already there.
+    fn code_seeded(&self) -> bool {
+        self.code_seed_skipped
+            || (self.code_seed_commit_sha.is_some() && self.code_seed_error.is_none())
+    }
+
     /// Settle `complete` and `gap` from the facts. An announcement this run
     /// withdrew counts as not announced: the next run announces it again.
+    /// Re-callable: the command settles again once the roster step ran.
     fn settle(mut self) -> Self {
         let code_ok = self.code_repo_existed || self.code_announcement_event_id.is_some();
         let agents_ok = self.agents_repo_existed
             || (self.agents_announcement_event_id.is_some()
                 && self.agents_announcement_withdrawn_event_id.is_none());
         let source_ok = self.source_existed || self.source_event_id.is_some();
-        self.complete = code_ok && agents_ok && self.pushed && source_ok;
+        let checkout_ok = self.checkout_path.is_some() && self.checkout_error.is_none();
+        let roster_ok = self.roster_error.is_none();
+        self.complete = code_ok
+            && self.code_seeded()
+            && agents_ok
+            && self.pushed
+            && source_ok
+            && checkout_ok
+            && roster_ok;
         self.gap = if self.complete {
             None
         } else if !code_ok {
@@ -196,6 +265,12 @@ impl ProjectAgentsInit {
                 "code repository {} not announced: {}",
                 self.code_repo_id,
                 self.publication_error.as_deref().unwrap_or("not reached")
+            ))
+        } else if !self.code_seeded() {
+            Some(format!(
+                "code repository {} not seeded: {}",
+                self.code_repo_id,
+                self.code_seed_error.as_deref().unwrap_or("not reached")
             ))
         } else if !self.pushed {
             Some(format!(
@@ -213,10 +288,21 @@ impl ProjectAgentsInit {
                 self.agents_repo_id,
                 self.publication_error.as_deref().unwrap_or("not reached")
             ))
-        } else {
+        } else if !source_ok {
             Some(format!(
                 "pack source not set: {}",
                 self.publication_error.as_deref().unwrap_or("not reached")
+            ))
+        } else if !checkout_ok {
+            Some(format!(
+                "code repository {} not checked out as the project's folder: {}",
+                self.code_repo_id,
+                self.checkout_error.as_deref().unwrap_or("not reached")
+            ))
+        } else {
+            Some(format!(
+                "project agents not all on the roster: {}",
+                self.roster_error.as_deref().unwrap_or("not reached")
             ))
         };
         self
@@ -235,21 +321,87 @@ enum SeedOutcome {
     },
 }
 
+/// How [`project_agents_init_with_paths`] reaches this host's disk and git —
+/// the command fills it from the app; tests from scratch directories.
+pub(crate) struct ProjectAgentsInitOptions {
+    /// The folder the code checkout goes *under*: the clone lands at
+    /// `<checkout_parent>/<slug>`.
+    pub checkout_parent: PathBuf,
+    /// The folder `by_project` already names for this project, if any.
+    pub recorded_checkout: Option<PathBuf>,
+    /// The git configuration a remote operation (push, clone) runs with for
+    /// the given keys — the credentialed git in production
+    /// (`build_git_auth_config_for_keys`, ledger 168).
+    pub git_auth: fn(&Keys) -> Result<GitAuthConfig, String>,
+}
+
+/// Where a checkout was recorded — the command writes `by_project`; tests
+/// capture the path.
+pub(crate) type RecordCheckout<'a> = &'a mut (dyn FnMut(&Path) -> Result<(), String> + Send);
+
 /// Create the project's two repositories, or finish creating them.
 ///
 /// See the module docs for the order and the rollback. The viewer's own key
 /// signs everything and pushes; the relay decides whether that key may
 /// announce inside this project, and its refusal is returned verbatim.
+/// `checkout_parent` is the folder the code checkout goes under; `None`
+/// means the community names no repositories folder, so the default one
+/// (`default_repos_root`) is used.
 #[tauri::command]
 pub async fn project_agents_init(
     app: AppHandle,
     state: State<'_, AppState>,
     project_ref: String,
+    checkout_parent: Option<String>,
 ) -> Result<ProjectAgentsInit, String> {
+    let project = project_ref.trim().to_string();
+    parse_project_coordinate(&project)?;
+    let checkout_parent = match checkout_parent
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    {
+        Some(parent) => {
+            let parent = PathBuf::from(parent);
+            if !parent.is_absolute() {
+                return Err(format!(
+                    "the repository folder {} must be an absolute path",
+                    parent.display()
+                ));
+            }
+            parent
+        }
+        None => PathBuf::from(crate::commands::default_repos_root()?),
+    };
     let catalog = packs_cache::template_catalog(&app);
     let packs_root = packs_cache::packs_root(&app)?;
-    let mut result =
-        project_agents_init_with_paths(&state, project_ref, catalog, packs_root.clone()).await?;
+    let recorded_checkout =
+        crate::coding_sessions::workdir_store::project::recorded_project_checkout(&app, &project);
+    let options = ProjectAgentsInitOptions {
+        checkout_parent,
+        recorded_checkout,
+        git_auth: crate::commands::project_git_exec::build_git_auth_config_for_keys,
+    };
+    let record_app = app.clone();
+    let record_project = project.clone();
+    let mut record = |path: &Path| {
+        use tauri::Manager;
+        let state = record_app.state::<AppState>();
+        crate::coding_sessions::workdir_store::project::set_project_checkout(
+            &record_app,
+            &state,
+            &record_project,
+            path.to_path_buf(),
+        )
+    };
+    let mut result = project_agents_init_with_paths(
+        &state,
+        project.clone(),
+        catalog,
+        packs_root.clone(),
+        options,
+        &mut record,
+    )
+    .await?;
     if result.pushed {
         // The provider reads `actions.yml` from this clone from now on
         // (spec § 4.11). Best-effort: the repositories exist either way.
@@ -298,7 +450,37 @@ pub async fn project_agents_init(
             Err(error) => result.agents_error = Some(error),
         }
     }
-    Ok(result)
+    // Step 7 — the roster: every agent associated with the project, the ones
+    // just installed and any already on disk, as collaborators (ledger 173).
+    // Runs whether or not the seed landed: agents from an earlier run are
+    // owed their membership too.
+    let roster_app = app.clone();
+    let roster_project = project.clone();
+    let agents = tokio::task::spawn_blocking(move || {
+        use tauri::Manager;
+        let state = roster_app.state::<AppState>();
+        crate::managed_agents::default_agents::project_agent_pubkeys(
+            &roster_app,
+            &state,
+            &roster_project,
+        )
+    })
+    .await
+    .map_err(|error| format!("listing the project's agents did not finish: {error}"))?;
+    match agents {
+        Ok(agents) => {
+            let keys = state.signing_keys()?;
+            let outcome =
+                project_roster::ensure_project_agents_on_roster(&state, &keys, &project, &agents)
+                    .await;
+            result.roster_added = outcome.added;
+            result.roster_error = outcome.error;
+        }
+        Err(error) => {
+            result.roster_error = Some(format!("could not list the project's agents: {error}"))
+        }
+    }
+    Ok(result.settle())
 }
 
 /// Sync this host's clone of a project's agents repository and record where
@@ -355,16 +537,38 @@ pub async fn record_project_agents_repo(
     Ok(true)
 }
 
-/// [`project_agents_init`]'s body, taking the template catalog and the packs
-/// cache root directly so tests need no Tauri app.
+/// The newest kind:30621 in `events` by `owner` with `d` = `dtag` whose
+/// signature verifies.
+fn newest_project_head<'a>(events: &'a [Event], owner: &str, dtag: &str) -> Option<&'a Event> {
+    events
+        .iter()
+        .filter(|event| {
+            u32::from(event.kind.as_u16()) == KIND_PROJECT
+                && event.pubkey.to_hex() == owner
+                && event.tags.iter().any(|tag| {
+                    let parts = tag.as_slice();
+                    parts.first().map(String::as_str) == Some("d")
+                        && parts.get(1).map(String::as_str) == Some(dtag)
+                })
+                && event.verify().is_ok()
+        })
+        .max_by_key(|event| (event.created_at, event.id))
+}
+
+/// [`project_agents_init`]'s body, taking the template catalog, the packs
+/// cache root and the checkout facts directly so tests need no Tauri app.
+/// Steps 1–6; the roster (step 7) needs the installed agents and is the
+/// command's.
 pub(crate) async fn project_agents_init_with_paths(
     state: &AppState,
     project_ref: String,
     catalog: TemplateCatalog,
     packs_root: PathBuf,
+    options: ProjectAgentsInitOptions,
+    record_checkout: RecordCheckout<'_>,
 ) -> Result<ProjectAgentsInit, String> {
     let project = project_ref.trim().to_string();
-    let (_owner, slug) = parse_project_coordinate(&project)?;
+    let (owner, slug) = parse_project_coordinate(&project)?;
     let keys = state.signing_keys()?;
     let viewer = keys.public_key().to_hex();
     let code_repo_id = slug.clone();
@@ -379,13 +583,15 @@ pub(crate) async fn project_agents_init_with_paths(
     let code_clone_url = packs_cache::packs_clone_url(&relay_http, &viewer, &code_repo_id);
     let agents_repo = format!("30617:{viewer}:{agents_repo_id}");
 
-    // Step 1 — preflight, community-wide.
+    // Step 1 — preflight, community-wide. The project head rides along for
+    // its name (the README's first line) — absent is fine, the slug stands.
     let preflight = crate::relay::query_relay(
         state,
         &[
             serde_json::json!({ "kinds": [KIND_REPO_ANNOUNCEMENT], "#d": [code_repo_id], "limit": 8 }),
             serde_json::json!({ "kinds": [KIND_REPO_ANNOUNCEMENT], "#d": [agents_repo_id], "limit": 8 }),
             serde_json::json!({ "kinds": [KIND_PROJECT_PACK_SOURCE], "#d": [project], "limit": 1 }),
+            serde_json::json!({ "kinds": [KIND_PROJECT], "authors": [owner], "#d": [slug], "limit": 8 }),
         ],
     )
     .await
@@ -438,6 +644,8 @@ pub(crate) async fn project_agents_init_with_paths(
             }
         }
     }
+    let project_name =
+        project_roster::project_name(newest_project_head(&preflight, &owner, &slug), &slug);
 
     let identity = resolve_app_commit_identity(state, &viewer).await;
     let mut result = ProjectAgentsInit::started(
@@ -452,7 +660,7 @@ pub(crate) async fn project_agents_init_with_paths(
     result.agents_repo_existed = agents_existed;
     result.source_existed = source_existed;
 
-    // Step 2 — the code repository: an announcement, nothing more.
+    // Step 2 — the code repository: its announcement, then its seed.
     if !code_existed {
         let announcement = build_repo_announcement(
             &keys,
@@ -468,6 +676,51 @@ pub(crate) async fn project_agents_init_with_paths(
                 result.publication_error = Some(error);
                 return Ok(result.settle());
             }
+        }
+    }
+    if code_existed
+        && read_push_record_id(state, &viewer, &code_repo_id)
+            .await
+            .is_some()
+    {
+        result.code_seed_skipped = true;
+    }
+    if !result.code_seed_skipped {
+        let checkout = packs_cache::packs_checkout_dir(&packs_root, &viewer, &code_repo_id);
+        let seed_keys = keys.clone();
+        let seed_url = code_clone_url.clone();
+        let seed_name = project_name.clone();
+        let seed_agents_repo_id = agents_repo_id.clone();
+        let seed_identity = identity.clone();
+        let git_auth = options.git_auth;
+        let seeded =
+            tokio::task::spawn_blocking(move || -> Result<(String, Option<String>), String> {
+                let mut auth = git_auth(&seed_keys)?;
+                auth.set_commit_identity(seed_identity.0, seed_identity.1);
+                let commit =
+                    seed_code_checkout(&checkout, &seed_name, &seed_agents_repo_id, &auth)?;
+                let push_error = run_git(
+                    &[
+                        "push",
+                        "--quiet",
+                        "--",
+                        &seed_url,
+                        &format!("HEAD:refs/heads/{SEED_BRANCH}"),
+                    ],
+                    Some(&checkout),
+                    &auth,
+                )
+                .err();
+                Ok((commit, push_error))
+            })
+            .await
+            .map_err(|error| format!("seeding the code repository did not finish: {error}"))?;
+        match seeded {
+            Ok((commit, push_error)) => {
+                result.code_seed_commit_sha = Some(commit);
+                result.code_seed_error = push_error;
+            }
+            Err(error) => result.code_seed_error = Some(error),
         }
     }
 
@@ -505,10 +758,10 @@ pub(crate) async fn project_agents_init_with_paths(
         let seed_keys = keys.clone();
         let seed_url = agents_clone_url.clone();
         let seed_slug = slug.clone();
+        let git_auth = options.git_auth;
         let seeded: SeedOutcome =
             tokio::task::spawn_blocking(move || -> Result<SeedOutcome, String> {
-                let mut auth =
-                    crate::commands::project_git_exec::build_git_auth_config_for_keys(&seed_keys)?;
+                let mut auth = git_auth(&seed_keys)?;
                 auth.set_commit_identity(identity.0, identity.1);
                 match seed_agents_checkout(&checkout, &catalog, &seed_slug, &auth) {
                     Err(seed_error) => Ok(SeedOutcome::SeedFailed { seed_error }),
@@ -572,6 +825,58 @@ pub(crate) async fn project_agents_init_with_paths(
         }
     }
 
+    // Step 6 — the checkout, only over a code repository that holds a commit.
+    if result.code_seeded() {
+        let target = options.checkout_parent.join(&slug);
+        match options.recorded_checkout {
+            Some(recorded) => {
+                if crate::commands::is_checkout_of(&recorded, &code_clone_url) {
+                    result.checkout_path = Some(recorded.display().to_string());
+                } else {
+                    result.checkout_error = Some(format!(
+                        "the project's folder is recorded as {}, which is not a git checkout of \
+                         {code_repo_id} ({code_clone_url}); this run would have cloned to {} — \
+                         clear the recorded folder or point it at a checkout of the repository, \
+                         then finish setup again; nothing was overwritten",
+                        recorded.display(),
+                        target.display()
+                    ));
+                }
+            }
+            None => {
+                let clone_keys = keys.clone();
+                let clone_url = code_clone_url.clone();
+                let clone_target = target.clone();
+                let git_auth = options.git_auth;
+                let cloned = tokio::task::spawn_blocking(move || {
+                    let auth = git_auth(&clone_keys)?;
+                    crate::commands::clone_repository_to_dir(
+                        &clone_target,
+                        &clone_url,
+                        Some(SEED_BRANCH),
+                        &auth,
+                    )
+                })
+                .await
+                .map_err(|error| format!("cloning the code repository did not finish: {error}"))?;
+                match cloned {
+                    Ok(clone) => {
+                        let path = PathBuf::from(&clone.path);
+                        result.checkout_cloned = clone.cloned;
+                        result.checkout_path = Some(clone.path);
+                        if let Err(error) = record_checkout(&path) {
+                            result.checkout_error = Some(format!(
+                                "{} is cloned but could not be recorded as the project's folder: {error}",
+                                path.display()
+                            ));
+                        }
+                    }
+                    Err(error) => result.checkout_error = Some(error),
+                }
+            }
+        }
+    }
+
     Ok(result.settle())
 }
 
@@ -582,7 +887,7 @@ pub(crate) fn seed_agents_checkout(
     checkout: &Path,
     catalog: &TemplateCatalog,
     slug: &str,
-    auth: &crate::commands::project_git_exec::GitAuthConfig,
+    auth: &GitAuthConfig,
 ) -> Result<(String, Vec<String>), String> {
     if checkout.exists() {
         std::fs::remove_dir_all(checkout)
@@ -592,6 +897,43 @@ pub(crate) fn seed_agents_checkout(
         .map_err(|error| format!("create {}: {error}", checkout.display()))?;
     let report = buzz_persona_pkg::seed::write_agents_repo_seed(checkout, catalog, slug)
         .map_err(|error| error.to_string())?;
+    let commit = commit_seed(checkout, SEED_COMMIT_MESSAGE, auth)?;
+    Ok((commit, report.roles))
+}
+
+/// The `README.md` the code seed writes: the project's name, then where its
+/// roles and plans live.
+pub(crate) fn code_seed_readme(project_name: &str, agents_repo_id: &str) -> String {
+    format!(
+        "# {}\n\nThis project's code. Roles and plans live in `{agents_repo_id}`.\n",
+        project_name.trim()
+    )
+}
+
+/// Write the code repository's seed — one `README.md` — into a fresh
+/// `checkout` and commit it once on `main`. Returns the commit. A checkout
+/// that already exists is cleared first, as [`seed_agents_checkout`] does.
+pub(crate) fn seed_code_checkout(
+    checkout: &Path,
+    project_name: &str,
+    agents_repo_id: &str,
+    auth: &GitAuthConfig,
+) -> Result<String, String> {
+    if checkout.exists() {
+        std::fs::remove_dir_all(checkout)
+            .map_err(|error| format!("clear {}: {error}", checkout.display()))?;
+    }
+    std::fs::create_dir_all(checkout)
+        .map_err(|error| format!("create {}: {error}", checkout.display()))?;
+    let readme = checkout.join("README.md");
+    std::fs::write(&readme, code_seed_readme(project_name, agents_repo_id))
+        .map_err(|error| format!("write {}: {error}", readme.display()))?;
+    commit_seed(checkout, CODE_SEED_COMMIT_MESSAGE, auth)
+}
+
+/// `git init` on [`SEED_BRANCH`], add everything, commit once with
+/// `message`; returns the commit.
+fn commit_seed(checkout: &Path, message: &str, auth: &GitAuthConfig) -> Result<String, String> {
     run_git(
         &["init", "--quiet", "--initial-branch", SEED_BRANCH],
         Some(checkout),
@@ -601,15 +943,10 @@ pub(crate) fn seed_agents_checkout(
         return Err("git init produced no repository".to_string());
     }
     run_git(&["add", "--all"], Some(checkout), auth)?;
-    run_git(
-        &["commit", "--quiet", "-m", SEED_COMMIT_MESSAGE],
-        Some(checkout),
-        auth,
-    )?;
-    let commit = run_git(&["rev-parse", "HEAD"], Some(checkout), auth)?
+    run_git(&["commit", "--quiet", "-m", message], Some(checkout), auth)?;
+    Ok(run_git(&["rev-parse", "HEAD"], Some(checkout), auth)?
         .trim()
-        .to_string();
-    Ok((commit, report.roles))
+        .to_string())
 }
 
 /// The kind:30624 for `project` naming its agents repository: the branch,

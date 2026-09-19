@@ -156,7 +156,7 @@ test("asks first, then associates exactly this agent with this project", async (
     screen
       .getByTestId("project-agent-associate-confirm")
       .textContent.includes(
-        "Bob becomes a permanent Tank Loop Builder agent. Its history stays attributed to Bob. This does not change project access.",
+        "Bob becomes a permanent Tank Loop Builder agent. Its history stays attributed to Bob. Adds the agent to the project roster as a collaborator, so it can read and write the project (Pulse, to-dos) under its own key.",
       ),
     true,
   );
@@ -170,6 +170,43 @@ test("asks first, then associates exactly this agent with this project", async (
   ]);
   assert.deepEqual(invalidated[0], ["managed-agents"]);
   assert.equal(screen.queryByTestId("project-agent-associate-confirm"), null);
+});
+
+test("a roster failure rides the result and is said after the association lands", async () => {
+  // The association itself landed (the record carries the project), but the
+  // relay refused the roster op; the agent is a project agent the relay
+  // will still refuse to let write, so that is said, in the host's words.
+  const { screen } = await import("@testing-library/react");
+  answers.associate_managed_agent_with_project = () => ({
+    ...rawAgent(PROJECT_REF),
+    rosterAdded: false,
+    rosterError: "restricted: only the project owner may write the roster",
+  });
+  await mount();
+  await click("project-agent-associate-button");
+  await click("project-agent-associate-yes");
+  assert.equal(screen.queryByTestId("project-agent-associate-confirm"), null);
+  assert.equal(screen.queryByTestId("project-agent-associate-error"), null);
+  assert.match(
+    screen.getByTestId("project-agent-associate-roster-error").textContent,
+    /not added to the project roster: restricted: only the project owner may write the roster\./,
+  );
+});
+
+test("a host that reports the roster op landed shows no roster line", async () => {
+  const { screen } = await import("@testing-library/react");
+  answers.associate_managed_agent_with_project = () => ({
+    ...rawAgent(PROJECT_REF),
+    rosterAdded: true,
+    rosterError: null,
+  });
+  await mount();
+  await click("project-agent-associate-button");
+  await click("project-agent-associate-yes");
+  assert.equal(
+    screen.queryByTestId("project-agent-associate-roster-error"),
+    null,
+  );
 });
 
 test("a refusal is shown in native's own words and the confirmation stays open", async () => {

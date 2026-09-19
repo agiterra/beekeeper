@@ -37,6 +37,7 @@ mod process_lifecycle;
 pub(crate) mod project_agent_association;
 pub(crate) mod project_association_authority;
 pub(crate) mod project_association_carry;
+pub(crate) mod project_roster;
 pub(crate) mod project_team_setup;
 pub(crate) mod readiness;
 pub(crate) mod reconcile;

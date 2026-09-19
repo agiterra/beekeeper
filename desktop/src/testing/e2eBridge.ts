@@ -1570,7 +1570,10 @@ declare global {
       name?: string;
     }[];
     /** Every `project_agents_init` payload, verbatim. */
-    __BUZZ_E2E_PROJECT_AGENTS_INIT_CALLS__?: { projectRef?: string }[];
+    __BUZZ_E2E_PROJECT_AGENTS_INIT_CALLS__?: {
+      projectRef?: string;
+      checkoutParent?: string | null;
+    }[];
     /** Every `record_project_agents_repo` payload, verbatim. */
     __BUZZ_E2E_RECORD_AGENTS_REPO_CALLS__?: Record<string, unknown>[];
     __BUZZ_E2E_PROJECT_REPO_SYNC_STATUS__?: {
@@ -2076,6 +2079,9 @@ function cloneRelayAgent(agent: RawRelayAgent): RawRelayAgent {
     capabilities: [...agent.capabilities],
   };
 }
+
+/** What the mock host answers `default_repos_root` with. */
+export const MOCK_DEFAULT_REPOS_ROOT = "/Users/e2e/.beekeeper/REPOS";
 
 function cloneManagedAgent(agent: MockManagedAgent): RawManagedAgent {
   return {
@@ -13460,7 +13466,10 @@ export function maybeInstallE2eTauriMocks() {
         return true;
       }
       case "project_agents_init": {
-        const input = (payload ?? {}) as { projectRef?: string };
+        const input = (payload ?? {}) as {
+          projectRef?: string;
+          checkoutParent?: string | null;
+        };
         window.__BUZZ_E2E_PROJECT_AGENTS_INIT_CALLS__ ??= [];
         window.__BUZZ_E2E_PROJECT_AGENTS_INIT_CALLS__.push({ ...input });
         const projectRef = input.projectRef;
@@ -13469,8 +13478,26 @@ export function maybeInstallE2eTauriMocks() {
         if (!result) {
           throw new Error(`Unsupported mocked Tauri command: ${command}`);
         }
-        return result;
+        // The host's answer carries the code seed, the checkout and the
+        // roster facts (`ProjectAgentsInitResult`); a spec that configured
+        // only the older fields gets the honest "nothing happened" defaults
+        // for the new ones, never a fabricated clone.
+        return {
+          codeSeedCommitSha: null,
+          codeSeedSkipped: false,
+          codeSeedError: null,
+          checkoutPath: null,
+          checkoutCloned: false,
+          checkoutError: null,
+          rosterAdded: [],
+          rosterError: null,
+          ...result,
+        };
       }
+      case "default_repos_root":
+        // The host's default repos root (`project_repo_paths.rs`), fixed so
+        // a spec can assert the create dialog's `<root>/<slug>` pre-fill.
+        return MOCK_DEFAULT_REPOS_ROOT;
       case "prune_coding_session_seat_worktree": {
         const input = (payload ?? {}) as {
           sessionRef?: string;
@@ -14311,7 +14338,13 @@ export function maybeInstallE2eTauriMocks() {
         };
         const agent = getMockManagedAgent(pubkey);
         associateMockManagedAgent(agent, projectRef);
-        return cloneManagedAgent(agent);
+        // Native also puts the agent on the project roster as a collaborator
+        // and reports the roster fact beside the record.
+        return {
+          ...cloneManagedAgent(agent),
+          rosterAdded: true,
+          rosterError: null,
+        };
       }
       case "update_managed_agent":
         return handleUpdateManagedAgent(

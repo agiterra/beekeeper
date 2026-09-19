@@ -225,7 +225,7 @@ export function ProjectWorkdirField({
               commit(draft);
             }
           }}
-          placeholder="Not set — falls back to the most recent directory"
+          placeholder="Not set — Finish repository setup (Packs) clones the project's repository here"
           spellCheck={false}
           value={draft}
         />
@@ -265,8 +265,10 @@ export function ProjectWorkdirField({
         </p>
       ) : (
         <p className="text-2xs text-muted-foreground">
-          New coding sessions for this project start here, ahead of any
-          per-channel or most-recently-used guess.
+          New coding sessions for this project start here and nowhere else: with
+          no folder recorded, a project session pre-fills nothing and a team
+          launch is refused until Finish repository setup (Packs) clones the
+          project&apos;s repository or you pick the folder here.
         </p>
       )}
     </div>

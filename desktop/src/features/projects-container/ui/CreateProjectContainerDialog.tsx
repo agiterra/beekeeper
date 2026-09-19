@@ -13,7 +13,14 @@ import { Input } from "@/shared/ui/input";
 import { Textarea } from "@/shared/ui/textarea";
 
 import { PersonaShareRecipients } from "@/features/agents/ui/PersonaShareRecipients";
-import type { CreateProjectContainerInput } from "../useCreateProjectContainer";
+import {
+  type CreateProjectContainerInput,
+  slugFromName,
+} from "../useCreateProjectContainer";
+import {
+  ProjectCheckoutFolderField,
+  type ProjectCheckoutFolderChoice,
+} from "./ProjectCheckoutFolderField";
 import { ProjectColorPickerField } from "./ProjectColorPickerField";
 import { ProjectIconPickerField } from "./ProjectIconPickerField";
 import { ProjectVisibilitySettings } from "./ProjectVisibilitySettings";
@@ -39,6 +46,16 @@ export function CreateProjectContainerDialog({
   const [icon, setIcon] = React.useState("");
   const [color, setColor] = React.useState<string | null>(null);
   const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
+  // The parent folder the code repository is cloned under; `null` hands the
+  // host its default root. The row is keyed on `open` so a folder chosen
+  // for one project never leaks into the next.
+  const [checkoutParent, setCheckoutParent] = React.useState<string | null>(
+    null,
+  );
+  const handleCheckoutChange = React.useCallback(
+    (choice: ProjectCheckoutFolderChoice) => setCheckoutParent(choice.parent),
+    [],
+  );
 
   React.useEffect(() => {
     if (!open) return;
@@ -49,6 +66,7 @@ export function CreateProjectContainerDialog({
     setIcon("");
     setColor(null);
     setErrorMessage(null);
+    setCheckoutParent(null);
   }, [open]);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -69,6 +87,7 @@ export function CreateProjectContainerDialog({
         })),
         icon: icon.trim() || null,
         color,
+        checkoutParent,
       });
       onOpenChange(false);
     } catch (error) {
@@ -109,6 +128,12 @@ export function CreateProjectContainerDialog({
               placeholder="What is this project about? (optional)"
               rows={3}
               value={description}
+            />
+            <ProjectCheckoutFolderField
+              disabled={isCreating}
+              key={open ? "open" : "closed"}
+              onChange={handleCheckoutChange}
+              slug={slugFromName(name)}
             />
             <ProjectColorPickerField
               color={color}
