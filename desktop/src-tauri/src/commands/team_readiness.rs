@@ -716,6 +716,64 @@ fn response_from_facts(
     }
 }
 
+/// The one fact about the git this computer would reach the relay with.
+///
+/// **Ledger 168.** A bundle launched from Finder sees only
+/// `/usr/bin:/bin:/usr/sbin:/sbin`, so it reaches Apple's git 2.39.5, which
+/// has no `authtype` credential capability and therefore cannot carry a
+/// Nostr credential at all; every seat re-stage and every hire whose pack
+/// source needs a fetch failed with git's `could not read Username`, a
+/// sentence about the credential for a problem that is the git.
+///
+/// `None` when the computer has a capable git: a readiness panel that
+/// announces a satisfied requirement teaches nothing.
+///
+/// Limited, not Blocked, by default: an old git breaks only what must reach
+/// the relay, and a launch whose packs are already cached does not. It blocks
+/// when this project's pack source could not be read — the shape a branch
+/// pin, or a commit this computer has not cached, produces, because both must
+/// fetch and a fetch is exactly what this git cannot do.
+fn git_capability_fact(
+    capability: &crate::commands::project_git_version::GitCapability,
+    packs_source_unavailable: bool,
+) -> Option<TeamReadinessFact> {
+    if capability.meets_minimum {
+        return None;
+    }
+    let found = match (capability.version.as_deref(), capability.path.as_deref()) {
+        (Some(version), Some(path)) => format!("git {version} at {path}"),
+        // A machine with no git at all: named as the absence it is, never as
+        // a version this check did not read.
+        _ => "no git".to_string(),
+    };
+    let minimum = &capability.minimum;
+    let (state, summary) = if packs_source_unavailable {
+        (
+            TeamReadinessFactState::Blocked,
+            format!(
+                "This computer's {found} cannot authenticate to the relay — the Nostr \
+                 credential helper needs git {minimum} or newer — and this project's role \
+                 packs could not be read, so no seat could be staged"
+            ),
+        )
+    } else {
+        (
+            TeamReadinessFactState::Limited,
+            format!(
+                "This computer's {found} cannot authenticate to the relay: the Nostr \
+                 credential helper needs git {minimum} or newer. Anything that must fetch \
+                 from the relay — a pack this computer has not cached, a hire, a push — \
+                 will be refused"
+            ),
+        )
+    };
+    let mut fact = TeamReadinessFact::local("host", "GIT_TOO_OLD_FOR_RELAY", state, summary);
+    fact.remedy = Some(format!(
+        "Install git {minimum} or newer (`brew install git` on macOS) and relaunch Beekeeper."
+    ));
+    Some(fact)
+}
+
 fn gather(
     host: &impl ReadinessHost,
     project_ref: String,
@@ -747,6 +805,12 @@ fn gather(
     collect_identity(host, &mut gathered);
     let checkout = collect_checkout(host, &project_ref, &mut gathered);
     collect_team(host, checkout.as_deref(), packs, &mut gathered);
+    if let Some(fact) = git_capability_fact(
+        &crate::commands::project_git_version::get_git_capability(),
+        matches!(packs, ProjectPackSourceProbe::Unavailable { .. }),
+    ) {
+        gathered.facts.push(fact);
+    }
     collect_runtimes_and_registry(
         host,
         checkout.as_deref(),
@@ -797,6 +861,10 @@ pub async fn team_readiness(
 #[cfg(test)]
 #[path = "team_readiness_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "team_readiness_git_capability_tests.rs"]
+mod git_capability_tests;
 
 // Split from `tests` because that file sits at the repository's 1000-line
 // ceiling; these are the cases that shell out to `git`.

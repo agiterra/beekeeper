@@ -160,8 +160,7 @@ separates publication, installation and provider-confirmed lead startup.
 
 ## Environment facts most likely to bite first
 
-The full list is ledger §3a, about sixty entries. These are the ones a fresh
-agent hits in the first hour.
+The full list is ledger §3a (~60 entries). These bite in the first hour.
 
 - The main checkout at `/Users/brian/Projects/beekeeper/beekeeper` is Brian's
   live dev checkout. Never rebase or switch branches there while a dev server
@@ -174,13 +173,14 @@ agent hits in the first hour.
   `git commit`. A pipe or a redirect on the line records nothing, silently.
 - Pushing to `origin` needs `just install-git-credentials`; `bee git status`
   says whether it is wired. Without it a fetch hangs on a prompt: set
-  `GIT_TERMINAL_PROMPT=0`.
+  `GIT_TERMINAL_PROMPT=0`. The helper needs **git 2.46+**; a bundle on
+  Apple's 2.39.5 failed every relay git op with
+  `could not read Username` (ledger 168, 2026-09-19).
 - `just desktop-check`, clippy with `--all-targets` and the file-size ratchet
   are what CI runs. Run them before claiming green.
 - macOS has no `timeout`. pnpm 11 may reinstall a shared `node_modules` when
-  a worktree's state file is stale. For already-installed matching dependencies,
-  `PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=false` prevents that automatic install;
-  the actual hook checks still run. Verified with pnpm 11.4.0 on 2026-09-12.
+  a worktree's state file is stale; `PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=false`
+  prevents it, hook checks still run (pnpm 11.4.0, 2026-09-12).
 
 ## Where evidence lives
 

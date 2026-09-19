@@ -104,3 +104,52 @@ export function aboutBuildTooltip(
     `       count ${relay.commitCount ?? "null"} · built ${relayBuildTime ?? UNKNOWN}`,
   ].join("\n");
 }
+
+/**
+ * What the app can say about the git it would reach the relay with.
+ *
+ * Mirrors `GitCapability` in
+ * `desktop/src-tauri/src/commands/project_git_version.rs`.
+ */
+export type GitCapability = {
+  /** The chosen git, or the one found and refused. `null` when none answered. */
+  path: string | null;
+  /** That git's version, `null` when none answered. */
+  version: string | null;
+  /** Whether the reported git can authenticate to the relay. */
+  meetsMinimum: boolean;
+  /** The requirement, as the backend states it (`2.46`). */
+  minimum: string;
+};
+
+/**
+ * The git line on the About row, and whether it is a warning.
+ *
+ * Ledger 168: a Finder-launched bundle's `PATH` is
+ * `/usr/bin:/bin:/usr/sbin:/sbin`, so the app reached Apple's git 2.39.5,
+ * which cannot carry a Nostr credential at all — and nothing in the product
+ * said so. Every credentialed git operation failed with git's own
+ * `could not read Username`, which names the credential rather than the git.
+ * This row is where a person can see which git the app is holding before
+ * anything fails.
+ *
+ * `null` while the answer has not arrived: a row that guessed "git unknown"
+ * would read as a failed probe rather than an unfinished one.
+ */
+export function aboutGitLine(
+  capability: GitCapability | null,
+): { text: string; warning: boolean } | null {
+  if (!capability) return null;
+  if (!capability.version || !capability.path) {
+    return {
+      text: `no git found — the relay needs git ${capability.minimum} or newer`,
+      warning: true,
+    };
+  }
+  const found = `git ${capability.version} at ${capability.path}`;
+  if (capability.meetsMinimum) return { text: found, warning: false };
+  return {
+    text: `${found} — too old to authenticate to the relay, which needs git ${capability.minimum} or newer`,
+    warning: true,
+  };
+}

@@ -3,8 +3,10 @@ import * as React from "react";
 import {
   aboutBuildState,
   aboutBuildTooltip,
+  aboutGitLine,
   shortSha,
   UNKNOWN,
+  type GitCapability,
 } from "./aboutBuildRowCopy";
 import { SettingsOptionRow } from "./SettingsOptionGroup";
 import {
@@ -16,6 +18,7 @@ import {
   type RelayBuildIdentity,
 } from "@/shared/api/communityProfile";
 import { useCommunities } from "@/features/communities/useCommunities";
+import { invokeTauri } from "@/shared/api/tauri";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 
 /**
@@ -40,6 +43,7 @@ export function AboutBuildRow() {
   const relayUrl = activeCommunity?.relayUrl ?? null;
   const [app, setApp] = React.useState<AppBuildIdentity | null>(null);
   const [relay, setRelay] = React.useState<RelayBuildIdentity | null>(null);
+  const [git, setGit] = React.useState<GitCapability | null>(null);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -48,6 +52,21 @@ export function AboutBuildRow() {
     void getAppBuildIdentity()
       .then((identity) => {
         if (!cancelled) setApp(identity);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    // Ledger 168. Which git the app holds is a property of how it was
+    // launched, so it is read once per mount and never guessed: a failure
+    // leaves the line off the row rather than inventing a version.
+    void invokeTauri<GitCapability>("get_git_capability")
+      .then((capability) => {
+        if (!cancelled) setGit(capability);
       })
       .catch(() => {});
     return () => {
@@ -88,6 +107,7 @@ export function AboutBuildRow() {
   };
   const { label } = aboutBuildState(input);
   const tooltip = aboutBuildTooltip(input, relay?.buildTime ?? null);
+  const gitLine = aboutGitLine(git);
 
   return (
     <SettingsOptionRow data-testid="about-build-row">
@@ -110,6 +130,19 @@ export function AboutBuildRow() {
             >
               {label}
             </p>
+            {gitLine ? (
+              <p
+                className={
+                  gitLine.warning
+                    ? "text-xs font-normal text-destructive"
+                    : "text-xs font-normal text-muted-foreground/70"
+                }
+                data-settings-subcopy
+                data-testid="about-build-git"
+              >
+                {gitLine.text}
+              </p>
+            ) : null}
           </div>
         </TooltipTrigger>
         <TooltipContent

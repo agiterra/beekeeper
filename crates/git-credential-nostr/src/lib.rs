@@ -394,6 +394,30 @@ fn report_denial() {
     eprintln!("relay denied this key ({short}\u{2026}); run `bee git check` to see why");
 }
 
+/// The first git that implements the `authtype` credential protocol this
+/// helper answers over, stated the way a person is told it.
+pub const MINIMUM_GIT_VERSION: &str = "2.46";
+
+/// What to tell someone whose git is too old, on this platform.
+#[cfg(target_os = "macos")]
+const INSTALL_HINT: &str = "Install it with `brew install git` and retry.";
+#[cfg(not(target_os = "macos"))]
+const INSTALL_HINT: &str = "Install git 2.46 or newer and retry.";
+
+/// The one sentence printed when git cannot carry a Nostr credential.
+///
+/// The same explanation the desktop app refuses a remote operation with
+/// (`desktop/src-tauri/src/commands/project_git_version.rs`), in the one
+/// place a terminal user meets it. Pure, and given its hint, so the wording
+/// is testable without a platform.
+pub fn authtype_unsupported_message(install_hint: &str) -> String {
+    format!(
+        "git-credential-nostr: this git cannot authenticate to the relay — it does not \
+         announce the authtype credential capability, which needs git \
+         {MINIMUM_GIT_VERSION} or newer. {install_hint}"
+    )
+}
+
 /// Run the credential helper. Returns exit code.
 /// Reads from stdin, writes to stdout. Errors go to stderr only.
 pub fn run() -> i32 {
@@ -409,6 +433,14 @@ pub fn run() -> i32 {
     let req = parse_stdin();
 
     if !req.has_authtype_capability {
+        // Ledger 168: git older than 2.46 does not announce `authtype`, so
+        // this helper has no way to hand git a NIP-98 credential and every
+        // authenticated operation dies on git's own
+        // `could not read Username … terminal prompts disabled`, which names
+        // the wrong problem entirely. The empty answer still goes to stdout,
+        // because git's protocol expects one; the explanation goes to stderr,
+        // where a terminal user reads it.
+        eprintln!("{}", authtype_unsupported_message(INSTALL_HINT));
         println!();
         let _ = io::stdout().flush();
         return 0;
@@ -575,5 +607,26 @@ mod tests {
     fn a_missing_key_file_is_a_state_not_a_failure() {
         let missing = Path::new("/nonexistent/beekeeper/key");
         assert!(matches!(read_keyfile(missing), Ok(None)));
+    }
+
+    /// Ledger 168. Before this, a git with no `authtype` capability got an
+    /// empty answer and silence, and the user got git's username prompt
+    /// error — a sentence about a credential, for a problem that is the git.
+    #[test]
+    fn a_git_without_authtype_is_told_why_it_cannot_authenticate() {
+        let message = authtype_unsupported_message("Install it with `brew install git` and retry.");
+        assert_eq!(
+            message,
+            "git-credential-nostr: this git cannot authenticate to the relay — it does not \
+             announce the authtype credential capability, which needs git 2.46 or newer. \
+             Install it with `brew install git` and retry."
+        );
+    }
+
+    /// The request parser must keep telling the capability apart from the
+    /// rest of the request, because that is the fact the message rests on.
+    #[test]
+    fn the_capability_line_is_the_only_thing_that_announces_authtype() {
+        assert!(!CredRequest::default().has_authtype_capability);
     }
 }

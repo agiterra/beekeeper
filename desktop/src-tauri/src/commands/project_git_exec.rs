@@ -4,6 +4,7 @@
 //! the identity nsec is handed to `git-credential-nostr` via environment
 //! variables so nothing key-related ever touches disk or global git config.
 
+use crate::commands::project_git_version::remote_capable_git;
 use crate::{app_state::AppState, managed_agents::resolve_command};
 use nostr::{Keys, ToBech32};
 use std::io::{Read, Write};
@@ -67,6 +68,24 @@ fn git_needs_credentials(args: &[&str]) -> bool {
 
 pub(crate) struct GitAuthConfig {
     git_path: std::path::PathBuf,
+    /// The git a credentialed invocation runs, or the sentence it is refused
+    /// with.
+    ///
+    /// **Ledger 168.** `git_path` is whatever `resolve_command("git")` found,
+    /// which in a Finder-launched bundle is Apple's git 2.39.5 — a git with
+    /// no `authtype` credential capability, so `git-credential-nostr` prints
+    /// nothing and every fetch, clone and push against the relay dies on
+    /// `could not read Username`. A remote operation therefore does not use
+    /// `git_path`; it uses the first git ≥ 2.46 this computer has, and when
+    /// there is none it fails with
+    /// [`crate::commands::project_git_version::remote_git_refusal`] rather
+    /// than with git's
+    /// username error, which names the wrong problem.
+    ///
+    /// A config that carries no credential helper — a public GitHub clone,
+    /// or a local-only config — keeps `git_path` here, because nothing it
+    /// runs needs the helper and an old git serves it perfectly well.
+    remote_git: Result<std::path::PathBuf, String>,
     credential_helper: Option<std::path::PathBuf>,
     nsec: String,
     allow_file_transport: bool,
@@ -89,6 +108,18 @@ pub(crate) struct GitAuthConfig {
 }
 
 impl GitAuthConfig {
+    /// The git to run for this invocation.
+    ///
+    /// `Err` only for a credentialed invocation on a computer whose git
+    /// cannot authenticate at all; the string is the whole explanation.
+    fn git_for(&self, needs_credentials: bool) -> Result<&std::path::Path, String> {
+        if needs_credentials {
+            self.remote_git.as_deref().map_err(std::clone::Clone::clone)
+        } else {
+            Ok(&self.git_path)
+        }
+    }
+
     /// Name the identity a subsequent `commit` in this config is authored as.
     ///
     /// See [`GitAuthConfig::commit_identity`] for why this exists: without
@@ -142,12 +173,12 @@ pub(crate) fn run_git_status(
     cwd: Option<&std::path::Path>,
     auth: &GitAuthConfig,
 ) -> Result<GitOutcome, String> {
-    let mut command = Command::new(&auth.git_path);
+    let needs_credentials = git_needs_credentials(args);
+    let mut command = Command::new(auth.git_for(needs_credentials)?);
     command.args(args);
     if let Some(cwd) = cwd {
         command.current_dir(cwd);
     }
-    let needs_credentials = git_needs_credentials(args);
     let timeout = if needs_credentials {
         REMOTE_GIT_TIMEOUT
     } else {
@@ -232,12 +263,12 @@ pub(crate) fn run_git_bytes(
     auth: &GitAuthConfig,
     input: &[u8],
 ) -> Result<Vec<u8>, String> {
-    let mut command = Command::new(&auth.git_path);
+    let needs_credentials = git_needs_credentials(args);
+    let mut command = Command::new(auth.git_for(needs_credentials)?);
     command.args(args);
     if let Some(cwd) = cwd {
         command.current_dir(cwd);
     }
-    let needs_credentials = git_needs_credentials(args);
     let timeout = if needs_credentials {
         REMOTE_GIT_TIMEOUT
     } else {
@@ -386,9 +417,13 @@ pub(crate) fn build_git_clone_auth_config(
     state: &AppState,
 ) -> Result<GitAuthConfig, String> {
     if validate_github_clone_url(clone_url).is_ok() {
+        // A public GitHub clone presents no credential, so the helper — and
+        // with it the 2.46 requirement — is not in play.
+        let git_path =
+            resolve_command("git").ok_or_else(|| "git was not found on PATH".to_string())?;
         return Ok(GitAuthConfig {
-            git_path: resolve_command("git")
-                .ok_or_else(|| "git was not found on PATH".to_string())?,
+            remote_git: Ok(git_path.clone()),
+            git_path,
             credential_helper: None,
             nsec: String::new(),
             allow_file_transport: false,
@@ -407,6 +442,10 @@ pub(crate) fn build_git_auth_config_for_keys(keys: &Keys) -> Result<GitAuthConfi
         .map_err(|error| format!("encode identity key: {error}"))?;
     Ok(GitAuthConfig {
         git_path,
+        // Probed once per app run and cached; a machine with no capable git
+        // carries the refusal here and produces it at the first remote
+        // operation, never at a local one.
+        remote_git: remote_capable_git(),
         credential_helper,
         nsec,
         allow_file_transport: false,
@@ -422,8 +461,12 @@ pub(crate) fn build_git_auth_config_for_keys(keys: &Keys) -> Result<GitAuthConfi
 /// credential helper to authenticate, and an env-borne key is worth removing
 /// wherever it is not needed.
 pub(crate) fn build_local_git_auth_config() -> Result<GitAuthConfig, String> {
+    let git_path = resolve_command("git").ok_or_else(|| "git was not found on PATH".to_string())?;
     Ok(GitAuthConfig {
-        git_path: resolve_command("git").ok_or_else(|| "git was not found on PATH".to_string())?,
+        // No helper, nothing to authenticate: whatever git this computer has
+        // is the right one, including Apple's.
+        remote_git: Ok(git_path.clone()),
+        git_path,
         credential_helper: None,
         nsec: String::new(),
         allow_file_transport: false,
@@ -452,6 +495,11 @@ pub(crate) fn build_local_clone_git_auth_config() -> Result<GitAuthConfig, Strin
 pub(crate) fn build_test_git_auth_config() -> Result<GitAuthConfig, String> {
     let mut auth = build_git_auth_config_for_keys(&Keys::generate())?;
     auth.allow_file_transport = true;
+    // A test clones and fetches over `file://` with no relay and no helper
+    // behind it, so the 2.46 requirement — which exists only for the Nostr
+    // credential protocol — must not decide whether the suite can run. The
+    // machine's own git answers for these, as it did before ledger 168.
+    auth.remote_git = Ok(auth.git_path.clone());
     // Finding 64: a test that commits names its own author. Without this the
     // packs-seed tests fail on any machine whose hostname git cannot turn
     // into an email, and pass elsewhere by authoring commits as whoever

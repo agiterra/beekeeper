@@ -156,6 +156,8 @@ See **Quick start** below — this is the developer / self-host path.
 
 You'll need [Docker](https://docs.docker.com/get-docker/) and [Hermit](https://cashapp.github.io/hermit/) (or Rust 1.88+, Node 24+, pnpm 10+, `just`).
 
+You also need **git 2.46 or newer** — the relay authenticates git with a Nostr credential helper that answers over git's `authtype` credential protocol, which older git (including Apple's bundled 2.39) does not support.
+
 **Once:**
 ```bash
 git clone https://github.com/block/buzz.git && cd buzz

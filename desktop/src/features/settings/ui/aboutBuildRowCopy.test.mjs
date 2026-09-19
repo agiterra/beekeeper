@@ -5,6 +5,7 @@ import { APP_SOFTWARE_URL } from "../relayBuildDrift.ts";
 import {
   aboutBuildState,
   aboutBuildTooltip,
+  aboutGitLine,
   shortSha,
   UNKNOWN,
 } from "./aboutBuildRowCopy.ts";
@@ -109,4 +110,43 @@ test("a dirty app build is disclosed in the tooltip too", () => {
     aboutBuildTooltip(dirty, relayBuildTime),
     /built from a modified tree/,
   );
+});
+
+test("a capable git is stated plainly, with no warning", () => {
+  assert.deepEqual(
+    aboutGitLine({
+      path: "/opt/homebrew/bin/git",
+      version: "2.55.0",
+      meetsMinimum: true,
+      minimum: "2.46",
+    }),
+    { text: "git 2.55.0 at /opt/homebrew/bin/git", warning: false },
+  );
+});
+
+test("an old git names itself, the requirement, and warns", () => {
+  const line = aboutGitLine({
+    path: "/usr/bin/git",
+    version: "2.39.5",
+    meetsMinimum: false,
+    minimum: "2.46",
+  });
+  assert.equal(line.warning, true);
+  assert.match(line.text, /^git 2\.39\.5 at \/usr\/bin\/git/);
+  assert.match(line.text, /needs git 2\.46 or newer$/);
+});
+
+test("no git at all is an absence, never a version", () => {
+  const line = aboutGitLine({
+    path: null,
+    version: null,
+    meetsMinimum: false,
+    minimum: "2.46",
+  });
+  assert.equal(line.warning, true);
+  assert.equal(line.text, "no git found — the relay needs git 2.46 or newer");
+});
+
+test("an unanswered probe renders nothing rather than a guess", () => {
+  assert.equal(aboutGitLine(null), null);
 });
