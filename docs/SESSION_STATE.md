@@ -14386,6 +14386,29 @@ removed from here.
      RPG Test from the rebuilt bundle — it must now seed `rpg-test`, fetch
      `main` into the unborn clone, and report the commit.
 
+177. **A recorded clone cut while the repository was empty was reported
+     "already checked out" and left without a commit after the seed landed
+     (2026-09-19, found by Andy on the first rerun of Finish repository setup
+     on the `70568778d` bundle).** Evidence: the panel printed `code seed:
+     seeded, commit 340a0643` and `Code already checked out at
+     ~/.beekeeper/REPOS/rpg-test`; hive's ref state for `rpg-test` now
+     carries `refs/heads/main 340a0643…`, the roster holds all eight agents,
+     yet `git log` in that folder still answered "No commits yet on main".
+     Cause: step 6 of `project_agents_init` short-circuited a recorded folder
+     that `is_checkout_of` the repository — path reported, nothing run — so
+     the clone helper's unborn-`HEAD` fetch (`clone_repository_to_dir`,
+     `desktop/src-tauri/src/commands/project_git_workflow.rs`) was reached
+     only for a folder nobody had recorded. Fix: a recorded checkout goes
+     through the same helper (`managed_agents/agents_repo.rs`, step 6), which
+     reuses it, fetches `origin` and puts it on `main` when `HEAD` is unborn,
+     and reports "could not be brought to main" with git's words otherwise;
+     the record is not rewritten. Pinned by
+     `a_recorded_unborn_clone_is_brought_to_main_by_the_seed`
+     (`agents_repo_tests.rs`): a recorded clone with `origin` on the relay and
+     no commit ends the run on the seed commit, `checkoutCloned=false`, no
+     re-record. Owed: the rerun on RPG Test brings
+     `~/.beekeeper/REPOS/rpg-test` to `340a0643`.
+
 ## 3a. Environment facts that cost real time (do not rediscover)
 
 - **pnpm 11's answer to a stale workspace state is to DELETE `node_modules`,

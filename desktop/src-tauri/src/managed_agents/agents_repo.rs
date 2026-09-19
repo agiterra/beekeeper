@@ -833,11 +833,14 @@ pub(crate) async fn project_agents_init_with_paths(
     // Step 6 — the checkout, only over a code repository that holds a commit.
     if result.code_seeded() {
         let target = options.checkout_parent.join(&slug);
-        match options.recorded_checkout {
+        // A recorded folder is reused only when it is a checkout of this
+        // repository — and reused *through* the clone helper, which fetches
+        // `main` into a clone cut while the repository was still empty
+        // (ledger 177: the first rerun on RPG Test reported the unborn
+        // clone as "already checked out" and left it without a commit).
+        let (clone_target, already_recorded) = match options.recorded_checkout {
             Some(recorded) => {
-                if crate::commands::is_checkout_of(&recorded, &code_clone_url) {
-                    result.checkout_path = Some(recorded.display().to_string());
-                } else {
+                if !crate::commands::is_checkout_of(&recorded, &code_clone_url) {
                     result.checkout_error = Some(format!(
                         "the project's folder is recorded as {}, which is not a git checkout of \
                          {code_repo_id} ({code_clone_url}); this run would have cloned to {} — \
@@ -846,38 +849,50 @@ pub(crate) async fn project_agents_init_with_paths(
                         recorded.display(),
                         target.display()
                     ));
+                    return Ok(result.settle());
+                }
+                (recorded, true)
+            }
+            None => (target, false),
+        };
+        let clone_keys = keys.clone();
+        let clone_url = code_clone_url.clone();
+        let clone_dir = clone_target.clone();
+        let git_auth = options.git_auth;
+        let cloned = tokio::task::spawn_blocking(move || {
+            let auth = git_auth(&clone_keys)?;
+            crate::commands::clone_repository_to_dir(
+                &clone_dir,
+                &clone_url,
+                Some(SEED_BRANCH),
+                &auth,
+            )
+        })
+        .await
+        .map_err(|error| format!("cloning the code repository did not finish: {error}"))?;
+        match cloned {
+            Ok(clone) => {
+                let path = PathBuf::from(&clone.path);
+                result.checkout_cloned = clone.cloned;
+                result.checkout_path = Some(clone.path);
+                if !already_recorded {
+                    if let Err(error) = record_checkout(&path) {
+                        result.checkout_error = Some(format!(
+                            "{} is cloned but could not be recorded as the project's folder: {error}",
+                            path.display()
+                        ));
+                    }
                 }
             }
-            None => {
-                let clone_keys = keys.clone();
-                let clone_url = code_clone_url.clone();
-                let clone_target = target.clone();
-                let git_auth = options.git_auth;
-                let cloned = tokio::task::spawn_blocking(move || {
-                    let auth = git_auth(&clone_keys)?;
-                    crate::commands::clone_repository_to_dir(
-                        &clone_target,
-                        &clone_url,
-                        Some(SEED_BRANCH),
-                        &auth,
+            Err(error) => {
+                result.checkout_error = Some(if already_recorded {
+                    format!(
+                        "the recorded folder {} could not be brought to {SEED_BRANCH}: {error}",
+                        clone_target.display()
                     )
+                } else {
+                    error
                 })
-                .await
-                .map_err(|error| format!("cloning the code repository did not finish: {error}"))?;
-                match cloned {
-                    Ok(clone) => {
-                        let path = PathBuf::from(&clone.path);
-                        result.checkout_cloned = clone.cloned;
-                        result.checkout_path = Some(clone.path);
-                        if let Err(error) = record_checkout(&path) {
-                            result.checkout_error = Some(format!(
-                                "{} is cloned but could not be recorded as the project's folder: {error}",
-                                path.display()
-                            ));
-                        }
-                    }
-                    Err(error) => result.checkout_error = Some(error),
-                }
             }
         }
     }

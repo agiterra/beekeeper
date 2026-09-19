@@ -684,6 +684,82 @@ mod against_a_stub_relay {
         std::fs::remove_dir_all(&root).ok();
     }
 
+    /// Ledger 177: a recorded folder that is a checkout of `<slug>` cut
+    /// while the repository was still empty (item 176's run left exactly
+    /// that) is not "already checked out": the run must fetch the seeded
+    /// `main` into it, so the next `git worktree add` has a commit.
+    #[tokio::test]
+    async fn a_recorded_unborn_clone_is_brought_to_main_by_the_seed() {
+        let root = scratch_root();
+        let catalog = catalog(&root);
+        let keys = Keys::generate();
+        let viewer = keys.public_key().to_hex();
+        let project = format!("30621:{viewer}:demo");
+        let (relay_url, _stored) = spawn_stub_relay(
+            vec![
+                project_head_json(&keys, "demo", "Demo Project"),
+                announcement_json(&keys, "demo"),
+                creation_record_json("demo"),
+            ],
+            None,
+            Some(root.join("git")),
+        )
+        .await;
+        let state = stubbed_state(relay_url.clone(), keys).await;
+        // The clone the first run left: `origin` on the relay, no commit.
+        let unborn = root.join("repos").join("demo");
+        std::fs::create_dir_all(&unborn).expect("dir");
+        let auth = build_test_git_auth_config().expect("auth");
+        run_git(
+            &["init", "--quiet", "--initial-branch", SEED_BRANCH],
+            Some(&unborn),
+            &auth,
+        )
+        .expect("init");
+        run_git(
+            &[
+                "remote",
+                "add",
+                "origin",
+                &format!("{relay_url}/git/{viewer}/demo"),
+            ],
+            Some(&unborn),
+            &auth,
+        )
+        .expect("remote");
+        assert!(run_git(&["rev-parse", "--verify", "HEAD"], Some(&unborn), &auth).is_err());
+
+        let (result, recorded) = run_init(
+            &state,
+            &project,
+            catalog,
+            root.join("cache"),
+            root.join("repos"),
+            Some(unborn.clone()),
+        )
+        .await;
+
+        assert!(!result.code_seed_skipped, "{result:?}");
+        assert!(result.code_seed_commit_sha.is_some(), "{result:?}");
+        assert_eq!(result.checkout_error, None, "{result:?}");
+        assert!(!result.checkout_cloned, "reused, not cloned");
+        assert_eq!(
+            result.checkout_path.as_deref(),
+            Some(unborn.display().to_string().as_str())
+        );
+        assert!(recorded.is_empty(), "already recorded; not re-recorded");
+        let head = run_git(&["rev-parse", "HEAD"], Some(&unborn), &auth).expect("head");
+        assert_eq!(
+            Some(head.trim()),
+            result.code_seed_commit_sha.as_deref(),
+            "the recorded clone now holds the seed"
+        );
+        let branch = run_git(&["branch", "--show-current"], Some(&unborn), &auth).expect("branch");
+        assert_eq!(branch.trim(), SEED_BRANCH);
+        assert!(result.complete, "{result:?}");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
     /// A project whose pack source already names another repository is
     /// refused: re-pointing is a deliberate `set-source`.
     #[tokio::test]
