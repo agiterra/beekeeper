@@ -8939,6 +8939,16 @@ impl Provider {
     pub fn pending_publishes(&self) -> usize {
         self.outbox.pending_len()
     }
+
+    /// Number of durable facts the outbox has given up on.
+    ///
+    /// Disclosed beside [`Provider::pending_publishes`] because a queue that
+    /// shrank because the relay refused its rows is a different state from a
+    /// queue that drained, and a status that showed only the first would be
+    /// reporting health it does not have.
+    pub fn parked_publishes(&self) -> usize {
+        self.outbox.parked_len()
+    }
 }
 
 fn validate_genesis_envelope(

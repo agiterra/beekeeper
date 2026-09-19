@@ -101,6 +101,7 @@ Rules, each with where it is written down.
   owed is live use in an installed build with a real
   session; the completed gate and selected browser evidence are linked above. The queued-steer prevention race found during integration is corrected
   and has a failing-before/passing-after process test. codex-acp 1.6.2 has no idle guard and stays in boundary mode.
+- **Provider outbox**: final relay refusals park, not retry (ledger 170); unproven live.
 - **Automatic context** is blocked on Brian resuming it; the Claude hook
   transport is a candidate, not proven in the installed adapter.
 - ~~**Unknown:** whether the 62 e2e-smoke failures that ledger §1 calls
