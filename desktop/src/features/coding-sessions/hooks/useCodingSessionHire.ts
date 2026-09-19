@@ -348,11 +348,23 @@ export type UseCodingSessionHireInput = {
    * alone (and falling back to the most recently used directory) is what cut
    * two Tank Loop seats from the Beekeeper repository on 2026-09-16; the rule
    * now lives in {@link resolveCodingSessionHireCheckout} and is never `mru`.
+   *
+   * May return a promise. A hire is a signed, once-only answer, so the real
+   * host reads the workdir store fresh from the native command at the moment
+   * it decides — not from whatever a React Query cache happened to hold —
+   * because a write to the store (Project settings → This computer →
+   * Repository folder) that landed after the last render must still be seen
+   * by the very next hire (item 167, live 2026-09-19: two hires answered
+   * `HIRE_CHECKOUT_NOT_RECORDED` more than a minute after the store held the
+   * project's checkout). Tests that pass a synchronous function keep working
+   * unchanged — awaiting a plain value resolves it immediately.
    */
   checkoutForHire: (input: {
     channelId: string;
     projectRef: string | null;
-  }) => CodingSessionHireCheckoutResolution;
+  }) =>
+    | CodingSessionHireCheckoutResolution
+    | Promise<CodingSessionHireCheckoutResolution>;
   /** Targets to answer a requesting seat's refusal turn to, by pubkey. */
   targetForActor: (
     channelId: string,
@@ -711,7 +723,7 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
       // build is told to work and cannot, and the fallback that used to stand
       // in for this — the most recently used directory — cut two seats from
       // the wrong repository on 2026-09-16 (ledger 135(a)).
-      const resolved = current.input.checkoutForHire({
+      const resolved = await current.input.checkoutForHire({
         channelId: request.channelId,
         projectRef,
       });

@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { Bot, ChevronDown, CircleAlert, FolderOpen, X } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
@@ -35,6 +36,17 @@ import { useProjectDefaultAgent } from "../lib/projectDefaultAgentStorage";
 const ROLE_SUGGESTION_LIST_ID = "project-default-agent-role-suggestions";
 
 /**
+ * Same literal key `CodingSessionHireHost`, the Roles tab redirect
+ * (`app/routes/index.tsx`) and `useRolePacksProject` read the workdir store
+ * through. A write here that does not invalidate it is exactly what left a
+ * hire host refusing `HIRE_CHECKOUT_NOT_RECORDED` for over a minute after
+ * this screen wrote the project's checkout (item 167) — the hire path now
+ * reads the store fresh and does not depend on this key, but every other
+ * view still renders from the cache, so this still has to invalidate it.
+ */
+const WORKDIR_STATE_QUERY_KEY = ["coding-session-workdir-state"] as const;
+
+/**
  * "On this computer" — the project settings that live on this machine and
  * never enter a relay event: the checkout directory sessions start in, and
  * the managed agent seated by default on new sessions. Both apply
@@ -61,8 +73,18 @@ export function ProjectSettingsLocalSection({
 /**
  * The directory this project's coding sessions start in. Same store key the
  * manage panel's "Sessions run in" row writes (`byProject[address]`).
+ *
+ * Exported for `ProjectSettingsLocalSection.test.mjs`: the sibling field,
+ * `ProjectDefaultAgentField`, reaches `useCommunities()`, which throws
+ * outside a `CommunitiesProvider` — this field alone is what item 167's fix
+ * touches, so it is what the test mounts.
  */
-function ProjectWorkdirField({ project }: { project: ProjectContainer }) {
+export function ProjectWorkdirField({
+  project,
+}: {
+  project: ProjectContainer;
+}) {
+  const queryClient = useQueryClient();
   const [draft, setDraft] = React.useState("");
   const [savedPath, setSavedPath] = React.useState<string | null>(null);
   const [validation, setValidation] =
@@ -122,6 +144,9 @@ function ProjectWorkdirField({ project }: { project: ProjectContainer }) {
           const next = state.byProject[project.address]?.path ?? trimmed;
           setSavedPath(next);
           setDraft(next);
+          void queryClient.invalidateQueries({
+            queryKey: WORKDIR_STATE_QUERY_KEY,
+          });
         })
         .catch((error) => {
           toast.error(
@@ -132,7 +157,7 @@ function ProjectWorkdirField({ project }: { project: ProjectContainer }) {
         })
         .finally(() => setBusy(false));
     },
-    [project.address, savedPath],
+    [project.address, queryClient, savedPath],
   );
 
   const handleBrowse = React.useCallback(() => {
@@ -154,6 +179,9 @@ function ProjectWorkdirField({ project }: { project: ProjectContainer }) {
       .then(() => {
         setSavedPath(null);
         setDraft("");
+        void queryClient.invalidateQueries({
+          queryKey: WORKDIR_STATE_QUERY_KEY,
+        });
       })
       .catch((error) => {
         toast.error(
@@ -163,7 +191,7 @@ function ProjectWorkdirField({ project }: { project: ProjectContainer }) {
         );
       })
       .finally(() => setBusy(false));
-  }, [project.address]);
+  }, [project.address, queryClient]);
 
   const problem = describeWorkdirProblem(draft, validation);
 

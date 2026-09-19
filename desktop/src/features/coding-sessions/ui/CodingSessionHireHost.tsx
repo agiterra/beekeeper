@@ -83,10 +83,6 @@ export function CodingSessionHireHost() {
     queryKey: ["coding-session-provider-runtimes"],
     queryFn: getCodingSessionProviderRuntimes,
   });
-  const workdirs = useQuery({
-    queryKey: ["coding-session-workdir-state"],
-    queryFn: getCodingSessionWorkdirState,
-  });
   const channelIds = useStableArrayShallow(
     React.useMemo(
       () =>
@@ -141,20 +137,30 @@ export function CodingSessionHireHost() {
     return labels;
   }, [projects.data]);
 
-  const workdirState = workdirs.data ?? null;
   const checkoutForHire = React.useCallback(
-    (input: { channelId: string; projectRef: string | null }) =>
-      // `mru` is deliberately not passed: the rule has no use for it, and it
-      // is what cut two Tank Loop seats from the Beekeeper repository on
-      // 2026-09-16 (ledger 135(a)).
-      resolveCodingSessionHireCheckout({
+    // A hire is a signed, once-only answer, so it is never decided from a
+    // React Query cache of the workdir store — this component used to read
+    // `workdirs.data` from `queryKey: ["coding-session-workdir-state"]` here
+    // — but from a fresh read of the same native command
+    // (`get_coding_session_workdir_state`) at the exact moment the hire is
+    // honoured. On 2026-09-19 a project's repository folder had sat in the
+    // store for over a minute (written by Project settings) while every
+    // hire into that project was still refused `HIRE_CHECKOUT_NOT_RECORDED`,
+    // because the cached snapshot the query held predated the write and
+    // nothing invalidated it (item 167). `mru` is deliberately not passed:
+    // the rule has no use for it, and it is what cut two Tank Loop seats
+    // from the Beekeeper repository on 2026-09-16 (ledger 135(a)).
+    async (input: { channelId: string; projectRef: string | null }) => {
+      const fresh = await getCodingSessionWorkdirState();
+      return resolveCodingSessionHireCheckout({
         projectRef: input.projectRef,
         projectLabel: projectLabels.get(input.projectRef?.trim() ?? "") ?? null,
         channelId: input.channelId,
-        byProject: workdirState?.byProject ?? {},
-        byChannel: workdirState?.byChannel ?? {},
-      }),
-    [projectLabels, workdirState],
+        byProject: fresh.byProject,
+        byChannel: fresh.byChannel,
+      });
+    },
+    [projectLabels],
   );
 
   const targetForActor = React.useCallback(

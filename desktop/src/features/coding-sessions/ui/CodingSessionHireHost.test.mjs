@@ -895,6 +895,120 @@ test("a project hire with no recorded checkout is refused, never seated", async 
 });
 
 /**
+ * Item 167, live 2026-09-19: Brian set Pivot Test's repository folder in
+ * Project settings, and both of the lead's hires a minute later were still
+ * refused `HIRE_CHECKOUT_NOT_RECORDED`. `CodingSessionHireHost.tsx` sourced
+ * `checkoutForHire` from `workdirs.data` — a React Query snapshot fetched
+ * once at mount — so a write that landed after that fetch was invisible to
+ * every hire until something happened to refetch it, which nothing did.
+ *
+ * The fix is `checkoutForHire` reading `get_coding_session_workdir_state`
+ * fresh, every time, with no cache in between (`CodingSessionHireHost.tsx`).
+ * This test proves that shape directly: `checkoutForHire` here is not a
+ * canned answer but the same two calls the host itself makes —
+ * `getCodingSessionWorkdirState()` then `resolveCodingSessionHireCheckout`
+ * — against a native layer whose answer changes underneath it. The store is
+ * written *after* the host would have already fetched once (`settle()`
+ * inside `harness` runs several ticks before the hire is delivered), and no
+ * query, cache or refetch is ever touched — only the mocked native command's
+ * return value moves — so a resolution that still names the stale project
+ * checkout would mean the fix regressed to reading a snapshot again.
+ */
+test("a hire answered after a store write sees the new checkout, with no refetch", async () => {
+  let workdirState = {
+    version: 1,
+    byProject: {},
+    byChannel: {},
+    mru: [],
+    pending: {},
+  };
+  const priorTauriInternals = dom.window.__TAURI_INTERNALS__;
+  dom.window.__TAURI_INTERNALS__ = {
+    invoke: (command) => {
+      if (command === "get_coding_session_workdir_state") {
+        return Promise.resolve(workdirState);
+      }
+      return Promise.reject(new Error(`unmocked: ${command}`));
+    },
+    transformCallback: () => Math.random(),
+  };
+  globalThis.__TAURI_INTERNALS__ = dom.window.__TAURI_INTERNALS__;
+
+  try {
+    const { getCodingSessionWorkdirState } = await import(
+      "@/shared/api/tauriCodingSessionWorkdirs.ts"
+    );
+    const { resolveCodingSessionHireCheckout } = await import(
+      "../lib/codingSessionHireCheckout.ts"
+    );
+
+    const host = await harness({
+      agents: [PROJECT_ADA],
+      umbrellas: [
+        {
+          ...UMBRELLA,
+          executions: [
+            {
+              activeGeneration: {
+                agentRef: LEAD_PUBKEY,
+                role: "lead",
+                status: "running",
+                projectRef: PROJECT_REF,
+              },
+            },
+          ],
+        },
+      ],
+      // Exactly `CodingSessionHireHost.tsx`'s own `checkoutForHire`: a fresh
+      // read of the native command on every call, never a value captured at
+      // mount.
+      checkoutForHire: async (input) => {
+        const fresh = await getCodingSessionWorkdirState();
+        return resolveCodingSessionHireCheckout({
+          projectRef: input.projectRef,
+          projectLabel: "Pivot Test",
+          channelId: input.channelId,
+          byProject: fresh.byProject,
+          byChannel: fresh.byChannel,
+        });
+      },
+    });
+
+    // The write Project settings performs, landing well after the host's own
+    // first read of the store and touching nothing the host holds a
+    // reference to.
+    workdirState = {
+      ...workdirState,
+      byProject: {
+        [PROJECT_REF]: {
+          path: "/Users/brian/Projects/pivot-test/pivot-test",
+          updatedAt: "2026-09-19T10:56:53Z",
+        },
+      },
+    };
+
+    await host.deliver(await signedHire());
+
+    assert.equal(
+      host.steps.includes("worktree"),
+      true,
+      "the hire was still refused after the store held the project's checkout",
+    );
+    const [cut] = host.of(9);
+    assert.ok(cut, "the umbrella was never told which repository the seat got");
+    assert.equal(
+      cut.content,
+      "Hired a builder — worktree cut from " +
+        "/Users/brian/Projects/pivot-test/pivot-test (project checkout)",
+    );
+    host.teardown();
+  } finally {
+    dom.window.__TAURI_INTERNALS__ = priorTauriInternals;
+    globalThis.__TAURI_INTERNALS__ = priorTauriInternals;
+  }
+});
+
+/**
  * Ledger 135(b): Kiln, shown as Codex on the Agents screen, pins no runtime
  * of its own — it inherits the harness from its persona, so
  * `ManagedAgent.runtime` is null and only `agentCommand` says `codex-acp`.
