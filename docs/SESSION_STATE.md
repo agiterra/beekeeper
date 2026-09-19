@@ -14163,6 +14163,65 @@ removed from here.
      consolidated list for him is
      [findings for Andy](history/2026-09-19-findings-for-andy.md).
 
+172. **Even after item 169's file-transport fix, a synced packs cache still
+     seated a seat on the cache's seed commit, because `--branch main` names
+     a ref, not the tip the sync had reached (found 2026-09-19, Sonnet, in
+     lane review by inspection and a red/green test; not yet exercised
+     live).** Project Pivot Test, source pinned `refs/heads/main` with
+     `path: .`, `team.yml` giving `runner` `workspace.agents_repo: read`.
+     The host synced the packs cache to the pinned branch's tip `d148d54`
+     (the seat's bundle manifest names `packRef.sha = d148d54…`, and
+     `git -C <cache> rev-parse HEAD` and `refs/remotes/origin/main` are both
+     `d148d54`), then cut the seat's clone with `git clone --quiet --branch
+     main -- <cache> <worktree>-agents`
+     (`desktop/src-tauri/src/managed_agents/seat_agents_clone.rs`,
+     the clone call, pre-fix). `--branch main` resolves the cache's **local**
+     `refs/heads/main` — the branch the cache's very first clone created —
+     not `refs/remotes/origin/main`, which is the ref `sync_packs_checkout`
+     advances (it fetches into `refs/remotes/origin/*` and checks out
+     detached, never touching the local branch). So the seat's clone landed
+     on the seed commit `6405b21`: its `team.yml` still read `runner: {}`
+     although the grant that seated it lives in `d148d54`. Verified with
+     `git -C <cache> rev-parse refs/heads/main` = `6405b21` versus
+     `refs/remotes/origin/main` = `d148d54`.
+     - **Fix.** `cut_seat_agents_clone` now takes the `sha` the caller
+       already holds — the resolved commit on the seat's own `packRef`, read
+       off `entry.pack_ref.sha` at the one call site
+       (`desktop/src-tauri/src/managed_agents/actor_seats.rs:822`, just after
+       `seat_entry_for_plan` sets it) — and clones without `--branch` (a
+       plain clone pulls every ref the cache advertises, including its
+       synced `refs/remotes/origin/*`), then `git checkout -B <branch> <sha>`
+       to land the seat on the exact staged commit while still naming it a
+       real branch a `write` seat can push from. `git rev-parse HEAD` is
+       checked against `sha` before returning, so a mismatch is caught here,
+       not trusted. The reuse path (a clone already exists beside the
+       worktree) fetches `sha` from the cache path directly — not through
+       `origin`, which by then already points at the relay from the first
+       stage — so a re-staged seat is not left on an older commit. The local
+       clone configuration lane 169 introduced
+       (`build_local_clone_git_auth_config`) and the `remote set-url origin
+       <relay>` step after it are unchanged.
+     - **Evidence.** Native, in throwaway temp repositories only
+       (`seat_agents_clone.rs` tests): `a_lagging_local_branch_does_not_
+       strand_the_seat_on_the_seed_commit` builds a cache whose local `main`
+       lags its `origin/main` exactly as `sync_packs_checkout` leaves one,
+       shows `--branch main` landing on the seed commit as the bug, then
+       shows landing on the resolved sha reaching the synced tip, checked
+       out to a real branch named `main`, with `origin` then pointable at a
+       relay-shaped URL; `the_reuse_path_advances_an_existing_clone` stages
+       twice at two different shas with `origin` already relay-pointed
+       between them and asserts the second stage's sha wins;
+       `a_sha_absent_from_the_cache_is_refused_by_name` asserts the refusal
+       names the missing sha. Item 169's own test is unchanged and still
+       passes. `cargo test --manifest-path desktop/src-tauri/Cargo.toml`:
+       3444 passed, 0 failed. `cargo clippy --all-targets -- -D warnings` and
+       `cargo fmt --check` both clean on `desktop/src-tauri`.
+     - **Not done / disclosed.** Nothing exercised live: the first seat
+       staged with an `agents_repo` grant against hive, at a branch the
+       cache had already been re-synced past once, is still owed. Andy
+       authored the code this fixes (item 162) and should review it, same as
+       169–171.
+
 ## 3a. Environment facts that cost real time (do not rediscover)
 
 - **pnpm 11's answer to a stale workspace state is to DELETE `node_modules`,

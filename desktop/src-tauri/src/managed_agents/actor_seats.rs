@@ -819,8 +819,23 @@ pub async fn stage_coding_session_actor_seat(
                     entry.agents_repo
                 ));
             };
+            // The exact commit the seat's role pack was just staged from
+            // (`packRef.sha` on the entry, set above by `seat_entry_for_plan`)
+            // — the clone must land there too, never on whatever ref its
+            // *name* resolves to in the cache (ledger 172).
+            let sha = entry
+                .pack_ref
+                .as_ref()
+                .map(|pack_ref| pack_ref.sha.as_str())
+                .ok_or_else(|| {
+                    format!(
+                        "this role is granted the agents repository ({:?}) but the seat's pack \
+                         was staged without a commit to clone it at",
+                        entry.agents_repo
+                    )
+                })?;
             let clone = crate::managed_agents::seat_agents_clone::cut_seat_agents_clone(
-                &app, &state, source, worktree,
+                &app, &state, source, worktree, sha,
             )?;
             entry.agents_checkout = Some(SeatAgentsCheckout {
                 path: clone,
