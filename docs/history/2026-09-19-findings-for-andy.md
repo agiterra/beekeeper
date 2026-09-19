@@ -3,7 +3,7 @@
 Compiled by Fable for Brian. Everything here was found by using the installed
 app against hive, not by reading code alone; each finding names its ledger
 item, which carries the evidence and `file:line`. Status is as of 2026-09-19
-12:10 EDT. "Lane" means a fix is being built on a topic branch and will land
+13:05 EDT. "Lane" means a fix is being built on a topic branch and will land
 on `main` rebased; "open" means nobody owns it yet.
 
 ## A. Fixed and landed since 2026-09-16 (for awareness; review welcome)
@@ -21,9 +21,9 @@ on `main` rebased; "open" means nobody owns it yet.
 
 | # | Finding | Ledger | Lane |
 | --- | --- | --- | --- |
-| 7 | **git ≥ 2.46 is a hard requirement nobody states.** `git-credential-nostr` speaks the `authtype` credential protocol and prints nothing without `capability[]=authtype`. A Finder-launched bundle resolves `git` from `/usr/bin` (Apple git 2.39), so every credentialed fetch/clone failed with "could not read Username". A branch-pinned agents repository fetches on every hire, so the pivot hits this on every machine that lacks a newer git on the GUI PATH. Reproduced with the exact `GIT_CONFIG_COUNT` environment; Homebrew git 2.55 succeeds with the same config. | 168 | git-version probe for remote ops, honest refusal, About-row disclosure, README requirement |
-| 8 | **The seat's agents-repository clone is refused by the file-transport rule.** `cut_seat_agents_clone` clones from the packs cache with `build_git_auth_config`, which sets `protocol.file.allow=never`; git answers "transport 'file' not allowed". Reproduced by hand. | 169 | local clone config with file transport allowed; `origin` still re-pointed at the relay |
-| 9 | **A staging failure after the worktree is cut never becomes a refusal.** The lead's `bee sessions hire` waited 120 s and reported "unconfirmed"; no refusal on the relay, the worktree left recorded. | 169 | publish a refusal with the native error, dispose of the cut tree |
+| 7 | **git ≥ 2.46 is a hard requirement nobody states.** `git-credential-nostr` speaks the `authtype` credential protocol and prints nothing without `capability[]=authtype`. A Finder-launched bundle resolves `git` from `/usr/bin` (Apple git 2.39), so every credentialed fetch/clone failed with "could not read Username". A branch-pinned agents repository fetches on every hire, so the pivot hits this on every machine that lacks a newer git on the GUI PATH. Reproduced with the exact `GIT_CONFIG_COUNT` environment; Homebrew git 2.55 succeeds with the same config. | 168 | **Landed** `37dfdec4e`: git-version probe for remote ops, honest refusal, About-row and readiness disclosure, README requirement |
+| 8 | **The seat's agents-repository clone is refused by the file-transport rule.** `cut_seat_agents_clone` clones from the packs cache with `build_git_auth_config`, which sets `protocol.file.allow=never`; git answers "transport 'file' not allowed". Reproduced by hand. | 169 | **Landed** `86dde1d3f`: local clone config with file transport allowed; `origin` still re-pointed at the relay |
+| 9 | **A staging failure after the worktree is cut never becomes a refusal.** The lead's `bee sessions hire` waited 120 s and reported "unconfirmed"; no refusal on the relay, the worktree left recorded. | 169 | **Landed** `86dde1d3f`: `HIRE_SEAT_STAGING_FAILED` with the native error, the cut tree disposed of |
 | 10 | **The provider outbox is poisoned by rows the relay can never accept.** 150 pending rows (149 × 44223, 1 × 44225) from 2026-09-04/05 sit outside the relay's ±900 s window; `flush_limit` breaks on the first failure, so fresh events (the host-step claim, seat metadata) rarely get a turn. The host-step run sat in `waiting_host` until the rows were acknowledged by hand. | 170 | park definitive rejections and out-of-window rows, continue the drain, disclose the parked count |
 
 ## C. Open, no lane yet (your call on priority)
