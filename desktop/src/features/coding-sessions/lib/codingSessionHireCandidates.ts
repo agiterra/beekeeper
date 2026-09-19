@@ -75,6 +75,10 @@ export function codingSessionHireAgentsFromManaged(
   return agents.map((agent) => {
     const runtime = resolveCodingSessionHireAgentRuntime({
       runtime: agent.runtime,
+      // The host's own record → definition resolution (ledger 139) answers
+      // before the catalog chain; until item 165 it was never handed over.
+      effectiveRuntime: agent.effectiveRuntime ?? null,
+      effectiveRuntimeSource: agent.runtimeSource ?? null,
       agentCommand: agent.agentCommand,
       provider: agent.provider,
       ...(options?.runtimeIdForCommand

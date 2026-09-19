@@ -886,6 +886,8 @@ fn a_projects_roles_folder_scans_to_exactly_what_the_picker_would_have_shown() {
 /// into its own file only to keep both under the repository file-size gate.
 #[path = "crew_roles_naming_tests.rs"]
 mod naming;
+#[path = "crew_roles_runtime_tests.rs"]
+mod runtime;
 
 /// Item 90: model, provider, runtime and avatar are host-owned install facts.
 /// A refresh (including one that renames in place) rebuilds the instance off

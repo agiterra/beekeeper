@@ -615,7 +615,10 @@ repository `<slug>` carries no Beekeeper files.
   one managed identity per role, minted with the owner's attestation and
   associated with the project, into the team "Project team <coord>"
   (ledger 164). Finish repository setup installs them for a project that
-  has none.
+  has none. Each installed identity pins this computer's preferred runtime
+  when its pack pins none, so a hire can seat it: a record left unpinned
+  resolves to the app's default harness, `buzz-agent`, which no
+  coding-session provider runs (ledger 165).
 - **Creation.** One host command, `project_agents_init`, built from the
   pieces `bee packs init` and **Create packs repository** already use
   (`desktop/src-tauri/src/managed_agents/packs_repo.rs:322,476,660`):

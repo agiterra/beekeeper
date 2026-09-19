@@ -37,6 +37,10 @@ use crate::managed_agents::{
 #[path = "crew_roles_project.rs"]
 mod project;
 pub(crate) use project::install_role_packs_in_named_team;
+#[path = "crew_roles_runtime.rs"]
+mod default_runtime;
+use default_runtime::derive_harness_fields;
+pub(crate) use default_runtime::pin_default_runtime;
 
 /// Name of the one team every installed role pack joins. Also the dedupe key:
 /// a second run updates this team rather than minting `Team roles (2)`.
@@ -813,15 +817,8 @@ fn install_role_packs_for_team(
         }
         // Re-derive the stored harness from the record we just assembled, so a
         // carried-over runtime or pin is not contradicted by a command line
-        // computed from the pack alone. `record_agent_command` is the same
-        // resolver spawn and the summary use (pin → record runtime → pack).
-        record.agent_command = crate::managed_agents::record_agent_command(&record, &definitions);
-        record.agent_args =
-            crate::managed_agents::normalize_agent_args(&record.agent_command, Vec::new());
-        record.mcp_command = crate::managed_agents::known_acp_runtime(&record.agent_command)
-            .and_then(|runtime| runtime.mcp_command)
-            .unwrap_or("")
-            .to_string();
+        // computed from the pack alone.
+        derive_harness_fields(&mut record, &definitions);
 
         match agents
             .iter_mut()

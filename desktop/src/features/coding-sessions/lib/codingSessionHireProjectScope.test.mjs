@@ -410,6 +410,59 @@ test("the host's candidate list keeps each agent's project and persona", () => {
   assert.equal(candidates[1].runtime, "codex");
 });
 
+// Ledger 165: the host's effective runtime reaches the decision. Item 139
+// taught the resolver to read it, but the candidate builder never handed it
+// over, so a crew agent whose record pinned nothing was read from its
+// effective harness — `buzz-agent`, the app default — and refused.
+test("the host's candidate list carries the host's effective runtime to the decision", () => {
+  const runtimeIdForCommand = (command) =>
+    command === "buzz-agent" ? "buzz-agent" : null;
+  const agents = codingSessionHireAgentsFromManaged(
+    [
+      {
+        pubkey: key("a", "verifier"),
+        name: "Verifier",
+        personaId: "crew-role:verifier",
+        runtime: "claude",
+        effectiveRuntime: "claude",
+        runtimeSource: "instance",
+        agentCommand: "claude-agent-acp",
+        homeRole: "verifier",
+        projectRef: P1,
+        hasRolePack: true,
+        model: null,
+        provider: null,
+      },
+      {
+        pubkey: key("b", "verifier"),
+        name: "Unpinned",
+        personaId: "crew-role:verifier",
+        runtime: null,
+        // The host stopped at the global tier: no tier pins a runtime, and
+        // the effective harness is the app default.
+        effectiveRuntime: null,
+        runtimeSource: "global",
+        agentCommand: "buzz-agent",
+        homeRole: "verifier",
+        projectRef: P1,
+        hasRolePack: true,
+        model: null,
+        provider: null,
+      },
+    ],
+    { runtimeIdForCommand },
+  );
+  assert.deepEqual(
+    [agents[0].runtime, agents[0].runtimeSource, agents[0].runtimeRead],
+    ["claude", "record", "claude"],
+  );
+  // What the Agents screen shows for it, so the hire and the screen agree.
+  assert.deepEqual(
+    [agents[1].runtime, agents[1].runtimeSource, agents[1].runtimeRead],
+    ["buzz-agent", "harness", "buzz-agent"],
+  );
+});
+
 // --- Refusal-code parity with the relay ------------------------------------
 
 test("the desktop's refusal codes are exactly buzz-core's HIRE_REFUSAL_CODES", () => {

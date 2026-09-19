@@ -391,6 +391,10 @@ pub(super) fn install_adopted_roles(
         &format!("Project team {}", draft.project_ref),
     )
     .map_err(|error| external(error.detail))?;
+    // A pack pins no runtime; without this every record lands on the app's
+    // default harness and no hire can seat it (ledger 165).
+    let global = crate::managed_agents::load_global_agent_config(app).map_err(external)?;
+    crew_roles::pin_default_runtime(&mut result, global.preferred_runtime.as_deref());
     association::associate_installation(&mut result.agents, &draft.project_ref, &result.installed)
         .map_err(invalid)?;
     save_personas(app, &result.definitions).map_err(external)?;

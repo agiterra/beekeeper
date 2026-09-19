@@ -197,7 +197,7 @@ pub async fn install_crew_role_packs(
 
         let mut mint =
             || crate::commands::agents::mint_agent_identity(&owner_keys).map(|(_, minted)| minted);
-        let result = install_role_packs(
+        let mut result = install_role_packs(
             &scan,
             definitions,
             agents,
@@ -206,6 +206,14 @@ pub async fn install_crew_role_packs(
             &names,
             &mut mint,
         )?;
+        // A pack pins no runtime; without this every record lands on the
+        // app's default harness and no hire can seat it (ledger 165).
+        let global = crate::managed_agents::load_global_agent_config(&app)
+            .map_err(CrewRoleInstallError::store)?;
+        crate::managed_agents::crew_roles::pin_default_runtime(
+            &mut result,
+            global.preferred_runtime.as_deref(),
+        );
 
         // Definitions first: `save_personas` preserves the instance half of the
         // unified store, and `save_managed_agents` preserves the definition

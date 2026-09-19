@@ -1,4 +1,5 @@
 import type { AuthStatus } from "./types/authPreflight";
+import type { ManagedAgentConfigSource } from "./types/managedAgentConfigSource";
 
 export type {
   AddChannelMembersInput,
@@ -239,8 +240,8 @@ export type ManagedAgent = {
    *  `model`/`modelSource`. `null` for no runtime, or an unrepublishing
    *  backend — fall back to `runtime`/`agentCommand` then (ledger 139). */
   effectiveRuntime: string | null;
-  /** Tier `effectiveRuntime` came from; `null` iff it is too. */
-  runtimeSource: "instance" | "definition" | "instance_legacy" | null;
+  /** Tier of `effectiveRuntime`; `"global"` + null means no tier pins one. */
+  runtimeSource: ManagedAgentConfigSource | null;
   teamId?: string | null;
   /** The role this agent is, from its pack persona. `null` when it has none. */
   homeRole: string | null;
@@ -298,7 +299,7 @@ export type ManagedAgent = {
    * `"definition"` = the linked persona named it, `"global"` = the app default,
    * `"instance_legacy"` = a record with no linked definition at all.
    */
-  modelSource: "instance" | "definition" | "global" | "instance_legacy" | null;
+  modelSource: ManagedAgentConfigSource | null;
   /** LLM inference provider, from the agent's pinned record snapshot. */
   provider: string | null;
   /**

@@ -64,12 +64,15 @@ export type CodingSessionHireAgentRuntime = {
 
 /**
  * The native `runtime_source` tiers `ManagedAgentSummary` can report
- * (`ConfigSource`, snake-cased). No `"global"` case — there is no global
- * tier for runtime, see `EffectiveAgentConfig::runtime`'s doc.
+ * (`ConfigSource`, snake-cased). `"global"` arrives only with a null
+ * `effectiveRuntime`: there is no global tier for runtime (see
+ * `EffectiveAgentConfig::runtime`'s doc), so it is the host saying no tier
+ * pins one, and the catalog chain below then reads the effective harness.
  */
 export type CodingSessionHireEffectiveRuntimeSource =
   | "instance"
   | "definition"
+  | "global"
   | "instance_legacy";
 
 export type ResolveCodingSessionHireAgentRuntimeInput = {
