@@ -14132,7 +14132,9 @@ removed from here.
      hand-signed 46030 with `d = approval_ref` and the run completed.
      Observed too: hive 502 for ~6 s at 11:47:47Z and "relay rate gate
      blocked acknowledged publication" on the provider's catch-up burst.
-     Andy authored the code under test and should review 169–171.
+     Andy authored the code under test and should review 169–171. The
+     consolidated list for him is
+     [findings for Andy](history/2026-09-19-findings-for-andy.md).
 
 ## 3a. Environment facts that cost real time (do not rediscover)
 
