@@ -134,9 +134,13 @@ test("the create is not published when custody staging fails", async () => {
     /keyring/,
   );
   assert.equal(published, 0);
+  // The custody entry is taken back even though the publish never ran: a
+  // staging call that threw may still have written part of what it was asked
+  // for, and an entry under a command id nothing will name is an orphan
+  // (ledger 169).
   assert.deepEqual(
     calls.map(([name]) => name),
-    ["ensureMembership", "stageSeat"],
+    ["ensureMembership", "stageSeat", "clearSeat"],
   );
 });
 

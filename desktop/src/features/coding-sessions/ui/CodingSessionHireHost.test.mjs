@@ -60,6 +60,15 @@ const PROJECT_ADA = {
   model: "opus[1m]",
 };
 
+/**
+ * What `stage_coding_session_actor_seat` threw on 2026-09-19, verbatim: the
+ * seat's clone of the project's agents repository ran with the *remote* git
+ * configuration, which forbids the `file` transport
+ * (`seat_agents_clone.rs`, ledger 169).
+ */
+const STAGING_FAILURE =
+  "could not clone the agents repository for this seat: fatal: transport 'file' not allowed";
+
 const LEAD_TARGET = {
   driver: "claude",
   instanceId: "claude-primary",
@@ -125,6 +134,7 @@ async function signedHire({
   role = "builder",
   providerInstanceRef = "claude-primary",
   routing,
+  commandId = "csl-hire-1",
 } = {}) {
   const { buildCodingSessionHireEvent } = await import(
     "../lib/codingSessionHireWire.ts"
@@ -134,7 +144,7 @@ async function signedHire({
       created_at: createdAt,
       ...buildCodingSessionHireEvent({
         channelId: CHANNEL_ID,
-        commandId: "csl-hire-1",
+        commandId,
         sessionRef: SESSION_REF,
         genesisRef: GENESIS_REF,
         role,
@@ -183,6 +193,14 @@ async function harness({
   receiptError = null,
   receiptInstanceRef = "claude-primary",
   grantError = null,
+  /**
+   * How many staging calls throw before one succeeds — the shape of ledger
+   * 169's second bug, where `stage_coding_session_actor_seat` failed after the
+   * worktree was cut.
+   */
+  stageSeatFailures = 0,
+  /** Make the host's own prune fail, so the refusal has to say so. */
+  disposeError = null,
 } = {}) {
   const { act, render } = await import("@testing-library/react");
   const React = (await import("react")).default;
@@ -196,6 +214,8 @@ async function harness({
   const steps = [];
   const published = [];
   const grants = [];
+  const disposals = [];
+  let stagingFailuresLeft = stageSeatFailures;
   let listener = null;
 
   const deps = {
@@ -215,12 +235,23 @@ async function harness({
     stageCreateHint: async () => {
       steps.push("hint");
     },
+    disposeSeatWorktree: async (input) => {
+      steps.push("dispose");
+      disposals.push(input);
+      if (disposeError !== null) throw new Error(disposeError);
+      return `removed the worktree for ${input.seatLabel}`;
+    },
     seatDeps: {
       ensureMembership: async () => {
         steps.push("membership");
       },
       stageSeat: async () => {
         steps.push("custody");
+        if (stagingFailuresLeft > 0) {
+          stagingFailuresLeft -= 1;
+          // The native sentence, verbatim, from the 2026-09-19 reproduction.
+          throw new Error(STAGING_FAILURE);
+        }
         return { packStaged: true };
       },
       clearSeat: async () => {
@@ -296,6 +327,7 @@ async function harness({
       });
       await settle();
     },
+    disposals,
     grants,
     of: (kind) => published.filter((event) => event.kind === kind),
     published,
@@ -1067,5 +1099,91 @@ test("an agent that inherits its harness from its persona is still seated on tha
   assert.equal(action.providerInstanceRef, "codex-primary");
   assert.equal(action.model, "gpt-5.6-sol");
   assert.equal(host.of(44220).length, 0, "the hire was refused");
+  host.teardown();
+});
+
+/**
+ * Ledger 169's second bug: a hire that failed in staging went unanswered.
+ *
+ * Live on 2026-09-19 the host cut the worktree, `cut_seat_agents_clone` was
+ * refused by git, the thrown error was recorded host-locally as an `error`
+ * outcome and published nowhere: `bee sessions hire` reported "exit 5
+ * unconfirmed" after 120 s, the provider's refusals.jsonl held nothing, and
+ * the worktree stayed cut. A hire must never go unanswered.
+ */
+test("a staging failure is refused once, in the host's own words, and the tree it cut is removed", async () => {
+  const host = await harness({ stageSeatFailures: 1 });
+  await host.deliver(await signedHire());
+
+  // No create, and the tree goes before the refusal is published so the
+  // refusal can say what happened to it.
+  assert.equal(host.of(44221).length, 0);
+  assert.deepEqual(host.steps, [
+    "worktree",
+    "hint",
+    "membership",
+    "custody",
+    "custody-cleared",
+    "dispose",
+    "sign:44220",
+    "publish:44220",
+    "sign:9",
+    "publish:9",
+  ]);
+  assert.deepEqual(host.disposals, [
+    { sessionRef: SESSION_REF, seatLabel: "Ada" },
+  ]);
+
+  // Exactly one refusal, carrying the native text verbatim.
+  const refusals = host.of(44220);
+  assert.equal(refusals.length, 1);
+  const payload = JSON.parse(refusals[0].content);
+  assert.deepEqual(payload.target, LEAD_TARGET);
+  assert.match(
+    payload.action.text,
+    /^hire refused: HIRE_SEAT_STAGING_FAILED — /,
+  );
+  assert.ok(payload.action.text.includes(STAGING_FAILURE), payload.action.text);
+  assert.ok(
+    payload.action.text.includes("removed the worktree for Ada"),
+    payload.action.text,
+  );
+  // And once more where the person who owns the computer can see it.
+  const [notice] = host.of(9);
+  assert.match(notice.content, /HIRE_SEAT_STAGING_FAILED/);
+  host.teardown();
+});
+
+test("a prune that fails is said in the refusal, not swallowed", async () => {
+  const host = await harness({
+    stageSeatFailures: 1,
+    disposeError: "this host has no worktree recorded for that seat",
+  });
+  await host.deliver(await signedHire());
+
+  const [refusal] = host.of(44220);
+  const text = JSON.parse(refusal.content).action.text;
+  assert.ok(text.includes(STAGING_FAILURE), text);
+  assert.match(text, /could not be removed: this host has no worktree/);
+  host.teardown();
+});
+
+test("a hire after the staging failure is fixed is seated normally", async () => {
+  const host = await harness({ stageSeatFailures: 1 });
+  await host.deliver(await signedHire());
+  assert.equal(host.of(44221).length, 0);
+
+  // A second request, its own commandId — the first was answered, and an
+  // answered hire is never re-run.
+  await host.deliver(await signedHire({ commandId: "csl-hire-2" }));
+  const creates = host.of(44221);
+  assert.equal(creates.length, 1);
+  const payload = JSON.parse(creates[0].content);
+  assert.equal(payload.action.actor, ADA_PUBKEY);
+  // The refused hire disposed of its own tree; the second cut a fresh one.
+  assert.deepEqual(host.disposals, [
+    { sessionRef: SESSION_REF, seatLabel: "Ada" },
+  ]);
+  assert.equal(host.steps.filter((step) => step === "worktree").length, 2);
   host.teardown();
 });

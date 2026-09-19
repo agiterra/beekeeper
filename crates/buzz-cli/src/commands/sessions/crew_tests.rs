@@ -2779,6 +2779,15 @@ fn every_contract_refusal_code_has_a_remedy_this_cli_can_print() {
         malformed.contains("bee sessions hire --help"),
         "{malformed}"
     );
+    // The staging refusal (ledger 169) does not tell a lead to retry: what
+    // failed is on the operator's computer, and the host's own error text is
+    // the only thing that says which part.
+    let staging =
+        hire_refusal_remedy("HIRE_SEAT_STAGING_FAILED").expect("HIRE_SEAT_STAGING_FAILED remedy");
+    assert!(
+        staging.contains("operator") && staging.contains("rather than retrying unchanged"),
+        "{staging}"
+    );
     // An invented code is not known, and the report says nothing rather than
     // guessing a remedy for it.
     assert_eq!(hire_refusal_remedy("HIRE_NOT_A_REAL_CODE"), None);

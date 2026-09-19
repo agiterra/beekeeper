@@ -22,6 +22,10 @@ import {
   codingSessionHireRequesterStanding,
   type CodingSessionHireRequest,
 } from "./codingSessionHireWire";
+import {
+  formatCodingSessionHireRefusal,
+  type CodingSessionHireRefusalCode,
+} from "./codingSessionHirePolicy";
 import { publishCodingSessionLaneMessage } from "./codingSessionLanePublish";
 
 /**
@@ -95,6 +99,104 @@ export async function publishRefusal(
         }),
         text: answer.text,
       }),
+    },
+    input,
+    deps,
+  );
+}
+
+/**
+ * Refuse a hire with a code and a reason of this host's own making.
+ *
+ * {@link publishRefusal} answers a *decision* — a refusal the planner
+ * produced, with its text already written. This answers a hire that got past
+ * the decision and then failed on this computer: the host writes the same
+ * `hire refused: <CODE> — <reason>` sentence `bee sessions hire` parses
+ * structurally, says it to the requesting seat and in the umbrella, and the
+ * caller records the outcome.
+ *
+ * It exists because such a failure had no answer at all. On 2026-09-19 the
+ * seat's agents clone was refused by git, staging threw, and the hire was
+ * recorded host-locally as an `error` and published nowhere: the lead waited
+ * out its whole window (ledger 169). A hire that gets no answer is a crash
+ * with better manners.
+ */
+export async function refuseCodingSessionHireWithCode(
+  request: CodingSessionHireRequest,
+  refusal: {
+    code: CodingSessionHireRefusalCode;
+    /** The host's own words, verbatim — never a summary of them. */
+    reason: string;
+  },
+  input: UseCodingSessionHireInput,
+  deps: CodingSessionHireDeps,
+): Promise<string> {
+  const text = formatCodingSessionHireRefusal(refusal);
+  await discloseCodingSessionHire(
+    {
+      channelId: request.channelId,
+      sessionRef: request.action.sessionRef,
+      requesterPubkey: request.requesterPubkey,
+      text,
+      notice: codingSessionHireRefusalNotice({
+        role: request.action.role,
+        requesterLabel: codingSessionHireRequesterLabel({
+          standing: codingSessionHireRequesterStanding(request),
+          nameFor: (pubkey) =>
+            input.agents.find((agent) => agent.pubkey === pubkey)?.name ?? null,
+        }),
+        text,
+      }),
+    },
+    input,
+    deps,
+  );
+  return text;
+}
+
+/**
+ * Answer a hire whose seat this host cut a tree for and then could not stage.
+ *
+ * Two things in one, because neither is right without the other: the worktree
+ * cut for a seat that will never exist is removed — by the host's own prune,
+ * which takes the § 4.11 agents clone recorded against it — and the hire is
+ * refused `HIRE_SEAT_STAGING_FAILED` with the host's error text verbatim and
+ * what happened to the tree. The tree goes first so the refusal can say so.
+ *
+ * Nothing here is a judgement about *what* failed: the host's own words are
+ * the only thing that names the part (git refusing the clone, an unreachable
+ * keyring, a role pack this computer cannot read), and summarizing them would
+ * throw away the one fact the operator needs (ledger 169).
+ */
+export async function refuseCodingSessionHireForSeatingFailure(
+  request: CodingSessionHireRequest,
+  seating: {
+    /** The host's own error text. */
+    failure: string;
+    sessionRef: string;
+    seatLabel: string;
+    /** Only for the sentence when the prune itself fails. */
+    worktreePath: string;
+  },
+  input: UseCodingSessionHireInput,
+  deps: CodingSessionHireDeps,
+): Promise<void> {
+  let disposal: string;
+  try {
+    disposal = await deps.disposeSeatWorktree({
+      sessionRef: seating.sessionRef,
+      seatLabel: seating.seatLabel,
+    });
+  } catch (error: unknown) {
+    disposal = `the worktree at ${seating.worktreePath} could not be removed: ${
+      error instanceof Error ? error.message : String(error)
+    }`;
+  }
+  await refuseCodingSessionHireWithCode(
+    request,
+    {
+      code: "HIRE_SEAT_STAGING_FAILED",
+      reason: `${seating.failure} — no seat was created; ${disposal}`,
     },
     input,
     deps,

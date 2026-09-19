@@ -3,7 +3,10 @@ import * as React from "react";
 import { relayClient } from "@/shared/api/relayClient";
 import { signRelayEvent } from "@/shared/api/tauri";
 import { stageCodingSessionCreateHint } from "@/shared/api/tauriCodingSessionWorkdirs";
-import { createCodingSessionWorktree } from "@/shared/api/tauriCodingSessionWorktrees";
+import {
+  createCodingSessionWorktree,
+  pruneCodingSessionSeatWorktree,
+} from "@/shared/api/tauriCodingSessionWorktrees";
 import type { CodingSessionProviderRuntime } from "@/shared/api/tauriSessionProvider";
 import type { RelayEvent } from "@/shared/api/types";
 import { ensureActorChannelMembership } from "../lib/actorSeatChannelMembership";
@@ -64,6 +67,7 @@ import {
   discloseCodingSessionHire,
   outcomeOf,
   publishRefusal,
+  refuseCodingSessionHireForSeatingFailure,
 } from "../lib/codingSessionHireDisclosure";
 import {
   codingSessionHireCheckoutLine,
@@ -212,6 +216,20 @@ export type CodingSessionHireDeps = {
   fetchRosterFold: typeof fetchCodingSessionRosterFold;
   createWorktree: typeof createCodingSessionWorktree;
   stageCreateHint: typeof stageCodingSessionCreateHint;
+  /**
+   * Remove the worktree this host cut for a seat that was never created.
+   *
+   * Only ever called for a tree this hire cut moments earlier and never
+   * published a create for: it is clean by construction, belongs to no
+   * session anybody can see, and the host's own prune rules
+   * (`remove_recorded_seat_worktree`) take its agents clone with it. Without
+   * it a failed staging left a worktree and a branch behind for every retry
+   * (ledger 169). Resolves to the host's own sentence about what it did.
+   */
+  disposeSeatWorktree: (input: {
+    sessionRef: string;
+    seatLabel: string;
+  }) => Promise<string>;
   /** The three custody/membership steps `publishSeatedCodingSessionCreate` runs. */
   seatDeps: SeatedCodingSessionCreateDeps;
   signer: typeof signRelayEvent;
@@ -260,6 +278,7 @@ export const DEFAULT_CODING_SESSION_HIRE_DEPS: CodingSessionHireDeps = {
   fetchRosterFold: fetchCodingSessionRosterFold,
   createWorktree: createCodingSessionWorktree,
   stageCreateHint: stageCodingSessionCreateHint,
+  disposeSeatWorktree: pruneCodingSessionSeatWorktree,
   seatDeps: {
     ensureMembership: ensureActorChannelMembership,
     stageSeat: stageCodingSessionActorSeat,
@@ -792,7 +811,16 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
       // What staging put on disk for this seat, for the outcome: null until
       // the host answers, and still null when no repository vouched for it.
       let stagedPackRef: CodingSessionSeatPackRef | null = null;
-      await publishSeatedCodingSessionCreate({
+      // Whether the create itself was attempted. Everything before it —
+      // membership, the project's 30624, staging the seat's key material and
+      // (spec § 4.11) its agents clone — can throw with nothing on the wire,
+      // and that failure is this host's to answer for. Once `publish` has
+      // begun, a 44221 may have reached the relay even if the call then
+      // failed, so a refusal there would be a claim that no seat exists when
+      // one might: that case keeps its old behaviour and is reported as an
+      // error.
+      let createAttempted = false;
+      const seatingFailure = await publishSeatedCodingSessionCreate({
         channelId: plan.channelId,
         commandId: plan.commandId,
         seat: { actor: plan.actor, role: plan.role },
@@ -807,6 +835,7 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
           stagedPackRef = packRef;
         },
         publish: async () => {
+          createAttempted = true;
           const event = await hireDeps.signer(
             buildCodingSessionCreateEvent({
               channelId: plan.channelId,
@@ -841,7 +870,30 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
             "Failed to seat the hired agent.",
           );
         },
-      });
+      }).then(
+        () => null,
+        (error: unknown) => {
+          if (createAttempted) throw error;
+          return error instanceof Error && error.message.trim()
+            ? error.message.trim()
+            : String(error);
+        },
+      );
+      if (seatingFailure !== null) {
+        await refuseCodingSessionHireForSeatingFailure(
+          request,
+          {
+            failure: seatingFailure,
+            sessionRef: plan.sessionRef,
+            seatLabel: plan.seatLabel,
+            worktreePath: created.path,
+          },
+          current.input,
+          hireDeps,
+        );
+        report(outcomeOf(request, "refused", "HIRE_SEAT_STAGING_FAILED"));
+        return;
+      }
       // Anything this host substituted for the lead's words — the runtime, the
       // model, or both — is said out loud in the umbrella, where both the lead
       // and the person can read it. A substitution nobody is told about is the

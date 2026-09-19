@@ -1147,6 +1147,16 @@ pub const HIRE_REFUSAL_CODES: &[&str] = &[
     // Repository folder. Named rather than seating an agent with no tree
     // (ledger 135(a), 136).
     "HIRE_CHECKOUT_NOT_RECORDED",
+    // The host cut the seat's worktree and then could not stage the seat
+    // itself — its key material, its role pack, or (spec § 4.11) its clone of
+    // the project's agents repository. The reason carries the host's own
+    // error text verbatim, because what failed is host-local and only its own
+    // words say which part. Named rather than left silent: on 2026-09-19 a
+    // staging failure produced no refusal at all and the lead's `bee sessions
+    // hire` waited out its window on an answer nobody was going to send
+    // (ledger 169). The host disposes of the tree it cut before it refuses,
+    // so a retry after the operator's fix cuts a fresh one.
+    "HIRE_SEAT_STAGING_FAILED",
 ];
 
 /// The three historical create key sets, oldest first, before the additive

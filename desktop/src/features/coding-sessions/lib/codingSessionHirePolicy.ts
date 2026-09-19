@@ -130,6 +130,8 @@ export const CODING_SESSION_HIRE_REFUSAL_CODES = [
    * The resolution logic lives in `codingSessionHireCheckout.ts` (135(a), 136).
    */
   "HIRE_CHECKOUT_NOT_RECORDED",
+  /** The tree was cut and the seat could not be staged (ledger 169). */
+  "HIRE_SEAT_STAGING_FAILED",
 ] as const;
 
 export type CodingSessionHireRefusalCode =

@@ -212,17 +212,28 @@ async function publishWithStagedSeat<T>(input: {
     input.projectRef ?? null,
     input.deps.fetchPackSource,
   );
-  const staged = await input.deps.stageSeat({
-    commandId: input.commandId,
-    agentPubkey: input.actorPubkey,
-    role: input.actorRole ?? null,
-    packSource,
-    ...(input.requireProjectRef
-      ? { requireProjectRef: input.requireProjectRef }
-      : {}),
-    ...(input.newSelection === true ? { newSelection: true } : {}),
-    ...(input.worktree ? { worktree: input.worktree } : {}),
-  });
+  let staged: CodingSessionSeatStaged | undefined;
+  try {
+    staged = await input.deps.stageSeat({
+      commandId: input.commandId,
+      agentPubkey: input.actorPubkey,
+      role: input.actorRole ?? null,
+      packSource,
+      ...(input.requireProjectRef
+        ? { requireProjectRef: input.requireProjectRef }
+        : {}),
+      ...(input.newSelection === true ? { newSelection: true } : {}),
+      ...(input.worktree ? { worktree: input.worktree } : {}),
+    });
+  } catch (error) {
+    // Staging can fail after it has written part of what it was asked to —
+    // the § 4.11 agents clone is cut before the custody entry is filed — so
+    // the entry is dropped rather than left under a command id no create will
+    // ever name. Best effort, and a no-op when nothing was written; the
+    // caller still gets the host's own error (ledger 169).
+    await input.deps.clearSeat(input.commandId).catch(() => {});
+    throw error;
+  }
   if (staged) {
     input.onSeatStaged?.({
       packStaged: staged.packStaged,

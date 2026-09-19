@@ -7,13 +7,26 @@
 //! seat's worktree record so disposal removes it with the tree. What the
 //! seat may do in it is the relay's push gate and, on Claude, the write
 //! fence's call — this module only puts the files where the briefing says.
+//!
+//! **Why the cache and not the relay.** The clone is cut from this host's
+//! packs cache, which is the branch's last sync rather than the relay's tip
+//! (ledger 162), and `origin` is pointed at the relay immediately after — so
+//! a `write` seat has a real upstream from its first command: `git fetch`
+//! brings it to the relay's tip and `git push` goes to the relay under the
+//! seat's own credentials and its owner's tier. Cutting from the relay URL
+//! instead would make every hire wait on a network clone, would need the
+//! host's credentials for a repository the *seat* is meant to authenticate
+//! to, and would fetch bytes the cache already holds — for a repository the
+//! host had, by definition, just synced to stage this seat's role pack. Spec
+//! § 4.11 says "clones the repository from its packs cache", and that is what
+//! this does.
 
 use std::path::{Path, PathBuf};
 
 use tauri::AppHandle;
 
 use crate::app_state::AppState;
-use crate::commands::project_git_exec::run_git;
+use crate::commands::project_git_exec::{build_local_clone_git_auth_config, run_git};
 use crate::managed_agents::packs_cache;
 
 /// The suffix the clone's directory carries beside the seat's worktree.
@@ -67,7 +80,14 @@ pub(crate) fn cut_seat_agents_clone(
             worktree.display()
         )
     })?;
-    let auth = crate::commands::project_git_exec::build_git_auth_config(state)?;
+    // The clone and the `set-url` after it are both local: the remote is a
+    // directory in this host's packs cache, and nothing here talks to the
+    // relay. So this runs with the local configuration, which carries no
+    // credential helper and no nsec — and, unlike every remote
+    // configuration, allows git's `file` transport. With the remote
+    // configuration this clone failed outright, `fatal: transport 'file' not
+    // allowed`, and the hire it was staging died with it (ledger 169).
+    let auth = build_local_clone_git_auth_config()?;
     let relay_http =
         crate::relay::relay_http_base_url(&crate::relay::relay_ws_url_with_override(state));
     let origin = packs_cache::packs_clone_url(&relay_http, &owner, &id);
@@ -104,6 +124,76 @@ pub(crate) fn cut_seat_agents_clone(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The clone's own transport, in a throwaway repository.
+    ///
+    /// This is ledger 169's first bug as a test: with the configuration every
+    /// *remote* operation uses, git refuses a clone whose remote is a path
+    /// (`protocol.file.allow=never`), and the hire that was staging this seat
+    /// dies with it. With the local clone configuration the same command
+    /// succeeds. Nothing here touches the real repository or a real cache.
+    #[test]
+    fn a_clone_from_the_cache_needs_the_file_transport_only_the_local_config_allows() {
+        use crate::commands::project_git_exec::{
+            build_git_auth_config_for_keys, build_local_clone_git_auth_config,
+            build_test_git_auth_config,
+        };
+        let temp = tempfile::tempdir().expect("temp");
+        let source = temp.path().join("cache");
+        std::fs::create_dir(&source).expect("source dir");
+        let seed = build_test_git_auth_config().expect("seed auth");
+        run_git(
+            &["init", "--quiet", "--initial-branch", "main"],
+            Some(&source),
+            &seed,
+        )
+        .expect("git init");
+        std::fs::write(source.join("team.yml"), "schema: beekeeper-team/v1\n").expect("team.yml");
+        run_git(&["add", "team.yml"], Some(&source), &seed).expect("git add");
+        run_git(&["commit", "--quiet", "-m", "seed"], Some(&source), &seed).expect("git commit");
+
+        let source_str = source.to_string_lossy().into_owned();
+        let remote_auth =
+            build_git_auth_config_for_keys(&nostr::Keys::generate()).expect("remote auth");
+        let refused_dest = temp.path().join("refused").to_string_lossy().into_owned();
+        let refusal = run_git(
+            &[
+                "clone",
+                "--quiet",
+                "--branch",
+                "main",
+                "--",
+                &source_str,
+                &refused_dest,
+            ],
+            None,
+            &remote_auth,
+        )
+        .expect_err("the remote configuration must refuse a clone from a path");
+        assert!(
+            refusal.contains("transport 'file' not allowed"),
+            "unexpected refusal: {refusal}"
+        );
+
+        let dest = temp.path().join("seat-agents");
+        let dest_str = dest.to_string_lossy().into_owned();
+        run_git(
+            &[
+                "clone",
+                "--quiet",
+                "--branch",
+                "main",
+                "--",
+                &source_str,
+                &dest_str,
+            ],
+            None,
+            &build_local_clone_git_auth_config().expect("local clone auth"),
+        )
+        .expect("the local clone configuration clones from a path");
+        assert!(dest.join(".git").is_dir(), "no clone at {}", dest.display());
+        assert!(dest.join("team.yml").is_file());
+    }
 
     #[test]
     fn the_clone_sits_beside_the_worktree() {

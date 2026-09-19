@@ -2055,6 +2055,14 @@ pub fn hire_refusal_remedy(code: &str) -> Option<&'static str> {
             "set the project's repository folder in Project settings → This computer, then hire \
              again; do not retry unchanged"
         }
+        // Host-local and not the lead's to fix: the reason carries the host's
+        // own error text, which names the part that failed (a keyring the
+        // host could not read, a role pack it could not stage, the agents
+        // repository clone). A retry repeats it until the operator acts.
+        "HIRE_SEAT_STAGING_FAILED" => {
+            "this computer could not stage the seat; the reason is its own error text — show it \
+             to the operator and hire again once it is fixed, rather than retrying unchanged"
+        }
         _ => return None,
     })
 }

@@ -431,6 +431,23 @@ pub(crate) fn build_local_git_auth_config() -> Result<GitAuthConfig, String> {
     })
 }
 
+/// A local configuration for a clone whose *remote* is a path on this disk.
+///
+/// Every other configuration built here sets `protocol.file.allow=never` on
+/// purpose: a relay-supplied clone URL must never be able to name a local
+/// path. A cache-to-sibling clone is the opposite case — the "remote" is a
+/// directory this host wrote itself, there is nothing to authenticate, and
+/// the nsec and the credential helper stay out of the environment. Widening
+/// [`build_git_auth_config`] instead would hand the file transport to every
+/// remote operation, so this is its own constructor (ledger 169: the seat's
+/// agents clone, spec § 4.11, ran with the remote config and git refused it
+/// with `fatal: transport 'file' not allowed`).
+pub(crate) fn build_local_clone_git_auth_config() -> Result<GitAuthConfig, String> {
+    let mut auth = build_local_git_auth_config()?;
+    auth.allow_file_transport = true;
+    Ok(auth)
+}
+
 #[cfg(test)]
 pub(crate) fn build_test_git_auth_config() -> Result<GitAuthConfig, String> {
     let mut auth = build_git_auth_config_for_keys(&Keys::generate())?;
