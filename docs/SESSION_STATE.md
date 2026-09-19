@@ -14106,6 +14106,34 @@ they unblock, and the work item 109 measured but did not do.
 Everything struck through in the previous §3 lives in §2 by item number and is
 removed from here.
 
+171. **First live proofs of the agents-repository pivot on hive (2026-09-19,
+     Brian with Fable).** Steps, results and evidence:
+     [the run](history/2026-09-19-pivot-live-proofs.md). Creation (P1/P2)
+     and a template-composed hire (A1–A4) pass first time on hive. Four
+     defects found by doing, each with its own item or lane: a stale
+     workdir snapshot refused a hire (167, landed); Apple git 2.39 cannot
+     drive the Nostr credential helper, which needs git 2.46 (168); the
+     seat's agents-repository clone is refused by the file-transport rule and
+     the error is never published as a refusal (169); the provider outbox is
+     poisoned by 150 unpublishable rows from 2026-09-04/05 because
+     `flush_limit` breaks on the first failure (170). Three UI gaps with no
+     lane yet: (a) the project Actions tab shows "No actions are published"
+     while `bee workflows list` on the same channel returns the workflow and
+     `bee actions publish` reported it accepted — the tab's channel set or
+     its query never produced a request, and remounting did not help
+     (`desktop/src/features/project-actions/lib/useProjectActions.ts:140-162`);
+     (b) the Dashboard inbox renders a kind 46010 host-step approval request
+     as its raw JSON with a reply composer and no approve control
+     (`desktop/src/features/home/lib/inbox.ts:165-187` knows the kind); (c)
+     `bee workflows approve --token <UUID>` hashes the token, so it cannot
+     answer a host-step request whose `approval_ref` is already the stored
+     hash (`crates/buzz-cli/src/commands/workflows.rs:232`); the desktop's
+     `grant_approval` passes the ref straight through. The relay accepted a
+     hand-signed 46030 with `d = approval_ref` and the run completed.
+     Observed too: hive 502 for ~6 s at 11:47:47Z and "relay rate gate
+     blocked acknowledged publication" on the provider's catch-up burst.
+     Andy authored the code under test and should review 169–171.
+
 ## 3a. Environment facts that cost real time (do not rediscover)
 
 - **pnpm 11's answer to a stale workspace state is to DELETE `node_modules`,
