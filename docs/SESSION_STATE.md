@@ -14245,6 +14245,10 @@ removed from here.
      habit. Not changed: `bee` itself, which was never wrong. Owed: the live
      check that the bundled Claude Code honours `SHELL`; if it does not, the
      nest's Claude settings get `{"defaultShell": "bash"}` instead.
+     **Proved live 2026-09-19** (installed `451754752`, RPG Test → "NES RPG
+     Plan", session `fa948d3a`): command lines carrying bare `==========`
+     separators completed with output and no `(eval)` abort; `SHELL` is
+     honoured, so the settings fallback is not needed.
 
 174. **A seat's own key could not write the project's Pulse: `bee pulse update`
      was refused 403, because nothing ever put a project's agents on its
@@ -14296,6 +14300,11 @@ removed from here.
        `self`; a wrong read at worst re-puts a member the relay upserts.
        Live: RPG Test's agents join its roster the first time Finish
        repository setup runs on the rebuilt bundle — owed.
+     **Proved live 2026-09-19**: Finish repository setup on `70568778d` put
+     the eight agents on RPG Test's roster (`bee projects members rpg-test`:
+     owner, one collaborator, eight agent collaborators); in "NES RPG Plan"
+     the lead's `bee pulse update --kind plan` under its own key answered
+     `accepted: true` (event `6302de05…`).
 
 175. **The lead seat of a project's first team session was cut from another
      project's checkout, worked there, and asked to record that folder as the
@@ -14355,6 +14364,12 @@ removed from here.
        setup on RPG Test seeds, clones and records `rpg-test`; the next
        founded team session pre-fills that folder and the lead's worktree is
        cut from it.
+     **Proved live 2026-09-19**: after items 176 and 177, the founded team
+     session "NES RPG Plan" cut the lead's worktree at
+     `~/.beekeeper/REPOS/rpg-test-wt-nes-rpg-plan-lead` (branch
+     `nes-rpg-plan-lead`, base `340a064`), and the lead's `bee sessions hire`
+     seated designer, architect and project-setup first try — the hires
+     item 136 refused this morning for want of a recorded folder.
 
 176. **The relay writes a `HEAD`-only kind:30618 ref state the moment a
      repository is announced, so the code seed of RPG Test was skipped as
@@ -14385,6 +14400,10 @@ removed from here.
      (`ProjectAgentsInitAction.tsx`). Owed: rerun Finish repository setup on
      RPG Test from the rebuilt bundle — it must now seed `rpg-test`, fetch
      `main` into the unborn clone, and report the commit.
+     **Proved live 2026-09-19**: the rerun reported `code seed: seeded, commit
+     340a0643`; hive's ref state for `rpg-test` carries
+     `refs/heads/main 340a0643…` beside the creation record. The clone stayed
+     unborn for one more reason — item 177.
 
 177. **A recorded clone cut while the repository was empty was reported
      "already checked out" and left without a commit after the seed landed
@@ -14408,6 +14427,9 @@ removed from here.
      no commit ends the run on the seed commit, `checkoutCloned=false`, no
      re-record. Owed: the rerun on RPG Test brings
      `~/.beekeeper/REPOS/rpg-test` to `340a0643`.
+     **Proved live 2026-09-19** (installed `451754752`): the rerun left
+     `~/.beekeeper/REPOS/rpg-test` on `340a064 [main]`, and the next team
+     session cut its lead worktree from it (item 175).
 
 ## 3a. Environment facts that cost real time (do not rediscover)
 
