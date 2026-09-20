@@ -14570,6 +14570,22 @@ removed from here.
        blocked assignment, so it did not gate completion. Wall clock from
        goal to terminal record 5 h 31 m, of which the team's own work was
        about 35 minutes; the rest was six human repairs and one fix batch.
+     - (p) **178(j), (k) and (n) are fixed and landed 2026-09-20 in
+       `084880966` (lanes 189, 190, 191; all twelve gates bare exit 0).**
+       (j): `buzz-ws-client` restarted its idle timer on every frame and the
+       relay pings every 30 s, so a subscription that had stopped delivering
+       relay messages never hit the 900 s deadline — the listener now proves
+       its own subscription instead of trusting the socket (189). (k): the
+       CLI read kinds 46001–46003, which nothing publishes, instead of the
+       relay's own run endpoints, and `approve --token` re-hashed a ref the
+       relay had already hashed (190; the new `GET /workflow-runs/{run_id}`
+       needs a relay deploy before `bee workflows run-status` answers on
+       hive). (n): git asks the credential helper once per push and replays
+       that one token, so the floor must finish before git connects — `just
+       push` runs it first and stamps the result (191). **Proven live the
+       same day, first real use:** `just push origin main` ran a 616 s full
+       floor, the hook found the stamp 6 s old, and
+       `febe67709..084880966  main -> main` went up with no `HTTP 401`.
 
 179. **Andy's eight-seat run finished the game and never finished its own
      protocol; almost half its turns were disposition bookkeeping
