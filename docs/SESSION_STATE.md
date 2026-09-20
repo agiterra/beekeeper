@@ -14638,7 +14638,7 @@ removed from here.
        run (`body_schema.rs:221-317`); the key list cannot drift from the
        types because it *is* the serialized types' keys. (3) `--verifies
        <report event id>` on `assign` reads that report's `headSha` off the
-       relay and fills `baseSha` (`body_schema.rs:346-435`); an explicit
+       relay and fills `baseSha` (`body_schema.rs:353-435`); an explicit
        `baseSha` that agrees passes, one that disagrees is refused naming both
        values and writing nothing, and a report with no `headSha`, an id that
        is not a report, or a report from another session is refused rather
