@@ -123,6 +123,14 @@ pub struct ProjectWorkDeclared {
     /// Only the goal. A decision that bounded the scope is a separate
     /// pointer, not this one.
     pub goal_ref: String,
+    /// The 44244 decision record that authorized this adoption, when one did.
+    ///
+    /// Present, `null` when none. It is **not** `goal_ref`: both are 64-hex,
+    /// so the envelope cannot tell them apart, and a decision id in
+    /// `goal_ref` would make the declaration permanently stale against the
+    /// session's current goal. The fold — the only layer holding the goal
+    /// set — refuses that with `goal_ref_not_a_goal`.
+    pub decision_ref: Option<String>,
     /// The actor who owes the outcome; a target, never an authorship claim.
     pub responsible_actor: String,
     /// Where the plan blob is read from.

@@ -52,7 +52,7 @@ fn declaration() -> Event {
         "work.declared",
         &format!(
             "{{\"workId\":\"9d0f0f0f-1111-4222-8333-444444444444\",\"goalRef\":\"{}\",\
-             \"responsibleActor\":\"{}\",\"planRef\":{{\"repository\":\"30617:{}:pivot-test-beekeeper-agents\",\
+             \"decisionRef\":null,\"responsibleActor\":\"{}\",\"planRef\":{{\"repository\":\"30617:{}:pivot-test-beekeeper-agents\",\
              \"commit\":\"{}\",\"path\":\"plans/kettle.md\"}},\"supersedes\":[]}}",
             hex("90a1"),
             hex("1ead"),
@@ -125,6 +125,45 @@ fn a_tag_that_disagrees_with_content_is_refused_not_preferred() {
         .expect("sign");
     let refusal = validate_project_work_record(&event).expect_err("parity");
     assert!(refusal.starts_with("tag-parity:"), "{refusal}");
+}
+
+#[test]
+fn a_declaration_must_write_its_decision_ref_even_when_there_is_none() {
+    let event = record(
+        "work.declared",
+        &format!(
+            "{{\"workId\":\"9d0f0f0f-1111-4222-8333-444444444444\",\"goalRef\":\"{}\",\
+             \"responsibleActor\":\"{}\",\"planRef\":{{\"repository\":\"30617:{}:pivot-test-beekeeper-agents\",\
+             \"commit\":\"{}\",\"path\":\"plans/kettle.md\"}},\"supersedes\":[]}}",
+            hex("90a1"),
+            hex("1ead"),
+            hex("1ead"),
+            "ab".repeat(20)
+        ),
+    );
+    let refusal = validate_project_work_record(&event).expect_err("absent decisionRef");
+    assert!(refusal.starts_with("absent-key:"), "{refusal}");
+}
+
+#[test]
+fn a_decision_id_in_goal_ref_is_not_the_relay_s_question() {
+    // Both are 64-hex, so one event cannot tell a goal from a decision. The
+    // relay admits it; the fold, which is the only layer holding the
+    // session's goal set, refuses it with goal_ref_not_a_goal. Claiming that
+    // check here would be claiming knowledge the relay does not have.
+    let event = record(
+        "work.declared",
+        &format!(
+            "{{\"workId\":\"9d0f0f0f-1111-4222-8333-444444444444\",\"goalRef\":\"{}\",\
+             \"decisionRef\":null,\"responsibleActor\":\"{}\",\"planRef\":{{\"repository\":\"30617:{}:pivot-test-beekeeper-agents\",\
+             \"commit\":\"{}\",\"path\":\"plans/kettle.md\"}},\"supersedes\":[]}}",
+            hex("dec0de"),
+            hex("1ead"),
+            hex("1ead"),
+            "ab".repeat(20)
+        ),
+    );
+    assert!(validate_project_work_record(&event).is_ok());
 }
 
 #[test]

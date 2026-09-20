@@ -16113,6 +16113,41 @@ removed from here.
        three ids and "the other four are open" beyond that
        (`amendment` versus `superseded-observation`), which § (c) does not
        state. Both are implemented as the fixtures write them.
+     - **Rebased onto amendment A2 (`86bc2c3d8`, lane 198) and rebuilt against
+       it.** A2 arrived after this lane's first pass; the fold was
+       restructured, not patched. What changed here: the input is now
+       `authority` + `currentGoalRef` + `goalEvents` + `planBlobs` +
+       caller-compiled `actionDefinitions` + `evidence` + `refStates`
+       (`project_work_fold.rs:60`); `work.declared` gained the nullable
+       `decisionRef` and `goalRef` is documented as the 44227 goal **only**
+       (`project_work.rs:127`); the three proof predicates are explicit with
+       ten named reason codes (`project_work_fold_project.rs:334` and the
+       `evaluate_review` / `evaluate_action` / `evaluate_git_ref` arms below
+       it); `candidateArtifact` + `artifactCommits` make `mixed_artifacts`
+       force `coverageComplete: false`
+       (`project_work_fold_coverage.rs:17`); conflict is computed over
+       **maximal** declarations per `workId`, two roots included
+       (`project_work_fold.rs:509`). **Authority reuses the 44244 predicate
+       rather than re-enumerating it**: `WorkAuthority::may_lead`
+       (`project_work_evidence.rs:80`) builds a
+       `CodingSessionTeamFoldContext` and calls *that* fold's `may_lead`, so
+       founder / active `lead` seat / active `may_steer` grantee is stated
+       once in this repository. `goal_ref_not_a_goal` is refused by the
+       **fold**, not the envelope, because a goal and a decision are both
+       64-hex and one event cannot tell them apart — a relay test says so in
+       words. All **thirteen** A2 sequences reproduce their
+       `expected-fold.json` exactly, each under the permutation property.
+     - **A second contract defect, found in A2 and reported not resolved.**
+       `sequences/fork-descendant/expected-fold.json` gives `dec30000…`
+       `supersedes: []` although its signed record names `dec10000…`, and the
+       same file asserts that very edge from `dec10000…`'s `supersededBy`.
+       The only rule consistent with all thirteen fixtures is "a superseded
+       declaration reports no `supersedes`", which is what W1 implemented
+       (`project_work_fold_project.rs:151`, with the reason at the site). It
+       silently drops lineage a reader may want, and no `README` sentence
+       states it. `check-fixtures.mjs` does not catch it: it validates
+       well-formedness, not the fold, so it and this implementation do not
+       disagree — the disagreement is inside the fixture.
      - **Not done, and owed.** Nothing is landed, deployed or run live. W2
        owns `bee sessions work validate|adopt|bind|status`, the atomic
        `adopt` path and the 30617 coordinate resolution; W3 the work brief;
@@ -16121,6 +16156,8 @@ removed from here.
        change means a relay-first landing: hive's NIP-11 `build_time` must
        pass the landing time before a desktop depending on 44249 is
        installed.
+     - Also owed by A2 and **not** in this lane: lanes 199 (approval races)
+       and 200 (the desktop's tag-refusal fallback).
      - Gates on `work/lane-195-work-records`, bare after committing:
        `cargo fmt --all --check`,
        `cargo clippy --workspace --all-targets -- -D warnings`,

@@ -408,6 +408,7 @@ fn decode_body(
                 &[
                     "workId",
                     "goalRef",
+                    "decisionRef",
                     "responsibleActor",
                     "planRef",
                     "supersedes",
@@ -418,6 +419,7 @@ fn decode_body(
             check_uuid(&work_id, "body.workId")?;
             let goal_ref = string(body, "goalRef", "body")?.to_owned();
             check_event_id(&goal_ref, "body.goalRef")?;
+            let decision_ref = nullable_event_id(body, "decisionRef", "body")?;
             let responsible_actor = string(body, "responsibleActor", "body")?.to_owned();
             check_event_id(&responsible_actor, "body.responsibleActor")?;
             let plan = plan_ref(body)?;
@@ -454,6 +456,7 @@ fn decode_body(
             Ok(ProjectWorkBody::Declared(ProjectWorkDeclared {
                 work_id,
                 goal_ref,
+                decision_ref,
                 responsible_actor,
                 plan_ref: plan,
                 supersedes,

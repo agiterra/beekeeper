@@ -176,6 +176,7 @@ mod tests {
         ProjectWorkDeclared {
             work_id: "9d0f0f0f-1111-4222-8333-444444444444".to_owned(),
             goal_ref: "90a1".to_owned() + &"0".repeat(60),
+            decision_ref: None,
             responsible_actor: "1ead".to_owned() + &"0".repeat(60),
             plan_ref: ProjectWorkPlanRef {
                 repository: format!(

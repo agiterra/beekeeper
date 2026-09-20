@@ -40,11 +40,19 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use crate::kind::KIND_PROJECT_WORK_RECORD;
-use crate::project_plan::{parse_plan, Plan, PlanProof};
+use crate::project_plan::{parse_plan, Plan, PlanCriterion, PlanProof};
 use crate::project_work::{
     validate_project_work_envelope, ProjectWorkAssignmentBound, ProjectWorkBody,
     ProjectWorkDeclared, ProjectWorkEvent, ProjectWorkEvidenceBound, ProjectWorkEvidenceKind,
     ProjectWorkEvidenceRef, ProjectWorkPlanRef,
+};
+
+#[path = "project_work_evidence.rs"]
+mod evidence_facts;
+pub use evidence_facts::{
+    WorkActionDefinition, WorkActiveGrant, WorkActiveSeat, WorkAuthority, WorkCheckoutFact,
+    WorkCoverageReasonCode, WorkEvidenceFact, WorkReasonCode, WorkStateReasonCode,
+    SIGNER_NOT_MAY_LEAD_MESSAGE,
 };
 
 /// Exact `schema` value a coverage projection carries.
@@ -53,32 +61,40 @@ pub const PROJECT_WORK_COVERAGE_SCHEMA: &str = "buzz-project-work-coverage/v1";
 pub const KIND_REF_STATE: u32 = 30618;
 
 /// Everything the fold is given. Nothing else is read.
+///
+/// The fold reads **no events but the 44249 records**. Everything else
+/// arrives as facts the caller established and verified from existing events;
+/// the fold does not re-verify signatures or re-resolve pointers it was not
+/// given, and it never infers a passing test from an event id.
 #[derive(Debug, Clone, Default)]
 pub struct WorkFoldInputs {
     /// The kind:44249 events. Any other kind is ignored, not excluded: an old
     /// reader never queries this kind, and a mixed stream must fold the same.
     pub events: Vec<ProjectWorkEvent>,
-    /// The `may_lead` set the 44244 authority projection already computed,
-    /// scoped to this project and session.
-    pub may_lead: Vec<String>,
-    /// The relay's NIP-11 `self` key. `None` means ref state cannot be
-    /// judged, and a `git-ref` criterion reads `unknown` rather than `open`.
+    /// The relay's NIP-11 `self` key, which signs ref state and the host-step
+    /// echo. `None` means neither can be judged.
     pub relay_self_key: Option<String>,
+    /// The 44244 authority projection, scoped to this project and session.
+    pub authority: WorkAuthority,
     /// The session's current kind:44227 goal. `None` means the current goal
     /// was not read, and no declaration is marked stale on that account.
     pub current_goal_ref: Option<String>,
+    /// The session's kind:44227 goal set — what makes `goal_ref_not_a_goal`
+    /// decidable. Empty means the caller did not establish it, and the fold
+    /// judges no declaration on that question rather than guessing.
+    pub goal_events: BTreeSet<String>,
     /// Plan blobs keyed by [`ProjectWorkPlanRef::blob_key`].
     pub plan_blobs: BTreeMap<String, String>,
-    /// Relay-signed kind:30618 ref-state events, newest or not: the fold
-    /// picks the newest per repository itself.
+    /// Action definitions the **caller** compiled from `actions.yml` at the
+    /// declaration's plan commit. The fold compares hashes; it does not
+    /// compile, because evidence that nominated its own expected hash would
+    /// prove nothing.
+    pub action_definitions: BTreeMap<String, WorkActionDefinition>,
+    /// Verified evidence facts, keyed by event id.
+    pub evidence: BTreeMap<String, WorkEvidenceFact>,
+    /// Every known relay-signed kind:30618 for the code repository, because
+    /// freshness needs the *newest* one, not only the bound one.
     pub ref_states: Vec<ProjectWorkEvent>,
-    /// Which referenced 44244 evidence events the caller established exist.
-    ///
-    /// `None` means the caller did not establish the question, and the fold
-    /// treats every non-`ref_observation` reference as resolved — the honest
-    /// reading, because "we did not look" must not render as "it is missing".
-    /// `Some` set makes an unlisted reference `unknown` with a named reason.
-    pub resolved_evidence_ids: Option<BTreeSet<String>>,
     /// The session this projection is about; derived from the records when
     /// absent.
     pub session_ref: Option<String>,
@@ -134,7 +150,9 @@ pub enum WorkCriterionStatus {
 }
 
 impl WorkCriterionStatus {
-    const fn as_str(self) -> &'static str {
+    /// The exact wire token.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::Open => "open",
             Self::Covered => "covered",
@@ -160,7 +178,9 @@ pub struct WorkCriterionProjection {
     pub evidence: Vec<ProjectWorkEvidenceRef>,
     /// The code commit the evidence is about.
     pub artifact_commit: Option<String>,
-    /// Why, for every status but `open` and `covered`.
+    /// The stable code for `reason`, when there is one.
+    pub reason_code: Option<WorkReasonCode>,
+    /// Why, in words, whenever `reason_code` is set.
     pub reason: Option<String>,
 }
 
@@ -180,15 +200,29 @@ pub struct WorkDeclarationProjection {
     pub supersedes: Vec<String>,
     /// What supersedes it.
     pub superseded_by: Vec<String>,
+    /// The stable code for `state_reason`, when there is one.
+    pub state_reason_code: Option<WorkStateReasonCode>,
     /// Why, when the state is not plain `head`.
     pub state_reason: Option<String>,
     /// Whether the plan blob at `planRef.commit` was supplied and parsed.
     pub plan_resolved: bool,
+    /// The one delivered revision this declaration's coverage is about.
+    ///
+    /// Coverage is a statement about *one* revision, not a per-criterion
+    /// scoreboard. It is the `git-ref` evidence's commit when the plan has a
+    /// `git-ref` criterion, otherwise the single commit shared by all
+    /// covering evidence, and `null` when neither holds.
+    pub candidate_artifact: Option<String>,
+    /// The distinct commits the covering evidence names, ascending.
+    pub artifact_commits: Vec<String>,
     /// Its criteria — projected for `head` and `stale` only.
     pub criteria: Vec<WorkCriterionProjection>,
-    /// Whether every criterion in the plan is covered under this declaration.
+    /// Whether every criterion in the plan is covered under this declaration,
+    /// at one artifact commit.
     pub coverage_complete: bool,
-    /// Which clause of `coverageComplete` failed, naming criteria.
+    /// The stable code for `coverage_reason`, when there is one.
+    pub coverage_reason_code: Option<WorkCoverageReasonCode>,
+    /// Which clause of `coverageComplete` failed, naming criteria or commits.
     pub coverage_reason: Option<String>,
 }
 
@@ -332,13 +366,12 @@ pub fn fold_work(inputs: &WorkFoldInputs) -> WorkProjection {
             .unwrap_or_default()
     });
 
-    let may_lead: BTreeSet<&str> = inputs.may_lead.iter().map(String::as_str).collect();
     let mut in_scope: Vec<Record> = Vec::with_capacity(records.len());
     for record in records {
         if record.session_ref != session_ref {
             excluded.push(WorkExclusion {
                 event_id: record.id.clone(),
-                code: "session-scope".to_owned(),
+                code: "session_scope".to_owned(),
                 message: format!("{} names another session", short(&record.id)),
             });
             continue;
@@ -346,21 +379,40 @@ pub fn fold_work(inputs: &WorkFoldInputs) -> WorkProjection {
         if record.project_ref != project_ref {
             excluded.push(WorkExclusion {
                 event_id: record.id.clone(),
-                code: "project-scope".to_owned(),
+                code: "project_scope".to_owned(),
                 message: format!("{} names another project", short(&record.id)),
             });
             continue;
         }
-        if !may_lead.contains(record.pubkey.as_str()) {
+        // All three record types require the same standing, and it is the
+        // 44244 fold's own `may_lead` — an association is a claim the fold
+        // must verify, never proof and never authority.
+        if !inputs.authority.may_lead(&record.pubkey) {
             excluded.push(WorkExclusion {
                 event_id: record.id.clone(),
-                code: "signer-not-may-lead".to_owned(),
-                message: format!(
-                    "{} does not hold may_lead in this project and session",
-                    short(&record.pubkey)
-                ),
+                code: "signer_not_may_lead".to_owned(),
+                message: format!("{} {SIGNER_NOT_MAY_LEAD_MESSAGE}", short(&record.pubkey)),
             });
             continue;
+        }
+        // `goalRef` and `decisionRef` are both 64-hex, so the envelope cannot
+        // tell them apart and accepts the record. This is the only layer
+        // holding the session's goal set, so the refusal belongs here — and
+        // it names the remedy rather than leaving the declaration pinned to a
+        // goal that will never be current.
+        if let ProjectWorkBody::Declared(body) = &record.body {
+            if !inputs.goal_events.is_empty() && !inputs.goal_events.contains(&body.goal_ref) {
+                excluded.push(WorkExclusion {
+                    event_id: record.id.clone(),
+                    code: "goal_ref_not_a_goal".to_owned(),
+                    message: format!(
+                        "goalRef {} is not one of the session's kind:44227 goal events; \
+                         a decision belongs in decisionRef",
+                        short(&body.goal_ref)
+                    ),
+                });
+                continue;
+            }
         }
         in_scope.push(record);
     }
@@ -388,7 +440,7 @@ pub fn fold_work(inputs: &WorkFoldInputs) -> WorkProjection {
         if !declaration_ids.contains(declaration_ref.as_str()) {
             excluded.push(WorkExclusion {
                 event_id: record.id.clone(),
-                code: "unknown-declaration".to_owned(),
+                code: "unknown_declaration".to_owned(),
                 message: format!(
                     "binds to declaration {}, which is not in the supplied set",
                     short(declaration_ref)
@@ -408,7 +460,7 @@ pub fn fold_work(inputs: &WorkFoldInputs) -> WorkProjection {
     for (work_id, heads) in conflicting_heads(&declarations, &states) {
         conflicts.push(WorkConflict {
             work_id,
-            message: conflict_message(&declarations, &heads),
+            message: conflict_message(&heads),
             heads,
         });
     }
@@ -428,12 +480,25 @@ pub fn fold_work(inputs: &WorkFoldInputs) -> WorkProjection {
             )
         })
         .collect();
+    // Grouped by work, current contracts first, and within a group the most
+    // derived revision first: a reader wants the newest revision of a fork at
+    // the top, and `depth` — the length of the longest supersedes chain
+    // behind a declaration — says which that is without consulting a clock.
+    let depths = supersession_depths(&declarations);
+    let depth_of = |id: &str| depths.get(id).copied().unwrap_or(0);
     projected.sort_by(|a, b| {
-        (&a.work_id, a.state.rank(), &a.declaration_ref).cmp(&(
-            &b.work_id,
-            b.state.rank(),
-            &b.declaration_ref,
-        ))
+        (
+            &a.work_id,
+            a.state.rank(),
+            std::cmp::Reverse(depth_of(&a.declaration_ref)),
+            &a.declaration_ref,
+        )
+            .cmp(&(
+                &b.work_id,
+                b.state.rank(),
+                std::cmp::Reverse(depth_of(&b.declaration_ref)),
+                &b.declaration_ref,
+            ))
     });
 
     excluded.sort_by(|a, b| a.event_id.cmp(&b.event_id));
@@ -460,10 +525,9 @@ fn resolve_states(
             // Only a sibling revision of the *same* work can supersede: a
             // declaration naming an id outside this set is simply a pointer
             // the fold cannot place, and the target keeps its own state.
-            if declarations
-                .iter()
-                .any(|(other, _)| other.id == *target && other.id != record.id)
-            {
+            if declarations.iter().any(|(other, other_body)| {
+                other.id == *target && other.id != record.id && other_body.work_id == body.work_id
+            }) {
                 superseded_by
                     .entry(target.as_str())
                     .or_default()
@@ -541,41 +605,56 @@ fn conflicting_heads(
 
 /// The one sentence a fork gets, in the conflict entry and in every head's
 /// `stateReason`, so a reader never has to correlate two phrasings.
-fn conflict_message(declarations: &Declarations<'_>, heads: &[String]) -> String {
-    let predecessors: Vec<&String> = heads
+///
+/// A **head** is a *maximal* valid declaration: one that no valid declaration
+/// of that `workId` names in `supersedes`. The resolution is one declaration
+/// naming every current head — not the head's immediate predecessor's
+/// siblings, which is the reading amendment A2 closed.
+fn conflict_message(heads: &[String]) -> String {
+    format!(
+        "{} maximal declarations of this workId have no valid successor ({}); \
+         one declaration naming every current head is required before this work can complete",
+        heads.len(),
+        heads
+            .iter()
+            .map(|id| short(id))
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
+/// How many supersessions stand behind each declaration.
+///
+/// Zero for a root; one more than the deepest declaration it supersedes
+/// otherwise. Computed by relaxation rather than recursion so a cycle — which
+/// the wire cannot express but a malicious set could attempt — terminates
+/// instead of recursing forever.
+fn supersession_depths(declarations: &Declarations<'_>) -> BTreeMap<String, usize> {
+    let mut depths: BTreeMap<String, usize> = declarations
         .iter()
-        .filter_map(|head| {
-            declarations
+        .map(|(r, _)| (r.id.clone(), 0))
+        .collect();
+    for _ in 0..declarations.len() {
+        let mut changed = false;
+        for (record, body) in declarations {
+            let deepest = body
+                .supersedes
                 .iter()
-                .find(|(record, _)| record.id == *head)
-                .map(|(_, body)| &body.supersedes)
-        })
-        .fold(None::<Vec<&String>>, |accumulated, supersedes| {
-            Some(match accumulated {
-                None => supersedes.iter().collect(),
-                Some(common) => common
-                    .into_iter()
-                    .filter(|id| supersedes.contains(*id))
-                    .collect(),
-            })
-        })
-        .unwrap_or_default();
-    let naming = if heads.len() == 2 {
-        "naming both heads"
-    } else {
-        "naming all heads"
-    };
-    match predecessors.as_slice() {
-        [one] => format!(
-            "{} unsuperseded successors of {}; an authorized declaration {naming} is required before this work can complete",
-            count_word(heads.len()),
-            short(one)
-        ),
-        _ => format!(
-            "{} unsuperseded declarations for this work; an authorized declaration {naming} is required before this work can complete",
-            count_word(heads.len())
-        ),
+                .filter_map(|target| depths.get(target).copied())
+                .max();
+            if let Some(deepest) = deepest {
+                let entry = depths.entry(record.id.clone()).or_default();
+                if *entry < deepest + 1 {
+                    *entry = deepest + 1;
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
     }
+    depths
 }
 
 // The per-declaration projection lives in a sibling file so no file here

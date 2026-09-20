@@ -8,7 +8,7 @@ Project Work Records
 
 **Depends on**: NIP-01 (basic event format), NIP-CSG (the session genesis every record roots at), NIP-CSAT (the authority chain the `may_lead` projection comes from), NIP-CSTX (kind:44244 — the assignments, reports, verdicts and completion this joins to), NIP-MP (the project coordinate), NIP-PK (the agents repository a plan lives in). Interacts with kind:30618 (relay-signed repository ref state) and kind:44227 (the session's current goal).
 
-This document is written from `conformance/project-work/README.md`, which is the frozen contract (ledger item 194) and stays normative where the two could differ. The fixtures under `conformance/project-work/fixtures/` pin every rule stated here, and `crates/buzz-core/src/project_plan.rs`, `project_work.rs` and `project_work_fold.rs` implement them (ledger item 195).
+This document is written from `conformance/project-work/README.md`, which is the frozen contract (ledger item 194, amended by A2 in `docs/UNIFIED_WORK_PLAN.md` § 8) and stays normative where the two could differ. The fixtures under `conformance/project-work/fixtures/` pin every rule stated here, and `crates/buzz-core/src/project_plan.rs`, `project_work.rs` and `project_work_fold.rs` implement them (ledger item 195).
 
 ## Abstract
 
@@ -69,6 +69,7 @@ The `a` tag is a canonical, singleton **project selector** so a reader can pick 
   "body": {
     "workId": "<uuid>",
     "goalRef": "<64-hex>",
+    "decisionRef": null,
     "responsibleActor": "<64-hex pubkey>",
     "planRef": {
       "repository": "30617:<64-hex owner>:<repo id>",
@@ -83,7 +84,8 @@ The `a` tag is a canonical, singleton **project selector** so a reader can pick 
 | key | type | null? | rule |
 |---|---|---|---|
 | `workId` | uuid | no | canonical lowercase; **stable across amendments** |
-| `goalRef` | 64-hex | no | the kind:44227 goal, or decision record, this work serves |
+| `goalRef` | 64-hex | no | the session's kind:44227 **goal** event, and only that. Never a decision: `state` compares this with the session's current goal, so a decision id here would make the declaration permanently stale |
+| `decisionRef` | 64-hex or `null` | **yes** | the 44244 decision record that authorized this adoption, when one did. Always present, written `null` when none |
 | `responsibleActor` | 64-hex | no | who owes the outcome; a target, never an authorship claim |
 | `planRef.repository` | coordinate | no | the **full** kind:30617 coordinate. A bare repo id is refused: a name is community-scoped and would be re-resolved by every later reader, which is how two readers end up pinning two repositories |
 | `planRef.commit` | hex | no | full immutable agents commit, 40 or 64 lowercase hex |
@@ -97,6 +99,8 @@ The `a` tag is a canonical, singleton **project selector** so a reader can pick 
  "body": {"declarationRef": "<64-hex>", "criterionIds": ["cli-behaviour"],
           "assignmentRef": "<64-hex>", "replacesBinding": null}}
 ```
+
+**Which layer refuses a decision id in `goalRef`.** Both are 64-hex, so the envelope cannot tell them apart and accepts the record: the refusal belongs to the **fold**, which is the only layer holding the session's goal set. A declaration whose `goalRef` is not in that set is excluded with `goal_ref_not_a_goal`, and the refusal names the remedy.
 
 `criterionIds` is 1–64 unique slugs, each ≤ 64 bytes, each of which must exist in the declaration's plan — a **fold** check, not a relay check. `replacesBinding` is the earlier binding this supersedes; the key is always present, written `null` when there is none.
 
@@ -162,7 +166,59 @@ Channel membership is checked before any of this: 44249 is a coding-session kind
 
 ## The fold
 
-`fold_work(inputs) -> WorkProjection` is a pure function of (the 44249 event set, the resolved plan blobs, the `may_lead` projection, the relay's self key, the session's current goal, relay-signed kind:30618 ref states, and which referenced evidence events the caller established). **No clock, no network, no ordering assumption**: the same events in any arrival order fold to the same output, and a duplicate delivery is harmless. It verifies *references and scope*; it does not re-verify signatures the relay verified at ingest.
+`fold_work(inputs) -> WorkProjection` is a pure function of its input. **No clock, no network, no ordering assumption**: the same events in any arrival order fold to the same output, and a duplicate delivery is harmless.
+
+### The input
+
+The fold reads **no events but the 44249 records**. Everything else arrives as facts the caller established and verified from existing events: the fold does not re-verify signatures, does not re-resolve pointers it was not given, does not compile an action definition, and never infers a passing test from an event id.
+
+```json
+{
+  "relaySelfKey": "<64-hex>",
+  "authority": {"founderPubkey": "<64-hex>",
+                "activeSeats":  [{"actorPubkey": "<64-hex>", "role": "lead"}],
+                "activeGrants": [{"actorPubkey": "<64-hex>",
+                                  "grantEventRef": "<64-hex>", "maySteer": true}]},
+  "currentGoalRef": "<64-hex>",
+  "goalEvents": ["<64-hex>"],
+  "planBlobs": {"<30617 coordinate>@<commit>:plans/x.md": "<blob bytes>"},
+  "actionDefinitions": {"verify": {"definitionHash": "<64-hex>", "steps": ["verify"]}},
+  "evidence": {"<event id>": {"…one fact per kind…"}},
+  "refStates": ["<relay-signed kind:30618 events>"]
+}
+```
+
+- **`authority`** is the 44244 fold's own context shape, and the predicate is that fold's own `may_lead` — founder, active `lead` seat, or active `may_steer` grantee. One predicate serves both folds; a second copy is a copy that drifts.
+- **`goalEvents`** is the session's kind:44227 goal set, which is what makes `goal_ref_not_a_goal` decidable. An empty set means the caller did not establish it, and the fold judges no declaration on that question rather than guessing.
+- **`actionDefinitions`** is compiled **by the caller** at the declaration's plan commit, with the publication compiler. Evidence that nominated its own expected hash would prove nothing.
+- **`evidence`** is keyed by event id and holds report, verdict and action-result facts. **`refStates`** holds every known relay-signed 30618 for the code repository, because freshness needs the newest one, not only the bound one.
+
+### The three proof predicates
+
+A **signed binding is a claim to verify.** A criterion is `covered` only when its bound evidence satisfies the predicate for its `proof` form:
+
+- **`review`** — a 44244 verdict whose `subtype` is `disposition` and whose `decision` is `approve` or `approve-with-notes`, signed by an actor `authority` admits, on a report for an assignment bound to that criterion, whose report `headSha` equals the binding's `artifactCommit`.
+- **`action`** — a host result (kind:46023, carried by the relay's kind:46014 echo signed with `relaySelfKey`) for a run whose `definitionHash` equals the compiled definition's, whose `stepId` is the criterion's `step`, with `exitCode` 0, `checkout.sha` equal to `artifactCommit`, and neither `checkout.dirtyBefore` nor `dirty`.
+- **`git-ref`** — the newest relay-signed 30618 for the plan's `code_repository` still names `refs/heads/<branch of delivery_ref>` at `artifactCommit`.
+
+### Reason codes
+
+| `reasonCode` | status | meaning |
+|---|---|---|
+| `evidence_unavailable` | `unknown` | a bound evidence id is in neither `evidence` nor `refStates` |
+| `plan_unreadable` | `unknown` | the plan blob at `planRef.commit` was not supplied |
+| `wrong_signer` | `open` | the verdict's signer does not satisfy `may_lead` |
+| `not_approving` | `open` | the disposition is not an approval |
+| `revision_mismatch` | `open` | the report or run is about another revision |
+| `wrong_run_or_hash` | `open` | the run executed another definition, or another step |
+| `action_failed` | `open` | the run exited non-zero |
+| `dirty_revision` | `open` | the tree was dirty before or after the command |
+| `bound_to_superseded_declaration` | `stale` | the late-green-for-P case |
+| `ref_observation_superseded` | `stale` | a newer ref state names another commit |
+
+A criterion whose evidence fails a predicate is **`open` with its reason named**, not `covered` and not silently empty: the binding exists, and saying so is the difference between "nobody has done this" and "somebody claimed it and the claim did not hold".
+
+### The output
 
 ```json
 {
@@ -170,18 +226,18 @@ Channel membership is checked before any of this: 44249 is a coding-session kind
   "sessionRef": "…", "projectRef": "30621:…:kettle",
   "declarations": [{
     "workId": "…", "declarationRef": "…", "planRef": {"…": "…"},
-    "state": "head", "supersedes": [], "supersededBy": [], "stateReason": null,
-    "planResolved": true,
+    "state": "head", "supersedes": [], "supersededBy": [],
+    "stateReasonCode": null, "stateReason": null, "planResolved": true,
+    "candidateArtifact": "<40-hex>", "artifactCommits": ["<40-hex>"],
     "criteria": [{
       "criterionId": "cli-behaviour", "proof": {"kind": "review"},
       "status": "covered", "assignmentRefs": ["…"],
       "evidence": [{"kind": "verdict", "eventId": "…"}],
-      "artifactCommit": "…", "reason": null
+      "artifactCommit": "…", "reasonCode": null, "reason": null
     }],
-    "coverageComplete": false,
-    "coverageReason": "1 of 5 criteria are not covered under this declaration: usage-documentation is open"
+    "coverageComplete": true, "coverageReasonCode": null, "coverageReason": null
   }],
-  "excluded": [{"eventId": "…", "code": "signer-not-may-lead", "message": "…"}],
+  "excluded": [{"eventId": "…", "code": "signer_not_may_lead", "message": "…"}],
   "conflicts": [{"workId": "…", "heads": ["…", "…"], "message": "…"}]
 }
 ```
@@ -192,35 +248,36 @@ Channel membership is checked before any of this: 44249 is a coding-session kind
 |---|---|
 | `head` | the current declaration for its `workId`: nothing supersedes it and it is not in a conflict |
 | `superseded` | another declaration names it in `supersedes`; `supersededBy` lists them |
-| `stale` | still the head, but the session's **current** kind:44227 goal differs from the declaration's `goalRef`. That mismatch is v1's **only** trigger; a 44244 decision never marks a declaration stale by itself. The contract stays pinned, and `stateReason` names both goals |
-| `conflict` | two or more unsuperseded successors of the same predecessor exist for this `workId`. Every one of them is `conflict`, `coverageComplete` is `false` for all, and a resolution naming **all** competing heads is required. No timestamp winner |
+| `stale` | still the head, but the session's **current** kind:44227 goal differs from the declaration's `goalRef`. That mismatch is v1's **only** trigger; a 44244 decision never marks a declaration stale by itself. `stateReasonCode` is `goal_changed` |
+| `conflict` | more than one **head** exists for this `workId`. A head is a *maximal* valid declaration: one that no valid declaration of that `workId` names in `supersedes` |
 
-`superseded` and `conflict` are structural and take precedence over `stale`. `criteria` is projected for `head` and `stale` only — the two states that *are* a current contract. A `superseded` or `conflict` declaration carries `criteria: []` and a `coverageReason` saying why; bindings made under a conflicted head are retained on the wire and simply not projected, and resolving the fork projects them.
+**Conflict is defined over maximal declarations, never over direct siblings.** P forks to A and B, then A2 supersedes only A: A2 and B share no immediate predecessor but both are maximal, so the work is still in conflict and the resolution must name both. Two declarations of one `workId` both with empty `supersedes` are two heads — an empty `supersedes` is not a claim to be first. Only valid declarations of the same `workId` count; a `supersedes` entry naming an event outside that set neither creates nor clears a head.
 
-Declarations are reported grouped by `workId`, current contracts first (`head`, `stale`, `conflict`, `superseded`) and then ascending by `declarationRef`. `excluded` is ascending by event id.
+`superseded` and `conflict` are structural and take precedence over `stale`. `criteria` is projected for `head` and `stale` only — the two states that *are* a current contract. Bindings made under a conflicted head are retained on the wire and simply not projected; resolving the fork projects them.
 
 ### Per-criterion `status`
 
-| status | meaning | `reason` |
-|---|---|---|
-| `open` | no evidence binding under the head declaration names this criterion | `null` |
-| `covered` | ≥ 1 `work.evidence_bound` under the head declaration names it, every `evidenceRefs` entry resolved, and the required proof form was satisfied | `null` |
-| `stale` | every binding carrying this criterion names a declaration that is **not** the head (the late-green-for-P case), or its `ref_observation` has been superseded by a newer ref state naming a different commit | names the declaration, or the newer ref state |
-| `unknown` | the fold could not read an input: the plan blob at `planRef.commit` was not supplied, or a referenced evidence event was not established | names the missing input |
+| status | meaning |
+|---|---|
+| `open` | no evidence binding under the head declaration names this criterion, **or** its bound evidence resolved and failed its predicate |
+| `covered` | evidence is bound, resolved, and satisfied the required proof form |
+| `stale` | every binding carrying it names a declaration that is not the head, or its `ref_observation` has been superseded |
+| `unknown` | the fold could not read an input: the plan blob, or a bound evidence id |
 
 `unknown` is a **result, not an error**. A fold given no plan blob returns every criterion it can name `unknown` with `planResolved: false` — never `open`, which would read as "nothing has been done" when the truth is "we cannot see the list".
 
-An amendment does not carry evidence forward. Evidence bound to P stays bound to P; under P2 those criteria are `stale` until re-bound at P2. Selective reuse is deliberately out of v1.
-
-### `ref_observation`, and how delivery is judged
-
-A `ref_observation` carries no new record. Its `eventId` is a **relay-signed kind:30618 ref-state event** for the plan's `code_repository`: the signer must equal the relay's NIP-11 `self` key (an owner-signed claim about its own branch is not an observation), its `d` tag names that repository, and its `refs/heads/<branch of delivery_ref>` tag must equal the binding's `artifactCommit`.
-
-**Freshness is judged at evaluation time, not at binding time.** The *newest* 30618 for that repository must still name that commit for that ref. An older matching 30618 that a newer one superseded with a different commit makes the criterion `stale` — the branch moved on, and what was delivered is no longer what is there. Ref state that cannot be read makes it `unknown`.
+An amendment does not carry evidence forward. Evidence bound to P stays bound to P; under P2 those criteria are `stale` until re-bound at P2.
 
 ### `coverageComplete`, and the 44244 terminal
 
-`coverageComplete` is `true` for a declaration when **all** of: `state == "head"`; `planResolved == true`; every criterion in the plan's `criteria` (retired ones are not counted) is `covered`; and its `workId` appears in no entry of `conflicts`. Otherwise it is `false` and `coverageReason` says which clause failed, naming criteria.
+**There is exactly one candidate artifact per declaration.** Coverage is a statement about *one delivered revision*, not a per-criterion scoreboard.
+
+- `candidateArtifact` is the `artifactCommit` of the valid `git-ref` evidence when the plan has a `git-ref` criterion, otherwise the single commit shared by all covering evidence. It is `null` when nothing is covered, and when a `git-ref` criterion is not yet covered.
+- `artifactCommits` lists the distinct commits the covering evidence names.
+
+`coverageComplete` is `true` when **all** of: `state == "head"`; `planResolved == true`; every criterion in the plan's `criteria` is `covered`; its `workId` is in no entry of `conflicts`; and `artifactCommits` has exactly one member, equal to `candidateArtifact`.
+
+**Mixed artifacts.** Tests green at A, the documentation review at B and the delivery observation at C is five individually-covered criteria and **nothing verified at the delivered commit**. Those criteria keep their `covered` status — they are true statements about the commits they name — but the declaration reads `coverageComplete: false` with `coverageReasonCode: "mixed_artifacts"` and lists the commits.
 
 **This output contains no mission-terminal field, deliberately.** Whether the 44244 `mission.completed` folded to terminal is a different question with a different fold. A reader that shows both shows **two rows**:
 
@@ -244,7 +301,8 @@ The two disagreeing is a **disclosure**, not a reconciliation. Nothing here merg
 |---|---|
 | plan parser and refusal codes | `crates/buzz-core/src/project_plan.rs` |
 | closed envelope, records, validators | `crates/buzz-core/src/project_work.rs`, `project_work_decode.rs` |
-| the coverage fold | `crates/buzz-core/src/project_work_fold.rs`, `project_work_fold_project.rs` |
+| the coverage fold | `crates/buzz-core/src/project_work_fold.rs`, `project_work_fold_project.rs`, `project_work_fold_coverage.rs` |
+| evidence facts, authority and reason codes | `crates/buzz-core/src/project_work_evidence.rs` |
 | typed builders | `crates/buzz-sdk/src/project_work.rs` |
 | relay ingest admission | `crates/buzz-relay/src/handlers/project_work.rs` |
 | kind constant and const asserts | `crates/buzz-core/src/kind.rs` |

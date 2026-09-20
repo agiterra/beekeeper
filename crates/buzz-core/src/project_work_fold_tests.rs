@@ -48,12 +48,20 @@ struct Sequence {
 const KETTLE_PLAN: &str =
     include_str!("../../../conformance/project-work/fixtures/plans/valid/kettle.md");
 
-const SEQUENCES: [Sequence; 5] = [
+const SEQUENCES: [Sequence; 13] = [
     sequence!("happy-path"),
     sequence!("amendment"),
     sequence!("fork"),
+    sequence!("fork-descendant"),
+    sequence!("fork-two-roots"),
     sequence!("superseded-observation"),
     sequence!("goal-changed"),
+    sequence!("goal-ref-not-a-goal"),
+    sequence!("evidence-refusals"),
+    sequence!("action-hash-mismatch"),
+    sequence!("action-failed"),
+    sequence!("action-dirty"),
+    sequence!("mixed-artifacts"),
 ];
 
 impl Sequence {
@@ -61,6 +69,11 @@ impl Sequence {
         serde_json::from_str(self.events).expect("sequence events")
     }
 
+    /// Build the fold's input from the fixture, substituting the one plan
+    /// fixture every sequence names. Nothing is invented here: the authority,
+    /// the goal set, the compiled action definitions, the evidence facts and
+    /// the ref states are the fixture's own, deserialized into the fold's
+    /// types — the implementer must not write its own oracle.
     fn inputs(&self) -> WorkFoldInputs {
         let raw: serde_json::Value = serde_json::from_str(self.inputs).expect("sequence inputs");
         let mut plan_blobs = BTreeMap::new();
@@ -73,19 +86,30 @@ impl Sequence {
             );
             plan_blobs.insert(key.clone(), KETTLE_PLAN.to_owned());
         }
+        let optional = |key: &str| -> serde_json::Value {
+            raw.get(key)
+                .filter(|value| !value.is_null())
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({}))
+        };
         WorkFoldInputs {
             events: self.events(),
-            may_lead: raw["mayLead"]
-                .as_array()
-                .expect("mayLead")
-                .iter()
-                .map(|key| key.as_str().expect("pubkey").to_owned())
-                .collect(),
             relay_self_key: raw["relaySelfKey"].as_str().map(str::to_owned),
+            authority: serde_json::from_value(raw["authority"].clone()).expect("authority"),
             current_goal_ref: raw["currentGoalRef"].as_str().map(str::to_owned),
+            goal_events: raw["goalEvents"]
+                .as_array()
+                .map(|ids| {
+                    ids.iter()
+                        .map(|id| id.as_str().expect("goal id").to_owned())
+                        .collect()
+                })
+                .unwrap_or_default(),
             plan_blobs,
+            action_definitions: serde_json::from_value(optional("actionDefinitions"))
+                .expect("actionDefinitions"),
+            evidence: serde_json::from_value(optional("evidence")).expect("evidence"),
             ref_states: serde_json::from_value(raw["refStates"].clone()).expect("refStates"),
-            resolved_evidence_ids: None,
             session_ref: None,
             project_ref: None,
         }
@@ -223,7 +247,7 @@ fn a_late_green_for_p_never_covers_p2() {
 fn a_record_signed_by_a_non_lead_is_excluded_by_name_and_breaks_nothing() {
     let projection = fold_work(&SEQUENCES[0].inputs());
     assert_eq!(projection.excluded.len(), 1);
-    assert_eq!(projection.excluded[0].code, "signer-not-may-lead");
+    assert_eq!(projection.excluded[0].code, "signer_not_may_lead");
     // The rest of the session still folds to complete coverage.
     assert!(projection.declarations[0].coverage_complete);
 }
@@ -246,14 +270,14 @@ fn an_unreadable_plan_blob_reads_unknown_and_never_open() {
 #[test]
 fn an_unestablished_evidence_event_reads_unknown() {
     let mut inputs = SEQUENCES[0].inputs();
-    inputs.resolved_evidence_ids = Some(BTreeSet::new());
+    inputs.evidence.clear();
     let projection = fold_work(&inputs);
     let declaration = &projection.declarations[0];
     assert!(!declaration.coverage_complete);
-    assert!(declaration
-        .criteria
-        .iter()
-        .any(|criterion| criterion.status == WorkCriterionStatus::Unknown));
+    assert!(declaration.criteria.iter().any(|criterion| {
+        criterion.status == WorkCriterionStatus::Unknown
+            && criterion.reason_code == Some(WorkReasonCode::EvidenceUnavailable)
+    }));
 }
 
 #[test]
@@ -411,4 +435,111 @@ fn a_foreign_kind_in_the_stream_is_ignored_not_excluded() {
         expected,
         "a kind this fold does not own is not its business"
     );
+}
+
+#[test]
+fn authority_is_the_44244_predicate_including_steer_grantees() {
+    // `bind6`'s signer holds a live may_steer grant and no lead seat, and its
+    // record is admitted; `bind9`'s holds neither, and its record is not.
+    // The predicate is the 44244 fold's own, not a second copy.
+    let inputs = SEQUENCES[0].inputs();
+    let grantee = &inputs.authority.active_grants[0].actor_pubkey;
+    assert!(inputs.authority.may_lead(grantee));
+    assert!(inputs.authority.may_lead(&inputs.authority.founder_pubkey));
+    assert!(!inputs.authority.may_lead(&"b0".repeat(32)));
+
+    let mut without_grant = inputs.clone();
+    without_grant.authority.active_grants.clear();
+    let projection = fold_work(&without_grant);
+    assert!(
+        projection.excluded.len() > 1,
+        "withdrawing the steer grant must exclude the records it admitted"
+    );
+}
+
+#[test]
+fn a_decision_id_in_goal_ref_is_refused_by_the_fold_not_the_envelope() {
+    let sequence = &SEQUENCES[7];
+    assert_eq!(sequence.name, "goal-ref-not-a-goal");
+    let inputs = sequence.inputs();
+    // The envelope accepts it: both are 64-hex and one event cannot tell them
+    // apart. The fold is the only layer holding the goal set.
+    assert!(validate_project_work_envelope(&inputs.events[0]).is_ok());
+    let projection = fold_work(&inputs);
+    assert!(projection.declarations.is_empty());
+    assert_eq!(projection.excluded[0].code, "goal_ref_not_a_goal");
+    assert!(projection.excluded[0].message.contains("decisionRef"));
+
+    // With no goal set established, the fold judges nobody on that question
+    // rather than guessing.
+    let mut unestablished = inputs.clone();
+    unestablished.goal_events.clear();
+    assert_eq!(fold_work(&unestablished).declarations.len(), 1);
+}
+
+#[test]
+fn coverage_is_about_one_revision_not_a_per_criterion_scoreboard() {
+    let sequence = &SEQUENCES[12];
+    assert_eq!(sequence.name, "mixed-artifacts");
+    let projection = fold_work(&sequence.inputs());
+    let declaration = &projection.declarations[0];
+    assert!(declaration
+        .criteria
+        .iter()
+        .all(|criterion| criterion.status == WorkCriterionStatus::Covered));
+    assert!(
+        !declaration.coverage_complete,
+        "five criteria green at three commits verify nothing at the delivered commit"
+    );
+    assert_eq!(
+        declaration.coverage_reason_code,
+        Some(WorkCoverageReasonCode::MixedArtifacts)
+    );
+    assert_eq!(declaration.artifact_commits.len(), 3);
+}
+
+#[test]
+fn evidence_that_resolved_and_failed_is_open_with_its_reason_named() {
+    for (index, expected) in [
+        (8, WorkReasonCode::WrongSigner),
+        (9, WorkReasonCode::WrongRunOrHash),
+        (10, WorkReasonCode::ActionFailed),
+        (11, WorkReasonCode::DirtyRevision),
+    ] {
+        let projection = fold_work(&SEQUENCES[index].inputs());
+        let declaration = &projection.declarations[0];
+        assert!(
+            declaration.criteria.iter().any(|criterion| {
+                criterion.reason_code == Some(expected)
+                    && criterion.status == WorkCriterionStatus::Open
+                    && criterion.reason.is_some()
+            }),
+            "{}: expected a criterion open with {}",
+            SEQUENCES[index].name,
+            expected.as_str()
+        );
+        // A failed claim is never coverage, and never silently empty.
+        assert!(!declaration.coverage_complete);
+        assert!(declaration.candidate_artifact.is_none());
+    }
+}
+
+#[test]
+fn a_fork_is_defined_over_maximal_declarations_including_two_roots() {
+    // P forks to A and B, then A2 supersedes only A: A2 and B share no
+    // immediate predecessor but both are maximal, so the work is still in
+    // conflict. A same-predecessor rule would clear it while B stands.
+    let descendant = fold_work(&SEQUENCES[3].inputs());
+    assert_eq!(descendant.conflicts.len(), 1);
+    assert_eq!(descendant.conflicts[0].heads.len(), 2);
+
+    // Two declarations of one workId with empty `supersedes` are two heads:
+    // an empty list is not a claim to be first.
+    let roots = fold_work(&SEQUENCES[4].inputs());
+    assert_eq!(roots.conflicts.len(), 1);
+    assert_eq!(roots.conflicts[0].heads.len(), 2);
+    assert!(roots
+        .declarations
+        .iter()
+        .all(|declaration| declaration.state == WorkDeclarationState::Conflict));
 }
