@@ -14440,6 +14440,118 @@ removed from here.
      `~/.beekeeper/REPOS/rpg-test` on `340a064 [main]`, and the next team
      session cut its lead worktree from it (item 175).
 
+178. **The system proof, single-machine run: kettle landed in ten minutes, the
+     flow did not finish, and the joins were paid for in model turns
+     (2026-09-20, Brian at the keyboard, Fable orchestrating, Astra auditing
+     read-only; installed `7b8f0a92d`).** Runbook
+     [2026-09-20-system-proof-runbook.md](history/2026-09-20-system-proof-runbook.md);
+     Astra's audit with the scorecard, per-seat cost rows and event ids is
+     [2026-09-20-astra-kettle-audit.md](history/2026-09-20-astra-kettle-audit.md).
+     One goal typed at 11:27Z in Pivot Test channel `85b8db75…`; lead
+     `74495ca8` (opus[1m]) planned in Pulse `d70d0fea…`, combined slices A+B
+     in one assignment `a6f032c3…` with the reason written, hired builder
+     `6c628bef`, wrote the `verify` action itself (`b8cd709` in the agents
+     repo), landed the builder's `fa927fd` on `main` at 11:36:44Z after a
+     clean-archive check, was refused publication of the action and opened
+     ruling `a009c234…` on Brian at 11:37:53Z, and hired verifier `f543d7bd`
+     meanwhile. Scorecard at cutoff 11:49Z: claims 2 pass; 1, 5, 6 partial;
+     7 fail at the workflow level; 3, 4, 8 not exercised. Five completed
+     turns: 9.25M cache-inclusive input, 107k output, 155 tool calls, $2.30
+     of *reported* cost (three of five results omit `costUsd`). Findings,
+     each with the transcript sequence in the audit:
+     - (a) **Routed hire refused `HIRE_NO_ROUTE` because the registry does
+       not travel with the project.** Hire `d00b9a46…` at 11:30:49 (class
+       builder, risk 2,2,2); the host reads `team/model-registry.yaml` from
+       the *code checkout* and `pivot-test` has none (L:64). The retry ten
+       seconds later was unrouted and the seat ran the identity's pin,
+       `opus[1m]`. Andy's lead recorded the same as its D5 ("no model
+       registry"). The registry exists once, in this repo's `team/`; under
+       the pivot it belongs in the agents repository beside `team.yml`. Lane
+       180.
+     - (b) **The recovered refusal was re-delivered as a founder-signed turn.**
+       Command `5cdb8dbe…` at 11:30:50, signed by Brian's key, queued the
+       refusal text as new user intent; it started at 11:31:33 after the
+       successful retry, and the lead spent 84.9 s, 580,779 input tokens and
+       $0.59 investigating it (L:74–95). Brian sent nothing. Source:
+       `desktop/src/features/coding-sessions/lib/codingSessionHireDisclosure.ts`
+       `refuseCodingSessionHireWithCode` says the refusal "to the requesting
+       seat" as a turn even though the hiring CLI already received it
+       synchronously. Lane 181.
+     - (c) **Every seat learned the wire schemas by writing to the live
+       relay.** 15 CLI `user_error` records in the lead, 11 in the builder,
+       26 in the verifier: assignment body one missing field at a time
+       (L:31–33), report body (B:67–93), verdict body (V:20–79). The lead's
+       brief told the verifier to probe with an empty body; V:63 published a
+       placeholder verdict (`summary: "s"`, `findings: ["f"]`) that was stored
+       and excluded only because its `assignmentRef` was wrong. Lane 182.
+     - (d) **The verifier's exact-input fence did not bind the commit it
+       was asked to verify.** Assignment `0ceddfb2…` names `fa927fd` in prose
+       and `baseSha: e682191` in the field the fence reads
+       (`verification_input.rs:142,265`); the verifier's tree stayed at the
+       README commit and it tested `fa927fd` from a scratch archive by hand.
+       Not a fence proof. Lane 182.
+     - (e) **Settlement nulls induced a false repair.** With a canonical
+       approving verdict `e0f9cfb5…` and a lead disposition `8cd1f37c…`, the
+       fold showed `settled:false` and null disposition fields because the
+       *acknowledgement* was missing
+       (`coding_session_team_transaction_fold.rs:866,906`); the lead concluded
+       a refutation was missing and recalled the verifier (L:176). Lane 183.
+     - (f) **Publication authority is not a seat's to hold, and setup did
+       not provide it.** Host-step actions are admitted for channel
+       owner/admin plus project creator/roster owner
+       (`command_executor.rs:804,821`); no seat grant reaches that. The lead
+       was right to ask. The system accepted a routine goal it lacked the
+       standing authority to finish; Astra's one change: `verify <commit>` as
+       a project operation authorized at setup. Design point for Andy.
+     - (g) **A manual `verify` tests whatever is checked out.** The action
+       has no checkout binding; commit isolation exists only for
+       `ref_updated`/`ci_result` (`buzz-workflow/src/schema.rs:297,614`), so a
+       green manual run does not prove `fa927fd`. Lane 184.
+     - (h) **Bench had to be ticked by hand** (policy `35a783db…` names seven
+       identities); "Use the team" should default to the team. Design point.
+     - (i) Fable published the action as Brian at 12:04Z with the bundled
+       `bee` (workflow `61680af3…`); `target/debug/bee` is stale and lacks
+       `actions`. Run continuation recorded in the runbook § 8.
+
+179. **Andy's eight-seat run finished the game and never finished its own
+     protocol; almost half its turns were disposition bookkeeping
+     (2026-09-19 on Andy's machine, `451754752`; audited read-only by Astra
+     2026-09-20).** Audit
+     [2026-09-20-astra-andy-rpg-audit.md](history/2026-09-20-astra-andy-rpg-audit.md).
+     Andy's own comparison, quoted from his message to Brian: team of eight
+     versus one solo Opus session on the same game brief; team 393 API
+     requests / 716k output / 62.2M cache-read / ~$76 / 4h15m elapsed
+     (~1h55m awake) / 45 commits, solo 75 requests / 113k output / $11.67 /
+     37 min / 1 commit; two reviewers graded solo B, team B+; the team's
+     review loop found five reproducible bugs after the first green suite,
+     solo shipped more content. Astra verified the team side from the relay
+     (32 turns, 66.5M cache-inclusive input, 714k output, $38.54 *reported*
+     with every first result unpriced) and did not verify the solo side.
+     - (a) **`mission.completed` refused until every assignment carried a
+       typed acknowledgement** — a local CLI preflight
+       (`crates/buzz-cli/src/commands/sessions/operations.rs:881-915`), not
+       the relay. The lead woke six seats to obtain ACKs (L282); all arrived
+       by 20:54:02Z; the lead ended at 20:54:17Z without re-evaluating.
+       Fold at 12:06Z: 8/8 settled, `canonicalTerminal: null`. Six
+       "housekeeping, no new work" repair turns cost $9.33 reported and 3.08M
+       input tokens. 14 of 32 turns (43.75%) were workers handling
+       dispositions or ACKs. Astra's one change: completion as a durable
+       pending operation re-evaluated when its prerequisites arrive; a
+       transport receipt must not consume a model turn. Lane 183.
+     - (b) **Hires ran the identity's own model** — seven `claude-fable-5-1[1m]`
+       under an `opus[1m]` lead — for the same reason as 178(a). Lane 180.
+     - (c) **Schema discovery by rejected writes, seat after seat**: designer
+       D65/69, architect A70–87, setup S86–96 (which grepped the `bee`
+       binary), builder B250/253, runner R126, verifier V121, lead
+       L258–279. Lane 182.
+     - (d) **A durable identity seated in two umbrellas needs `--session-ref`
+       on every send** (L240); the active umbrella is not carried. Open.
+     - (e) Andy's three product observations stand as stated: default to
+       the most expensive model, seats idle for hours holding worktrees
+       until the acknowledgement round, completion refused until all eight
+       acknowledged. (a) and (b) above are their causes; the idle-hold is
+       the consequence of (a).
+
 ## 3a. Environment facts that cost real time (do not rediscover)
 
 - **pnpm 11's answer to a stale workspace state is to DELETE `node_modules`,
