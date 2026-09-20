@@ -183,6 +183,7 @@ async function projectAcceptedNonterminal(events, assignments) {
       notes: [],
       decisions: [],
       waitingOnDecision: null,
+      pendingCompletion: null,
       canonicalTerminal: null,
     }),
   );
@@ -485,12 +486,18 @@ test("native Rust-fold wrapper binds exact inputs before Mission projection", as
         dispositionEventId: null,
         acknowledgementEventId: null,
         settled: false,
+        awaiting: {
+          link: "disposition",
+          owedByRole: "lead",
+          owedByActor: null,
+        },
       },
     ],
     unseatedReports: [],
     notes: [],
     decisions: [],
     waitingOnDecision: null,
+    pendingCompletion: null,
     canonicalTerminal: { eventId: blocked.id, type: "mission.blocked" },
   };
   const invocationInput = {
@@ -754,6 +761,7 @@ test("accepted assignment chains preserve signed chronology and acknowledgement 
     dispositionEventId: null,
     acknowledgementEventId: null,
     settled: false,
+    awaiting: { link: "disposition", owedByRole: "lead", owedByActor: null },
   };
 
   const assigned = (
@@ -802,6 +810,7 @@ test("accepted assignment chains preserve signed chronology and acknowledgement 
           dispositionEventId: disposition.id,
           acknowledgementEventId: acknowledgement.id,
           settled: true,
+          awaiting: null,
         },
       ],
     )
@@ -866,6 +875,7 @@ test("multi-assignment accepted steps retain their own source and author regardl
     dispositionEventId: null,
     acknowledgementEventId: null,
     settled: false,
+    awaiting: { link: "disposition", owedByRole: "lead", owedByActor: null },
   }));
   const forward = await projectAcceptedNonterminal(
     [assignmentA, assignmentB],
@@ -966,6 +976,7 @@ async function projectWithFold(events, foldOverrides) {
       notes: [],
       decisions: [],
       waitingOnDecision: null,
+      pendingCompletion: null,
       canonicalTerminal: null,
       ...foldOverrides(inputEventIds),
     }),
@@ -1036,6 +1047,11 @@ test("D-T9: transactions project chronologically with counterparty and parent", 
           dispositionEventId: verdictEvent.id,
           acknowledgementEventId: null,
           settled: false,
+          awaiting: {
+            link: "disposition",
+            owedByRole: "lead",
+            owedByActor: null,
+          },
         },
       ],
       unseatedReports: [
@@ -1125,6 +1141,7 @@ test("D-T9: the decoder requires the fold's unseatedReports field", async () => 
     excluded: [],
     conflicts: [],
     assignments: [],
+    pendingCompletion: null,
     canonicalTerminal: null,
   };
   const invocationInput = {

@@ -1148,6 +1148,9 @@ test("R2 §8: rail section order puts Team third, above Changes", async () => {
     // ruling held on a person is the most actionable thing a rail can carry,
     // so it sits with the state rather than below four panels of detail.
     "Decisions",
+    // Ledger 183(g): where each approval chain is waiting sits beside the
+    // decision queue, because both answer "what is this mission waiting on".
+    "Settlement",
     "Team",
     "Changes",
     "Files",

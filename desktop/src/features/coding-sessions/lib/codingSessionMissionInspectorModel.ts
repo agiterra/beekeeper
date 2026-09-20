@@ -213,6 +213,35 @@ export type CodingSessionMissionDisclosureInput = {
   eventIds: readonly string[];
 };
 
+/**
+ * One active assignment's settlement, carried verbatim from the native fold
+ * (ledger 183(c)/(g)).
+ *
+ * `awaiting` is the whole point: three nulls said *that* a chain was
+ * incomplete and never *where*, and the kettle lead read a missing
+ * acknowledgement as a missing refutation and recalled a verifier that owed
+ * nothing. Absent (`undefined`) means no fold ran — unknown, never "settled".
+ */
+export type CodingSessionMissionSettlementInput = {
+  assignmentEventId: string;
+  settled: boolean;
+  awaiting: {
+    link: "report" | "disposition" | "acknowledgement";
+    owedByRole: string;
+    /** `null` for a disposition: several parties may rule (183(c)). */
+    owedByActor: string | null;
+  } | null;
+};
+
+/** A signed completion whose prerequisites are merely late (ledger 183(a)). */
+export type CodingSessionMissionPendingCompletionInput = {
+  eventId: string;
+  code: string;
+  /** The fold's own sentence, verbatim. */
+  reason: string;
+  unsettledAssignmentEventIds: readonly string[];
+};
+
 export type CodingSessionMissionInspectorInput = {
   goal: CodingSessionMissionGoalInput;
   acceptedPlan: CodingSessionAcceptedPlanInput;
@@ -228,6 +257,10 @@ export type CodingSessionMissionInspectorInput = {
    * ran, which is `unknown` — never "every report is seated".
    */
   unseatedReportEventIds?: readonly string[];
+  /** The fold's `assignments[]`; absent means no fold ran. */
+  settlements?: readonly CodingSessionMissionSettlementInput[];
+  /** The fold's `pendingCompletion`; `null` is a folded "nothing is held". */
+  pendingCompletion?: CodingSessionMissionPendingCompletionInput | null;
   observedChanges: CodingSessionObservedChanges;
   /** Trusted projected source items for observed paths, when ingress retains them. */
   observedFileSources?: ReadonlyMap<string, readonly string[]>;

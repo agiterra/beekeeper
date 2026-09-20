@@ -47,8 +47,16 @@ test("the decoder accepts the adapter's own serialized response", () => {
     "heldOn",
     "requestId",
   ]);
-  // Waiting on a person is not a terminal.
+  // Waiting on a person is not a terminal, and neither is a held completion.
   assert.equal(decoded.canonicalTerminal, null);
+  assert.equal(decoded.pendingCompletion, null);
+  // Ledger 183(g): the missing link crosses the boundary, so the app no
+  // longer shows the three nulls the CLI stopped printing.
+  assert.deepEqual(decoded.assignments[0].awaiting, {
+    link: "disposition",
+    owedByRole: "lead",
+    owedByActor: null,
+  });
 });
 
 test("the fixture carries exactly the adapter's top-level key set", () => {
@@ -63,6 +71,7 @@ test("the fixture carries exactly the adapter's top-level key set", () => {
     "includedEventIds",
     "inputEventIds",
     "notes",
+    "pendingCompletion",
     "schema",
     "unseatedReports",
     "waitingOnDecision",

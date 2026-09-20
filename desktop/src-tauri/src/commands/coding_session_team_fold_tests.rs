@@ -220,6 +220,7 @@ fn full_approval_chain_returns_closed_provenance_bound_projection() {
             disposition_event_id: Some(disposition),
             acknowledgement_event_id: Some(acknowledgement),
             settled: true,
+            awaiting: None,
         }
     );
     assert_eq!(
@@ -252,6 +253,8 @@ fn full_approval_chain_returns_closed_provenance_bound_projection() {
             "includedEventIds",
             "inputEventIds",
             "notes",
+            // Ledger 183(a)/(b): a completion held for a late prerequisite.
+            "pendingCompletion",
             "schema",
             "unseatedReports",
             "waitingOnDecision",

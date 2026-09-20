@@ -309,12 +309,18 @@ function foldResponse(request) {
         dispositionEventId: null,
         acknowledgementEventId: null,
         settled: false,
+        awaiting: {
+          link: "disposition",
+          owedByRole: "lead",
+          owedByActor: null,
+        },
       },
     ],
     unseatedReports: [],
     notes: [],
     decisions: [],
     waitingOnDecision: null,
+    pendingCompletion: null,
     canonicalTerminal: null,
   };
 }

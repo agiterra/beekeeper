@@ -217,6 +217,7 @@ function nativeResponse(request) {
     notes: [],
     decisions: [],
     waitingOnDecision: null,
+    pendingCompletion: null,
     canonicalTerminal: terminal
       ? { eventId: terminal.id, type: terminal.payload.type }
       : null,

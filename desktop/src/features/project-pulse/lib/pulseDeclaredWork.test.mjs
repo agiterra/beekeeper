@@ -55,6 +55,7 @@ function digestOf(entries) {
 function settlement(overrides = {}) {
   return {
     settled: false,
+    awaiting: { link: "disposition", owedByRole: "lead", owedByActor: null },
     governedReportEventId: null,
     dispositionEventId: null,
     acknowledgementEventId: null,
@@ -239,6 +240,7 @@ test("settlement comes from the fold's own row, and moves the row to settled", (
               status: "settled",
               settlement: settlement({
                 settled: true,
+                awaiting: null,
                 governedReportEventId: "1a".repeat(32),
                 dispositionEventId: "2b".repeat(32),
                 acknowledgementEventId: "3c".repeat(32),
@@ -627,6 +629,7 @@ test("a complete read whose only work is settled is complete, not empty", () => 
               status: "settled",
               settlement: settlement({
                 settled: true,
+                awaiting: null,
                 governedReportEventId: "1a".repeat(32),
                 dispositionEventId: "2b".repeat(32),
                 acknowledgementEventId: "3c".repeat(32),

@@ -532,6 +532,10 @@ export function useCodingSessionMissionSurface(input: {
                   gateRows={observationView.gates}
                   seatAuthorities={input.seatAuthorities}
                   unseatedReportEventIds={pending.unseatedReportEventIds}
+                  settlements={evidence.inspectorInput.settlements}
+                  pendingCompletion={
+                    evidence.inspectorInput.pendingCompletion ?? null
+                  }
                   variant={input.isNarrow ? "drawer" : "panel"}
                 />
               ),
@@ -580,6 +584,8 @@ export function useCodingSessionMissionSurface(input: {
     [
       auditSeats,
       evidence.errorMessage,
+      evidence.inspectorInput.pendingCompletion,
+      evidence.inspectorInput.settlements,
       evidence.isLoading,
       evidence.refresh,
       input.active,

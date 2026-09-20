@@ -1698,6 +1698,11 @@ test("declared-work navigation is offered only where an execution is recorded", 
       dispositions: [],
       settlement: {
         settled: false,
+        awaiting: {
+          link: "disposition",
+          owedByRole: "lead",
+          owedByActor: null,
+        },
         governedReportEventId: null,
         dispositionEventId: null,
         acknowledgementEventId: null,

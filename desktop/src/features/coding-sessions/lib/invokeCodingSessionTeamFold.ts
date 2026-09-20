@@ -57,6 +57,21 @@ export type CodingSessionNativeTeamFoldResponse = {
     readonly dispositionEventId: string | null;
     readonly acknowledgementEventId: string | null;
     readonly settled: boolean;
+    /**
+     * The one missing link while `settled` is false, `null` exactly when it
+     * is true (ledger 183(c)).
+     *
+     * Required rather than optional: three nulls and no diagnosis is what a
+     * lead misread in the kettle run, and a build that has not shipped this
+     * must fail the decoder rather than read as "nothing is known".
+     * `owedByActor` is `null` for a disposition on purpose — several parties
+     * may rule, so naming one would be a guess.
+     */
+    readonly awaiting: {
+      readonly link: "report" | "disposition" | "acknowledgement";
+      readonly owedByRole: string;
+      readonly owedByActor: string | null;
+    } | null;
   }[];
   /**
    * Reports the native fold **included** by assignee equality whose author
@@ -105,6 +120,17 @@ export type CodingSessionNativeTeamFoldResponse = {
   readonly waitingOnDecision: {
     readonly requestId: string;
     readonly heldOn: string;
+  } | null;
+  /**
+   * A signed `mission.completed` whose prerequisites are merely late
+   * (ledger 183(a)/(b)). Never set at the same time as `canonicalTerminal`:
+   * a finished mission is not also a pending one.
+   */
+  readonly pendingCompletion: {
+    readonly eventId: string;
+    readonly code: string;
+    readonly reason: string;
+    readonly unsettledAssignmentEventIds: readonly string[];
   } | null;
   readonly canonicalTerminal: {
     readonly eventId: string;
@@ -256,13 +282,46 @@ function isSettlement(
         "dispositionEventId",
         "acknowledgementEventId",
         "settled",
+        "awaiting",
       ],
     ]) &&
     isEventId(value.assignmentEventId) &&
     isNullableEventId(value.governedReportEventId) &&
     isNullableEventId(value.dispositionEventId) &&
     isNullableEventId(value.acknowledgementEventId) &&
-    typeof value.settled === "boolean"
+    typeof value.settled === "boolean" &&
+    (value.awaiting === null || isAwaiting(value.awaiting))
+  );
+}
+
+function isAwaiting(
+  value: unknown,
+): value is NonNullable<
+  CodingSessionNativeTeamFoldResponse["assignments"][number]["awaiting"]
+> {
+  return (
+    hasExactFields(value, [["link", "owedByRole", "owedByActor"]]) &&
+    (value.link === "report" ||
+      value.link === "disposition" ||
+      value.link === "acknowledgement") &&
+    isString(value.owedByRole) &&
+    (value.owedByActor === null || isEventId(value.owedByActor))
+  );
+}
+
+function isPendingCompletion(
+  value: unknown,
+): value is NonNullable<
+  CodingSessionNativeTeamFoldResponse["pendingCompletion"]
+> {
+  return (
+    hasExactFields(value, [
+      ["eventId", "code", "reason", "unsettledAssignmentEventIds"],
+    ]) &&
+    isEventId(value.eventId) &&
+    isString(value.code) &&
+    isString(value.reason) &&
+    isEventIdArray(value.unsettledAssignmentEventIds)
   );
 }
 
@@ -367,6 +426,7 @@ function decodeNativeResponse(
         "notes",
         "decisions",
         "waitingOnDecision",
+        "pendingCompletion",
         "canonicalTerminal",
       ],
     ]) ||
@@ -390,6 +450,10 @@ function decodeNativeResponse(
     !(
       value.waitingOnDecision === null ||
       isWaitingOnDecision(value.waitingOnDecision)
+    ) ||
+    !(
+      value.pendingCompletion === null ||
+      isPendingCompletion(value.pendingCompletion)
     ) ||
     !(value.canonicalTerminal === null || isTerminal(value.canonicalTerminal))
   ) {
@@ -422,7 +486,12 @@ function cloneAndFreezeNativeResponse(
     ),
     assignments: Object.freeze(
       response.assignments.map((assignment) =>
-        Object.freeze({ ...assignment }),
+        Object.freeze({
+          ...assignment,
+          awaiting: assignment.awaiting
+            ? Object.freeze({ ...assignment.awaiting })
+            : null,
+        }),
       ),
     ),
     unseatedReports: Object.freeze(
@@ -443,6 +512,14 @@ function cloneAndFreezeNativeResponse(
     ),
     waitingOnDecision: response.waitingOnDecision
       ? Object.freeze({ ...response.waitingOnDecision })
+      : null,
+    pendingCompletion: response.pendingCompletion
+      ? Object.freeze({
+          ...response.pendingCompletion,
+          unsettledAssignmentEventIds: Object.freeze([
+            ...response.pendingCompletion.unsettledAssignmentEventIds,
+          ]),
+        })
       : null,
     canonicalTerminal: response.canonicalTerminal
       ? Object.freeze({ ...response.canonicalTerminal })
@@ -505,6 +582,14 @@ function bindResponse(input: {
       assignment.dispositionEventId,
       assignment.acknowledgementEventId,
     ]),
+    // `awaiting.owedByActor` is a pubkey, not an event id, so it is
+    // deliberately absent here — the same reason a note's `refs` are.
+    ...(response.pendingCompletion
+      ? [
+          response.pendingCompletion.eventId,
+          ...response.pendingCompletion.unsettledAssignmentEventIds,
+        ]
+      : []),
     ...response.unseatedReports.flatMap((report) => [
       report.eventId,
       report.assignmentRef,

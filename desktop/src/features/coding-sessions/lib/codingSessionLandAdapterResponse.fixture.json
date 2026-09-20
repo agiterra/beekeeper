@@ -8,7 +8,11 @@
       "dispositionAuthorPubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
       "dispositionEventId": "d07a7df61082958ff108e141ea766ee654c139abbcb09037690fff74502937b9",
       "headSha": "07c470be07c470be07c470be07c470be07c470be",
-      "observedGates": ["cargo fmt", "cargo clippy", "cargo test"],
+      "observedGates": [
+        "cargo fmt",
+        "cargo clippy",
+        "cargo test"
+      ],
       "policyEventId": "9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a",
       "policyNotEvaluated": null,
       "policyResolution": "present",
@@ -116,7 +120,11 @@
       "dispositionAuthorPubkey": "",
       "dispositionEventId": "",
       "headSha": "07c470be07c470be07c470be07c470be07c470be",
-      "observedGates": ["cargo fmt", "cargo clippy", "cargo test"],
+      "observedGates": [
+        "cargo fmt",
+        "cargo clippy",
+        "cargo test"
+      ],
       "policyEventId": "9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a",
       "policyNotEvaluated": null,
       "policyResolution": "present",

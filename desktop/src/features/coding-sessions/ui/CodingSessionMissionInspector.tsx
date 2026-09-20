@@ -51,6 +51,11 @@ import {
 } from "./CodingSessionGateRows";
 import { CodingSessionMissionDecisionQueue } from "./CodingSessionMissionDecisionQueue";
 import { Integrity } from "./CodingSessionMissionInspectorIntegrity";
+import type {
+  CodingSessionMissionPendingCompletionInput,
+  CodingSessionMissionSettlementInput,
+} from "../lib/codingSessionMissionInspectorModel";
+import { CodingSessionMissionSettlement } from "./CodingSessionMissionSettlement";
 import { CodingSessionMissionStatePanel } from "./CodingSessionMissionStatePanel";
 
 export type CodingSessionMissionInspectorProps = {
@@ -69,6 +74,15 @@ export type CodingSessionMissionInspectorProps = {
   seatAuthorities?: readonly CodingSessionSeatAuthority[];
   /** Report event ids the Rust fold listed under `unseatedReports`. */
   unseatedReportEventIds?: readonly string[];
+  /**
+   * The native fold's `assignments[]` (ledger 183(g)).
+   *
+   * `undefined` is not `[]`: it means no fold reached this view, which is
+   * unknown rather than "every assignment is settled".
+   */
+  settlements?: readonly CodingSessionMissionSettlementInput[];
+  /** The fold's `pendingCompletion`; `null` is a folded "nothing is held". */
+  pendingCompletion?: CodingSessionMissionPendingCompletionInput | null;
   /**
    * This session's folded kind-44246 gate rows, observed first.
    *
@@ -130,6 +144,8 @@ export function CodingSessionMissionInspector({
   onOpenFileTrace,
   onRefresh,
   seatAuthorities,
+  settlements,
+  pendingCompletion = null,
   unseatedReportEventIds,
 }: CodingSessionMissionInspectorProps) {
   // The prop wins when a caller (or a test) supplies one; otherwise the
@@ -237,6 +253,16 @@ export function CodingSessionMissionInspector({
             decisionsKnown={model.decisionsKnown}
             decisionsTruncated={model.decisionsTruncated}
             decisionsTruncatedNotice={model.decisionsTruncatedNotice}
+          />
+        </InspectorSection>
+
+        <InspectorSection title="Settlement">
+          {/* Ledger 183(g): where each approval chain is waiting, and any
+              completion held for a late prerequisite. Rendered from the
+              native fold verbatim — this panel derives nothing. */}
+          <CodingSessionMissionSettlement
+            pendingCompletion={pendingCompletion}
+            settlements={settlements}
           />
         </InspectorSection>
 

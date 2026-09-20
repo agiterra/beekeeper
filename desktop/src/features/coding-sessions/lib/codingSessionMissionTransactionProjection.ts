@@ -653,6 +653,22 @@ export function projectNativeTeamFoldToMissionInspector(input: {
     transactions: transactions.rows,
     transactionsTruncated: transactions.truncated,
     unseatedReportEventIds,
+    // Ledger 183(g): carried through verbatim, the same discipline as
+    // `decisions` below. The fold decides where a chain is waiting and who
+    // owes the missing link; this layer copies the answer and forms none.
+    settlements: fold.assignments.map((assignment) => ({
+      assignmentEventId: assignment.assignmentEventId,
+      settled: assignment.settled,
+      awaiting: assignment.awaiting ? { ...assignment.awaiting } : null,
+    })),
+    pendingCompletion: fold.pendingCompletion
+      ? {
+          ...fold.pendingCompletion,
+          unsettledAssignmentEventIds: [
+            ...fold.pendingCompletion.unsettledAssignmentEventIds,
+          ],
+        }
+      : null,
     // Carried through verbatim. Item 105 put both on the wire and nothing
     // rendered them for a batch; the fold decides what is waiting and what was
     // asked, and this layer copies the answer rather than forming one.

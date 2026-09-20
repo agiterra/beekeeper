@@ -242,6 +242,24 @@ pub struct CodingSessionTeamFoldAdapterConflict {
     pub contender_event_ids: Vec<String>,
 }
 
+/// The one missing link of an unsettled assignment, and who owes it.
+///
+/// Ledger 183(c)/(g): three nulls say *that* a chain is incomplete and never
+/// *where*, and the 178(e) reader drew the wrong conclusion from them and
+/// recalled a verifier that owed nothing. `owedByActor` is deliberately
+/// absent for a disposition — founder, any active `lead` and any steer-grant
+/// holder may all rule, so naming one would be a guess, not a fact.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingSessionTeamFoldAdapterAwaiting {
+    /// `report`, `disposition` or `acknowledgement`, in the fold's own words.
+    pub link: String,
+    /// Role slug of the party that owes it.
+    pub owed_by_role: String,
+    /// Lowercase-hex pubkey of that party, when exactly one can supply it.
+    pub owed_by_actor: Option<String>,
+}
+
 /// Canonical approval state for one active assignment.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -256,6 +274,28 @@ pub struct CodingSessionTeamFoldAdapterSettlement {
     pub acknowledgement_event_id: Option<String>,
     /// Whether the full approval and acknowledgement chain is complete.
     pub settled: bool,
+    /// The missing link while [`Self::settled`] is false; `None` exactly when
+    /// it is true.
+    pub awaiting: Option<CodingSessionTeamFoldAdapterAwaiting>,
+}
+
+/// A signed `mission.completed` that is not terminal yet because at least one
+/// prerequisite is not on the wire (ledger 183(a)/(b), 179(a)).
+///
+/// Not a refusal and not a second source of truth: the list is recomputed by
+/// the fold on every read, so the same record becomes terminal the moment the
+/// last prerequisite lands, with nothing republished.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingSessionTeamFoldAdapterPendingCompletion {
+    /// Event id of the published completion.
+    pub event_id: String,
+    /// One of the three `PENDING_COMPLETION_CODES`.
+    pub code: CodingSessionTeamFoldAdapterExclusionCode,
+    /// The fold's own sentence for that code, verbatim.
+    pub reason: String,
+    /// Assignments this completion names that are not settled, in fold order.
+    pub unsettled_assignment_event_ids: Vec<String>,
 }
 
 /// One canonical report whose author holds no active seat for the role its
@@ -362,6 +402,10 @@ pub struct CodingSessionTeamFoldAdapterResponse {
     pub decisions: Vec<CodingSessionTeamFoldAdapterDecision>,
     /// The open decision blocking active work; null when nothing is waiting.
     pub waiting_on_decision: Option<CodingSessionTeamFoldAdapterWaitingOnDecision>,
+    /// A published completion whose prerequisites are merely late, or null.
+    /// Never both this and [`Self::canonical_terminal`]: a finished mission is
+    /// not also a pending one.
+    pub pending_completion: Option<CodingSessionTeamFoldAdapterPendingCompletion>,
     /// Canonical newest authorized terminal record, never inferred from silence.
     pub canonical_terminal: Option<CodingSessionTeamFoldAdapterTerminal>,
 }
@@ -497,6 +541,13 @@ fn fold_adapter(
                 disposition_event_id: value.disposition_event_id,
                 acknowledgement_event_id: value.acknowledgement_event_id,
                 settled: value.settled,
+                awaiting: value
+                    .awaiting
+                    .map(|awaiting| CodingSessionTeamFoldAdapterAwaiting {
+                        link: awaiting.link.as_str().into(),
+                        owed_by_role: awaiting.owed_by_role,
+                        owed_by_actor: awaiting.owed_by_actor,
+                    }),
             })
             .collect(),
         unseated_reports: fold
@@ -535,6 +586,14 @@ fn fold_adapter(
                 held_on: value.held_on,
             }
         }),
+        pending_completion: fold.pending_completion.map(|value| {
+            CodingSessionTeamFoldAdapterPendingCompletion {
+                event_id: value.event_id,
+                code: exclusion_code(value.code),
+                reason: value.reason,
+                unsettled_assignment_event_ids: value.unsettled_assignment_event_ids,
+            }
+        }),
         canonical_terminal: fold.canonical_terminal.map(|value| {
             CodingSessionTeamFoldAdapterTerminal {
                 event_id: value.event_id,
@@ -557,3 +616,10 @@ pub async fn fold_coding_session_team_transactions(
 #[cfg(test)]
 #[path = "coding_session_team_fold_tests.rs"]
 mod tests;
+
+// Lane 183's two projections get their own file: the sibling is at the
+// repository's 1,000-line ceiling and a test must never be the reason a file
+// is split under pressure.
+#[cfg(test)]
+#[path = "coding_session_team_fold_settlement_tests.rs"]
+mod settlement_tests;

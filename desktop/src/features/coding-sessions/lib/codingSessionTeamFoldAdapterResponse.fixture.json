@@ -30,7 +30,12 @@
       "governedReportEventId": null,
       "dispositionEventId": null,
       "acknowledgementEventId": null,
-      "settled": false
+      "settled": false,
+      "awaiting": {
+        "link": "disposition",
+        "owedByRole": "lead",
+        "owedByActor": null
+      }
     }
   ],
   "unseatedReports": [],
@@ -58,5 +63,6 @@
     "requestId": "ccddc85a3089c5b5f5f091d6758944b2c8f120312740fc5715248f36563f4cc7",
     "heldOn": "founder"
   },
+  "pendingCompletion": null,
   "canonicalTerminal": null
 }

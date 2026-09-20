@@ -106,6 +106,7 @@ function assignment(overrides = {}) {
     dispositions: [],
     settlement: {
       settled: false,
+      awaiting: { link: "disposition", owedByRole: "lead", owedByActor: null },
       governedReportEventId: null,
       dispositionEventId: null,
       acknowledgementEventId: null,
@@ -374,6 +375,7 @@ test("every test id the contract names is on the screen", async () => {
             status: "settled",
             settlement: {
               settled: true,
+              awaiting: null,
               governedReportEventId: id("f1"),
               dispositionEventId: id("f2"),
               acknowledgementEventId: id("f3"),

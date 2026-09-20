@@ -16,14 +16,26 @@
     },
     "schema": "buzz-coding-session-team-transaction-adapter/v1",
     "tags": [
-      ["h", "e0d3f1b8-8c66-4c62-9ef1-3fa933b32f86"],
-      ["d", "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"],
-      ["cstx-v", "buzz-coding-session-team-transaction/v1"],
+      [
+        "h",
+        "e0d3f1b8-8c66-4c62-9ef1-3fa933b32f86"
+      ],
+      [
+        "d",
+        "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+      ],
+      [
+        "cstx-v",
+        "buzz-coding-session-team-transaction/v1"
+      ],
       [
         "cstx-genesis",
         "abababababababababababababababababababababababababababababababab"
       ],
-      ["cstx-type", "decision.answer"]
+      [
+        "cstx-type",
+        "decision.answer"
+      ]
     ]
   },
   "capabilities": {
