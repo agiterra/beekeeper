@@ -52,7 +52,6 @@ fn declared_code(text: &str) -> PlanRefusalCode {
     let raw = line
         .trim_start()
         .trim_start_matches("# REFUSED:")
-        .trim()
         .split_whitespace()
         .next()
         .expect("a refusal declaration names a code");
