@@ -457,50 +457,84 @@ named**, not `covered` and not silently empty: the binding exists, and saying
 so is the difference between "nobody has done this" and "somebody claimed it
 and the claim did not hold".
 
+Two criteria of one declaration — one covered, one still owed. This block
+is checked by `check-fixtures.mjs` against the same rules as every
+sequence fixture, so the text and the fixtures cannot drift apart in key
+names or in status and reason spellings.
+
+<!-- check-fixtures: fold-example -->
+
 ```json
 {
   "schema": "buzz-project-work-coverage/v1",
   "sessionRef": "11111111-2222-4333-8444-555555555555",
-  "projectRef": "30621:<64-hex>:kettle",
+  "projectRef": "30621:1ead000000000000000000000000000000000000000000000000000000000000:kettle",
   "declarations": [
     {
-      "workId": "<uuid>",
-      "declarationRef": "<64-hex>",
-      "planRef": {"repository": "…", "commit": "…", "path": "…"},
+      "workId": "9d0f0f0f-1111-4222-8333-444444444444",
+      "declarationRef": "dec1000000000000000000000000000000000000000000000000000000000000",
+      "planRef": {
+        "repository": "30617:1ead000000000000000000000000000000000000000000000000000000000000:pivot-test-beekeeper-agents",
+        "commit": "abababababababababababababababababababab",
+        "path": "plans/kettle.md"
+      },
       "state": "head",
       "supersedes": [],
       "supersededBy": [],
       "stateReasonCode": null,
       "stateReason": null,
       "planResolved": true,
-      "candidateArtifact": "<40-hex>",
-      "artifactCommits": ["<40-hex>"],
+      "candidateArtifact": "e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7",
+      "artifactCommits": [
+        "e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7"
+      ],
       "criteria": [
         {
           "criterionId": "cli-behaviour",
-          "proof": {"kind": "review"},
+          "proof": {
+            "kind": "review"
+          },
           "status": "covered",
-          "assignmentRefs": ["<64-hex>"],
-          "evidence": [{"kind": "verdict", "eventId": "<64-hex>"}],
-          "artifactCommit": "<40-hex>",
+          "assignmentRefs": [
+            "a551000000000000000000000000000000000000000000000000000000000000"
+          ],
+          "evidence": [
+            {
+              "kind": "report",
+              "eventId": "1ea1000000000000000000000000000000000000000000000000000000000000"
+            },
+            {
+              "kind": "verdict",
+              "eventId": "bed1000000000000000000000000000000000000000000000000000000000000"
+            }
+          ],
+          "artifactCommit": "e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7",
+          "reasonCode": null,
+          "reason": null
+        },
+        {
+          "criterionId": "usage-documentation",
+          "proof": {
+            "kind": "review"
+          },
+          "status": "open",
+          "assignmentRefs": [
+            "a552000000000000000000000000000000000000000000000000000000000000"
+          ],
+          "evidence": [],
+          "artifactCommit": null,
           "reasonCode": null,
           "reason": null
         }
       ],
       "coverageComplete": false,
       "coverageReasonCode": "criteria_not_covered",
-      "coverageReason": "1 of 5 criteria are not covered: usage-documentation is open"
+      "coverageReason": "1 of 2 criteria are not covered under this declaration: usage-documentation is open"
     }
   ],
-  "excluded": [
-    {"eventId": "<64-hex>", "code": "signer_not_may_lead", "message": "…"}
-  ],
-  "conflicts": [
-    {"workId": "<uuid>", "heads": ["<64-hex>", "<64-hex>"],
-     "message": "2 maximal declarations of this workId have no valid successor; completion refused until an authorized record names every head"}
-  ]
-}
-```
+  "excluded": [],
+  "conflicts": []
+}```
 
 ### Per-declaration `state`
 
@@ -510,6 +544,18 @@ and the claim did not hold".
 | `superseded` | another declaration names it in `supersedes`; `supersededBy` lists them |
 | `stale` | still the head, but the session's **current** kind:44227 goal (the fold the product already uses to select the active goal) differs from the declaration's `goalRef`. That mismatch is v1's **only** trigger: a 44244 decision never marks a declaration stale by itself, because a requirement-changing decision is followed by a goal change or by an explicit amendment from the lead. The contract stays pinned; `stateReason` names both goals |
 | `conflict` | more than one **head** exists for this `workId`. A **head** is a *maximal* valid declaration: one that no valid declaration of that `workId` names in `supersedes`. Every head is `conflict`, `coverageComplete` is `false` for all, and the resolution is one declaration naming **all** current heads. No timestamp winner |
+
+**`supersedes` is reported exactly as the event recorded it, in every state —
+`head`, `superseded`, `stale` and `conflict` alike; `supersededBy` is the
+derived inverse over the projected set.** A superseded declaration that itself
+superseded an earlier one still says so, because that list is what the record
+says and the projection never edits a record.
+
+**`assignmentRefs` lists every valid `work.assignment_bound` naming that
+criterion under the declaration being projected, with or without evidence.**
+An unfinished criterion is exactly where the question "who owes this" is asked,
+so an `open` criterion with an assignment names it; `[]` means nobody has been
+assigned it yet, not "no evidence has arrived".
 
 **Conflict is defined over maximal declarations, never over direct siblings.**
 Two consequences the fixtures pin:

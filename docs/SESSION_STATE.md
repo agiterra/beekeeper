@@ -16090,6 +16090,29 @@ removed from here.
        -D warnings`, `cargo test -p buzz-core`,
        `node conformance/project-work/check-fixtures.mjs`,
        `just file-size-check`, `just current-state-check`.
+     - **Addendum, amendment A3 (same day).** The implementing lane read the
+       fixtures literally, as a frozen contract is meant to be read, and found
+       three defects in them. (1) `sequences/fork-descendant` projected
+       `supersedes: []` on a superseded declaration whose event recorded
+       `[dec1…]`, while `dec1…` listed it in `supersededBy` — the two halves of
+       one fact disagreeing. Ruled: `supersedes` is reported **as recorded**,
+       in every state, and `supersededBy` is its derived inverse; the checker
+       now compares both against the events and against each other, and every
+       sequence was audited (only that one was wrong). (2) A criterion with a
+       valid assignment binding and no evidence projected
+       `assignmentRefs: []` (`sequences/goal-changed`), which is the one place
+       "who owes this" is worth asking. Ruled: `assignmentRefs` lists every
+       valid `work.assignment_bound` for that criterion under the projected
+       declaration, evidence or not; the checker derives the expected set from
+       the events. (3) The README § (c) example diverged from every sequence
+       file in key names and spellings. It is now a real two-criterion
+       document behind a `<!-- check-fixtures: fold-example -->` marker, and
+       `check-fixtures.mjs` parses it and runs the **same** structural rules
+       over it as over the fixtures — including exact key sets for every
+       declaration and criterion object — so the normative text and the
+       fixtures cannot drift again. Changed: `fork-descendant` and
+       `goal-changed` expected folds, README § (c), `check-fixtures.mjs`. Each
+       new guard was proven to bite by reintroducing the defect.
 
 ## 3a. Environment facts that cost real time (do not rediscover)
 
