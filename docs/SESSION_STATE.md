@@ -14584,6 +14584,90 @@ removed from here.
        acknowledged. (a) and (b) above are their causes; the idle-hold is
        the consequence of (a).
 
+180. **The model registry now travels with the project: readers look in the
+     agents repository first, and a project with none is told so in those
+     words (built 2026-09-20, lane 180, not landed and not exercised
+     live).** Fixes 178(a) and 179(b).
+     - **Evidence of the defect.** Hire `d00b9a46…` at 11:30:49Z on the Pivot
+       Test run was refused `HIRE_NO_ROUTE — registry not readable on this
+       host` for class builder at risk 2,2,2; the retry ten seconds later was
+       unrouted and its seat ran the identity's pin, `opus[1m]`. Andy's run
+       the day before seated seven `claude-fable-5-1[1m]` hires the same way.
+     - **Cause.** Exactly one place was ever read:
+       `desktop/src-tauri/src/commands/project_files.rs` allowlisted
+       `team/model-registry.yaml` and nothing else, and the renderer's one
+       reader asked for that path by name
+       (`codingSessionRegistrySource.ts`, `readModelRegistry`). Only this
+       repository has that file. Under the pivot a project's team lives in
+       `<slug>-beekeeper-agents` (spec § 4.11) and no reader looked there.
+       The refusal then inherited the CLI's generic remedy for the code —
+       "nothing offered clears that class at that risk tier"
+       (`crates/buzz-cli/src/commands/sessions/crew.rs:2041`) — which
+       describes the opposite fact and sent the live lead hunting a routing
+       bug that was not there.
+     - **The registry travels with the project.** The agents-repository seed
+       writes `model-registry.yaml` at the root from this repository's own
+       file, embedded with `include_str!` so the build cannot drift from it:
+       `crates/buzz-persona/src/seed.rs:73` (the constant) and `:185` (the
+       write). It is a **copy the project owns**, unlike a seeded role, which
+       is a reference — routing is the team's own cost policy. Spec § 4.11's
+       layout list and seed paragraph now say so.
+     - **One lookup order, three readers.**
+       `crates/buzz-core/src/model_registry_source.rs` holds the order, the
+       origin tokens (`agents-repo`, `checkout`, `explicit`) and the refusal
+       sentence: `resolve_model_registry` at `:213`,
+       `ancestor_model_registry_candidates` at `:266`,
+       `MissingModelRegistry`'s `Display` at `:176`. The desktop host reads a
+       project's registry from its recorded agents-repository clone, then its
+       code checkout, through the existing `project_files` guards, and
+       discloses `origin`, `originLabel` and every place it looked:
+       `desktop/src-tauri/src/commands/model_registry.rs:110,145,178`. `bee
+       sessions route` and `bee sessions registry check` walk up from the
+       working directory trying the agents repository, a seat's sibling
+       `<worktree>-agents` clone, then the checkout
+       (`crates/buzz-cli/src/commands/sessions/registry.rs:74,110`), and
+       print `registrySource` and `registryLookedIn` beside the decision
+       (`route.rs:355`). `--registry <path>` still overrides and reports
+       origin `explicit`. The renderer's one reader calls the new command and
+       carries which copy answered in the label every surface already shows
+       (`codingSessionRegistrySource.ts:107`).
+     - **The refusal.** With no registry in either place the sentence is "no
+       model registry: looked in <agents repo>:model-registry.yaml and
+       <checkout>/team/model-registry.yaml", with the absolute paths the host
+       actually tried and each skipped place's own refusal code beside it. It
+       never borrows the class/risk sentence, which is kept for the case it
+       describes: a registry that exists and gated every candidate out.
+     - **Tests that pin it.** `buzz-core`: the agents repository answers
+       first, the checkout still answers, the refusal names both places and
+       says "no place to look" when nothing is recorded, and the ancestor
+       walk's exact 11-candidate order. `buzz-persona`: the seeded registry
+       is this repository's file byte for byte, and it is written. The
+       desktop host: `model_registry_tests.rs` — the agents repository
+       answers with its pinned ref disclosed, the checkout still answers for
+       Beekeeper's own project with the skipped rung's `file-missing` shown,
+       a registry planted behind a symlink out of the repository is skipped
+       (`outside-checkout`) and the next rung answers, a project with no
+       recorded directory has nowhere to look, and the name the seed writes
+       is the name readers compose. `buzz-cli`: the sibling agents clone
+       beats the checkout, standing inside the agents repository reads its
+       own file, `--registry` overrides both, and the refusal names both
+       kinds of place. The renderer's reader keeps its nine cases with the
+       new shape.
+     - **What is owed live.** Nothing here has run against a real hire: the
+       proof is a routed hire on a project whose registry is only in its
+       agents repository, seated on the routed target rather than the
+       identity's pin. Two pieces of the design are **not built**: the wire
+       routing record carries no registry-origin field (its key set is
+       exactly 13 and is validated on both sides —
+       `crates/buzz-core/src/coding_session_routing.rs:3046`; adding a 14th
+       key belongs with whoever next changes that schema), so the origin
+       travels only in the host's own disclosure and the CLI's report; and
+       an **unrouted** hire still takes the identity's pin rather than
+       `team.yml`'s per-role `runtime`/`model` hint. Those hint fields parse
+       today (`crates/buzz-persona/src/team.rs:105,109`) and **no consumer
+       reads them**; wiring them needs the hire-answer path
+       (`desktop/src/features/coding-sessions/lib/codingSessionHireAnswer.ts:271`),
+       which this lane did not own.
 182. **The `bee sessions` bodies now answer for their own shape: `--example`
      prints a valid body, a refusal names every required key, and `--verifies`
      fills the field the fence actually reads (2026-09-20, lane 182 on
