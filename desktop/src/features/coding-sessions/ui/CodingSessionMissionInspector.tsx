@@ -56,6 +56,12 @@ import type {
   CodingSessionMissionSettlementInput,
 } from "../lib/codingSessionMissionInspectorModel";
 import { CodingSessionMissionSettlement } from "./CodingSessionMissionSettlement";
+import {
+  InspectorSection,
+  missionStateRow,
+} from "./CodingSessionMissionInspectorSection";
+import type { ProjectWorkResponse } from "@/shared/api/tauriProjectWork";
+import { ProjectWorkCoverage } from "./ProjectWorkCoverage";
 import { CodingSessionMissionStatePanel } from "./CodingSessionMissionStatePanel";
 
 export type CodingSessionMissionInspectorProps = {
@@ -83,6 +89,17 @@ export type CodingSessionMissionInspectorProps = {
   settlements?: readonly CodingSessionMissionSettlementInput[];
   /** The fold's `pendingCompletion`; `null` is a folded "nothing is held". */
   pendingCompletion?: CodingSessionMissionPendingCompletionInput | null;
+  /**
+   * The native work-coverage projection (NIP-PW), rendered verbatim.
+   *
+   * `undefined` means nothing supplied one, which the child says is unknown.
+   * It is a **separate** question from the 44244 mission state, and the child
+   * shows the two on separate rows: a terminal mission over incomplete
+   * coverage is a disclosure, not something to reconcile.
+   */
+  workCoverage?: ProjectWorkResponse | null;
+  workCoverageLoading?: boolean;
+  workCoverageError?: string | null;
   /**
    * This session's folded kind-44246 gate rows, observed first.
    *
@@ -146,6 +163,9 @@ export function CodingSessionMissionInspector({
   seatAuthorities,
   settlements,
   pendingCompletion = null,
+  workCoverage = null,
+  workCoverageLoading = false,
+  workCoverageError = null,
   unseatedReportEventIds,
 }: CodingSessionMissionInspectorProps) {
   // The prop wins when a caller (or a test) supplies one; otherwise the
@@ -451,6 +471,19 @@ export function CodingSessionMissionInspector({
           )}
         </InspectorSection>
 
+        <InspectorSection title="Work coverage">
+          {/* NIP-PW: the adopted contract, what covers each criterion and
+              what remains. Rendered from `buzz-core`'s projection verbatim;
+              the 44244 mission state is a separate row inside the child and
+              is never merged with it. */}
+          <ProjectWorkCoverage
+            errorMessage={workCoverageError}
+            loading={workCoverageLoading}
+            missionRow={missionStateRow(model.missionState)}
+            response={workCoverage}
+          />
+        </InspectorSection>
+
         <InspectorSection
           title="Structured tests"
           truncations={truncationsFor(model, "tests")}
@@ -706,34 +739,6 @@ function MissionStateAndLiveness({
       {word}
       {provenance} <span className="text-muted-foreground">· {liveness}</span>
     </p>
-  );
-}
-
-function InspectorSection({
-  children,
-  title,
-  truncations = [],
-}: {
-  children: React.ReactNode;
-  title: string;
-  truncations?: readonly CodingSessionMissionInspectorModel["truncations"][number][];
-}) {
-  return (
-    <section className="border-b border-border/50 py-4 last:border-b-0">
-      <h3 className="mb-2 text-2xs font-semibold tracking-wide text-muted-foreground uppercase">
-        {title}
-      </h3>
-      {children}
-      {truncations.map((truncation) => (
-        <p
-          className="mt-2 text-2xs text-amber-700 dark:text-amber-300"
-          key={truncation.id}
-          role="status"
-        >
-          {truncation.notice}
-        </p>
-      ))}
-    </section>
   );
 }
 

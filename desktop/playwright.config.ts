@@ -33,6 +33,8 @@ export default defineConfig({
         "**/search-scope-screenshots.spec.ts",
         "**/coding-sessions.spec.ts",
         "**/coding-session-mission-lens.spec.ts",
+        // NIP-PW: the native work-coverage projection across the bridge.
+        "**/project-work.spec.ts",
         "**/coding-session-mission-density.spec.ts",
         "**/coding-session-observations.spec.ts",
         // Absent-participant handover: claim, reconstruct, fence, deletion.

@@ -1,0 +1,156 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { after, before, test } from "node:test";
+
+import { JSDOM } from "jsdom";
+
+const dom = new JSDOM("<!doctype html><html><body></body></html>", {
+  url: "http://localhost",
+});
+
+before(() => {
+  Object.assign(globalThis, {
+    document: dom.window.document,
+    Element: dom.window.Element,
+    HTMLElement: dom.window.HTMLElement,
+    IS_REACT_ACT_ENVIRONMENT: true,
+    window: dom.window,
+  });
+});
+
+after(() => dom.window.close());
+
+const SEQUENCES = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../../../../../conformance/project-work/fixtures/sequences",
+);
+
+function fold(name) {
+  return JSON.parse(
+    readFileSync(resolve(SEQUENCES, name, "expected-fold.json"), "utf8"),
+  );
+}
+
+function response(name, unreadablePlans = []) {
+  return {
+    schema: "buzz-project-work-response/v1",
+    implementation: "buzz-core",
+    coverage: fold(name),
+    unreadablePlans,
+    agentsRepoRead: unreadablePlans.length === 0,
+  };
+}
+
+async function renderCoverage(props) {
+  const React = (await import("react")).default;
+  const { cleanup, render } = await import("@testing-library/react");
+  const { ProjectWorkCoverage } = await import("./ProjectWorkCoverage.tsx");
+  return {
+    cleanup,
+    ...render(React.createElement(ProjectWorkCoverage, props)),
+  };
+}
+
+test("no fold is 'unknown', never 'nothing remains'", async () => {
+  const view = await renderCoverage({ response: null });
+  assert.match(
+    view.getByTestId("project-work-unknown").textContent,
+    /Work coverage unknown/,
+  );
+  assert.equal(view.queryByTestId("project-work-coverage"), null);
+  view.cleanup();
+});
+
+test("a failed read is the failure, not an empty contract", async () => {
+  const view = await renderCoverage({
+    response: null,
+    errorMessage: "relay said 403",
+  });
+  assert.match(view.getByTestId("project-work-error").textContent, /403/);
+  view.cleanup();
+});
+
+test("the happy path shows the contract, every criterion and completeness", async () => {
+  const view = await renderCoverage({ response: response("happy-path") });
+  const declaration = view.getByTestId("project-work-declaration");
+  assert.equal(declaration.dataset.state, "head");
+  assert.match(declaration.textContent, /plans\/kettle\.md @/);
+  const criteria = view.getAllByTestId("project-work-criterion");
+  assert.ok(criteria.length > 0);
+  assert.ok(criteria.every((node) => node.dataset.status.length > 0));
+  assert.match(
+    view.getByTestId("project-work-coverage-complete").textContent,
+    /coverage complete/,
+  );
+  view.cleanup();
+});
+
+test("the mission state is a separate row and is never merged in", async () => {
+  const view = await renderCoverage({
+    response: response("happy-path"),
+    missionRow: "terminal — completed abc123",
+  });
+  const row = view.getByTestId("project-work-mission-row");
+  assert.match(row.textContent, /mission : terminal — completed abc123/);
+  // The coverage answer is its own element; nothing combines the two.
+  assert.ok(
+    !view
+      .getByTestId("project-work-coverage-complete")
+      .textContent.includes("terminal"),
+  );
+  view.cleanup();
+});
+
+test("an absent mission fold is unknown on its own row", async () => {
+  const view = await renderCoverage({ response: response("happy-path") });
+  assert.match(
+    view.getByTestId("project-work-mission-row").textContent,
+    /unknown — the 44244 fold has not answered/,
+  );
+  view.cleanup();
+});
+
+test("a fork renders as a conflict with the fold's own sentence", async () => {
+  const view = await renderCoverage({ response: response("fork") });
+  const conflict = view.getByTestId("project-work-conflict");
+  assert.match(conflict.textContent, /maximal declarations/);
+  assert.match(
+    view.getByTestId("project-work-next").textContent,
+    /Resolve the fork/,
+  );
+  view.cleanup();
+});
+
+test("an unread plan says its criteria are unknown, not open", async () => {
+  const view = await renderCoverage({
+    response: response("happy-path", [
+      {
+        repository: "30617:aa:agents",
+        commit: "ab".repeat(20),
+        path: "plans/kettle.md",
+        reasonCode: "plan_unreadable",
+        reason: "fatal: path does not exist",
+      },
+    ]),
+  });
+  assert.match(
+    view.getByTestId("project-work-unreadable-plan").textContent,
+    /plan_unreadable: fatal: path does not exist/,
+  );
+  view.cleanup();
+});
+
+test("at most one next step is offered, and it names what releases it", async () => {
+  for (const name of ["fork", "mixed-artifacts", "amendment"]) {
+    const view = await renderCoverage({ response: response(name) });
+    assert.ok(
+      view.queryAllByTestId("project-work-next").length <= 1,
+      `${name} offers at most one next step`,
+    );
+    const next = view.queryByTestId("project-work-next");
+    if (next) assert.match(next.textContent, /released by /);
+    view.cleanup();
+  }
+});

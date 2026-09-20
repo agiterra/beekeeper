@@ -1154,6 +1154,9 @@ test("R2 §8: rail section order puts Team third, above Changes", async () => {
     "Team",
     "Changes",
     "Files",
+    // NIP-PW: what the adopted contract still owes. It sits above the
+    // evidence panels it summarizes, not among them.
+    "Work coverage",
     "Structured tests",
     "Accepted plan",
     "Seat-reported plans",

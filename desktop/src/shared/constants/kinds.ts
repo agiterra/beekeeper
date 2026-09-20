@@ -184,6 +184,15 @@ export const KIND_CODING_SESSION_CLOSURE = 44230;
 export const KIND_CODING_SESSION_TEAM_TRANSACTION = 44244;
 
 /**
+ * Kind:44249 project work record (NIP-PW), addressable by `d` = sessionRef.
+ *
+ * Declared here so no surface writes the integer itself. Desktop never
+ * decodes the record: it fetches these events and hands them whole to
+ * `buzz-core`'s coverage fold through the `project_work_coverage` command.
+ */
+export const KIND_PROJECT_WORK_RECORD = 44249;
+
+/**
  * Kind:44245 session policy (NIP-CSP), addressable by `d` = sessionRef.
  *
  * Declared here so no surface writes the integer itself. Desktop never encodes

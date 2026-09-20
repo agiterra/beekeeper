@@ -44,6 +44,7 @@ import { CodingSessionExecutionRail } from "./CodingSessionExecutionRail";
 import { shouldAutoOpenAgentsSurface } from "./CodingSessionUmbrellaWorkspaceModel";
 import { CodingSessionMissionAudit } from "./CodingSessionMissionAudit";
 import { CodingSessionMissionContext } from "./CodingSessionMissionContext";
+import { useProjectWork } from "../hooks/useProjectWork";
 import { CodingSessionMissionInspector } from "./CodingSessionMissionInspector";
 import type { CodingSessionSurfaceDescriptor } from "./CodingSessionSurfaceHost";
 
@@ -258,6 +259,48 @@ export function useCodingSessionMissionSurface(input: {
       verifierRequired,
     ],
   );
+  // NIP-PW: the session's work coverage, folded natively. The scope is the
+  // facts this surface already holds — its channel, session, project and
+  // founder, plus the accepted-44228 seats it renders elsewhere. The agents
+  // checkout is **not** passed: the native side resolves this host's own
+  // record for the project, so a seat's worktree cannot become the source of
+  // a contract. `null` scope means the question cannot be asked, and the
+  // panel says unknown rather than "nothing remains".
+  const workScope = React.useMemo(() => {
+    if (
+      !input.active ||
+      input.umbrella.sessionRef === null ||
+      input.umbrella.founderPubkey === null ||
+      projectRef === null
+    ) {
+      return null;
+    }
+    return {
+      channelRef: input.channelId,
+      sessionRef: input.umbrella.sessionRef,
+      projectRef,
+      founderPubkey: input.umbrella.founderPubkey,
+      activeSeats: (input.seatAuthorities ?? [])
+        .filter((authority) => authority.kind === "granted")
+        .flatMap((authority) =>
+          authority.actorPubkey && authority.role
+            ? [{ actorPubkey: authority.actorPubkey, role: authority.role }]
+            : [],
+        ),
+      activeGrants: [],
+      repositoryIds:
+        repoRef === null ? [] : [repoRef.slice(repoRef.lastIndexOf(":") + 1)],
+    };
+  }, [
+    input.active,
+    input.channelId,
+    input.seatAuthorities,
+    input.umbrella.founderPubkey,
+    input.umbrella.sessionRef,
+    projectRef,
+    repoRef,
+  ]);
+  const workCoverage = useProjectWork(workScope);
   const { land, unavailableReason: landUnavailableReason } =
     useCodingSessionMissionLand({
       founderPubkey: input.umbrella.founderPubkey,
@@ -533,6 +576,17 @@ export function useCodingSessionMissionSurface(input: {
                   seatAuthorities={input.seatAuthorities}
                   unseatedReportEventIds={pending.unseatedReportEventIds}
                   settlements={evidence.inspectorInput.settlements}
+                  workCoverage={workCoverage.data ?? null}
+                  workCoverageLoading={
+                    workCoverage.isPending && workScope !== null
+                  }
+                  workCoverageError={
+                    workCoverage.error
+                      ? workCoverage.error instanceof Error
+                        ? workCoverage.error.message
+                        : String(workCoverage.error)
+                      : null
+                  }
                   pendingCompletion={
                     evidence.inspectorInput.pendingCompletion ?? null
                   }
@@ -587,6 +641,10 @@ export function useCodingSessionMissionSurface(input: {
       evidence.inspectorInput.pendingCompletion,
       evidence.inspectorInput.settlements,
       evidence.isLoading,
+      workCoverage.data,
+      workCoverage.error,
+      workCoverage.isPending,
+      workScope,
       evidence.refresh,
       input.active,
       input.deliveries,

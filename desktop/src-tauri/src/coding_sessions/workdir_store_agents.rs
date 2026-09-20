@@ -124,3 +124,16 @@ pub(super) fn view_of(
         })
         .collect()
 }
+
+/// This host's clone of `project`'s agents repository, when one is recorded.
+///
+/// Read-only and failure-tolerant on purpose: a caller that cannot read the
+/// record gets `None` and reports every criterion `unknown` with a reason,
+/// which is a better answer than a refusal that hides the whole contract.
+pub(crate) fn agents_repo_path_for_project(app: &AppHandle, project: &str) -> Option<String> {
+    super::load_workdir_store_readonly(app)
+        .ok()?
+        .agents_repos
+        .get(project.trim())
+        .map(|record| record.path.display().to_string())
+}

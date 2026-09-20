@@ -669,6 +669,14 @@ type E2eConfig = {
     relaySelfDelayMs?: number;
     /** Canonical buzz-core adapter response for Mission transaction E2E. */
     codingSessionTeamFoldResponse?: Record<string, unknown>;
+    /**
+     * The native `project_work_coverage` answer (NIP-PW), verbatim.
+     *
+     * Absent is not `{}`: the command then throws, which is what a build
+     * with no coverage read does, and the panel says unknown rather than
+     * "nothing remains".
+     */
+    projectWorkCoverageResponse?: Record<string, unknown>;
     /** Canonical buzz-core adapter response for the session-policy fold. */
     codingSessionPolicyFoldResponse?: Record<string, unknown>;
     /** Canonical buzz-core adapter response for the kind-44246 fold (L5). */
@@ -1441,6 +1449,10 @@ declare global {
     __BUZZ_E2E_SET_MISSION_FOLD_RESPONSE__?: (
       response: Record<string, unknown>,
     ) => void;
+    /** Replace the mocked native work-coverage answer (NIP-PW). */
+    __BUZZ_E2E_SET_PROJECT_WORK_RESPONSE__?: (
+      response: Record<string, unknown>,
+    ) => void;
     /** Prepend `count` synthetic older messages to a channel's mock store so
      *  an older-history fetch has something to paginate. Mirrors how the real
      *  relay backfills history. Returns the created events. */
@@ -1858,6 +1870,7 @@ let mockIdentityLostCleared = false;
 // Same pattern for `mock.identityLocked`.
 let mockIdentityLockedCleared = false;
 let mockCodingSessionTeamFoldResponse: Record<string, unknown> | null = null;
+let mockProjectWorkCoverageResponse: Record<string, unknown> | null = null;
 let mockCodingSessionPolicyFoldResponse: Record<string, unknown> | null = null;
 let mockCodingSessionObservationFoldResponse: Record<string, unknown> | null =
   null;
@@ -11236,6 +11249,9 @@ export function maybeInstallE2eTauriMocks() {
   mockCodingSessionTeamFoldResponse = config.mock?.codingSessionTeamFoldResponse
     ? structuredClone(config.mock.codingSessionTeamFoldResponse)
     : null;
+  mockProjectWorkCoverageResponse = config.mock?.projectWorkCoverageResponse
+    ? structuredClone(config.mock.projectWorkCoverageResponse)
+    : null;
   mockCodingSessionPolicyFoldResponse = config.mock
     ?.codingSessionPolicyFoldResponse
     ? structuredClone(config.mock.codingSessionPolicyFoldResponse)
@@ -11388,6 +11404,9 @@ export function maybeInstallE2eTauriMocks() {
   };
   window.__BUZZ_E2E_SET_MISSION_FOLD_RESPONSE__ = (response) => {
     mockCodingSessionTeamFoldResponse = structuredClone(response);
+  };
+  window.__BUZZ_E2E_SET_PROJECT_WORK_RESPONSE__ = (response) => {
+    mockProjectWorkCoverageResponse = structuredClone(response);
   };
   window.__BUZZ_E2E_PREPEND_MOCK_HISTORY__ = prependMockHistory;
   window.__BUZZ_E2E_EMIT_MOCK_TYPING__ = ({
@@ -14982,6 +15001,15 @@ export function maybeInstallE2eTauriMocks() {
         const response = mockCodingSessionTeamFoldResponse;
         if (!response) {
           throw new Error("mock Mission fold response is not configured");
+        }
+        return structuredClone(response);
+      }
+      case "project_work_coverage": {
+        const response = mockProjectWorkCoverageResponse;
+        if (!response) {
+          throw new Error(
+            "mock project-work coverage response is not configured",
+          );
         }
         return structuredClone(response);
       }

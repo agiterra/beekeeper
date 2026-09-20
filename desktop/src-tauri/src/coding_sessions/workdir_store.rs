@@ -50,9 +50,8 @@ mod lock;
 pub(crate) use lock::lock_workdir_store;
 #[path = "workdir_store_agents.rs"]
 mod agents;
-pub(crate) use agents::{
-    attach_agents_clone, record_agents_repo, CodingSessionAgentsRepo, CodingSessionAgentsRepoView,
-};
+#[rustfmt::skip]
+pub(crate) use agents::{agents_repo_path_for_project, attach_agents_clone, record_agents_repo, CodingSessionAgentsRepo, CodingSessionAgentsRepoView};
 pub(crate) mod project;
 
 /// Current on-disk schema version of the desktop's own record.

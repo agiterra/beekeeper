@@ -804,6 +804,7 @@ dependencies = [
  "buzz-shell-host",
  "buzz-terminal",
  "buzz-voice",
+ "buzz-workflow",
  "bytes",
  "bzip2 0.6.1",
  "chrono",

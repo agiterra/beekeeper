@@ -16679,6 +16679,146 @@ removed from here.
      what landed, with `--session`, `--work` and `--plans-from` kept as
      aliases and `--responsible` defaulting to the caller.
 
+203. **The Actions tab was blind because it asked about no channel, mission
+     settlement stopped at the Tauri boundary, and there was no surface for
+     work coverage at all (2026-09-20, lane W5/203; Wave 2 of
+     `docs/UNIFIED_WORK_PLAN.md`).** Built, gated, not landed and not
+     exercised live. Closes 171(a), 171(b), 183(g) and the desktop item 184
+     recorded as owed; consumes 184, 186, 190, 193, 199 and lane W2's
+     assembler (201).
+     - **(a) The cause of the blind tab, with the line.**
+       `useProjectActions` built its channel set from `useChannelsQuery()`
+       called with no options
+       (`desktop/src/features/project-actions/lib/useProjectActions.ts:144`
+       pre-fix, the block ledger 171(a) already pointed at, lines 140–162).
+       That hook hides every `channel_type = transport` channel from its
+       returned list by default — `includeSessionTransports` defaults to
+       `false`, and its own doc says the project/session surfaces must opt
+       in (`desktop/src/features/channels/hooks.ts:320-329`,
+       `isSessionTransportChannel` in `shared/api/channelTypes.ts:18`). A
+       project action is published into whichever channel `bee actions
+       publish --channel` named, and for Pivot Test — whose step 2 was a team
+       session — that is the session's hidden transport channel. So the set
+       came back empty, and `loadProjectActions` turned an empty set into
+       `[]` with an early return, which the screen rendered identically to
+       "No actions are published". Two changes: the call opts in, and an
+       empty channel set now **throws a named refusal** instead of answering
+       `[]`; `ProjectActionsScreen` renders `readability` — `readable`,
+       `no-readable-channel`, `channels-unreadable` — as three different
+       states, and only the first can ever show the empty state. The
+       channel-set derivation is extracted as the pure
+       `projectActionChannelIds` so the regression has a test.
+     - **(b) Each surface, and the wire fact it renders.** Run rows:
+       `trigger_author`, `definition_hash`, the host step's `checkout`
+       (`mode`, `sha`, `headShaBefore`, `dirtyBefore`), `exit_code`,
+       `duration_ms` and `result_event_id` — every one of them a field lane
+       190 put on the relay's wire and the desktop's `RawWorkflowRun` /
+       `RawWorkflowHostStep` did not carry. `definition_changed` and
+       `definition_unknown` (items 193, 199) render as sentences, not codes.
+       Run control: `bee workflows trigger --checkout` in the app —
+       `build_workflow_trigger` now writes `{"checkout":"<40-hex>"}` on the
+       kind:46020 and refuses a short or non-hex value in the relay's own
+       words before anything is signed; the field appears exactly when a step
+       declares `checkout: required` (item 184(b)), prefilled from the newest
+       **relay-signed** kind:30618 for the project's code repository, and an
+       action that binds nothing says it runs in the working directory as
+       found. Approval: the kind:46010's own content (`runId`, `workflowId`,
+       `stepId`, `approverSpec`) plus the run's `definition_hash` read
+       through the new `get_workflow_run` → `GET /workflow-runs/{run_id}`
+       (lane 190) and the command compiled from the published definition.
+       Settlement: `awaiting` and `pendingCompletion` (item 183(c)). Work
+       coverage: `buzz-core`'s `fold_work` projection verbatim.
+     - **(c) What closes 171(b).** The inbox rendered a kind:46010 as its
+       JSON body under a reply composer — the file is
+       `desktop/src/features/home/ui/InboxMessageRow.tsx`, which renders
+       every inbox message through `VideoReviewCommentMarkdown`;
+       `features/home/lib/inbox.ts:165-187` only ever gave it a label and a
+       preview. A recognised 46010 now renders `ProjectActionApprovalCard`
+       there and on the Actions tab: action, step, the definition the **run**
+       is bound to, the commit, and the exact command out of the published
+       definition, with Approve once / Approve and allow future runs of this
+       exact definition / Deny, publishing the 46030 with `d` = the approval
+       ref straight through (no second hash — the CLI's bug, item 190). The
+       hash shown is the run's binding and never one re-read from the
+       workflow, which is lane 199's finding 1 stated as a UI rule. A viewer
+       who is not the project owner gets the same card read-only with the
+       sentence that says who may answer, because item 186 makes
+       `ApproveHostStep` undelegable; no control is offered that the relay
+       would refuse, and nothing is minted on render.
+     - **(d) Disclosed, and owed by the relay.** The run wire carries
+       `trigger_context.author` and **not** its `checkout`
+       (`crates/buzz-relay/src/api/workflows.rs` `run_json`), so before a
+       host claims the step no record names the run's bound commit. The
+       approval card says exactly that rather than guessing. Putting the
+       bound commit on the run wire is a one-field relay change and belongs
+       to whoever next owns `api/workflows.rs`.
+     - **(e) Work coverage: the native command.** New
+       `desktop/src-tauri/src/commands/project_work.rs`
+       (`project_work_coverage`, registered in `handlers.rs`). Same division
+       of labour as the team-transaction fold: the frontend fetches the
+       kind:44249 records and the 44244 / 44227 / 46013 / 46014 / 46023 /
+       30618 events they reference — the same set `bee sessions work status`
+       reads — and hands them over whole; the native side reads each
+       declaration's plan blob with `git show <commit>:<path>`, compiles the
+       actions with the publication compiler at that same commit, calls
+       `buzz_core::project_work_inputs::assemble_fold_inputs` and
+       `fold_work`, and returns the projection verbatim. **There is no
+       TypeScript fold.** The agents checkout is resolved natively from this
+       host's own `workdir_store` record for the project and is not accepted
+       from the frontend at all, so a seat's mutable worktree cannot become
+       the source of a contract.
+     - **(f) Work coverage: the surface.** `ProjectWorkCoverage`, a child of
+       the Mission inspector: the adopted contract (plan path @ short commit
+       with its repository), each criterion with status, the fold's reason,
+       who owes it, the evidence linked to its source event, the candidate
+       artifact and `coverageComplete`. `head`, `superseded`, `stale`,
+       `conflict` and `unknown` each render differently and none collapses
+       into "not covered"; an unread plan says its criteria are unknown, not
+       open. The 44244 mission state is a **separate row** and is never
+       merged: a terminal mission over incomplete coverage is the disclosure
+       the contract asks for, not something to reconcile. At most one next
+       step is offered, and it names the fact that releases it.
+     - **(g) Tests.** Native: `events/workflows.rs` (bound, unbound and
+       refused triggers); a new
+       `commands/coding_session_team_fold_settlement_tests.rs` (the sibling
+       is at the 1,000-line ceiling) proving a report owed by exactly one
+       assignee is named, a ruling names no actor and says why, and a held
+       completion crosses as pending rather than as silence; a new
+       `commands/project_work_tests.rs` (5 cases, throwaway git repositories
+       only) proving an unknown schema is refused by name, a host with no
+       agents clone folds `unknown` and not `open`, a plan read at its pinned
+       commit resolves, and a commit this clone lacks names git's own
+       refusal. TypeScript: `useProjectActions.test.mjs` (the transport
+       channel is in the set; an empty set refuses rather than answering
+       "no actions"), `hostStepApproval.test.mjs`,
+       `actionRunProvenance.test.mjs`, `useProjectCodeRefTip.test.mjs`,
+       `CodingSessionMissionSettlement.test.mjs`, and
+       `projectWork.test.mjs` / `ProjectWorkCoverage.test.mjs`, both driven
+       by **the frozen contract's own `expected-fold.json` sequences** rather
+       than hand-written doubles. New e2e `tests/e2e/project-work.spec.ts`:
+       the projection crosses the bridge verbatim, and a coverage read that
+       cannot answer throws instead of returning an empty contract.
+     - **(h) Ownership amendments, for the finalizer.** Three sets of files
+       outside W5's listed ownership were unavoidable and no other Wave 2
+       lane owns them: `invokeCodingSessionTeamFold.ts` validates the adapter
+       response against a **closed** key list, and the projection, evidence
+       hook and mission surface are the only path from the fold to the panel
+       (Part B is impossible without all four, plus their hand-built response
+       fixtures); `InboxMessageRow.tsx` is where a 46010 is rendered today;
+       and `shared/constants/kinds.ts` (one line for 44249),
+       `desktop/src-tauri/Cargo.toml` (`buzz-workflow`, already in the tree
+       through `buzz-session-provider`, for the one compiler) and
+       `playwright.config.ts` (one `testMatch` line the registration guard
+       requires). `compile_plan_actions` is ~40 lines mirroring the CLI's;
+       the compiler itself is shared, and hoisting the mapping into
+       `buzz-core` beside `assemble_fold_inputs` is the right follow-up.
+     - **(i) Owed live.** Nothing here has been run against hive. The proof
+       is the Wave 3 control run: **a host step approved from the app**, on a
+       card that named the definition and the command, with the run then
+       reaching a host — plus a `checkout: required` action started from the
+       Run control, and one session's coverage read in the Mission panel
+       beside `bee sessions work status` for the same session, agreeing.
+
 204. **Lane 186 taught the relay to echo `projectRef` onto the kind:40099
      authority acceptance receipt and did not teach the CLI's strict reader
      the key, so from that landing every team session a project owner founds
