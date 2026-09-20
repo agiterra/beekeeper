@@ -293,7 +293,7 @@ fn evidence_refs(body: &Map<String, Value>) -> Refused<Vec<ProjectWorkEvidenceRe
         let map = object(item, &where_)?;
         check_keys(map, &["kind", "eventId"], &where_)?;
         let kind_raw = string(map, "kind", &where_)?;
-        let Some(kind) = ProjectWorkEvidenceKind::from_str(kind_raw) else {
+        let Some(kind) = ProjectWorkEvidenceKind::from_wire(kind_raw) else {
             return refuse(
                 ProjectWorkRefusalCode::ClosedEnum,
                 format!("{where_}.kind"),
@@ -371,7 +371,7 @@ pub fn decode_project_work_content(content: &str) -> Refused<ProjectWorkPayload>
         );
     }
     let type_raw = string(payload, "type", "content")?;
-    let Some(record_type) = ProjectWorkRecordType::from_str(type_raw) else {
+    let Some(record_type) = ProjectWorkRecordType::from_wire(type_raw) else {
         return refuse(
             ProjectWorkRefusalCode::RecordType,
             "content.type",
@@ -575,7 +575,7 @@ pub fn validate_project_work_envelope(event: &ProjectWorkEvent) -> Refused<Proje
         );
     }
     check_event_id(&event.tags[4][1], "tags.pwk-genesis")?;
-    if ProjectWorkRecordType::from_str(&event.tags[5][1]).is_none() {
+    if ProjectWorkRecordType::from_wire(&event.tags[5][1]).is_none() {
         return refuse(
             ProjectWorkRefusalCode::RecordType,
             "tags.pwk-type",

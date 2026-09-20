@@ -20,6 +20,7 @@ pub mod coding_session_policy;
 pub mod coding_session_team_transaction;
 pub mod mentions;
 pub mod nip_oa;
+pub mod project_work;
 
 pub use builders::*;
 

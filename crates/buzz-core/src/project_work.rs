@@ -70,8 +70,11 @@ impl ProjectWorkRecordType {
     }
 
     /// Resolve a wire token, or `None` when the vocabulary does not know it.
+    ///
+    /// Named `from_wire`, not `from_str`: this is a closed wire vocabulary,
+    /// not a general parse, and it never fails with an error type.
     #[must_use]
-    pub fn from_str(raw: &str) -> Option<Self> {
+    pub fn from_wire(raw: &str) -> Option<Self> {
         match raw {
             "work.declared" => Some(Self::Declared),
             "work.assignment_bound" => Some(Self::AssignmentBound),
@@ -172,8 +175,11 @@ impl ProjectWorkEvidenceKind {
     }
 
     /// Resolve a wire token, or `None` when the vocabulary does not know it.
+    ///
+    /// Named `from_wire`, not `from_str`: this is a closed wire vocabulary,
+    /// not a general parse, and it never fails with an error type.
     #[must_use]
-    pub fn from_str(raw: &str) -> Option<Self> {
+    pub fn from_wire(raw: &str) -> Option<Self> {
         match raw {
             "report" => Some(Self::Report),
             "verdict" => Some(Self::Verdict),
