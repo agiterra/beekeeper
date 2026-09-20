@@ -3026,7 +3026,7 @@ pub enum SessionsCmd {
     /// `headSha`, or set `baseSha` in `--body` yourself; passing both is
     /// refused when they disagree.
     #[command(
-        after_help = "Examples:\n  bee sessions assign --example verifier > assignment.json\n  bee sessions assign --channel <uuid> --session-ref <uuid> --genesis <hex64> --body @assignment.json --wake-to verifier --verifies <report-event-id>\n\nRule:\n  a verifier or runner assignment carries baseSha; the seat's tree is established from that field alone\n\nRecipe:\n  bee sessions assign --channel <uuid> --session-ref <uuid> --genesis <hex64> --body @assignment.json --wake-to builder"
+        after_help = "Examples:\n  bee sessions assign --example verifier > assignment.json\n  bee sessions assign --channel <uuid> --session-ref <uuid> --genesis <hex64> --body @assignment.json --wake-to verifier --verifies <report-event-id>\n\nThe fence reads baseSha and nothing else: an objective naming a commit is\nread by nobody. A `Rule:` block is deliberately absent here — the\nspecification froze no sentence for this verb, and inventing one to fill the\ngap would be worse than the recipe alone.\n\nRecipe:\n  bee sessions assign --channel <uuid> --session-ref <uuid> --genesis <hex64> --body @assignment.json --wake-to builder"
     )]
     Assign(TeamTransactionWriteArgs),
     /// Publish a signed assignment report (kind 44244).
