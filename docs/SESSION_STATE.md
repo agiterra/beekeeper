@@ -16000,6 +16000,128 @@ removed from here.
        `plan-repository-bare-id` refusal (18 refusals now) and two sequences,
        `superseded-observation` and `goal-changed` (5 now). Re-gated bare.
 
+195. **The v1 work contract is implemented: a `beekeeper-plan/v1` parser, the
+     closed kind:44249 envelope, the pure order-independent coverage fold,
+     typed builders and the relay's ingest arm — all five frozen sequences
+     reproduce their `expected-fold.json` exactly (built 2026-09-20, lane W1
+     on `work/lane-195-work-records`; not landed, not installed, nothing run
+     live).** Wave 1 of [`UNIFIED_WORK_PLAN.md`](UNIFIED_WORK_PLAN.md) § 4,
+     against the contract ledger item 194 froze. `kind.rs` was not touched:
+     W1 uses `KIND_PROJECT_WORK_RECORD` and never edits its file (plan § 8
+     A1.1).
+     - **The plan parser.** `crates/buzz-core/src/project_plan.rs:480`
+       (`parse_plan`) takes bytes and returns a `Plan` or a `PlanRefusal`
+       carrying one of 32 stable string codes a CLI and a UI can show. Closed
+       frontmatter keys, the three `proof` forms closed in both directions,
+       the slug grammar, the 64 KiB / 64-criteria / 1024-byte-`accept`
+       ceilings, active/retired disjointness, and `status`/`plans/archive/`
+       governing **new adoption only** (`check_plan_adoptable`). Path hygiene
+       is `validate_plan_path`; the symlink case has a code for the reader
+       that does the I/O, because the parser never touches a filesystem.
+       `serde_yaml` was already a `buzz-core` dependency (the model registry);
+       no new dependency was added anywhere in this lane. Each of the six
+       refused plan fixtures is refused with the code the fixture's own
+       `# REFUSED:` comment declares — the test reads the declaration out of
+       the file rather than restating it, so the two cannot drift
+       (`project_plan_tests.rs:105`).
+     - **The closed envelope.** `project_work.rs` holds the types and
+       `project_work_decode.rs` the validators (a sibling file, as kind
+       44244's decoder is, so no file passes 1,000 lines):
+       `decode_project_work_content:322`, `validate_project_work_envelope:531`
+       (the reader path), `validate_project_work_payload:665` (the publication
+       path, reached through the canonical bytes so no author signs what a
+       reader would refuse). Closed key sets at every level with
+       `unknown-key` and `absent-key` told apart; the six ordered two-field
+       tags checked by **name, order and value** before parity; the 16 KiB
+       ceiling refused before parsing. All three valid fixtures round-trip
+       **byte for byte**: `canonical_content()` equals the fixture's `content`
+       string and `canonical_tags()` equals its tag array. All 18 refusal
+       fixtures are refused with the code each declares before its colon.
+     - **The fold.** `project_work_fold.rs:276` (`fold_work`) with the
+       per-declaration projection in `project_work_fold_project.rs:15`. Pure:
+       no clock, no network, no I/O. All five sequences — `happy-path`,
+       `amendment`, `fork`, `superseded-observation`, `goal-changed` — produce
+       their `expected-fold.json` **exactly**, compared as whole documents.
+       `unknown` is first class: an unsupplied plan blob yields every
+       nameable criterion `unknown` with `planResolved:false`, never `open`.
+       Delivery is judged at **evaluation** time from the newest
+       relay-signed 30618 (`evaluate_git_ref:323`), and a ref state the relay
+       did not sign is not an observation. The output carries no
+       mission-terminal field.
+     - **The permutation test.** `the_fold_is_order_independent_under_every_permutation`
+       folds each sequence under **every** permutation of its events when the
+       sequence has ≤ 6 (720 orders for the 5-event ones), and under 512
+       deterministic shuffles from a fixed LCG when it is longer (the 9-event
+       `happy-path`); every order must produce the identical projection. A
+       second test folds each sequence with its events duplicated forwards
+       and backwards and demands the same output. A third
+       (`a_late_green_for_p_never_covers_p2`) demands that no criterion of P2
+       is `covered` by evidence bound to P, under every one of those orders.
+     - **Relay authority is exactly its sibling's, and no stronger.**
+       `crates/buzz-relay/src/handlers/project_work.rs` validates **structure
+       only** and the ingest arm is at
+       `crates/buzz-relay/src/handlers/ingest.rs:4180`, immediately after the
+       44244 arm and written the same way. 44249 joins
+       `required_scope_for_kind` (`Scope::MessagesWrite`, ingest.rs:501),
+       `requires_h_channel_scope` (:829) and `is_coding_session_kind` (:855),
+       so a non-member is refused by the strict channel-membership gate
+       before its content is parsed — the same gate 44244 has. **The relay
+       does not check `may_lead`**, because 44244/44245/44246/44247 do not
+       either; that is the consuming fold's question against the accepted
+       44228 chain, and the fold does check it, excluding a non-`may_lead`
+       signer by name without failing the set. Inventing a stronger relay
+       gate for a sibling kind would have been a claim about enforcement that
+       no other kind here makes. A test in
+       `handlers/project_work_tests.rs` states this division explicitly
+       rather than leaving it to be inferred. Refusals carry the contract's
+       stable code, so an unknown `pwk-type` is `record-type:` and an unknown
+       version is `schema:`, never a bare "invalid".
+     - **Compatibility, proven not asserted.**
+       `the_44244_fold_is_unaffected_by_44249_events_in_the_same_channel`
+       folds the same 44244 set through `fold_coding_session_team_transactions`
+       with and without 44249 records present in the stream (selected by kind,
+       which is what a REQ does) and demands an identical fold; it also shows
+       the 44244 decoder **refuses** a 44249 envelope outright — the
+       finding-13 cliff, which is precisely why this is a sibling kind.
+       `a_foreign_kind_in_the_stream_is_ignored_not_excluded` shows the work
+       fold ignores a kind it does not own rather than reporting it.
+       `the_work_kind_is_registered_but_is_not_project_a_scoped` re-asserts
+       the `a`-tag-is-a-selector decision at the fold's own boundary.
+     - **The NIP.** [`nips/NIP-PW.md`](nips/NIP-PW.md), written from the
+       conformance README, which stays normative; the README now carries the
+       one-line pointer to it (decision 17, and the last of W0's five
+       rulings).
+     - **One contract defect found, implemented as written and reported, not
+       edited around.** `sequences/goal-changed/expected-fold.json` pins
+       `assignmentRefs: []` for a criterion that *does* carry an assignment
+       binding under that declaration (`b1d10000…` binds `cli-behaviour` to
+       `a5510000…`), so the projection rule is "an `open` criterion reports no
+       bindings". No fixture discriminates that from "a `stale` **declaration**
+       reports no bindings", and § (c) states neither. The implementation
+       matches the fixture and says so at
+       `project_work_fold_project.rs:184`. The cost is real: the projection
+       whose job is "what remains and **who owes it**" cannot name the owner
+       of an unfinished criterion. An amendment restoring `assignmentRefs` on
+       `open` criteria is recommended, and would change exactly one fixture.
+     - Two smaller README/fixture divergences, both resolved in the fixtures'
+       favour: § (c)'s illustrative `coverageReason` reads "1 of 5 criteria
+       are not covered:" while every sequence writes "… not covered **under
+       this declaration**:"; and the bucket phrasing is `id`-listing up to
+       three ids and "the other four are open" beyond that
+       (`amendment` versus `superseded-observation`), which § (c) does not
+       state. Both are implemented as the fixtures write them.
+     - **Not done, and owed.** Nothing is landed, deployed or run live. W2
+       owns `bee sessions work validate|adopt|bind|status`, the atomic
+       `adopt` path and the 30617 coordinate resolution; W3 the work brief;
+       W5 the surface (a reader showing coverage and mission as **two rows**,
+       never merged). The live proof is the Wave 3 control run. The relay
+       change means a relay-first landing: hive's NIP-11 `build_time` must
+       pass the landing time before a desktop depending on 44249 is
+       installed.
+     - Gates on `work/lane-195-work-records`, bare after committing:
+       `cargo fmt --all --check`,
+       `cargo clippy --workspace --all-targets -- -D warnings`,
+       `cargo test -p buzz-core -p buzz-sdk`, `cargo test -p buzz-relay --lib`,
 198. **Contract amendment A2: the work contract now says what evidence
      *proves* a criterion, against which single artifact, signed by whom,
      naming which goal, and when a fork is still a fork (built 2026-09-20,
@@ -16088,6 +16210,7 @@ removed from here.
      - Gates on `work/lane-198-contract-a2`, bare after committing:
        `cargo fmt --all --check`, `cargo clippy -p buzz-core --all-targets --
        -D warnings`, `cargo test -p buzz-core`,
+||||||| parent of 6e8e371cb (docs(nip-pw): the project-work NIP, written from the frozen contract)
        `node conformance/project-work/check-fixtures.mjs`,
        `just file-size-check`, `just current-state-check`.
      - **Addendum, amendment A3 (same day).** The implementing lane read the
