@@ -742,6 +742,12 @@ pub async fn preview_coding_session_seat_pack(
 /// `require_project_ref`; an agent that is not that project's is refused with
 /// [`SEAT_NOT_PROJECT_AGENT`](crate::managed_agents::project_agent_association::SEAT_NOT_PROJECT_AGENT), and passes `new_selection: Some(true)` for the
 /// full new-seat rule ([`new_seat_refusal`]). Resume and restage pass neither.
+///
+/// `worktree` and `session_id` are how a role granted the agents repository
+/// gets its clone placed. A create names the `worktree` it just cut; a
+/// re-stage names only the execution, and the host resolves the tree from its
+/// own record ([`seat_worktree_from_record`]). A grant with neither is
+/// refused with what was looked for, never with a guess (ledger 187).
 #[tauri::command]
 #[allow(clippy::too_many_arguments)] // Tauri state handles plus the fixed IPC shape.
 pub async fn stage_coding_session_actor_seat(
@@ -755,6 +761,7 @@ pub async fn stage_coding_session_actor_seat(
     require_project_ref: Option<String>,
     new_selection: Option<bool>,
     worktree: Option<String>,
+    session_id: Option<String>,
 ) -> Result<StagedActorSeat, String> {
     let relay_url = relay_ws_url_with_override(&state);
     let Some(path) = actor_seats_file_path(&app, &state)? else {
@@ -812,13 +819,34 @@ pub async fn stage_coding_session_actor_seat(
             .filter(|worktree| !worktree.is_empty())
             .map(Path::new);
         if entry.agents_repo != packs_cache::AgentsRepoAccess::None {
-            let (Some(source), Some(worktree)) = (source.as_ref(), worktree) else {
+            let Some(source) = source.as_ref() else {
                 return Err(format!(
-                    "this role is granted the agents repository ({:?}) but the seat has no \
-                     worktree to put a clone beside, or no project source to clone",
+                    "this role is granted the agents repository ({:?}) but this create names no \
+                     project source to clone it from",
                     entry.agents_repo
                 ));
             };
+            // A re-stage — the composer's Reconnect, a restart, a new
+            // generation after a relaunch — names the execution but not the
+            // directory this host cut for it. Refusing for want of a fact the
+            // host wrote down itself was the whole of ledger 187, so the
+            // caller's worktree is preferred and the host's own record
+            // answers when there is none.
+            let worktree = crate::managed_agents::seat_agents_clone::resolve_seat_agents_worktree(
+                &app,
+                worktree,
+                session_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|id| !id.is_empty()),
+            )
+            .map_err(|reason| {
+                format!(
+                    "this role is granted the agents repository ({:?}) but {reason}",
+                    entry.agents_repo
+                )
+            })?;
+            let worktree = worktree.as_path();
             // The exact commit the seat's role pack was just staged from
             // (`packRef.sha` on the entry, set above by `seat_entry_for_plan`)
             // — the clone must land there too, never on whatever ref its

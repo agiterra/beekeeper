@@ -15238,6 +15238,103 @@ removed from here.
        publishing `verify` and triggering it without a ruling — and the
        approval gate is expected to stop the *run* at the host step, which is
        the boundary working, not a defect.
+187. **A seat granted the agents repository could not be *re*connected at all:
+     staging refused for want of a worktree path this computer had itself
+     written down (found 2026-09-20 live on the installed `7b8f0a92d`, after
+     the app was relaunched mid-kettle-run; the granted-seat path is Andy's
+     P4, item 162, extended by lanes 169 and 172).** Project Pivot Test,
+     session `74495ca8`, role `lead` with `workspace.agents_repo: write`,
+     worktree `/Users/brian/Projects/pivot-test-wt-build-kettle-cli-lead`
+     with its generation-1 clone already beside it at
+     `…-lead-agents`. Pressing **Reconnect** in the composer answered, in
+     full: *"this role is granted the agents repository (Write) but the seat
+     has no worktree to put a clone beside, or no project source to clone"*.
+     The lead could not be resumed, so the run's mission could not be
+     finished from the rebuilt bundle. Seats **without** a grant reattach
+     normally, which is why this survived every earlier relaunch — nothing
+     before the kettle run had ever given a lead a write grant.
+     - **Cause 1, the host demanded a fact only a create holds.**
+       `stage_coding_session_actor_seat`
+       (`desktop/src-tauri/src/managed_agents/actor_seats.rs:805-820`,
+       pre-fix) required **both** `pack_source` and `worktree` whenever
+       `entry.agents_repo != AgentsRepoAccess::None`, in one `let (Some,
+       Some) = … else` whose refusal could not even say which of the two was
+       missing. A seat is staged twice in its life — once by the create that
+       cut its tree, and again by every reconnect, restart and
+       post-relaunch generation — and only the first caller holds the
+       directory.
+     - **Cause 2, the composer sent no worktree, and had none to send.** The
+       reconnect at
+       `desktop/src/features/coding-sessions/ui/CodingSessionComposer.tsx:705`
+       builds its staging input through `buildCodingSessionResumeInput`
+       (`lib/codingSessionResumeSeat.ts`) from `{actorPubkey, role,
+       projectRef}` and nothing else;
+       `project-agents/ui/ProjectAgentSessionDefinition.tsx:99` does pass a
+       `worktree`, which is why a restart from the Agents tab worked and the
+       composer's Reconnect did not. The composer holds no `sessionRef`, so
+       it cannot run that surface's `listCodingSessionSeatWorktrees` lookup.
+     - **Cause 3, independent: a re-stage tried to cut a fresh clone.**
+       `land_seat_agents_clone_on_sha` branched on `dest.join(".git").is_dir()`
+       alone. A directory that exists and is *not* a clone fell into the
+       clone branch, where git refuses a non-empty destination with its own
+       words; a directory that is a git repository of something *else* fell
+       into the reuse branch, where the fetch would have succeeded and handed
+       the seat an unrelated history under the project's name.
+     - **Fix 1: the host reads its own record.** `seat_worktree_from_record`
+       (`seat_agents_clone.rs`, beside the clone it exists to place; the
+       1000-line ratchet on `actor_seats.rs`/`actor_seats_tests.rs` decided
+       the file, and it is the right one) resolves the seat's worktree from the desktop's
+       `coding-session-workdirs.json` by the execution's **provider session
+       id** — `CodingSessionSeatWorktree::session_id`, the same field the
+       provider resolves a live session's cwd from, written by the create
+       path the moment it cut the tree. `resolve_seat_agents_worktree`
+       prefers a caller-supplied path and falls back to it. The two required
+       facts are now refused **separately and by name**: a missing project
+       source says so, and an unresolvable worktree says what it looked for
+       (no session id at all / no record for session `<id>` / two different
+       directories recorded for one session, both named). A guess was
+       rejected: the recorded path is also what disposal removes.
+     - **Fix 2: the composer sends what it has.** The reconnect now passes
+       `sessionId: target.sessionId` in its seat facts; it travels
+       `codingSessionResumeSeat.ts` → `publishSeatedCodingSessionResume` →
+       `stageSeat` → the Tauri command's new `session_id`. Deliberately an
+       **id, not a path**: `actor_seats.rs`'s module doc already holds that
+       the webview never sends a path so a wrong or compromised renderer
+       cannot point staging at a directory of its choosing, and a reconnect
+       would have had to invent one anyway.
+     - **Fix 3: a re-stage reuses what is there, or refuses by name.**
+       `existing_seat_agents_clone` (`seat_agents_clone.rs`) admits reuse
+       only on evidence — `dest` is a git work tree whose `origin` is either
+       this computer's packs cache or a relay URL ending in
+       `/git/<owner>/<id>` for the project's own agents repository. A
+       reusable clone is fetched and landed on the exact `packRef.sha` the
+       seat was just staged from (ledger 172's rule, unchanged). Anything
+       else — a plain folder, a file, a repository of something else, a
+       clone with no `origin` — is refused naming the directory, what was
+       found there, and what was expected.
+     - **Evidence.** Rust, against throwaway repositories and in-memory
+       records only, all in `seat_agents_clone.rs`:
+       `an_absent_worktree_is_resolved_from_this_hosts_own_record`,
+       `two_records_naming_one_directory_resolve_to_it`,
+       `an_unresolvable_worktree_is_refused_with_what_was_looked_for`
+       (all three shapes: no id, no record, two records),
+       `an_existing_clone_is_reused_rather_than_recut`
+       (proves reuse by surviving evidence a recut would destroy — an
+       untracked file and a second branch written into generation 1's clone)
+       and `a_foreign_directory_beside_the_worktree_is_refused_by_name`
+       (both shapes, and asserts the refused repository was never fetched
+       into). 10/10 `seat_agents_clone::tests` green; ledger 169's and 172's
+       own tests are unchanged among them. Desktop:
+       "the composer's reconnect hands staging the execution's session id"
+       (`CodingSessionComposer.reconnectSeat.test.mjs`, a mounted composer
+       whose Reconnect is clicked, with only the custody seam and the publish
+       stubbed) and three mapping tests in
+       `codingSessionResumeSeat.test.mjs`.
+     - **Owed live.** Nothing here has been exercised against a real seat:
+       the lead of session `74495ca8` reconnecting on a bundle rebuilt from
+       this fix, its agents clone reused rather than recut, and the kettle
+       mission finished, is the proof this item closes on. Until then the
+       refusal is known to be gone only in tests.
 
 ## 3a. Environment facts that cost real time (do not rediscover)
 

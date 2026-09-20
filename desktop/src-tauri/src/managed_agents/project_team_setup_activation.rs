@@ -844,6 +844,9 @@ pub async fn project_team_setup_start_lead(
         Some(true),
         // A setup seat has no worktree of its own; no § 4.9 override applies.
         None,
+        // Nor an execution yet: this stages the create that will mint one, so
+        // there is no provider session id to resolve a worktree by either.
+        None,
     )
     .await
     .map_err(external)?;

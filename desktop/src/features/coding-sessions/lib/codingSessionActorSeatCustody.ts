@@ -154,6 +154,16 @@ export async function stageCodingSessionActorSeat(input: {
    * instead of `main`'s (spec § 4.9). Read only; never written to.
    */
   worktree?: string | null;
+  /**
+   * The provider session id of the execution being staged, when there is one.
+   *
+   * A re-stage (reconnect, restart, a generation after a relaunch) knows the
+   * execution but not the directory the create cut for it. The host resolves
+   * the seat's worktree from its own record by this id, so a role granted the
+   * agents repository can be staged again without the renderer having to
+   * carry — or invent — a path (ledger 187).
+   */
+  sessionId?: string | null;
 }): Promise<StagedCodingSessionActorSeat> {
   const staged = await invokeTauri<StagedCodingSessionActorSeat | null>(
     "stage_coding_session_actor_seat",
@@ -166,6 +176,7 @@ export async function stageCodingSessionActorSeat(input: {
       requireProjectRef: input.requireProjectRef ?? null,
       newSelection: input.newSelection === true,
       worktree: input.worktree ?? null,
+      sessionId: input.sessionId ?? null,
     },
   );
   return {

@@ -708,6 +708,12 @@ export function CodingSessionComposer({
             actorPubkey: seatActorPubkey,
             role: seatRole,
             projectRef,
+            // The execution this composer is pointed at. A role granted the
+            // agents repository needs its clone put beside the seat's
+            // worktree, and a reconnect never knew that path — the host did,
+            // under this id, from the moment it cut the tree. Without it a
+            // granted lead could not be reconnected at all (ledger 187).
+            sessionId: target.sessionId,
           },
           deps: seatCustody,
           publish: () =>

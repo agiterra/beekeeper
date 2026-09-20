@@ -128,3 +128,59 @@ test("a reader that fails refuses the resume rather than staging the wrong pack"
     /Could not read the project's pack source/,
   );
 });
+
+test("the resume input carries the execution's session id to the host", async () => {
+  const { calls, deps } = recordingDeps();
+
+  // Ledger 187: a reconnect knows the execution, not the directory the create
+  // cut for it. The host writes that tree down under this id, so this is what
+  // lets a role granted the agents repository be re-staged at all.
+  await publishSeatedCodingSessionResume(
+    buildCodingSessionResumeInput({
+      commandId: "csl-6",
+      seat: {
+        actorPubkey: ACTOR,
+        role: "lead",
+        projectRef: PROJECT_REF,
+        sessionId: "session-74495ca8",
+      },
+      publish: async () => "resumed",
+      deps,
+    }),
+  );
+
+  const [, staged] = calls.find(([name]) => name === "stageSeat");
+  assert.equal(staged.sessionId, "session-74495ca8");
+  assert.equal(staged.worktree, undefined);
+});
+
+test("a caller that does know the worktree still sends it, and both travel", () => {
+  const built = buildCodingSessionResumeInput({
+    commandId: "csl-7",
+    seat: {
+      actorPubkey: ACTOR,
+      role: "lead",
+      projectRef: PROJECT_REF,
+      worktree: "/Users/brian/Projects/pivot-test-wt-lead",
+      sessionId: "session-74495ca8",
+    },
+    publish: async () => "resumed",
+    deps: { stageSeat: async () => undefined, clearSeat: async () => {} },
+  });
+
+  assert.equal(built.worktree, "/Users/brian/Projects/pivot-test-wt-lead");
+  assert.equal(built.sessionId, "session-74495ca8");
+});
+
+test("an execution with no session id omits the key rather than sending null", () => {
+  const built = buildCodingSessionResumeInput({
+    commandId: "csl-8",
+    seat: { actorPubkey: ACTOR, role: "lead", projectRef: PROJECT_REF },
+    publish: async () => "resumed",
+    deps: { stageSeat: async () => undefined, clearSeat: async () => {} },
+  });
+
+  // "Not known" is a shape, not a value: the host refuses a granted role with
+  // what it looked for instead of staging beside a guess.
+  assert.equal("sessionId" in built, false);
+});

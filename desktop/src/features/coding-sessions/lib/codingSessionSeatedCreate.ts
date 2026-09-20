@@ -100,6 +100,13 @@ export type CodingSessionSeatCustody = {
      * resume, which continues an execution that already exists.
      */
     newSelection?: boolean;
+    /**
+     * The provider session id of the execution being staged, when the caller
+     * has one. A re-stage knows the execution but not the directory the
+     * create cut for it; the host resolves the seat's worktree from its own
+     * record by this id rather than refusing (ledger 187).
+     */
+    sessionId?: string | null;
   }) => Promise<CodingSessionSeatStaged | undefined>;
   /** Drop the custody entry again. Best effort; never fails the publish. */
   clearSeat: (commandId: string) => Promise<void>;
@@ -204,6 +211,8 @@ async function publishWithStagedSeat<T>(input: {
   newSelection?: boolean;
   /** The seat's own worktree, for the § 4.9 branch override; omitted when unknown. */
   worktree?: string | null;
+  /** See `CodingSessionSeatCustody.stageSeat`; omitted when unknown. */
+  sessionId?: string | null;
   publish: () => Promise<T>;
   deps: CodingSessionSeatCustody;
   onSeatStaged?: CodingSessionSeatStagedReporter;
@@ -224,6 +233,7 @@ async function publishWithStagedSeat<T>(input: {
         : {}),
       ...(input.newSelection === true ? { newSelection: true } : {}),
       ...(input.worktree ? { worktree: input.worktree } : {}),
+      ...(input.sessionId ? { sessionId: input.sessionId } : {}),
     });
   } catch (error) {
     // Staging can fail after it has written part of what it was asked to —
@@ -303,6 +313,12 @@ export async function publishSeatedCodingSessionResume<T>(input: {
   projectRef?: string | null;
   /** The seat's own worktree, for the § 4.9 branch override; omitted when unknown. */
   worktree?: string | null;
+  /**
+   * The execution's provider session id. A reconnect holds this and, as a
+   * rule, no worktree — so it is what lets the host place a granted seat's
+   * agents clone without the renderer naming a path (ledger 187).
+   */
+  sessionId?: string | null;
   publish: () => Promise<T>;
   deps: CodingSessionSeatCustody;
   /** Called with what staging actually put on disk, before the publish. */
@@ -315,6 +331,7 @@ export async function publishSeatedCodingSessionResume<T>(input: {
     actorRole: input.actorRole ?? null,
     projectRef: input.projectRef ?? null,
     ...(input.worktree ? { worktree: input.worktree } : {}),
+    ...(input.sessionId ? { sessionId: input.sessionId } : {}),
     publish: input.publish,
     deps: input.deps,
     ...(input.onSeatStaged ? { onSeatStaged: input.onSeatStaged } : {}),

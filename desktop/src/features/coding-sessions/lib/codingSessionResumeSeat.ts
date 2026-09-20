@@ -26,6 +26,18 @@
  *
  * Deliberately free of relay and Tauri imports — the production seam is a
  * sibling module — so this stays a pure mapping a node test can load.
+ *
+ * # The second gap this closes (ledger 187)
+ *
+ * A role granted the agents repository (`team.yml` `workspace.agents_repo`)
+ * needs its clone put beside the seat's worktree. The create cut that tree
+ * and knew its path; a reconnect does not, and the host refused the whole
+ * re-stage for want of it — so the lead of a project's first team session
+ * could not be reconnected after a relaunch at all. The composer does hold
+ * the execution's provider **session id**, and the host wrote the tree down
+ * under exactly that id when it cut it, so the id is what travels. A caller
+ * that does know the worktree (the project-agent restart) still passes it and
+ * still wins.
  */
 import type { CodingSessionSeatCustody } from "./codingSessionSeatedCreate";
 
@@ -49,6 +61,16 @@ export type CodingSessionResumeSeat = {
    * which stages main's definition.
    */
   worktree?: string | null;
+  /**
+   * The execution's provider session id, from its established command target.
+   *
+   * With it the host resolves the seat's own worktree from its record of the
+   * tree it cut, which is what lets a role granted the agents repository be
+   * re-staged at all (ledger 187). Omitted means "not known"; a granted role
+   * is then refused with what was looked for rather than staged beside a
+   * guess.
+   */
+  sessionId?: string | null;
 };
 
 /**
@@ -70,6 +92,7 @@ export function buildCodingSessionResumeInput<T>(input: {
   actorRole: string | null;
   projectRef: string | null;
   worktree?: string | null;
+  sessionId?: string | null;
   publish: () => Promise<T>;
   deps: CodingSessionSeatCustody;
 } {
@@ -79,6 +102,7 @@ export function buildCodingSessionResumeInput<T>(input: {
     actorRole: input.seat.role,
     projectRef: input.seat.projectRef,
     ...(input.seat.worktree ? { worktree: input.seat.worktree } : {}),
+    ...(input.seat.sessionId ? { sessionId: input.seat.sessionId } : {}),
     publish: input.publish,
     deps: input.deps,
   };
