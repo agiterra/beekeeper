@@ -100,7 +100,14 @@ impl NostrWsConnection {
             .await
     }
 
-    /// Receives the next relay message, waiting up to `timeout_dur`.
+    /// Receives the next relay message, waiting up to `timeout_dur` in total.
+    ///
+    /// `timeout_dur` is a deadline over the whole call, not a window that
+    /// restarts on every WebSocket frame: a relay heartbeat `Ping` (answered
+    /// here with a `Pong`) is transport chatter, not a relay message, and
+    /// must not extend the wait. A caller using this as a liveness check
+    /// would otherwise never time out on a connection whose subscription has
+    /// gone silent while its heartbeat keeps running.
     pub async fn next_event(
         &mut self,
         timeout_dur: Duration,
@@ -130,8 +137,17 @@ impl NostrWsConnection {
             return Ok(msg);
         }
 
+        let deadline = tokio::time::Instant::now() + timeout_dur;
+
         loop {
-            let raw = timeout(timeout_dur, self.ws.next())
+            let remaining = deadline
+                .checked_duration_since(tokio::time::Instant::now())
+                .unwrap_or(Duration::ZERO);
+            if remaining.is_zero() {
+                return Err(WsClientError::Timeout);
+            }
+
+            let raw = timeout(remaining, self.ws.next())
                 .await
                 .map_err(|_| WsClientError::Timeout)?
                 .ok_or(WsClientError::ConnectionClosed)?

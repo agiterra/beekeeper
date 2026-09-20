@@ -8,10 +8,12 @@
 //! {"kinds":[46013], "#a":[<every project coordinate this host serves>]}
 //! ```
 //!
-//! Stored requests replay on every (re)connect, so a request published while
-//! the provider was down is found by the first REQ. The provider's durable
-//! [`crate::action_step_store`] is what keeps a replay from running anything
-//! twice; this task only decides whether an event is a *verifiable* request.
+//! Stored requests replay on every (re)connect **and on every cadence probe**
+//! (see [`LISTENER_PROBE_INTERVAL`]), so a request published while the
+//! provider was down — or one whose live frame never arrived over a
+//! connection the relay still heartbeats — is found by the next REQ. The
+//! provider's durable [`crate::action_step_store`] is what keeps a replay
+//! from running anything twice; this task only decides whether an event is a *verifiable* request.
 //!
 //! # What it verifies
 //!
@@ -25,6 +27,19 @@
 //! The same queue also carries the completion of every spawned command
 //! ([`ActionStepEvent::Finished`]), so the run loop selects on one receiver
 //! for the whole feature.
+//!
+//! # Liveness
+//!
+//! A relay heartbeat is not evidence that a subscription still delivers. The
+//! relay pings every 30 s (`buzz-relay/src/connection.rs` `heartbeat_loop`),
+//! so a connection whose subscription has silently stopped feeding this task
+//! still looks busy at the socket. This task therefore measures liveness at
+//! the application layer: every [`LISTENER_PROBE_INTERVAL`] it closes its
+//! subscription and re-issues the REQ under a fresh id, and requires the
+//! relay's `EOSE` within [`LISTENER_PROBE_TIMEOUT`]. A missing `EOSE` ends
+//! the connection and reconnects. Because the filter carries no `since`, the
+//! re-issued REQ replays every stored request, so a missed live frame is
+//! recovered at the next probe rather than waiting for a relaunch.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -36,13 +51,22 @@ use buzz_ws_client::{NostrWsConnection, RelayMessage, WsClientError};
 use nostr::{Event, Keys, Tag};
 use serde_json::json;
 use tokio::sync::{mpsc, watch};
+use tokio::time::Instant;
 
 use crate::host_command::HostCommandOutcome;
 
-/// Subscription id the listener's single REQ uses.
-const SUBSCRIPTION_ID: &str = "csp-action-steps";
-/// How long one connection waits for any frame before it is recycled.
+/// Prefix of the subscription id the listener's REQ uses. Each re-issue adds
+/// a sequence suffix, so the relay's `EOSE` names exactly one probe.
+const SUBSCRIPTION_PREFIX: &str = "csp-action-steps";
+/// How long one connection waits for any *relay message* before it is
+/// recycled. WebSocket pings do not count: see [`crate::action_step_listener`]
+/// § Liveness.
 pub const LISTENER_IDLE: Duration = Duration::from_secs(900);
+/// How often the subscription is closed and re-issued as a liveness probe.
+pub const LISTENER_PROBE_INTERVAL: Duration = Duration::from_secs(90);
+/// How long a probe waits for the relay's `EOSE` before the connection is
+/// declared dead.
+pub const LISTENER_PROBE_TIMEOUT: Duration = Duration::from_secs(30);
 /// First reconnect delay after a failed or dropped connection.
 pub const LISTENER_FIRST_BACKOFF: Duration = Duration::from_secs(1);
 /// Ceiling on the exponential reconnect delay.
@@ -91,6 +115,10 @@ pub struct ListenerConfig {
     pub relay_self: String,
     /// Idle ceiling for one connection.
     pub idle: Duration,
+    /// How often the subscription is re-issued as a liveness probe.
+    pub probe_interval: Duration,
+    /// How long a probe waits for `EOSE` before the connection is dead.
+    pub probe_timeout: Duration,
     /// First reconnect delay.
     pub first_backoff: Duration,
     /// Ceiling on the reconnect delay.
@@ -106,6 +134,8 @@ impl ListenerConfig {
             auth_tag,
             relay_self,
             idle: LISTENER_IDLE,
+            probe_interval: LISTENER_PROBE_INTERVAL,
+            probe_timeout: LISTENER_PROBE_TIMEOUT,
             first_backoff: LISTENER_FIRST_BACKOFF,
             max_backoff: LISTENER_MAX_BACKOFF,
         }
@@ -167,6 +197,28 @@ fn now_secs() -> u64 {
         .unwrap_or_default()
 }
 
+/// Why a candidate 46013 was not delivered.
+///
+/// Expiry is separated from every other rejection because it is *routine*:
+/// the filter carries no `since`, so every probe replays every stored
+/// request, including ones whose claim window closed hours ago. Logging that
+/// at WARN once per replay is noise that hides real refusals.
+#[derive(Debug)]
+pub(crate) enum RequestRejection {
+    /// The claim window had already closed when the request was seen.
+    Expired(String),
+    /// A forgery, a bad signature, a foreign signer, or a malformed body.
+    Invalid(String),
+}
+
+impl std::fmt::Display for RequestRejection {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Expired(reason) | Self::Invalid(reason) => formatter.write_str(reason),
+        }
+    }
+}
+
 /// Verify one candidate 46013: signature, signer, wire shape, window.
 ///
 /// `pub(crate)` so the provider's tests can exercise the exact checks the
@@ -175,23 +227,26 @@ pub(crate) fn verify_request_event(
     event: &Event,
     relay_self: &str,
     now: u64,
-) -> Result<HostStepRequested, String> {
-    event
-        .verify()
-        .map_err(|error| format!("host step request failed cryptographic verification: {error}"))?;
+) -> Result<HostStepRequested, RequestRejection> {
+    event.verify().map_err(|error| {
+        RequestRejection::Invalid(format!(
+            "host step request failed cryptographic verification: {error}"
+        ))
+    })?;
     let signer = event.pubkey.to_hex();
     if signer != relay_self {
-        return Err(format!(
+        return Err(RequestRejection::Invalid(format!(
             "host step request signer {signer} does not match the witnessed relay self {relay_self}"
-        ));
+        )));
     }
-    let request = decode_host_step_requested(event)
-        .map_err(|error| format!("invalid host step request: {error}"))?;
+    let request = decode_host_step_requested(event).map_err(|error| {
+        RequestRejection::Invalid(format!("invalid host step request: {error}"))
+    })?;
     if request.expires_at <= now {
-        return Err(format!(
+        return Err(RequestRejection::Expired(format!(
             "host step request expired at {} (now {now})",
             request.expires_at
-        ));
+        )));
     }
     Ok(request)
 }
@@ -236,6 +291,61 @@ async fn run(
     }
 }
 
+/// Compose the subscription id one probe uses.
+fn subscription_id(sequence: u64) -> String {
+    format!("{SUBSCRIPTION_PREFIX}-{sequence}")
+}
+
+/// Whether a subscription id in a relay frame is one of ours.
+///
+/// A frame from the *previous* probe's id can still be in flight when the
+/// next REQ goes out; those events are as good as any other, so they are
+/// accepted rather than dropped.
+fn ours(subscription_id: &str) -> bool {
+    subscription_id.starts_with(SUBSCRIPTION_PREFIX)
+}
+
+/// Send `CLOSE` for the previous subscription (when there was one) and `REQ`
+/// the new one, logging the served set the filter names.
+async fn issue_subscription(
+    conn: &mut NostrWsConnection,
+    wanted: &BTreeSet<String>,
+    previous: Option<&str>,
+    sequence: u64,
+) -> Result<String, String> {
+    if let Some(previous) = previous {
+        conn.send_raw(&json!(["CLOSE", previous]))
+            .await
+            .map_err(|error| format!("close previous subscription: {error}"))?;
+    }
+    let id = subscription_id(sequence);
+    let projects: Vec<&String> = wanted.iter().collect();
+    let filter = json!({"kinds": [KIND_WORKFLOW_HOST_STEP_REQUESTED], "#a": projects});
+    conn.send_raw(&json!(["REQ", &id, filter]))
+        .await
+        .map_err(|error| format!("subscribe: {error}"))?;
+    tracing::info!(
+        target: "csp::actions",
+        subscription_id = %id,
+        served = wanted.len(),
+        projects = %wanted.iter().cloned().collect::<Vec<_>>().join(","),
+        "action step listener subscribed"
+    );
+    Ok(id)
+}
+
+/// The `d` tag of a candidate, read before anything is verified, so the log
+/// names the run even when verification then refuses the event.
+fn requested_d_tag(event: &Event) -> String {
+    event
+        .tags
+        .iter()
+        .map(nostr::Tag::as_slice)
+        .find(|values| values.first().map(String::as_str) == Some("d"))
+        .and_then(|values| values.get(1).cloned())
+        .unwrap_or_else(|| "<none>".to_owned())
+}
+
 async fn serve_one_connection(
     config: &ListenerConfig,
     wanted: &BTreeSet<String>,
@@ -250,13 +360,48 @@ async fn serve_one_connection(
     .await
     .map_err(|error| format!("connect: {error}"))?;
 
-    let projects: Vec<&String> = wanted.iter().collect();
-    let filter = json!({"kinds": [KIND_WORKFLOW_HOST_STEP_REQUESTED], "#a": projects});
-    conn.send_raw(&json!(["REQ", SUBSCRIPTION_ID, filter]))
-        .await
-        .map_err(|error| format!("subscribe: {error}"))?;
+    let mut sequence: u64 = 0;
+    let mut current = issue_subscription(&mut conn, wanted, None, sequence).await?;
+    let mut last_message = Instant::now();
+    let mut probe_at = last_message + config.probe_interval;
+    // The opening REQ is itself a probe: its `EOSE` is the first proof that
+    // this subscription is alive.
+    let mut eose_by = Some(last_message + config.probe_timeout);
 
     loop {
+        // Deadlines are settled at the top of every pass, not only when the
+        // read times out: a connection that keeps *delivering* while it owes
+        // an EOSE is still a connection whose subscription is unproven, and
+        // one that keeps timing out must still probe on the cadence.
+        let now = Instant::now();
+        if eose_by.is_some_and(|deadline| now >= deadline) {
+            return Err(format!(
+                "the relay did not answer subscription {current} with EOSE within {} s",
+                config.probe_timeout.as_secs()
+            ));
+        }
+        if now.saturating_duration_since(last_message) >= config.idle {
+            return Err("no relay message within the idle window".into());
+        }
+        if now >= probe_at {
+            sequence += 1;
+            current = issue_subscription(&mut conn, wanted, Some(&current), sequence).await?;
+            probe_at = now + config.probe_interval;
+            eose_by = Some(now + config.probe_timeout);
+            continue;
+        }
+
+        let mut wait = config
+            .idle
+            .saturating_sub(now.saturating_duration_since(last_message))
+            .min(probe_at.saturating_duration_since(now));
+        if let Some(deadline) = eose_by {
+            wait = wait.min(deadline.saturating_duration_since(now));
+        }
+        // Never a zero wait: a deadline already passed is handled below, and
+        // a zero timeout would spin.
+        let wait = wait.max(Duration::from_millis(1));
+
         let message = tokio::select! {
             changed = served.changed() => {
                 return match changed {
@@ -264,21 +409,40 @@ async fn serve_one_connection(
                     Err(_) => Ok(ConnectionEnd::Shutdown),
                 };
             }
-            message = conn.next_event(config.idle) => message,
+            message = conn.next_event(wait) => message,
         };
+        if message.is_ok() {
+            last_message = Instant::now();
+        }
         match message {
             Ok(RelayMessage::Event {
                 subscription_id,
                 event,
-            }) if subscription_id == SUBSCRIPTION_ID => {
+            }) if ours(&subscription_id) => {
                 let event_id = event.id.to_hex();
+                tracing::info!(
+                    target: "csp::actions",
+                    %event_id,
+                    run = %requested_d_tag(&event),
+                    "host step request received"
+                );
                 let request = match verify_request_event(&event, &config.relay_self, now_secs()) {
                     Ok(request) => request,
-                    Err(reason) => {
+                    Err(RequestRejection::Expired(reason)) => {
+                        // Routine on every replay: the stored request outlives
+                        // its own claim window and there is nothing to do.
+                        tracing::debug!(
+                            target: "csp::actions",
+                            %event_id,
+                            "skipped a replayed host step request: {reason}"
+                        );
+                        continue;
+                    }
+                    Err(rejection) => {
                         tracing::warn!(
                             target: "csp::actions",
                             %event_id,
-                            "skipped a candidate host step request: {reason}"
+                            "skipped a candidate host step request: {rejection}"
                         );
                         continue;
                     }
@@ -292,21 +456,36 @@ async fn serve_one_connection(
                     );
                     continue;
                 }
-                if events
-                    .send(ActionStepEvent::Requested {
-                        event_id,
-                        request: Box::new(request),
-                    })
-                    .await
-                    .is_err()
-                {
-                    return Ok(ConnectionEnd::Shutdown);
+                // Never `send().await`: the run loop can be inside a long
+                // turn, and a blocked read loop stops answering the relay
+                // altogether. A full queue drops *this* delivery only — the
+                // next probe replays the stored request.
+                match events.try_send(ActionStepEvent::Requested {
+                    event_id: event_id.clone(),
+                    request: Box::new(request),
+                }) {
+                    Ok(()) => {}
+                    Err(mpsc::error::TrySendError::Full(_)) => {
+                        tracing::warn!(
+                            target: "csp::actions",
+                            %event_id,
+                            capacity = LISTENER_EVENT_CAPACITY,
+                            "the host step queue is full; this delivery is dropped and will be \
+                             replayed by the next subscription probe"
+                        );
+                    }
+                    Err(mpsc::error::TrySendError::Closed(_)) => {
+                        return Ok(ConnectionEnd::Shutdown);
+                    }
                 }
+            }
+            Ok(RelayMessage::Eose { subscription_id }) if subscription_id == current => {
+                eose_by = None;
             }
             Ok(RelayMessage::Closed {
                 subscription_id,
                 message,
-            }) if subscription_id == SUBSCRIPTION_ID => {
+            }) if subscription_id == current => {
                 return Err(format!(
                     "relay closed the action step subscription: {message}"
                 ));
@@ -315,9 +494,9 @@ async fn serve_one_connection(
                 tracing::debug!(target: "csp::actions", "relay notice: {message}");
             }
             Ok(_) => {}
-            Err(WsClientError::Timeout) => {
-                return Err("no relay frame within the idle window".into());
-            }
+            // Nothing arrived inside the shortest deadline; the top of the
+            // loop decides what that means.
+            Err(WsClientError::Timeout) => {}
             Err(error) => return Err(format!("receive: {error}")),
         }
     }
@@ -347,6 +526,10 @@ pub async fn next_action_step_event(
     }
     std::future::pending().await
 }
+
+#[cfg(test)]
+#[path = "action_step_listener_tests.rs"]
+mod liveness_tests;
 
 #[cfg(test)]
 mod tests {
@@ -404,12 +587,15 @@ mod tests {
         let forged = signed(&other, &request(2_000));
         assert!(verify_request_event(&forged, &relay_self, 1_000)
             .unwrap_err()
+            .to_string()
             .contains("does not match the witnessed relay self"));
 
+        // Expiry is its own rejection: the log demotes it to debug because
+        // every probe replays stored requests whose window has closed.
         let stale = signed(&relay, &request(2_000));
-        assert!(verify_request_event(&stale, &relay_self, 2_000)
-            .unwrap_err()
-            .contains("expired"));
+        let rejection = verify_request_event(&stale, &relay_self, 2_000).unwrap_err();
+        assert!(matches!(rejection, RequestRejection::Expired(_)));
+        assert!(rejection.to_string().contains("expired"));
     }
 
     #[tokio::test]

@@ -15471,6 +15471,86 @@ removed from here.
        provider's `state.json` is already
        `/Users/brian/Projects/pivot-test-wt-build-kettle-cli-lead`.
 
+189. **The listener's 900-second idle window measured WebSocket frames, not
+     relay messages, so a subscription that had silently stopped delivering
+     looked busy behind the relay's own 30-second heartbeat — this is why the
+     host step sat unclaimed for 11 minutes and was claimed one second after
+     a relaunch (cause established from the code 2026-09-20; the live shapes
+     are 178(j) and, on 2026-09-19, 313 s and 170).**
+     - **Evidence for the shape, from the run.** Relay 46013 `2d586ed3…`
+       published 12:50:45Z; the provider's `csp::actions` log has nothing
+       between its 11:31:56Z reconnect and the 13:01Z relaunch, then a claim
+       (46022) at 13:01:50Z and a result at 13:03:18Z. The only recurring
+       line in that log is `connection ended: no relay frame within the idle
+       window`, roughly every **two hours** — not every 15 minutes, which is
+       what `LISTENER_IDLE` would produce over a genuinely silent socket.
+     - **Cause, and how it was established.** Read, not assumed, from the two
+       ends of the socket. `buzz-ws-client`'s `recv_one` applied its timeout
+       **per raw frame inside its own loop**: a `Message::Ping` was answered
+       with a `Pong` and the loop went round, restarting `timeout(timeout_dur,
+       self.ws.next())` from zero. The relay pings every 30 s
+       (`crates/buzz-relay/src/connection.rs:447` `heartbeat_loop`). 30 < 900,
+       so on a connection whose TCP is alive the 900 s idle window **can never
+       elapse**, however long the subscription delivers nothing; the two-hourly
+       timeouts are the occasions the socket died outright. Hypothesis (b),
+       a read loop blocked on `events.send(...).await`, is not what happened
+       here — the queue holds 64 and the run loop was draining — and (c) is
+       ruled out by the connection existing at all, since an empty served set
+       parks before connecting (`action_step_listener.rs:238`). Both are
+       nonetheless closed below, because neither was *proven* impossible and
+       both are cheap to remove.
+     - **Fix 1 — liveness that owes nothing to relay chatter.** Every
+       `LISTENER_PROBE_INTERVAL` (90 s) the listener CLOSEs its subscription
+       and re-issues the REQ under a fresh id, and requires the relay's
+       `EOSE` within `LISTENER_PROBE_TIMEOUT` (30 s); a missing `EOSE` ends
+       the connection and the existing backoff reconnects
+       (`action_step_listener.rs:65,69,309,371–391`). Deadlines are settled at
+       the top of every pass, so a connection that keeps delivering while
+       owing an `EOSE` is still recycled. Because the filter carries no
+       `since`, each re-issue replays every stored request: a live frame that
+       never arrived is recovered at the next probe instead of at the next
+       relaunch. The window that was doing no work now measures what it
+       claims to — `next_event`'s timeout is a **deadline over the whole
+       call** (`buzz-ws-client/src/connection.rs:104–150`), pings are
+       answered without extending it, and the listener's `idle` is now
+       genuinely "no relay message in 900 s".
+     - **Fix 2 — the read loop cannot be starved by its consumer.** The
+       delivery is `try_send` on the same bounded queue
+       (`action_step_listener.rs:441`): a full queue logs one WARN naming the
+       event id and the read loop keeps reading, and the next probe replays
+       the request it dropped. A closed queue still ends the task.
+     - **Fix 3 — the log says what it is serving.** Every (re)connect and
+       every probe logs at INFO the subscription id, the served-project count
+       and the coordinates (`:326`); every candidate logs at INFO its event id
+       and `d` tag (run:step) **before** verification (`:405`). Expiry became
+       its own rejection, `RequestRejection::Expired` (`:207`), logged at
+       debug (`:415`) — with replay on a 90-second cadence the old WARN
+       ("host step request expired") would have repeated forever.
+     - **Tests** (`action_step_listener_tests.rs`, an axum stub relay that
+       speaks AUTH, REQ/EOSE, live EVENTs **and a WebSocket ping heartbeat**):
+       `a_silent_subscription_behind_a_live_heartbeat_is_recycled_and_recovers_the_request`
+       — the relay answers the first REQ, then goes deaf while pinging; with
+       the idle set to 30 s and the test finishing in under a second, only the
+       probe can recover, and it does, over a second connection;
+       `a_slow_consumer_does_not_stop_the_read_loop_and_loses_nothing` — with
+       nothing draining the queue the relay still sees the REQ re-issued
+       twice on the same connection, and the event published meanwhile is
+       there when the consumer resumes;
+       `a_replayed_request_this_host_already_reported_is_skipped` — the
+       durable store refuses the second `insert` and leaves the `Reported`
+       record exactly as it was (the listener does not dedupe; the store is
+       what keeps a script from running twice);
+       `an_expired_replayed_request_is_rejected_as_expired_not_as_invalid`.
+       22 passed in `cargo test -p buzz-session-provider action_step`.
+     - **Owed live.** None of this has faced hive. The proof is a repeat of
+       the 178(j) sequence on a bundle rebuilt from this commit: trigger an
+       approved host step, leave the app running, and see the claim published
+       without a relaunch — with `action step listener subscribed` lines in
+       `session-provider/logs/<key>.log` about 90 s apart to show the cadence
+       running. The CI result listener (`ci_result_listener.rs`) has the same
+       single-subscription shape and is **not** fixed here beyond inheriting
+       the `next_event` deadline; it has no probe cadence.
+
 190. **`bee workflows runs` returned `[]` for every run because it queried a
      kind range nothing on this relay has ever published — the fix is a CLI
      read, not a write-path bug — and `bee workflows approve --token <UUID>`
