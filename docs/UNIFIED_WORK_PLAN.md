@@ -148,3 +148,22 @@ every Wave 1+ brief.
    CLI `lib.rs` 6,820. W2 and W3 briefs name the functions they touch, not the
    file, and lanes add new modules rather than growing these.
 8. Migration `0046` is free and is W4's.
+
+**A2 — Astra's adversarial review of Wave 0, 2026-09-20**
+([review](history/2026-09-20-astra-wave0-review.md)). All eight findings
+accepted; the Wave 0 gate reopens until 198–200 land.
+1. Lane 199 (approval races): an action-scope grant binds to the approved
+   run's stored hash, never a later workflow read; run creation admits the
+   caller's expected hash atomically and the executor checks the hash of the
+   definition it is about to run. Each race is reproduced before it is fixed.
+2. Lane 198 (contract): the fold's inputs carry verified evidence facts and
+   caller-compiled action definitions, with named predicates per proof kind;
+   coverage is complete only over **one candidate artifact commit**
+   (`mixed_artifacts` otherwise); authority is the existing 44244 `may_lead`
+   predicate including active steer grantees; `goalRef` names only the goal
+   and a new nullable `decisionRef` names a decision; conflict is defined over
+   maximal declarations per `workId`, two roots included.
+3. Lane 200: the desktop's tag-refusal fallback matches the refusal exactly.
+4. Process: the implementer never writes its own oracle. W1 builds the parts
+   A2 does not touch and takes the amended fixtures from lane 198's branch.
+
