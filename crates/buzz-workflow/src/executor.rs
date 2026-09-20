@@ -1303,6 +1303,110 @@ async fn add_reaction_impl(message_id: &str, emoji: &str) -> Result<JsonValue, W
     }))
 }
 
+/// Terminal reason for a run whose action definition changed after the run
+/// was created: the operator's approval named a definition that is no longer
+/// the one the relay would execute.
+pub const RUN_STOPPED_DEFINITION_CHANGED: &str = "definition_changed";
+
+/// Terminal reason for a run created before runs carried their definition
+/// binding (migration 0046). It stays readable; it never executes.
+pub const RUN_STOPPED_DEFINITION_UNKNOWN: &str = "definition_unknown";
+
+/// Why a run was stopped short of its next step by a fact about the *run*
+/// rather than a failure of a step.
+///
+/// A project action's approval is the operator's consent for one definition
+/// to run a command on their machine (spec § 5.4). A run is bound to the
+/// definition selected when it was created, and the binding is checked at
+/// every entry into execution and again before any request is published. A
+/// mismatch is not a retry: the run ends here and the work needs a fresh run
+/// and a fresh approval.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunStop {
+    /// The stored definition is not the one this run was created from.
+    DefinitionChanged {
+        /// Lowercase hex of the definition the run was created from.
+        run_definition_hash: String,
+        /// Lowercase hex of the definition stored now.
+        current_definition_hash: String,
+    },
+    /// The run carries no definition binding at all.
+    DefinitionUnknown {
+        /// Lowercase hex of the definition stored now.
+        current_definition_hash: String,
+    },
+}
+
+impl RunStop {
+    /// Stable machine-readable reason, written to `workflow_runs.error_code`.
+    pub const fn code(&self) -> &'static str {
+        match self {
+            Self::DefinitionChanged { .. } => RUN_STOPPED_DEFINITION_CHANGED,
+            Self::DefinitionUnknown { .. } => RUN_STOPPED_DEFINITION_UNKNOWN,
+        }
+    }
+
+    /// What a reader of the run is told. Names both hashes so the disagreement
+    /// is checkable rather than asserted.
+    pub fn message(&self) -> String {
+        match self {
+            Self::DefinitionChanged {
+                run_definition_hash,
+                current_definition_hash,
+            } => format!(
+                "the action definition changed after this run started (run was created from \
+                 {run_definition_hash}, the published definition is now \
+                 {current_definition_hash}); an approval names one definition, so this run \
+                 stops — start a fresh run and approve it"
+            ),
+            Self::DefinitionUnknown {
+                current_definition_hash,
+            } => format!(
+                "this run predates definition binding, so nothing can say which definition it \
+                 was approved for (the published definition is {current_definition_hash}); it \
+                 stays readable but cannot execute — start a fresh run"
+            ),
+        }
+    }
+}
+
+/// Compare the definition a run was created from with the one stored now.
+///
+/// `None` means the run may proceed. This is the whole rule, in one place, so
+/// the approval check, the resume check and the emission check cannot drift.
+pub fn run_definition_stop(
+    run: &buzz_db::workflow::WorkflowRunRecord,
+    workflow: &buzz_db::workflow::WorkflowRecord,
+) -> Option<RunStop> {
+    match run.definition_hash.as_deref() {
+        Some(bound) if bound == workflow.definition_hash.as_slice() => None,
+        Some(bound) => Some(RunStop::DefinitionChanged {
+            run_definition_hash: hex::encode(bound),
+            current_definition_hash: hex::encode(&workflow.definition_hash),
+        }),
+        None => Some(RunStop::DefinitionUnknown {
+            current_definition_hash: hex::encode(&workflow.definition_hash),
+        }),
+    }
+}
+
+/// Load the run and its workflow and apply [`run_definition_stop`].
+///
+/// A database error is *not* an answer: it propagates, so a run is never
+/// allowed to proceed because the check could not be made.
+pub async fn check_run_definition(
+    engine: &WorkflowEngine,
+    community_id: CommunityId,
+    run_id: Uuid,
+) -> Result<Option<RunStop>, WorkflowError> {
+    let run = engine.db.get_workflow_run(community_id, run_id).await?;
+    let workflow = engine
+        .db
+        .get_workflow(community_id, run.workflow_id)
+        .await?;
+    Ok(run_definition_stop(&run, &workflow))
+}
+
 /// Rich return type from `execute_run` / `execute_from_step`.
 ///
 /// Carries enough information for the caller to:
@@ -1323,6 +1427,10 @@ pub struct ExecutionResult {
     pub step_outputs: HashMap<String, JsonValue>,
     /// Execution trace: one entry per completed/skipped step.
     pub trace: Vec<JsonValue>,
+    /// Set when the run was stopped by a fact about the run itself — today,
+    /// its definition binding. `finalize_run` writes the named terminal
+    /// reason; no step ran and nothing was published.
+    pub stopped: Option<RunStop>,
 }
 
 /// Execute a workflow run sequentially.
@@ -1466,6 +1574,38 @@ async fn execute_steps(
     let mut step_outputs: HashMap<String, JsonValue> = initial_outputs.unwrap_or_default();
     let mut trace: Vec<JsonValue> = Vec::new();
 
+    // Every entry into execution — the first segment and every resume after
+    // an approval or a host result — starts by checking that the run is still
+    // the definition it was created from. A step that already ran is not
+    // re-run; a step that has not run yet does not run at all.
+    match check_run_definition(engine, community_id, run_id).await {
+        Ok(None) => {}
+        Ok(Some(stop)) => {
+            warn!(
+                run_id = %run_id,
+                reason = stop.code(),
+                "Run stopped before step {start_index}: {}",
+                stop.message()
+            );
+            return Ok(ExecutionResult {
+                suspension: None,
+                step_index: start_index,
+                step_outputs,
+                trace,
+                stopped: Some(stop),
+            });
+        }
+        Err(error) => {
+            return Err((
+                error,
+                crate::error::PartialProgress {
+                    step_index: start_index,
+                    trace,
+                },
+            ))
+        }
+    }
+
     for (i, step) in def.steps.iter().enumerate() {
         if i < start_index {
             debug!(run_id = %run_id, step = %step.id, "Skipping already-executed step");
@@ -1580,7 +1720,7 @@ async fn execute_steps(
                     .unwrap_or_default();
                 let mut full_trace = prefix;
                 full_trace.extend(trace.iter().cloned());
-                if let Err(e) = crate::suspend::persist_and_publish(
+                match crate::suspend::persist_and_publish(
                     engine,
                     community_id,
                     run_id,
@@ -1590,17 +1730,32 @@ async fn execute_steps(
                 )
                 .await
                 {
-                    let progress = crate::error::PartialProgress {
-                        step_index: i,
-                        trace,
-                    };
-                    return Err((e, progress));
+                    Ok(None) => {}
+                    Ok(Some(stop)) => {
+                        // The fence held at the emission point: nothing was
+                        // written and nothing was published.
+                        return Ok(ExecutionResult {
+                            suspension: None,
+                            step_index: i,
+                            step_outputs,
+                            trace,
+                            stopped: Some(stop),
+                        });
+                    }
+                    Err(e) => {
+                        let progress = crate::error::PartialProgress {
+                            step_index: i,
+                            trace,
+                        };
+                        return Err((e, progress));
+                    }
                 }
                 return Ok(ExecutionResult {
                     suspension: Some(suspension),
                     step_index: i,
                     step_outputs,
                     trace,
+                    stopped: None,
                 });
             }
             StepResult::Skipped => {
@@ -1619,6 +1774,7 @@ async fn execute_steps(
         step_index: def.steps.len(),
         step_outputs,
         trace,
+        stopped: None,
     })
 }
 

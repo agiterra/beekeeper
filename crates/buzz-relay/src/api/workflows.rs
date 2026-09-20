@@ -427,6 +427,12 @@ fn run_json(run: &buzz_db::workflow::WorkflowRunRecord, workflow_name: &str) -> 
         "completed_at": run.completed_at.map(|value| value.timestamp()),
         "error_code": run.error_code,
         "error_message": run.error_message,
+        // The definition this run was created from, so a reader can tell a
+        // run bound to the published action from one that was stopped by an
+        // edit (`error_code` `definition_changed`) and from a pre-binding run
+        // (`definition_unknown`). `null` is a disclosed non-answer: the run
+        // predates the binding, never that the relay declined to say.
+        "definition_hash": run.definition_hash.as_ref().map(hex::encode),
         "created_at": run.created_at.timestamp(),
     })
 }
@@ -659,6 +665,7 @@ mod tests {
             completed_at: None,
             error_message: None,
             error_code: None,
+            definition_hash: Some(vec![0xab; 32]),
             created_at: Utc::now(),
         }
     }

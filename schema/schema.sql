@@ -405,6 +405,11 @@ CREATE TABLE workflow_runs (
     completed_at        TIMESTAMPTZ,
     error_message       TEXT,
     error_code          TEXT,
+    -- The definition this run was created from, bound in the run's own INSERT
+    -- (migration 0046). NULL only for runs that predate the column: they stay
+    -- readable and refuse to resume, because nothing can say what their
+    -- operator approved.
+    definition_hash     BYTEA,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (community_id, id),
     FOREIGN KEY (community_id, workflow_id)

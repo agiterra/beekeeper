@@ -38,10 +38,17 @@ pub mod hash;
 pub mod schema;
 pub mod suspend;
 
+/// Runs are bound to the definition they were created from (ledger 193).
+#[cfg(test)]
+mod run_definition_tests;
+
 pub use action_sink::{ActionSink, ActionSinkError, ApprovalRequest};
 pub use actions_file::{parse_actions_yml, ActionEntry, ACTIONS_SCHEMA, ACTIONS_YML};
 pub use error::{PartialProgress, WorkflowError};
-pub use executor::ExecutionResult;
+pub use executor::{
+    check_run_definition, run_definition_stop, ExecutionResult, RunStop,
+    RUN_STOPPED_DEFINITION_CHANGED, RUN_STOPPED_DEFINITION_UNKNOWN,
+};
 pub use hash::{definition_hash, definition_hash_hex, hash_definition_value};
 pub use schema::{ActionDef, Step, TriggerDef, WorkflowDef};
 pub use suspend::{host_step_output, resume_index_after_approval, Suspension};
@@ -222,6 +229,11 @@ impl WorkflowEngine {
     /// again here would race the grant or claim that the request invites, so
     /// this function only logs it.
     ///
+    /// A **stopped** result — a run that is no longer bound to the definition
+    /// it was created from — is written here as `failed` with the named
+    /// terminal reason (`definition_changed`, `definition_unknown`), because
+    /// nothing was written or published on the executor's side.
+    ///
     /// `existing_trace` is prepended to the executor's trace — used by the
     /// resume paths where earlier steps already have trace entries.
     pub async fn finalize_run(
@@ -240,7 +252,39 @@ impl WorkflowEngine {
                 let trace_json = serde_json::Value::Array(full_trace);
                 let step_count = result.step_index as i32;
 
-                if let Some(suspension) = &result.suspension {
+                if let Some(stop) = &result.stopped {
+                    // The run was stopped by a fact about the run itself: it
+                    // is no longer the definition it was created from. No step
+                    // ran and no request was published, so the run ends here,
+                    // with the reason on the record. A fresh run — and a fresh
+                    // approval — is the only way forward.
+                    tracing::warn!(
+                        run_id = %run_id,
+                        reason = stop.code(),
+                        "Workflow run stopped — {}",
+                        stop.message()
+                    );
+                    if let Err(e) = self
+                        .db
+                        .update_workflow_run(
+                            community_id,
+                            run_id,
+                            RunStatus::Failed,
+                            step_count,
+                            &trace_json,
+                            Some(buzz_db::workflow::WorkflowRunFailure {
+                                code: stop.code(),
+                                message: &stop.message(),
+                            }),
+                        )
+                        .await
+                    {
+                        tracing::error!(
+                            run_id = %run_id,
+                            "Failed to record the stopped run: {e}"
+                        );
+                    }
+                } else if let Some(suspension) = &result.suspension {
                     // WF-08 closed: the run is parked and its request is out.
                     tracing::info!(
                         run_id = %run_id,
@@ -1964,7 +2008,7 @@ steps:
 
     // -- SEC-006: event-path regression (requires Postgres) ----------------
 
-    async fn setup_db() -> buzz_db::Db {
+    pub(crate) async fn setup_db() -> buzz_db::Db {
         let database_url = std::env::var("BUZZ_TEST_DATABASE_URL")
             .or_else(|_| std::env::var("DATABASE_URL"))
             .unwrap_or_else(|_| "postgres://buzz:buzz_dev@localhost:5432/buzz".to_owned());
@@ -1978,7 +2022,11 @@ steps:
 
     /// Create a community, a channel owned by `creator`, and add `member` as a
     /// plain member. Returns `(community, channel)`.
-    async fn setup_channel(db: &buzz_db::Db, creator: &[u8], member: &[u8]) -> (CommunityId, Uuid) {
+    pub(crate) async fn setup_channel(
+        db: &buzz_db::Db,
+        creator: &[u8],
+        member: &[u8],
+    ) -> (CommunityId, Uuid) {
         let host = format!("sec006-{}.example", Uuid::new_v4().simple());
         let community = match db
             .create_community_with_owner(&host, &hex::encode(creator))
@@ -2552,9 +2600,9 @@ steps:
     /// Records what the engine asked the relay to publish, and answers with a
     /// deterministic event id so the test can check what was stored.
     #[derive(Default)]
-    struct RecordingSink {
-        approvals: std::sync::Mutex<Vec<crate::action_sink::ApprovalRequest>>,
-        host_steps: std::sync::Mutex<Vec<buzz_core::host_step::HostStepRequested>>,
+    pub(crate) struct RecordingSink {
+        pub(crate) approvals: std::sync::Mutex<Vec<crate::action_sink::ApprovalRequest>>,
+        pub(crate) host_steps: std::sync::Mutex<Vec<buzz_core::host_step::HostStepRequested>>,
     }
 
     impl ActionSink for RecordingSink {

@@ -15772,6 +15772,114 @@ removed from here.
      - **Owed.** A relay deploy makes the fallback unnecessary; remove it
        only after hive reports a `software_commit` that contains 181.
 
+193. **The counterexample was real: a project action's command could be
+     swapped between the operator seeing the approval request and granting
+     it, and the new command was handed to a host exactly once. A run is now
+     bound to the definition it was created from (2026-09-20, lane W4/193;
+     Wave 0 of `docs/UNIFIED_WORK_PLAN.md`; Astra's static gap, unified plan
+     § 7).** Built, gated, not landed and not exercised against a live host.
+     - **Reproduced, with the count.** Sequence: publish a one-step project
+       action v1 (`run_on_host`, `["echo","v1"]`), trigger it, leave the run
+       parked on its synthetic approval gate; republish v2 under the *same*
+       workflow id with the *same* step id `build` and a different command;
+       grant the old request; resume. **Observed before the fix: 1** —
+       `assertion left == right failed: a command the owner never approved
+       was handed to a host / left: 1 / right: 0` (the fix's comparator
+       disabled behind a temporary env switch, which makes the code path
+       identical to `e26de4933`; the switch is not in the committed tree).
+       After the fix: 0, and the run ends `failed` with
+       `error_code = definition_changed`.
+     - **Why it counted host-step requests by hash.** The kind:46013 carries
+       no command text (spec § 5.5): it carries `definitionHash`, and the
+       host compiles the command from its own copy of the project's
+       `actions.yml` and compares hashes
+       (`crates/buzz-session-provider/src/action_steps.rs`). So "the changed
+       command ran" is exactly "a request naming v2's hash was published for
+       a run approved under v1's" — the host's own drift check passes,
+       because the relay handed it the *new* hash.
+     - **Cause, three places, none of which knew what the run was.**
+       (a) approval resume loaded the **current** workflow —
+       `resume_workflow_after_approval`,
+       `crates/buzz-relay/src/handlers/command_executor.rs:1822` at
+       `084880966`; (b) the executor fell back from a current-hash autorun
+       grant to a per-run approval, `crates/buzz-workflow/src/executor.rs:894`;
+       (c) that approval matched on run id and step id only, with no
+       definition hash, `crates/buzz-workflow/src/suspend.rs:99`
+       (`granted_approval_for_step`). The host's comparison
+       (`action_steps.rs:285`) is downstream of all three and cannot close
+       them. The same hole was open on the host-result resume path
+       (`crates/buzz-relay/src/handlers/host_steps.rs`
+       `resume_workflow_after_host_step`), which W4 also closes.
+     - **The binding.** `workflow_runs.definition_hash BYTEA` (migration
+       `migrations/0046_workflow_run_definition_hash.sql`, `schema/schema.sql`
+       `workflow_runs`). It is written by the run's **own INSERT**, selected
+       from the `workflows` row the run references
+       (`crates/buzz-db/src/workflow.rs` `create_workflow_run`, `INSERT …
+       SELECT … FROM workflows`), so no caller — event trigger, manual
+       trigger, schedule, `ref_updated`, or the webhook bridge, which this
+       lane did not have to touch — can create an unbound run, and no
+       signature changed. If the definition were edited between a caller's
+       read and the INSERT, the run binds the *newer* hash and is stopped
+       before its first step: fails closed.
+     - **Where it is checked.** One comparator,
+       `buzz_workflow::run_definition_stop`
+       (`crates/buzz-workflow/src/executor.rs`), used at three points so they
+       cannot drift: (1) **every entry into execution** — first segment and
+       every resume — at the top of `execute_steps`, via
+       `check_run_definition`; (2) **at emission**, in
+       `crates/buzz-workflow/src/suspend.rs` `persist_and_publish`, which now
+       returns `Ok(Some(RunStop))` and writes and publishes nothing; (3) **at
+       approval**, in `handle_approval_grant`
+       (`crates/buzz-relay/src/handlers/command_executor.rs`), which refuses
+       the kind:46030 at ingest *before* the approval row is consumed and
+       stops the run. A database error at any of the three propagates: a run
+       is never allowed to proceed because the check could not be made.
+     - **The named terminal reasons.** `definition_changed` and
+       `definition_unknown` (`RUN_STOPPED_DEFINITION_CHANGED` /
+       `_UNKNOWN`, `RunStop::{code,message}`), written to
+       `workflow_runs.error_code` by `WorkflowEngine::finalize_run`. The
+       message names both hashes, so the disagreement is checkable rather
+       than asserted. A stopped run is terminal: the remedy is a fresh run
+       and a fresh approval, never a retry. Runs created before the column
+       stay readable and end `definition_unknown` if anything tries to
+       resume or approve them — nothing can say what their operator agreed
+       to. `GET /workflows/{id}/runs` and `GET /workflow-runs/{run_id}` now
+       carry `definition_hash` (null for a pre-binding run, a disclosed
+       non-answer), beside the `error_code` that already existed
+       (`crates/buzz-relay/src/api/workflows.rs` `run_json`).
+     - **Autorun is unchanged.** A `scope: action` grant is still bound to
+       one definition hash, so an edit re-arms the gate for the *next* run
+       exactly as before (spec § 5.4, ledger item's C4 proof still green).
+       The binding does not grant anything; it only refuses.
+     - **Tests** (all Postgres-backed unless noted), against a throwaway
+       database: `crates/buzz-workflow/src/run_definition_tests.rs` — the
+       counterexample; an edit **between two steps** of a multi-step run
+       (first command already ran, second never requested); a hash-stable
+       approval still releases the step exactly once; lane 184's bound
+       `--checkout` still reaches the host across the approval; a duplicate
+       host result does not repeat a command; an autorun grant re-arms on a
+       changed definition and releases the new one; and a pure unit case for
+       the comparator's three answers.
+       `crates/buzz-relay/src/handlers/command_executor.rs` tests —
+       the real `handle_approval_grant` refuses a grant after an edit and
+       leaves the approval pending, and a run whose `definition_hash` is NULL
+       (written as a pre-0046 run is) is readable but cannot be approved.
+       11/11 `-p buzz-workflow --lib --ignored`, 9/9 for the relay's workflow
+       and host-step ignored set.
+     - **Owed.** No wire-level e2e and no live host: no relay was started on
+       this machine (port 3000 is held by another process and this worktree
+       has no `.env`), so `crates/buzz-test-client/tests/e2e_work_definition_binding.rs`
+       was deliberately **not written** rather than written and never run.
+       The proof that exists drives the relay's own ingest handler and the
+       real engine against Postgres; the end-to-end refusal seen by an
+       operator in the app, and the host's behaviour on receiving nothing,
+       are unproven. Also owed: the desktop/CLI surfaces do not yet show
+       `definition_hash` or explain the two terminal reasons to a reader
+       (W5's file ownership, not this lane's).
+     - **One file edited outside the lane's ownership**, mechanically:
+       `crates/buzz-db/src/migration.rs`'s embedded-migration count assertion
+       (45 → 46), which any new migration must bump.
+
 194. **The durable-work contract is frozen as data: `beekeeper-plan/v1`, one
      sibling kind for work records, the coverage fold's output type, the CLI
      surface and the seat brief — plus kind 44249 (built 2026-09-20, lane W0

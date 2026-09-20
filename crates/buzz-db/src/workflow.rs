@@ -228,6 +228,13 @@ pub struct WorkflowRunRecord {
     /// Stable machine-readable failure or cancellation classification.
     /// Kept separate from `error_message` so callers never parse diagnostics.
     pub error_code: Option<String>,
+    /// SHA-256 of the canonical definition JSON this run was created from,
+    /// bound in the run's own INSERT from the `workflows` row it references.
+    ///
+    /// `None` only for runs created before migration 0046. A run with no
+    /// binding stays readable but must never gain authority to execute:
+    /// nothing can say which definition its operator approved.
+    pub definition_hash: Option<Vec<u8>>,
     /// When the run record was created.
     pub created_at: DateTime<Utc>,
 }
@@ -1003,11 +1010,21 @@ pub async fn create_workflow_run(
 ) -> Result<Uuid> {
     let id = Uuid::new_v4();
 
-    sqlx::query(
+    // The definition hash is selected from the workflow row in the run's own
+    // INSERT, so the binding is atomic with the run and no caller can create
+    // an unbound one (ledger 193). If the definition were edited between the
+    // caller's read and this statement, the run binds the *newer* hash and
+    // the engine — which is about to execute the older parsed definition —
+    // stops it with `definition_changed`. That fails closed, which is the
+    // point.
+    let inserted = sqlx::query(
         r#"
         INSERT INTO workflow_runs
-            (community_id, id, workflow_id, status, trigger_event_id, current_step, execution_trace, trigger_context)
-        VALUES ($1, $2, $3, 'pending', $4, 0, '[]', $5)
+            (community_id, id, workflow_id, status, trigger_event_id, current_step,
+             execution_trace, trigger_context, definition_hash)
+        SELECT $1, $2, $3, 'pending', $4, 0, '[]', $5, w.definition_hash
+        FROM workflows w
+        WHERE w.community_id = $1 AND w.id = $3
         "#,
     )
     .bind(community_id.as_uuid())
@@ -1016,7 +1033,12 @@ pub async fn create_workflow_run(
     .bind(trigger_event_id)
     .bind(trigger_context)
     .execute(pool)
-    .await?;
+    .await?
+    .rows_affected();
+
+    if inserted == 0 {
+        return Err(DbError::NotFound(format!("workflow {workflow_id}")));
+    }
 
     Ok(id)
 }
@@ -1030,7 +1052,8 @@ pub async fn get_workflow_run(
     let row = sqlx::query(
         r#"
         SELECT community_id, id, workflow_id, status::text AS status, trigger_event_id, current_step,
-               execution_trace, trigger_context, started_at, completed_at, error_message, error_code, created_at
+               execution_trace, trigger_context, started_at, completed_at, error_message, error_code,
+               definition_hash, created_at
         FROM workflow_runs
         WHERE community_id = $1 AND id = $2
         "#,
@@ -1062,7 +1085,8 @@ pub async fn list_workflow_runs_page(
     let rows = sqlx::query(
         r#"
         SELECT community_id, id, workflow_id, status::text AS status, trigger_event_id, current_step,
-               execution_trace, trigger_context, started_at, completed_at, error_message, error_code, created_at
+               execution_trace, trigger_context, started_at, completed_at, error_message, error_code,
+               definition_hash, created_at
         FROM workflow_runs
         WHERE community_id = $1 AND workflow_id = $2
           AND (
@@ -1408,6 +1432,7 @@ fn row_to_run_record(row: sqlx::postgres::PgRow) -> Result<WorkflowRunRecord> {
         completed_at: row.try_get("completed_at")?,
         error_message: row.try_get("error_message")?,
         error_code: row.try_get("error_code")?,
+        definition_hash: row.try_get("definition_hash")?,
         created_at: row.try_get("created_at")?,
     })
 }
@@ -2135,6 +2160,7 @@ mod tests {
             completed_at: None,
             error_message: None,
             error_code: None,
+            definition_hash: None,
             created_at: now,
         };
 
@@ -2164,6 +2190,7 @@ mod tests {
             completed_at: None,
             error_message: None,
             error_code: None,
+            definition_hash: None,
             created_at: now,
         };
 
@@ -2188,6 +2215,7 @@ mod tests {
             completed_at: Some(now),
             error_message: Some("step timeout exceeded".to_owned()),
             error_code: Some("step_timeout".to_owned()),
+            definition_hash: None,
             created_at: now,
         };
 
@@ -2220,6 +2248,7 @@ mod tests {
             completed_at: Some(now),
             error_message: None,
             error_code: None,
+            definition_hash: None,
             created_at: now,
         };
 
@@ -2243,6 +2272,7 @@ mod tests {
             completed_at: None,
             error_message: None,
             error_code: None,
+            definition_hash: None,
             created_at: now,
         };
 

@@ -1398,6 +1398,26 @@ async fn handle_approval_grant(
         ));
     }
 
+    // 3b. An approval is consent for **one** definition to run a command on
+    // the operator's machine (spec § 5.4, ledger 193). If the action has been
+    // edited since this request was published, the operator is being asked to
+    // release a step they never saw: refuse the grant, and stop the run —
+    // resuming it would hand the *current* definition to a host under the
+    // earlier consent. A run that carries no binding at all (created before
+    // migration 0046) can never establish what was consented to, so it stops
+    // too. Either way the remedy is a fresh run and a fresh approval.
+    if let Some(stop) = run_definition_stop_for_approval(state, tenant.community(), &approval)
+        .await
+        .map_err(|e| IngestError::Internal(format!("error: definition binding: {e}")))?
+    {
+        stop_run(state, tenant.community(), approval.run_id, &stop).await;
+        return Err(IngestError::Rejected(format!(
+            "invalid: {} ({})",
+            stop.message(),
+            stop.code()
+        )));
+    }
+
     // 4. Validate caller is authorized approver
     approver_admitted(
         state,
@@ -1787,6 +1807,61 @@ async fn handle_approval_deny(
     })
 }
 
+/// The definition binding of the run an approval belongs to, or `None` when
+/// the run may still act on it.
+///
+/// A database failure is returned, never swallowed: an approval is not
+/// admitted because the check could not be made.
+async fn run_definition_stop_for_approval(
+    state: &Arc<AppState>,
+    community_id: CommunityId,
+    approval: &buzz_db::workflow::ApprovalRecord,
+) -> Result<Option<buzz_workflow::RunStop>, buzz_db::error::DbError> {
+    let run = state
+        .db
+        .get_workflow_run(community_id, approval.run_id)
+        .await?;
+    let workflow = state.db.get_workflow(community_id, run.workflow_id).await?;
+    Ok(buzz_workflow::run_definition_stop(&run, &workflow))
+}
+
+/// End a run with a named terminal reason, preserving its trace.
+///
+/// Best effort by design: the refusal the caller is about to return is the
+/// fact that matters, and a run left parked cannot execute anything either —
+/// every resume path re-checks the same binding.
+async fn stop_run(
+    state: &Arc<AppState>,
+    community_id: CommunityId,
+    run_id: Uuid,
+    stop: &buzz_workflow::RunStop,
+) {
+    let (current_step, trace) = match state.db.get_workflow_run(community_id, run_id).await {
+        Ok(run) => (run.current_step, run.execution_trace),
+        Err(error) => {
+            tracing::error!("stop_run: failed to read run {run_id}: {error}");
+            return;
+        }
+    };
+    if let Err(error) = state
+        .db
+        .update_workflow_run(
+            community_id,
+            run_id,
+            RunStatus::Failed,
+            current_step,
+            &trace,
+            Some(buzz_db::workflow::WorkflowRunFailure {
+                code: stop.code(),
+                message: &stop.message(),
+            }),
+        )
+        .await
+    {
+        tracing::error!("stop_run: failed to stop run {run_id}: {error}");
+    }
+}
+
 /// Resume a suspended workflow run after an approval gate has been granted.
 /// Resume a run parked on the approval bound to `approval_step_index`.
 ///
@@ -1885,6 +1960,7 @@ async fn resume_workflow_after_approval(
 mod tests {
     use super::*;
     use nostr::{EventBuilder, Keys, Kind, Tag, Timestamp};
+    use sha2::Digest;
 
     async fn persistence_test_context() -> (buzz_db::Db, TenantContext) {
         let url = std::env::var("BUZZ_TEST_DATABASE_URL")
@@ -2097,6 +2173,253 @@ mod tests {
         assert_eq!(
             buzz_workflow::hash_definition_value(&stored).expect("hash"),
             buzz_workflow::definition_hash(&reread).expect("hash")
+        );
+    }
+
+    /// A community, a channel, a published one-step project action, a run
+    /// parked on its synthetic approval gate, and the raw approval token.
+    async fn approval_fixture(
+        state: &Arc<AppState>,
+        command: &str,
+    ) -> (TenantContext, Uuid, Uuid, String) {
+        let owner = Keys::generate();
+        let owner_bytes = owner.public_key().to_bytes().to_vec();
+        let host = format!("approval-binding-{}.example", Uuid::new_v4().simple());
+        let community = match state
+            .db
+            .create_community_with_owner(&host, &owner.public_key().to_hex())
+            .await
+            .expect("create community")
+        {
+            buzz_db::CreateCommunityWithOwnerResult::Created(record) => record.id,
+            other => panic!("expected a fresh community, got {other:?}"),
+        };
+        let tenant = TenantContext::resolved(community, host);
+        state
+            .db
+            .ensure_user(community, &owner_bytes)
+            .await
+            .expect("ensure owner");
+        let channel = state
+            .db
+            .create_channel(
+                community,
+                "actions",
+                buzz_core::channel::ChannelType::Stream,
+                buzz_core::channel::ChannelVisibility::Private,
+                None,
+                &owner_bytes,
+                None,
+                None,
+            )
+            .await
+            .expect("create channel");
+        let project = format!("30621:{}:pulse", "1".repeat(64));
+        let yaml = format!(
+            "name: verify\nproject: '{project}'\ntrigger:\n  on: manual\nsteps:\n  - id: build\n    action: run_on_host\n    command: [\"echo\", \"{command}\"]\n"
+        );
+        let (def, canonical) = buzz_workflow::WorkflowEngine::parse_yaml(&yaml).expect("parse");
+        let hash = buzz_workflow::definition_hash(&def).expect("hash");
+        let workflow_id = state
+            .db
+            .create_workflow(
+                community,
+                Some(channel.id),
+                &owner_bytes,
+                "verify",
+                &canonical,
+                &hash,
+                Some(&project),
+            )
+            .await
+            .expect("create workflow");
+        let run_id = state
+            .db
+            .create_workflow_run(community, workflow_id, None, None)
+            .await
+            .expect("create run");
+        let token = Uuid::new_v4().to_string();
+        state
+            .db
+            .create_approval(buzz_db::workflow::CreateApprovalParams {
+                community_id: community,
+                token: &token,
+                workflow_id,
+                run_id,
+                step_id: "build",
+                step_index: 0,
+                approver_spec: "any",
+                expires_at: Utc::now() + chrono::Duration::hours(1),
+            })
+            .await
+            .expect("create approval");
+        state
+            .db
+            .update_workflow_run(
+                community,
+                run_id,
+                RunStatus::WaitingApproval,
+                0,
+                &serde_json::json!([{"step_id": "build", "status": "awaiting_approval"}]),
+                None,
+            )
+            .await
+            .expect("park run");
+        (tenant, workflow_id, run_id, token)
+    }
+
+    /// Republish the action with a different command under the same id.
+    async fn republish(state: &Arc<AppState>, community: CommunityId, workflow_id: Uuid) {
+        let workflow = state
+            .db
+            .get_workflow(community, workflow_id)
+            .await
+            .expect("workflow");
+        let project = workflow.project_ref.clone().expect("project ref");
+        let yaml = format!(
+            "name: verify\nproject: '{project}'\ntrigger:\n  on: manual\nsteps:\n  - id: build\n    action: run_on_host\n    command: [\"echo\", \"v2\"]\n"
+        );
+        let (def, canonical) = buzz_workflow::WorkflowEngine::parse_yaml(&yaml).expect("parse v2");
+        let hash = buzz_workflow::definition_hash(&def).expect("hash v2");
+        state
+            .db
+            .update_workflow(
+                community,
+                workflow_id,
+                "verify",
+                &canonical,
+                &hash,
+                Some(&project),
+            )
+            .await
+            .expect("republish");
+    }
+
+    fn grant_event(keys: &Keys, token: &str) -> Event {
+        let token_hash = hex::encode(sha2::Sha256::digest(token.as_bytes()));
+        EventBuilder::new(
+            Kind::Custom(KIND_APPROVAL_GRANT as u16),
+            serde_json::json!({ "note": "ok", "scope": "run" }).to_string(),
+        )
+        .tags(vec![Tag::parse(["d", token_hash.as_str()]).expect("d tag")])
+        .sign_with_keys(keys)
+        .expect("grant event")
+    }
+
+    fn http_auth(keys: &Keys) -> IngestAuth {
+        IngestAuth::Http {
+            pubkey: keys.public_key(),
+            scopes: vec![buzz_auth::Scope::MessagesWrite],
+            auth_method: super::super::ingest::HttpAuthMethod::Nip98,
+        }
+    }
+
+    /// Ledger 193: an approval is consent for one definition. Editing the
+    /// action after the request was published refuses the grant at ingest and
+    /// stops the run, so no resume can hand the new command to a host.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn a_grant_is_refused_when_the_definition_changed() {
+        let state = crate::state::tests::test_state().await;
+        let (tenant, workflow_id, run_id, token) = approval_fixture(&state, "v1").await;
+        republish(&state, tenant.community(), workflow_id).await;
+
+        let approver = Keys::generate();
+        let event = grant_event(&approver, &token);
+        let message =
+            match handle_approval_grant(&tenant, &state, &event, &http_auth(&approver)).await {
+                Err(IngestError::Rejected(message)) => message,
+                Err(other) => panic!("expected a refusal, got {other:?}"),
+                Ok(accepted) => panic!("expected a refusal, got {}", accepted.message),
+            };
+        assert!(
+            message.contains(buzz_workflow::RUN_STOPPED_DEFINITION_CHANGED),
+            "the refusal names the reason: {message}"
+        );
+
+        let run = state
+            .db
+            .get_workflow_run(tenant.community(), run_id)
+            .await
+            .expect("run");
+        assert_eq!(run.status, RunStatus::Failed);
+        assert_eq!(
+            run.error_code.as_deref(),
+            Some(buzz_workflow::RUN_STOPPED_DEFINITION_CHANGED)
+        );
+        let approvals = state
+            .db
+            .get_run_approvals(tenant.community(), workflow_id, run_id)
+            .await
+            .expect("approvals");
+        assert!(
+            approvals
+                .iter()
+                .all(|approval| approval.status == ApprovalStatus::Pending),
+            "the approval was never consumed"
+        );
+    }
+
+    /// A run created before migration 0046 carries no binding. It stays
+    /// readable, and it cannot gain authority to execute: granting its
+    /// approval refuses with `definition_unknown`.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn a_run_without_a_binding_cannot_be_approved() {
+        let state = crate::state::tests::test_state().await;
+        let (tenant, workflow_id, run_id, token) = approval_fixture(&state, "v1").await;
+
+        // Exactly the shape of a run written before the column existed.
+        let url = std::env::var("BUZZ_TEST_DATABASE_URL")
+            .or_else(|_| std::env::var("DATABASE_URL"))
+            .expect("a test database url");
+        let pool = sqlx::PgPool::connect(&url).await.expect("connect");
+        sqlx::query(
+            "UPDATE workflow_runs SET definition_hash = NULL WHERE community_id = $1 AND id = $2",
+        )
+        .bind(tenant.community().as_uuid())
+        .bind(run_id)
+        .execute(&pool)
+        .await
+        .expect("unbind the run");
+
+        let run = state
+            .db
+            .get_workflow_run(tenant.community(), run_id)
+            .await
+            .expect("a legacy run is still readable");
+        assert!(run.definition_hash.is_none());
+
+        let approver = Keys::generate();
+        let event = grant_event(&approver, &token);
+        let message =
+            match handle_approval_grant(&tenant, &state, &event, &http_auth(&approver)).await {
+                Err(IngestError::Rejected(message)) => message,
+                Err(other) => panic!("expected a refusal, got {other:?}"),
+                Ok(accepted) => panic!("expected a refusal, got {}", accepted.message),
+            };
+        assert!(
+            message.contains(buzz_workflow::RUN_STOPPED_DEFINITION_UNKNOWN),
+            "the refusal names the reason: {message}"
+        );
+        let run = state
+            .db
+            .get_workflow_run(tenant.community(), run_id)
+            .await
+            .expect("run");
+        assert_eq!(run.status, RunStatus::Failed);
+        assert_eq!(
+            run.error_code.as_deref(),
+            Some(buzz_workflow::RUN_STOPPED_DEFINITION_UNKNOWN)
+        );
+        assert_eq!(
+            state
+                .db
+                .get_run_approvals(tenant.community(), workflow_id, run_id)
+                .await
+                .expect("approvals")
+                .len(),
+            1
         );
     }
 

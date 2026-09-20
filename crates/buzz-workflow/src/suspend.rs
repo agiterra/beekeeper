@@ -24,6 +24,7 @@ use uuid::Uuid;
 
 use crate::action_sink::ApprovalRequest;
 use crate::error::WorkflowError;
+use crate::executor::RunStop;
 use crate::schema::{ActionDef, WorkflowDef};
 use crate::WorkflowEngine;
 
@@ -114,7 +115,9 @@ pub async fn granted_approval_for_step(
 /// `trace` is the run's complete trace, prefix and this segment together,
 /// **without** an entry for the suspended step; this function appends one.
 /// On success the run is `waiting_approval` or `waiting_host` and the
-/// request event has been published. If the publish fails after the rows are
+/// request event has been published, and `Ok(None)` is returned. `Ok(Some)`
+/// means nothing was written or published because the run is no longer bound
+/// to the stored definition; the caller ends the run with that reason. If the publish fails after the rows are
 /// written, the run is left parked and the error is returned: the approval
 /// is still discoverable through the relay's approvals listing, and a host
 /// step row without a request event is visible as exactly that.
@@ -125,12 +128,32 @@ pub async fn persist_and_publish(
     step_index: usize,
     suspension: &Suspension,
     trace: &mut Vec<serde_json::Value>,
-) -> Result<(), WorkflowError> {
+) -> Result<Option<RunStop>, WorkflowError> {
     let run = engine.db.get_workflow_run(community_id, run_id).await?;
     let workflow = engine
         .db
         .get_workflow(community_id, run.workflow_id)
         .await?;
+
+    // The emission fence. A kind:46013 carries a `definitionHash` and no
+    // command text: the host compiles the command from its own copy of the
+    // project's `actions.yml` and runs whatever that hash names. So this —
+    // the moment the request is built from the *workflow* row — is the last
+    // place a substituted definition could reach an operator's machine, and
+    // the request is never built for a run whose binding no longer holds
+    // (ledger 193). An approval request is fenced the same way: asking an
+    // operator to approve a step of a definition the run is not bound to
+    // would be asking them to consent to something that cannot run.
+    if let Some(stop) = crate::executor::run_definition_stop(&run, &workflow) {
+        tracing::warn!(
+            run_id = %run_id,
+            step_id = suspension.step_id(),
+            reason = stop.code(),
+            "Refusing to publish a suspension request: {}",
+            stop.message()
+        );
+        return Ok(Some(stop));
+    }
     let channel_id = workflow
         .channel_id
         .ok_or_else(|| WorkflowError::SuspensionFailed("workflow has no channel".into()))?
@@ -202,7 +225,7 @@ pub async fn persist_and_publish(
                          published: {error}"
                     ))
                 })?;
-            Ok(())
+            Ok(None)
         }
         Suspension::HostStep {
             step_id,
@@ -263,7 +286,7 @@ pub async fn persist_and_publish(
                 .db
                 .set_host_step_requested_event(community_id, run_id, step_id, &event_bytes)
                 .await?;
-            Ok(())
+            Ok(None)
         }
     }
 }
