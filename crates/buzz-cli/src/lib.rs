@@ -3700,6 +3700,13 @@ pub enum SessionsCmd {
         /// The word to define. Omit to list every word once.
         word: Option<String>,
     },
+    /// Adopt a committed plan as this session's contract, bind assignments
+    /// and evidence to its criteria, and read what remains (NIP-PW)
+    #[command(
+        subcommand,
+        after_help = "Examples:\n  bee sessions work validate --plan plans/kettle.md --agents-repo <dir> --commit <sha>\n  bee sessions work adopt --plan plans/kettle.md --commit <sha> --agents-repo <dir> --channel <uuid> --session-ref <uuid>\n  bee sessions work status --channel <uuid> --session-ref <uuid> --agents-repo <dir>\n\nRecipe:\n  bee sessions work status --channel <uuid> --session-ref <uuid>"
+    )]
+    Work(commands::sessions::work::SessionWorkCmd),
     /// Measure one team session: timeline, per-seat cost, coordination
     /// accounting, and every metric the wire cannot support named `unknown`
     #[command(
@@ -3772,6 +3779,12 @@ pub struct TeamTransactionWriteArgs {
     /// Execution target or role to wake after the transaction is stored.
     #[arg(long = "wake-to")]
     pub wake_to: Option<String>,
+    /// Publish a completion whose adopted plan is not fully covered, stating why
+    #[arg(long = "without-coverage")]
+    pub without_coverage: Option<String>,
+    /// Agents repository checkout the adopted plan's criteria are read from
+    #[arg(long = "agents-repo")]
+    pub agents_repo: Option<String>,
 }
 
 /// Input for one signed `note` — the state-free verb.
@@ -5196,6 +5209,20 @@ async fn run(cli: Cli) -> Result<(), CliError> {
         }
     }
 
+    // `bee sessions work`'s write verbs answer for their own record offline,
+    // the same way lane 182's bodies do: dispatched ahead of the key gate, so
+    // a seat learning this wire needs neither an identity nor a relay.
+    if let Cmd::Sessions(SessionsCmd::Work(ref sub)) = cli.command {
+        if let Some((verb, requested)) = commands::sessions::work::example_request(sub) {
+            return commands::sessions::work::print_example(verb, &requested);
+        }
+        // `validate` is offline except for git: it reads a plan blob and
+        // compiles the actions it names, and reaches no relay at all.
+        if let commands::sessions::work::SessionWorkCmd::Validate(args) = sub {
+            return commands::sessions::work::cmd_validate(args);
+        }
+    }
+
     // `sessions explain` answers from a data file compiled into this binary.
     // It is handled here, before the key requirement below, on purpose: a seat
     // that has to ask what a word its own tool printed means should not have to
@@ -6225,6 +6252,7 @@ mod tests {
                 "transcript",
                 "verdict",
                 "whoami",
+                "work",
                 "worktree"
             ]
         );
@@ -6340,7 +6368,7 @@ mod tests {
             // appended here and two of them independently wrote 35 (item 108's
             // exact-count trap); the finalizer set it once, after every lane,
             // and both tests re-run green.
-            ("sessions", 39),
+            ("sessions", 40),
             ("social", 7),
             ("terminals", 6),
             ("upload", 1),

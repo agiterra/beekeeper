@@ -128,6 +128,8 @@ pub mod project_work;
 /// NIP-PW: the pure, order-independent coverage fold over a session's work
 /// records — what remains, who owes it and what proves it.
 pub mod project_work_fold;
+/// NIP-PW: the one shared assembler from fetched events to the fold's input.
+pub mod project_work_inputs;
 pub mod pulse;
 /// Declared work in Project Pulse: assignments, their evidence, and the one
 /// word the canonical fold settles them with.

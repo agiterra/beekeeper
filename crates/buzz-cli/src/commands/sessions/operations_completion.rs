@@ -178,6 +178,124 @@ pub(super) fn disclose_completion_outcome(output: &mut Value, outcome: &Completi
     }
 }
 
+// ── Coverage before a terminal (lane 201, NIP-PW) ──────────────────────────
+
+/// Refuse a `mission.completed` while the session's adopted plan still has
+/// criteria that are open, stale or unknown.
+///
+/// **Two questions, two answers.** A completion says the mission is done; the
+/// NIP-PW coverage fold says whether the adopted plan's criteria are met at
+/// one delivered revision. Nothing here merges them — the record is still the
+/// same signed 44244 terminal, and `bee sessions work status` still prints
+/// coverage and mission as two rows. What this adds is the one check the
+/// contract asks for: the CLI checks coverage *before* publishing
+/// (`conformance/project-work/README.md` § (c), last paragraph).
+///
+/// **A session with no declaration is unchanged.** No declaration, no
+/// contract to measure against, and this returns `Ok(())` having published
+/// and refused nothing — every session that predates NIP-PW completes exactly
+/// as it did.
+///
+/// `--without-coverage "<reason>"` publishes anyway. The reason is **not**
+/// written into the 44244 body: that body is `deny_unknown_fields` and its
+/// closed shape is what lets every reader decode it, so this prints the
+/// disclosure and tells the operator to record it in Pulse rather than
+/// quietly editing prose the operator signed.
+///
+/// # Errors
+/// [`CliError::Usage`] listing every criterion that is not covered, with its
+/// reason; or the error naming a read that failed.
+pub(super) async fn refuse_incomplete_coverage(
+    client: &crate::client::BuzzClient,
+    transaction_type: buzz_core::coding_session_team_transaction::CodingSessionTeamTransactionType,
+    channel: &str,
+    session_ref: &str,
+    agents_repo: Option<&str>,
+    without_coverage: Option<&str>,
+) -> Result<(), CliError> {
+    use buzz_core::coding_session_team_transaction::CodingSessionTeamTransactionType;
+    if transaction_type != CodingSessionTeamTransactionType::MissionCompleted {
+        return Ok(());
+    }
+    let session =
+        crate::commands::sessions::work::session_context(client, channel, session_ref).await?;
+    let (coverage, _reads) =
+        crate::commands::sessions::work::coverage_for_session(client, &session, agents_repo)
+            .await?;
+    let Some(open) = incomplete_head(&coverage) else {
+        return Ok(());
+    };
+    if let Some(reason) = without_coverage {
+        eprintln!(
+            "{}",
+            json!({
+                "coverage": "incomplete",
+                "publishedAnyway": true,
+                "reason": reason,
+                "criteria": open.criteria,
+                "recordedIn": "nowhere on the wire",
+                "message": format!(
+                    "published without coverage: {reason}. This reason is NOT on the wire: the                      kind:44244 completion body is a closed shape and this command will not add                      a key to it. Record it in Pulse (`bee pulse note`) so the next reader finds                      it beside the terminal."
+                ),
+            })
+        );
+        return Ok(());
+    }
+    Err(CliError::Usage(format!(
+        "coverage-incomplete: work {} ({}) is not covered — {}. Bind the evidence that answers          them (`bee sessions work bind evidence`), read the whole picture with `bee sessions          work status --channel {channel} --session-ref {session_ref}`, or publish anyway with          --without-coverage \"<reason>\" and record the reason in Pulse.",
+        &open.work_id,
+        open.coverage_reason,
+        open.criteria.join("; ")
+    )))
+}
+
+/// One head declaration that is not fully covered, rendered for a refusal.
+struct IncompleteCoverage {
+    work_id: String,
+    coverage_reason: String,
+    criteria: Vec<String>,
+}
+
+/// The first head declaration whose coverage is incomplete, if any.
+///
+/// Only `head` and `stale` declarations carry criteria — they are the two
+/// states that *are* a current contract — so a superseded or conflicted
+/// declaration never blocks a completion by itself; a conflict shows up as
+/// its heads' own incomplete coverage.
+fn incomplete_head(
+    coverage: &buzz_core::project_work_fold::WorkProjection,
+) -> Option<IncompleteCoverage> {
+    coverage
+        .declarations
+        .iter()
+        .find(|declaration| !declaration.criteria.is_empty() && !declaration.coverage_complete)
+        .map(|declaration| IncompleteCoverage {
+            work_id: declaration.work_id.clone(),
+            coverage_reason: declaration
+                .coverage_reason
+                .clone()
+                .unwrap_or_else(|| "coverage is incomplete".to_owned()),
+            criteria: declaration
+                .criteria
+                .iter()
+                .filter(|criterion| {
+                    criterion.status != buzz_core::project_work_fold::WorkCriterionStatus::Covered
+                })
+                .map(|criterion| {
+                    format!(
+                        "{} is {}{}",
+                        criterion.criterion_id,
+                        criterion.status.as_str(),
+                        criterion
+                            .reason_code
+                            .map(|code| format!(" ({})", code.as_str()))
+                            .unwrap_or_default()
+                    )
+                })
+                .collect(),
+        })
+}
+
 #[cfg(test)]
 #[path = "operations_completion_tests.rs"]
 mod tests;

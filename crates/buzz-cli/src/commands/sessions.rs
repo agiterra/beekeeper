@@ -109,6 +109,9 @@ mod seat_authority;
 #[cfg(test)]
 mod seat_authority_tests;
 pub mod whoami;
+// Lane 201: NIP-PW work records — adopt a committed plan, bind assignments
+// and evidence to its criteria, and read what remains.
+pub mod work;
 // L11: what a session's git worktrees hold, and what may be removed.
 pub mod worktree;
 
@@ -2970,6 +2973,7 @@ pub async fn dispatch(
             )
             .await
         }
+        SessionsCmd::Work(sub) => work::dispatch(sub, client, format).await,
         SessionsCmd::Whoami => whoami::cmd_whoami(client, format).await,
         // Also reached before any key is required, in `run()`: the
         // vocabulary is compiled in, so `explain` needs no relay.

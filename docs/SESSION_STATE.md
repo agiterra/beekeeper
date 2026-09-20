@@ -16626,6 +16626,59 @@ removed from here.
      strings in `codingSessionCommand.test.mjs` and
      `codingSessionHireDisclosure.test.mjs`; 33/33 green.
 
+201. **The coverage fold's input had no assembler, so every reader would have
+     written its own — and `bee sessions work` did not exist** (Wave 2 lane
+     W2, `work/lane-201-work-cli`). The fold reads no events but the 44249
+     records (`conformance/project-work/README.md` § (c)); turning fetched
+     events into its input — decoding 44244 reports and dispositions, pairing
+     a 46023 host result with the relay's 46014 echo *and* the 46013 request
+     that names the definition hash it was bound to, keeping only
+     relay-signed 30618 ref state, picking the newest 44227 goal — is real
+     work that the CLI, the desktop (W5) and the provider (W3b) must do
+     **identically**. Two assemblers is two places to decide what counts as
+     an approving disposition.
+     `crates/buzz-core/src/project_work_inputs.rs` is the one:
+     `assemble_fold_inputs(raw: RawWorkInputs) -> Result<WorkFoldInputs,
+     AssembleRefusal>`, pure, no I/O, no clock, each input's provenance
+     documented on its field. Only a set with **no founder** is refused
+     (`founder_unknown` / `founder_malformed`): with none, every record would
+     be excluded `signer_not_may_lead` and the projection would read as
+     "nobody did anything". Everything else unusable is left out, and the
+     fold says `unknown` with a reason. Two facts it refuses to guess: an
+     absent `exitCode` is not a zero, and an unread `dirtyBefore` is not a
+     clean tree. Tests rebuild all 13 frozen sequences' `inputs.json` from a
+     raw event set and assert `fold_work(assemble(raw)) ==
+     expected-fold.json`, under permutation
+     (`project_work_inputs_tests.rs`).
+     The CLI is `bee sessions work validate|adopt|bind|status`
+     (`crates/buzz-cli/src/commands/sessions/work.rs`). **Adoption is
+     atomic**: the blob at the commit, every action compiled from
+     `actions.yml` at that same commit, the `30617` agents-repository
+     coordinate and the session's current goal all resolve before anything is
+     signed, and a failed compile publishes nothing — counted against a stub
+     wire, not asserted (`a_failing_action_compile_signs_nothing`). A commit
+     no remote-tracking branch contains and the relay's 30618 does not reach
+     is refused `commit-not-published`, naming both checks. Adopt and both
+     binds are idempotent on retry (match on workId + planRef + supersedes,
+     and on the whole binding body). `status` runs the command's own read →
+     assemble → fold path and reproduces every frozen sequence exactly; with
+     no `--agents-repo` the criteria read `unknown` with
+     `plan_blob_unavailable`, never `open`; a p-gated read is an error naming
+     the read. `sessions complete` now refuses a terminal over an incomplete
+     head declaration, listing each criterion and its reason, unless
+     `--without-coverage "<reason>"` is given — and that reason is **not**
+     written into the closed 44244 body: the command says so and sends the
+     operator to Pulse. A session with no declaration completes exactly as it
+     did. No extra record is published after a completion; the README makes
+     `completionRef` a field of `work.evidence_bound`, not a second write.
+     Contract defects found, none worked around: § (d)'s flag spellings
+     (`--session`, `--plan-repo`, `--criterion`, `--plans-from`) omit the
+     channel a 44249 needs for its `h` gate and the genesis and project its
+     envelope carries, and name no `--responsible`; the brief's spellings
+     (`--channel`, `--session-ref`, `--criteria a,b`, `--agents-repo`) are
+     what landed, with `--session`, `--work` and `--plans-from` kept as
+     aliases and `--responsible` defaulting to the caller.
+
 204. **Lane 186 taught the relay to echo `projectRef` onto the kind:40099
      authority acceptance receipt and did not teach the CLI's strict reader
      the key, so from that landing every team session a project owner founds
@@ -16728,6 +16781,7 @@ removed from here.
      - **Owed.** The relay's own emission is unchanged, so nothing needs
        redeploying; a re-run of a team hire on an installed build carrying
        this fix is the proof that `created_ungranted` is gone.
+
 
 ## 3a. Environment facts that cost real time (do not rediscover)
 

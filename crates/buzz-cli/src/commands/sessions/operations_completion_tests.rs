@@ -214,3 +214,121 @@ fn the_pending_message_reads_as_prose() {
     assert!(!COMPLETION_PENDING_MESSAGE.contains('\n'));
     assert!(COMPLETION_PENDING_MESSAGE.contains("no further turn from anybody"));
 }
+
+// ── Coverage before a terminal (lane 201) ──────────────────────────────────
+
+use buzz_core::project_work_fold::{
+    WorkCoverageReasonCode, WorkCriterionProjection, WorkCriterionStatus,
+    WorkDeclarationProjection, WorkDeclarationState, WorkProjection, WorkReasonCode,
+};
+
+fn criterion(id: &str, status: WorkCriterionStatus) -> WorkCriterionProjection {
+    WorkCriterionProjection {
+        criterion_id: id.to_owned(),
+        proof: None,
+        status,
+        assignment_refs: Vec::new(),
+        evidence: Vec::new(),
+        artifact_commit: None,
+        reason_code: (status != WorkCriterionStatus::Covered)
+            .then_some(WorkReasonCode::EvidenceUnavailable),
+        reason: None,
+    }
+}
+
+fn projection(
+    state: WorkDeclarationState,
+    criteria: Vec<WorkCriterionProjection>,
+    complete: bool,
+) -> WorkProjection {
+    WorkProjection {
+        schema: "buzz-project-work-coverage/v1".to_owned(),
+        session_ref: SESSION.to_owned(),
+        project_ref: "30621:1e:kettle".to_owned(),
+        declarations: vec![WorkDeclarationProjection {
+            work_id: "9d0f0f0f-1111-4222-8333-444444444444".to_owned(),
+            declaration_ref: "1a".repeat(32),
+            plan_ref: buzz_core::project_work::ProjectWorkPlanRef {
+                repository: "30617:1e:kettle-beekeeper-agents".to_owned(),
+                commit: "ab".repeat(20),
+                path: "plans/kettle.md".to_owned(),
+            },
+            state,
+            supersedes: Vec::new(),
+            superseded_by: Vec::new(),
+            state_reason_code: None,
+            state_reason: None,
+            plan_resolved: true,
+            candidate_artifact: None,
+            artifact_commits: Vec::new(),
+            criteria,
+            coverage_complete: complete,
+            coverage_reason_code: (!complete).then_some(WorkCoverageReasonCode::CriteriaNotCovered),
+            coverage_reason: (!complete).then(|| "1 of 2 criteria are not covered".to_owned()),
+        }],
+        excluded: Vec::new(),
+        conflicts: Vec::new(),
+    }
+}
+
+/// A session with **no declaration** has no contract to measure against: the
+/// gate finds nothing incomplete and every pre-NIP-PW session completes
+/// exactly as it did.
+#[test]
+fn a_session_with_no_declaration_is_unchanged() {
+    let empty = WorkProjection {
+        schema: "buzz-project-work-coverage/v1".to_owned(),
+        session_ref: SESSION.to_owned(),
+        project_ref: String::new(),
+        declarations: Vec::new(),
+        excluded: Vec::new(),
+        conflicts: Vec::new(),
+    };
+    assert!(incomplete_head(&empty).is_none());
+}
+
+/// A fully covered head blocks nothing.
+#[test]
+fn a_covered_head_blocks_nothing() {
+    let covered = projection(
+        WorkDeclarationState::Head,
+        vec![criterion("cli-behaviour", WorkCriterionStatus::Covered)],
+        true,
+    );
+    assert!(incomplete_head(&covered).is_none());
+}
+
+/// An open, stale or unknown criterion is named in the refusal, with its
+/// reason — the operator must not have to go and ask what is missing.
+#[test]
+fn an_incomplete_head_names_every_criterion_and_its_reason() {
+    for status in [
+        WorkCriterionStatus::Open,
+        WorkCriterionStatus::Stale,
+        WorkCriterionStatus::Unknown,
+    ] {
+        let incomplete = projection(
+            WorkDeclarationState::Head,
+            vec![
+                criterion("cli-behaviour", WorkCriterionStatus::Covered),
+                criterion("usage-documentation", status),
+            ],
+            false,
+        );
+        let open = incomplete_head(&incomplete).expect("incomplete");
+        assert_eq!(open.criteria.len(), 1, "only the uncovered one is listed");
+        let line = &open.criteria[0];
+        assert!(line.contains("usage-documentation"), "{line}");
+        assert!(line.contains(status.as_str()), "{line}");
+        assert!(line.contains("evidence_unavailable"), "{line}");
+        assert!(open.coverage_reason.contains("not covered"));
+    }
+}
+
+/// A superseded declaration carries no criteria, and never blocks a
+/// completion by itself: only a current contract can.
+#[test]
+fn a_superseded_declaration_never_blocks_a_completion() {
+    let superseded = projection(WorkDeclarationState::Superseded, Vec::new(), false);
+    assert!(incomplete_head(&superseded).is_none());
+}

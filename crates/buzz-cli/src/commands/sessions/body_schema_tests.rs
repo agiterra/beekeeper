@@ -252,6 +252,9 @@ fn an_absent_envelope_flag_is_named_before_any_relay_read() {
         wake_to: None,
         example: None,
         verifies: None,
+        // Lane 201: the completion coverage gate's two flags.
+        without_coverage: None,
+        agents_repo: None,
     };
     let error = require_envelope("assign", &args).expect_err("an absent --channel is refused");
     assert!(error.to_string().contains("--channel is required"));
@@ -269,6 +272,9 @@ fn a_complete_envelope_passes() {
         wake_to: None,
         example: None,
         verifies: None,
+        // Lane 201: the completion coverage gate's two flags.
+        without_coverage: None,
+        agents_repo: None,
     };
     assert!(require_envelope("assign", &args).is_ok());
 }

@@ -87,6 +87,17 @@ pub async fn cmd_write(
 ) -> Result<(), CliError> {
     let body_value = read_json_argument(&args.body)?;
     let body = decode_body(transaction_type, body_value)?;
+    // Lane 201 (NIP-PW): a completion is checked against the session's adopted
+    // plan before it is signed. A session with no declaration is unaffected.
+    completion::refuse_incomplete_coverage(
+        client,
+        transaction_type,
+        &args.channel,
+        &args.session_ref,
+        args.agents_repo.as_deref(),
+        args.without_coverage.as_deref(),
+    )
+    .await?;
     publish_operation(
         client,
         PublishOperation {

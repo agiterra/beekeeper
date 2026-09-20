@@ -3002,3 +3002,59 @@ as at the relay's gate), and, when the 64-record page was full,
    `announcement`, and `rule_records_read: 0`.
 5. A kind-5 tombstone naming a record's coordinate
    (`30625:<author>:<owner-hex>:<repo-id>`) retires that founder's rows.
+
+### 6.19 Project work: adopt, bind, status (`bee sessions work`, kind 44249)
+
+Lane 201. Contract: `conformance/project-work/README.md` § (d), NIP-PW.
+Offline first — these two need no identity and no relay at all:
+
+```bash
+bee sessions work adopt --example              # a complete work.declared
+bee sessions work bind evidence --example      # a complete work.evidence_bound
+bee sessions work validate --plan plans/kettle.md \
+  --agents-repo ~/src/<slug>-beekeeper-agents --commit <sha>
+```
+
+`validate` with `--commit` reads `git show <commit>:<path>`; **without**
+`--commit` it reads the working file and says `"uncommitted": true` with the
+sentence that it cannot be adopted. A plan whose `action` criterion does not
+resolve in `actions.yml` at that commit is still `"valid": true` — a missing
+action blocks *adoption*, not drafting — with `"adoptable": false` and the
+reason under `unresolvedActions`.
+
+Live, in a session you lead:
+
+```bash
+bee sessions work adopt --plan plans/kettle.md --commit <full sha> \
+  --agents-repo <dir> --channel <uuid> --session-ref <uuid>
+bee sessions work bind assignment --declaration <id> --criteria cli-behaviour \
+  --assignment <44244 assignment id> --channel <uuid> --session-ref <uuid>
+bee sessions work bind evidence --declaration <id> --criteria cli-behaviour \
+  --artifact <40-hex> --evidence verdict:<id> --channel <uuid> --session-ref <uuid>
+bee --format compact sessions work status --channel <uuid> --session-ref <uuid> \
+  --agents-repo <dir>
+```
+
+**What to check by hand:**
+
+1. **Atomicity.** Adopt a plan whose `action` criterion names an action
+   `actions.yml` does not define: exit 1, the compile error, and
+   `bee sessions work status` shows **no** new declaration.
+2. **Push before adopt.** A commit that exists only locally is refused
+   `commit-not-published`, and the refusal names both checks it made
+   (`git branch -r --contains`, and the relay's 30618 for that repository).
+3. **Idempotence.** Re-run the same `adopt` and the same `bind` verbatim:
+   each answers `"republished": false` and publishes nothing.
+4. **Two rows, never merged.** `status` prints `coverage` and `mission` as
+   siblings. A terminal mission over incomplete coverage must read as exactly
+   that — it is the disclosure, not a reconciliation.
+5. **Without `--agents-repo`**, every criterion reads `unknown` with
+   `plan_blob_unavailable` under `reads.unresolvedPlans` — never `open`.
+6. **A failed read is an error.** Point `--channel` at a channel you are not a
+   member of: the command exits non-zero naming the read, never an empty
+   projection.
+7. **Coverage before a terminal.** With a head declaration whose criteria are
+   not all covered, `bee sessions complete` refuses and lists each criterion
+   with its reason; `--without-coverage "<reason>"` publishes and prints that
+   the reason is **not** on the wire and must be recorded in Pulse. A session
+   with no declaration completes exactly as before.
