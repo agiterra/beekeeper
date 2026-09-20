@@ -16679,6 +16679,142 @@ removed from here.
      what landed, with `--session`, `--work` and `--plans-from` kept as
      aliases and `--responsible` defaulting to the caller.
 
+202. **Whether a panel was open no longer decides anything, and a wake that
+     races the checkout no longer costs an assignment: the party holding the
+     turn gate now owns `accept → establish → verify → start` (2026-09-20,
+     lane W3a, branch `work/lane-202-provider-preparation`, base
+     `dec62fbb0`).** Closes the two gaps item 185 left open in its own "owed,
+     live" paragraph. 185 made establishment durable but built the queue in
+     the **desktop**, which holds no governed kind-44244 subscription — the
+     first sighting still came from a mounted surface — and ordered nothing
+     against the assignee's wake, so an early wake hit the 133 fence, which
+     consumes the delivery and costs a re-issued assignment and a model turn.
+     178(d) is what that cost once: assignment `0ceddfb2…` named
+     `baseSha: e682191`, the verifier's tree stayed on the README commit, and
+     the seat tested a scratch archive by hand.
+     - (a) **The queue and the checkout moved into the provider, unchanged in
+       substance.** `crates/buzz-session-provider/src/assignment_inputs.rs`
+       (new, 1,454 lines) holds the intent record, the serial drain
+       (`drain_pending_assignment_inputs`, factored over a new
+       `drain_one_assignment_input`), the started-attempt count persisted
+       *before* the git work, terminal outcomes that are never retried, one
+       replay of an interrupted attempt and then `establish_abandoned`, the
+       nine refusal codes with their words pinned against serde, the remote
+       ladder that never names a constant, and a dirty tree preserved and
+       refused. The seat's tree is now an **input** (`SeatCheckout`) the
+       caller resolves — the desktop from the `worktrees` map it wrote when it
+       cut the tree, the provider from the session record it is about to open
+       a turn against — so neither party searches the disk. `seatLabel`
+       became optional in `resolve_request` for that reason: the provider has
+       no label to offer and says `null` rather than inventing one.
+     - (b) **One store, one lock, two processes.** `AssignmentInputDocument`
+       models only `assignmentInputs` and carries every other key of
+       `coding-session-workdirs.json` through `#[serde(flatten)] rest`
+       verbatim, so the sidecar cannot clobber a key it does not understand.
+       It never *creates* the file: a missing store is refused
+       `unrecorded_tree`, because inventing the desktop's schema version and
+       defaults would be a guess. `lock_store_file` is the single
+       implementation of the `O_NOFOLLOW` / `0600` / `flock` protocol and
+       `desktop/src-tauri/src/coding_sessions/workdir_store_lock.rs` now calls
+       it. Proof, not assertion:
+       `two_writers_serialise_and_neither_clobbers_the_others_keys` runs eight
+       writers — four through this module, four writing the whole desktop
+       document — and every write of both survives; and
+       `a_second_process_waits_for_the_lock_and_keeps_what_it_finds` spawns a
+       **real second process** (`current_exe` re-running one named test),
+       asserts it is still blocked 400 ms in, and asserts it read the first
+       process's write, which is what serialisation means.
+       `establish_recorded_assignment` holds the lock only around the two
+       writes; the git work, which may fetch, runs outside it, so a person's
+       UI never waits on somebody else's network.
+     - (c) **How the provider finds the file.** It cannot be derived: the
+       store lives in the app's *config* directory and the provider's state
+       directory hangs off the app's *data* directory, which are one folder on
+       macOS and Windows and two on Linux. So the host says it — every
+       `projects.json` materialization now writes `host-workdir-store.json`
+       beside it (`HostStorePointer`, version 1, absolute path), and a
+       provider that finds no pointer, or a version it does not know,
+       establishes nothing and logs why rather than guessing a path.
+     - (d) **Ordering, and the deferral.** `Provider::prepare_assignment_input`
+       runs inside `verification_input_outcome`, *after* the assignment has
+       been proven canonical and bound to this actor, role and command
+       (`turn_input_requirement`) and *before* the fence — so a raw,
+       ungoverned 44244 still moves no tree. Three answers: `Ready` falls
+       through to the fence, which measures the tree itself as it always did;
+       `Blocked` refuses; and `Deferred` is the new `TurnInput::Deferred`,
+       handled beside `Undecided` in `apply_turn_decision` — nothing
+       published, nothing consumed, the same `commandId` still deliverable, so
+       an early wake is *held*, not spent. Establishment is awaited under a
+       120 s bound (`ASSIGNMENT_INPUT_ESTABLISH_BOUND`); past it the record
+       still says `establishing`, the work carries on, and the next delivery
+       decides against whatever it settled as.
+     - (e) **The blocker, and why it is a receipt rather than a host-answer
+       command.** A failed, abandoned or dirty establishment refuses with
+       `VERIFICATION_INPUT_NOT_ESTABLISHED` carrying git's own words, bounded
+       to 512 bytes and stripped of control characters
+       (`verification_input::establishment_blocked`, `bounded_git_words`), and
+       the seat is **not** started. It rides the existing turn-refused receipt
+       — which opens no model turn for anyone and is already fenced against
+       being said twice under one command id — rather than a lane-181 tagged
+       host-answer command, because the relay's envelope validator admits
+       exactly one host-answer tag value, `hire`
+       (`crates/buzz-relay/src/handlers/ingest.rs:3200`), and a second value
+       would be refused at ingest while reusing `hire` would be a lie. Once
+       per *assignment* is enforced durably by `blockerPublished` on the
+       record, claimed by `claim_establishment_blocker`; `requeue` clears it,
+       because a person asking again is a new question.
+     - (f) **The desktop became an adapter and a display.** No handler
+       registration was added or removed (plan § 8 A1.2). It no longer drains:
+       a drain there would be a second scheduler over one record set, racing
+       the party that decides whether the turn may open.
+       `coding_session_observe_assignment_inputs` records intents,
+       `coding_session_requeue_assignment_input` re-queues one,
+       `coding_session_resume_assignment_inputs` and
+       `resume_assignment_inputs_at_launch` keep their names and say what is
+       still owed instead of doing it. `assignment_input.rs` 865 → 183 and its
+       tests 867 → 291; `workdir_store.rs` was at 999/1000, so the **first**
+       commit moved the seat-worktree records and the finding-60 hint
+       migration out to `workdir_store_worktrees.rs` (pure move, 999 → 846);
+       the ratchet was not touched.
+     - (g) **Functions touched in the provider's 21k-line `lib.rs`**, by name:
+       `apply_turn_decision` (the new `Deferred` arm), `process_team_wake_for`
+       (one call, after the verified snapshot), `verification_input_outcome`
+       (the preparation step), and four new ones —
+       `queue_assignment_inputs_from_snapshot`,
+       `seat_checkout_for_assignment`, `prepare_assignment_input`,
+       `block_on_establishment` — plus the `AssignmentInputPreparation` enum,
+       the bound constant and one `mod` line. Nothing else in that file
+       changed, and `state.rs` needed no field: the durable in-flight marker
+       is the record's own `establishing` outcome.
+     - (h) **Tests.** 24 in `assignment_inputs_tests.rs` against real
+       repositories in temp directories (never a worktree of this repo):
+       established and measured by git, already-current, dirty preserved and
+       never retried, interruption replayed once then abandoned, a commit
+       absent from the clone fetched from the resolved remote, a commit no
+       remote has refused `unknown_commit` by name, `no_remote`,
+       `ambiguous_remote`, `fetch_failed`, `buzz.wipRemote` as the ladder's
+       first rung under a remote **not** called origin, unsafe branch names,
+       off-host, invalid, unnamed, requeue, the pinned words, foreign-key
+       preservation, and the two lock proofs. Six more in
+       `src/tests/verification_input_tests.rs` drive
+       `prepare_assignment_input` directly: a wake that races the checkout is
+       established and opens, a duplicate delivery costs one establishment,
+       restart mid-checkout replays once and then blocks with git's words and
+       exactly one claimed blocker, a dirty seat is preserved and blocked
+       twice but told about once, no pointer is a no-op, and an unnamed commit
+       or a detached checkout records nothing. Desktop: 12 adapter cases
+       across the two rewritten test files. Gates green bare on `988b5f979`:
+       workspace fmt and `clippy --workspace --all-targets -D warnings`;
+       `cargo test -p buzz-session-provider` 920 passed; Tauri fmt, clippy and
+       `cargo test` 3,463 passed; `just desktop-check`; `pnpm test` 9,735
+       passed; `just file-size-check`; `just current-state-check`.
+     - (i) **Owed, live.** Nothing here has run against a live seat. The Wave 3
+       control run is the proof this lane exists for: a verifier assignment
+       whose Mission panel is **never opened**, and a wake sent *before* the
+       checkout — the first must establish and open once, the second must
+       defer and then open once. Also unproven live: the pointer file reaching
+       a real sidecar, and the 120 s bound under a slow fetch.
+
 203. **The Actions tab was blind because it asked about no channel, mission
      settlement stopped at the Tauri boundary, and there was no surface for
      work coverage at all (2026-09-20, lane W5/203; Wave 2 of
