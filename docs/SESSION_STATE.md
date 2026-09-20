@@ -15732,16 +15732,30 @@ removed from here.
      `["buzz-host-answer","hire"]` and taught the relay's ingest allowlist
      (`validate_coding_session_command_envelope`,
      `crates/buzz-relay/src/handlers/ingest.rs:3141`) to accept exactly that
-     tag. But hive.agiterra.org was still running the 2026-09-18 image
-     (`71efd0da1`), whose copy of that function ends its match arm
+     tag. An older relay's copy of that function ends its match arm
      `_ => return Err("unsupported coding-session command tag")`
-     (`ingest.rs:3195`) — it refuses any tag it does not recognize. So on the
-     installed desktop, every host hire refusal published against hive was
-     rejected at ingest (`invalid: unsupported coding-session command tag`),
-     the requesting lead's `bee sessions hire` never saw an answer, and it
-     waited out its 120s window and reported `unconfirmed` — exactly ledger
-     169's failure, reopened by 181's own fix. A desktop must work against a
-     relay one release behind.
+     (`ingest.rs:3195`) — it refuses any tag it does not recognize, so against
+     such a relay every host hire refusal is rejected at ingest
+     (`invalid: unsupported coding-session command tag`), the requesting
+     lead's `bee sessions hire` never sees an answer, and it waits out its
+     120s window and reports `unconfirmed` — exactly ledger 169's failure,
+     reopened by 181's own fix. A desktop must work against a relay one
+     release behind.
+     - ~~**Struck 2026-09-20 by the Wave 0 finalizer: "hive.agiterra.org was
+       still running the 2026-09-18 image (`71efd0da1`)".**~~ That was the
+       orchestrator's error, read off a stale `CURRENT_STATE.md` row. hive
+       deploys *itself* from a green CI pipeline within about 25 minutes of a
+       push ([`INTEGRATION.md`](INTEGRATION.md) § Deploying), so it was
+       never parked on a 2026-09-18 image. Measured NIP-11 `build_time` on
+       2026-09-20: `2026-09-20T14:51:23Z` (the deploy of `79d87f4cd`, which
+       carries lane 181), then `2026-09-20T18:13:42Z` (the deploy of
+       `084880966`). The real exposure window for tagged refusals was
+       therefore roughly 14:40Z–14:51Z on 2026-09-20 — the minutes between the
+       desktop change reaching an installed build and hive's own deploy of
+       181 — not a standing outage. The fallback is kept as protection for a
+       desktop that is **ahead of its relay**, which is the normal state for
+       ~25 minutes after any relay-touching landing, not as a fix for a relay
+       that is stuck.
      - **Fix.** `publishCodingSessionHostAnswerTurn`
        (`desktop/src/features/coding-sessions/lib/codingSessionHireDisclosure.ts:125`),
        called from `discloseCodingSessionHire` (`:80`), publishes the tagged
