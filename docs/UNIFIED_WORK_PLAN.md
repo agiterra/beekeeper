@@ -15,8 +15,9 @@ Brian states a goal once; the lead adopts a committed plan file as the
 contract; software prepares, briefs, verifies the exact artifact, observes
 delivery and settles completion; and the project can say what remains, who owes
 it and what proves it — with **zero unplanned human repairs** on a
-kettle-sized task and under 60 minutes goal to terminal record (today: 5 h 31 m,
-~35 min of team work, six repairs; ledger 178(o)).
+kettle-sized task and under 60 minutes goal to terminal record (today: 5 h 34 m
+goal→terminal, ~35 min of team work, six operator-counted repairs — 7
+founder-signed non-host-answer commands on the wire; ledger 178(o), 178(r)).
 
 ## 2. Decisions taken (do not reopen without new evidence)
 

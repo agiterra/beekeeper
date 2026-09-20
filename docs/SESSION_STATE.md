@@ -14568,8 +14568,11 @@ removed from here.
        both assignments' report, disposition and acknowledgement chains
        complete. Ruling `a009c234…` remains formally unanswered; it names no
        blocked assignment, so it did not gate completion. Wall clock from
-       goal to terminal record 5 h 31 m, of which the team's own work was
-       about 35 minutes; the rest was six human repairs and one fix batch.
+       goal to terminal record ~~5 h 31 m~~ **20,042 s (5 h 34 m); the
+       5 h 31 m was first-turn→terminal, see 178(r)**, of which the team's own
+       work was about 35 minutes; the rest was six human repairs (an operator
+       count; the wire shows 7 founder-signed non-host-answer commands, 178(r))
+       and one fix batch.
      - (p) **178(j), (k) and (n) are fixed and landed 2026-09-20 in
        `084880966` (lanes 189, 190, 191; all twelve gates bare exit 0).**
        (j): `buzz-ws-client` restarted its idle timer on every frame and the
@@ -14595,6 +14598,16 @@ removed from here.
        (exit 0), where it 404'd before. So (k) is closed: 190 is live, not
        merely landed. The same read shows `definition_hash: null` on that
        pre-binding run — lane 193's disclosed non-answer, not a failure.
+     - (r) **Two numbers this item reported are corrected (2026-09-20,
+       source: ledger 197, `bee sessions measure` over the same relay
+       events).** Goal→terminal on the kettle run is **20,042 s (5 h 34 m)**
+       measured from the goal event, and 19,898 s from the first turn; the
+       earlier "5 h 31 m" was first-turn→terminal, so it is struck as a
+       goal→terminal figure and kept as a first-turn one. And "six human
+       repairs" is an **operator count**, not a wire number: the wire shows
+       **7 founder-signed non-host-answer commands**. Both corrections are
+       what the measurement tool exists to prevent — numbers reported by a
+       model reading transcripts rather than by a command.
 
 179. **Andy's eight-seat run finished the game and never finished its own
      protocol; almost half its turns were disposition bookkeeping
