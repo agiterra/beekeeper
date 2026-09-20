@@ -114,11 +114,20 @@ pub mod private_managed_agent;
 /// Project Pulse entries (44240): the explicit coordination claim contract.
 pub mod project_agent_association;
 pub mod project_pack_source;
+/// NIP-PW: the `beekeeper-plan/v1` plan file — the committed statement of
+/// what success means, parsed from bytes with no I/O and no clock.
+pub mod project_plan;
 /// Project to-do ops (44248): the wire contract of one field-level edit.
 pub mod project_todo;
 /// Pure project to-do fold shared by every adapter, pinned by
 /// `conformance/project-todo-fold/`.
 pub mod project_todo_fold;
+/// NIP-PW: the closed kind:44249 work-record envelope — a lead's adoption of
+/// a plan, and the assignments and evidence bound to its criteria.
+pub mod project_work;
+/// NIP-PW: the pure, order-independent coverage fold over a session's work
+/// records — what remains, who owes it and what proves it.
+pub mod project_work_fold;
 pub mod pulse;
 /// Declared work in Project Pulse: assignments, their evidence, and the one
 /// word the canonical fold settles them with.
