@@ -30,33 +30,6 @@
     }
   },
   "evidence": {},
-  "refStates": [
-    {
-      "id": "0b51000000000000000000000000000000000000000000000000000000000000",
-      "pubkey": "4e1a000000000000000000000000000000000000000000000000000000000000",
-      "created_at": 1789000050,
-      "kind": 30618,
-      "tags": [
-        ["d", "pivot-test"],
-        ["refs/heads/main", "e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7"],
-        ["HEAD", "ref: refs/heads/main"],
-        ["p", "1ead000000000000000000000000000000000000000000000000000000000000"]
-      ],
-      "content": ""
-    },
-    {
-      "id": "0b52000000000000000000000000000000000000000000000000000000000000",
-      "pubkey": "4e1a000000000000000000000000000000000000000000000000000000000000",
-      "created_at": 1789000095,
-      "kind": 30618,
-      "tags": [
-        ["d", "pivot-test"],
-        ["refs/heads/main", "3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a"],
-        ["HEAD", "ref: refs/heads/main"],
-        ["p", "1ead000000000000000000000000000000000000000000000000000000000000"]
-      ],
-      "content": ""
-    }
-  ],
-  "note": "The bound 30618 named the artifact commit when it was signed; a newer relay-signed 30618 now names a different commit on refs/heads/main. Delivery is judged at evaluation time."
+  "refStates": [],
+  "note": "goalRef names the authorizing decision instead of the session's goal. Both are 64-hex, so the envelope accepts it: the refusal belongs to the fold, which is the only layer holding the session's goal set. The remedy is goalRef = the goal, decisionRef = the decision."
 }

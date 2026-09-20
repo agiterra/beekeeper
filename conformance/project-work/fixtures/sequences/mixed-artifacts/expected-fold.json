@@ -17,8 +17,10 @@
       "stateReasonCode": null,
       "stateReason": null,
       "planResolved": true,
-      "candidateArtifact": "e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7",
+      "candidateArtifact": "c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5",
       "artifactCommits": [
+        "b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4",
+        "c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5",
         "e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7"
       ],
       "criteria": [
@@ -108,7 +110,7 @@
               "eventId": "bed2000000000000000000000000000000000000000000000000000000000000"
             }
           ],
-          "artifactCommit": "e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7",
+          "artifactCommit": "b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4",
           "reasonCode": null,
           "reason": null
         },
@@ -124,25 +126,19 @@
           "evidence": [
             {
               "kind": "ref_observation",
-              "eventId": "0b51000000000000000000000000000000000000000000000000000000000000"
+              "eventId": "0b52000000000000000000000000000000000000000000000000000000000000"
             }
           ],
-          "artifactCommit": "e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7",
+          "artifactCommit": "c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5",
           "reasonCode": null,
           "reason": null
         }
       ],
-      "coverageComplete": true,
-      "coverageReasonCode": null,
-      "coverageReason": null
+      "coverageComplete": false,
+      "coverageReasonCode": "mixed_artifacts",
+      "coverageReason": "every criterion is covered, but at three different artifact commits (b4b4b4b4b4b4…, c5c5c5c5c5c5…, e7e7e7e7e7e7…); the candidate is c5c5c5c5c5c5… from the git-ref evidence, and nothing proves the delivered commit"
     }
   ],
-  "excluded": [
-    {
-      "eventId": "b1d9000000000000000000000000000000000000000000000000000000000000",
-      "code": "signer_not_may_lead",
-      "message": "b0110000… is neither the founder, nor an active lead seat, nor the holder of an active may_steer grant"
-    }
-  ],
+  "excluded": [],
   "conflicts": []
 }

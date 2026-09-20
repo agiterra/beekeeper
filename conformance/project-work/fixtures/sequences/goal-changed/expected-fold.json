@@ -14,8 +14,11 @@
       "state": "stale",
       "supersedes": [],
       "supersededBy": [],
+      "stateReasonCode": "goal_changed",
       "stateReason": "adopted against goal 90a10000…; the session's current goal is 90a20000…. The contract stays pinned until the lead adopts an amendment",
       "planResolved": true,
+      "candidateArtifact": null,
+      "artifactCommits": [],
       "criteria": [
         {
           "criterionId": "cli-behaviour",
@@ -26,6 +29,7 @@
           "assignmentRefs": [],
           "evidence": [],
           "artifactCommit": null,
+          "reasonCode": null,
           "reason": null
         },
         {
@@ -37,6 +41,7 @@
           "assignmentRefs": [],
           "evidence": [],
           "artifactCommit": null,
+          "reasonCode": null,
           "reason": null
         },
         {
@@ -50,6 +55,7 @@
           "assignmentRefs": [],
           "evidence": [],
           "artifactCommit": null,
+          "reasonCode": null,
           "reason": null
         },
         {
@@ -61,6 +67,7 @@
           "assignmentRefs": [],
           "evidence": [],
           "artifactCommit": null,
+          "reasonCode": null,
           "reason": null
         },
         {
@@ -72,10 +79,12 @@
           "assignmentRefs": [],
           "evidence": [],
           "artifactCommit": null,
+          "reasonCode": null,
           "reason": null
         }
       ],
       "coverageComplete": false,
+      "coverageReasonCode": "criteria_not_covered",
       "coverageReason": "the declaration is stale against the session's current goal, and all 5 criteria are open"
     }
   ],

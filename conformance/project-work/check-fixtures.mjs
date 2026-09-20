@@ -157,8 +157,17 @@ function checkInvalidPlan(path) {
 }
 
 // -------------------------------------------------------------- work records
+const REASON_CODES = [
+  "evidence_unavailable", "wrong_signer", "wrong_run_or_hash", "action_failed",
+  "dirty_revision", "revision_mismatch", "not_approving",
+  "bound_to_superseded_declaration", "ref_observation_superseded", "plan_unreadable",
+];
+const STATE_REASON_CODES = ["superseded", "conflict", "goal_changed"];
+const COVERAGE_REASON_CODES = ["criteria_not_covered", "mixed_artifacts", "conflict", "superseded"];
+const EXCLUSION_CODES = ["signer_not_may_lead", "goal_ref_not_a_goal"];
+
 const KEYS = {
-  "work.declared": ["workId", "goalRef", "responsibleActor", "planRef", "supersedes"],
+  "work.declared": ["workId", "goalRef", "decisionRef", "responsibleActor", "planRef", "supersedes"],
   "work.assignment_bound": ["declarationRef", "criterionIds", "assignmentRef", "replacesBinding"],
   "work.evidence_bound": ["declarationRef", "criterionIds", "artifactCommit", "evidenceRefs", "completionRef"],
 };
@@ -217,6 +226,7 @@ function checkEvent(event, where) {
   if (p.type === "work.declared") {
     check(UUID.test(body.workId ?? ""), where, "workId is not a uuid");
     check(HEX64.test(body.goalRef ?? ""), where, "goalRef is not 64 hex");
+    check(body.decisionRef === null || HEX64.test(body.decisionRef ?? ""), where, "decisionRef must be null or 64 hex");
     check(HEX64.test(body.responsibleActor ?? ""), where, "responsibleActor is not 64 hex");
     const r = body.planRef ?? {};
     check(Object.keys(r).length === 3, where, "planRef must have exactly repository, commit, path");
@@ -293,9 +303,57 @@ function checkSequences(planCriteria) {
       ids.add(event.id);
     }
     check(times.size === events.length, where, "two events share an id and timestamp");
-    for (const pubkey of inputs.mayLead ?? []) check(HEX64.test(pubkey), where, "a mayLead pubkey is not 64 hex");
+    const auth = inputs.authority ?? {};
+    check(HEX64.test(auth.founderPubkey ?? ""), where, "authority.founderPubkey is not 64 hex");
+    for (const seat of auth.activeSeats ?? []) {
+      check(HEX64.test(seat.actorPubkey ?? ""), where, "an active seat actorPubkey is not 64 hex");
+      check(typeof seat.role === "string" && seat.role.length > 0, where, "an active seat has no role");
+    }
+    for (const g of auth.activeGrants ?? []) {
+      check(HEX64.test(g.actorPubkey ?? ""), where, "a grant actorPubkey is not 64 hex");
+      check(HEX64.test(g.grantEventRef ?? ""), where, "a grant grantEventRef is not 64 hex");
+      check(typeof g.maySteer === "boolean", where, "a grant does not say whether it may steer");
+    }
+    const mayLead = (pubkey) =>
+      pubkey === auth.founderPubkey ||
+      (auth.activeSeats ?? []).some((x) => x.actorPubkey === pubkey && x.role === "lead") ||
+      (auth.activeGrants ?? []).some((x) => x.actorPubkey === pubkey && x.maySteer);
+    for (const [name, def] of Object.entries(inputs.actionDefinitions ?? {})) {
+      check(SLUG.test(name), where, `action name "${name}" is not slug grammar`);
+      check(HEX64.test(def.definitionHash ?? ""), where, `actionDefinitions.${name}.definitionHash is not 64 hex`);
+      check(Array.isArray(def.steps) && def.steps.length > 0 && def.steps.every((x) => SLUG.test(x)), where, `actionDefinitions.${name}.steps is not a list of step slugs`);
+    }
+    for (const [key, fact] of Object.entries(inputs.evidence ?? {})) {
+      check(key === fact.eventId, where, `evidence is keyed ${key} but the fact names ${fact.eventId}`);
+      check(HEX64.test(fact.eventId ?? ""), where, "an evidence fact id is not 64 hex");
+      check(EVIDENCE_KINDS.includes(fact.kind), where, `evidence fact kind "${fact.kind}" is not closed-set`);
+      if (fact.kind === "report") {
+        check(HEX64.test(fact.signer ?? ""), where, "a report fact has no signer");
+        check(HEX64.test(fact.assignmentRef ?? ""), where, "a report fact has no assignmentRef");
+        check(COMMIT.test(fact.headSha ?? ""), where, "a report fact has no 40/64-hex headSha");
+      }
+      if (fact.kind === "verdict") {
+        check(HEX64.test(fact.signer ?? ""), where, "a verdict fact has no signer");
+        check(["disposition", "refutation"].includes(fact.subtype), where, "a verdict fact has no closed subtype");
+        check(typeof fact.decision === "string" && fact.decision.length > 0, where, "a verdict fact has no decision");
+        check(HEX64.test(fact.assignmentRef ?? "") && HEX64.test(fact.reportRef ?? ""), where, "a verdict fact does not name its assignment and report");
+      }
+      if (fact.kind === "action_result") {
+        check(HEX64.test(fact.exitedEventId ?? ""), where, "an action result carries no relay 46014 echo id");
+        check(HEX64.test(fact.resultSigner ?? ""), where, "an action result has no result signer");
+        check(fact.echoSigner === inputs.relaySelfKey, where, "an action result's echo is not signed by the relay self key");
+        check(HEX64.test(fact.definitionHash ?? ""), where, "an action result has no 64-hex definitionHash");
+        check(UUID.test(fact.runId ?? ""), where, "an action result has no run uuid");
+        check(SLUG.test(fact.stepId ?? ""), where, "an action result has no step id");
+        check(Number.isInteger(fact.exitCode), where, "an action result has no integer exit code");
+        check(typeof fact.dirty === "boolean", where, "an action result does not say whether the tree ended dirty");
+        check(COMMIT.test(fact.checkout?.sha ?? ""), where, "an action result's checkout names no commit");
+        check(typeof fact.checkout?.dirtyBefore === "boolean", where, "an action result does not say whether the tree started dirty");
+      }
+    }
     check(HEX64.test(inputs.currentGoalRef ?? ""), where, "inputs.currentGoalRef is not a 64-hex goal event id");
     check(HEX64.test(inputs.relaySelfKey ?? ""), where, "inputs.relaySelfKey is not 64 hex");
+    check(Array.isArray(inputs.goalEvents) && inputs.goalEvents.every((g) => HEX64.test(g)), where, "inputs.goalEvents is not a list of 64-hex goal ids");
     for (const rs of inputs.refStates ?? []) {
       check(rs.kind === KIND_GIT_REPO_STATE, where, `a ref state is kind ${rs.kind}, not ${KIND_GIT_REPO_STATE}`);
       check(rs.pubkey === inputs.relaySelfKey, where, "a ref state is not signed by the relay's self key");
@@ -312,12 +370,32 @@ function checkSequences(planCriteria) {
       check(existsSync(resolve(dir, rel)), where, `plan blob fixture is missing: ${rel}`);
     }
     check(fold.schema === "buzz-project-work-coverage/v1", where, "expected-fold schema is wrong");
-    check(Array.isArray(fold.declarations) && fold.declarations.length > 0, where, "no declarations in expected fold");
+    check(Array.isArray(fold.declarations), where, "declarations is not an array");
+    check(fold.declarations.length > 0 || fold.excluded.length > 0, where, "an expected fold with no declarations must say what it excluded");
     for (const d of fold.declarations) {
       check(ids.has(d.declarationRef), where, `expected fold names declaration ${d.declarationRef} which is not in events.json`);
       check(["head", "superseded", "stale", "conflict"].includes(d.state), where, `unknown declaration state "${d.state}"`);
       check((d.state === "head") === (d.stateReason === null), where, `a ${d.state} declaration must state its reason (and a head must not)`);
+      const covering = d.criteria.filter((c) => c.status === "covered");
+      const commits = [...new Set(covering.map((c) => c.artifactCommit))].sort();
+      check(JSON.stringify(commits) === JSON.stringify([...d.artifactCommits].sort()), where, `artifactCommits ${d.artifactCommits} does not list the covering evidence's commits ${commits}`);
+      if (covering.length > 0) {
+        check(d.candidateArtifact !== null, where, "covered criteria with no candidate artifact");
+        const gitRef = covering.find((c) => c.proof.kind === "git-ref");
+        if (gitRef) check(d.candidateArtifact === gitRef.artifactCommit, where, "the candidate is not the git-ref evidence's commit");
+      }
+      if (commits.length > 1) {
+        check(d.coverageReasonCode === "mixed_artifacts", where, "covering evidence at several commits must read mixed_artifacts");
+        check(d.coverageComplete === false, where, "mixed artifacts cannot be complete coverage");
+      }
       check(typeof d.coverageComplete === "boolean", where, "coverageComplete is not a boolean");
+      check(d.candidateArtifact === null || COMMIT.test(d.candidateArtifact), where, "candidateArtifact is neither null nor a 40/64-hex commit");
+      check(Array.isArray(d.artifactCommits) && d.artifactCommits.every((c) => COMMIT.test(c)), where, "artifactCommits is not a list of commits");
+      check(d.coverageReasonCode === null || COVERAGE_REASON_CODES.includes(d.coverageReasonCode), where, `unknown coverageReasonCode "${d.coverageReasonCode}"`);
+      check((d.coverageReasonCode === null) === (d.coverageReason === null), where, "coverageReasonCode and coverageReason must agree about being absent");
+      check(d.coverageComplete === (d.coverageReasonCode === null), where, "an incomplete declaration must name why, and a complete one must not");
+      check(d.stateReasonCode === null || STATE_REASON_CODES.includes(d.stateReasonCode), where, `unknown stateReasonCode "${d.stateReasonCode}"`);
+      check((d.stateReasonCode === null) === (d.stateReason === null), where, "stateReasonCode and stateReason must agree about being absent");
       check(!("missionTerminal" in d) && !("mission" in fold), where, "coverage output must not carry a mission terminal field: two questions, never merged");
       if (d.state === "head" || d.state === "stale") {
         check(d.criteria.length > 0, where, "a head declaration must project its criteria");
@@ -329,9 +407,41 @@ function checkSequences(planCriteria) {
         check(planCriteria.has(c.criterionId), where, `criterion "${c.criterionId}" is not in the plan fixture`);
         check(["open", "covered", "stale", "unknown"].includes(c.status), where, `unknown criterion status "${c.status}"`);
         check(c.status !== "covered" || c.evidence.length > 0, where, `criterion "${c.criterionId}" is covered with no evidence`);
-        check(c.status !== "open" || c.evidence.length === 0, where, `criterion "${c.criterionId}" is open with ${c.evidence.length} evidence refs`);
-        check((c.status === "open" || c.status === "covered") === (c.reason === null), where, `criterion "${c.criterionId}" is ${c.status}: a reason is required unless it is open or covered`);
-        for (const e of c.evidence) check(EVIDENCE_KINDS.includes(e.kind) && HEX64.test(e.eventId), where, "malformed evidence ref in expected fold");
+        check(c.reasonCode === null || REASON_CODES.includes(c.reasonCode), where, `criterion "${c.criterionId}" has unknown reasonCode "${c.reasonCode}"`);
+        check((c.reasonCode === null) === (c.reason === null), where, `criterion "${c.criterionId}": reasonCode and reason must agree about being absent`);
+        check(c.status !== "covered" || c.reasonCode === null, where, `criterion "${c.criterionId}" is covered and still names a reason`);
+        check(c.status === "covered" || c.evidence.length === 0 || c.reasonCode !== null, where, `criterion "${c.criterionId}" is ${c.status} with evidence and no reason: say which predicate failed`);
+        check(c.status !== "unknown" || c.reasonCode !== null, where, `criterion "${c.criterionId}" is unknown with no reason`);
+        check(c.status !== "covered" || COMMIT.test(c.artifactCommit ?? ""), where, `criterion "${c.criterionId}" is covered with no artifact commit`);
+        for (const e of c.evidence) {
+          check(EVIDENCE_KINDS.includes(e.kind) && HEX64.test(e.eventId), where, "malformed evidence ref in expected fold");
+          const known = e.kind === "ref_observation"
+            ? (inputs.refStates ?? []).some((r) => r.id === e.eventId)
+            : Boolean((inputs.evidence ?? {})[e.eventId]);
+          if (!known) {
+            check(c.status === "unknown" && c.reasonCode === "evidence_unavailable", where,
+              `criterion "${c.criterionId}" names evidence ${e.eventId} that no input supplies, so it must be unknown/evidence_unavailable`);
+          }
+          if (known && e.kind !== "ref_observation") {
+            check((inputs.evidence[e.eventId].kind) === e.kind, where, `evidence ${e.eventId} is bound as ${e.kind} but supplied as ${inputs.evidence[e.eventId].kind}`);
+          }
+          if (known && c.status === "covered" && e.kind === "verdict") {
+            const f = inputs.evidence[e.eventId];
+            check(["approve", "approve-with-notes"].includes(f.decision), where, `criterion "${c.criterionId}" is covered by a ${f.decision} disposition`);
+            check(mayLead(f.signer), where, `criterion "${c.criterionId}" is covered by a verdict from an actor who does not satisfy may_lead`);
+          }
+          if (known && c.status === "covered" && e.kind === "report") {
+            check(inputs.evidence[e.eventId].headSha === c.artifactCommit, where, `criterion "${c.criterionId}" is covered by a report about another revision`);
+          }
+          if (known && c.status === "covered" && e.kind === "action_result") {
+            const f = inputs.evidence[e.eventId];
+            const def = (inputs.actionDefinitions ?? {})[f.actionName];
+            check(Boolean(def) && def.definitionHash === f.definitionHash, where, `criterion "${c.criterionId}" is covered by a run of another definition`);
+            check(Boolean(def) && def.steps.includes(f.stepId), where, `criterion "${c.criterionId}" is covered by a step the definition does not define`);
+            check(f.exitCode === 0 && f.dirty === false && f.checkout.dirtyBefore === false, where, `criterion "${c.criterionId}" is covered by a failed or dirty run`);
+            check(f.checkout.sha === c.artifactCommit, where, `criterion "${c.criterionId}" is covered by a run on another commit`);
+          }
+        }
       }
       if (d.coverageComplete) {
         check(d.state === "head", where, "coverageComplete on a declaration that is not the head");
@@ -341,11 +451,14 @@ function checkSequences(planCriteria) {
     }
     for (const x of fold.excluded ?? []) {
       check(ids.has(x.eventId), where, `excluded event ${x.eventId} is not in events.json`);
-      check(typeof x.code === "string" && x.code.length > 0, where, "an exclusion carries no code");
+      check(EXCLUSION_CODES.includes(x.code), where, `unknown exclusion code "${x.code}"`);
     }
     for (const c of fold.conflicts ?? []) {
       check(Array.isArray(c.heads) && c.heads.length >= 2, where, "a conflict must name at least two heads");
       for (const h of c.heads) check(ids.has(h), where, `conflict head ${h} is not in events.json`);
+      const conflicted = fold.declarations.filter((d) => d.workId === c.workId && d.state === "conflict").map((d) => d.declarationRef).sort();
+      check(JSON.stringify(conflicted) === JSON.stringify([...c.heads].sort()), where,
+        "the conflict's heads must be exactly the declarations projected as conflict: a head is a maximal declaration, not a direct sibling");
     }
   }
 }

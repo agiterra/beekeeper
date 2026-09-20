@@ -1,0 +1,57 @@
+{
+  "schema": "buzz-project-work-coverage/v1",
+  "sessionRef": "11111111-2222-4333-8444-555555555555",
+  "projectRef": "30621:1ead000000000000000000000000000000000000000000000000000000000000:kettle",
+  "declarations": [
+    {
+      "workId": "9d0f0f0f-1111-4222-8333-444444444444",
+      "declarationRef": "dec1000000000000000000000000000000000000000000000000000000000000",
+      "planRef": {
+        "repository": "30617:1ead000000000000000000000000000000000000000000000000000000000000:pivot-test-beekeeper-agents",
+        "commit": "abababababababababababababababababababab",
+        "path": "plans/kettle.md"
+      },
+      "state": "conflict",
+      "supersedes": [],
+      "supersededBy": [],
+      "stateReasonCode": "conflict",
+      "stateReason": "2 maximal declarations of this workId have no valid successor (dec10000…, dec60000…); one declaration naming every current head is required before this work can complete",
+      "planResolved": true,
+      "candidateArtifact": null,
+      "artifactCommits": [],
+      "criteria": [],
+      "coverageComplete": false,
+      "coverageReasonCode": "conflict",
+      "coverageReason": "conflict: coverage is not computed while two heads compete, and the later timestamp does not win"
+    },
+    {
+      "workId": "9d0f0f0f-1111-4222-8333-444444444444",
+      "declarationRef": "dec6000000000000000000000000000000000000000000000000000000000000",
+      "planRef": {
+        "repository": "30617:1ead000000000000000000000000000000000000000000000000000000000000:pivot-test-beekeeper-agents",
+        "commit": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "path": "plans/kettle.md"
+      },
+      "state": "conflict",
+      "supersedes": [],
+      "supersededBy": [],
+      "stateReasonCode": "conflict",
+      "stateReason": "2 maximal declarations of this workId have no valid successor (dec10000…, dec60000…); one declaration naming every current head is required before this work can complete",
+      "planResolved": true,
+      "candidateArtifact": null,
+      "artifactCommits": [],
+      "criteria": [],
+      "coverageComplete": false,
+      "coverageReasonCode": "conflict",
+      "coverageReason": "conflict: coverage is not computed while two heads compete, and the later timestamp does not win"
+    }
+  ],
+  "excluded": [],
+  "conflicts": [
+    {
+      "workId": "9d0f0f0f-1111-4222-8333-444444444444",
+      "heads": ["dec1000000000000000000000000000000000000000000000000000000000000", "dec6000000000000000000000000000000000000000000000000000000000000"],
+      "message": "2 maximal declarations of this workId have no valid successor (dec10000…, dec60000…); one declaration naming every current head is required before this work can complete"
+    }
+  ]
+}

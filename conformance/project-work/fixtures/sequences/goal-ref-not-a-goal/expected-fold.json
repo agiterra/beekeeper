@@ -1,0 +1,14 @@
+{
+  "schema": "buzz-project-work-coverage/v1",
+  "sessionRef": "11111111-2222-4333-8444-555555555555",
+  "projectRef": "30621:1ead000000000000000000000000000000000000000000000000000000000000:kettle",
+  "declarations": [],
+  "excluded": [
+    {
+      "eventId": "dec1000000000000000000000000000000000000000000000000000000000000",
+      "code": "goal_ref_not_a_goal",
+      "message": "goalRef dec0de00… is not one of the session's kind:44227 goal events; a decision belongs in decisionRef"
+    }
+  ],
+  "conflicts": []
+}

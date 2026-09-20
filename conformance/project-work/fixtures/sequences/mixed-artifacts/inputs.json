@@ -16,11 +16,10 @@
       }
     ]
   },
-  "currentGoalRef": "90a2000000000000000000000000000000000000000000000000000000000000",
+  "currentGoalRef": "90a1000000000000000000000000000000000000000000000000000000000000",
   "goalEvents": ["90a1000000000000000000000000000000000000000000000000000000000000", "90a2000000000000000000000000000000000000000000000000000000000000"],
   "planBlobs": {
-    "30617:1ead000000000000000000000000000000000000000000000000000000000000:pivot-test-beekeeper-agents@abababababababababababababababababababab:plans/kettle.md": "../../plans/valid/kettle.md",
-    "30617:1ead000000000000000000000000000000000000000000000000000000000000:pivot-test-beekeeper-agents@cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd:plans/kettle.md": "../../plans/valid/kettle.md"
+    "30617:1ead000000000000000000000000000000000000000000000000000000000000:pivot-test-beekeeper-agents@abababababababababababababababababababab:plans/kettle.md": "../../plans/valid/kettle.md"
   },
   "actionDefinitions": {
     "verify": {
@@ -52,7 +51,7 @@
       "eventId": "1ea2000000000000000000000000000000000000000000000000000000000000",
       "signer": "b011000000000000000000000000000000000000000000000000000000000000",
       "assignmentRef": "a552000000000000000000000000000000000000000000000000000000000000",
-      "headSha": "e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7"
+      "headSha": "b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4"
     },
     "bed2000000000000000000000000000000000000000000000000000000000000": {
       "kind": "verdict",
@@ -62,8 +61,41 @@
       "decision": "approve",
       "assignmentRef": "a552000000000000000000000000000000000000000000000000000000000000",
       "reportRef": "1ea2000000000000000000000000000000000000000000000000000000000000"
+    },
+    "ac71000000000000000000000000000000000000000000000000000000000000": {
+      "kind": "action_result",
+      "eventId": "ac71000000000000000000000000000000000000000000000000000000000000",
+      "exitedEventId": "ec71000000000000000000000000000000000000000000000000000000000000",
+      "resultSigner": "8057000000000000000000000000000000000000000000000000000000000000",
+      "echoSigner": "4e1a000000000000000000000000000000000000000000000000000000000000",
+      "actionName": "verify",
+      "runId": "77777777-8888-4999-8aaa-bbbbbbbbbbbb",
+      "stepId": "verify",
+      "definitionHash": "d1f0000000000000000000000000000000000000000000000000000000000000",
+      "disposition": "exited",
+      "exitCode": 0,
+      "checkout": {
+        "mode": "commit e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7",
+        "sha": "e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7",
+        "dirtyBefore": false
+      },
+      "dirty": false
     }
   },
-  "refStates": [],
-  "note": "decl2 cites its authorizing decision in decisionRef and the session's current goal in goalRef: a decision id in goalRef would be refused. decl1 was adopted against goal1 and would read stale had it not been superseded — superseded is structural and takes precedence."
+  "refStates": [
+    {
+      "id": "0b52000000000000000000000000000000000000000000000000000000000000",
+      "pubkey": "4e1a000000000000000000000000000000000000000000000000000000000000",
+      "created_at": 1789000095,
+      "kind": 30618,
+      "tags": [
+        ["d", "pivot-test"],
+        ["refs/heads/main", "c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5"],
+        ["HEAD", "ref: refs/heads/main"],
+        ["p", "1ead000000000000000000000000000000000000000000000000000000000000"]
+      ],
+      "content": ""
+    }
+  ],
+  "note": "Tests and review at A, the documentation review at B, the delivery observation at C. Every criterion is individually covered and nothing was ever verified at the delivered commit — which is exactly why coverage is judged against one candidate artifact."
 }

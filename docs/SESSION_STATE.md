@@ -16000,6 +16000,97 @@ removed from here.
        `plan-repository-bare-id` refusal (18 refusals now) and two sequences,
        `superseded-observation` and `goal-changed` (5 now). Re-gated bare.
 
+198. **Contract amendment A2: the work contract now says what evidence
+     *proves* a criterion, against which single artifact, signed by whom,
+     naming which goal, and when a fork is still a fork (built 2026-09-20,
+     lane W0 on `work/lane-198-contract-a2`; data and documentation only).**
+     Closes findings 3–7 of Astra's Wave 0 adversarial review
+     (`/tmp/astra-wave0-review.md`, read-only at `c0b474548`), each of which
+     the review called a place where two conforming implementations of item
+     194 would disagree. Ownership: `conformance/project-work/**` alone; kind
+     44249 is unchanged.
+     - **(A) The fold's inputs carry verified evidence facts; this file
+       defines the predicates (finding 3).** The frozen happy path claimed
+       `covered` from event ids alone, so one implementation would refuse to
+       infer a passing action and another would trust the lead's binding. The
+       input type now carries `authority`, `currentGoalRef`, `goalEvents`,
+       `planBlobs`, `actionDefinitions` (compiled **by the caller** from
+       `actions.yml` at the declaration's plan commit, with the publication
+       compiler, so evidence cannot nominate its own expected hash),
+       `evidence` keyed by event id, and `refStates`. `review` needs an
+       approving 44244 disposition by an actor `may_lead` admits, on a report
+       for a bound assignment whose `headSha` equals the binding's
+       `artifactCommit`; `action` needs a host 46023 carried by the relay's
+       46014, matching definition hash and step id, exit 0, `checkout.sha`
+       equal to the artifact commit and neither `dirtyBefore` nor `dirty`;
+       `git-ref` is unchanged. Absent evidence is `unknown`
+       (`evidence_unavailable`); present-and-failing is **`open` with a named
+       reason** — `wrong_signer`, `not_approving`, `revision_mismatch`,
+       `wrong_run_or_hash`, `action_failed`, `dirty_revision` — never
+       silently empty. A signed binding stays a claim to verify.
+     - **(B) One candidate artifact (finding 4).** Coverage was completable
+       from tests at A, a docs review at B and delivery at C, with nothing
+       verified at the delivered commit. `candidateArtifact` is the `git-ref`
+       evidence's commit when the plan has a `git-ref` criterion, else the
+       single commit all covering evidence shares; `artifactCommits` lists
+       what was actually named; mixed commits keep their per-criterion
+       `covered` status and force `coverageComplete: false` with
+       `coverageReasonCode: "mixed_artifacts"`.
+     - **(C) Authority is the existing predicate, all three arms (finding
+       5).** The README enumerated founder plus lead seat; the code
+       (`coding_session_team_transaction_fold.rs`
+       `CodingSessionTeamFoldContext::may_lead`) also admits any active
+       `may_steer` grant. Documented truthfully rather than narrowed, because
+       a narrower contract would have been settled twice — once in the CLI,
+       once in the relay — and differently.
+     - **(D) `goalRef` is the goal; a decision goes in the new nullable
+       `decisionRef` (finding 6).** The schema had permitted a decision id in
+       `goalRef`, which decision 14 then made permanently stale. `work.declared`
+       is now a six-key body. Both ids are 64-hex, so the **fold** refuses
+       (`goal_ref_not_a_goal`), not the envelope — it is the only layer
+       holding the session's goal set — and the refusal names the key the id
+       belongs in.
+     - **(E) A conflict is more than one *maximal* declaration of a `workId`
+       (finding 7).** The direct-sibling wording let A2-supersedes-A clear a
+       conflict while B was still unresolved, and said nothing about two
+       roots. A head is a declaration no valid declaration of that `workId`
+       supersedes; resolution names every head; an empty `supersedes` is not
+       a claim to be first.
+     - **Fixtures.** Eight sequences added — `goal-ref-not-a-goal`,
+       `evidence-refusals` (four review-side failures in one declaration),
+       `action-hash-mismatch`, `action-failed`, `action-dirty`,
+       `mixed-artifacts`, `fork-descendant`, `fork-two-roots` — and all five
+       existing sequences regenerated for the new input and output shapes.
+       `happy-path` now carries real evidence facts, so its expected fold is
+       derivable rather than asserted, and it holds both ruling-C cases: a
+       steer-grantee's binding (`bind6`, no seat) is **accepted** and a plain
+       worker's (`bind9`) is excluded `signer_not_may_lead`. Records: new
+       valid `work-declared-with-decision.json`, new refusal
+       `missing-decision-ref.json`; every `work.declared` fixture gained
+       `decisionRef`. Event ids, pubkeys and timestamps are unchanged
+       throughout; the exclusion code was spelled `signer-not-may-lead` and is
+       now `signer_not_may_lead`, matching the ruling's snake_case reasons.
+     - **`check-fixtures.mjs` bites on the new shapes**: the evidence-fact key
+       sets, the relay-echo signer, the `may_lead` predicate re-implemented
+       over `authority` (a fixture cannot claim `covered` from a
+       changes-requested disposition or an unauthorized signer), the
+       definition-hash/step/exit/dirty/commit checks, `artifactCommits`
+       agreeing with the covering criteria, `mixed_artifacts` forced when they
+       disagree, and a conflict's `heads` having to equal exactly the
+       declarations projected as `conflict`. Proven to bite: flipping the
+       happy path's disposition to `changes-requested` and demoting one
+       `fork-descendant` head each failed with the right message.
+     - **Not done.** Still no parser, no fold, no CLI verb, no relay arm; the
+       expected-fold files remain a specification of W1's output, not output
+       anything produced. Review findings 1–2 (lane 193's two
+       definition-binding races) and 8 (lane 192's substring matcher) are
+       other lanes'.
+     - Gates on `work/lane-198-contract-a2`, bare after committing:
+       `cargo fmt --all --check`, `cargo clippy -p buzz-core --all-targets --
+       -D warnings`, `cargo test -p buzz-core`,
+       `node conformance/project-work/check-fixtures.mjs`,
+       `just file-size-check`, `just current-state-check`.
+
 ## 3a. Environment facts that cost real time (do not rediscover)
 
 - **pnpm 11's answer to a stale workspace state is to DELETE `node_modules`,

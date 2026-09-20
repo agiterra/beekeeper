@@ -5,16 +5,14 @@
   "declarations": [
     {
       "workId": "9d0f0f0f-1111-4222-8333-444444444444",
-      "declarationRef": "dec2000000000000000000000000000000000000000000000000000000000000",
+      "declarationRef": "dec1000000000000000000000000000000000000000000000000000000000000",
       "planRef": {
         "repository": "30617:1ead000000000000000000000000000000000000000000000000000000000000:pivot-test-beekeeper-agents",
-        "commit": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "commit": "abababababababababababababababababababab",
         "path": "plans/kettle.md"
       },
       "state": "head",
-      "supersedes": [
-        "dec1000000000000000000000000000000000000000000000000000000000000"
-      ],
+      "supersedes": [],
       "supersededBy": [],
       "stateReasonCode": null,
       "stateReason": null,
@@ -27,12 +25,12 @@
           "proof": {
             "kind": "review"
           },
-          "status": "stale",
+          "status": "open",
           "assignmentRefs": [],
           "evidence": [],
           "artifactCommit": null,
-          "reasonCode": "bound_to_superseded_declaration",
-          "reason": "evidence for this criterion is bound to declaration dec10000…, which is not the head"
+          "reasonCode": null,
+          "reason": null
         },
         {
           "criterionId": "shared-storage-and-parser",
@@ -54,23 +52,30 @@
             "step": "verify"
           },
           "status": "open",
-          "assignmentRefs": [],
-          "evidence": [],
-          "artifactCommit": null,
-          "reasonCode": null,
-          "reason": null
+          "assignmentRefs": [
+            "a553000000000000000000000000000000000000000000000000000000000000"
+          ],
+          "evidence": [
+            {
+              "kind": "action_result",
+              "eventId": "ac72000000000000000000000000000000000000000000000000000000000000"
+            }
+          ],
+          "artifactCommit": "e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7",
+          "reasonCode": "wrong_run_or_hash",
+          "reason": "host result ac720000… ran definition hash d2f00000…, not the verify definition compiled at the plan commit (d1f00000…)"
         },
         {
           "criterionId": "usage-documentation",
           "proof": {
             "kind": "review"
           },
-          "status": "stale",
+          "status": "open",
           "assignmentRefs": [],
           "evidence": [],
           "artifactCommit": null,
-          "reasonCode": "bound_to_superseded_declaration",
-          "reason": "evidence for this criterion is bound to declaration dec10000…, which is not the head"
+          "reasonCode": null,
+          "reason": null
         },
         {
           "criterionId": "delivered-main",
@@ -87,30 +92,7 @@
       ],
       "coverageComplete": false,
       "coverageReasonCode": "criteria_not_covered",
-      "coverageReason": "5 of 5 criteria are not covered under this declaration: cli-behaviour and usage-documentation are stale; shared-storage-and-parser, verified-landed-revision and delivered-main are open"
-    },
-    {
-      "workId": "9d0f0f0f-1111-4222-8333-444444444444",
-      "declarationRef": "dec1000000000000000000000000000000000000000000000000000000000000",
-      "planRef": {
-        "repository": "30617:1ead000000000000000000000000000000000000000000000000000000000000:pivot-test-beekeeper-agents",
-        "commit": "abababababababababababababababababababab",
-        "path": "plans/kettle.md"
-      },
-      "state": "superseded",
-      "supersedes": [],
-      "supersededBy": [
-        "dec2000000000000000000000000000000000000000000000000000000000000"
-      ],
-      "stateReasonCode": "superseded",
-      "stateReason": "superseded by dec20000…",
-      "planResolved": true,
-      "candidateArtifact": null,
-      "artifactCommits": [],
-      "criteria": [],
-      "coverageComplete": false,
-      "coverageReasonCode": "superseded",
-      "coverageReason": "superseded: coverage is computed for the head declaration only"
+      "coverageReason": "5 of 5 criteria are not covered under this declaration: verified-landed-revision carries evidence that failed its predicate, and the other four are open"
     }
   ],
   "excluded": [],

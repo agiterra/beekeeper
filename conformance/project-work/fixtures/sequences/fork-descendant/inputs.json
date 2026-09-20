@@ -21,7 +21,8 @@
   "planBlobs": {
     "30617:1ead000000000000000000000000000000000000000000000000000000000000:pivot-test-beekeeper-agents@abababababababababababababababababababab:plans/kettle.md": "../../plans/valid/kettle.md",
     "30617:1ead000000000000000000000000000000000000000000000000000000000000:pivot-test-beekeeper-agents@cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd:plans/kettle.md": "../../plans/valid/kettle.md",
-    "30617:1ead000000000000000000000000000000000000000000000000000000000000:pivot-test-beekeeper-agents@1212121212121212121212121212121212121212:plans/kettle.md": "../../plans/valid/kettle.md"
+    "30617:1ead000000000000000000000000000000000000000000000000000000000000:pivot-test-beekeeper-agents@1212121212121212121212121212121212121212:plans/kettle.md": "../../plans/valid/kettle.md",
+    "30617:1ead000000000000000000000000000000000000000000000000000000000000:pivot-test-beekeeper-agents@b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4:plans/kettle.md": "../../plans/valid/kettle.md"
   },
   "actionDefinitions": {
     "verify": {
@@ -31,24 +32,7 @@
       ]
     }
   },
-  "evidence": {
-    "1ea1000000000000000000000000000000000000000000000000000000000000": {
-      "kind": "report",
-      "eventId": "1ea1000000000000000000000000000000000000000000000000000000000000",
-      "signer": "b011000000000000000000000000000000000000000000000000000000000000",
-      "assignmentRef": "a551000000000000000000000000000000000000000000000000000000000000",
-      "headSha": "e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7"
-    },
-    "bed1000000000000000000000000000000000000000000000000000000000000": {
-      "kind": "verdict",
-      "eventId": "bed1000000000000000000000000000000000000000000000000000000000000",
-      "signer": "1ead000000000000000000000000000000000000000000000000000000000000",
-      "subtype": "disposition",
-      "decision": "approve",
-      "assignmentRef": "a551000000000000000000000000000000000000000000000000000000000000",
-      "reportRef": "1ea1000000000000000000000000000000000000000000000000000000000000"
-    }
-  },
+  "evidence": {},
   "refStates": [],
-  "note": "Two successors of one predecessor. bindB is retained on the wire and simply not projected while the fork stands."
+  "note": "decl5 supersedes only decl3. The remaining maximal declarations, decl5 and decl4, share no immediate predecessor — conflict is defined over maximal valid declarations of the workId, not over direct siblings, so it is still a conflict."
 }

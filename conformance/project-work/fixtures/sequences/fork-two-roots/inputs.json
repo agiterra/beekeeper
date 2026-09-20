@@ -16,10 +16,11 @@
       }
     ]
   },
-  "currentGoalRef": "90a2000000000000000000000000000000000000000000000000000000000000",
+  "currentGoalRef": "90a1000000000000000000000000000000000000000000000000000000000000",
   "goalEvents": ["90a1000000000000000000000000000000000000000000000000000000000000", "90a2000000000000000000000000000000000000000000000000000000000000"],
   "planBlobs": {
-    "30617:1ead000000000000000000000000000000000000000000000000000000000000:pivot-test-beekeeper-agents@abababababababababababababababababababab:plans/kettle.md": "../../plans/valid/kettle.md"
+    "30617:1ead000000000000000000000000000000000000000000000000000000000000:pivot-test-beekeeper-agents@abababababababababababababababababababab:plans/kettle.md": "../../plans/valid/kettle.md",
+    "30617:1ead000000000000000000000000000000000000000000000000000000000000:pivot-test-beekeeper-agents@cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd:plans/kettle.md": "../../plans/valid/kettle.md"
   },
   "actionDefinitions": {
     "verify": {
@@ -31,5 +32,5 @@
   },
   "evidence": {},
   "refStates": [],
-  "note": "The session's current kind:44227 goal is goal2; this declaration was adopted against goal1. That mismatch is v1's only trigger for a stale declaration."
+  "note": "Two adoptions of the same workId, neither naming the other. Both are maximal, so both are heads and the work is in conflict: an empty supersedes is not a claim to be first."
 }

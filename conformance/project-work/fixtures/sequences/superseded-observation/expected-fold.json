@@ -14,8 +14,11 @@
       "state": "head",
       "supersedes": [],
       "supersededBy": [],
+      "stateReasonCode": null,
       "stateReason": null,
       "planResolved": true,
+      "candidateArtifact": null,
+      "artifactCommits": [],
       "criteria": [
         {
           "criterionId": "cli-behaviour",
@@ -26,6 +29,7 @@
           "assignmentRefs": [],
           "evidence": [],
           "artifactCommit": null,
+          "reasonCode": null,
           "reason": null
         },
         {
@@ -37,6 +41,7 @@
           "assignmentRefs": [],
           "evidence": [],
           "artifactCommit": null,
+          "reasonCode": null,
           "reason": null
         },
         {
@@ -50,6 +55,7 @@
           "assignmentRefs": [],
           "evidence": [],
           "artifactCommit": null,
+          "reasonCode": null,
           "reason": null
         },
         {
@@ -61,6 +67,7 @@
           "assignmentRefs": [],
           "evidence": [],
           "artifactCommit": null,
+          "reasonCode": null,
           "reason": null
         },
         {
@@ -79,10 +86,12 @@
             }
           ],
           "artifactCommit": "e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7",
+          "reasonCode": "ref_observation_superseded",
           "reason": "the newest relay-signed ref state for pivot-test (0b520000…) names refs/heads/main at 3a3a3a3a3a3a…, not the bound artifact commit"
         }
       ],
       "coverageComplete": false,
+      "coverageReasonCode": "criteria_not_covered",
       "coverageReason": "5 of 5 criteria are not covered under this declaration: delivered-main is stale; the other four are open"
     }
   ],
