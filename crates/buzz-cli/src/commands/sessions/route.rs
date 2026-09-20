@@ -35,7 +35,8 @@ use crate::client::BuzzClient;
 use crate::error::CliError;
 
 use super::catalog::CatalogSnapshot;
-use super::registry::{catalog_revision, load_registry};
+use super::registry::{catalog_revision, load_registry_source};
+use buzz_core::model_registry_source::ResolvedModelRegistry;
 
 /// Every `(provider, model)` a snapshot offers, with the catalog's own
 /// per-model context window where it publishes one.
@@ -251,6 +252,10 @@ fn candidate_row(candidate: &Candidate) -> Value {
 }
 
 /// The full decision document.
+///
+/// `registry` is the file that answered; [`decision_report_from`] adds which
+/// copy it was and every place that was looked at, which is what a reader
+/// needs when two machines disagree about a decision (ledger 178(a)).
 pub fn decision_report(decision: &RoutingDecision, registry_path: &str) -> Value {
     let record = serde_json::to_value(&decision.record).unwrap_or(Value::Null);
     json!({
@@ -319,7 +324,7 @@ pub async fn cmd_route(
     request: &RouteRequest,
     format: &crate::OutputFormat,
 ) -> Result<(), CliError> {
-    let (path, registry) = load_registry(registry_path)?;
+    let (resolved, registry) = load_registry_source(registry_path)?;
     let snapshot = super::catalog::load_catalogs(client, channel_id).await?;
     let offered = offers(&snapshot);
     let decision = route(&registry, &offered, request, catalog_revision(&snapshot))
@@ -333,13 +338,43 @@ pub async fn cmd_route(
             );
         }
         crate::OutputFormat::Json => {
-            println!(
-                "{}",
-                decision_report(&decision, &path.display().to_string())
-            );
+            println!("{}", decision_report_from(&decision, &resolved));
         }
     }
     Ok(())
+}
+
+/// [`decision_report`] with the registry's provenance attached.
+///
+/// `registrySource` is `agents-repo`, `checkout` or `explicit`, and
+/// `registryLookedIn` is every place that was tried in order. Before
+/// 2026-09-20 there was only one place, so neither field could have said
+/// anything; now a routed decision that came from a project's agents
+/// repository and one that came from a code checkout are different facts,
+/// and a reader comparing two machines needs to know which they are holding.
+pub fn decision_report_from(decision: &RoutingDecision, resolved: &ResolvedModelRegistry) -> Value {
+    let mut report = decision_report(decision, &resolved.path.display().to_string());
+    if let Some(object) = report.as_object_mut() {
+        object.insert(
+            "registrySource".to_owned(),
+            Value::String(resolved.origin.as_str().to_owned()),
+        );
+        object.insert(
+            "registrySourceLabel".to_owned(),
+            Value::String(resolved.origin.describe().to_owned()),
+        );
+        object.insert(
+            "registryLookedIn".to_owned(),
+            Value::Array(
+                resolved
+                    .looked_in
+                    .iter()
+                    .map(|place| Value::String(place.clone()))
+                    .collect(),
+            ),
+        );
+    }
+    report
 }
 
 /// The one-line summary a human reads: risk, tier, effort, choice, runner-up.

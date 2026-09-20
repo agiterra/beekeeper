@@ -42,63 +42,90 @@ use buzz_core::coding_session_routing::{
     check_coverage, parse_registry, Registry, DEFAULT_REGISTRY_RELATIVE_PATH,
 };
 use buzz_core::kind::KIND_CODING_SESSION_OBSERVATION;
+use buzz_core::model_registry_source::{
+    ancestor_model_registry_candidates, resolve_model_registry, ModelRegistryCandidate,
+    ResolvedModelRegistry, AGENTS_REPO_REGISTRY_FILE,
+};
 
 use crate::client::BuzzClient;
 use crate::error::CliError;
 
 use super::catalog::{load_catalogs, CatalogSnapshot};
 
-/// Find the registry: the explicit path, or the nearest ancestor of the
-/// working directory that holds `team/model-registry.yaml`.
+/// Find the registry: the explicit path, or — walking up from `start` — the
+/// project's agents repository, a seat's sibling agents clone, then a code
+/// checkout's `team/model-registry.yaml`.
+///
+/// The order is `buzz_core::model_registry_source`'s, the same one the
+/// desktop host uses, because a `bee sessions route` that printed a decision
+/// from one file while the host seated a decision from another would be
+/// worse than no command at all. Under the agents-repository pivot the
+/// registry lives at `<agents repo>/model-registry.yaml` (spec § 4.11); the
+/// checkout rung is kept for this repository, which still holds
+/// `team/model-registry.yaml`.
 ///
 /// Walking up is what lets a seat run this from a worktree subdirectory. The
-/// error names every directory that was tried, because "registry not found"
-/// with no path is the kind of message that costs an hour.
+/// error names every place that was tried, because "registry not found" with
+/// no path is the kind of message that costs an hour.
+///
+/// # Errors
+///
+/// [`CliError::NotFound`] naming the path, or every path that was tried.
+pub fn resolve_registry_source(
+    explicit: Option<&str>,
+    start: &Path,
+) -> Result<ResolvedModelRegistry, CliError> {
+    let candidates = match explicit {
+        Some(path) => vec![ModelRegistryCandidate::explicit(Path::new(path))],
+        None => ancestor_model_registry_candidates(start),
+    };
+    resolve_model_registry(&candidates).map_err(|missing| {
+        CliError::NotFound(match explicit {
+            Some(path) => format!("no model registry at {path}"),
+            None => format!(
+                "{missing} — pass --registry <path>, or run from a project's agents repository \
+                 (holding {AGENTS_REPO_REGISTRY_FILE}) or a checkout holding \
+                 {DEFAULT_REGISTRY_RELATIVE_PATH}"
+            ),
+        })
+    })
+}
+
+/// [`resolve_registry_source`], reduced to the path that answered.
 ///
 /// # Errors
 ///
 /// [`CliError::NotFound`] naming the path, or every path that was tried.
 pub fn resolve_registry_path(explicit: Option<&str>, start: &Path) -> Result<PathBuf, CliError> {
-    if let Some(path) = explicit {
-        let path = PathBuf::from(path);
-        return if path.is_file() {
-            Ok(path)
-        } else {
-            Err(CliError::NotFound(format!(
-                "no model registry at {}",
-                path.display()
-            )))
-        };
-    }
-    let mut tried = Vec::new();
-    for ancestor in start.ancestors() {
-        let candidate = ancestor.join(DEFAULT_REGISTRY_RELATIVE_PATH);
-        if candidate.is_file() {
-            return Ok(candidate);
-        }
-        tried.push(candidate.display().to_string());
-    }
-    Err(CliError::NotFound(format!(
-        "no model registry found — pass --registry <path>, or run from a checkout holding \
-         {DEFAULT_REGISTRY_RELATIVE_PATH}. Tried: {}",
-        tried.join(", ")
-    )))
+    resolve_registry_source(explicit, start).map(|resolved| resolved.path)
 }
 
-/// Read and parse the registry, naming the file in any failure.
+/// Read and parse the registry, naming the file in any failure, and say which
+/// copy answered.
+///
+/// # Errors
+///
+/// [`CliError::NotFound`] when there is no file, [`CliError::Usage`] when the
+/// file is not a registry.
+pub fn load_registry_source(
+    explicit: Option<&str>,
+) -> Result<(ResolvedModelRegistry, Registry), CliError> {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let resolved = resolve_registry_source(explicit, &cwd)?;
+    let registry = parse_registry(&resolved.text)
+        .map_err(|error| CliError::Usage(format!("{}: {error}", resolved.path.display())))?;
+    Ok((resolved, registry))
+}
+
+/// [`load_registry_source`], for callers that only need the path it came from.
 ///
 /// # Errors
 ///
 /// [`CliError::NotFound`] when there is no file, [`CliError::Usage`] when the
 /// file is not a registry.
 pub fn load_registry(explicit: Option<&str>) -> Result<(PathBuf, Registry), CliError> {
-    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let path = resolve_registry_path(explicit, &cwd)?;
-    let text = std::fs::read_to_string(&path)
-        .map_err(|error| CliError::Other(format!("cannot read {}: {error}", path.display())))?;
-    let registry = parse_registry(&text)
-        .map_err(|error| CliError::Usage(format!("{}: {error}", path.display())))?;
-    Ok((path, registry))
+    let (resolved, registry) = load_registry_source(explicit)?;
+    Ok((resolved.path, registry))
 }
 
 /// The single catalog revision, or `null` when more than one signer published.
@@ -176,7 +203,8 @@ pub async fn cmd_registry_check(
     registry_path: Option<&str>,
     format: &crate::OutputFormat,
 ) -> Result<(), CliError> {
-    let (path, registry) = load_registry(registry_path)?;
+    let (resolved, registry) = load_registry_source(registry_path)?;
+    let path = resolved.path.clone();
     let snapshot = load_catalogs(client, channel_id).await?;
     let offered = super::route::offers(&snapshot);
     let coverage = check_coverage(&registry, &offered);
@@ -204,6 +232,13 @@ pub async fn cmd_registry_check(
 
     let report = json!({
         "registry": path.display().to_string(),
+        // Which copy answered, and every place that was tried: a check that
+        // said only "fresh" without naming the file's provenance could be
+        // green about a registry no seat on this machine routes against
+        // (ledger 178(a)).
+        "registrySource": resolved.origin.as_str(),
+        "registrySourceLabel": resolved.origin.describe(),
+        "registryLookedIn": resolved.looked_in,
         "registryVersion": registry.version,
         "registryUpdatedAt": registry.updated_at,
         "rows": registry.targets.len(),
@@ -449,6 +484,70 @@ mod tests {
             error.to_string().contains(DEFAULT_REGISTRY_RELATIVE_PATH),
             "unexpected: {error}"
         );
+    }
+
+    /// Ledger 178(a): a project's registry lives in its agents repository,
+    /// and that is the copy `bee` routes against.
+    #[test]
+    fn an_agents_repository_beside_the_seat_answers_before_the_checkout() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        let checkout = root.join("pivot-test");
+        let agents = root.join("pivot-test-agents");
+        std::fs::create_dir_all(checkout.join("team")).expect("mkdir");
+        std::fs::create_dir_all(&agents).expect("mkdir");
+        std::fs::write(
+            checkout.join(DEFAULT_REGISTRY_RELATIVE_PATH),
+            "version: 1\n# checkout\n",
+        )
+        .expect("write");
+        std::fs::write(
+            agents.join(AGENTS_REPO_REGISTRY_FILE),
+            "version: 1\n# agents\n",
+        )
+        .expect("write");
+
+        // Standing in the seat's worktree, the sibling agents clone wins.
+        let resolved = resolve_registry_source(None, &checkout).expect("resolve");
+        assert_eq!(resolved.origin.as_str(), "agents-repo");
+        assert!(resolved.text.contains("# agents"), "{}", resolved.text);
+
+        // Standing inside the agents repository itself, its own file wins.
+        let inside = resolve_registry_source(None, &agents).expect("resolve");
+        assert_eq!(inside.path, agents.join(AGENTS_REPO_REGISTRY_FILE));
+
+        // `--registry` still overrides both, and says it was told.
+        let named = resolve_registry_source(
+            Some(
+                checkout
+                    .join(DEFAULT_REGISTRY_RELATIVE_PATH)
+                    .to_str()
+                    .expect("utf8"),
+            ),
+            &agents,
+        )
+        .expect("resolve");
+        assert_eq!(named.origin.as_str(), "explicit");
+        assert!(named.text.contains("# checkout"), "{}", named.text);
+    }
+
+    /// The refusal names the places, and never borrows the sentence about a
+    /// class nothing clears (ledger 178(a)).
+    #[test]
+    fn a_registry_nowhere_to_be_found_names_both_kinds_of_place() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let error = resolve_registry_source(None, dir.path()).expect_err("must fail");
+        let sentence = error.to_string();
+        assert!(
+            sentence.contains("no model registry: looked in "),
+            "{sentence}"
+        );
+        assert!(sentence.contains(AGENTS_REPO_REGISTRY_FILE), "{sentence}");
+        assert!(
+            sentence.contains(DEFAULT_REGISTRY_RELATIVE_PATH),
+            "{sentence}"
+        );
+        assert!(!sentence.contains("risk tier"), "{sentence}");
     }
 
     /// With one signer the revision is a number; with two there is no shared

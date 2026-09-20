@@ -576,6 +576,7 @@ from another project's folder (2026-09-19, ledger 175).
   README.md                         # the layout and the archive rule, for people and agents
   team.yml                          # beekeeper-team/v1 (§ 4.2; `workspace.agents_repo` replaces `roles_visible`)
   actions.yml                       # buzz-project-actions/v1 (§ 5.1), moved here unchanged
+  model-registry.yaml               # the execution targets hires route against (2026-09-20, ledger 180)
   roles/<role>.md                   # in force (§ 4.3, § 4.4)
   roles/<role>/skills/<s>/SKILL.md
   roles/archive/<role>.md           # retained; never hireable, never includable
@@ -613,7 +614,17 @@ from another project's folder (2026-09-19, ledger 175).
   concrete: a project takes Beekeeper's minor revisions at the next hire and
   opts into a major one by editing the line. `team.yml` is seeded with the
   eight roles and `lead: lead`; `actions.yml` with an empty list; `plans/`
-  and both `archive/` directories with a `.gitkeep`. `team.yml` also
+  and both `archive/` directories with a `.gitkeep`;
+  `model-registry.yaml` with a **copy** of the registry this Beekeeper build
+  ships (`team/model-registry.yaml`, embedded with `include_str!`), because
+  the registry must travel with the project: read only from the code
+  checkout, it existed for Beekeeper alone and every routed hire elsewhere
+  was refused `HIRE_NO_ROUTE`, fell back to unrouted, and ran the identity's
+  own pin — the most expensive target (ledger 178(a), 179(b), 180). Unlike a
+  role it is a copy, not a reference: routing is the project's own cost
+  policy. Readers resolve it agents repository first, code checkout second,
+  and disclose which answered
+  (`buzz_core::model_registry_source`). `team.yml` also
   lists one default agent per role — the slug in title case, the lead
   persistent, every other role ephemeral — and creation **installs them**:
   one managed identity per role, minted with the owner's attestation and

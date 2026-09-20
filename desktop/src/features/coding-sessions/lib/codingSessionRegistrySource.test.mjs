@@ -6,19 +6,32 @@ import {
   readModelRegistryRows,
 } from "./codingSessionRegistrySource.ts";
 
-/** A stub `read_project_file` that answers from a plain object. */
+/**
+ * A stub `read_model_registry` that answers from a plain object keyed by
+ * project coordinate.
+ *
+ * The host resolves *where* now — agents repository, then code checkout — so
+ * the reader hands it a project and gets back the file that answered plus
+ * which copy it was.
+ */
 function stubReader(files) {
-  return async (projectRef, relativePath) => {
-    const key = `${projectRef}|${relativePath}`;
-    const hit = files[key];
+  return async (projectRef) => {
+    const hit = files[projectRef];
     if (hit === undefined) {
-      // What `readProjectFile` really rejects with: the host's own refusal.
+      // What the host really rejects with when neither place holds one.
       throw {
-        code: "file-missing",
-        message: `/checkout/${relativePath} cannot be opened: No such file or directory`,
+        code: "no-model-registry",
+        message:
+          "no model registry: looked in /cache/abc-demo-beekeeper-agents/model-registry.yaml " +
+          "and /checkout/team/model-registry.yaml",
       };
     }
-    return { path: `/checkout/${relativePath}`, text: hit };
+    return {
+      path: "/checkout/team/model-registry.yaml",
+      text: hit,
+      origin: "checkout",
+      originLabel: "the project's code checkout",
+    };
   };
 }
 
@@ -50,27 +63,35 @@ targets:
 test("reads the registry out of the project the caller named", async () => {
   const source = await readModelRegistry("30621:abc:beekeeper", {
     read: stubReader({
-      "30621:abc:beekeeper|team/model-registry.yaml": REGISTRY_YAML,
+      "30621:abc:beekeeper": REGISTRY_YAML,
     }),
   });
   assert.equal(source.kind, "readable");
   assert.equal(source.text, REGISTRY_YAML);
-  assert.equal(source.label, "/checkout/team/model-registry.yaml");
+  // The origin rides in the label: which copy answered is part of the
+  // answer, not a detail (ledger 178(a)).
+  assert.equal(
+    source.label,
+    "/checkout/team/model-registry.yaml (the project's code checkout)",
+  );
 });
 
-test("a missing registry file is unreadable, with the host's own sentence", async () => {
+test("no registry in either place is unreadable, naming both files", async () => {
   const source = await readModelRegistry("30621:abc:beekeeper", {
     read: stubReader({}),
   });
   assert.equal(source.kind, "unreadable");
+  assert.match(source.why, /no model registry: looked in /);
+  assert.match(source.why, /beekeeper-agents\/model-registry\.yaml/);
   assert.match(source.why, /team\/model-registry\.yaml/);
-  assert.match(source.why, /No such file or directory/);
+  // Never the sentence for a registry that exists and gated everything out.
+  assert.doesNotMatch(source.why, /risk tier/);
 });
 
 test("no project at all is unreadable, and says which project is missing", async () => {
   const source = await readModelRegistry(null, {
     read: stubReader({
-      "30621:abc:beekeeper|team/model-registry.yaml": REGISTRY_YAML,
+      "30621:abc:beekeeper": REGISTRY_YAML,
     }),
   });
   assert.equal(source.kind, "unreadable");
@@ -90,7 +111,7 @@ test("a reader that throws a bare error still produces a sentence", async () => 
 test("rows for the badge come from the real file, with its version", async () => {
   const rows = await readModelRegistryRows("30621:abc:beekeeper", {
     read: stubReader({
-      "30621:abc:beekeeper|team/model-registry.yaml": REGISTRY_YAML,
+      "30621:abc:beekeeper": REGISTRY_YAML,
     }),
   });
   assert.equal(rows.kind, "read");
@@ -106,7 +127,7 @@ test("rows for the badge come from the real file, with its version", async () =>
 test("a file that is not a registry is unreadable, naming the parse failure", async () => {
   const rows = await readModelRegistryRows("30621:abc:beekeeper", {
     read: stubReader({
-      "30621:abc:beekeeper|team/model-registry.yaml": "version: 99\n",
+      "30621:abc:beekeeper": "version: 99\n",
     }),
   });
   assert.equal(rows.kind, "unreadable");
@@ -116,7 +137,7 @@ test("a file that is not a registry is unreadable, naming the parse failure", as
 test("a blank project coordinate is the no-project answer, not a missing file", async () => {
   const source = await readModelRegistry("   ", {
     read: stubReader({
-      "30621:abc:beekeeper|team/model-registry.yaml": REGISTRY_YAML,
+      "30621:abc:beekeeper": REGISTRY_YAML,
     }),
   });
   assert.equal(source.kind, "unreadable");
@@ -129,7 +150,7 @@ test("the reader answers in the shape the router consumes", async () => {
   // the keys the router reads are the keys this produces.
   const source = await readModelRegistry("30621:abc:beekeeper", {
     read: stubReader({
-      "30621:abc:beekeeper|team/model-registry.yaml": REGISTRY_YAML,
+      "30621:abc:beekeeper": REGISTRY_YAML,
     }),
   });
   assert.deepEqual(Object.keys(source).sort(), ["kind", "label", "text"]);
@@ -152,7 +173,12 @@ test("F4: every mapped row carries a measured flag, and it follows the block", a
 
   const rowsOf = async (source) =>
     readModelRegistryRows("proj", {
-      read: async () => ({ text: source, path: "team/model-registry.yaml" }),
+      read: async () => ({
+        text: source,
+        path: "team/model-registry.yaml",
+        origin: "checkout",
+        originLabel: "the project's code checkout",
+      }),
     });
 
   const shipped = await rowsOf(text);

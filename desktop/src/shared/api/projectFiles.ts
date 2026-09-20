@@ -1,5 +1,8 @@
 import { invokeTauri, TauriInvokeError } from "@/shared/api/tauri";
-import type { ProjectFileRead } from "@/shared/api/types";
+import type {
+  ModelRegistryHostRead,
+  ProjectFileRead,
+} from "@/shared/api/types";
 
 /**
  * Reading one allowlisted file out of a project checkout.
@@ -43,6 +46,33 @@ export async function readProjectFile(
     return await invokeTauri<ProjectFileRead>("read_project_file", {
       projectRef,
       relativePath,
+    });
+  } catch (error) {
+    if (
+      error instanceof TauriInvokeError &&
+      isProjectFileRefusal(error.payload)
+    ) {
+      throw error.payload;
+    }
+    throw error;
+  }
+}
+
+/**
+ * Read a project's model registry from this computer.
+ *
+ * The host resolves *where* — the project's agents repository first (spec
+ * § 4.11), then `team/model-registry.yaml` in its code checkout — and says
+ * which copy answered. Rejects rather than resolves when there is none, with
+ * a sentence naming every place it looked; a caller that treated an absent
+ * registry as an empty one would route on nothing and call it a decision.
+ */
+export async function readModelRegistrySource(
+  projectRef: string,
+): Promise<ModelRegistryHostRead> {
+  try {
+    return await invokeTauri<ModelRegistryHostRead>("read_model_registry", {
+      projectRef,
     });
   } catch (error) {
     if (

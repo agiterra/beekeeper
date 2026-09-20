@@ -84,6 +84,10 @@ fn the_seed_commit_holds_the_layout_by_reference() {
     for rel in [
         "team.yml",
         "actions.yml",
+        // The registry travels with the project, in the seed commit, or a
+        // routed hire on this project has nothing to route against (ledger
+        // 178(a), 180).
+        "model-registry.yaml",
         "README.md",
         "roles/lead.md",
         "roles/archive/.gitkeep",
@@ -91,6 +95,10 @@ fn the_seed_commit_holds_the_layout_by_reference() {
     ] {
         assert!(checkout.join(rel).is_file(), "{rel}");
     }
+    assert_eq!(
+        std::fs::read_to_string(checkout.join("model-registry.yaml")).expect("registry"),
+        buzz_persona_pkg::seed::SEEDED_MODEL_REGISTRY
+    );
     let lead = std::fs::read_to_string(checkout.join("roles/lead.md")).expect("lead");
     assert!(lead.contains("![[beekeeper/lead@^1.0.0]]"));
     assert!(!lead.contains("You are the lead"), "referenced, not copied");

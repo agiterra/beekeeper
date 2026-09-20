@@ -45,13 +45,13 @@ use crate::commands::project_git_exec::{
 use crate::managed_agents::packs_cache;
 
 /// The suffix the clone's directory carries beside the seat's worktree.
-pub const SEAT_AGENTS_CLONE_SUFFIX: &str = "-agents";
-
-/// Where a seat's agents clone goes: the worktree's sibling `<name>-agents`.
-pub fn seat_agents_clone_path(worktree: &Path) -> Option<PathBuf> {
-    let name = worktree.file_name()?.to_str()?;
-    Some(worktree.with_file_name(format!("{name}{SEAT_AGENTS_CLONE_SUFFIX}")))
-}
+///
+/// Defined in `buzz-core` and re-exported here: `bee`, running *inside* a
+/// seat, composes the same sibling to find the project's model registry
+/// (`buzz_core::model_registry_source`, ledger 178(a)), and a host that cut
+/// `-agents` while the CLI looked for something else would leave a seat
+/// unable to find the repository it was given.
+pub use buzz_core_pkg::model_registry_source::{seat_agents_clone_path, SEAT_AGENTS_CLONE_SUFFIX};
 
 /// Cut (or reuse) the seat's clone of the agents repository `source` names,
 /// landed on `sha` — the resolved commit the caller already staged the

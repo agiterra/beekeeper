@@ -1,55 +1,74 @@
 /**
- * Where the shared model registry lives, and why this app cannot read it yet.
+ * Where a project's model registry lives, and what a host with none says.
  *
- * `team/model-registry.yaml` in the project checkout is the one registry the
- * router and the Agents badge are both about. This module is the single place
- * that says so, and the single place that says — out loud, with the path — why
- * this desktop has never loaded it.
+ * There are two places, in this order (spec § 4.11,
+ * `desktop/src-tauri/src/commands/model_registry.rs`):
  *
- * **The gap is real and it is not a rendering detail.** The app has exactly
- * two ways to touch a project's files, `scanProjectRolePacks` and
- * `pickCrewRolePacksDirectory` (`shared/api/tauriTeams.ts:331` and `:350`),
- * and both answer with a role, a name and a directory — never with file
- * content. Which project a Dashboard surface is looking at is already solved
- * (`features/agents/lib/rolePacksProject.ts`); reading a file out of it is
- * not. So both consumers refuse rather than guess:
+ * 1. `model-registry.yaml` at the root of the project's agents repository,
+ *    `<slug>-beekeeper-agents`, beside `team.yml`. The agents-repository seed
+ *    writes it, so it travels with the project.
+ * 2. `team/model-registry.yaml` in the project's code checkout — what
+ *    Beekeeper's own repository has, and the only place any reader looked
+ *    before 2026-09-20.
  *
- * - the router refuses a routed hire `HIRE_NO_ROUTE`, naming this reason;
- * - the Agents badge renders "Registry: unknown (not readable)".
+ * **That single place is why routing did not work off this repository.** On
+ * the live Pivot Test run a routed hire (`class builder`, `risk 2,2,2`) was
+ * refused `HIRE_NO_ROUTE — registry not readable on this host`; the retry ten
+ * seconds later was unrouted and the seat ran the identity's own pin,
+ * `opus[1m]`. Andy's eight-seat run did the same thing seven times over
+ * (ledger 178(a), 179(b)).
  *
- * The alternative — a registry copy compiled into the app — would be worse
- * than the gap. Nobody could check it against the file the team edits, and
- * every routing decision it produced would cite a version that was never on
- * disk. A registry the operator cannot see is not a registry, it is a
- * hardcoded opinion wearing one's name.
+ * There is still no registry compiled into the app. A registry the operator
+ * cannot open is a hardcoded opinion wearing one's name, and every routing
+ * decision it produced would cite a version that was never on disk. When
+ * neither place holds one, the host refuses with a sentence naming both — see
+ * [`describeUnreadableModelRegistry`] for the shape that sentence takes.
  */
 import type { CodingSessionRegistrySource } from "./codingSessionHireRouting";
 
-/** The registry's path within a project checkout. Spelled once. */
+/** The registry's path within a project's code checkout. Spelled once. */
 export const MODEL_REGISTRY_PROJECT_PATH = "team/model-registry.yaml";
 
 /**
- * The `unreadable` source this host really holds, naming the file it would
- * have read.
+ * The registry's file name at an agents repository's root.
  *
- * `checkoutPath` is this computer's most recent checkout directory, when it
- * has recorded one. Naming it matters: an operator told only "not readable"
- * has nowhere to go, and an operator told the full path can open the file,
- * see that it is there, and understand that the missing piece is a reader
- * rather than the registry.
+ * Mirrors `buzz_core::model_registry_source::AGENTS_REPO_REGISTRY_FILE`, the
+ * name the seed writes and every reader composes.
+ */
+export const AGENTS_REPO_MODEL_REGISTRY_FILE = "model-registry.yaml";
+
+/**
+ * The `unreadable` source for a project with no registry in either place,
+ * naming both files.
+ *
+ * The sentence is deliberately *not* "nothing offered clears that class at
+ * that risk tier": that one describes a registry that exists and gated every
+ * candidate out, and its remedy is a different class or a different risk. The
+ * remedy for this one is a file. Conflating them is what sent the live lead
+ * hunting a routing bug that was not there.
+ *
+ * The host produces this sentence itself, with absolute paths, whenever it can
+ * (`read_model_registry`). This function is the answer for the cases that
+ * never reach the host — no project resolved, or no recorded directory — where
+ * all that can honestly be named is the two relative paths.
  */
 export function describeUnreadableModelRegistry(
   checkoutPath: string | null,
 ): Extract<CodingSessionRegistrySource, { kind: "unreadable" }> {
-  const where =
-    checkoutPath === null
+  const root = checkoutPath === null ? null : checkoutPath.replace(/\/+$/, "");
+  const agents =
+    root === null
+      ? `<agents repository>/${AGENTS_REPO_MODEL_REGISTRY_FILE}`
+      : `${root}-beekeeper-agents/${AGENTS_REPO_MODEL_REGISTRY_FILE}`;
+  const checkout =
+    root === null
       ? MODEL_REGISTRY_PROJECT_PATH
-      : `${checkoutPath.replace(/\/+$/, "")}/${MODEL_REGISTRY_PROJECT_PATH}`;
+      : `${root}/${MODEL_REGISTRY_PROJECT_PATH}`;
   return {
     kind: "unreadable",
     why:
-      `The router reads ${where}, and this app has no command that reads a ` +
-      "project file — the only project-file access it has returns directory " +
-      "listings. Route from the checkout with the CLI, or add a reader.",
+      `no model registry: looked in ${agents} and ${checkout}. Seed the ` +
+      "project's agents repository with a model-registry.yaml, route from a " +
+      "checkout with the CLI, or hire without routing.",
   };
 }

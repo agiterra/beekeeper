@@ -45,18 +45,33 @@ use tauri::AppHandle;
 
 use crate::coding_sessions::workdir_store::load_workdir_store;
 
-/// The shared model registry's path inside a project checkout.
+/// The shared model registry's path inside a project **code** checkout.
 ///
-/// Mirrors `MODEL_REGISTRY_PROJECT_PATH` in
-/// `desktop/src/features/coding-sessions/lib/codingSessionRegistryAccess.ts`.
-pub const MODEL_REGISTRY_RELATIVE_PATH: &str = "team/model-registry.yaml";
+/// One spelling for every reader:
+/// `buzz_core::coding_session_routing::DEFAULT_REGISTRY_RELATIVE_PATH`, which
+/// is also what `bee sessions route` walks up looking for.
+pub const MODEL_REGISTRY_RELATIVE_PATH: &str =
+    buzz_core_pkg::coding_session_routing::DEFAULT_REGISTRY_RELATIVE_PATH;
+
+/// The shared model registry's path inside a project's **agents repository**
+/// (spec § 4.11) — at the root, beside `team.yml`.
+///
+/// Allowlisted here because that is where a project's registry lives now: the
+/// agents-repository seed writes it, and the code checkout rung is kept only
+/// for Beekeeper's own repository. See [`super::model_registry`] for the
+/// order the two are read in and why (ledger 178(a)).
+pub const AGENTS_REPO_MODEL_REGISTRY_RELATIVE_PATH: &str =
+    buzz_core_pkg::model_registry_source::AGENTS_REPO_REGISTRY_FILE;
 
 /// Every relative path this command will ever read.
 ///
 /// Extending this list is the only way to widen the command's reach, which is
 /// the point: adding a path is a visible, reviewable edit rather than a
 /// parameter a caller can choose.
-pub const READABLE_PROJECT_FILES: &[&str] = &[MODEL_REGISTRY_RELATIVE_PATH];
+pub const READABLE_PROJECT_FILES: &[&str] = &[
+    MODEL_REGISTRY_RELATIVE_PATH,
+    AGENTS_REPO_MODEL_REGISTRY_RELATIVE_PATH,
+];
 
 /// The largest project file that may cross the IPC boundary: 256 KiB.
 ///

@@ -1,13 +1,12 @@
-import { readProjectFile } from "@/shared/api/projectFiles";
+import { readModelRegistrySource } from "@/shared/api/projectFiles";
 import {
   parseModelRegistry,
   type ModelRegistry,
 } from "./codingSessionModelRegistry";
-import { MODEL_REGISTRY_PROJECT_PATH } from "./codingSessionRegistryAccess";
 import type { CodingSessionRegistrySource } from "./codingSessionHireRouting";
 
 /**
- * The one place this app reads `team/model-registry.yaml`.
+ * The one place this app reads a project's model registry.
  *
  * # Why one reader
  *
@@ -23,10 +22,15 @@ import type { CodingSessionRegistrySource } from "./codingSessionHireRouting";
  *
  * From the project coordinate the caller owns. The Agents tab passes the
  * project it is showing; the hire host passes the hired umbrella's project.
- * Both resolve the NIP-MP coordinate (for example
- * `30621:<owner>:<dtag>`) through `CodingSessionWorkdirStore::by_project`, so
- * neither surface can silently substitute whatever project another UI last
- * selected.
+ * The host then looks in that project's **agents repository** first — where
+ * the seed writes `model-registry.yaml` (spec § 4.11) — and in its code
+ * checkout second, and reports which copy answered. Both rungs are this
+ * computer's own records for that coordinate, so neither surface can
+ * silently substitute whatever project another UI last selected.
+ *
+ * Reading only the checkout is what refused every routed hire on a project
+ * that is not Beekeeper: the registry existed, in the agents repository, and
+ * no reader looked there (ledger 178(a), 179(b)).
  *
  * # Every no-answer is an answer
  *
@@ -50,16 +54,17 @@ export type ModelRegistrySource = CodingSessionRegistrySource;
 
 /** Test seam: the host call, injectable so the reader is testable in jsdom. */
 export type ModelRegistryReaderDeps = {
-  read: (
-    projectRef: string,
-    relativePath: string,
-  ) => Promise<{
+  read: (projectRef: string) => Promise<{
     path: string;
     text: string;
+    /** `agents-repo` or `checkout`; absent from an older host. */
+    originLabel?: string;
   }>;
 };
 
-const DEFAULT_DEPS: ModelRegistryReaderDeps = { read: readProjectFile };
+const DEFAULT_DEPS: ModelRegistryReaderDeps = {
+  read: readModelRegistrySource,
+};
 
 /** The sentence for a thrown refusal, a thrown `Error`, or anything else. */
 function sentenceFor(error: unknown): string {
@@ -89,13 +94,21 @@ export async function readModelRegistry(
     return {
       kind: "unreadable",
       why:
-        `This app resolved no project to read ${MODEL_REGISTRY_PROJECT_PATH} ` +
-        "from. Open a project, or choose one on the Agents tab.",
+        "This app resolved no project to read a model registry from. Open a " +
+        "project, or choose one on the Agents tab.",
     };
   }
   try {
-    const file = await deps.read(projectRef, MODEL_REGISTRY_PROJECT_PATH);
-    return { kind: "readable", text: file.text, label: file.path };
+    const file = await deps.read(projectRef);
+    // The origin rides in the label, which is the one string every surface
+    // already shows. Two machines can route the same class to different
+    // targets honestly — different registries — and a reader who is only
+    // told the path of a cache directory cannot tell that is what happened.
+    const label =
+      file.originLabel === undefined
+        ? file.path
+        : `${file.path} (${file.originLabel})`;
+    return { kind: "readable", text: file.text, label };
   } catch (error) {
     return { kind: "unreadable", why: sentenceFor(error) };
   }
