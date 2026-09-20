@@ -834,6 +834,7 @@ pub async fn stage_coding_session_actor_seat(
             // answers when there is none.
             let worktree = crate::managed_agents::seat_agents_clone::resolve_seat_agents_worktree(
                 &app,
+                &state,
                 worktree,
                 session_id
                     .as_deref()

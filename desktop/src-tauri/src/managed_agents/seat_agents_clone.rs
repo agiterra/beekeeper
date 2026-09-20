@@ -151,52 +151,46 @@ pub(crate) fn cut_seat_agents_clone(
 }
 
 /// The worktree a seat's agents clone (spec § 4.11) goes beside, resolved
-/// from the caller when it named one and from this host's own record of the
+/// from the caller when it named one and from this host's own records of the
 /// execution when it did not.
 ///
-/// Reads the desktop's worktree store without taking its lock or writing
-/// anything: this is a lookup, and the record it reads is written only by the
-/// path that cut the tree.
+/// # Why there are three records and not one (ledger 187, ledger 188)
+///
+/// A seat is staged twice in its life: once by the create that cut its tree,
+/// and again by every reconnect, restart and post-relaunch generation. Only
+/// the first caller holds the directory, and refusing the second for want of
+/// it made a granted lead unreconnectable. Ledger 187 answered from the
+/// desktop's `worktrees` records, keyed by provider session id — and that
+/// answered for nothing, because **44 of the 47 records on the machine where
+/// it was proven carry no session id at all**: only the solo create path
+/// (`useCodingSessionWorktreeRecorder`) ever wrote one, and a team launch's
+/// lead tree left no `worktrees` record whatever. So the chain is, in order:
+///
+/// 1. the caller's own path, when it has one;
+/// 2. the desktop's `worktrees` record for this session id — exact when the
+///    create path recorded one, which from ledger 188 a team launch does too;
+/// 3. the **provider's** own snapshot of the execution, `sessions[<id>].cwd`
+///    — the directory the agent is literally running in, written by the
+///    process that spawned it;
+/// 4. the desktop's one-shot create hint, `pending[<createCommandId>]`, with
+///    the command id read from that same provider record.
+///
+/// Rungs 2–4 are records, not assertions, so each candidate is checked to be
+/// a directory and a git work tree before it is returned; a record naming
+/// something else is refused by name. The caller's own path is taken as
+/// given: a create passes the tree it has just cut, and adding a git probe
+/// there would invent a new way for a hire to fail.
+///
+/// Nothing here writes, and nothing takes the workdir store's lock.
 pub(crate) fn resolve_seat_agents_worktree(
     app: &AppHandle,
+    state: &AppState,
     caller: Option<&Path>,
     session_id: Option<&str>,
 ) -> Result<PathBuf, String> {
     if let Some(caller) = caller {
         return Ok(caller.to_path_buf());
     }
-    let store = load_workdir_store_readonly(app).map_err(|error| {
-        format!(
-            "the caller named no worktree and this computer could not read its own record of the \
-             trees it cut: {error}"
-        )
-    })?;
-    seat_worktree_from_record(session_id, &store)
-}
-
-/// The recorded worktree of the execution running as `session_id`.
-///
-/// # Why this exists (ledger 187)
-///
-/// A seat is staged twice in its life: once by the create that hired it, and
-/// again by every reconnect, restart and post-relaunch generation. Only the
-/// first caller holds the directory — the create cut it. The composer's
-/// Reconnect holds the execution's provider session id and nothing else, so a
-/// lead with an `agents_repo` grant could not be reconnected at all: staging
-/// refused for want of a path this host had itself written into
-/// `coding-session-workdirs.json` the moment it cut the tree.
-///
-/// The provider resolves a live session's cwd from exactly this field
-/// (`CodingSessionSeatWorktree::session_id`, republished as the projects
-/// view's `sessions` map), so reading it here gives the clone the same
-/// directory the seat is actually running in rather than a second opinion.
-///
-/// Every failure names what was looked for. A guess would put a clone — and,
-/// on disposal, a removal — beside a directory nobody asked for.
-fn seat_worktree_from_record(
-    session_id: Option<&str>,
-    store: &CodingSessionWorkdirStore,
-) -> Result<PathBuf, String> {
     let Some(session_id) = session_id else {
         return Err(
             "the caller named no worktree and this execution carries no provider session id, so \
@@ -204,6 +198,91 @@ fn seat_worktree_from_record(
                 .to_string(),
         );
     };
+    let store = load_workdir_store_readonly(app).map_err(|error| {
+        format!(
+            "the caller named no worktree and this computer could not read its own record of the \
+             trees it cut: {error}"
+        )
+    })?;
+    let provider = provider_session_record(app, state, session_id)?;
+    seat_worktree_from_records(session_id, &store, &provider)
+}
+
+/// Rungs 2 to 4 of [`resolve_seat_agents_worktree`], over records already
+/// read — so the whole chain, including its refusals, is exercisable without
+/// an [`AppHandle`], a provider on disk, or a desktop store file.
+fn seat_worktree_from_records(
+    session_id: &str,
+    store: &CodingSessionWorkdirStore,
+    provider: &ProviderSessionFacts,
+) -> Result<PathBuf, String> {
+    // Rung 2. A `worktrees` record that names two different directories for
+    // one session is a contradiction, not a fallback, so it refuses here
+    // rather than quietly trying the next record.
+    if let Some(recorded) = seat_worktree_from_record(session_id, store)? {
+        return usable_seat_worktree(recorded, "this computer's worktree record");
+    }
+    // Rung 3, then rung 4, both off the provider's record of this execution.
+    if let Some(cwd) = provider.cwd.clone() {
+        return usable_seat_worktree(cwd, "the provider's record of this execution");
+    }
+    if let Some(command_id) = provider.command_id.as_deref() {
+        if let Some(hint) = store.pending.get(command_id) {
+            return usable_seat_worktree(
+                hint.clone(),
+                &format!("this computer's create hint for command {command_id}"),
+            );
+        }
+    }
+    Err(format!(
+        "the caller named no worktree and nothing on this computer records one for provider \
+         session {session_id} (looked in its own coding-session worktree records, in the \
+         provider's record of that execution, and in its create hint for {})",
+        provider
+            .command_id
+            .as_deref()
+            .map(|id| format!("command {id}"))
+            .unwrap_or_else(|| "that execution, which names no create command".to_string())
+    ))
+}
+
+/// A candidate path from a record, admitted only if it is still a git work
+/// tree on disk.
+///
+/// `source` names the record it came from, so a refusal says which of the
+/// three answered and what was wrong with its answer — the difference
+/// between "nobody wrote it down" and "what was written down is gone".
+fn usable_seat_worktree(path: PathBuf, source: &str) -> Result<PathBuf, String> {
+    if !path.is_dir() {
+        return Err(format!(
+            "{source} names {} for this seat, and no such directory exists on this computer",
+            path.display()
+        ));
+    }
+    // `.git` is a **file** in a linked worktree and a directory in an ordinary
+    // clone; both are work trees, and both are legitimate homes for a seat.
+    if !path.join(".git").exists() {
+        return Err(format!(
+            "{source} names {} for this seat, and that directory is not a git work tree",
+            path.display()
+        ));
+    }
+    Ok(path)
+}
+
+/// The desktop's own worktree record for the execution running as
+/// `session_id`: `Some` when exactly one directory is recorded, `None` when
+/// none is, and a refusal when two disagree.
+///
+/// `None` is deliberately not an error. Ledger 188: this record exists only
+/// where a create path wrote one, and for most of the trees on a real machine
+/// no create path ever did — so an absent record is an ordinary state that
+/// the next rung answers, while two contradictory records are a fault that
+/// must not be papered over by falling through.
+fn seat_worktree_from_record(
+    session_id: &str,
+    store: &CodingSessionWorkdirStore,
+) -> Result<Option<PathBuf>, String> {
     let mut matches: Vec<&Path> = store
         .worktrees
         .values()
@@ -213,21 +292,118 @@ fn seat_worktree_from_record(
     matches.sort_unstable();
     matches.dedup();
     match matches.as_slice() {
-        [] => Err(format!(
-            "the caller named no worktree and this computer records none for provider session \
-             {session_id} (looked in its own coding-session worktree records)"
-        )),
-        [only] => Ok(only.to_path_buf()),
+        [] => Ok(None),
+        [only] => Ok(Some(only.to_path_buf())),
         many => Err(format!(
-            "the caller named no worktree and this computer records {} different worktrees for \
-             provider session {session_id} ({}), so it cannot tell which one an agents clone \
-             belongs beside",
+            "this computer records {} different worktrees for provider session {session_id} \
+             ({}), so it cannot tell which one an agents clone belongs beside",
             many.len(),
             many.iter()
                 .map(|path| path.display().to_string())
                 .collect::<Vec<_>>()
                 .join(", ")
         )),
+    }
+}
+
+/// The two host-local facts the provider's own snapshot holds about one
+/// execution: where it runs, and the create command that minted it.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct ProviderSessionFacts {
+    /// `sessions[<id>].cwd` — the directory the agent process runs in.
+    cwd: Option<PathBuf>,
+    /// `sessions[<id>].commandId` — the key the desktop's create hint is
+    /// filed under.
+    command_id: Option<String>,
+}
+
+/// Longest `state.json` this reader will parse. The provider's snapshot on a
+/// busy machine is tens of kilobytes; a file orders of magnitude past that is
+/// refused rather than parsed, the same bound the workdir store uses.
+const MAX_PROVIDER_STATE_BYTES: u64 = 8 * 1024 * 1024;
+
+/// Read what the provider recorded about one execution.
+///
+/// **Why the desktop reads another process's file.** `cwd` is deliberately
+/// host-local — it is never in a signed event — so the only parties that can
+/// know it are the two processes on this machine, and the provider is the one
+/// that spawned the agent *in* it. The desktop already reads this directory
+/// (the redaction vault) and writes into it (the seat custody file and the
+/// projects view), so this is the same seam, not a new one.
+///
+/// Read as JSON rather than through [`buzz_session_provider_pkg::state`]'s
+/// own store, which creates the directory, re-restricts every file in it and
+/// replays the command ledger — all of it write-shaped work this lookup has
+/// no business doing behind a running provider's back. The two keys it reads
+/// are pinned against the real `SessionRecord` by a test below, so a rename
+/// upstream fails here rather than silently answering `None` forever.
+///
+/// A missing file, an unprovisioned provider, or an execution this provider
+/// never ran are all "nothing recorded", not errors: the caller's final
+/// refusal names every place it looked.
+fn provider_session_record(
+    app: &AppHandle,
+    state: &AppState,
+    session_id: &str,
+) -> Result<ProviderSessionFacts, String> {
+    let relay_url = crate::relay::relay_ws_url_with_override(state);
+    let store = crate::session_provider::store::load_provider_store(app)?;
+    let Some(record) = store.get(&relay_url) else {
+        return Ok(ProviderSessionFacts::default());
+    };
+    let path = crate::session_provider::provider_state_dir(app, &record.provider_pubkey)?
+        .join("state.json");
+    let Some(text) = read_bounded(&path)? else {
+        return Ok(ProviderSessionFacts::default());
+    };
+    let snapshot: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|error| format!("could not read the provider's own session record: {error}"))?;
+    Ok(provider_session_facts(&snapshot, session_id))
+}
+
+/// Read `path` when it is there and not absurd, as text.
+fn read_bounded(path: &Path) -> Result<Option<String>, String> {
+    match std::fs::metadata(path) {
+        Ok(metadata) if metadata.len() > MAX_PROVIDER_STATE_BYTES => {
+            return Err(format!(
+                "the provider's session record at {} is too large to read",
+                path.display()
+            ))
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(format!(
+                "could not read the provider's own session record: {error}"
+            ))
+        }
+    }
+    std::fs::read_to_string(path)
+        .map(Some)
+        .map_err(|error| format!("could not read the provider's own session record: {error}"))
+}
+
+/// Pull one execution's two facts out of a parsed provider snapshot.
+///
+/// Split from the file read so the shape can be exercised without a provider
+/// on disk. Anything absent or of the wrong type reads as `None` — this is a
+/// lookup in someone else's file, and the caller's refusal already names it
+/// as one of the places that had no answer.
+fn provider_session_facts(snapshot: &serde_json::Value, session_id: &str) -> ProviderSessionFacts {
+    let Some(record) = snapshot.get("sessions").and_then(|s| s.get(session_id)) else {
+        return ProviderSessionFacts::default();
+    };
+    ProviderSessionFacts {
+        cwd: record
+            .get("cwd")
+            .and_then(serde_json::Value::as_str)
+            .filter(|cwd| !cwd.trim().is_empty())
+            .map(PathBuf::from),
+        command_id: record
+            .get("commandId")
+            .and_then(serde_json::Value::as_str)
+            .filter(|id| !id.trim().is_empty())
+            .map(str::to_owned),
     }
 }
 
@@ -375,594 +551,5 @@ fn land_seat_agents_clone_on_sha(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The relay-URL tail the tests' `origin` carries, so a reuse is admitted
-    /// the same way [`cut_seat_agents_clone`] admits one in production.
-    const SEAT_ORIGIN_SUFFIX: &str = "/git/deadbeef/seat-slug-beekeeper-agents";
-
-    /// The clone's own transport, in a throwaway repository.
-    ///
-    /// This is ledger 169's first bug as a test: with the configuration every
-    /// *remote* operation uses, git refuses a clone whose remote is a path
-    /// (`protocol.file.allow=never`), and the hire that was staging this seat
-    /// dies with it. With the local clone configuration the same command
-    /// succeeds. Nothing here touches the real repository or a real cache.
-    #[test]
-    fn a_clone_from_the_cache_needs_the_file_transport_only_the_local_config_allows() {
-        use crate::commands::project_git_exec::{
-            build_git_auth_config_for_keys, build_local_clone_git_auth_config,
-            build_test_git_auth_config,
-        };
-        let temp = tempfile::tempdir().expect("temp");
-        let source = temp.path().join("cache");
-        std::fs::create_dir(&source).expect("source dir");
-        let seed = build_test_git_auth_config().expect("seed auth");
-        run_git(
-            &["init", "--quiet", "--initial-branch", "main"],
-            Some(&source),
-            &seed,
-        )
-        .expect("git init");
-        std::fs::write(source.join("team.yml"), "schema: beekeeper-team/v1\n").expect("team.yml");
-        run_git(&["add", "team.yml"], Some(&source), &seed).expect("git add");
-        run_git(&["commit", "--quiet", "-m", "seed"], Some(&source), &seed).expect("git commit");
-
-        let source_str = source.to_string_lossy().into_owned();
-        let remote_auth =
-            build_git_auth_config_for_keys(&nostr::Keys::generate()).expect("remote auth");
-        let refused_dest = temp.path().join("refused").to_string_lossy().into_owned();
-        let refusal = run_git(
-            &[
-                "clone",
-                "--quiet",
-                "--branch",
-                "main",
-                "--",
-                &source_str,
-                &refused_dest,
-            ],
-            None,
-            &remote_auth,
-        )
-        .expect_err("the remote configuration must refuse a clone from a path");
-        assert!(
-            refusal.contains("transport 'file' not allowed"),
-            "unexpected refusal: {refusal}"
-        );
-
-        let dest = temp.path().join("seat-agents");
-        let dest_str = dest.to_string_lossy().into_owned();
-        run_git(
-            &[
-                "clone",
-                "--quiet",
-                "--branch",
-                "main",
-                "--",
-                &source_str,
-                &dest_str,
-            ],
-            None,
-            &build_local_clone_git_auth_config().expect("local clone auth"),
-        )
-        .expect("the local clone configuration clones from a path");
-        assert!(dest.join(".git").is_dir(), "no clone at {}", dest.display());
-        assert!(dest.join("team.yml").is_file());
-    }
-
-    /// Build a packs-cache-shaped repo the way `sync_packs_checkout` leaves
-    /// one: a first clone of a throwaway `seed` (which gives the cache the
-    /// local `refs/heads/<branch>` the sync never advances), then `seed`
-    /// gains a second commit and the cache is synced the way
-    /// `sync_packs_checkout` does it — `git fetch origin` into
-    /// `refs/remotes/origin/*`, then a detached checkout — never touching
-    /// the cache's own local branch. Returns the cache path and both commits.
-    fn build_lagging_cache(
-        temp: &tempfile::TempDir,
-        branch: &str,
-        auth: &GitAuthConfig,
-    ) -> (PathBuf, String, String) {
-        let seed = temp.path().join("seed");
-        std::fs::create_dir(&seed).expect("seed dir");
-        run_git(
-            &["init", "--quiet", "--initial-branch", branch],
-            Some(&seed),
-            auth,
-        )
-        .expect("git init seed");
-        std::fs::write(
-            seed.join("team.yml"),
-            "schema: beekeeper-team/v1\nroles:\n  runner: {}\n",
-        )
-        .expect("write team.yml");
-        run_git(&["add", "team.yml"], Some(&seed), auth).expect("git add");
-        run_git(&["commit", "--quiet", "-m", "seed"], Some(&seed), auth).expect("git commit seed");
-        let seed_str = seed.to_string_lossy().into_owned();
-
-        let cache = temp.path().join("cache");
-        let cache_str = cache.to_string_lossy().into_owned();
-        run_git(
-            &["clone", "--quiet", "--", &seed_str, &cache_str],
-            None,
-            auth,
-        )
-        .expect("clone the cache from the seed");
-        let seed_sha = run_git(&["rev-parse", "HEAD"], Some(&seed), auth)
-            .expect("seed sha")
-            .trim()
-            .to_string();
-
-        // Advance the source (what the relay's tip does between syncs), then
-        // sync the cache exactly as `sync_packs_checkout` does: fetch into
-        // `refs/remotes/origin/*` and check out detached. The cache's local
-        // `refs/heads/<branch>` is never touched, so it stays at `seed_sha`.
-        std::fs::write(
-            seed.join("team.yml"),
-            "schema: beekeeper-team/v1\nroles:\n  runner:\n    workspace:\n      agents_repo: read\n",
-        )
-        .expect("write advanced team.yml");
-        run_git(&["add", "team.yml"], Some(&seed), auth).expect("git add advance");
-        run_git(
-            &["commit", "--quiet", "-m", "grant runner agents_repo: read"],
-            Some(&seed),
-            auth,
-        )
-        .expect("git commit advance");
-        let synced_sha = run_git(&["rev-parse", "HEAD"], Some(&seed), auth)
-            .expect("synced sha")
-            .trim()
-            .to_string();
-        run_git(&["fetch", "--quiet", "origin"], Some(&cache), auth).expect("sync fetch");
-        run_git(
-            &["checkout", "--quiet", "--detach", "origin/main"],
-            Some(&cache),
-            auth,
-        )
-        .expect("sync detached checkout");
-
-        assert_ne!(
-            seed_sha, synced_sha,
-            "the test needs two distinct commits to prove a lag"
-        );
-        assert_eq!(
-            run_git(&["rev-parse", "refs/heads/main"], Some(&cache), auth)
-                .expect("cache local main")
-                .trim(),
-            seed_sha,
-            "the cache's local branch must still be the seed commit, or this test proves nothing"
-        );
-        (cache, seed_sha, synced_sha)
-    }
-
-    /// Ledger 172, as a red/green test: `--branch main` reads the cache's
-    /// *local* `main`, which stays on the seed commit forever once the cache
-    /// is synced by fetch-and-detach. Landing the clone on the resolved
-    /// `sha` instead reaches the commit the seat's pack was actually staged
-    /// from, checks it out as a real branch (so a `write` seat has one to
-    /// push), and the `remote set-url` [`cut_seat_agents_clone`] runs right
-    /// after lands cleanly on top.
-    #[test]
-    fn a_lagging_local_branch_does_not_strand_the_seat_on_the_seed_commit() {
-        let temp = tempfile::tempdir().expect("temp");
-        let auth =
-            crate::commands::project_git_exec::build_test_git_auth_config().expect("test auth");
-        let (cache, seed_sha, synced_sha) = build_lagging_cache(&temp, "main", &auth);
-
-        // What `--branch main` would have done: it names the ref, not the
-        // commit, so it resolves the cache's stale local branch.
-        let stale_dest = temp.path().join("stale-branch-name");
-        run_git(
-            &[
-                "clone",
-                "--quiet",
-                "--branch",
-                "main",
-                "--",
-                &cache.to_string_lossy(),
-                &stale_dest.to_string_lossy(),
-            ],
-            None,
-            &auth,
-        )
-        .expect("clone by branch name");
-        assert_eq!(
-            run_git(&["rev-parse", "HEAD"], Some(&stale_dest), &auth)
-                .expect("stale HEAD")
-                .trim(),
-            seed_sha,
-            "the bug: --branch main lands on the seed commit, not the synced tip"
-        );
-
-        // The fix: land on the resolved sha.
-        let dest = temp.path().join("seat-agents");
-        land_seat_agents_clone_on_sha(
-            &cache,
-            &dest,
-            "main",
-            &synced_sha,
-            SEAT_ORIGIN_SUFFIX,
-            &auth,
-        )
-        .expect("landing on the synced sha must succeed");
-        assert_eq!(
-            run_git(&["rev-parse", "HEAD"], Some(&dest), &auth)
-                .expect("dest HEAD")
-                .trim(),
-            synced_sha,
-            "the clone must land on the synced commit, not the seed"
-        );
-        assert_eq!(
-            run_git(&["symbolic-ref", "--short", "HEAD"], Some(&dest), &auth)
-                .expect("branch name")
-                .trim(),
-            "main",
-            "the checkout must be a real branch named after the pinned ref, not detached"
-        );
-        assert!(
-            dest.join("team.yml")
-                .to_str()
-                .map(|_| std::fs::read_to_string(dest.join("team.yml")).unwrap_or_default())
-                .unwrap_or_default()
-                .contains("agents_repo: read"),
-            "the clone's working tree must hold the synced content, not the seed's"
-        );
-
-        // The step `cut_seat_agents_clone` runs right after landing: pointing
-        // `origin` at the relay. Proven here against the same `run_git` call
-        // it uses, so a break in that composition shows up beside the clone.
-        let relay_like = "http://127.0.0.1:9/git/deadbeef/seat-slug-beekeeper-agents";
-        run_git(
-            &["remote", "set-url", "origin", "--", relay_like],
-            Some(&dest),
-            &auth,
-        )
-        .expect("point origin at the relay");
-        assert_eq!(
-            run_git(&["remote", "get-url", "origin"], Some(&dest), &auth)
-                .expect("origin url")
-                .trim(),
-            relay_like
-        );
-    }
-
-    /// A seat re-staged after the cache advanced again must not be left on
-    /// its first stage's commit: [`land_seat_agents_clone_on_sha`]'s reuse
-    /// branch fetches the new sha straight from the cache path, not through
-    /// `origin` (which, on a real clone, already points at the relay by the
-    /// time a reuse happens).
-    #[test]
-    fn the_reuse_path_advances_an_existing_clone() {
-        let temp = tempfile::tempdir().expect("temp");
-        let auth =
-            crate::commands::project_git_exec::build_test_git_auth_config().expect("test auth");
-        let (cache, seed_sha, synced_sha) = build_lagging_cache(&temp, "main", &auth);
-
-        let dest = temp.path().join("seat-agents");
-        land_seat_agents_clone_on_sha(&cache, &dest, "main", &seed_sha, SEAT_ORIGIN_SUFFIX, &auth)
-            .expect("first stage lands on the seed commit");
-        assert_eq!(
-            run_git(&["rev-parse", "HEAD"], Some(&dest), &auth)
-                .expect("HEAD after first stage")
-                .trim(),
-            seed_sha
-        );
-
-        // As `cut_seat_agents_clone` does after a real clone: point `origin`
-        // at the relay, so the reuse fetch below must not depend on it.
-        run_git(
-            &[
-                "remote",
-                "set-url",
-                "origin",
-                "--",
-                "http://127.0.0.1:9/git/deadbeef/seat-slug-beekeeper-agents",
-            ],
-            Some(&dest),
-            &auth,
-        )
-        .expect("point origin at the relay");
-
-        land_seat_agents_clone_on_sha(
-            &cache,
-            &dest,
-            "main",
-            &synced_sha,
-            SEAT_ORIGIN_SUFFIX,
-            &auth,
-        )
-        .expect("the reuse path must advance the clone");
-        assert_eq!(
-            run_git(&["rev-parse", "HEAD"], Some(&dest), &auth)
-                .expect("HEAD after reuse")
-                .trim(),
-            synced_sha,
-            "a re-staged seat must land on the newly staged commit, not its first one"
-        );
-    }
-
-    /// A sha the cache never held — never fetched, never synced, or simply
-    /// wrong — must refuse by name rather than silently landing somewhere
-    /// else or hanging on a network round trip that never happens locally.
-    #[test]
-    fn a_sha_absent_from_the_cache_is_refused_by_name() {
-        let temp = tempfile::tempdir().expect("temp");
-        let auth =
-            crate::commands::project_git_exec::build_test_git_auth_config().expect("test auth");
-        let (cache, _seed_sha, _synced_sha) = build_lagging_cache(&temp, "main", &auth);
-
-        let missing_sha = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
-        let dest = temp.path().join("seat-agents");
-        let error = land_seat_agents_clone_on_sha(
-            &cache,
-            &dest,
-            "main",
-            missing_sha,
-            SEAT_ORIGIN_SUFFIX,
-            &auth,
-        )
-        .expect_err("a sha the cache never held must be refused");
-        assert!(
-            error.contains(missing_sha),
-            "the refusal must name the missing sha, got: {error}"
-        );
-    }
-
-    /// Ledger 187's second weakness: a re-stage must **advance** the clone
-    /// generation 1 left beside the worktree, not try to cut a second one.
-    ///
-    /// Proven by evidence the reuse path cannot fake: an untracked file and a
-    /// second branch written into the first clone are still there after the
-    /// second stage. A fresh clone would have neither (and, in fact, git
-    /// refuses to clone into a non-empty directory at all, which is how this
-    /// showed up as a refusal rather than as a duplicate).
-    #[test]
-    fn an_existing_clone_is_reused_rather_than_recut() {
-        let temp = tempfile::tempdir().expect("temp");
-        let auth =
-            crate::commands::project_git_exec::build_test_git_auth_config().expect("test auth");
-        let (cache, seed_sha, synced_sha) = build_lagging_cache(&temp, "main", &auth);
-
-        let dest = temp.path().join("seat-agents");
-        land_seat_agents_clone_on_sha(&cache, &dest, "main", &seed_sha, SEAT_ORIGIN_SUFFIX, &auth)
-            .expect("first stage cuts the clone");
-        std::fs::write(dest.join("seat-notes.md"), "generation 1 was here\n").expect("seat note");
-        run_git(&["branch", "generation-1"], Some(&dest), &auth).expect("mark generation 1");
-        run_git(
-            &[
-                "remote",
-                "set-url",
-                "origin",
-                "--",
-                "http://127.0.0.1:9/git/deadbeef/seat-slug-beekeeper-agents",
-            ],
-            Some(&dest),
-            &auth,
-        )
-        .expect("point origin at the relay");
-
-        land_seat_agents_clone_on_sha(
-            &cache,
-            &dest,
-            "main",
-            &synced_sha,
-            SEAT_ORIGIN_SUFFIX,
-            &auth,
-        )
-        .expect("a re-stage must reuse the clone it finds");
-        assert_eq!(
-            run_git(&["rev-parse", "HEAD"], Some(&dest), &auth)
-                .expect("HEAD after re-stage")
-                .trim(),
-            synced_sha,
-            "the reused clone must land on the newly staged commit"
-        );
-        assert!(
-            dest.join("seat-notes.md").is_file(),
-            "a reused clone keeps what generation 1 left in it; this one was recut"
-        );
-        assert!(
-            run_git(
-                &["rev-parse", "--verify", "generation-1"],
-                Some(&dest),
-                &auth
-            )
-            .is_ok(),
-            "a reused clone keeps generation 1's refs; this one was recut"
-        );
-    }
-
-    /// A directory that merely carries the clone's name is refused by name.
-    ///
-    /// Two shapes, both of which a person can create by hand beside a seat's
-    /// worktree: a plain folder, and a real git repository of something else.
-    /// The second is the dangerous one — a fetch into it would succeed, and
-    /// the seat would be handed an unrelated history under the project's
-    /// name — so the refusal rests on `origin`, not on "is it a repo".
-    #[test]
-    fn a_foreign_directory_beside_the_worktree_is_refused_by_name() {
-        let temp = tempfile::tempdir().expect("temp");
-        let auth =
-            crate::commands::project_git_exec::build_test_git_auth_config().expect("test auth");
-        let (cache, _seed_sha, synced_sha) = build_lagging_cache(&temp, "main", &auth);
-
-        let plain = temp.path().join("plain-folder-agents");
-        std::fs::create_dir(&plain).expect("plain dir");
-        std::fs::write(plain.join("notes.txt"), "mine\n").expect("note");
-        let error = land_seat_agents_clone_on_sha(
-            &cache,
-            &plain,
-            "main",
-            &synced_sha,
-            SEAT_ORIGIN_SUFFIX,
-            &auth,
-        )
-        .expect_err("a plain folder must be refused, not cloned into");
-        assert!(
-            error.contains(&plain.display().to_string())
-                && error.contains("not a git clone of the project's agents repository"),
-            "the refusal must name the directory: {error}"
-        );
-
-        let foreign = temp.path().join("foreign-agents");
-        std::fs::create_dir(&foreign).expect("foreign dir");
-        run_git(
-            &["init", "--quiet", "--initial-branch", "main"],
-            Some(&foreign),
-            &auth,
-        )
-        .expect("git init foreign");
-        run_git(
-            &[
-                "remote",
-                "add",
-                "origin",
-                "--",
-                "http://127.0.0.1:9/git/deadbeef/somebody-elses-repo",
-            ],
-            Some(&foreign),
-            &auth,
-        )
-        .expect("foreign origin");
-        let error = land_seat_agents_clone_on_sha(
-            &cache,
-            &foreign,
-            "main",
-            &synced_sha,
-            SEAT_ORIGIN_SUFFIX,
-            &auth,
-        )
-        .expect_err("a git repository of something else must be refused, not fetched into");
-        assert!(
-            error.contains("somebody-elses-repo") && error.contains(SEAT_ORIGIN_SUFFIX),
-            "the refusal must name what it found and what it expected: {error}"
-        );
-        // `rev-parse --verify` takes a well-formed 40-hex at face value, so
-        // the object itself is what gets asked about.
-        assert!(
-            run_git(&["cat-file", "-e", &synced_sha], Some(&foreign), &auth).is_err(),
-            "the refused directory must not have been fetched into"
-        );
-    }
-
-    /// One recorded worktree, shaped as the create path files it.
-    fn seat_worktree_record(
-        path: &str,
-        session_id: Option<&str>,
-    ) -> crate::coding_sessions::workdir_store::CodingSessionSeatWorktree {
-        crate::coding_sessions::workdir_store::CodingSessionSeatWorktree {
-            path: PathBuf::from(path),
-            branch: "coding-session-lead".into(),
-            repo_root: PathBuf::from("/Users/someone/Projects/pivot-test"),
-            created_at: "2026-09-20T13:00:00Z".into(),
-            session_id: session_id.map(str::to_owned),
-            agents_clone: None,
-        }
-    }
-
-    fn store_with(
-        records: &[(&str, &str, Option<&str>)],
-    ) -> crate::coding_sessions::workdir_store::CodingSessionWorkdirStore {
-        let mut store = crate::coding_sessions::workdir_store::CodingSessionWorkdirStore::default();
-        for (key, path, session_id) in records {
-            store
-                .worktrees
-                .insert((*key).to_string(), seat_worktree_record(path, *session_id));
-        }
-        store
-    }
-
-    /// Ledger 187: the reconnect names the execution, not the directory, and the
-    /// host answers from the record it wrote when it cut the tree.
-    #[test]
-    fn an_absent_worktree_is_resolved_from_this_hosts_own_record() {
-        let store = store_with(&[
-            (
-                "44220:aa:one/lead",
-                "/Users/brian/Projects/pivot-test-wt-build-kettle-cli-lead",
-                Some("session-74495ca8"),
-            ),
-            (
-                "44220:aa:one/builder",
-                "/Users/brian/Projects/pivot-test-wt-build-kettle-cli-builder",
-                Some("session-6c628bef"),
-            ),
-            (
-                "44220:aa:old/lead",
-                "/Users/brian/Projects/older-tree",
-                None,
-            ),
-        ]);
-        assert_eq!(
-            seat_worktree_from_record(Some("session-74495ca8"), &store).expect("resolved"),
-            PathBuf::from("/Users/brian/Projects/pivot-test-wt-build-kettle-cli-lead")
-        );
-    }
-
-    /// The same record filed under two keys (a seat relabelled between
-    /// generations) is one directory, not an ambiguity.
-    #[test]
-    fn two_records_naming_one_directory_resolve_to_it() {
-        let store = store_with(&[
-            (
-                "44220:aa:one/lead",
-                "/Users/brian/Projects/tree",
-                Some("s1"),
-            ),
-            (
-                "44220:aa:one/Levain",
-                "/Users/brian/Projects/tree",
-                Some("s1"),
-            ),
-        ]);
-        assert_eq!(
-            seat_worktree_from_record(Some("s1"), &store).expect("resolved"),
-            PathBuf::from("/Users/brian/Projects/tree")
-        );
-    }
-
-    /// Every failure names what was looked for. A guess here would put a clone —
-    /// and, on disposal, a removal — beside a directory nobody asked for.
-    #[test]
-    fn an_unresolvable_worktree_is_refused_with_what_was_looked_for() {
-        let store = store_with(&[(
-            "44220:aa:one/lead",
-            "/Users/brian/Projects/tree",
-            Some("s1"),
-        )]);
-
-        let no_id = seat_worktree_from_record(None, &store).expect_err("no id, no answer");
-        assert!(
-            no_id.contains("no provider session id"),
-            "unexpected refusal: {no_id}"
-        );
-
-        let unknown = seat_worktree_from_record(Some("s-missing"), &store)
-            .expect_err("an unrecorded session must refuse");
-        assert!(
-            unknown.contains("s-missing") && unknown.contains("records none"),
-            "the refusal must name the session it looked for: {unknown}"
-        );
-
-        let ambiguous = store_with(&[
-            ("44220:aa:one/a", "/Users/brian/Projects/tree-a", Some("s1")),
-            ("44220:aa:one/b", "/Users/brian/Projects/tree-b", Some("s1")),
-        ]);
-        let error = seat_worktree_from_record(Some("s1"), &ambiguous)
-            .expect_err("two directories for one session must refuse");
-        assert!(
-            error.contains("tree-a") && error.contains("tree-b"),
-            "the refusal must name both candidates: {error}"
-        );
-    }
-
-    #[test]
-    fn the_clone_sits_beside_the_worktree() {
-        assert_eq!(
-            seat_agents_clone_path(Path::new("/src/proj.worktrees/lane")),
-            Some(PathBuf::from("/src/proj.worktrees/lane-agents"))
-        );
-        assert_eq!(seat_agents_clone_path(Path::new("/")), None);
-    }
-}
+#[path = "seat_agents_clone_tests.rs"]
+mod tests;

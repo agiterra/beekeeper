@@ -15347,6 +15347,115 @@ removed from here.
        mission finished, is the proof this item closes on. Until then the
        refusal is known to be gone only in tests.
 
+188. **Item 187's fix shipped and still refused the kettle lead: it read a
+     record almost nothing writes. The team-launch path had never recorded
+     the lead's worktree at all (found live 2026-09-20 on the installed
+     `79d87f4cd` bundle, Reconnect on the kettle lead of session
+     `74495ca8-2aeb-4f25-9f40-3124be1c476f`).** The new refusal, in full:
+     *"this role is granted the agents repository (Write) but the caller
+     named no worktree and this computer records none for provider session
+     74495ca8-2aeb-4f25-9f40-3124be1c476f (looked in its own coding-session
+     worktree records)"*. The refusal was doing its job — it named exactly
+     what it looked for, and what it looked for was empty.
+     - **Evidence, from the store itself** (`~/Library/Application
+       Support/io.agiterra.beekeeper.app.dev/coding-session-workdirs.json`,
+       read 2026-09-20): the only record naming the lead's tree is
+       `pending["csl-86e283cf-dd2c-4d6c-a0ee-b23cd1f9a8c1"] =
+       "/Users/brian/Projects/pivot-test-wt-build-kettle-cli-lead"` — the
+       one-shot create hint, keyed by the create's `commandId`. It has **no
+       `worktrees` entry**. Worse, of the **47** `worktrees` records on that
+       machine only **3** carry a `sessionId` at all, and all three are solo
+       sessions from `useCodingSessionWorktreeRecorder`; exactly **1** of the
+       47 carries an `agentsClone`. So 187's rung answered for 3 of 47 trees
+       and for none of the team-launched leads. `agentsRepos` holds the
+       *project's packs cache*, not any seat's clone — reading it for a seat
+       would have been a fourth wrong answer.
+     - **Cause, with the code.** A seat's tree is cut before its session has a
+       name, so recording it takes two steps: hold the directory at create,
+       file it when the provider's receipt names the session. The solo path
+       does both (`useCodingSessionWorktreeRecorder`, finding 82's fix,
+       wired at `useNewCodingSessionCreate.ts:360`). **The team-launch path
+       does only the first**: `ui/useCodingSessionCrewLaunch.ts` called
+       `stageCreateHint` and nothing else, and its `awaitSeatReceipt`
+       wrapper — which receives the `CodingSessionCommandTarget`, session id
+       and all — threw the id away. The lead of every project team session
+       ever launched is therefore a tree the host cannot name: not for a
+       reconnect placing its agents clone, not for disposal, not for a person
+       looking at a folder they no longer recognise.
+     - **Fix 1: four records, in order, and each one checked.**
+       `resolve_seat_agents_worktree`
+       (`desktop/src-tauri/src/managed_agents/seat_agents_clone.rs`) now
+       tries (1) the caller's own path, (2) the desktop's `worktrees` record
+       by session id, (3) **the provider's own snapshot**,
+       `sessions[<id>].cwd` — the directory the agent is literally running
+       in, written by the process that spawned it — and (4) the desktop's
+       `pending[<createCommandId>]`, with the command id read from that same
+       provider record. Rungs 2–4 are records, not promises, so
+       `usable_seat_worktree` requires the path to be a directory and a git
+       work tree (`.git` as file **or** directory — a linked worktree is
+       both legitimate and the common case here) and refuses by name
+       otherwise. A `worktrees` record naming two different directories for
+       one session still refuses rather than falling through: a
+       contradiction is a fault, not a reason to try the next rung. The final
+       refusal names all three places and the command id it looked under.
+     - **Why the host reads the provider's file.** `cwd` is deliberately
+       host-local — never in a signed event — so the only parties that can
+       know it are the two processes on this machine, and the provider is the
+       one that spawned the agent in it. The desktop already reads that
+       directory (the redaction vault) and writes into it (the seat custody
+       file, the projects view). It is read as JSON rather than through
+       `buzz_session_provider::state`'s own `StateStore::open`, which
+       creates the directory, re-restricts every file and replays the command
+       ledger — write-shaped work a lookup has no business doing behind a
+       running provider. The two keys are pinned against that crate's real
+       `SessionRecord` by a round-trip test, so a rename upstream fails a
+       test instead of silently making rungs 3 and 4 answer "nothing" forever.
+     - **Fix 2: the launch path records what it cuts.**
+       `ui/useCodingSessionCrewLaunch.ts` holds each seat's directory at
+       `publishSeatCreate` and files it in its `awaitSeatReceipt` wrapper,
+       the first moment the session has an id — the same two-step the solo
+       path has had, with the same never-fatal rule (a bookkeeping write must
+       not cost a live session). The host records only what it recognises as
+       a tree it cut, so a seat running in an ordinary checkout still records
+       nothing. New optional dep `recordWorktree` so a test can watch it.
+     - **Not done, and why.** The composer was **not** given a
+       `createCommandId` to pass: the 44223 metadata
+       (`BuzzCodingSessionMetadataV1`, `codingSessionIngressPayloads.ts`)
+       carries no create command id and adding one is a `buzz-core` wire
+       change — and it would not have helped the kettle lead, whose 44223 is
+       already signed. The host reads the id off the provider's own record
+       instead, which is also the rule `actor_seats.rs`'s module doc keeps:
+       the webview never names a directory staging will write beside. Fix 2
+       repairs **new** launches only; every tree already on this machine is
+       answered by rungs 3 and 4. A generation-1 agents clone is still not
+       recorded on the tree at stage time (the record does not exist yet);
+       the re-stage attaches it, because `attach_agents_clone` matches by
+       path.
+     - **Evidence.** 15/15 `seat_agents_clone::tests` (moved to a sibling
+       `seat_agents_clone_tests.rs` for the 1000-line ratchet, the same split
+       `actor_seats.rs` uses), six of them new:
+       `a_recorded_worktree_answers_for_its_session`,
+       `one_session_with_two_directories_refuses_instead_of_guessing`,
+       `the_providers_own_record_answers_when_the_desktop_recorded_nothing`
+       (the kettle lead's exact shape),
+       `the_create_hint_answers_by_the_command_the_provider_names`,
+       `a_session_no_record_knows_is_refused_naming_every_place_looked`,
+       `a_record_naming_something_that_is_not_a_work_tree_is_refused_by_name`,
+       plus `the_providers_snapshot_yields_the_cwd_and_the_create_command`
+       and the drift guard
+       `the_provider_session_keys_match_the_providers_own_type`. Desktop:
+       "a team launch files the lead's tree against the session that settles"
+       (`useCodingSessionCrewLaunch.leadWorktree.test.mjs`), which also
+       asserts the create hint is still written — the record is an addition,
+       not a replacement.
+     - **Owed live, again.** The same proof 187 owed and did not get: the
+       kettle lead of session `74495ca8` reconnecting on a bundle rebuilt
+       from this, its agents clone reused rather than recut, and the mission
+       finished. This time the path that must answer is rung 3, and it can be
+       checked before the rebuild: `sessions["74495ca8-…"].cwd` in the
+       provider's `state.json` is already
+       `/Users/brian/Projects/pivot-test-wt-build-kettle-cli-lead`.
+
 ## 3a. Environment facts that cost real time (do not rediscover)
 
 - **pnpm 11's answer to a stale workspace state is to DELETE `node_modules`,

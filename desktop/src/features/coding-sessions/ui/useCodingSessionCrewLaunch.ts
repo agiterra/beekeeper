@@ -6,7 +6,10 @@ import {
   recordCodingSessionWorkdirUse,
   stageCodingSessionCreateHint,
 } from "@/shared/api/tauriCodingSessionWorkdirs";
-import { createCodingSessionWorktree } from "@/shared/api/tauriCodingSessionWorktrees";
+import {
+  createCodingSessionWorktree,
+  recordCodingSessionWorktree,
+} from "@/shared/api/tauriCodingSessionWorktrees";
 import { ensureActorChannelMembership } from "../lib/actorSeatChannelMembership";
 import {
   clearCodingSessionActorSeat,
@@ -95,6 +98,12 @@ export type CodingSessionCrewLaunchHostDeps = {
   buildPolicyEvent: typeof buildCodingSessionPolicyEvent;
   stageCreateHint: typeof stageCodingSessionCreateHint;
   recordWorkdirUse: typeof recordCodingSessionWorkdirUse;
+  /**
+   * File the tree a seat actually runs in against the session that just
+   * settled (ledger 188). Optional so an older injected dep set still runs;
+   * production always passes the real call.
+   */
+  recordWorktree?: typeof recordCodingSessionWorktree;
   /** The three custody/membership steps `publishSeatedCodingSessionCreate` runs. */
   seatDeps: SeatedCodingSessionCreateDeps;
   signer: typeof signRelayEvent;
@@ -127,6 +136,7 @@ export const DEFAULT_CODING_SESSION_CREW_LAUNCH_DEPS: CodingSessionCrewLaunchHos
     buildPolicyEvent: buildCodingSessionPolicyEvent,
     stageCreateHint: stageCodingSessionCreateHint,
     recordWorkdirUse: recordCodingSessionWorkdirUse,
+    recordWorktree: recordCodingSessionWorktree,
     seatDeps: {
       ensureMembership: ensureActorChannelMembership,
       stageSeat: stageCodingSessionActorSeat,
@@ -241,6 +251,17 @@ export function useCodingSessionCrewLaunch(input: {
       setResult(null);
       setSteps(planCodingSessionCrewLaunch(launchInput));
       setIsLaunching(true);
+      // Ledger 188: a seat's tree is cut before its session has a name, so
+      // the directory is held here from the create until the provider's
+      // receipt names the session — the same two-step the solo path does in
+      // `useCodingSessionWorktreeRecorder`, which this path never had. Held
+      // in memory because a working directory is host-local and must never
+      // travel in a relay event; a reload in that window simply loses it,
+      // which is exactly what happened before.
+      const seatTrees = new Map<
+        string,
+        { sessionRef: string; seatLabel: string; path: string }
+      >();
       // The goal is published inside `publishGenesis`, so this is written
       // before the launch and read after it.
       //
@@ -380,6 +401,11 @@ export function useCodingSessionCrewLaunch(input: {
             // it cut one — not the checkout the form still holds.
             const seatWorkdir = workdir ?? current.workdir;
             if (seatWorkdir) {
+              seatTrees.set(commandId, {
+                sessionRef,
+                seatLabel: seat.actorLabel,
+                path: seatWorkdir,
+              });
               // Exactly what the solo path stages
               // (`useNewCodingSessionCreate.ts`): the project coordinate and
               // the checkout to remember, so `byProject` is written when it
@@ -482,12 +508,34 @@ export function useCodingSessionCrewLaunch(input: {
             });
             return { commandId, packStaged, packRef };
           },
-          awaitSeatReceipt: ({ channelId, commandId }) =>
-            deps.awaitSeatReceipt({
+          awaitSeatReceipt: async ({ channelId, commandId }) => {
+            const target = await deps.awaitSeatReceipt({
               channelId,
               commandId,
               providerAuthorityPubkey,
-            }),
+            });
+            // The first moment this seat has a session id. Ledger 188: the
+            // lead's tree was cut by this path and never recorded, so nothing
+            // could name it afterwards — not a reconnect placing its agents
+            // clone, not disposal, not the person looking at a folder they no
+            // longer recognise. The host records only what it recognises as a
+            // tree it cut, so calling it for a seat running in an ordinary
+            // checkout records nothing, on purpose.
+            const tree = seatTrees.get(commandId);
+            seatTrees.delete(commandId);
+            if (tree) {
+              // Never fatal: the seat is live either way, and failing the
+              // launch over a bookkeeping write would trade a real session
+              // for a record of one.
+              await (deps.recordWorktree ?? recordCodingSessionWorktree)({
+                sessionRef: tree.sessionRef,
+                seatLabel: tree.seatLabel,
+                path: tree.path,
+                sessionId: target.sessionId,
+              }).catch(() => {});
+            }
+            return target;
+          },
           grantOperator: async ({ channelId, genesisRef, granteePubkey }) => {
             const result = await deps.ensureCreateOperatorGrants({
               channelId,
