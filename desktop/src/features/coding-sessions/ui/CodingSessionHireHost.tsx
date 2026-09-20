@@ -19,6 +19,7 @@ import {
   useCodingSessionHire,
   type UseCodingSessionHireInput,
 } from "../hooks/useCodingSessionHire";
+import { readTeamRoleHints } from "@/shared/api/projectFiles";
 import { readModelRegistry } from "../lib/codingSessionRegistrySource";
 import { useGlobalCodingSessionCatalog } from "../useCodingSessionCatalog";
 import { groupCodingSessionCatalog } from "../lib/codingSessionUmbrellaModel";
@@ -197,6 +198,7 @@ export function CodingSessionHireHost() {
       checkoutForHire={checkoutForHire}
       operatorPubkey={identityQuery.data?.pubkey ?? null}
       registryForProject={readModelRegistry}
+      teamHintsForProject={readTeamRoleHints}
       providerAuthorityPubkey={providerStatus.data?.providerPubkey ?? null}
       runtimes={runtimes.data ?? []}
       targetForActor={targetForActor}

@@ -28,6 +28,7 @@ import {
   codingSessionHireRefusalNotice,
   planCodingSessionHireAnswer,
   type CodingSessionHireOutcomeState,
+  type CodingSessionTeamRoleHint,
 } from "../lib/codingSessionHireAnswer";
 import {
   formatCodingSessionHireRefusal,
@@ -357,6 +358,10 @@ export type UseCodingSessionHireInput = {
   registryForProject?: (
     projectRef: string | null,
   ) => Promise<CodingSessionRegistrySource>;
+  /** Read `team.yml`'s per-role hints for each hire (ledger 180, item 3). */
+  teamHintsForProject?: (
+    projectRef: string | null,
+  ) => Promise<ReadonlyMap<string, CodingSessionTeamRoleHint>>;
   /** The 44222 revision behind {@link modelCatalogs}, when one was read. */
   catalogRevision?: number | null;
   /**
@@ -690,6 +695,10 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
             why: "this host was given no registry source for the umbrella's project",
           });
 
+      const teamRoleHints = current.input.teamHintsForProject
+        ? await current.input.teamHintsForProject(projectRef)
+        : undefined;
+
       const answer = planCodingSessionHireAnswer({
         request,
         umbrella,
@@ -717,6 +726,7 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
         ),
         providerAuthorityPubkey,
         registry,
+        ...(teamRoleHints ? { teamRoleHints } : {}),
         catalogRevision:
           catalogSource?.catalogRevision ??
           current.input.catalogRevision ??

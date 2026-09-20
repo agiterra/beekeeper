@@ -63,6 +63,14 @@ pub const MODEL_REGISTRY_RELATIVE_PATH: &str =
 pub const AGENTS_REPO_MODEL_REGISTRY_RELATIVE_PATH: &str =
     buzz_core_pkg::model_registry_source::AGENTS_REPO_REGISTRY_FILE;
 
+/// The team manifest at an agents repository's root (spec § 4.2).
+///
+/// Allowlisted for its per-role advisory `runtime`/`model` hints: without
+/// them an **unrouted** hire has nothing but the identity's own pin to run,
+/// which is how seven seats ran the most expensive target on Andy's run
+/// (ledger 179(b), 180). Same name the composer reads.
+pub const TEAM_MANIFEST_RELATIVE_PATH: &str = buzz_persona_pkg::team::TEAM_YML;
+
 /// Every relative path this command will ever read.
 ///
 /// Extending this list is the only way to widen the command's reach, which is
@@ -71,6 +79,7 @@ pub const AGENTS_REPO_MODEL_REGISTRY_RELATIVE_PATH: &str =
 pub const READABLE_PROJECT_FILES: &[&str] = &[
     MODEL_REGISTRY_RELATIVE_PATH,
     AGENTS_REPO_MODEL_REGISTRY_RELATIVE_PATH,
+    TEAM_MANIFEST_RELATIVE_PATH,
 ];
 
 /// The largest project file that may cross the IPC boundary: 256 KiB.

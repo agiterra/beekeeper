@@ -14653,21 +14653,55 @@ removed from here.
        own file, `--registry` overrides both, and the refusal names both
        kinds of place. The renderer's reader keeps its nine cases with the
        new shape.
+     - **An unrouted hire now has the team's advice, not just a pin.** This
+       is 179(b)'s other half: `team.yml`'s per-role `runtime`/`model` hints
+       parsed since the pivot (`crates/buzz-persona/src/team.rs:105,109`) and
+       **no consumer read them**, so every unrouted hire ran the identity's
+       own record — `opus[1m]` here, seven `claude-fable-5-1[1m]` seats on
+       Andy's machine, chosen by nobody. The host reads `team.yml` from the
+       same snapshot as the registry and in the same order
+       (`read_team_role_hints`,
+       `desktop/src-tauri/src/commands/model_registry.rs:256`; `team.yml`
+       joined the read allowlist at `project_files.rs:72`), and
+       `resolveCodingSessionHireTeamModelHint`
+       (`desktop/src/features/coding-sessions/lib/codingSessionHireAnswer.ts:368`)
+       decides, in this order: a model the **lead** named wins (D13, already
+       catalog-checked), then the **team's** hint when the seat's own runtime
+       offers that exact id, then the **identity's** pin exactly as before.
+       The provenance rides on the create's existing `modelNotice`, which the
+       umbrella already renders — **no new wire key**.
+       - **It refuses nothing new.** A hint the catalog does not offer, or one
+         whose `provider:` half names another vendor, falls through to the pin
+         *and says so in the notice*; a hint that silently did nothing would
+         be worse than none, because the team would read its own `team.yml`
+         and believe it. A `team.yml` that does not parse is no hints, not a
+         refused hire (the hire never mentioned that file).
+       - **The runtime hint is not a provider switch.** The identity decides
+         the runtime (item 88(i), live 2026-08-28), so a `runtime:` naming
+         another adapter changes nothing and the notice says why.
+       - Tests: hint honoured (model and provenance), hint not offered → pin
+         with the reason, hint for another vendor → pin naming the vendor and
+         the rule, no hint for the role → pin and silence, no manifest at all
+         → the behaviour that shipped before, a lead-named model wins, a
+         routed hire ignores the hint. Rust: hints read from the agents
+         repository listing every role hint-or-not, and an unparseable
+         manifest is empty.
+       - Known edge, unchanged: an identity whose pin the runtime does not
+         offer is still refused `HIRE_MODEL_NOT_OFFERED` before any hint is
+         consulted (item 88(a)), because that check lives in
+         `codingSessionHirePolicy.ts`, which this lane did not own. A project
+         whose `team.yml` names a good model can therefore still be refused
+         for a stale pin.
      - **What is owed live.** Nothing here has run against a real hire: the
        proof is a routed hire on a project whose registry is only in its
        agents repository, seated on the routed target rather than the
-       identity's pin. Two pieces of the design are **not built**: the wire
+       identity's pin, and an unrouted hire on a project whose `team.yml`
+       names a model. One piece of the design is **not built**: the wire
        routing record carries no registry-origin field (its key set is
        exactly 13 and is validated on both sides —
        `crates/buzz-core/src/coding_session_routing.rs:3046`; adding a 14th
        key belongs with whoever next changes that schema), so the origin
-       travels only in the host's own disclosure and the CLI's report; and
-       an **unrouted** hire still takes the identity's pin rather than
-       `team.yml`'s per-role `runtime`/`model` hint. Those hint fields parse
-       today (`crates/buzz-persona/src/team.rs:105,109`) and **no consumer
-       reads them**; wiring them needs the hire-answer path
-       (`desktop/src/features/coding-sessions/lib/codingSessionHireAnswer.ts:271`),
-       which this lane did not own.
+       travels only in the host's own disclosure and the CLI's report.
 182. **The `bee sessions` bodies now answer for their own shape: `--example`
      prints a valid body, a refusal names every required key, and `--verifies`
      fills the field the fence actually reads (2026-09-20, lane 182 on

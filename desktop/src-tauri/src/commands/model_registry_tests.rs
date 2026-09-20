@@ -194,3 +194,51 @@ fn the_seeded_file_name_is_the_name_readers_look_for() {
         buzz_core_pkg::model_registry_source::AGENTS_REPO_REGISTRY_FILE
     );
 }
+
+/// The hints an unrouted hire runs on, read from the same snapshot as the
+/// registry (ledger 179(b), 180).
+#[test]
+fn team_yml_hints_are_read_from_the_agents_repository_and_list_every_role() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let agents = tmp.path().join("pivot-test-beekeeper-agents");
+    fs::create_dir_all(&agents).expect("agents dir");
+    fs::write(
+        agents.join("team.yml"),
+        concat!(
+            "schema: beekeeper-team/v1\n",
+            "version: 0.1.0\n",
+            "lead: lead\n",
+            "roles:\n",
+            "  lead: {}\n",
+            "  builder:\n",
+            "    runtime: claude\n",
+            "    model: anthropic:claude-sonnet-5\n",
+        ),
+    )
+    .expect("write team.yml");
+
+    let hints = super::team_role_hints(
+        &fs::read_to_string(agents.join("team.yml")).expect("read"),
+        &agents.join("team.yml"),
+    );
+    // Every role the manifest lists, hint or not: "the team says nothing
+    // about this role" and "this host never read the team" are different
+    // facts, and only the second one may fall back silently.
+    assert_eq!(
+        hints.keys().cloned().collect::<Vec<_>>(),
+        vec!["builder".to_owned(), "lead".to_owned()]
+    );
+    let builder = &hints["builder"];
+    assert_eq!(builder.runtime.as_deref(), Some("claude"));
+    assert_eq!(builder.model.as_deref(), Some("anthropic:claude-sonnet-5"));
+    assert_eq!(hints["lead"].runtime, None);
+    assert_eq!(hints["lead"].model, None);
+}
+
+/// A `team.yml` the parser refuses is no hints, not a refused hire: the file
+/// is the project's to edit and the hire never mentioned it.
+#[test]
+fn a_team_manifest_that_does_not_parse_is_no_hints_rather_than_a_refusal() {
+    let hints = super::team_role_hints("schema: something-else/v9\n", Path::new("/x/team.yml"));
+    assert!(hints.is_empty());
+}

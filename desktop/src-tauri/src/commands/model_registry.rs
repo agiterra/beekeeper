@@ -37,7 +37,7 @@
 //! allowlisted name, containment after symlink resolution, a size ceiling,
 //! UTF-8 or nothing — because a checkout is a person's disk.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 use tauri::AppHandle;
@@ -48,6 +48,7 @@ use buzz_core_pkg::model_registry_source::{
 
 use super::project_files::{
     read_allowlisted_project_file, ProjectFileRefusal, MODEL_REGISTRY_RELATIVE_PATH,
+    TEAM_MANIFEST_RELATIVE_PATH,
 };
 use crate::coding_sessions::workdir_store::{load_workdir_store, CodingSessionWorkdirStore};
 
@@ -207,6 +208,125 @@ pub fn read_model_registry(
             )
         },
     })
+}
+
+/// One role's advisory execution hints from the project's `team.yml`
+/// (spec § 4.2, `roles.<role>.runtime` and `roles.<role>.model`).
+///
+/// Advisory is the whole point: the router decides for a hire that asks to be
+/// routed (D17), and these are what an **unrouted** hire has instead of the
+/// identity's own pin. Either field may be absent, and absent is not a guess.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TeamRoleHint {
+    /// `roles.<role>.runtime` — a runtime slug (`claude`, `codex`).
+    pub runtime: Option<String>,
+    /// `roles.<role>.model` — `provider:model-id`.
+    pub model: Option<String>,
+}
+
+/// A project's per-role hints, and the file they were read from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TeamRoleHints {
+    /// The absolute, symlink-resolved path of the `team.yml` that answered.
+    pub path: String,
+    /// Which copy answered: `agents-repo` or `checkout`.
+    pub origin: String,
+    /// Role slug to hint, for every role the manifest lists. A role with
+    /// neither field is still listed: "the team says nothing about this
+    /// role" and "this host never read the team" are different facts.
+    pub roles: std::collections::BTreeMap<String, TeamRoleHint>,
+}
+
+/// Read a project's `team.yml` hints from the same snapshot the registry is
+/// read from.
+///
+/// The order is [`host_model_registry_candidates`]': the project's agents
+/// repository, then its code checkout. A manifest that does not parse is
+/// **not** an error here — it is no hints, with the parser's own sentence —
+/// because a hire must not be refused for a file it never asked about.
+///
+/// # Errors
+///
+/// A [`ProjectFileRefusal`] coded [`NO_TEAM_MANIFEST_CODE`] when no
+/// `team.yml` was found, naming every place that was tried, or when no
+/// project was named.
+#[tauri::command]
+pub fn read_team_role_hints(
+    app: AppHandle,
+    project_ref: String,
+) -> Result<TeamRoleHints, ProjectFileRefusal> {
+    let project_ref = project_ref.trim().to_owned();
+    if project_ref.is_empty() {
+        return Err(ProjectFileRefusal {
+            code: NO_TEAM_MANIFEST_CODE,
+            message: "no project was named, so there is no team manifest to read".to_owned(),
+        });
+    }
+    let store = load_workdir_store(&app).map_err(|error| ProjectFileRefusal {
+        code: NO_TEAM_MANIFEST_CODE,
+        message: format!("this computer's project directory record could not be read: {error}"),
+    })?;
+    let mut looked_in = Vec::new();
+    for candidate in host_model_registry_candidates(&store, &project_ref) {
+        match read_allowlisted_project_file(&candidate.root, TEAM_MANIFEST_RELATIVE_PATH) {
+            Ok(read) => {
+                return Ok(TeamRoleHints {
+                    path: read.path.clone(),
+                    origin: candidate.candidate.origin.as_str().to_owned(),
+                    roles: team_role_hints(&read.text, Path::new(&read.path)),
+                })
+            }
+            Err(refusal) => looked_in.push(format!(
+                "{}/{TEAM_MANIFEST_RELATIVE_PATH} ({})",
+                candidate.root.display(),
+                refusal.code
+            )),
+        }
+    }
+    Err(ProjectFileRefusal {
+        code: NO_TEAM_MANIFEST_CODE,
+        message: if looked_in.is_empty() {
+            format!(
+                "no team manifest: this computer has recorded neither an agents repository nor                  a checkout for project {project_ref}"
+            )
+        } else {
+            format!(
+                "no team manifest: looked in {}",
+                buzz_core_pkg::model_registry_source::join_and(&looked_in)
+            )
+        },
+    })
+}
+
+/// The refusal code a project with no readable `team.yml` earns.
+pub const NO_TEAM_MANIFEST_CODE: &str = "no-team-manifest";
+
+/// Every role the manifest lists, with its advisory hints; empty when the
+/// file does not parse as a team manifest.
+///
+/// Tolerant on purpose. `team.yml` is the project's to edit, and a typo in it
+/// must not turn every unrouted hire into a refusal about a file the hire
+/// never mentioned — it turns into "no hint", which is exactly what the
+/// project had before it wrote the line.
+fn team_role_hints(text: &str, path: &Path) -> std::collections::BTreeMap<String, TeamRoleHint> {
+    let Ok(manifest) = buzz_persona_pkg::team::parse_team_yml(text, path) else {
+        return std::collections::BTreeMap::new();
+    };
+    manifest
+        .roles
+        .iter()
+        .map(|(role, entry)| {
+            (
+                role.clone(),
+                TeamRoleHint {
+                    runtime: entry.runtime.clone(),
+                    model: entry.model.clone(),
+                },
+            )
+        })
+        .collect()
 }
 
 #[cfg(test)]

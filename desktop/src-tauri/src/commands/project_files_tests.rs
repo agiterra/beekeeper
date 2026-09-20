@@ -11,6 +11,7 @@ use std::os::unix::fs as unix_fs;
 use super::{
     read_allowlisted_project_file, AGENTS_REPO_MODEL_REGISTRY_RELATIVE_PATH,
     MAX_PROJECT_FILE_BYTES, MODEL_REGISTRY_RELATIVE_PATH, READABLE_PROJECT_FILES,
+    TEAM_MANIFEST_RELATIVE_PATH,
 };
 
 /// A checkout with `team/model-registry.yaml` in it, holding `text`.
@@ -24,17 +25,22 @@ fn checkout_with_registry(text: &str) -> tempfile::TempDir {
 
 /// The allowlist holds the model registry in both of the two places a
 /// project can keep one — the agents repository (spec § 4.11) and the code
-/// checkout — and nothing else. Reading only the checkout is what refused
-/// every routed hire off this repository (ledger 178(a), 180).
+/// checkout — plus the team manifest whose per-role hints an unrouted hire
+/// runs on, and nothing else. Reading only the checkout registry is what
+/// refused every routed hire off this repository, and reading no team
+/// manifest is what ran every unrouted one on the identity's pin (ledger
+/// 178(a), 179(b), 180).
 #[test]
-fn the_allowlist_holds_the_model_registry_in_both_of_its_places_and_nothing_else() {
+fn the_allowlist_holds_the_registry_in_both_places_the_team_manifest_and_nothing_else() {
     assert_eq!(
         READABLE_PROJECT_FILES,
         &[
             MODEL_REGISTRY_RELATIVE_PATH,
-            AGENTS_REPO_MODEL_REGISTRY_RELATIVE_PATH
+            AGENTS_REPO_MODEL_REGISTRY_RELATIVE_PATH,
+            TEAM_MANIFEST_RELATIVE_PATH
         ]
     );
+    assert_eq!(TEAM_MANIFEST_RELATIVE_PATH, "team.yml");
     assert_eq!(MODEL_REGISTRY_RELATIVE_PATH, "team/model-registry.yaml");
     assert_eq!(
         AGENTS_REPO_MODEL_REGISTRY_RELATIVE_PATH,

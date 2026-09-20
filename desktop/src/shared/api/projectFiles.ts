@@ -106,3 +106,50 @@ export async function readModelRegistrySource(
     throw error;
   }
 }
+
+/**
+ * One role's advisory execution hints from a project's `team.yml`.
+ *
+ * Mirrors the Rust `TeamRoleHint`. Advisory is the whole point: a hire that
+ * asks to be routed is routed (D17); these are what an **unrouted** hire has
+ * instead of the identity's own pin, which is the most expensive target on
+ * offer (ledger 179(b), 180).
+ */
+export type TeamRoleHint = {
+  /** `roles.<role>.runtime` — a runtime slug (`claude`, `codex`). */
+  runtime: string | null;
+  /** `roles.<role>.model` — `provider:model-id`. */
+  model: string | null;
+};
+
+/** A project's per-role hints, and the `team.yml` they were read from. */
+export type TeamRoleHints = {
+  path: string;
+  origin: string;
+  roles: Record<string, TeamRoleHint>;
+};
+
+/**
+ * Read a project's `team.yml` hints from the snapshot the registry comes
+ * from: the agents repository first, the code checkout second.
+ *
+ * Resolves to an empty map rather than rejecting when there is no manifest,
+ * because a project with no `team.yml` is the ordinary case and must not turn
+ * a hire into a refusal about a file it never mentioned. The reason is kept
+ * on the promise's own path — `roles` empty and `path` naming what was tried
+ * — so nothing silently reports "no hint" for a manifest this host simply
+ * failed to open.
+ */
+export async function readTeamRoleHints(
+  projectRef: string | null,
+): Promise<ReadonlyMap<string, TeamRoleHint>> {
+  if (projectRef === null || projectRef.trim().length === 0) return new Map();
+  try {
+    const read = await invokeTauri<TeamRoleHints>("read_team_role_hints", {
+      projectRef,
+    });
+    return new Map(Object.entries(read.roles));
+  } catch {
+    return new Map();
+  }
+}

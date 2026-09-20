@@ -518,3 +518,144 @@ test("a routed hire is not refused for the identity's own stale model", () => {
   assert.equal(routed.kind, "seat");
   assert.equal(routed.plan.model, "sonnet");
 });
+
+// ── team.yml's per-role hint on an unrouted hire (ledger 179(b), 180) ───────
+//
+// An unrouted hire used to have exactly one input for the model: the
+// identity's own pin. That is how seven seats on Andy's run took
+// `claude-fable-5-1[1m]` under an `opus[1m]` lead — nobody chose it, it was
+// simply what their records said. The project's `team.yml` gets a say now,
+// and every one of these cases is about the seat still being honest about
+// which source chose.
+
+/** The identity, pinned to `opus[1m]` the way a minted agent is. */
+const PINNED = [
+  {
+    pubkey: ADA,
+    name: "Ada",
+    homeRole: "builder",
+    projectRef: PROJECT_REF,
+    hasRolePack: true,
+    model: "opus[1m]",
+  },
+];
+
+const CLAUDE_SLUGS = new Map([["claude-primary", "claude"]]);
+
+test("an unrouted hire runs team.yml's model for the role, and says it did", () => {
+  const result = answer({
+    candidates: PINNED,
+    modelCatalogs: CLAUDE_CATALOG,
+    providerRuntimeSlugs: CLAUDE_SLUGS,
+    teamRoleHints: new Map([
+      ["builder", { runtime: "claude", model: "claude:sonnet" }],
+    ]),
+  });
+  assert.equal(result.kind, "seat");
+  assert.equal(result.plan.model, "sonnet");
+  // The provenance is the point: a seat that silently ran something other
+  // than its identity's pin would be the same class of lie as a "default"
+  // label hiding the real model.
+  assert.match(result.plan.modelNotice, /team\.yml names it for the builder/);
+  assert.match(result.plan.modelNotice, /opus\[1m\]/);
+  assert.equal(
+    codingSessionHireModelNoticeLine({
+      role: result.plan.role,
+      notice: result.plan.modelNotice,
+    }).startsWith("Hired a builder — ran sonnet"),
+    true,
+  );
+});
+
+test("a hint the runtime does not offer falls back to the pin and says why", () => {
+  const result = answer({
+    candidates: PINNED,
+    modelCatalogs: CLAUDE_CATALOG,
+    providerRuntimeSlugs: CLAUDE_SLUGS,
+    teamRoleHints: new Map([
+      ["builder", { runtime: null, model: "claude:gpt-5.6-sol" }],
+    ]),
+  });
+  // Refuses nothing: a hint is advice, and advice this catalog cannot serve
+  // is disclosed rather than fatal.
+  assert.equal(result.kind, "seat");
+  assert.equal(result.plan.model, "opus[1m]");
+  assert.match(result.plan.modelNotice, /does not offer/);
+  assert.match(result.plan.modelNotice, /gpt-5\.6-sol/);
+});
+
+test("a hint for another vendor does not move the seat off its identity's runtime", () => {
+  const result = answer({
+    candidates: PINNED,
+    // The id exists in this catalog, so only the vendor half can refuse it.
+    modelCatalogs: new Map([["claude-primary", ["opus[1m]", "sonnet"]]]),
+    providerRuntimeSlugs: CLAUDE_SLUGS,
+    teamRoleHints: new Map([
+      ["builder", { runtime: "codex", model: "codex:sonnet" }],
+    ]),
+  });
+  assert.equal(result.kind, "seat");
+  assert.equal(result.plan.model, "opus[1m]");
+  assert.match(result.plan.modelNotice, /names codex/);
+  // Item 88(i): the identity decides the runtime, and the notice says so
+  // rather than the host quietly switching adapters.
+  assert.match(result.plan.modelNotice, /the identity decides the runtime/);
+});
+
+test("no hint for the role leaves the identity's pin and says nothing", () => {
+  const result = answer({
+    candidates: PINNED,
+    modelCatalogs: CLAUDE_CATALOG,
+    providerRuntimeSlugs: CLAUDE_SLUGS,
+    teamRoleHints: new Map([
+      ["verifier", { runtime: null, model: "claude:haiku" }],
+    ]),
+  });
+  assert.equal(result.kind, "seat");
+  assert.equal(result.plan.model, "opus[1m]");
+  assert.equal(result.plan.modelNotice, null);
+});
+
+test("no team manifest at all is the behaviour that shipped before", () => {
+  const result = answer({ candidates: PINNED, modelCatalogs: CLAUDE_CATALOG });
+  assert.equal(result.kind, "seat");
+  assert.equal(result.plan.model, "opus[1m]");
+  assert.equal(result.plan.modelNotice, null);
+});
+
+test("a model the lead named wins over team.yml, with nothing to disclose", () => {
+  const result = answer({
+    candidates: PINNED,
+    request: {
+      ...REQUEST,
+      action: { ...REQUEST.action, model: "haiku" },
+    },
+    modelCatalogs: CLAUDE_CATALOG,
+    providerRuntimeSlugs: CLAUDE_SLUGS,
+    teamRoleHints: new Map([
+      ["builder", { runtime: null, model: "claude:sonnet" }],
+    ]),
+  });
+  assert.equal(result.kind, "seat");
+  assert.equal(result.plan.model, "haiku");
+  assert.equal(result.plan.modelNotice, null);
+});
+
+test("a routed hire ignores team.yml: the router already chose", () => {
+  const result = answer({
+    candidates: PINNED,
+    request: routedRequest({
+      class: "builder",
+      risk: { impact: 3, uncertainty: 3, irreversibility: 2 },
+    }),
+    registry: READABLE_REGISTRY,
+    modelCatalogs: CLAUDE_CATALOG,
+    providerRuntimeSlugs: CLAUDE_SLUGS,
+    teamRoleHints: new Map([
+      ["builder", { runtime: null, model: "claude:haiku" }],
+    ]),
+  });
+  assert.equal(result.kind, "seat");
+  assert.equal(result.plan.model, "sonnet");
+  assert.equal(result.plan.modelNotice, null);
+});

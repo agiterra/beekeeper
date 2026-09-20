@@ -26,6 +26,16 @@
  * risk, chosen, runner-up, reason, review triggers — on the seat's create.
  * A routed hire that cannot be routed is refused `HIRE_NO_ROUTE`; it is never
  * seated on a guess.
+ *
+ * Since 2026-09-20 an **unrouted** hire has one more input, and it is not a
+ * router: the project's `team.yml` per-role `model` hint (spec § 4.2,
+ * advisory by D17). Without it an unrouted hire ran the identity's own pin —
+ * `opus[1m]` here, `claude-fable-5-1[1m]` on Andy's machine, seven seats deep
+ * — which is the most expensive target on offer (ledger 179(b), 180). The
+ * hint is honoured only when the seat's own runtime actually offers the id;
+ * otherwise the pin runs, and the notice says which and why. Nothing new is
+ * refused: a hint is advice, and advice a catalog cannot serve is disclosed,
+ * not fatal.
  */
 import {
   decideCodingSessionHire,
@@ -114,6 +124,15 @@ export type CodingSessionHireAnswerInput = {
    * none. Only a hire that asks to be routed is affected by it.
    */
   registry?: CodingSessionRegistrySource;
+  /**
+   * The project's `team.yml` per-role hints, by role slug — read from the
+   * same agents-repository snapshot as the registry.
+   *
+   * Absent means this host read no team manifest, which is a different fact
+   * from a manifest that says nothing about the role: the first falls back to
+   * the pin silently, the second says the team was read and had no opinion.
+   */
+  teamRoleHints?: ReadonlyMap<string, CodingSessionTeamRoleHint>;
   /** The 44222 revision the catalogs came from, when the host read one. */
   catalogRevision?: number | null;
   /** The seat this hire's seat will review, for the cross-provider rule. */
@@ -248,6 +267,24 @@ export function planCodingSessionHireAnswer(
     };
   }
 
+  // Only for an unrouted hire, and only when the lead named no model: a
+  // routed decision is the router's, and a named model is the lead's (D13).
+  const teamHint =
+    routing.kind === "routed"
+      ? { model: decision.model, notice: null }
+      : resolveCodingSessionHireTeamModelHint({
+          role: decision.role,
+          requestedModel: request.action.model,
+          pin: decision.model,
+          providerInstanceRef: decision.providerInstanceRef,
+          providerRuntimeSlug:
+            input.providerRuntimeSlugs?.get(decision.providerInstanceRef) ??
+            null,
+          offeredModels:
+            input.modelCatalogs?.get(decision.providerInstanceRef) ?? [],
+          hints: input.teamRoleHints,
+        });
+
   return {
     kind: "seat",
     plan: buildCodingSessionHireSeatPlan({
@@ -265,19 +302,162 @@ export function planCodingSessionHireAnswer(
       providerInstanceRef: decision.providerInstanceRef,
       providerAuthorityPubkey: input.providerAuthorityPubkey,
       // A routed seat runs the target the router chose; an unrouted one runs
-      // what it always ran. Neither is a substitution nobody named: the
-      // routing record is published with the create and says which gates the
-      // model cleared and why it was the cheapest of them.
+      // the team's advice for its role when the runtime offers it, and the
+      // identity's own pin otherwise. None of the three is a substitution
+      // nobody named: a routed seat publishes the routing record with its
+      // create, and an unrouted one carries `modelNotice` — which the
+      // umbrella renders — naming the source that chose.
       model:
         routing.kind === "routed"
           ? routing.record.chosen.model
-          : decision.model,
-      modelNotice: decision.modelNotice,
+          : teamHint.model,
+      modelNotice: decision.modelNotice ?? teamHint.notice,
       providerNotice: decision.providerNotice,
       routing: routing.kind === "routed" ? routing.record : null,
       seatOrdinal: codingSessionHireSeatOrdinal(liveSeats, decision.role),
     }),
   };
+}
+
+/**
+ * One role's advisory hints from the project's `team.yml` (spec § 4.2).
+ *
+ * Mirrors the host's `TeamRoleHint`. Either field may be absent, and absent
+ * is not a guess: it is the team declining to have an opinion.
+ */
+export type CodingSessionTeamRoleHint = {
+  /** `roles.<role>.runtime` — a runtime slug (`claude`, `codex`). */
+  runtime: string | null;
+  /** `roles.<role>.model` — `provider:model-id`. */
+  model: string | null;
+};
+
+/** Which source chose an unrouted seat's model, and what to say about it. */
+export type CodingSessionHireTeamModelChoice = {
+  /** The model the create carries; `null` lets the runtime choose. */
+  model: string | null;
+  /** The sentence the umbrella shows, or null when there is nothing to say. */
+  notice: string | null;
+};
+
+/**
+ * The model an **unrouted** hire runs, and where it came from.
+ *
+ * The order, and why each step is where it is:
+ *
+ * 1. **A model the lead named wins.** D13 makes the model the lead's call,
+ *    and `decideCodingSessionHire` has already checked it against the
+ *    runtime's own catalog. Nothing here may second-guess it.
+ * 2. **Then the team's advice for the role**, when the seat's runtime offers
+ *    that exact id. This is the step that did not exist: an unrouted hire had
+ *    only the identity's pin, so seven seats on Andy's run took
+ *    `claude-fable-5-1[1m]` under an `opus[1m]` lead because that is what
+ *    their identities pinned (ledger 179(b)).
+ * 3. **Then the identity's own pin**, exactly as before.
+ *
+ * A hint is advice, so it **refuses nothing**. A hint the catalog does not
+ * offer, or one addressed to another vendor, falls through to the pin and
+ * says so — a hint that silently did nothing would be worse than no hint,
+ * because the team would read its own `team.yml` and believe it.
+ *
+ * The runtime hint is deliberately *not* honoured as a provider switch. The
+ * identity decides the runtime — a codex identity does not run on the Claude
+ * adapter whatever anybody asked for (item 88(i), live 2026-08-28) — so when
+ * `runtime` names something else this says so and changes nothing.
+ */
+export function resolveCodingSessionHireTeamModelHint(input: {
+  role: string;
+  /** The model the lead named, if any. */
+  requestedModel: string | null;
+  /** What the decision already settled on: the identity's pin, or null. */
+  pin: string | null;
+  providerInstanceRef: string;
+  /** The runtime slug behind {@link providerInstanceRef}, when known. */
+  providerRuntimeSlug: string | null;
+  offeredModels: readonly string[];
+  hints: ReadonlyMap<string, CodingSessionTeamRoleHint> | undefined;
+}): CodingSessionHireTeamModelChoice {
+  const pin = { model: input.pin, notice: null };
+  // The lead named one, or this host read no team: nothing to add.
+  if (input.requestedModel !== null && input.requestedModel.trim().length > 0) {
+    return pin;
+  }
+  if (input.hints === undefined) return pin;
+  const hint = input.hints.get(input.role);
+  if (hint === undefined) return pin;
+
+  const runtimeNote = describeTeamRuntimeHint(hint, input.providerRuntimeSlug);
+  const asked = hint.model?.trim() ?? "";
+  if (asked.length === 0) {
+    return { model: input.pin, notice: runtimeNote };
+  }
+  // `provider:model-id`, per team.yml's own documentation. The vendor half is
+  // checked rather than stripped: a hint written for another vendor is advice
+  // about a seat this is not.
+  const separator = asked.indexOf(":");
+  const vendor = separator < 0 ? null : asked.slice(0, separator);
+  const modelId = separator < 0 ? asked : asked.slice(separator + 1);
+  if (!input.offeredModels.includes(modelId)) {
+    return {
+      model: input.pin,
+      notice: joinNotices(
+        `team.yml asks this ${input.role} to run ${asked}, which ` +
+          `${input.providerInstanceRef} does not offer; ran ` +
+          `${input.pin ?? "the runtime's own default"} instead`,
+        runtimeNote,
+      ),
+    };
+  }
+  if (
+    vendor !== null &&
+    input.providerRuntimeSlug !== null &&
+    vendor !== input.providerRuntimeSlug &&
+    !input.providerInstanceRef.startsWith(`${vendor}-`)
+  ) {
+    return {
+      model: input.pin,
+      notice: joinNotices(
+        `team.yml asks this ${input.role} to run ${asked}, which names ` +
+          `${vendor} and this seat runs on ${input.providerInstanceRef}; ran ` +
+          `${input.pin ?? "the runtime's own default"} instead`,
+        runtimeNote,
+      ),
+    };
+  }
+  if (modelId === input.pin) {
+    // The team and the identity agree. Say nothing about the model — there is
+    // nothing a person would act on — but keep any runtime note.
+    return { model: input.pin, notice: runtimeNote };
+  }
+  return {
+    model: modelId,
+    notice: joinNotices(
+      `ran ${modelId} because the project's team.yml names it for the ` +
+        `${input.role} role, not this identity's pin ` +
+        `(${input.pin ?? "none"})`,
+      runtimeNote,
+    ),
+  };
+}
+
+/** One clause when `team.yml`'s runtime hint is not the runtime being used. */
+function describeTeamRuntimeHint(
+  hint: CodingSessionTeamRoleHint,
+  providerRuntimeSlug: string | null,
+): string | null {
+  const asked = hint.runtime?.trim() ?? "";
+  if (asked.length === 0 || providerRuntimeSlug === null) return null;
+  if (asked === providerRuntimeSlug) return null;
+  return (
+    `team.yml prefers the ${asked} runtime for this role, but the ` +
+    `identity runs on ${providerRuntimeSlug} and the identity decides the ` +
+    "runtime"
+  );
+}
+
+/** Both sentences when there are two, one when there is one, else null. */
+function joinNotices(first: string, second: string | null): string {
+  return second === null ? first : `${first}; ${second}`;
 }
 
 function inferCodingSessionHireRoutingPeer(input: {
