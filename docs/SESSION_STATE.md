@@ -15772,6 +15772,83 @@ removed from here.
      - **Owed.** A relay deploy makes the fallback unnecessary; remove it
        only after hive reports a `software_commit` that contains 181.
 
+194. **The durable-work contract is frozen as data: `beekeeper-plan/v1`, one
+     sibling kind for work records, the coverage fold's output type, the CLI
+     surface and the seat brief — plus kind 44249 (built 2026-09-20, lane W0
+     on `work/lane-194-work-contract`; nothing implements it yet).** Wave 0 of
+     [`UNIFIED_WORK_PLAN.md`](UNIFIED_WORK_PLAN.md) § 3–4, from Astra's
+     [unified plan](history/2026-09-20-astra-unified-plan.md) § 2. W1, W2, W3
+     and W5 build against this in parallel; after Fable's and Astra's review
+     it changes only by an amendment in that plan's § 8.
+     - **What is frozen.** `conformance/project-work/README.md`, six sections:
+       (a) the plan file — every frontmatter key, the slug grammar, the three
+       `proof` forms, the id rules (stable across reorder and file move, a
+       retired id never recycled), `status` governing new adoption only, and
+       the rule that the blob is read with `git show <commit>:<path>` and
+       never the working copy or the fetched tip; (b) the closed 44249
+       envelope and its three record variants with every key, type and
+       nullability; (c) the fold's output as a JSON shape; (d)
+       `bee sessions work validate|adopt|bind|status` with flags, exit codes
+       and output shapes; (e) the brief's eight fields with an 8 KiB budget;
+       (f) compatibility.
+     - **Kind 44249, `KIND_PROJECT_WORK_RECORD`** (`crates/buzz-core/src/kind.rs`).
+       The lowest unused and unreserved number in this fork and in vanilla —
+       44231–44239 continuity, 44240 Pulse with 44241–44243 reserved,
+       44244–44248 team transaction, policy, observation, handover, to-do op.
+       `git grep 44249` here and `git grep 44249 vanilla/main` (`12201c49b`)
+       both matched nothing on 2026-09-20. One kind, three closed types;
+       exactly six ordered two-field tags `h`, `d`(=sessionRef), `a`,
+       `pwk-v`, `pwk-genesis`, `pwk-type`, with tag-to-content parity as
+       44244 checks it. Not three more 44244 subtypes: that fold `Err`s on the
+       **whole set** for one unrecognised envelope, so an older build would
+       read a session carrying a work record as a broken mission.
+     - **Decisions taken where the design left a choice** (all recorded in the
+       README's § Decisions with reasons): `d` is the sessionRef, matching all
+       four siblings, not a new `workId` key; the `a` tag is a **selector, not
+       a gate** — 44249 is deliberately not added to `is_project_a_scoped_kind`
+       and a const assert pins that, because claiming a project-membership
+       gate this kind does not have is the kind of lie this repo treats as a
+       crash; all three record types need the same `may_lead` authority, so a
+       worker cannot nominate what its own work proves; 16 KiB content ceiling,
+       not 44244's 128 KiB, because every field is a pointer or a slug;
+       nullable keys are present and written `null`; `unknown` is a
+       first-class criterion status with a reason, so an unreadable plan blob
+       can never render as `open`; evidence never carries across an amendment;
+       and **the coverage output carries no mission-terminal field** — two
+       questions shown as two rows, disagreement disclosed, never merged.
+     - **Fixtures** (`conformance/project-work/fixtures/`): the kettle plan
+       plus six plans that must be refused (duplicate id, recycled retired id,
+       unknown key, empty accept, a path where an action name belongs,
+       oversize at 65 577 bytes); three valid records and seventeen refusals,
+       one per reason; and three event **sequences** with their expected fold
+       beside each — happy path to complete coverage (deliberately out of
+       causal order, and carrying one record signed by a non-`may_lead` actor
+       that is excluded by name without breaking the fold), the P→P2 amendment
+       where a late green for P leaves P2's criteria `stale`, and a two-head
+       fork that shows `conflict` and refuses completion. All ids are fixed
+       fakes of the correct length and every timestamp is fixed.
+     - **Verified.** `node conformance/project-work/check-fixtures.mjs` passes
+       and was proven to bite: perturbing `supersedes` in a valid record and
+       flipping one criterion's status in an expected fold each produced the
+       right failure. It asserts every refusal fixture still fails at least one
+       shape check, so a fixture cannot quietly stop refusing. It is a
+       well-formedness checker, **not** the contract's validator or the fold —
+       those are W1's — and it is wired into no CI recipe.
+     - **Not done.** No parser, no fold, no CLI verb, no relay ingest arm, no
+       surface: this lane wrote documentation, fixtures and one constant. The
+       expected-fold files are a **specification** of W1's output, not output
+       anything has produced. Five open questions are listed at the end of the
+       README for the orchestrator: who signs a `git-ref` observation and how
+       fresh it must be; which record marks a declaration `stale`; whether a
+       failed action compile at adopt signs anything; whether `planRef` should
+       carry a full repository coordinate rather than a bare id; and whether
+       this contract also wants a `docs/nips/NIP-*.md`.
+     - Gates on `work/lane-194-work-contract`, bare after committing:
+       `cargo fmt --all --check`, `cargo clippy -p buzz-core --all-targets --
+       -D warnings`, `cargo test -p buzz-core`,
+       `node conformance/project-work/check-fixtures.mjs`,
+       `just file-size-check`, `just current-state-check`.
+
 ## 3a. Environment facts that cost real time (do not rediscover)
 
 - **pnpm 11's answer to a stale workspace state is to DELETE `node_modules`,

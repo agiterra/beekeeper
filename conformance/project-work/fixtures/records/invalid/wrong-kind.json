@@ -1,0 +1,18 @@
+{
+  "refusal": "wrong-kind: a work record is kind 44249; 44244 is the team transaction",
+  "event": {
+    "id": "dec1000000000000000000000000000000000000000000000000000000000000",
+    "pubkey": "1ead000000000000000000000000000000000000000000000000000000000000",
+    "created_at": 1789000010,
+    "kind": 44244,
+    "tags": [
+      ["h", "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"],
+      ["d", "11111111-2222-4333-8444-555555555555"],
+      ["a", "30621:1ead000000000000000000000000000000000000000000000000000000000000:kettle"],
+      ["pwk-v", "buzz-project-work/v1"],
+      ["pwk-genesis", "9e0e000000000000000000000000000000000000000000000000000000000000"],
+      ["pwk-type", "work.declared"]
+    ],
+    "content": "{\"schema\":\"buzz-project-work/v1\",\"sessionRef\":\"11111111-2222-4333-8444-555555555555\",\"genesisRef\":\"9e0e000000000000000000000000000000000000000000000000000000000000\",\"projectRef\":\"30621:1ead000000000000000000000000000000000000000000000000000000000000:kettle\",\"type\":\"work.declared\",\"body\":{\"workId\":\"9d0f0f0f-1111-4222-8333-444444444444\",\"goalRef\":\"90a1000000000000000000000000000000000000000000000000000000000000\",\"responsibleActor\":\"1ead000000000000000000000000000000000000000000000000000000000000\",\"planRef\":{\"repository\":\"pivot-test-beekeeper-agents\",\"commit\":\"abababababababababababababababababababab\",\"path\":\"plans/kettle.md\"},\"supersedes\":[]}}"
+  }
+}

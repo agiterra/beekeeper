@@ -1,0 +1,18 @@
+{
+  "refusal": "hex: artifactCommit must be 40 or 64 lowercase hex",
+  "event": {
+    "id": "b1d6000000000000000000000000000000000000000000000000000000000000",
+    "pubkey": "1ead000000000000000000000000000000000000000000000000000000000000",
+    "created_at": 1789000061,
+    "kind": 44249,
+    "tags": [
+      ["h", "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"],
+      ["d", "11111111-2222-4333-8444-555555555555"],
+      ["a", "30621:1ead000000000000000000000000000000000000000000000000000000000000:kettle"],
+      ["pwk-v", "buzz-project-work/v1"],
+      ["pwk-genesis", "9e0e000000000000000000000000000000000000000000000000000000000000"],
+      ["pwk-type", "work.evidence_bound"]
+    ],
+    "content": "{\"schema\":\"buzz-project-work/v1\",\"sessionRef\":\"11111111-2222-4333-8444-555555555555\",\"genesisRef\":\"9e0e000000000000000000000000000000000000000000000000000000000000\",\"projectRef\":\"30621:1ead000000000000000000000000000000000000000000000000000000000000:kettle\",\"type\":\"work.evidence_bound\",\"body\":{\"declarationRef\":\"dec1000000000000000000000000000000000000000000000000000000000000\",\"criterionIds\":[\"cli-behaviour\"],\"artifactCommit\":\"e7e7e7e\",\"evidenceRefs\":[{\"kind\":\"report\",\"eventId\":\"1ea1000000000000000000000000000000000000000000000000000000000000\"}],\"completionRef\":null}}"
+  }
+}

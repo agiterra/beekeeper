@@ -1,0 +1,105 @@
+{
+  "schema": "buzz-project-work-coverage/v1",
+  "sessionRef": "11111111-2222-4333-8444-555555555555",
+  "projectRef": "30621:1ead000000000000000000000000000000000000000000000000000000000000:kettle",
+  "declarations": [
+    {
+      "workId": "9d0f0f0f-1111-4222-8333-444444444444",
+      "declarationRef": "dec2000000000000000000000000000000000000000000000000000000000000",
+      "planRef": {
+        "repository": "pivot-test-beekeeper-agents",
+        "commit": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "path": "plans/kettle.md"
+      },
+      "state": "head",
+      "supersedes": [
+        "dec1000000000000000000000000000000000000000000000000000000000000"
+      ],
+      "supersededBy": [],
+      "stateReason": null,
+      "planResolved": true,
+      "criteria": [
+        {
+          "criterionId": "cli-behaviour",
+          "proof": {
+            "kind": "review"
+          },
+          "status": "stale",
+          "assignmentRefs": [],
+          "evidence": [],
+          "artifactCommit": null,
+          "reason": "evidence for this criterion is bound to declaration dec10000…, which is not the head"
+        },
+        {
+          "criterionId": "shared-storage-and-parser",
+          "proof": {
+            "kind": "review"
+          },
+          "status": "open",
+          "assignmentRefs": [],
+          "evidence": [],
+          "artifactCommit": null,
+          "reason": null
+        },
+        {
+          "criterionId": "verified-landed-revision",
+          "proof": {
+            "kind": "action",
+            "name": "verify",
+            "step": "verify"
+          },
+          "status": "open",
+          "assignmentRefs": [],
+          "evidence": [],
+          "artifactCommit": null,
+          "reason": null
+        },
+        {
+          "criterionId": "usage-documentation",
+          "proof": {
+            "kind": "review"
+          },
+          "status": "stale",
+          "assignmentRefs": [],
+          "evidence": [],
+          "artifactCommit": null,
+          "reason": "evidence for this criterion is bound to declaration dec10000…, which is not the head"
+        },
+        {
+          "criterionId": "delivered-main",
+          "proof": {
+            "kind": "git-ref"
+          },
+          "status": "open",
+          "assignmentRefs": [],
+          "evidence": [],
+          "artifactCommit": null,
+          "reason": null
+        }
+      ],
+      "coverageComplete": false,
+      "coverageReason": "5 of 5 criteria are not covered under this declaration: cli-behaviour and usage-documentation are stale; shared-storage-and-parser, verified-landed-revision and delivered-main are open"
+    },
+    {
+      "workId": "9d0f0f0f-1111-4222-8333-444444444444",
+      "declarationRef": "dec1000000000000000000000000000000000000000000000000000000000000",
+      "planRef": {
+        "repository": "pivot-test-beekeeper-agents",
+        "commit": "abababababababababababababababababababab",
+        "path": "plans/kettle.md"
+      },
+      "state": "superseded",
+      "supersedes": [],
+      "supersededBy": [
+        "dec2000000000000000000000000000000000000000000000000000000000000"
+      ],
+      "stateReason": "superseded by dec20000…",
+      "planResolved": true,
+      "criteria": [],
+      "coverageComplete": false,
+      "coverageReason": "superseded: coverage is computed for the head declaration only"
+    }
+  ],
+  "excluded": [],
+  "conflicts": []
+}

@@ -878,6 +878,58 @@ pub const KIND_CODING_SESSION_HANDOVER: u32 = 44247;
 /// The wire contract is `docs/nips/NIP-TD.md`.
 pub const KIND_PROJECT_TODO_OP: u32 = 44248;
 
+/// NIP-PWK: Project work record — the signed join between a committed plan
+/// file and the work that delivers it.
+///
+/// Regular stored event (append-only), channel-scoped via `h` exactly as its
+/// 4424x siblings are, with `d=sessionRef` for grouping and a canonical `a`
+/// project coordinate so one project's work can be selected. Content is
+/// strict public JSON carrying exactly one of three closed types —
+/// `work.declared` (a lead adopts `plans/<slug>.md` at an exact agents
+/// commit), `work.assignment_bound` (which criteria an assignment owes) and
+/// `work.evidence_bound` (which evidence answers them at which artifact
+/// commit). Ordered tags: `h`, `d`, `a`, `pwk-v`, `pwk-genesis`, `pwk-type`.
+///
+/// Criterion *text* never reaches the wire: a declaration names a repository,
+/// a full commit and a path, and the reader resolves the blob with
+/// `git show <commit>:<path>`. The commit is the version; there is no second
+/// counter, and editing or archiving the file cancels nothing already adopted.
+///
+/// **The relay validates structure only**, as it does for 44244–44247.
+/// Whether the signer held `may_lead` in that project and session is the
+/// consuming fold's question against the accepted NIP-CSAT chain; a binding
+/// is a claim to verify, never proof and never authority.
+///
+/// **The `a` tag is a selector, not a gate.** This kind is deliberately
+/// **not** a member of [`is_project_a_scoped_kind`]: 44240 and 44248 are
+/// gated by project membership *alone, with no channel*, while a work record
+/// is gated by channel membership through `h`, like every other coding-session
+/// kind. Reading the `a` tag as a membership gate would claim an admission
+/// rule that does not exist here.
+///
+/// **Why this is not three more 44244 subtypes.** The same two facts that
+/// moved observations to 44246: 44244's operation vocabulary is a closed serde
+/// enum with no `other` arm and
+/// `fold_coding_session_team_transactions` returns `Err` for the **whole set**
+/// on one unrecognised envelope, so a build predating this vocabulary would
+/// read a session carrying one work record as a broken mission — while a build
+/// that never heard of 44249 simply never queries it. And work coverage and
+/// mission settlement are two questions that must be able to disagree: a
+/// terminal record with incomplete coverage is a disclosure, and merging them
+/// into one fold would make it unsayable.
+///
+/// **Allocation.** 44249 is the lowest unused and unreserved kind in this fork
+/// and in vanilla: 44231–44239 are reserved by the continuity research, 44240
+/// is the shipped Pulse entry with 44241–44243 reserved by the Pulse plan, and
+/// 44244–44248 are the team transaction, policy, observation, handover and
+/// to-do op. Both greps were run on 2026-09-20 before this constant existed:
+/// `git grep 44249` over this tree matched nothing, and
+/// `git grep 44249 vanilla/main` (`12201c49b`) matched nothing at all.
+///
+/// The wire contract is `conformance/project-work/README.md` § (b), frozen by
+/// ledger item 194; the fold's output type is § (c) of the same file.
+pub const KIND_PROJECT_WORK_RECORD: u32 = 44249;
+
 // Forum / social (45000–45999)
 // V1 used addressable range (30001–30003) — wrong.
 /// A forum post (thread root).
@@ -1705,6 +1757,7 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_CODING_SESSION_POLICY,
     KIND_CODING_SESSION_OBSERVATION,
     KIND_CODING_SESSION_HANDOVER,
+    KIND_PROJECT_WORK_RECORD,
     KIND_WORKFLOW_DEF,
     KIND_LONG_FORM,
     KIND_USER_STATUS,
@@ -2040,6 +2093,21 @@ const _: () = assert!(!is_parameterized_replaceable(KIND_CODING_SESSION_HANDOVER
 const _: () = assert!(KIND_CODING_SESSION_HANDOVER <= u16::MAX as u32);
 // The next free number, and nothing between it and the observation.
 const _: () = assert!(KIND_CODING_SESSION_HANDOVER == KIND_CODING_SESSION_OBSERVATION + 1);
+// A work record is append-only for the reason the whole 4424x block is: an
+// adoption, a binding and an evidence association are what a later reader
+// reconstructs "what remains" from, and a replaceable one would let a lead's
+// newest write erase the contract a seat was briefed under. Supersession is
+// written as an explicit `supersedes` list on a new record, so a fork is
+// visible as a fork rather than resolved by whoever wrote last.
+const _: () = assert!(!is_ephemeral(KIND_PROJECT_WORK_RECORD));
+const _: () = assert!(!is_replaceable(KIND_PROJECT_WORK_RECORD));
+const _: () = assert!(!is_parameterized_replaceable(KIND_PROJECT_WORK_RECORD));
+const _: () = assert!(KIND_PROJECT_WORK_RECORD <= u16::MAX as u32);
+// The next free number, and nothing between it and the to-do op.
+const _: () = assert!(KIND_PROJECT_WORK_RECORD == KIND_PROJECT_TODO_OP + 1);
+// Channel-gated through `h`, so it is deliberately not in the project-`a`
+// scoped set: that set's members carry no channel at all.
+const _: () = assert!(!is_project_a_scoped_kind(KIND_PROJECT_WORK_RECORD));
 // Moderation kinds fit u16 and are neither replaceable nor ephemeral:
 // 1984 is a regular event (persisted to the queue, never fanned out);
 // 9040–9044 are direct commands (executed, never stored).
@@ -2060,6 +2128,21 @@ mod tests {
         for &k in ALL_KINDS {
             assert!(seen.insert(k), "duplicate kind value: {k}");
         }
+    }
+
+    /// A project work record (44249) is written by clients, gated by its `h`
+    /// channel like every other coding-session kind, and is **not** a member
+    /// of the project-`a`-scoped set — those kinds carry no channel at all,
+    /// and treating a selector tag as an admission rule would claim a gate
+    /// this kind does not have. Contract:
+    /// `conformance/project-work/README.md` § (b), ledger 194.
+    #[test]
+    fn a_project_work_record_is_channel_gated_and_client_written() {
+        assert_eq!(KIND_PROJECT_WORK_RECORD, 44249);
+        assert!(!is_relay_only_kind(KIND_PROJECT_WORK_RECORD));
+        assert!(!is_project_a_scoped_kind(KIND_PROJECT_WORK_RECORD));
+        assert!(!PROJECT_A_SCOPED_KINDS.contains(&KIND_PROJECT_WORK_RECORD));
+        assert!(ALL_KINDS.contains(&KIND_PROJECT_WORK_RECORD));
     }
 
     #[test]

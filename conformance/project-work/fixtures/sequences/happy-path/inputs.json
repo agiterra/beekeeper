@@ -1,0 +1,9 @@
+{
+  "mayLead": [
+    "1ead000000000000000000000000000000000000000000000000000000000000"
+  ],
+  "planBlobs": {
+    "pivot-test-beekeeper-agents@abababababababababababababababababababab:plans/kettle.md": "../../plans/valid/kettle.md"
+  },
+  "note": "Every plan blob resolves to the same fixture: an amendment may leave criterion ids unchanged, and that must not carry evidence forward."
+}

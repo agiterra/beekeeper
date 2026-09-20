@@ -1,0 +1,70 @@
+{
+  "schema": "buzz-project-work-coverage/v1",
+  "sessionRef": "11111111-2222-4333-8444-555555555555",
+  "projectRef": "30621:1ead000000000000000000000000000000000000000000000000000000000000:kettle",
+  "declarations": [
+    {
+      "workId": "9d0f0f0f-1111-4222-8333-444444444444",
+      "declarationRef": "dec3000000000000000000000000000000000000000000000000000000000000",
+      "planRef": {
+        "repository": "pivot-test-beekeeper-agents",
+        "commit": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "path": "plans/kettle.md"
+      },
+      "state": "conflict",
+      "supersedes": [
+        "dec1000000000000000000000000000000000000000000000000000000000000"
+      ],
+      "supersededBy": [],
+      "stateReason": "two unsuperseded successors of dec10000…; an authorized declaration naming both heads is required before this work can complete",
+      "planResolved": true,
+      "criteria": [],
+      "coverageComplete": false,
+      "coverageReason": "conflict: coverage is not computed while two heads compete, and the later timestamp does not win"
+    },
+    {
+      "workId": "9d0f0f0f-1111-4222-8333-444444444444",
+      "declarationRef": "dec4000000000000000000000000000000000000000000000000000000000000",
+      "planRef": {
+        "repository": "pivot-test-beekeeper-agents",
+        "commit": "1212121212121212121212121212121212121212",
+        "path": "plans/kettle.md"
+      },
+      "state": "conflict",
+      "supersedes": [
+        "dec1000000000000000000000000000000000000000000000000000000000000"
+      ],
+      "supersededBy": [],
+      "stateReason": "two unsuperseded successors of dec10000…; an authorized declaration naming both heads is required before this work can complete",
+      "planResolved": true,
+      "criteria": [],
+      "coverageComplete": false,
+      "coverageReason": "conflict: coverage is not computed while two heads compete, and the later timestamp does not win"
+    },
+    {
+      "workId": "9d0f0f0f-1111-4222-8333-444444444444",
+      "declarationRef": "dec1000000000000000000000000000000000000000000000000000000000000",
+      "planRef": {
+        "repository": "pivot-test-beekeeper-agents",
+        "commit": "abababababababababababababababababababab",
+        "path": "plans/kettle.md"
+      },
+      "state": "superseded",
+      "supersedes": [],
+      "supersededBy": ["dec3000000000000000000000000000000000000000000000000000000000000", "dec4000000000000000000000000000000000000000000000000000000000000"],
+      "stateReason": "superseded by dec30000… and dec40000…",
+      "planResolved": true,
+      "criteria": [],
+      "coverageComplete": false,
+      "coverageReason": "superseded: coverage is computed for the head declaration only"
+    }
+  ],
+  "excluded": [],
+  "conflicts": [
+    {
+      "workId": "9d0f0f0f-1111-4222-8333-444444444444",
+      "heads": ["dec3000000000000000000000000000000000000000000000000000000000000", "dec4000000000000000000000000000000000000000000000000000000000000"],
+      "message": "two unsuperseded successors of dec10000…; an authorized declaration naming both heads is required before this work can complete"
+    }
+  ]
+}
