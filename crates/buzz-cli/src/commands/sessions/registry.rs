@@ -91,15 +91,6 @@ pub fn resolve_registry_source(
     })
 }
 
-/// [`resolve_registry_source`], reduced to the path that answered.
-///
-/// # Errors
-///
-/// [`CliError::NotFound`] naming the path, or every path that was tried.
-pub fn resolve_registry_path(explicit: Option<&str>, start: &Path) -> Result<PathBuf, CliError> {
-    resolve_registry_source(explicit, start).map(|resolved| resolved.path)
-}
-
 /// Read and parse the registry, naming the file in any failure, and say which
 /// copy answered.
 ///
@@ -453,7 +444,7 @@ mod tests {
 
     #[test]
     fn an_explicit_path_that_does_not_exist_is_named() {
-        let error = resolve_registry_path(Some("/nope/registry.yaml"), Path::new("/tmp"))
+        let error = resolve_registry_source(Some("/nope/registry.yaml"), Path::new("/tmp"))
             .expect_err("must fail");
         assert!(
             error.to_string().contains("/nope/registry.yaml"),
@@ -471,7 +462,9 @@ mod tests {
         let nested = root.join("crates").join("buzz-cli");
         std::fs::create_dir_all(&nested).expect("mkdir");
         assert_eq!(
-            resolve_registry_path(None, &nested).expect("resolve"),
+            resolve_registry_source(None, &nested)
+                .expect("resolve")
+                .path,
             registry
         );
     }
@@ -479,7 +472,7 @@ mod tests {
     #[test]
     fn a_missing_registry_names_the_paths_it_tried() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let error = resolve_registry_path(None, dir.path()).expect_err("must fail");
+        let error = resolve_registry_source(None, dir.path()).expect_err("must fail");
         assert!(
             error.to_string().contains(DEFAULT_REGISTRY_RELATIVE_PATH),
             "unexpected: {error}"
