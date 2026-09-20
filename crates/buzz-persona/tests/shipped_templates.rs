@@ -7,9 +7,14 @@
 //!
 //! - the catalog loads and validates clean, with the eight roles and the
 //!   three shared fragments;
-//! - every thin pack composes to **exactly the bytes its persona had before
-//!   it was thinned** (`tests/fixtures/shipped-roles-2026-09-18/`), skills
-//!   included, so no seat's instructions changed when the text moved;
+//! - every thin pack composes to the **current** text of its role template
+//!   and the current shared contract, stages and validates, and keeps the
+//!   identity (description, display name) its persona had before it was
+//!   thinned (`tests/fixtures/shipped-roles-2026-09-18/`). Until 1.1.0 the
+//!   composed *body* was pinned to those same fixture bytes; role text is
+//!   now expected to advance through new template versions, and the
+//!   guarantee that a published version never changes is pinned by hash in
+//!   `src/role_work_contract_tests.rs`;
 //! - the seed writer, given this catalog, yields roles that compose with
 //!   the template's skills and the role's own paragraph.
 
@@ -18,7 +23,9 @@ use std::path::{Path, PathBuf};
 use buzz_persona::compose::{compose_role, write_staged_pack, ComposeOptions, RoleSource};
 use buzz_persona::persona::parse_persona_md;
 use buzz_persona::seed::{write_agents_repo_seed, SHARED_FRAGMENTS};
-use buzz_persona::template::{validate_catalog, TemplateCatalog, TemplateKind, TemplateRange};
+use buzz_persona::template::{
+    validate_catalog, Template, TemplateCatalog, TemplateKind, TemplateRange,
+};
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -44,6 +51,32 @@ fn fixture(role: &str) -> buzz_persona::persona::PersonaConfig {
         .join(format!("{role}.persona.md"));
     let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     parse_persona_md(&text).unwrap_or_else(|e| panic!("{role} fixture: {e}"))
+}
+
+/// The version of `name` a `@^1.0.0` include resolves to in this build: what
+/// a seat composed today actually receives.
+fn current(catalog: &TemplateCatalog, name: &str) -> Template {
+    let range = TemplateRange::parse(name, "^1.0.0").expect("caret range parses");
+    let resolved = catalog
+        .resolve(name, &range)
+        .unwrap_or_else(|error| panic!("{name}@^1.0.0: {error}"));
+    assert!(resolved.warning.is_none(), "{name}@^1.0.0: {resolved:?}");
+    resolved.template
+}
+
+/// The skills a composed role must carry: its role template's, by name.
+fn template_skill_names(template: &Template) -> Vec<String> {
+    let mut names: Vec<String> = template
+        .skills
+        .iter()
+        .map(|s| {
+            s.trim_start_matches("./skills/")
+                .trim_end_matches('/')
+                .to_owned()
+        })
+        .collect();
+    names.sort();
+    names
 }
 
 const SHIPPED_ROLES: [&str; 8] = [
@@ -106,8 +139,7 @@ fn the_shipped_catalog_loads_and_validates_clean() {
 }
 
 #[test]
-fn every_thin_shipped_pack_composes_to_the_bytes_its_persona_had_before_and_restages_as_a_valid_pack(
-) {
+fn every_thin_shipped_pack_composes_to_its_current_template_text_and_restages_as_a_valid_pack() {
     let catalog = TemplateCatalog::load(&shipped_templates(), "test").expect("catalog loads");
     let staging = tempfile::tempdir().expect("tempdir");
     for role in SHIPPED_ROLES {
@@ -124,10 +156,25 @@ fn every_thin_shipped_pack_composes_to_the_bytes_its_persona_had_before_and_rest
         )
         .unwrap_or_else(|e| panic!("{role}: {e}"));
         let before = fixture(role);
-        assert_eq!(
-            composed.persona.prompt, before.prompt,
-            "{role}: the composed body is not the 2026-09-17 bytes"
+        // The body is the *current* text of the two templates the thin
+        // persona includes, in order. A new template version reaches a hire
+        // through the caret range; what may never change is a published
+        // version's own bytes, which `role_work_contract_tests.rs` pins.
+        let role_template = &current(&catalog, role);
+        let contract = current(&catalog, "working-contract");
+        assert!(
+            composed.persona.prompt.contains(role_template.body.trim()),
+            "{role}: the composed body is not {}@{}",
+            role_template.name,
+            role_template.version
         );
+        assert!(
+            composed.persona.prompt.contains(contract.body.trim()),
+            "{role}: the composed body lost working-contract@{}",
+            contract.version
+        );
+        // The pack's own frontmatter still names the role, unchanged since
+        // the personas were thinned.
         assert_eq!(composed.persona.description, before.description, "{role}");
         assert_eq!(composed.persona.display_name, before.display_name, "{role}");
         let refs: Vec<&str> = composed
@@ -154,18 +201,9 @@ fn every_thin_shipped_pack_composes_to_the_bytes_its_persona_had_before_and_rest
         write_staged_pack(&composed, &dest).unwrap_or_else(|e| panic!("{role}: {e}"));
         let staged = buzz_persona::resolve::resolve_persona_by_name(&dest, role)
             .unwrap_or_else(|e| panic!("{role} staged: {e}"));
-        assert_eq!(staged.system_prompt, before.prompt);
+        assert_eq!(staged.system_prompt, composed.persona.prompt);
         assert_eq!(staged.role.as_deref(), Some(role));
-        let mut expected_skills: Vec<String> = before
-            .skills
-            .iter()
-            .map(|s| {
-                s.trim_start_matches("./skills/")
-                    .trim_end_matches('/')
-                    .to_owned()
-            })
-            .collect();
-        expected_skills.sort();
+        let expected_skills = template_skill_names(role_template);
         let mut staged_skills = staged.skills.clone();
         staged_skills.sort();
         assert_eq!(staged_skills, expected_skills, "{role} skills changed");
@@ -198,26 +236,28 @@ fn the_seed_of_the_shipped_catalog_composes_every_role_by_reference() {
             &ComposeOptions::local(format!("roles/{role}")),
         )
         .unwrap_or_else(|e| panic!("seeded {role}: {e}"));
-        let before = fixture(role);
-        // The seeded role carries the shipped role's whole text — the
-        // paragraph and the working contract — plus the two extra fragments.
+        // The seeded role carries the shipped role's whole current text —
+        // the paragraph and the working contract — plus the two extra
+        // fragments. The seed writes the newest role version's own
+        // description, so that is what it is compared against.
+        let role_template = &current(&catalog, role);
         assert!(
-            composed.persona.prompt.contains(before.prompt.trim()),
+            composed.persona.prompt.contains(role_template.body.trim()),
             "seeded {role} lost the shipped text"
         );
-        assert_eq!(composed.persona.description, before.description);
+        for fragment in SHARED_FRAGMENTS {
+            let fragment = current(&catalog, fragment);
+            assert!(
+                composed.persona.prompt.contains(fragment.body.trim()),
+                "seeded {role} lost {}@{}",
+                fragment.name,
+                fragment.version
+            );
+        }
+        assert_eq!(composed.persona.description, role_template.description);
         let mut skills: Vec<String> = composed.skills.iter().map(|s| s.name.clone()).collect();
         skills.sort();
-        let mut expected: Vec<String> = before
-            .skills
-            .iter()
-            .map(|s| {
-                s.trim_start_matches("./skills/")
-                    .trim_end_matches('/')
-                    .to_owned()
-            })
-            .collect();
-        expected.sort();
+        let expected = template_skill_names(role_template);
         assert_eq!(skills, expected, "seeded {role} skills");
         assert_eq!(composed.pack_id, "project:demo");
         assert!(

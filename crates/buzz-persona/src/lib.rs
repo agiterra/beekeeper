@@ -10,3 +10,6 @@ pub mod skills;
 pub mod team;
 pub mod template;
 pub mod validate;
+
+#[cfg(test)]
+mod role_work_contract_tests;

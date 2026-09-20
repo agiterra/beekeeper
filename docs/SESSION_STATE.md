@@ -16160,6 +16160,113 @@ removed from here.
        `cargo fmt --all --check`,
        `cargo clippy --workspace --all-targets -- -D warnings`,
        `cargo test -p buzz-core -p buzz-sdk`, `cargo test -p buzz-relay --lib`,
+
+196. **Role templates 1.1.0: each role is taught only the judgment and
+     procedure it actually owes, now that the software does the rest
+     (2026-09-20, lane W6 of the unified plan, Wave 1).** The two live runs
+     spent a third to a half of their effort operating Beekeeper (178, 179);
+     the software answers landed as 180–191 and the role text still taught
+     the compensations. New version directories under
+     `personas/templates/<name>/1.1.0/`, one per changed template; no 1.0.0
+     byte moved and nothing already staged or already seeded was rewritten.
+     - **Every role, and the working contract.** Every example names `$BEE`
+       — `lead/1.0.0/skills/hire/SKILL.md` was the last file hardcoding
+       `bee`, in two commands. The first read of any body-taking command is
+       its own `--example` (182), stated once in the working contract and
+       again where each role writes a body; the contract says in as many
+       words why a probe is not free — an empty or placeholder body sent to a
+       live relay is a real signed record that is stored and folded, as
+       V:63's placeholder verdict was on 2026-09-20 (178(c)).
+     - **Lead.** Hire only for a bounded, useful outcome — a named question,
+       required independence, or a demonstrated capability need; eight
+       available identities are not a staffing plan and one author over one
+       package is a legitimate decision. Route the hire (`--class`/`--risk`)
+       and read the create's `modelNotice`; hire unrouted only when the host
+       reports no registry (180). Verifier assignments use
+       `assign --verifies <report event>` so `baseSha` is the reported head
+       (182, 178(d)). Verify with the project's action bound to the commit
+       (`workflows trigger --checkout <sha>`, 184) and read it with
+       `workflows run-status` (190). Publish `mission.completed` when the
+       work is done: it may answer `pending` and settle by itself, so no seat
+       is woken to collect acknowledgements and the fold's `awaiting` names
+       the missing link (183, 179(a)). A genuinely missing authority becomes
+       one specific ruling request while independent work continues (178(f)).
+     - **Builder.** The skill `brief-is-law` is `implement-the-outcome`
+       (same rejection of blind obedience, now named for what it owns);
+       ordinary tests for the changed behaviour are part of the change, and a
+       test that has never been seen red proves only that it runs.
+     - **Architect.** Invoked for a concrete structural question and ends it:
+       a decision, or a bounded missing-evidence disposition with a
+       reconsideration trigger. Never a stage every change passes through.
+     - **Designer.** New skill `reduce-the-work`: explicit responsibility for
+       the decisions, steps and interruptions the whole task costs, across
+       CLI output, setup, approvals and error recovery, not one screen.
+       Truthful state stays the constraint, never the excuse.
+     - **Verifier.** Teaches `Blocked` beside `Confirmed` and `NotRefuted` —
+       it has always existed on the wire
+       (`CodingSessionTeamRefutationDecision`,
+       `crates/buzz-core/src/coding_session_team_transaction.rs:288`) and
+       1.0.0 named only two. Missing inputs are never packaged as
+       reassurance; verify the exact reported revision and say RAN or READ.
+     - **Runner.** Worth a turn for discovering a procedure or diagnosing an
+       unusual failure, never for polling. New skill `leave-an-action`: a
+       successful engagement leaves a reusable entry in the agents
+       repository's `actions.yml` (proposed through the lead when the role
+       holds no write grant) so the next run needs no model turn.
+     - **Poker.** Takes a workflow, an exploration budget and an evidence
+       standard from its assignment and asks for any that is missing;
+       reports reproducible findings and its coverage limits; never repairs
+       what it finds.
+     - **Project Setup.** Output is demonstrated readiness: the commands it
+       actually ran and where, their exit status and counts, the references
+       that actually resolved, and the precise missing grants. A procedure
+       not run is a proposal and must say so.
+     - **Project Pulse.** The end-of-turn re-read stays — its software
+       replacement is not built, and the fragment says plainly that nothing
+       else notifies you — but it is narrowed to what bears on the current
+       task: plans covering your outcome, claims on your files, blockers and
+       handoffs naming you. `memory` is unchanged and ships only 1.0.0.
+     - **Packaging (spec § 3.2).** Ten new version directories, each complete
+       and self-contained; 1.0.0 is untouched and still resolves for anyone
+       pinned to it exactly. Nothing is deprecated: 1.0.0 stays a valid pin,
+       so the renamed builder skill is a version a project opts out of rather
+       than a warning it cannot silence. Versions are not registered in a
+       list — `TemplateCatalog::load` reads the directory
+       (`crates/buzz-persona/src/template.rs`) and `tauri.conf.json` bundles
+       `personas/templates` whole — so shipping 1.1.0 is creating the
+       directories. **A new project** seeded by this build gets
+       `![[beekeeper/<role>@^1.1.0]]`, `working-contract@^1.1.0`,
+       `project-pulse@^1.1.0` and `memory@^1.0.0`, because
+       `TemplateCatalog::role_templates` and the seed's fragment lookup both
+       take the newest non-deprecated version; `seed.rs` needed no change.
+       **An existing project** keeps its role files byte for byte and its
+       `@^1.0.0` ranges resolve to 1.1.0 at its next hire — the behaviour
+       `seed.rs`'s own doc comment promises. A running seat is unaffected:
+       its staged pack is immutable for its life.
+     - **Tests.** New `crates/buzz-persona/src/role_work_contract_tests.rs`
+       (8 tests, one `mod` line in `lib.rs`): every 1.0.0 directory pinned by
+       SHA-256 over its files; every 1.1.0 template current under `^1.0.0`
+       and composing, with the renamed builder skill present and the old one
+       gone; a new project's seed resolving to the versions above and an
+       older seed's carets resolving to 1.1.0 while `@1.0.0` still answers
+       1.0.0; no bare `bee` token in any 1.1.0 file; the verifier naming all
+       three decisions; no sentence teaching acknowledgement collection
+       except to forbid it; no model id, provider or price; and a per-role
+       table of the procedures 180–191 supplied. `tests/shipped_templates.rs`
+       changed with them: its thin-pack test pinned the composed body to the
+       2026-09-17 fixture bytes, which was a migration-integrity check for
+       the 2026-09-18 thinning and would now forbid any role text from ever
+       improving; it asserts the current template text, the staged pack and
+       the pack's unchanged identity instead, and the immutability guarantee
+       it stood for lives in the hash pins above. **These are string tests
+       over prose: necessary, not sufficient.** They prove the instruction is
+       present and spelled the way a seat searches for it; they cannot prove
+       a seat behaves differently.
+     - **Owed live.** Everything behavioural. The claim that seats stop
+       paying for orientation is the Wave 3 control run's to make or refute
+       (`docs/UNIFIED_WORK_PLAN.md` § 4), measured by M against the kettle
+       audit's numbers. Not landed, not installed, no seat has run 1.1.0.
+
 198. **Contract amendment A2: the work contract now says what evidence
      *proves* a criterion, against which single artifact, signed by whom,
      naming which goal, and when a fork is still a fork (built 2026-09-20,
