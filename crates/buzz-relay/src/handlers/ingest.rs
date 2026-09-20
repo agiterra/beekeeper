@@ -3142,6 +3142,9 @@ fn validate_coding_session_command_envelope(event: &Event) -> Result<(), String>
     use buzz_core::coding_session_command::{
         coding_session_target_key, CodingSessionCommandPayload, CODING_SESSION_COMMAND_TAG_VERSION,
     };
+    use buzz_core::coding_session_payload::{
+        CODING_SESSION_HOST_ANSWER_TAG_HIRE, CODING_SESSION_HOST_ANSWER_TAG_NAME,
+    };
 
     let payload: CodingSessionCommandPayload = serde_json::from_str(&event.content)
         .map_err(|_| "malformed coding-session command payload".to_string())?;
@@ -3150,6 +3153,7 @@ fn validate_coding_session_command_envelope(event: &Event) -> Result<(), String>
     let mut h_count = 0_u8;
     let mut version_count = 0_u8;
     let mut target_count = 0_u8;
+    let mut host_answer_count = 0_u8;
 
     for tag in event.tags.iter() {
         let parts = tag.as_slice();
@@ -3177,8 +3181,22 @@ fn validate_coding_session_command_envelope(event: &Event) -> Result<(), String>
                     );
                 }
             }
+            // Marks a `thread.turn.start` this event's own signer authored as
+            // its own answer, never a person's words — see
+            // `is_host_answer_command` in `buzz-core`. The relay does not act
+            // on it; it only has to survive ingest so a provider's turn
+            // intake can read it back.
+            CODING_SESSION_HOST_ANSWER_TAG_NAME => {
+                host_answer_count = host_answer_count.saturating_add(1);
+                if parts[1] != CODING_SESSION_HOST_ANSWER_TAG_HIRE {
+                    return Err("unsupported coding-session command host-answer tag value".into());
+                }
+            }
             _ => return Err("unsupported coding-session command tag".into()),
         }
+    }
+    if host_answer_count > 1 {
+        return Err("coding-session command carries more than one host-answer tag".into());
     }
 
     if h_count != 1 || version_count != 1 || target_count != 1 {

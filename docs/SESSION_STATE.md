@@ -14702,76 +14702,92 @@ removed from here.
        `crates/buzz-core/src/coding_session_routing.rs:3046`; adding a 14th
        key belongs with whoever next changes that schema), so the origin
        travels only in the host's own disclosure and the CLI's report.
-181. **Lane 181: a host's own refusal disclosure is now marked and, within
-     the requester's own wait, no longer opened as a turn (fixes 178(b))
-     (2026-09-20, built in `work/lane-181-refusal-turn`).** Two changes in
-     `desktop/src/features/coding-sessions/lib/codingSessionHireDisclosure.ts`
-     and a new sibling
-     `desktop/src/features/coding-sessions/lib/codingSessionHireHostNotice.ts`:
-     - **Every host disclosure is marked, never mistaken for a person's
-       words.** `markCodingSessionHostNoticeText` prefixes the umbrella
-       notice with `[Host notice — not a person] `; `markCodingSessionHostTurnText`
-       appends the same marker to the *end* of the text sent as a turn.
-       Deliberately a suffix, not the prefix the ledger item's own wording
-       suggested: `bee sessions hire` recognizes a refusal structurally by
-       the text starting with the exact `hire refused: ` prefix
-       (`HIRE_REFUSAL_PREFIX`/`parse_hire_refusal`,
+181. **Lane 181: a host's own hire-refusal turn is marked and tagged as a
+     host answer, never suppressed (fixes 178(b))
+     (2026-09-20, built in `work/lane-181-refusal-turn`).** First pass
+     suppressed the turn inside the requester's own wait window; the
+     orchestrator corrected that premise mid-lane — `bee sessions hire`'s own
+     poll (`wait_for_hire`/`read_hire_answer`/`find_hire_refusal`,
+     `crates/buzz-cli/src/commands/sessions/crew.rs`,
+     `crates/buzz-cli/src/commands/sessions/crew_cmds.rs`) determines
+     `HireOutcome::Refused` by reading the *same* target-addressed 44220
+     directly off the relay — there is no separate structured answer.
+     Suppressing that publish would have made every fast refusal report
+     `unconfirmed` instead of `refused`, permanently (the disclosure function
+     runs once), reintroducing exactly what ledger 169 fixed. The landed
+     design instead always publishes the turn and marks it two ways so it is
+     never mistaken for a person's words, in TypeScript and Rust:
+     - **The text is marked.** `markCodingSessionHostNoticeText` prefixes the
+       umbrella notice with `[Host notice — not a person] `;
+       `markCodingSessionHostTurnText` appends the same marker to the *end*
+       of the text sent as a turn
+       (`desktop/src/features/coding-sessions/lib/codingSessionHireHostNotice.ts`).
+       Deliberately a suffix there, not a prefix: `bee sessions hire`
+       recognizes a refusal structurally by the text starting with the exact
+       `hire refused: ` prefix (`HIRE_REFUSAL_PREFIX`/`parse_hire_refusal`,
        `crates/buzz-core/src/coding_session_lifecycle_command.rs`,
        `crates/buzz-cli/src/commands/sessions/crew.rs:2072`; its own test
        fixes this — `"please hire refused: HIRE_OFF — x", // prefix must
-       start the text`). Putting the marker ahead of that prefix would make
-       every refusal ever published unparseable, turning every refused hire
-       into the `unconfirmed` one ledger 169 fixed. The marker is applied
-       once, inside `discloseCodingSessionHire`, so every disclosure path —
+       start the text`). Applied once, inside `discloseCodingSessionHire`
+       (`codingSessionHireDisclosure.ts`), so every disclosure path —
        refusal, malformed hire, grant failure, model/provider substitution —
-       carries it without a second call site to keep in sync.
-     - **A refusal opens a turn on the requester only when the requester's
-       own `bee sessions hire` could not have read it synchronously.**
-       `codingSessionHireAnswerWithinRequesterWindow` compares `deps.now()`
-       against the hire's own `createdAt` with a 120s budget
-       (`CODING_SESSION_HIRE_ANSWER_SYNCHRONOUS_SECONDS`, matching
-       `HIRE_WAIT_SECONDS` in `crates/buzz-cli/src/commands/sessions/crew.rs`,
-       asserted there at 120 by `crew_tests.rs`). `publishRefusal` and
-       `refuseCodingSessionHireWithCode` (and, through it,
-       `refuseCodingSessionHireForSeatingFailure`) pass `openTurn: false`
-       when still inside that window; `discloseCodingSessionHire` then skips
-       `targetForActor`/`publishCodingSessionCommand` entirely and publishes
-       only the umbrella notice. Outside the window — the common case for a
-       staging failure, which runs after cutting a worktree and cloning the
-       agents repository, easily longer than 120s — both the notice and the
-       marked turn are published, exactly as before.
-     - **Open technical risk, disclosed rather than hidden**: `bee sessions
-       hire`'s own poll (`wait_for_hire`/`read_hire_answer` in
-       `crates/buzz-cli/src/commands/sessions/crew_cmds.rs`) determines
-       `HireOutcome::Refused` by reading this *same* target-addressed 44220
-       off the relay directly — it is not a separate structured answer.
-       Suppressing that publish inside the window (as this lane does) means
-       a fast refusal that used to let the CLI report `refused` within a
-       second or two will now make the CLI wait out its own 120s window and
-       report `unconfirmed` instead — and, because `discloseCodingSessionHire`
-       runs once, that event is never published later either, so
-       `bee sessions status` would show the same hire `unconfirmed`
-       indefinitely, with only the umbrella notice as its answer. This
-       matches the fix as specified and is very likely the deliberate
-       trade — a $0.59, 580k-token misread is worse than a slower
-       `unconfirmed` — but it has not been proved against a live
-       `bee sessions hire` run, and no Rust-side change makes `unconfirmed`
-       resolve to `refused` later for this case. Worth a live check before
-       calling 178(b) fully closed.
-     - Tests, beside the file: `codingSessionHireHostNotice.ts` has no test
-       file of its own — its pure functions are exercised directly by
-       `codingSessionHireDisclosure.test.mjs`, which covers the marker
-       prefix/suffix and idempotency, the within-window (notice only, no
-       turn) and past-window (marked turn + notice) cases for all three
-       refusal entry points, and the no-live-target case. Updated to match:
-       `desktop/src/features/coding-sessions/hooks/useCodingSessionHire.test.mjs`
-       (grant-failure and named-requester assertions, which now carry the
-       marker) and
-       `desktop/src/features/coding-sessions/ui/CodingSessionHireHost.test.mjs`
-       (several refusal-wording tests moved their harness `now` past the
-       120s window so the turn they inspect is still opened; one test split
-       into a past-window and a within-window case). `pnpm typecheck` and
-       `pnpm test` both green on the full desktop suite.
+       carries it.
+     - **The wire is tagged.** `discloseCodingSessionHire` publishes the turn
+       with `hostAnswer: true`, which `buildCodingSessionCommandEvent`
+       (`codingSessionCommand.ts`) turns into one
+       `["buzz-host-answer", "hire"]` tag — never touching the signed
+       `action.text` the CLI parses. `CODING_SESSION_HOST_ANSWER_TAG_NAME`
+       and the value `"hire"` are mirrored in
+       `crates/buzz-core/src/coding_session_payload.rs`
+       (`is_host_answer_command`, `host_answer_prompt_item`,
+       `HOST_ANSWER_RECORDED`); the relay's envelope validator
+       (`validate_coding_session_command_envelope`,
+       `crates/buzz-relay/src/handlers/ingest.rs`) allows exactly one, with
+       that value, alongside the existing `h`/`cs-v`/`cs-target` tags —
+       without this the relay's `_ => "unsupported coding-session command
+       tag"` arm would have refused every marked event at ingest, silently
+       reintroducing 169 the same way suppression would have.
+     - **The provider's turn intake reads the tag, not the text.**
+       `Provider::on_turn` (`crates/buzz-session-provider/src/lib.rs`) takes
+       a new `host_answer: bool`, computed from
+       `payload::is_host_answer_command(event.tags.iter())` at both call
+       sites — the live `KIND_CODING_SESSION_COMMAND` arm of
+       `handle_command_event_inner` and the replay path
+       (`HeldCommand` gained a `host_answer` field, set when a command is
+       held during a channel's replay window, so a redelivered host answer is
+       still recognized after `deliver_held_commands`). When `decide_turn`
+       resolves a host-answer command to `TurnDecision::Start`, `on_turn`
+       calls the new `record_host_answer` instead of `apply_turn_decision`:
+       it writes an ordinary `user_prompt` transcript item
+       (`payload::host_answer_prompt_item`, additive `hostAnswer: true`
+       field) via `enqueue_transcript`, and returns
+       `TurnDisposition::Answered(payload::HOST_ANSWER_RECORDED)` — no
+       `turn_queued`/`turn_started` receipt, nothing enters the session's
+       mailbox, the running agent is never woken. Every other decision shape
+       (`Ignore`, `Fail`, `Interrupt`) is unaffected — the tag only narrows
+       what already reached `Start`, so authority, budget and the
+       verification-input fence all still run exactly as before.
+     - Tests: `codingSessionHireDisclosure.test.mjs` covers the marker and
+       the tag for all three refusal entry points and the no-live-target
+       case; `codingSessionCommand.test.mjs` gained a case pinning the exact
+       tag list and its absence by default; `useCodingSessionHire.test.mjs`
+       and `CodingSessionHireHost.test.mjs` were updated for the marker text
+       and now also assert the tag on the refusal turn. `pnpm typecheck` and
+       the full desktop suite are green. On the Rust side,
+       `a_host_answer_command_is_recorded_and_opens_no_turn`
+       (`buzz-session-provider`) delivers one tagged and one untagged turn to
+       the same session and asserts the tagged one publishes no receipts and
+       lands in the transcript with `hostAnswer: true`, while the untagged
+       one queues and starts normally. `cargo fmt --all --check`, `cargo
+       clippy --workspace --all-targets -- -D warnings`, and `cargo test -p
+       buzz-session-provider -p buzz-core` are green; `cargo check -p
+       buzz-core -p buzz-session-provider -p buzz-relay` compiles clean.
+     - Not exercised live: no real `bee sessions hire` run against an
+       installed build with this change. The design keeps the CLI's fast
+       synchronous read intact by construction (the 44220 publishes exactly
+       as before), but that claim is inference from reading
+       `wait_for_hire`/`find_hire_refusal`, not a measured run.
+
 182. **The `bee sessions` bodies now answer for their own shape: `--example`
      prints a valid body, a refusal names every required key, and `--verifies`
      fills the field the fence actually reads (2026-09-20, lane 182 on

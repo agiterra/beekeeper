@@ -18,7 +18,6 @@ import {
   type CodingSessionHireAnswer,
 } from "./codingSessionHireAnswer";
 import {
-  codingSessionHireAnswerWithinRequesterWindow,
   markCodingSessionHostNoticeText,
   markCodingSessionHostTurnText,
 } from "./codingSessionHireHostNotice";
@@ -39,6 +38,25 @@ import { publishCodingSessionLaneMessage } from "./codingSessionLanePublish";
  * To the requester so it can act, and to the umbrella so the person sees it.
  * Neither is allowed to fail the other: a lead that heard nothing would wait
  * out its whole turn budget on an answer that was published and dropped.
+ *
+ * The turn to the requester is **always** published, exactly as before
+ * ledger 178: `bee sessions hire` reads this same event directly off the
+ * relay to answer its own poll
+ * (`find_hire_refusal`/`wait_for_hire`/`read_hire_answer`,
+ * `crates/buzz-cli/src/commands/sessions/crew.rs`,
+ * `crates/buzz-cli/src/commands/sessions/crew_cmds.rs`) — it is the CLI's
+ * *answer channel*, not a redundant echo, and suppressing it (an earlier,
+ * wrong version of this fix) would have made every fast refusal report
+ * `unconfirmed` instead of `refused`. What must not happen is the *live
+ * seat*, still running, reading the same words a second time whenever the
+ * provider's mailbox gets to it, as though a person just typed them
+ * (ledger 178(b)). Two independent things fix that instead of suppressing
+ * the publish: the text carries {@link markCodingSessionHostTurnText}'s
+ * marker, and the command itself carries `hostAnswer: true`
+ * (`CODING_SESSION_HOST_ANSWER_TAG_NAME` in `codingSessionCommand.ts`), which
+ * the provider's turn intake reads to record the answer in the transcript
+ * without ever opening a turn from it
+ * (`crates/buzz-session-provider/src/lib.rs`).
  */
 export async function discloseCodingSessionHire(
   disclosure: {
@@ -49,26 +67,14 @@ export async function discloseCodingSessionHire(
     text: string;
     /** The umbrella's own line for the same fact. */
     notice: string;
-    /**
-     * Whether to also open a turn on the requesting seat, addressed to its
-     * own live target, in addition to the umbrella notice.
-     *
-     * Defaults to `true` — most disclosures (a seated model substitution, a
-     * failed grant) have no synchronous reader the way a refusal's caller
-     * does. A refusal computes this from
-     * {@link codingSessionHireAnswerWithinRequesterWindow}: `false` when the
-     * requester's own `bee sessions hire` could still be waiting on the
-     * answer this same turn would carry (ledger 178(b)).
-     */
-    openTurn?: boolean;
   },
   input: UseCodingSessionHireInput,
   deps: CodingSessionHireDeps,
 ): Promise<void> {
-  const target =
-    disclosure.openTurn === false
-      ? null
-      : input.targetForActor(disclosure.channelId, disclosure.requesterPubkey);
+  const target = input.targetForActor(
+    disclosure.channelId,
+    disclosure.requesterPubkey,
+  );
   if (target) {
     await publishCodingSessionCommand(
       {
@@ -77,6 +83,7 @@ export async function discloseCodingSessionHire(
         target,
         text: markCodingSessionHostTurnText(disclosure.text),
         deliver: "boundary",
+        hostAnswer: true,
       },
       { publisher: deps.publisher, signer: deps.signer },
     ).catch(() => {});
@@ -115,14 +122,6 @@ export async function publishRefusal(
             input.agents.find((agent) => agent.pubkey === pubkey)?.name ?? null,
         }),
         text: answer.text,
-      }),
-      // See `codingSessionHireAnswerWithinRequesterWindow`: a fast refusal
-      // is already in the requester's own `bee sessions hire` poll before
-      // this ever reaches the wire; only a turn published once that window
-      // has lapsed carries anything new (ledger 178(b)).
-      openTurn: !codingSessionHireAnswerWithinRequesterWindow({
-        requestCreatedAt: request.createdAt,
-        nowSeconds: deps.now(),
       }),
     },
     input,
@@ -171,15 +170,6 @@ export async function refuseCodingSessionHireWithCode(
             input.agents.find((agent) => agent.pubkey === pubkey)?.name ?? null,
         }),
         text,
-      }),
-      // Same rule as `publishRefusal`: this code path answers a hire that
-      // failed on this computer *after* the decision — often after cutting a
-      // worktree or staging a clone, which can easily outrun the requester's
-      // own wait. Whichever side of the window it lands on, `deps.now()` is
-      // read once, at the moment this host is ready to answer.
-      openTurn: !codingSessionHireAnswerWithinRequesterWindow({
-        requestCreatedAt: request.createdAt,
-        nowSeconds: deps.now(),
       }),
     },
     input,

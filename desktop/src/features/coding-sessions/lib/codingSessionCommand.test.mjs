@@ -329,6 +329,39 @@ test("the default delivery class is omitted from the wire", () => {
   assert.equal("deliver" in action, false);
 });
 
+test("hostAnswer adds exactly one buzz-host-answer tag, and is omitted by default", () => {
+  const marked = buildCodingSessionCommandEvent({
+    channelId: "channel-1",
+    commandId: "cmd-host-answer",
+    target,
+    text: "hire refused: HIRE_OFF — hiring is switched off",
+    deliver: "boundary",
+    hostAnswer: true,
+  });
+  assert.deepEqual(marked.tags, [
+    ["h", "channel-1"],
+    ["cs-v", "csc1-1"],
+    ["cs-target", "coding-session/v1|10:provider-a10:instance-19:session-11:2"],
+    ["buzz-host-answer", "hire"],
+  ]);
+  // It never touches the signed content: `bee sessions hire` still parses
+  // `action.text` structurally, and a provider's turn intake reads the tag,
+  // never the content, to recognize the answer.
+  assert.equal("hostAnswer" in JSON.parse(marked.content).action, false);
+
+  const ordinary = buildCodingSessionCommandEvent({
+    channelId: "channel-1",
+    commandId: "cmd-ordinary",
+    target,
+    text: "do the thing",
+    deliver: "boundary",
+  });
+  assert.equal(
+    ordinary.tags.some((tag) => tag[0] === "buzz-host-answer"),
+    false,
+  );
+});
+
 test("an escalated delivery class is on the wire, explicit, and closed", () => {
   assert.deepEqual(
     [...CODING_SESSION_TURN_DELIVERIES],

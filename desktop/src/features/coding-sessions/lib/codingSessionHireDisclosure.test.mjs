@@ -1,20 +1,20 @@
 /**
- * Ledger 178(b): a refusal's turn must never read as a person's words, and
- * must never be opened at all when the requester's own `bee sessions hire`
- * could still be reading the same answer off its own poll.
+ * Ledger 178(b): a refusal's turn must never read as a person's words. It is
+ * always published — `bee sessions hire` reads this same event to answer its
+ * own poll — so the fix marks the text and tags the wire event, rather than
+ * suppressing the publish.
  */
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { CODING_SESSION_HOST_ANSWER_TAG_NAME } from "./codingSessionCommand.ts";
 import {
   publishRefusal,
   refuseCodingSessionHireForSeatingFailure,
   refuseCodingSessionHireWithCode,
 } from "./codingSessionHireDisclosure.ts";
 import {
-  CODING_SESSION_HIRE_ANSWER_SYNCHRONOUS_SECONDS,
   CODING_SESSION_HOST_NOTICE_MARKER,
-  codingSessionHireAnswerWithinRequesterWindow,
   markCodingSessionHostNoticeText,
   markCodingSessionHostTurnText,
 } from "./codingSessionHireHostNotice.ts";
@@ -50,7 +50,7 @@ function request(overrides = {}) {
 }
 
 /** A minimal input/deps pair recording every publish, newest last. */
-function harness({ now, hasTarget = true } = {}) {
+function harness({ hasTarget = true } = {}) {
   const published = [];
   const input = {
     agents: [],
@@ -61,7 +61,7 @@ function harness({ now, hasTarget = true } = {}) {
   };
   const deps = {
     newTurnCommandId: () => "csc-refusal-1",
-    now: () => now,
+    now: () => request().createdAt,
     publisher: {
       publishEvent: async (event) => {
         published.push(event);
@@ -72,7 +72,7 @@ function harness({ now, hasTarget = true } = {}) {
       id: "unsigned",
       kind: input.kind,
       pubkey: "p",
-      created_at: now,
+      created_at: 0,
       tags: input.tags,
       content: input.content,
       sig: "s",
@@ -82,7 +82,9 @@ function harness({ now, hasTarget = true } = {}) {
   return {
     input,
     deps,
-    turns: () =>
+    published,
+    turns: () => published.filter((event) => event.kind === 44220),
+    turnTexts: () =>
       published
         .filter((event) => event.kind === 44220)
         .map((event) => JSON.parse(event.content).action.text),
@@ -92,24 +94,6 @@ function harness({ now, hasTarget = true } = {}) {
         .map((event) => event.content),
   };
 }
-
-test("codingSessionHireAnswerWithinRequesterWindow: boundary at exactly the CLI's own wait", () => {
-  assert.equal(CODING_SESSION_HIRE_ANSWER_SYNCHRONOUS_SECONDS, 120);
-  assert.equal(
-    codingSessionHireAnswerWithinRequesterWindow({
-      requestCreatedAt: 1000,
-      nowSeconds: 1000 + 120,
-    }),
-    true,
-  );
-  assert.equal(
-    codingSessionHireAnswerWithinRequesterWindow({
-      requestCreatedAt: 1000,
-      nowSeconds: 1000 + 121,
-    }),
-    false,
-  );
-});
 
 test("markCodingSessionHostNoticeText: prefixes once, never doubles up", () => {
   const marked = markCodingSessionHostNoticeText("Ada asked to hire a builder");
@@ -127,9 +111,8 @@ test("markCodingSessionHostTurnText: the hire-refused prefix `bee sessions hire`
   assert.equal(markCodingSessionHostTurnText(marked), marked);
 });
 
-test("(a) publishRefusal's turn text carries the host-notice marker", async () => {
-  // Outside the window, so a turn is actually opened to inspect.
-  const host = harness({ now: request().createdAt + 200 });
+test("(a) publishRefusal always opens a turn on the requester, marked, and tagged as a host answer", async () => {
+  const host = harness();
   await publishRefusal(
     request(),
     {
@@ -141,62 +124,31 @@ test("(a) publishRefusal's turn text carries the host-notice marker", async () =
     host.input,
     host.deps,
   );
-  const [turnText] = host.turns();
-  assert.ok(turnText.startsWith("hire refused: HIRE_NO_ROUTE — "));
-  assert.ok(turnText.includes(CODING_SESSION_HOST_NOTICE_MARKER));
+  const [turn] = host.turns();
+  assert.ok(
+    turn,
+    "the requester must always be told — it is the CLI's own answer channel",
+  );
+  const payload = JSON.parse(turn.content);
+  // `bee sessions hire` parses this text structurally: it must still start
+  // with the exact `hire refused: ` prefix.
+  assert.ok(payload.action.text.startsWith("hire refused: HIRE_NO_ROUTE — "));
+  assert.ok(payload.action.text.includes(CODING_SESSION_HOST_NOTICE_MARKER));
+  // And the wire itself says this is a host answer, so a provider's turn
+  // intake can recognize it without parsing the text at all.
+  assert.deepEqual(
+    turn.tags.find((tag) => tag[0] === CODING_SESSION_HOST_ANSWER_TAG_NAME),
+    [CODING_SESSION_HOST_ANSWER_TAG_NAME, "hire"],
+  );
+
   const [noticeText] = host.notices();
   assert.ok(noticeText.startsWith(`[${CODING_SESSION_HOST_NOTICE_MARKER}]`));
 });
 
-test("(b) a refusal answered inside the requester's wait window publishes the notice and no turn", async () => {
-  const req = request();
-  // Answered one second after the request — well inside the CLI's 120s wait.
-  const host = harness({ now: req.createdAt + 1 });
+test("a requester with no live target gets no turn, only the umbrella notice", async () => {
+  const host = harness({ hasTarget: false });
   await publishRefusal(
-    req,
-    {
-      kind: "refused",
-      code: "HIRE_NO_ROUTE",
-      reason: "no registry",
-      text: "hire refused: HIRE_NO_ROUTE — no registry",
-    },
-    host.input,
-    host.deps,
-  );
-  assert.deepEqual(host.turns(), []);
-  const notices = host.notices();
-  assert.equal(notices.length, 1);
-  assert.ok(notices[0].includes("hire refused: HIRE_NO_ROUTE — no registry"));
-});
-
-test("(c) a refusal published after the window still opens the turn, prefixed", async () => {
-  const req = request();
-  // Answered well past the CLI's own 120s wait — its caller has already been
-  // told `unconfirmed` and has no other way to learn the outcome.
-  const host = harness({ now: req.createdAt + 121 });
-  await publishRefusal(
-    req,
-    {
-      kind: "refused",
-      code: "HIRE_NO_ROUTE",
-      reason: "no registry",
-      text: "hire refused: HIRE_NO_ROUTE — no registry",
-    },
-    host.input,
-    host.deps,
-  );
-  const turns = host.turns();
-  assert.equal(turns.length, 1);
-  assert.ok(turns[0].startsWith("hire refused: HIRE_NO_ROUTE — "));
-  assert.ok(turns[0].includes(CODING_SESSION_HOST_NOTICE_MARKER));
-  assert.equal(host.notices().length, 1);
-});
-
-test("a requester with no live target never opens a turn, window notwithstanding", async () => {
-  const req = request();
-  const host = harness({ now: req.createdAt + 500, hasTarget: false });
-  await publishRefusal(
-    req,
+    request(),
     {
       kind: "refused",
       code: "HIRE_OFF",
@@ -210,44 +162,38 @@ test("a requester with no live target never opens a turn, window notwithstanding
   assert.equal(host.notices().length, 1);
 });
 
-test("refuseCodingSessionHireWithCode: same window rule, and returns the unmarked structural text", async () => {
-  const req = request();
-  const withinWindow = harness({ now: req.createdAt + 5 });
+test("refuseCodingSessionHireWithCode: always tags and marks the turn, and returns the unmarked structural text", async () => {
+  const host = harness();
   const returned = await refuseCodingSessionHireWithCode(
-    req,
+    request(),
     {
       code: "HIRE_CHECKOUT_NOT_RECORDED",
       reason: "set the project's repository folder",
     },
-    withinWindow.input,
-    withinWindow.deps,
+    host.input,
+    host.deps,
   );
   assert.equal(
     returned,
     "hire refused: HIRE_CHECKOUT_NOT_RECORDED — set the project's repository folder",
   );
-  assert.deepEqual(withinWindow.turns(), []);
-
-  const pastWindow = harness({ now: req.createdAt + 300 });
-  await refuseCodingSessionHireWithCode(
-    req,
-    {
-      code: "HIRE_CHECKOUT_NOT_RECORDED",
-      reason: "set the project's repository folder",
-    },
-    pastWindow.input,
-    pastWindow.deps,
+  const [turn] = host.turns();
+  assert.ok(turn);
+  assert.deepEqual(
+    turn.tags.find((tag) => tag[0] === CODING_SESSION_HOST_ANSWER_TAG_NAME),
+    [CODING_SESSION_HOST_ANSWER_TAG_NAME, "hire"],
   );
-  const turns = pastWindow.turns();
-  assert.equal(turns.length, 1);
-  assert.ok(turns[0].includes(CODING_SESSION_HOST_NOTICE_MARKER));
+  assert.ok(
+    JSON.parse(turn.content).action.text.includes(
+      CODING_SESSION_HOST_NOTICE_MARKER,
+    ),
+  );
 });
 
-test("refuseCodingSessionHireForSeatingFailure: disposes the worktree and still marks the answer", async () => {
-  const req = request();
-  const host = harness({ now: req.createdAt + 400 });
+test("refuseCodingSessionHireForSeatingFailure: disposes the worktree and still marks and tags the answer", async () => {
+  const host = harness();
   await refuseCodingSessionHireForSeatingFailure(
-    req,
+    request(),
     {
       failure: "git clone failed: ENOENT",
       sessionRef: SESSION_REF,
@@ -259,7 +205,12 @@ test("refuseCodingSessionHireForSeatingFailure: disposes the worktree and still 
   );
   const turns = host.turns();
   assert.equal(turns.length, 1);
-  assert.ok(turns[0].startsWith("hire refused: HIRE_SEAT_STAGING_FAILED — "));
-  assert.ok(turns[0].includes("git clone failed: ENOENT"));
-  assert.ok(turns[0].includes(CODING_SESSION_HOST_NOTICE_MARKER));
+  const text = JSON.parse(turns[0].content).action.text;
+  assert.ok(text.startsWith("hire refused: HIRE_SEAT_STAGING_FAILED — "));
+  assert.ok(text.includes("git clone failed: ENOENT"));
+  assert.ok(text.includes(CODING_SESSION_HOST_NOTICE_MARKER));
+  assert.deepEqual(
+    turns[0].tags.find((tag) => tag[0] === CODING_SESSION_HOST_ANSWER_TAG_NAME),
+    [CODING_SESSION_HOST_ANSWER_TAG_NAME, "hire"],
+  );
 });

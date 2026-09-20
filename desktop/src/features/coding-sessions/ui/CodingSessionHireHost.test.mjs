@@ -401,7 +401,7 @@ test("a hire is answered in order, and the seat it creates is granted", async ()
   host.teardown();
 });
 
-test("a refused hire answered after the requester's own wait comes back as a 44220 turn to the seat that asked", async () => {
+test("a refused hire comes back as a 44220 turn to the seat that asked, marked and tagged as a host answer", async () => {
   const host = await harness({
     policy: {
       enabled: false,
@@ -409,10 +409,6 @@ test("a refused hire answered after the requester's own wait comes back as a 442
       maxSeatsPerUmbrella: 4,
       allowedProviderInstanceRefs: null,
     },
-    // Past `bee sessions hire`'s own 120s wait: by now its caller has already
-    // been told `unconfirmed`, so this is the only way left to reach it
-    // (ledger 178(b)).
-    now: HIRE_CREATED_AT + 200,
   });
   await host.deliver(await signedHire());
 
@@ -424,39 +420,20 @@ test("a refused hire answered after the requester's own wait comes back as a 442
   assert.ok(turn, "the lead was never told");
   const payload = JSON.parse(turn.content);
   assert.deepEqual(payload.target, LEAD_TARGET);
+  // `bee sessions hire` parses this structurally — it must still start with
+  // the exact prefix — and it must always be published: it is the CLI's own
+  // answer channel, not a redundant echo (ledger 178(b)).
   assert.match(payload.action.text, /^hire refused: HIRE_OFF — /);
   assert.match(payload.action.text, HOST_NOTICE_MARKER_RE);
+  // The wire itself says this is a host answer, so a provider's turn intake
+  // can recognize it without parsing the text.
+  assert.deepEqual(
+    turn.tags.find((tag) => tag[0] === "buzz-host-answer"),
+    ["buzz-host-answer", "hire"],
+  );
   // And once more where the person who set the policy can see it.
   const [notice] = host.of(9);
   assert.ok(notice, "the umbrella was never told");
-  assert.match(
-    notice.content,
-    /asked to hire a builder — hire refused: HIRE_OFF/,
-  );
-  host.teardown();
-});
-
-test("a refused hire answered inside the requester's own wait is disclosed only in the umbrella, never as a turn", async () => {
-  // `bee sessions hire` polls the relay directly for up to 120s and reads a
-  // refusal the same way this host answers one; a turn addressed to the same
-  // live seat this fast is not new information, it is the CLI's own answer
-  // arriving a second time as though a person just typed it (ledger 178(b)).
-  const host = await harness({
-    policy: {
-      enabled: false,
-      allowedRoles: null,
-      maxSeatsPerUmbrella: 4,
-      allowedProviderInstanceRefs: null,
-    },
-    now: HIRE_CREATED_AT,
-  });
-  await host.deliver(await signedHire());
-
-  assert.equal(host.of(44221).length, 0);
-  assert.equal(host.of(44220).length, 0, "no turn was opened on the seat");
-  const [notice] = host.of(9);
-  assert.ok(notice, "the umbrella was never told");
-  assert.match(notice.content, HOST_NOTICE_MARKER_RE);
   assert.match(
     notice.content,
     /asked to hire a builder — hire refused: HIRE_OFF/,
@@ -484,9 +461,7 @@ test("a hire older than the host's window is refused HIRE_STALE, never seated", 
 // or none at all, so the whole catalog — including `sonnet` — refuses a vendor
 // name it does not publish.
 test("a vendor model id the catalog does not publish is refused, not translated", async () => {
-  // Past the requester's own wait, so the turn this test inspects is
-  // actually opened (ledger 178(b)).
-  const host = await harness({ now: HIRE_CREATED_AT + 200 });
+  const host = await harness();
   await host.deliver(await signedHire({ model: "claude-sonnet-5" }));
 
   assert.equal(host.of(44221).length, 0, "an unoffered model was seated");
@@ -505,9 +480,6 @@ test("a model no runtime offers is refused with the offered ids, not guessed", a
     modelCatalogs: new Map([
       ["claude-primary", ["default", "claude-fable-5[1m]"]],
     ]),
-    // Past the requester's own wait, so the turn this test inspects is
-    // actually opened (ledger 178(b)).
-    now: HIRE_CREATED_AT + 200,
   });
   await host.deliver(await signedHire({ model: "claude-sonnet-5" }));
 
@@ -604,9 +576,7 @@ test("a model the provider's catalog offers is seated, not refused by the runtim
 });
 
 test("the refusal sentence lists the provider catalog verbatim", async () => {
-  // Past the requester's own wait, so the turn this test inspects is
-  // actually opened (ledger 178(b)).
-  const host = await harness({ now: HIRE_CREATED_AT + 200 });
+  const host = await harness();
   await host.deliver(await signedHire({ model: "gpt-5.6-sol" }));
 
   const text = JSON.parse(host.of(44220)[0].content).action.text;
@@ -843,10 +813,7 @@ test("a hire this host cannot read is refused HIRE_MALFORMED, never dropped", as
 });
 
 test("a hire carrying the contract's own request shape is not malformed", async () => {
-  // Past the requester's own wait, so the turn this test inspects is
-  // actually opened (ledger 178(b)) — this is a real `HIRE_NO_ROUTE`
-  // refusal, gated the same as any other.
-  const host = await harness({ now: HIRE_CREATED_AT + 200 });
+  const host = await harness();
   await host.deliver(
     await signedMalformedHire({
       class: "builder",
@@ -1162,14 +1129,7 @@ test("an agent that inherits its harness from its persona is still seated on tha
  * the worktree stayed cut. A hire must never go unanswered.
  */
 test("a staging failure is refused once, in the host's own words, and the tree it cut is removed", async () => {
-  // Past the requester's own wait — realistically true anyway, since
-  // staging a seat (worktree, membership, custody, the agents clone) takes
-  // real time — so the turn this test inspects is actually opened (ledger
-  // 178(b)).
-  const host = await harness({
-    stageSeatFailures: 1,
-    now: HIRE_CREATED_AT + 200,
-  });
+  const host = await harness({ stageSeatFailures: 1 });
   await host.deliver(await signedHire());
 
   // No create, and the tree goes before the refusal is published so the
@@ -1215,7 +1175,6 @@ test("a prune that fails is said in the refusal, not swallowed", async () => {
   const host = await harness({
     stageSeatFailures: 1,
     disposeError: "this host has no worktree recorded for that seat",
-    now: HIRE_CREATED_AT + 200,
   });
   await host.deliver(await signedHire());
 

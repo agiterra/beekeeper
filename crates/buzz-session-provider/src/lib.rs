@@ -1029,6 +1029,10 @@ struct HeldCommand {
     event_id: String,
     operator_pubkey: String,
     content: String,
+    /// Whether the raw event carried [`payload::CODING_SESSION_HOST_ANSWER_TAG_NAME`].
+    /// Read from tags at hold time because a held command is replayed from
+    /// its own fields, never re-consulting the original event.
+    host_answer: bool,
 }
 
 /// What the provider must remember to write the *next* generation of one
@@ -1670,6 +1674,7 @@ impl Provider {
                     &command.operator_pubkey,
                     &command.event_id,
                     &command.content,
+                    command.host_answer,
                 )
                 .await;
             if let Err(error) = delivered {
@@ -1750,6 +1755,7 @@ impl Provider {
                         event_id: event.id.to_hex(),
                         operator_pubkey,
                         content: event.content.clone(),
+                        host_answer: payload::is_host_answer_command(event.tags.iter()),
                     });
                     // No watermark write at all. `watermark_ceiling` is a
                     // clamp, not an advance — a `min` over the turns this
@@ -1773,6 +1779,7 @@ impl Provider {
                         &operator_pubkey,
                         &event.id.to_hex(),
                         &event.content,
+                        payload::is_host_answer_command(event.tags.iter()),
                     )
                     .await?;
                 if disposition == TurnDisposition::Undecided {
@@ -4547,6 +4554,11 @@ impl Provider {
         operator_pubkey: &str,
         event_id: &str,
         content: &str,
+        // Whether the raw event carried `buzz-host-answer` — see
+        // `payload::is_host_answer_command`. Read from tags, not content, so
+        // `bee sessions hire`'s structural parse of the text is unaffected
+        // either way (ledger 178(b)).
+        host_answer: bool,
     ) -> anyhow::Result<TurnDisposition> {
         let projects = ProjectsFile::default();
         // A turn never resolves a working directory or a seat; both empty maps
@@ -4557,8 +4569,60 @@ impl Provider {
             created_at,
             content,
         );
+        // A host answer that is actually admitted (authority, budget, and
+        // every other ordinary gate already ran inside `decide_turn`) is
+        // recorded, never delivered: the command is this computer's own
+        // answer to something it already decided — a hire refusal, most
+        // often — and `bee sessions hire` already reads it directly off the
+        // relay to settle its own poll. Opening a turn from it a second time,
+        // whenever this mailbox gets to it, is the live seat reading its own
+        // recent output back as if a person had just typed it. Anything
+        // `decide_turn` did *not* admit (ignored, refused, an interrupt) is
+        // handled exactly as any other command — the tag only ever narrows
+        // what already reached `Start`.
+        if host_answer {
+            if let TurnDecision::Start {
+                ref command_id,
+                ref target,
+                ref text,
+                ..
+            } = decision
+            {
+                return self.record_host_answer(
+                    channel_id,
+                    target,
+                    command_id,
+                    text,
+                    operator_pubkey,
+                );
+            }
+        }
         self.apply_turn_decision(channel_id, created_at, operator_pubkey, event_id, decision)
             .await
+    }
+
+    /// Record a host-answer command in the session's transcript without
+    /// opening a turn from it.
+    ///
+    /// The only trace of this command a seat ever sees again: no
+    /// `turn_queued`/`turn_started` receipt, and nothing enters the
+    /// execution's mailbox. A tool call can still read it — it is an
+    /// ordinary `user_prompt` item, `hostAnswer: true` and all — but nothing
+    /// wakes the running agent because of it.
+    fn record_host_answer(
+        &mut self,
+        channel_id: Uuid,
+        target: &CodingSessionTarget,
+        command_id: &str,
+        text: &str,
+        operator_pubkey: &str,
+    ) -> anyhow::Result<TurnDisposition> {
+        let item =
+            payload::host_answer_prompt_item(text, Some(operator_pubkey), Some(command_id), None);
+        self.enqueue_transcript(channel_id, target, None, item, Priority::Normal)?;
+        Ok(TurnDisposition::Answered(
+            payload::HOST_ANSWER_RECORDED.to_owned(),
+        ))
     }
 
     /// Carry out one already-made turn decision.
@@ -11130,6 +11194,38 @@ mod tests {
         )
     }
 
+    /// A `thread.turn.start` command tagged as a host answer — the shape
+    /// `discloseCodingSessionHire` publishes for a hire refusal (ledger
+    /// 178(b)).
+    fn host_answer_turn_event(
+        channel_id: Uuid,
+        command_id: &str,
+        target: &CodingSessionTarget,
+        text: &str,
+    ) -> Event {
+        let content = serde_json::json!({
+            "schema": "buzz-coding-session-command/v1",
+            "commandId": command_id,
+            "target": target,
+            "action": { "type": "thread.turn.start", "text": text },
+        })
+        .to_string();
+        nostr::EventBuilder::new(
+            nostr::Kind::Custom(KIND_CODING_SESSION_COMMAND as u16),
+            content,
+        )
+        .tags(vec![
+            nostr::Tag::parse(["h", &channel_id.to_string()]).expect("tag"),
+            nostr::Tag::parse([
+                payload::CODING_SESSION_HOST_ANSWER_TAG_NAME,
+                payload::CODING_SESSION_HOST_ANSWER_TAG_HIRE,
+            ])
+            .expect("tag"),
+        ])
+        .sign_with_keys(test_operator_keys())
+        .expect("sign")
+    }
+
     fn interrupt_event(channel_id: Uuid, command_id: &str, target: &CodingSessionTarget) -> Event {
         command_event(
             channel_id,
@@ -16463,6 +16559,86 @@ mod tests {
         // The receipt and the transcript name the same turn, so a consumer can
         // join them without matching text.
         assert_eq!(receipts[1]["turnId"], prompt["turnId"]);
+    }
+
+    /// Ledger 178(b): a 44220 tagged `buzz-host-answer` is this computer's own
+    /// answer to something it already decided — most often a hire refusal —
+    /// and must never be delivered as a live turn: the requester already read
+    /// this exact event to answer its own `bee sessions hire` poll, and
+    /// opening a turn from it a second time, whenever this mailbox gets to
+    /// it, reads as fresh instruction from whoever signed it. It is still
+    /// recorded in the transcript, so a tool call can read it later. An
+    /// ordinary, untagged turn to the same session is unaffected.
+    #[tokio::test]
+    async fn a_host_answer_command_is_recorded_and_opens_no_turn() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = provider(&dir.path().join("state"), Some(&projects));
+        provider
+            .handle_command_event(channel_id, &create_event(&provider, channel_id, "create-1"))
+            .await
+            .expect("handle");
+        let target = provider
+            .state()
+            .sessions()
+            .next()
+            .expect("session")
+            .target("instance-1");
+
+        provider
+            .handle_command_event(
+                channel_id,
+                &host_answer_turn_event(
+                    channel_id,
+                    "turn-host-answer",
+                    &target,
+                    "hire refused: HIRE_NO_ROUTE — no registry",
+                ),
+            )
+            .await
+            .expect("handle");
+        provider
+            .handle_command_event(
+                channel_id,
+                &turn_event(channel_id, "turn-ordinary", &target),
+            )
+            .await
+            .expect("handle");
+        pump_until_turn_finished(&mut provider).await;
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+
+        assert!(
+            receipt_stages(&sink, "turn-host-answer").is_empty(),
+            "a host answer must never publish turn_queued/turn_started"
+        );
+        assert_eq!(
+            receipt_stages(&sink, "turn-ordinary"),
+            vec!["turn_queued".to_owned(), "turn_started".to_owned()],
+        );
+
+        let prompts: Vec<serde_json::Value> = transcript_items_in_sequence(&sink)
+            .into_iter()
+            .filter(|item| item["item"]["kind"] == "user_prompt")
+            .collect();
+        let host_item = prompts
+            .iter()
+            .find(|item| item["item"]["commandId"] == "turn-host-answer")
+            .expect("the host answer must still be recorded in the transcript");
+        assert_eq!(host_item["item"]["hostAnswer"], true);
+        assert_eq!(
+            host_item["item"]["content"],
+            "hire refused: HIRE_NO_ROUTE — no registry"
+        );
+        let ordinary_item = prompts
+            .iter()
+            .find(|item| item["item"]["commandId"] == "turn-ordinary")
+            .expect("the ordinary turn must still be recorded in the transcript");
+        assert!(ordinary_item["item"].get("hostAnswer").is_none());
     }
 
     /// The prompt an operator types into the create dialog is a turn like any

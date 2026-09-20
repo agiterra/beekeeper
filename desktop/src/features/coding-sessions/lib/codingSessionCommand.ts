@@ -7,6 +7,24 @@ import { KIND_CODING_SESSION_COMMAND } from "@/shared/constants/kinds";
 export const CODING_SESSION_COMMAND_SCHEMA = "buzz-coding-session-command/v1";
 /** The locked version of the public command tag envelope. */
 export const CODING_SESSION_COMMAND_TAG_VERSION = "csc1-1";
+/**
+ * Nostr tag name marking a `thread.turn.start` command as its own signer's
+ * answer to something already decided — a hire refusal, for instance — never
+ * a person's words.
+ *
+ * Mirrors `CODING_SESSION_HOST_ANSWER_TAG_NAME` in
+ * `crates/buzz-core/src/coding_session_payload.rs`, which is also where the
+ * provider-side predicate that reads it lives. The relay's envelope
+ * validator (`validate_coding_session_command_envelope`,
+ * `crates/buzz-relay/src/handlers/ingest.rs`) allows exactly one of these,
+ * with the value below; the command must still be published exactly as any
+ * other turn — `bee sessions hire` reads this same event directly off the
+ * relay to answer its own poll (ledger 178(b)), so it is the CLI's answer
+ * channel and never a redundant echo to suppress.
+ */
+export const CODING_SESSION_HOST_ANSWER_TAG_NAME = "buzz-host-answer";
+/** The one recognized host-answer tag value today. */
+export const CODING_SESSION_HOST_ANSWER_TAG_HIRE = "hire";
 /** Maximum UTF-8 byte length for a command or target identifier. */
 export const MAX_CODING_SESSION_IDENTIFIER_BYTES = 256;
 /** Maximum UTF-8 byte length for a coding-session turn. */
@@ -233,6 +251,13 @@ export function buildCodingSessionCommandEvent(input: {
   text: string;
   attachments?: CodingSessionTurnAttachment[];
   deliver: CodingSessionTurnDelivery;
+  /**
+   * Marks this turn as the sender's own answer to something it already
+   * decided, never a person's words — see
+   * {@link CODING_SESSION_HOST_ANSWER_TAG_NAME}. Omitted by every ordinary
+   * turn; the hire host is this tag's only writer today.
+   */
+  hostAnswer?: boolean;
 }): CodingSessionCommandEventInput {
   // The caller always names a class; an unreadable one is refused here rather
   // than defaulted, so a turn asked to interrupt is never quietly delivered at
@@ -246,6 +271,7 @@ export function buildCodingSessionCommandEvent(input: {
     channelId: input.channelId,
     commandId: input.commandId,
     target: input.target,
+    hostAnswer: input.hostAnswer,
     action: {
       type: "thread.turn.start",
       text: input.text,
@@ -278,6 +304,7 @@ function buildCodingSessionActionEvent(input: {
   commandId: string;
   target: CodingSessionCommandTarget;
   action: CodingSessionCommandAction;
+  hostAnswer?: boolean;
 }): CodingSessionCommandEventInput {
   validateCodingSessionCommandInput(input);
   const payload: CodingSessionCommandPayload = {
@@ -293,6 +320,14 @@ function buildCodingSessionActionEvent(input: {
       ["h", input.channelId],
       ["cs-v", CODING_SESSION_COMMAND_TAG_VERSION],
       ["cs-target", buildCodingSessionTargetKey(input.target)],
+      ...(input.hostAnswer === true
+        ? [
+            [
+              CODING_SESSION_HOST_ANSWER_TAG_NAME,
+              CODING_SESSION_HOST_ANSWER_TAG_HIRE,
+            ],
+          ]
+        : []),
     ],
   };
 }

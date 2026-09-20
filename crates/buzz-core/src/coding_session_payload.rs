@@ -2320,6 +2320,74 @@ pub fn user_prompt_item(
     item
 }
 
+/// Nostr tag name marking a 44220 `thread.turn.start` command as a host's own
+/// answer — not a person's words — to something the host already decided.
+///
+/// The desktop hire host writes it on a hire refusal's turn
+/// (`discloseCodingSessionHire` /
+/// `desktop/src/features/coding-sessions/lib/codingSessionHireDisclosure.ts`),
+/// which must still reach the relay exactly as before: `bee sessions hire`
+/// reads the same event directly off the relay to answer its own poll
+/// (`find_hire_refusal`/`wait_for_hire`,
+/// `crates/buzz-cli/src/commands/sessions/crew.rs`,
+/// `crates/buzz-cli/src/commands/sessions/crew_cmds.rs`), so it is the CLI's
+/// *answer channel*, not a redundant echo — suppressing the publish would
+/// make every fast refusal report `unconfirmed` instead of `refused`. What
+/// must not happen is the *live seat* reading it a second time, whenever the
+/// provider's mailbox gets to it, as fresh unprompted instruction from
+/// whoever signed it (ledger 178(b)). [`is_host_answer_command`] is the one
+/// predicate that reads this tag; a provider's turn intake consults it before
+/// opening a turn, never before recording one.
+pub const CODING_SESSION_HOST_ANSWER_TAG_NAME: &str = "buzz-host-answer";
+
+/// The one recognized value today. Not a closed enum on purpose: a second
+/// value is a judgment call for whoever adds it, not a rewrite of
+/// [`is_host_answer_command`].
+pub const CODING_SESSION_HOST_ANSWER_TAG_HIRE: &str = "hire";
+
+/// Whether a 44220 command's tags mark it as a host answer.
+///
+/// Reads tags only — the relay's own envelope validator
+/// (`validate_coding_session_command_envelope`,
+/// `crates/buzz-relay/src/handlers/ingest.rs`) already requires every tag to
+/// carry exactly two fields, so a well-formed event is the only kind this
+/// ever sees; a malformed one is refused before it reaches here.
+pub fn is_host_answer_command<'a>(tags: impl IntoIterator<Item = &'a nostr::Tag>) -> bool {
+    tags.into_iter().any(
+        |tag| matches!(tag.as_slice(), [name, _] if name == CODING_SESSION_HOST_ANSWER_TAG_NAME),
+    )
+}
+
+/// A `user_prompt` transcript item for a command this provider recognized as
+/// a host answer and did not deliver as a live turn.
+///
+/// Same shape [`user_prompt_item`] emits — a reader that does not yet know
+/// about `hostAnswer` still sees an ordinary prompt record — plus the one
+/// additive field naming what makes it different: nobody is waiting on a
+/// reply, and no `turn_queued`/`turn_started` receipt was ever published for
+/// it. A tool call reads it from the transcript; the running agent is never
+/// woken by it.
+pub fn host_answer_prompt_item(
+    content: &str,
+    operator_pubkey: Option<&str>,
+    command_id: Option<&str>,
+    sender_role: Option<&str>,
+) -> serde_json::Value {
+    let mut item = user_prompt_item(content, false, operator_pubkey, command_id, sender_role, 0);
+    if let Some(object) = item.as_object_mut() {
+        object.insert("hostAnswer".into(), serde_json::json!(true));
+    }
+    item
+}
+
+/// `TurnDisposition::Answered` code for a command [`is_host_answer_command`]
+/// recognized: recorded in the transcript, never delivered as a turn. Not a
+/// receipt code — nothing is published back to the sender under it, because
+/// the sender already has this exact event; it exists only so the provider's
+/// own logs and tests can name what happened to the command without
+/// confusing it with an ordinary refusal.
+pub const HOST_ANSWER_RECORDED: &str = "HOST_ANSWER_RECORDED";
+
 /// Whether `value` could have travelled as a `commandId` on the wire: nonblank,
 /// bounded, and free of control characters — the same rule
 /// `coding_session_command`'s validator applies to the command itself.
