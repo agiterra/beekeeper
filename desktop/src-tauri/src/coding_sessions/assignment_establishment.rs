@@ -1,103 +1,59 @@
-//! The durable, host-owned sequence that puts a seat on its exact input.
+//! Recording what a surface saw, for the party that acts on it.
 //!
-//! # The defect this closes
+//! # Who establishes an input now, and why it is not this process
 //!
-//! Establishing a verifier's or a runner's input — checking out the commit its
-//! assignment names, in that seat's own worktree — used to run from a React
-//! effect in the mission surface
-//! (`desktop/src/features/coding-sessions/hooks/useCodingSessionAssignmentInputs.ts`).
-//! That made a *panel* the thing which decided whether work became executable:
-//! it ran only while Mission was mounted, stopped when the panel was closed,
-//! and kept its "already attempted" set in a React ref, so a relaunch knew
-//! nothing. In the 2026-09-20 kettle run the verifier's tree stayed on the
-//! README commit and the seat ended up verifying a scratch archive by hand
-//! (ledger 178(d)).
+//! Lane 185 moved "accept assignment → establish input → record result" out of
+//! a React effect and into a durable host queue, which closed the half of the
+//! defect that a *closed panel* could stop the work. It left the other half
+//! open, and said so: this app holds no relay subscription of its own for kind
+//! 44244 — every team transaction arrives as an argument to
+//! `fold_coding_session_team_transactions` — so the first **sighting** still
+//! came from a mounted surface; and nothing ordered establishment before the
+//! seat's wake, so a wake that raced ahead was refused by the provider's fence
+//! and cost a re-issued assignment and a model turn (ledger 133, 178(d), 185).
 //!
-//! The work is now queued **durably** the first time this host sees the
-//! assignment, and the queue is drained by the host: on the observation that
-//! queued it, and again at launch for anything a quit or a crash left pending.
-//! Closing the panel no longer stops an establishment, and no longer loses one.
+//! Both halves belong to the party that holds the governed subscription *and*
+//! the turn gate. That is the provider. It now records the intent from its own
+//! verified complete-discovery pass, drains it, and defers a wake that arrives
+//! while an establishment is pending
+//! ([`buzz_session_provider_pkg::assignment_inputs`], and the fence in
+//! `crates/buzz-session-provider/src/verification_input.rs`).
 //!
-//! # What still needs a surface, said plainly
+//! # What this module is for
 //!
-//! This host has **no relay subscription of its own** for kind 44244: every
-//! team transaction reaches `desktop/src-tauri` as an argument to
-//! `fold_coding_session_team_transactions`, handed in by the frontend that
-//! holds the subscription. So the *first sighting* of an assignment still
-//! comes from a surface. That is not only a limitation, it is also the safe
-//! boundary: an assignment is only worth acting on once the governed fold has
-//! admitted it under a session's authority context, and a background poller
-//! that decoded 44244 without that context could move a seat's tree on an
-//! excluded — possibly forged — assignment. What this module owns is
-//! everything after the sighting, which is where the panel used to be
-//! load-bearing.
+//! Two things, and deliberately not a third:
 //!
-//! # Ordering against the wake
+//! * a surface that folded an assignment can still **hand over what it saw**,
+//!   which costs nothing and can only ever add a row the provider would have
+//!   recorded anyway;
+//! * a person can ask for one settled assignment to be **tried again**.
 //!
-//! Nothing here can be ordered *before* the assignee's wake: the only path
-//! that wakes an assignee seat is the lead's CLI
-//! (`crates/buzz-cli/src/commands/sessions/crew_cmds.rs`,
-//! `send_team_operation_wake`). The order is made irrelevant instead of
-//! claimed: the provider refuses a verifier or runner turn whose tree does not
-//! hold the assignment's `baseSha`
-//! (`crates/buzz-session-provider/src/verification_input.rs`), and it decides
-//! by reading `HEAD` and `git status --porcelain` in the seat's own working
-//! directory — never by being told. So the fence needs **no new signal** from
-//! this module and no new event kind: a commit this host has established is a
-//! fact the provider reads for itself, and the established commit already
-//! reaches the wire through the provider's existing observed-commit refresh.
-//!
-//! # Retry discipline
-//!
-//! A terminal outcome is never retried automatically. A refusal is a fact
-//! about this computer now — a dirty tree, a commit no remote has — and
-//! re-running it on a timer would turn one honest sentence into a loop. Only
-//! [`coding_session_requeue_assignment_input`], a person's own click, puts a
-//! settled assignment back in the queue.
-//!
-//! An *interrupted* attempt is the one case that replays, and it is bounded:
-//! [`CodingSessionAssignmentInputRecord::attempts`] is incremented and
-//! persisted **before** the git work, so a launch that finds a started attempt
-//! knows it was started. The second such find records
-//! [`ASSIGNMENT_INPUT_ABANDONED`] and stops, because an attempt that takes the
-//! app down with it twice will take it down a third time.
+//! It no longer drains. A drain from here would be a second scheduler over one
+//! record set, racing the party that decides whether the turn may open, and
+//! the two could disagree about whether an attempt was in flight. The records,
+//! the file and the lock are shared; the *order* has one owner.
 
 use buzz_core_pkg::coding_session_team_transaction::role_requires_verification_input;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
 
 use crate::app_state::AppState;
-use crate::coding_sessions::assignment_input::{
-    is_object_id, CodingSessionAssignmentInputRecord, EstablishAssignmentInputRequest,
-};
+use crate::coding_sessions::assignment_input::{seat_checkout, CodingSessionAssignmentInputRecord};
 use crate::coding_sessions::workdir_store::{
-    load_workdir_store, lock_workdir_store, save_workdir_store, seat_worktree_key,
-    CodingSessionWorkdirStore, WORKDIR_STORE_VERSION,
+    load_workdir_store, lock_workdir_store, save_workdir_store, CodingSessionWorkdirStore,
+    WORKDIR_STORE_VERSION,
 };
-use crate::util::now_iso;
 
-/// Queued by an observation, with no attempt started yet.
-pub(crate) const ASSIGNMENT_INPUT_INTENDED: &str = "intended";
+use buzz_session_provider_pkg::assignment_inputs::{
+    queue_intent, requeue_assignment_input as requeue_assignment_input_core,
+    AssignmentInputDisposition, AssignmentIntent,
+};
 
-/// An attempt has been started; this is written before git runs.
-pub(crate) const ASSIGNMENT_INPUT_ESTABLISHING: &str = "establishing";
-
-/// Two attempts were started and neither finished; the host stopped trying.
-pub(crate) const ASSIGNMENT_INPUT_ABANDONED: &str = "establish_abandoned";
-
-/// How many attempts may be *started* for one assignment before the host stops
-/// replaying it at launch.
+/// What this host has to say about one observed assignment's input.
 ///
-/// Two, not one: the ordinary interruption is a person quitting the app
-/// mid-checkout, and refusing to finish that would be worse than finishing it.
-/// Three would be a loop with extra steps.
-pub(crate) const MAX_ESTABLISH_ATTEMPTS: u32 = 2;
-
-/// True for an outcome the host still owes an answer for.
-#[must_use]
-pub(crate) fn assignment_input_is_pending(outcome: &str) -> bool {
-    outcome == ASSIGNMENT_INPUT_INTENDED || outcome == ASSIGNMENT_INPUT_ESTABLISHING
-}
+/// The shared disposition, re-exported: the words a surface reads are the
+/// words the provider writes.
+pub use buzz_session_provider_pkg::assignment_inputs::AssignmentInputDisposition as CodingSessionAssignmentInputDisposition;
 
 /// One folded assignment, as a surface observed it.
 ///
@@ -127,26 +83,6 @@ pub struct ObservedCodingSessionAssignment {
     pub branch: Option<String>,
 }
 
-/// What this host has to say about one observed assignment's input.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CodingSessionAssignmentInputDisposition {
-    /// The role does not start from a named revision — a builder is told what
-    /// to change, not asked a question about a commit.
-    NotRequired,
-    /// An input-bound role whose assignment names no commit. Nothing was
-    /// queued and nothing could be; inventing a commit would be a guess.
-    Unnamed,
-    /// The observation could not be read as one: an id or a commit that is not
-    /// an object id. Said out loud rather than dropped.
-    Invalid,
-    /// This host cut no worktree for that seat, so it has no tree to move.
-    /// The ordinary case for anyone watching a mission they did not hire.
-    OffHost,
-    /// This host has a durable record for the assignment; read it.
-    Recorded,
-}
-
 /// One row: what the host decided, and its durable record when it has one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -165,11 +101,13 @@ pub struct CodingSessionAssignmentInputStatus {
 /// record that already names the **same** commit is dispositive and is left
 /// exactly as it is — including a refusal, which is why nothing loops. A
 /// record for a *different* commit is no answer about this one, so it is
-/// replaced by a fresh intent with the attempt count back at zero.
+/// replaced by a fresh intent with the attempt count back at zero. The rule
+/// itself lives in the shared core; what is decided here is only which
+/// observations are this host's business at all.
 pub(crate) fn queue_observed_assignments(
     store: &mut CodingSessionWorkdirStore,
     observed: &[ObservedCodingSessionAssignment],
-) -> Vec<CodingSessionAssignmentInputDisposition> {
+) -> Vec<AssignmentInputDisposition> {
     observed
         .iter()
         .map(|assignment| queue_one(store, assignment))
@@ -179,28 +117,10 @@ pub(crate) fn queue_observed_assignments(
 fn queue_one(
     store: &mut CodingSessionWorkdirStore,
     assignment: &ObservedCodingSessionAssignment,
-) -> CodingSessionAssignmentInputDisposition {
-    use CodingSessionAssignmentInputDisposition as Disposition;
-
+) -> AssignmentInputDisposition {
     let role = assignment.assignee_role.as_deref().unwrap_or("").trim();
     if !role_requires_verification_input(role) {
-        return Disposition::NotRequired;
-    }
-    let assignment_id = assignment.assignment_id.trim().to_string();
-    if assignment_id.len() != 64 || !is_object_id(&assignment_id) {
-        return Disposition::Invalid;
-    }
-    let commit = assignment
-        .base_sha
-        .as_deref()
-        .unwrap_or("")
-        .trim()
-        .to_string();
-    if commit.is_empty() {
-        return Disposition::Unnamed;
-    }
-    if !is_object_id(&commit) {
-        return Disposition::Invalid;
+        return AssignmentInputDisposition::NotRequired;
     }
     let session_ref = assignment.session_ref.trim().to_string();
     let seat_label = assignment
@@ -209,115 +129,31 @@ fn queue_one(
         .unwrap_or("")
         .trim()
         .to_string();
-    if session_ref.is_empty() || seat_label.is_empty() {
-        return Disposition::OffHost;
-    }
     // The tree this host recorded cutting, or nothing. No search of the disk:
     // adopting a tree this host did not cut is how a seat's uncommitted work
     // would get moved out from under somebody.
-    if !store
-        .worktrees
-        .contains_key(&seat_worktree_key(&session_ref, &seat_label))
-    {
-        return Disposition::OffHost;
-    }
-    let already = store
-        .assignment_input(&assignment_id)
-        .is_some_and(|record| record.commit.as_deref() == Some(commit.as_str()));
-    if already {
-        return Disposition::Recorded;
-    }
-    let branch = assignment
-        .branch
-        .as_deref()
-        .map(str::trim)
-        .filter(|branch| !branch.is_empty())
-        .map(str::to_string);
-    store.record_assignment_input(CodingSessionAssignmentInputRecord {
-        assignment_id,
-        session_ref: Some(session_ref),
-        seat_label: Some(seat_label),
-        commit: Some(commit),
-        branch,
-        path: None,
-        remote: None,
-        outcome: ASSIGNMENT_INPUT_INTENDED.to_string(),
-        message: None,
-        changes: None,
-        attempts: 0,
-        recorded_at: now_iso(),
-    });
-    Disposition::Recorded
+    let checkout = (!session_ref.is_empty() && !seat_label.is_empty())
+        .then(|| seat_checkout(store, &session_ref, &seat_label))
+        .flatten();
+    queue_intent(
+        &mut store.assignment_inputs,
+        &AssignmentIntent {
+            assignment_id: assignment.assignment_id.trim().to_string(),
+            session_ref,
+            seat_label: (!seat_label.is_empty()).then_some(seat_label.clone()),
+            base_sha: assignment.base_sha.clone().unwrap_or_default(),
+            branch: assignment.branch.clone(),
+        },
+        checkout.as_ref(),
+    )
 }
 
 /// Every assignment this host still owes an input for, in key order.
-///
-/// Key order, not assignment order: the queue is drained one at a time and
-/// each item is independent, so the only property that matters is that all of
-/// them are reached. The signed order is not recoverable from the store and
-/// pretending otherwise would be a fiction.
 #[must_use]
 pub(crate) fn pending_assignment_inputs(store: &CodingSessionWorkdirStore) -> Vec<String> {
-    store
-        .assignment_inputs
-        .iter()
-        .filter(|(_, record)| assignment_input_is_pending(&record.outcome))
-        .map(|(key, _)| key.clone())
-        .collect()
-}
-
-/// Drain the queue, one assignment at a time, persisting as it goes.
-///
-/// `persist` is called after the attempt count is written and again after each
-/// terminal outcome, because the count is only a bound if it reaches the disk
-/// before the git work it is counting. A `persist` that fails says so where it
-/// is wired; the tree is already in the state the record describes, so the
-/// outcome stands and what is lost is the record of it.
-///
-/// Returns the assignment ids it touched, in the order it touched them.
-pub(crate) fn drain_pending_assignment_inputs(
-    store: &mut CodingSessionWorkdirStore,
-    mut persist: impl FnMut(&CodingSessionWorkdirStore),
-) -> Vec<String> {
-    let mut drained = Vec::new();
-    for assignment_id in pending_assignment_inputs(store) {
-        let Some(record) = store.assignment_input(&assignment_id).cloned() else {
-            continue;
-        };
-        drained.push(assignment_id.clone());
-        if record.attempts >= MAX_ESTABLISH_ATTEMPTS {
-            let mut abandoned = record;
-            abandoned.outcome = ASSIGNMENT_INPUT_ABANDONED.to_string();
-            abandoned.message = Some(format!(
-                "{} attempts to establish this input were started on this computer and none \
-                 finished, so it will not be tried again on its own",
-                abandoned.attempts
-            ));
-            abandoned.recorded_at = now_iso();
-            store.record_assignment_input(abandoned);
-            persist(store);
-            continue;
-        }
-        let mut started = record;
-        started.outcome = ASSIGNMENT_INPUT_ESTABLISHING.to_string();
-        started.attempts += 1;
-        started.message = None;
-        started.recorded_at = now_iso();
-        store.record_assignment_input(started);
-        persist(store);
-        // The attempt files its own terminal record, carrying the count
-        // forward. Its refusal is the record; nothing here re-reads it, and
-        // nothing here tries again.
-        let _ = crate::coding_sessions::assignment_input::establish(
-            store,
-            &EstablishAssignmentInputRequest {
-                assignment_id: assignment_id.clone(),
-                ..EstablishAssignmentInputRequest::default()
-            },
-        );
-        persist(store);
-    }
-    drained
+    buzz_session_provider_pkg::assignment_inputs::pending_assignment_inputs(
+        &store.assignment_inputs,
+    )
 }
 
 /// Put a settled assignment back in the queue, from a person's own click.
@@ -328,23 +164,13 @@ pub(crate) fn requeue_assignment_input(
     store: &mut CodingSessionWorkdirStore,
     assignment_id: &str,
 ) -> bool {
-    let Some(record) = store.assignment_input(assignment_id).cloned() else {
-        return false;
-    };
-    let mut requeued = record;
-    requeued.outcome = ASSIGNMENT_INPUT_INTENDED.to_string();
-    requeued.message = None;
-    requeued.changes = None;
-    requeued.attempts = 0;
-    requeued.recorded_at = now_iso();
-    store.record_assignment_input(requeued);
-    true
+    requeue_assignment_input_core(&mut store.assignment_inputs, assignment_id)
 }
 
 fn statuses(
     store: &CodingSessionWorkdirStore,
     observed: &[ObservedCodingSessionAssignment],
-    dispositions: &[CodingSessionAssignmentInputDisposition],
+    dispositions: &[AssignmentInputDisposition],
 ) -> Vec<CodingSessionAssignmentInputStatus> {
     observed
         .iter()
@@ -352,7 +178,7 @@ fn statuses(
         .map(|(assignment, disposition)| {
             let assignment_id = assignment.assignment_id.trim().to_string();
             CodingSessionAssignmentInputStatus {
-                record: (*disposition == CodingSessionAssignmentInputDisposition::Recorded)
+                record: (*disposition == AssignmentInputDisposition::Recorded)
                     .then(|| store.assignment_input(&assignment_id).cloned())
                     .flatten(),
                 assignment_id,
@@ -362,7 +188,7 @@ fn statuses(
         .collect()
 }
 
-/// Every record the host holds, as statuses, newest state included.
+/// Every record the host holds for these assignments, as statuses.
 fn recorded_statuses(
     store: &CodingSessionWorkdirStore,
     assignment_ids: &[String],
@@ -371,70 +197,69 @@ fn recorded_statuses(
         .iter()
         .map(|assignment_id| CodingSessionAssignmentInputStatus {
             assignment_id: assignment_id.clone(),
-            disposition: CodingSessionAssignmentInputDisposition::Recorded,
+            disposition: AssignmentInputDisposition::Recorded,
             record: store.assignment_input(assignment_id).cloned(),
         })
         .collect()
 }
 
-/// Run the whole sequence under the store's lock: load, act, drain, save.
+/// Run one mutation under the store's lock: load, act, save.
 fn with_store<T>(
     app: &AppHandle,
     state: &AppState,
-    act: impl FnOnce(&mut CodingSessionWorkdirStore, &mut dyn FnMut(&CodingSessionWorkdirStore)) -> T,
+    act: impl FnOnce(&mut CodingSessionWorkdirStore) -> T,
 ) -> Result<T, String> {
     let _lock = lock_workdir_store(app)?;
     let mut store = load_workdir_store(app)?;
     store.version = WORKDIR_STORE_VERSION;
-    let mut persist = |store: &CodingSessionWorkdirStore| {
-        if let Err(error) = save_workdir_store(app, state, store) {
-            eprintln!("coding session: assignment-input queue could not be saved: {error}");
-        }
-    };
-    let answer = act(&mut store, &mut persist);
-    persist(&store);
+    let answer = act(&mut store);
+    if let Err(error) = save_workdir_store(app, state, &store) {
+        eprintln!("coding session: assignment-input records could not be saved: {error}");
+    }
     Ok(answer)
 }
 
-/// Queue the inputs these assignments need, establish them, and report.
+/// Record the inputs these assignments need, and report what is known.
 ///
-/// The surface's only job: hand over what it folded. It does not check out
-/// anything, decide what is a candidate, or hold the "already attempted" set —
-/// all three now live in this host's durable record, so closing the surface
-/// cannot stop an establishment and relaunching cannot lose one.
+/// The surface's only job: hand over what it folded. It checks out nothing,
+/// and it decides nothing about *when* — the provider establishes an input
+/// before it opens the turn that needs it, whether or not this panel was ever
+/// mounted.
 #[tauri::command]
 pub async fn coding_session_observe_assignment_inputs(
     app: AppHandle,
     state: State<'_, AppState>,
     assignments: Vec<ObservedCodingSessionAssignment>,
 ) -> Result<Vec<CodingSessionAssignmentInputStatus>, String> {
-    with_store(&app, &state, |store, persist| {
+    with_store(&app, &state, |store| {
         let dispositions = queue_observed_assignments(store, &assignments);
-        drain_pending_assignment_inputs(store, |snapshot| persist(snapshot));
         statuses(store, &assignments, &dispositions)
     })
 }
 
-/// Finish what an earlier run started: drain the queue with no new sighting.
+/// Read back whatever this host still owes an input for.
 ///
-/// Called at launch, with no arguments and no surface, which is the whole
-/// point — an assignment queued yesterday is established today whether or not
-/// anybody opens the mission that queued it.
+/// Kept registered under its old name because the hook and the launch path
+/// call it, but it no longer drains anything: it answers with the rows, so a
+/// surface and an operator can see that work is outstanding and who is doing
+/// it. The establishment itself belongs to the provider.
 #[tauri::command]
 pub async fn coding_session_resume_assignment_inputs(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<Vec<CodingSessionAssignmentInputStatus>, String> {
-    with_store(&app, &state, |store, persist| {
-        let drained = drain_pending_assignment_inputs(store, |snapshot| persist(snapshot));
-        recorded_statuses(store, &drained)
+    with_store(&app, &state, |store| {
+        let pending = pending_assignment_inputs(store);
+        recorded_statuses(store, &pending)
     })
 }
 
-/// Ask this host to establish one assignment's input again.
+/// Ask for one assignment's input to be established again.
 ///
-/// A person's click, not a timer. Answers `None` for an assignment this host
-/// holds no record of, which is a truer answer than an empty success.
+/// A person's request, not a timer: the record is put back to `intended` with
+/// its attempt count zeroed, and the provider's next pass over that channel
+/// drains it. Answers `None` for an assignment this host holds no record of,
+/// which is a truer answer than an empty success.
 #[tauri::command]
 pub async fn coding_session_requeue_assignment_input(
     app: AppHandle,
@@ -442,40 +267,39 @@ pub async fn coding_session_requeue_assignment_input(
     assignment_id: String,
 ) -> Result<Option<CodingSessionAssignmentInputStatus>, String> {
     let assignment_id = assignment_id.trim().to_string();
-    with_store(&app, &state, |store, persist| {
+    with_store(&app, &state, |store| {
         if !requeue_assignment_input(store, &assignment_id) {
             return None;
         }
-        drain_pending_assignment_inputs(store, |snapshot| persist(snapshot));
         Some(CodingSessionAssignmentInputStatus {
             assignment_id: assignment_id.clone(),
-            disposition: CodingSessionAssignmentInputDisposition::Recorded,
+            disposition: AssignmentInputDisposition::Recorded,
             record: store.assignment_input(&assignment_id).cloned(),
         })
     })
 }
 
-/// Drain the queue once at launch, off the async executor.
+/// Say at launch what is still owed, without doing it.
 ///
-/// Errors are printed, never surfaced: this runs with nobody watching, and a
-/// store it could not read leaves every pending intent exactly where it was
-/// for the next launch or the next observation.
+/// Runs with nobody watching, so errors are printed rather than surfaced. It
+/// deliberately establishes nothing: an app that drained here would be racing
+/// the provider, which is the party that knows whether a turn is about to open
+/// against the tree in question.
 pub fn resume_assignment_inputs_at_launch(app: &AppHandle) {
     use tauri::Manager;
 
     let state = app.state::<AppState>();
-    match with_store(app, state.inner(), |store, persist| {
-        drain_pending_assignment_inputs(store, |snapshot| persist(snapshot))
-    }) {
-        Ok(drained) if !drained.is_empty() => {
+    match with_store(app, state.inner(), |store| pending_assignment_inputs(store)) {
+        Ok(pending) if !pending.is_empty() => {
             eprintln!(
-                "coding session: resumed {} pending assignment input(s) at launch",
-                drained.len()
+                "coding session: {} assignment input(s) are still owed; the provider establishes \
+                 them before the turns that need them",
+                pending.len()
             );
         }
         Ok(_) => {}
         Err(error) => {
-            eprintln!("coding session: pending assignment inputs could not be resumed: {error}");
+            eprintln!("coding session: pending assignment inputs could not be read: {error}");
         }
     }
 }

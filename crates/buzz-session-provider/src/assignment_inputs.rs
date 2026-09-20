@@ -1066,6 +1066,73 @@ pub fn establish(
     outcome
 }
 
+/// The file a desktop host writes beside the provider's projects view, naming
+/// where its `coding-session-workdirs.json` lives.
+///
+/// The path cannot be derived: the store sits in the app's *config* directory
+/// and this provider's state directory hangs off the app's *data* directory,
+/// which are the same folder on macOS and Windows and different ones on Linux.
+/// Deriving it would be a guess on one platform, so the host says it instead,
+/// in the same write that materializes `projects.json`.
+pub const HOST_STORE_POINTER_FILE: &str = "host-workdir-store.json";
+
+/// Schema version of [`HostStorePointer`].
+pub const HOST_STORE_POINTER_VERSION: u32 = 1;
+
+/// Where this computer's desktop host keeps the shared record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostStorePointer {
+    /// Schema version; a document from the future is ignored, not guessed at.
+    pub version: u32,
+    /// Absolute path of `coding-session-workdirs.json`.
+    pub path: PathBuf,
+}
+
+/// Resolve the host store this provider shares, or `None` with the reason
+/// logged.
+///
+/// `None` is an ordinary answer, not a failure: a provider running without a
+/// desktop host beside it has no seat worktrees recorded anywhere, so there is
+/// no tree it could move and nothing is lost by saying so.
+#[must_use]
+pub fn host_store_from_pointer(state_dir: &Path) -> Option<AssignmentInputStore> {
+    let pointer_path = state_dir.join(HOST_STORE_POINTER_FILE);
+    let raw = match std::fs::read(&pointer_path) {
+        Ok(raw) => raw,
+        Err(error) => {
+            tracing::debug!(
+                target: "csp::assignment_inputs",
+                path = %pointer_path.display(),
+                %error,
+                "no host workdir-store pointer; this provider establishes no inputs"
+            );
+            return None;
+        }
+    };
+    let pointer: HostStorePointer = match serde_json::from_slice(&raw) {
+        Ok(pointer) => pointer,
+        Err(error) => {
+            tracing::warn!(
+                target: "csp::assignment_inputs",
+                %error,
+                "the host workdir-store pointer could not be read"
+            );
+            return None;
+        }
+    };
+    if pointer.version != HOST_STORE_POINTER_VERSION || !pointer.path.is_absolute() {
+        tracing::warn!(
+            target: "csp::assignment_inputs",
+            version = pointer.version,
+            path = %pointer.path.display(),
+            "the host workdir-store pointer names a version or a path this build will not use"
+        );
+        return None;
+    }
+    Some(AssignmentInputStore::new(pointer.path))
+}
+
 /// The host-local store, as this module reads and writes it.
 ///
 /// Only `assignmentInputs` is understood; every other key travels through

@@ -634,3 +634,193 @@ fn a_second_process_waits_for_the_lock_and_keeps_what_it_finds() {
     assert_eq!(saved["pending"]["child"], "/drafts/child");
     assert_eq!(saved["version"], 2);
 }
+
+#[test]
+fn a_commit_already_checked_out_is_reported_already_current() {
+    let root = tempfile::tempdir().expect("temp");
+    let origin = root.path().join("origin");
+    let first = repo_with_one_commit(&origin);
+    let seat = root.path().join("seat");
+    let checkout = seat_clone(&origin, &seat, "seat/verifier");
+
+    let mut records = AssignmentInputRecords::new();
+    let id = assignment_id("6d");
+    queue_intent(&mut records, &intent(&id, &first), Some(&checkout));
+    drain(&mut records, &checkout);
+    let record = assignment_input(&records, &id).expect("record");
+    assert_eq!(record.outcome, ASSIGNMENT_INPUT_ALREADY_CURRENT);
+    assert_eq!(
+        record.remote, None,
+        "a commit already in the repository names no means that was never used"
+    );
+    assert_eq!(head_of(&seat), first);
+}
+
+#[test]
+fn a_tree_the_caller_cannot_place_is_refused_as_unrecorded() {
+    let mut records = AssignmentInputRecords::new();
+    let id = assignment_id("7e");
+    let commit = "a".repeat(40);
+    record_assignment_input(
+        &mut records,
+        AssignmentInputRecord::intended(&intent(&id, &commit), None),
+    );
+    let refusal = establish(
+        &mut records,
+        &EstablishAssignmentInputRequest {
+            assignment_id: id.clone(),
+            ..EstablishAssignmentInputRequest::default()
+        },
+        None,
+    )
+    .expect_err("no tree, no establishment");
+    assert_eq!(refusal.code, EstablishAssignmentInputCode::UnrecordedTree);
+    assert_eq!(
+        assignment_input(&records, &id).expect("record").outcome,
+        EstablishAssignmentInputCode::UnrecordedTree.as_str()
+    );
+}
+
+#[test]
+fn a_recorded_path_that_is_gone_is_refused_as_missing_tree() {
+    let root = tempfile::tempdir().expect("temp");
+    let mut records = AssignmentInputRecords::new();
+    let id = assignment_id("8f");
+    let checkout = SeatCheckout {
+        path: root.path().join("never-cut"),
+        branch: "seat/verifier".to_owned(),
+    };
+    queue_intent(&mut records, &intent(&id, &"a".repeat(40)), Some(&checkout));
+    drain(&mut records, &checkout);
+    assert_eq!(
+        assignment_input(&records, &id).expect("record").outcome,
+        EstablishAssignmentInputCode::MissingTree.as_str()
+    );
+}
+
+#[test]
+fn a_repository_with_no_remote_refuses_by_name_when_the_object_is_missing() {
+    let root = tempfile::tempdir().expect("temp");
+    let seat = root.path().join("seat");
+    repo_with_one_commit(&seat);
+    let checkout = SeatCheckout {
+        path: seat.clone(),
+        branch: "main".to_owned(),
+    };
+
+    let mut records = AssignmentInputRecords::new();
+    let id = assignment_id("90");
+    queue_intent(&mut records, &intent(&id, &"a".repeat(40)), Some(&checkout));
+    drain(&mut records, &checkout);
+    let record = assignment_input(&records, &id).expect("record");
+    assert_eq!(
+        record.outcome,
+        EstablishAssignmentInputCode::NoRemote.as_str()
+    );
+}
+
+#[test]
+fn several_remotes_with_no_config_answer_are_ambiguous() {
+    let root = tempfile::tempdir().expect("temp");
+    let origin = root.path().join("origin");
+    repo_with_one_commit(&origin);
+    let seat = root.path().join("seat");
+    let checkout = seat_clone(&origin, &seat, "seat/runner");
+    run_git(&seat, &["remote", "add", "elsewhere", "../origin"]);
+
+    let mut records = AssignmentInputRecords::new();
+    let id = assignment_id("a2");
+    queue_intent(&mut records, &intent(&id, &"a".repeat(40)), Some(&checkout));
+    drain(&mut records, &checkout);
+    let record = assignment_input(&records, &id).expect("record");
+    assert_eq!(
+        record.outcome,
+        EstablishAssignmentInputCode::AmbiguousRemote.as_str(),
+        "two remotes and no config key is a question, not a coin toss"
+    );
+}
+
+#[test]
+fn buzz_wip_remote_is_the_first_rung_of_the_ladder() {
+    let root = tempfile::tempdir().expect("temp");
+    let origin = root.path().join("origin");
+    repo_with_one_commit(&origin);
+    let seat = root.path().join("seat");
+    let checkout = seat_clone(&origin, &seat, "seat/runner");
+    // A second remote makes the ladder load-bearing: without the config key
+    // this would be `ambiguous_remote`.
+    run_git(&seat, &["remote", "rename", "origin", "hive"]);
+    run_git(&seat, &["remote", "add", "elsewhere", "../origin"]);
+    run_git(&seat, &["config", "buzz.wipRemote", "hive"]);
+    let later = add_commit(&origin, "later.txt");
+
+    let mut records = AssignmentInputRecords::new();
+    let id = assignment_id("b3");
+    queue_intent(&mut records, &intent(&id, &later), Some(&checkout));
+    drain(&mut records, &checkout);
+    let record = assignment_input(&records, &id).expect("record");
+    assert_eq!(record.outcome, ASSIGNMENT_INPUT_ESTABLISHED);
+    assert_eq!(
+        record.remote.as_deref(),
+        Some("hive"),
+        "the remote is whatever config named, never the literal 'origin'"
+    );
+}
+
+#[test]
+fn an_unreachable_remote_is_refused_as_fetch_failed() {
+    let root = tempfile::tempdir().expect("temp");
+    let seat = root.path().join("seat");
+    repo_with_one_commit(&seat);
+    run_git(
+        &seat,
+        &[
+            "remote",
+            "add",
+            "gone",
+            &root.path().join("no-such-repository").to_string_lossy(),
+        ],
+    );
+    let checkout = SeatCheckout {
+        path: seat.clone(),
+        branch: "main".to_owned(),
+    };
+
+    let mut records = AssignmentInputRecords::new();
+    let id = assignment_id("c4");
+    queue_intent(&mut records, &intent(&id, &"a".repeat(40)), Some(&checkout));
+    drain(&mut records, &checkout);
+    let record = assignment_input(&records, &id).expect("record");
+    assert_eq!(
+        record.outcome,
+        EstablishAssignmentInputCode::FetchFailed.as_str()
+    );
+    assert!(record.message.is_some(), "a refusal says what happened");
+}
+
+#[test]
+fn an_unsafe_branch_name_is_refused_before_git_sees_it() {
+    for name in ["--upload-pack=x", "seat/verifier\nmain", "a..b", "@", ""] {
+        assert!(
+            !is_safe_branch_name(name),
+            "{name:?} must not be handed to git as a single branch"
+        );
+    }
+    assert!(is_safe_branch_name("seat/verifier"));
+
+    let root = tempfile::tempdir().expect("temp");
+    let origin = root.path().join("origin");
+    let first = repo_with_one_commit(&origin);
+    let seat = root.path().join("seat");
+    let checkout = seat_clone(&origin, &seat, "seat/verifier");
+    let mut records = AssignmentInputRecords::new();
+    let id = assignment_id("d5");
+    let mut unsafe_intent = intent(&id, &first);
+    unsafe_intent.branch = Some("--upload-pack=touch".to_owned());
+    queue_intent(&mut records, &unsafe_intent, Some(&checkout));
+    drain(&mut records, &checkout);
+    assert_eq!(
+        assignment_input(&records, &id).expect("record").outcome,
+        EstablishAssignmentInputCode::InvalidInput.as_str()
+    );
+}

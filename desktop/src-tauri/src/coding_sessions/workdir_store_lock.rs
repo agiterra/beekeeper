@@ -1,47 +1,28 @@
 //! Serialize the shared workdir record and its provider view as one mutation.
 //! A per-session launch lock cannot protect hints belonging to other sessions.
+//!
+//! The protocol itself lives in
+//! [`buzz_session_provider_pkg::assignment_inputs::lock_store_file`], because the
+//! sidecar provider writes the same file: two implementations of one advisory
+//! lock is two chances to disagree about which file it is and what may be
+//! followed to get there.
 
-use std::path::Path;
 use tauri::AppHandle;
 
 /// Held from before reading the shared store until its provider view is written.
-/// The OS lock also covers a second desktop process using the same app-data dir.
+/// The OS lock also covers a second desktop process using the same app-data dir,
+/// and the sidecar provider, which takes the same lock on the same path.
 pub(crate) fn lock_workdir_store(app: &AppHandle) -> Result<std::fs::File, String> {
-    lock_path(&super::workdir_store_path(app)?.with_extension("lock"))
-}
-
-fn lock_path(path: &Path) -> Result<std::fs::File, String> {
-    match std::fs::symlink_metadata(path) {
-        Ok(meta) if !meta.is_file() || meta.file_type().is_symlink() => {
-            return Err("The workdir store lock must be a regular file.".into());
-        }
-        Ok(_) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error.to_string()),
-    }
-    let mut options = std::fs::OpenOptions::new();
-    options.read(true).write(true).create(true).truncate(false);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
-    }
-    let file = options.open(path).map_err(|error| error.to_string())?;
-    if !file
-        .metadata()
-        .map_err(|error| error.to_string())?
-        .is_file()
-    {
-        return Err("The workdir store lock must be a regular file.".into());
-    }
-    file.lock().map_err(|error| error.to_string())?;
-    Ok(file)
+    buzz_session_provider_pkg::assignment_inputs::lock_store_file(&super::workdir_store_path(app)?)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use buzz_session_provider_pkg::assignment_inputs::lock_store_file;
 
+    /// The lock is taken on the store path's `.lock` sibling, and holding it
+    /// serializes writers that each opened it for themselves — which is what
+    /// the app and its sidecar provider are.
     #[test]
     fn concurrent_hints_preserve_each_other_and_existing_project_defaults() {
         let root = tempfile::tempdir().expect("temp");
@@ -58,7 +39,7 @@ mod tests {
             .map(|index| {
                 let path = path.clone();
                 std::thread::spawn(move || {
-                    let _lock = lock_path(&path.with_extension("lock")).expect("lock");
+                    let _lock = lock_store_file(&path).expect("lock");
                     let mut store: super::super::CodingSessionWorkdirStore =
                         serde_json::from_slice(&std::fs::read(&path).expect("read"))
                             .expect("store");
@@ -88,9 +69,10 @@ mod tests {
         let root = tempfile::tempdir().expect("temp");
         let target = root.path().join("target");
         std::fs::write(&target, "keep").expect("write");
-        let path = root.path().join("lock");
-        std::os::unix::fs::symlink(&target, &path).expect("link");
-        assert!(lock_path(&path).is_err());
+        // `lock_store_file` locks the `.lock` sibling of the path it is given.
+        let store = root.path().join("store.json");
+        std::os::unix::fs::symlink(&target, store.with_extension("lock")).expect("link");
+        assert!(lock_store_file(&store).is_err());
         assert_eq!(std::fs::read_to_string(target).expect("read"), "keep");
     }
 }

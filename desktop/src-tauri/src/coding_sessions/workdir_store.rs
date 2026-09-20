@@ -212,7 +212,7 @@ pub(crate) enum CodingSessionWorkdirScope {
 
 /// What the provider reads: the minimum needed to resolve a cwd.
 ///
-/// Mirrors `buzz_session_provider::commands::ProjectsFile`. Deliberately a
+/// Mirrors `buzz_session_provider_pkg::commands::ProjectsFile`. Deliberately a
 /// separate type from the store above — the provider must not inherit the
 /// desktop's MRU or timestamps, which are UI memory, not resolution inputs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -626,7 +626,31 @@ fn materialize_projects_view_for_relay(
     let state_dir = provider_state_dir(app, &record.provider_pubkey)?;
     let payload = serde_json::to_vec_pretty(&store.projects_view())
         .map_err(|error| format!("failed to serialize coding-session projects view: {error}"))?;
-    atomic_write_json_restricted(&state_dir.join(PROJECTS_FILE_NAME), &payload)
+    atomic_write_json_restricted(&state_dir.join(PROJECTS_FILE_NAME), &payload)?;
+    materialize_host_store_pointer(app, &state_dir)
+}
+
+/// Tell the provider where this host keeps the record they share.
+///
+/// The provider establishes a seat's exact input before it opens the turn that
+/// needs it, writing the same `assignmentInputs` rows in the same file under
+/// the same lock. It cannot *derive* that file's path: the store lives in the
+/// app's config directory and the provider's state directory hangs off the
+/// app's data directory, which are one folder on macOS and Windows and two on
+/// Linux. So the host says it, in the same write that materializes the
+/// projects view, and a provider that finds no pointer establishes nothing
+/// rather than guessing.
+fn materialize_host_store_pointer(app: &AppHandle, state_dir: &Path) -> Result<(), String> {
+    let pointer = buzz_session_provider_pkg::assignment_inputs::HostStorePointer {
+        version: buzz_session_provider_pkg::assignment_inputs::HOST_STORE_POINTER_VERSION,
+        path: workdir_store_path_readonly(app)?,
+    };
+    let payload = serde_json::to_vec_pretty(&pointer)
+        .map_err(|error| format!("failed to serialize the host store pointer: {error}"))?;
+    atomic_write_json_restricted(
+        &state_dir.join(buzz_session_provider_pkg::assignment_inputs::HOST_STORE_POINTER_FILE),
+        &payload,
+    )
 }
 
 /// Re-materialize what the desktop remembers for one caller-pinned relay.
