@@ -7,7 +7,7 @@
       "workId": "9d0f0f0f-1111-4222-8333-444444444444",
       "declarationRef": "dec1000000000000000000000000000000000000000000000000000000000000",
       "planRef": {
-        "repository": "pivot-test-beekeeper-agents",
+        "repository": "30617:1ead000000000000000000000000000000000000000000000000000000000000:pivot-test-beekeeper-agents",
         "commit": "abababababababababababababababababababab",
         "path": "plans/kettle.md"
       },
@@ -130,7 +130,7 @@
     {
       "eventId": "b1d9000000000000000000000000000000000000000000000000000000000000",
       "code": "signer-not-may-lead",
-      "message": "b011… does not hold may_lead in this project and session"
+      "message": "b0110000… does not hold may_lead in this project and session"
     }
   ],
   "conflicts": []

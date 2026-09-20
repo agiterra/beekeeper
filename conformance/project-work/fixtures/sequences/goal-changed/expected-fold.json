@@ -5,18 +5,16 @@
   "declarations": [
     {
       "workId": "9d0f0f0f-1111-4222-8333-444444444444",
-      "declarationRef": "dec2000000000000000000000000000000000000000000000000000000000000",
+      "declarationRef": "dec1000000000000000000000000000000000000000000000000000000000000",
       "planRef": {
         "repository": "30617:1ead000000000000000000000000000000000000000000000000000000000000:pivot-test-beekeeper-agents",
-        "commit": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "commit": "abababababababababababababababababababab",
         "path": "plans/kettle.md"
       },
-      "state": "head",
-      "supersedes": [
-        "dec1000000000000000000000000000000000000000000000000000000000000"
-      ],
+      "state": "stale",
+      "supersedes": [],
       "supersededBy": [],
-      "stateReason": null,
+      "stateReason": "adopted against goal 90a10000…; the session's current goal is 90a20000…. The contract stays pinned until the lead adopts an amendment",
       "planResolved": true,
       "criteria": [
         {
@@ -24,11 +22,11 @@
           "proof": {
             "kind": "review"
           },
-          "status": "stale",
+          "status": "open",
           "assignmentRefs": [],
           "evidence": [],
           "artifactCommit": null,
-          "reason": "evidence for this criterion is bound to declaration dec10000…, which is not the head"
+          "reason": null
         },
         {
           "criterionId": "shared-storage-and-parser",
@@ -59,11 +57,11 @@
           "proof": {
             "kind": "review"
           },
-          "status": "stale",
+          "status": "open",
           "assignmentRefs": [],
           "evidence": [],
           "artifactCommit": null,
-          "reason": "evidence for this criterion is bound to declaration dec10000…, which is not the head"
+          "reason": null
         },
         {
           "criterionId": "delivered-main",
@@ -78,26 +76,7 @@
         }
       ],
       "coverageComplete": false,
-      "coverageReason": "5 of 5 criteria are not covered under this declaration: cli-behaviour and usage-documentation are stale; shared-storage-and-parser, verified-landed-revision and delivered-main are open"
-    },
-    {
-      "workId": "9d0f0f0f-1111-4222-8333-444444444444",
-      "declarationRef": "dec1000000000000000000000000000000000000000000000000000000000000",
-      "planRef": {
-        "repository": "30617:1ead000000000000000000000000000000000000000000000000000000000000:pivot-test-beekeeper-agents",
-        "commit": "abababababababababababababababababababab",
-        "path": "plans/kettle.md"
-      },
-      "state": "superseded",
-      "supersedes": [],
-      "supersededBy": [
-        "dec2000000000000000000000000000000000000000000000000000000000000"
-      ],
-      "stateReason": "superseded by dec20000…",
-      "planResolved": true,
-      "criteria": [],
-      "coverageComplete": false,
-      "coverageReason": "superseded: coverage is computed for the head declaration only"
+      "coverageReason": "the declaration is stale against the session's current goal, and all 5 criteria are open"
     }
   ],
   "excluded": [],

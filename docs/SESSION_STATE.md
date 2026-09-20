@@ -15848,6 +15848,26 @@ removed from here.
        -D warnings`, `cargo test -p buzz-core`,
        `node conformance/project-work/check-fixtures.mjs`,
        `just file-size-check`, `just current-state-check`.
+     - **Amended the same day by the orchestrator's rulings on the five open
+       questions**, which are now decisions 13–17 in the README and are no
+       longer open: (1) a `ref_observation` is a **relay-signed kind:30618**
+       ref state for the plan's `code_repository` whose
+       `refs/heads/<branch of delivery_ref>` equals the `artifactCommit`, with
+       the signer equal to the relay's NIP-11 `self` key, judged at
+       **evaluation** time — an older matching 30618 superseded by a newer one
+       naming a different commit makes the criterion `stale`, unreadable ref
+       state makes it `unknown`; (2) a declaration is `stale` on exactly one
+       trigger, the session's current kind:44227 goal differing from its
+       `goalRef` — a 44244 decision never marks one stale by itself; (3)
+       adoption is **atomic**: any unresolved plan, action or repository
+       refuses with the compile error and exit 1, having signed nothing; (4)
+       `planRef.repository` is the **full 30617 coordinate**, as the seat
+       manifest's `packRef.repo` is, and a bare id is refused; (5) the NIP is
+       W1's — `docs/nips/NIP-PW.md`, written from this README, which stays
+       normative until it exists and which the NIP may not diverge from. The
+       fixtures were regenerated for the coordinate form and gained the
+       `plan-repository-bare-id` refusal (18 refusals now) and two sequences,
+       `superseded-observation` and `goal-changed` (5 now). Re-gated bare.
 
 ## 3a. Environment facts that cost real time (do not rediscover)
 

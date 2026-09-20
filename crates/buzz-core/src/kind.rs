@@ -878,7 +878,7 @@ pub const KIND_CODING_SESSION_HANDOVER: u32 = 44247;
 /// The wire contract is `docs/nips/NIP-TD.md`.
 pub const KIND_PROJECT_TODO_OP: u32 = 44248;
 
-/// NIP-PWK: Project work record — the signed join between a committed plan
+/// NIP-PW: Project work record — the signed join between a committed plan
 /// file and the work that delivers it.
 ///
 /// Regular stored event (append-only), channel-scoped via `h` exactly as its
@@ -927,7 +927,9 @@ pub const KIND_PROJECT_TODO_OP: u32 = 44248;
 /// `git grep 44249 vanilla/main` (`12201c49b`) matched nothing at all.
 ///
 /// The wire contract is `conformance/project-work/README.md` § (b), frozen by
-/// ledger item 194; the fold's output type is § (c) of the same file.
+/// ledger item 194; the fold's output type is § (c) of the same file. That
+/// file is normative until `docs/nips/NIP-PW.md` exists, which the lane
+/// implementing this kind writes from it.
 pub const KIND_PROJECT_WORK_RECORD: u32 = 44249;
 
 // Forum / social (45000–45999)

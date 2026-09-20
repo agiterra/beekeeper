@@ -11,6 +11,11 @@ W3 the brief, W5 the surface — all against the fixtures in `fixtures/`. The
 one piece of code this lane landed is the kind constant,
 `KIND_PROJECT_WORK_RECORD = 44249` in `crates/buzz-core/src/kind.rs`.
 
+**This README is normative until `docs/nips/NIP-PW.md` exists.** Lane W1
+writes that NIP from this file when it implements the kind; the NIP must not
+diverge from what is written here, and where it would, the amendment is made
+here first.
+
 Governing plan: [`docs/UNIFIED_WORK_PLAN.md`](../../docs/UNIFIED_WORK_PLAN.md)
 (W0 in § 3, Wave 0 in § 4). Design source: Astra's
 [unified plan](../../docs/history/2026-09-20-astra-unified-plan.md) § 2.
@@ -197,7 +202,7 @@ standing is the consuming fold's question against the accepted NIP-CSAT chain.
     "goalRef": "<64-hex>",
     "responsibleActor": "<64-hex pubkey>",
     "planRef": {
-      "repository": "<repo id>",
+      "repository": "30617:<64-hex owner>:<repo id>",
       "commit": "<40- or 64-hex>",
       "path": "plans/<slug>.md"
     },
@@ -211,7 +216,7 @@ standing is the consuming fold's question against the accepted NIP-CSAT chain.
 | `workId` | uuid string | no | canonical lowercase; **stable across amendments** |
 | `goalRef` | 64-hex | no | the kind:44227 goal, or the decision record, this work serves |
 | `responsibleActor` | 64-hex | no | the actor who owes the outcome; a target, never an authorship claim |
-| `planRef.repository` | string | no | agents repository id, 1–64 bytes, repo-id grammar |
+| `planRef.repository` | coordinate | no | the **full** kind:30617 coordinate `30617:<64-hex owner>:<repo id>` of the agents repository — the same shape the seat manifest's `packRef.repo` uses. A bare repo id is refused: a name is community-scoped and would have to be re-resolved by every later reader, which is how two readers end up pinning two repositories |
 | `planRef.commit` | hex | no | **full** immutable agents commit, 40 or 64 hex, lowercase |
 | `planRef.path` | string | no | relative, ≤ 256 bytes, starts `plans/`, no `..`, no leading `/` |
 | `supersedes` | list of 64-hex | no (may be `[]`) | ≤ 8 declaration event ids; empty on first adoption, one for an ordinary amendment, **all** conflicting heads for an explicit conflict resolution |
@@ -270,6 +275,26 @@ Every nullable key is **present** and written as `null`. An absent key is a
 refusal — the same rule 44244's bodies carry, and the reason lane 182 could
 print a complete example for every body.
 
+### `ref_observation`, and how delivery is judged
+
+A `ref_observation` evidence ref carries **no new record**. Its `eventId` is a
+**relay-signed kind:30618 ref-state event** for the plan's `code_repository`:
+
+- the 30618's signer must equal the relay's NIP-11 `self` key — the relay is
+  the authoritative source of ref state for repositories it hosts
+  (`crates/buzz-relay/src/api/git/manifest_event.rs`), and an owner-signed
+  claim about its own branch is not an observation;
+- its `d` tag names the plan's `code_repository`;
+- its `refs/heads/<branch of delivery_ref>` tag must equal the binding's
+  `artifactCommit`.
+
+**Freshness is judged at evaluation time, not at binding time.** The *newest*
+30618 for that repository must still name that commit for that ref. An older
+matching 30618 that a newer one has superseded with a different commit makes
+the criterion `stale` — the branch moved on, and what was delivered is no
+longer what is there. Ref state that cannot be read makes it `unknown`. The
+fixture pair is `sequences/superseded-observation/`.
+
 ### Who may sign
 
 All three records require the **same** authority: the `may_lead` set the
@@ -296,7 +321,7 @@ is not a fold-wide error and it never silently becomes coverage.
 | `evidenceRefs` | 32 entries |
 | `supersedes` | 8 entries |
 | `planRef.path` | 256 bytes |
-| `planRef.repository` | 64 bytes |
+| `planRef.repository` | 128 bytes |
 | `projectRef` | 256 bytes |
 
 16 KiB, not 44244's 128 KiB: every field here is a pointer or a slug. A record
@@ -360,8 +385,11 @@ events in any arrival order fold to the same output.
 |---|---|
 | `head` | the current declaration for its `workId`: nothing supersedes it and it is not in a conflict |
 | `superseded` | another declaration names it in `supersedes`; `supersededBy` lists them |
-| `stale` | still the head, but the lead has recorded an accepted goal/decision change against it; the contract is pinned and a new adoption is owed. `stateReason` names the decision event |
+| `stale` | still the head, but the session's **current** kind:44227 goal (the fold the product already uses to select the active goal) differs from the declaration's `goalRef`. That mismatch is v1's **only** trigger: a 44244 decision never marks a declaration stale by itself, because a requirement-changing decision is followed by a goal change or by an explicit amendment from the lead. The contract stays pinned; `stateReason` names both goals |
 | `conflict` | two or more unsuperseded successors of the same predecessor exist for this `workId`; every one of them is `conflict`, `coverageComplete` is `false` for all, and a resolution naming **all** competing heads is required. No timestamp winner |
+
+`superseded` and `conflict` are structural and take precedence over `stale`:
+a superseded declaration adopted against an older goal reads `superseded`.
 
 `criteria` is projected for `head` and `stale` declarations only — those are
 the two states that *are* a current contract. A `superseded` or `conflict`
@@ -375,7 +403,7 @@ projected; nothing is deleted, and resolving the fork projects them.
 |---|---|---|
 | `open` | no evidence binding under the head declaration names this criterion | `null` |
 | `covered` | ≥ 1 `work.evidence_bound` under the head declaration names it, every `evidenceRefs` entry resolved, and the required proof form was satisfied | `null` |
-| `stale` | evidence for this criterion exists, but every binding that carries it names a declaration that is **not** the head — the late-green-for-P case | names the declaration it was bound to |
+| `stale` | either every binding carrying this criterion names a declaration that is **not** the head (the late-green-for-P case), or its `ref_observation` has been superseded by a newer ref state naming a different commit | names the declaration it was bound to, or the newer ref state |
 | `unknown` | the fold could not read an input: the plan blob at `planRef.commit` was not supplied, or a referenced evidence event was not supplied | names the missing input |
 
 `unknown` is a result, not an error. A fold given no plan blob returns every
@@ -478,6 +506,14 @@ bee sessions work adopt --session <uuid>
 Validates the blob at the commit, compiles every `action` proof against
 `actions.yml` **at that same commit**, then signs and publishes a
 `work.declared`. Refuses `status: superseded` and any `plans/archive/` path.
+
+**Adoption is atomic: a failed compile signs nothing.** Any unresolved plan,
+action or repository — a missing `actions.yml` entry, a step the action does
+not define, a repository that does not resolve to a project-associated
+coordinate, a blob that is not at that commit — refuses with the compile error
+and **exit 1**, having published no event. A declaration exists only when
+everything it references resolved at that commit; a half-adopted contract
+would be a contract nobody can read.
 A retry with the same `--work-id` and the same inputs publishes the same
 declaration id; it does not mint a second workId.
 
@@ -601,8 +637,10 @@ File conventions:
 - An **invalid** plan file carries exactly one `# REFUSED: <code> — <why>`
   YAML comment in its frontmatter, and the checker asserts the defect is still
   present in the file.
-- A sequence's `inputs.json` carries the `mayLead` signer set and the plan
-  blobs the fold was given, keyed `<repo>@<commit>:<path>`. Both amendment
+- A sequence's `inputs.json` carries the `mayLead` signer set, the relay's
+  `self` key, the session's `currentGoalRef`, any relay-signed kind:30618
+  `refStates`, and the plan blobs the fold was given, keyed
+  `<30617 coordinate>@<commit>:<path>`. Both amendment
   commits resolve to the *same* plan fixture on purpose: identical criterion
   ids must not carry evidence forward.
 
@@ -613,6 +651,8 @@ The three sequences:
 | `happy-path` | one declaration, five criteria, bindings and evidence to complete coverage; `coverageComplete: true` |
 | `amendment` | P adopted, P2 supersedes it, then a **late** `work.evidence_bound` arrives naming P. It must not cover P2: that criterion is `stale`, `coverageComplete` is `false` |
 | `fork` | two successors of P, neither superseded. Both are `conflict`, `conflicts` names both heads, coverage is refused for both |
+| `superseded-observation` | a `git-ref` criterion bound to a 30618 that named the artifact commit, then superseded by a newer relay-signed 30618 naming a different commit: the criterion is `stale`, not `covered` |
+| `goal-changed` | the session's current goal differs from the declaration's `goalRef`: the declaration reads `state: "stale"` and stays pinned |
 
 `node conformance/project-work/check-fixtures.mjs` asserts every fixture
 parses and that ids, hex lengths, uuids and byte limits are well-formed, so a
@@ -661,27 +701,35 @@ Where Astra's prose left a choice, the smaller option was taken.
     explicit flags and read nothing they could get wrong, exactly as
     `sessions note` and `sessions decide` were left without one in 182.
 
-## Open questions for the orchestrator
+13. **A `ref_observation` is a relay-signed kind:30618, judged at evaluation
+    time** (orchestrator ruling, 2026-09-20). No new record type, no new
+    signer class: the relay already signs ref state for repositories it hosts,
+    and a superseded observation reads `stale` rather than `covered` because
+    delivery is a fact about the branch *now*, not about the moment somebody
+    bound it.
+14. **A declaration is `stale` on exactly one trigger: a current-goal
+    mismatch** (ruling). A 44244 decision never marks one stale by itself.
+    One trigger the product already computes beats a second inference path
+    that would guess at the semantics of arbitrary chat.
+15. **Adoption is atomic; a failed compile signs nothing** (ruling). Exit 1
+    with the compile error. A declaration that references something which did
+    not resolve is a contract nobody can read.
+16. **`planRef.repository` is the full 30617 coordinate** (ruling), matching
+    the seat manifest's `packRef.repo`. A bare id is community-scoped and
+    would be re-resolved by every later reader, which is how two readers pin
+    two repositories.
+17. **The NIP is W1's, written from this file** (ruling). This README is
+    normative until `docs/nips/NIP-PW.md` exists, and the NIP must not
+    diverge from it.
 
-1. **Does a `git-ref` criterion need the observation signed?** (c) counts a
-   `ref_observation` evidence ref as satisfying it, but nothing here says who
-   may sign a repository observation or how fresh it must be. W1 will need a
-   rule; the smallest is "any may_lead actor, and the fold reports the
-   observation's own timestamp without judging it".
-2. **`stale` on a declaration needs a decision event to point at.** The
-   contract says the lead records an accepted goal/decision change and that
-   marks the declaration stale. Which record is that — a 44244
-   `decision.answer`, a new 44227 goal, or both? W1 cannot compute `stale`
-   until this is named.
-3. **Does `bee sessions work adopt` publish anything when the action compile
-   fails?** Stated as "blocks adoption". Silent refusal with exit 1 is
-   assumed; confirm nothing partial is signed.
-4. **Repository resolution at adoption.** "Resolve repository names to
-   canonical project-associated repository coordinates; refuse ambiguity" —
-   the coordinate form (`30617:<pubkey>:<id>`) is not stored in `planRef`,
-   only the bare id. Should `planRef.repository` carry the full coordinate
-   instead? Kept small here; changing it later is a v2.
-5. **Where does this contract live long-term?** The siblings each have a
-   `docs/nips/NIP-*.md`. This directory is the normative source today and the
-   kind constant points at it. If a NIP file is wanted, it is a separate
-   lane's file, not a lane's silent addition.
+## Owed by other lanes
+
+The five open questions this lane raised were ruled on by the orchestrator on
+2026-09-20 and are now decisions 13–17 above. What they leave for other lanes:
+
+- **W1** owns `docs/nips/NIP-PW.md`, written from this file, plus the unit
+  tests behind each decision — in particular the relay-`self` signer check and
+  the newest-30618 freshness read (13), and the current-goal fold that
+  computes a stale declaration (14).
+- **W2** owns the atomic `adopt` path (15) and the repository resolution that
+  produces the 30617 coordinate at adoption time (16).

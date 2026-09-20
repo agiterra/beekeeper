@@ -7,7 +7,7 @@
       "workId": "9d0f0f0f-1111-4222-8333-444444444444",
       "declarationRef": "dec3000000000000000000000000000000000000000000000000000000000000",
       "planRef": {
-        "repository": "pivot-test-beekeeper-agents",
+        "repository": "30617:1ead000000000000000000000000000000000000000000000000000000000000:pivot-test-beekeeper-agents",
         "commit": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
         "path": "plans/kettle.md"
       },
@@ -26,7 +26,7 @@
       "workId": "9d0f0f0f-1111-4222-8333-444444444444",
       "declarationRef": "dec4000000000000000000000000000000000000000000000000000000000000",
       "planRef": {
-        "repository": "pivot-test-beekeeper-agents",
+        "repository": "30617:1ead000000000000000000000000000000000000000000000000000000000000:pivot-test-beekeeper-agents",
         "commit": "1212121212121212121212121212121212121212",
         "path": "plans/kettle.md"
       },
@@ -45,7 +45,7 @@
       "workId": "9d0f0f0f-1111-4222-8333-444444444444",
       "declarationRef": "dec1000000000000000000000000000000000000000000000000000000000000",
       "planRef": {
-        "repository": "pivot-test-beekeeper-agents",
+        "repository": "30617:1ead000000000000000000000000000000000000000000000000000000000000:pivot-test-beekeeper-agents",
         "commit": "abababababababababababababababababababab",
         "path": "plans/kettle.md"
       },

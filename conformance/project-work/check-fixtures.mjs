@@ -28,6 +28,8 @@ const HEX64 = /^[0-9a-f]{64}$/;
 const COMMIT = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const COORD = /^30621:[0-9a-f]{64}:[A-Za-z0-9._-]{1,128}$/;
+const REPO_COORD = /^30617:[0-9a-f]{64}:[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
+const KIND_GIT_REPO_STATE = 30618;
 const TYPES = ["work.declared", "work.assignment_bound", "work.evidence_bound"];
 const EVIDENCE_KINDS = ["report", "verdict", "action_result", "ref_observation"];
 const PLAN_KEYS = [
@@ -218,7 +220,7 @@ function checkEvent(event, where) {
     check(HEX64.test(body.responsibleActor ?? ""), where, "responsibleActor is not 64 hex");
     const r = body.planRef ?? {};
     check(Object.keys(r).length === 3, where, "planRef must have exactly repository, commit, path");
-    check(SLUG.test(r.repository ?? ""), where, `planRef.repository is not a repo id: ${r.repository}`);
+    check(REPO_COORD.test(r.repository ?? ""), where, `planRef.repository is not a full 30617 coordinate: ${r.repository}`);
     check(COMMIT.test(r.commit ?? ""), where, `planRef.commit is not a full 40/64 hex commit: ${r.commit}`);
     check(typeof r.path === "string" && r.path.startsWith("plans/") && !r.path.includes(".."), where, `planRef.path is not a plans/ path: ${r.path}`);
     check(Array.isArray(body.supersedes) && body.supersedes.every((x) => HEX64.test(x)), where, "supersedes is not a list of event ids");
@@ -292,8 +294,21 @@ function checkSequences(planCriteria) {
     }
     check(times.size === events.length, where, "two events share an id and timestamp");
     for (const pubkey of inputs.mayLead ?? []) check(HEX64.test(pubkey), where, "a mayLead pubkey is not 64 hex");
+    check(HEX64.test(inputs.currentGoalRef ?? ""), where, "inputs.currentGoalRef is not a 64-hex goal event id");
+    check(HEX64.test(inputs.relaySelfKey ?? ""), where, "inputs.relaySelfKey is not 64 hex");
+    for (const rs of inputs.refStates ?? []) {
+      check(rs.kind === KIND_GIT_REPO_STATE, where, `a ref state is kind ${rs.kind}, not ${KIND_GIT_REPO_STATE}`);
+      check(rs.pubkey === inputs.relaySelfKey, where, "a ref state is not signed by the relay's self key");
+      check(HEX64.test(rs.id ?? ""), where, "a ref state id is not 64 hex");
+      check(Number.isInteger(rs.created_at), where, "a ref state has no fixed timestamp");
+      const d = (rs.tags ?? []).find((t) => t[0] === "d");
+      check(Boolean(d), where, "a ref state carries no d tag naming its repository");
+      const heads = (rs.tags ?? []).filter((t) => t[0].startsWith("refs/heads/"));
+      check(heads.length >= 1, where, "a ref state names no branch");
+      for (const h of heads) check(COMMIT.test(h[1]), where, `ref ${h[0]} does not name a 40/64-hex commit`);
+    }
     for (const [key, rel] of Object.entries(inputs.planBlobs ?? {})) {
-      check(/^[a-z0-9-]+@(?:[0-9a-f]{40}|[0-9a-f]{64}):plans\/[a-z0-9-]+\.md$/.test(key), where, `plan blob key is malformed: ${key}`);
+      check(/^30617:[0-9a-f]{64}:[a-z0-9-]+@(?:[0-9a-f]{40}|[0-9a-f]{64}):plans\/[a-z0-9-]+\.md$/.test(key), where, `plan blob key is malformed: ${key}`);
       check(existsSync(resolve(dir, rel)), where, `plan blob fixture is missing: ${rel}`);
     }
     check(fold.schema === "buzz-project-work-coverage/v1", where, "expected-fold schema is wrong");
@@ -301,6 +316,7 @@ function checkSequences(planCriteria) {
     for (const d of fold.declarations) {
       check(ids.has(d.declarationRef), where, `expected fold names declaration ${d.declarationRef} which is not in events.json`);
       check(["head", "superseded", "stale", "conflict"].includes(d.state), where, `unknown declaration state "${d.state}"`);
+      check((d.state === "head") === (d.stateReason === null), where, `a ${d.state} declaration must state its reason (and a head must not)`);
       check(typeof d.coverageComplete === "boolean", where, "coverageComplete is not a boolean");
       check(!("missionTerminal" in d) && !("mission" in fold), where, "coverage output must not carry a mission terminal field: two questions, never merged");
       if (d.state === "head" || d.state === "stale") {
@@ -312,7 +328,8 @@ function checkSequences(planCriteria) {
         check(SLUG.test(c.criterionId), where, `criterion id "${c.criterionId}" is not slug grammar`);
         check(planCriteria.has(c.criterionId), where, `criterion "${c.criterionId}" is not in the plan fixture`);
         check(["open", "covered", "stale", "unknown"].includes(c.status), where, `unknown criterion status "${c.status}"`);
-        check((c.status === "covered") === (c.evidence.length > 0), where, `criterion "${c.criterionId}" is ${c.status} with ${c.evidence.length} evidence refs`);
+        check(c.status !== "covered" || c.evidence.length > 0, where, `criterion "${c.criterionId}" is covered with no evidence`);
+        check(c.status !== "open" || c.evidence.length === 0, where, `criterion "${c.criterionId}" is open with ${c.evidence.length} evidence refs`);
         check((c.status === "open" || c.status === "covered") === (c.reason === null), where, `criterion "${c.criterionId}" is ${c.status}: a reason is required unless it is open or covered`);
         for (const e of c.evidence) check(EVIDENCE_KINDS.includes(e.kind) && HEX64.test(e.eventId), where, "malformed evidence ref in expected fold");
       }

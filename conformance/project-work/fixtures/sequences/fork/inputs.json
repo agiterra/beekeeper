@@ -1,11 +1,14 @@
 {
+  "relaySelfKey": "4e1a000000000000000000000000000000000000000000000000000000000000",
   "mayLead": [
     "1ead000000000000000000000000000000000000000000000000000000000000"
   ],
+  "currentGoalRef": "90a1000000000000000000000000000000000000000000000000000000000000",
   "planBlobs": {
-    "pivot-test-beekeeper-agents@abababababababababababababababababababab:plans/kettle.md": "../../plans/valid/kettle.md",
-    "pivot-test-beekeeper-agents@cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd:plans/kettle.md": "../../plans/valid/kettle.md",
-    "pivot-test-beekeeper-agents@1212121212121212121212121212121212121212:plans/kettle.md": "../../plans/valid/kettle.md"
+    "30617:1ead000000000000000000000000000000000000000000000000000000000000:pivot-test-beekeeper-agents@abababababababababababababababababababab:plans/kettle.md": "../../plans/valid/kettle.md",
+    "30617:1ead000000000000000000000000000000000000000000000000000000000000:pivot-test-beekeeper-agents@cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd:plans/kettle.md": "../../plans/valid/kettle.md",
+    "30617:1ead000000000000000000000000000000000000000000000000000000000000:pivot-test-beekeeper-agents@1212121212121212121212121212121212121212:plans/kettle.md": "../../plans/valid/kettle.md"
   },
-  "note": "Every plan blob resolves to the same fixture: an amendment may leave criterion ids unchanged, and that must not carry evidence forward."
+  "refStates": [],
+  "note": "bindB is retained on the wire and simply not projected while the fork stands; resolving the fork projects it."
 }
