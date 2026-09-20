@@ -162,3 +162,47 @@ fn the_longest_allowed_delegation_still_fits_the_content_ceiling() {
     );
     assert!(decode_coding_session_authority_transition(&content).is_ok());
 }
+
+/// The shared cross-reader vectors, run against the canonical decoder every
+/// other Rust reader ultimately calls.
+///
+/// One fixture, four readers (`conformance/authority-chain/README.md`): a
+/// lane that adds a key to this wire adds a vector, and every reader's copy
+/// of this test fails until that reader has been taught the key. Ledger 204
+/// is what happens without it.
+#[test]
+fn shared_authority_chain_vectors_match_the_transition_decoder() {
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../conformance/authority-chain/fixtures/chain-vectors.json"
+    ))
+    .expect("fixture parses");
+    assert_eq!(
+        fixture["schema"],
+        "buzz-coding-session-authority-chain-conformance/v1"
+    );
+    let vectors = fixture["vectors"].as_array().expect("vectors");
+    assert!(!vectors.is_empty());
+    let mut saw_project_actions = false;
+    for vector in vectors {
+        let name = vector["name"].as_str().expect("name");
+        let expected = vector["transitionValid"]
+            .as_bool()
+            .expect("transitionValid");
+        let content = serde_json::to_string(&vector["transition"]).expect("transition");
+        assert_eq!(
+            decode_coding_session_authority_transition(&content).is_ok(),
+            expected,
+            "shared authority-chain vector {name}"
+        );
+        if vector["transition"]["type"]
+            .as_str()
+            .is_some_and(|value| value.ends_with("-project-actions"))
+        {
+            saw_project_actions = true;
+        }
+    }
+    assert!(
+        saw_project_actions,
+        "the shared set must cover the project-action types"
+    );
+}

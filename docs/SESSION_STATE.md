@@ -16626,6 +16626,104 @@ removed from here.
      strings in `codingSessionCommand.test.mjs` and
      `codingSessionHireDisclosure.test.mjs`; 33/33 green.
 
+204. **Lane 186 taught the relay to echo `projectRef` onto the kind:40099
+     authority acceptance receipt and did not teach the CLI's strict reader
+     the key, so from that landing every team session a project owner founds
+     with "Use roles" on had an unreadable authority chain and no seat on one
+     could publish a canonical report (found live 2026-09-20 22:35–22:46Z on
+     the installed `a5be5c1a5` bundle against hive, project Kettle Smoke,
+     session `f9e0c67f-e326-410a-87ce-ebf613bdd437`).** The desktop signs a
+     `grant-project-actions` delegation at launch for such a session (186), so
+     the very first link after the seat carries `projectRef`, the relay echoes
+     it, and every read of the chain died on it: `bee sessions hire` returned
+     `created_ungranted`, the named remedy `bee sessions seat-repair` was
+     refused identically, `bee sessions report` was REFUSED, and `bee sessions
+     operation get` / `bee pulse digest` reported
+     `invalid accepted authority chain: malformed authority acceptance
+     receipt: unknown field \`projectRef\``. The lead disclosed it honestly on
+     the wire rather than working around it silently ("Aligning the relay and
+     CLI on that receipt shape is an operator action nobody in this session
+     holds", `pulse digest` → `missions[0].lines[waiting]`), which is the only
+     reason it was caught before the next team session.
+     - **The rule this violated.** `docs/UNIFIED_WORK_PLAN.md` § 2 decision 2:
+       *additive change is allowed when every strict reader ships in the same
+       landing*. One reader did not ship, and the envelope was closed for it.
+     - **Every reader of the 44228 transition and its 40099 receipt, and where
+       each stood.**
+       `crates/buzz-core/src/coding_session_authority_transition.rs:473-497`
+       (transition key-set and `validate_project_ref`) — correct, 186 wrote
+       it; `validate_project_ref` is now `pub` so the receipt readers hold the
+       echo to the same rule instead of re-spelling it.
+       `crates/buzz-cli/src/commands/sessions/operations_authority.rs:33`
+       (`AuthorityAcceptanceReceipt`, `deny_unknown_fields`) — **the defect**:
+       no `project_ref` field, so serde refused the whole receipt. This is the
+       reader 186's report called "private to `commands::sessions`".
+       `crates/buzz-session-provider/src/authority.rs:104` (`ReceiptContent`)
+       — tolerated the key (it is not `deny_unknown_fields`) and never bound
+       it, the gap 186 named: the fence folded a delegation without checking
+       which project the relay said it reached.
+       `desktop/src/features/coding-sessions/lib/codingSessionAuthorityTimeline.ts:110-380`
+       — correct on `projectRef`'s presence and binding, but its receipt
+       key-set treated the required echo as *present-or-absent* for both claim
+       and delegation receipts, so it alone would have accepted a receipt that
+       dropped the scope and shown the link as accepted with none.
+       `crates/buzz-cli/src/commands/sessions.rs:2209` (`AuthorityReceipt`) —
+       a deliberately lenient read surface, field-by-field, unaffected.
+       `crates/buzz-db/src/event.rs:2555-2739` and
+       `crates/buzz-db/src/coding_session_project_action_grant.rs` — read the
+       *transition*, already carry `project_ref`. `crates/buzz-relay` decodes
+       transitions through `buzz-core` and only **writes** the receipt
+       (`handlers/side_effects.rs:1500`, untouched: the wire did not change).
+       Mobile and web decode no receipt content.
+     - **The fix.** `projectRef` is accepted on a receipt exactly where the
+       transition type carries it and refused on a receipt for any other type
+       — the transition's own rule, mirrored — and the receipt↔transition
+       binding now compares `projectRef` for equality the way it compares
+       `role` and `bodyPubkey`, in the CLI projection
+       (`operations_authority.rs`, split out as
+       `decode_authority_acceptance_receipt`) and in the provider fence
+       (`authority.rs`, `AcceptedTransition::project_ref`). The desktop's two
+       present-or-absent receipt sets became required sets, aligning it with
+       the two stricter readers. No reader was loosened to ignore unknown
+       fields and the relay's emission is unchanged.
+     - **Red before green.** The test
+       `a_delegation_receipt_carrying_project_ref_projects_the_chain`
+       (`operations_receipt_tests.rs`) builds the exact
+       chain the desktop signs and runs it through
+       `project_receipt_backed_authority_chain` — the path `bee sessions
+       report`/`hire` use. On `HEAD`'s reader it fails with the live string
+       verbatim: *a delegation receipt must not break the chain: "malformed
+       authority acceptance receipt: unknown field `projectRef`, expected one
+       of `type`, `genesisRef`, `acceptedEventId`, `seq`, `transitionType`,
+       `granteePubkey`, `role`, `bodyPubkey`"*. That test file's `receipt_value`
+       helper had itself omitted the echo, which is how the regression passed
+       every gate.
+     - **One fixture, four readers.**
+       `conformance/authority-chain/fixtures/chain-vectors.json` — 19 canonical
+       transition+receipt pairs covering all nine transition types and the
+       refusals, each with `transitionValid` / `receiptValid` / `binds` — is
+       loaded by `buzz-core`
+       (`coding_session_authority_transition_project_action_tests.rs`),
+       `buzz-cli` (`operations_receipt_tests.rs`), `buzz-session-provider`
+       (`authority.rs`) and the desktop
+       (`codingSessionAuthorityConformance.test.mjs`). A lane that adds a
+       receipt key adds a vector, and every reader's test fails until that
+       reader is updated. Running it is what found the desktop's
+       present-or-absent divergence, which no single-crate test could have.
+     - **Live, read-only, same command against hive 2026-09-20 23:3xZ.**
+       `bee --format compact pulse digest --project
+       30621:3d3b7169…:kettle-smoke`. Installed `bee 0.1.0 (a5be5c1a)`:
+       `missionErrors: [{"scope": "authority:f9e0c67f-e326-410a-87ce-ebf613bdd437",
+       "message": "invalid accepted authority chain: malformed authority
+       acceptance receipt: unknown field `projectRef`, …"}]`. This lane's
+       `target/debug/bee`, same relay, same project: `missionErrors: []`. The
+       string still appears in the digest, inside the lead's own recorded
+       message about the defect — wire content, not a read failure. Nothing
+       was written to hive.
+     - **Owed.** The relay's own emission is unchanged, so nothing needs
+       redeploying; a re-run of a team hire on an installed build carrying
+       this fix is the proof that `created_ungranted` is gone.
+
 ## 3a. Environment facts that cost real time (do not rediscover)
 
 - **pnpm 11's answer to a stale workspace state is to DELETE `node_modules`,

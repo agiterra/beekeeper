@@ -30,7 +30,7 @@ pub(super) const AUTHORITY_ACCEPTANCE_RECEIPT_TYPE: &str =
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct AuthorityAcceptanceReceipt {
+pub(super) struct AuthorityAcceptanceReceipt {
     #[serde(rename = "type")]
     receipt_type: String,
     genesis_ref: String,
@@ -51,6 +51,93 @@ struct AuthorityAcceptanceReceipt {
     /// them succeeded (composition run 5).
     #[serde(default)]
     body_pubkey: Option<String>,
+    /// The project a `grant-project-actions`/`revoke-project-actions` receipt
+    /// is scoped to.
+    ///
+    /// **Absent here broke every team session a project owner founded with
+    /// "Use roles" on.** Lane 186 taught the relay to echo `projectRef`
+    /// (`buzz-relay/src/handlers/side_effects.rs`) without teaching this
+    /// `deny_unknown_fields` struct to read it, so from the moment the
+    /// desktop signed that delegation at launch, every read of the chain —
+    /// `sessions hire`, `seat-repair`, `report`, `operation get`, `pulse
+    /// digest` — failed with "unknown field `projectRef`" and no seat could
+    /// publish a report (ledger 204, found live 2026-09-20).
+    #[serde(default)]
+    project_ref: Option<String>,
+}
+
+/// Strictly decode one kind:40099 authority acceptance receipt's content.
+///
+/// Split out of [`project_receipt_backed_authority_chain`] so the shared
+/// `conformance/authority-chain` vectors can run against exactly the bytes
+/// the live projection runs against, rather than against a second copy of
+/// these rules.
+pub(super) fn decode_authority_acceptance_receipt(
+    value: Value,
+) -> Result<AuthorityAcceptanceReceipt, String> {
+    let role_key_present = value
+        .as_object()
+        .is_some_and(|object| object.contains_key("role"));
+    // Keyed on the key's presence, not the parsed value, for the reason
+    // the lifecycle receipt's `turnId` is: an explicit `"bodyPubkey": null`
+    // is a receipt claiming the relay saw no body, which is a different
+    // claim from a receipt that carries no such key.
+    let body_key_present = value
+        .as_object()
+        .is_some_and(|object| object.contains_key("bodyPubkey"));
+    let project_key_present = value
+        .as_object()
+        .is_some_and(|object| object.contains_key("projectRef"));
+    let receipt: AuthorityAcceptanceReceipt = serde_json::from_value(value)
+        .map_err(|error| format!("malformed authority acceptance receipt: {error}"))?;
+    if receipt.receipt_type != AUTHORITY_ACCEPTANCE_RECEIPT_TYPE {
+        return Err("authority receipt type mismatch".into());
+    }
+    let is_seat_receipt = matches!(
+        receipt.transition_type,
+        CodingSessionAuthorityTransitionType::GrantSeat
+            | CodingSessionAuthorityTransitionType::RevokeSeat
+    );
+    if is_seat_receipt != role_key_present || is_seat_receipt != receipt.role.is_some() {
+        return Err("authority receipt role presence does not match its transition type".into());
+    }
+    // A claim receipt names the body it fences to and every other receipt
+    // names none: a grant receipt carrying one would be describing a fence
+    // nobody raised, and a takeover receipt without one names a claim the
+    // fold could not apply.
+    let is_claim_receipt = receipt.transition_type.is_claim();
+    if is_claim_receipt != body_key_present || is_claim_receipt != receipt.body_pubkey.is_some() {
+        return Err(
+            "authority receipt bodyPubkey presence does not match its transition type".into(),
+        );
+    }
+    if let Some(body_pubkey) = &receipt.body_pubkey {
+        if body_pubkey.len() != 64
+            || !body_pubkey
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err("authority receipt bodyPubkey is not a lowercase 64-hex pubkey".into());
+        }
+    }
+    // The same rule, exactly, for the delegation's scope: the two
+    // project-action types carry `projectRef` and no other type may. A
+    // delegation receipt that dropped its scope would say a delegation was
+    // accepted without saying what it reaches, and a `revoke` carrying one
+    // is a relay this build does not understand.
+    let is_project_receipt = receipt.transition_type.is_project_actions();
+    if is_project_receipt != project_key_present
+        || is_project_receipt != receipt.project_ref.is_some()
+    {
+        return Err(
+            "authority receipt projectRef presence does not match its transition type".into(),
+        );
+    }
+    if let Some(project_ref) = &receipt.project_ref {
+        buzz_core::coding_session_authority_transition::validate_project_ref(project_ref)
+            .map_err(|error| format!("authority receipt {error}"))?;
+    }
+    Ok(receipt)
 }
 
 pub(super) async fn fetch_trusted_relay_self(client: &BuzzClient) -> Result<String, CliError> {
@@ -235,51 +322,7 @@ pub(super) fn project_receipt_backed_authority_chain(
         {
             return Err("authority acceptance receipt crosses the requested channel".into());
         }
-        let role_key_present = value
-            .as_object()
-            .is_some_and(|object| object.contains_key("role"));
-        // Keyed on the key's presence, not the parsed value, for the reason
-        // the lifecycle receipt's `turnId` is: an explicit `"bodyPubkey": null`
-        // is a receipt claiming the relay saw no body, which is a different
-        // claim from a receipt that carries no such key.
-        let body_key_present = value
-            .as_object()
-            .is_some_and(|object| object.contains_key("bodyPubkey"));
-        let receipt: AuthorityAcceptanceReceipt = serde_json::from_value(value)
-            .map_err(|error| format!("malformed authority acceptance receipt: {error}"))?;
-        if receipt.receipt_type != AUTHORITY_ACCEPTANCE_RECEIPT_TYPE {
-            return Err("authority receipt type mismatch".into());
-        }
-        let is_seat_receipt = matches!(
-            receipt.transition_type,
-            CodingSessionAuthorityTransitionType::GrantSeat
-                | CodingSessionAuthorityTransitionType::RevokeSeat
-        );
-        if is_seat_receipt != role_key_present || is_seat_receipt != receipt.role.is_some() {
-            return Err(
-                "authority receipt role presence does not match its transition type".into(),
-            );
-        }
-        // A claim receipt names the body it fences to and every other receipt
-        // names none: a grant receipt carrying one would be describing a fence
-        // nobody raised, and a takeover receipt without one names a claim the
-        // fold could not apply.
-        let is_claim_receipt = receipt.transition_type.is_claim();
-        if is_claim_receipt != body_key_present || is_claim_receipt != receipt.body_pubkey.is_some()
-        {
-            return Err(
-                "authority receipt bodyPubkey presence does not match its transition type".into(),
-            );
-        }
-        if let Some(body_pubkey) = &receipt.body_pubkey {
-            if body_pubkey.len() != 64
-                || !body_pubkey
-                    .bytes()
-                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-            {
-                return Err("authority receipt bodyPubkey is not a lowercase 64-hex pubkey".into());
-            }
-        }
+        let receipt = decode_authority_acceptance_receipt(value)?;
         let transition = transitions
             .get(&receipt.accepted_event_id)
             .ok_or_else(|| "authority receipt references a missing transition".to_owned())?;
@@ -295,6 +338,10 @@ pub(super) fn project_receipt_backed_authority_chain(
             // this link — and the fence would be raised on whichever the
             // reader happened to trust.
             || payload.body_pubkey != receipt.body_pubkey
+            // And the scope, for the same reason: a delegation is only as
+            // narrow as the project it names, so a receipt and a link that
+            // disagree about `projectRef` are not describing one delegation.
+            || payload.project_ref != receipt.project_ref
         {
             return Err("authority receipt facts do not match the accepted transition".into());
         }

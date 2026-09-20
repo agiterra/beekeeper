@@ -168,6 +168,16 @@ fn receipt_value(transition: &Event) -> Value {
     if let (Some(object), Some(role)) = (content.as_object_mut(), payload.role) {
         object.insert("role".into(), Value::String(role));
     }
+    if let (Some(object), Some(body_pubkey)) = (content.as_object_mut(), payload.body_pubkey) {
+        object.insert("bodyPubkey".into(), Value::String(body_pubkey));
+    }
+    // The relay echoes the delegation's scope onto its receipt
+    // (`buzz-relay/src/handlers/side_effects.rs`). A fixture that omitted it
+    // would test a wire nobody serves — which is precisely how ledger 204's
+    // regression reached an installed build with every gate green.
+    if let (Some(object), Some(project_ref)) = (content.as_object_mut(), payload.project_ref) {
+        object.insert("projectRef".into(), Value::String(project_ref));
+    }
     content
 }
 
@@ -469,4 +479,141 @@ fn gaps_and_duplicate_conflicts_are_rejected() {
         &relay.public_key().to_hex(),
     )
     .is_err());
+}
+
+// ── ledger 204: the delegation receipt every team session now carries ───────
+
+const PROJECT_REF: &str =
+    "30621:efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef:kettle-smoke";
+
+/// A `grant-project-actions` link, signed the way the desktop signs one at
+/// launch for a project owner founding a team session with "Use roles" on.
+fn project_action_grant_event(
+    signer: &Keys,
+    grantee: &str,
+    seq: u32,
+    previous: Option<&Event>,
+    project_ref: &str,
+) -> Event {
+    let payload = CodingSessionAuthorityTransitionPayload::new_grant_project_actions(
+        GENESIS,
+        previous.map(|event| event.id.to_hex()),
+        seq,
+        grantee,
+        project_ref,
+    );
+    EventBuilder::new(
+        Kind::Custom(KIND_CODING_SESSION_AUTHORITY_TRANSITION as u16),
+        serde_json::to_string(&payload).expect("payload"),
+    )
+    .tags([
+        Tag::parse(["h", CHANNEL]).expect("h"),
+        Tag::parse(["csat-v", CODING_SESSION_AUTHORITY_TRANSITION_TAG_VERSION]).expect("version"),
+        Tag::parse(["csat-genesis", GENESIS]).expect("genesis"),
+    ])
+    .sign_with_keys(signer)
+    .expect("delegation")
+}
+
+/// The regression found live on `a5be5c1a5` against hive on 2026-09-20
+/// (ledger 204): a chain whose second link is the project-action delegation
+/// the desktop signs at launch could not be read at all, so `bee sessions
+/// hire`, `seat-repair`, `report` and `operation get` each failed with
+/// *malformed authority acceptance receipt: unknown field `projectRef`* and
+/// no seat on such a session could publish a canonical report.
+#[test]
+fn a_delegation_receipt_carrying_project_ref_projects_the_chain() {
+    let founder = Keys::generate();
+    let relay = Keys::generate();
+    let lead = Keys::generate().public_key().to_hex();
+
+    let seat = authority_event(
+        &founder,
+        CodingSessionAuthorityTransitionType::GrantSeat,
+        &lead,
+        1,
+        None,
+        Some("lead"),
+    );
+    let delegation = project_action_grant_event(&founder, &lead, 2, Some(&seat), PROJECT_REF);
+    let receipts = vec![
+        receipt_event(receipt_value(&seat), &relay, 1_700_000_001),
+        receipt_event(receipt_value(&delegation), &relay, 1_700_000_002),
+    ];
+    // The fixture must be the wire the relay actually signs, or this test
+    // proves nothing.
+    let delegation_receipt: Value =
+        serde_json::from_str(&receipts[1].content).expect("receipt content");
+    assert_eq!(delegation_receipt["projectRef"], json!(PROJECT_REF));
+
+    let projected = project_receipt_backed_authority_chain(
+        &[seat, delegation],
+        &receipts,
+        CHANNEL,
+        GENESIS,
+        &founder.public_key().to_hex(),
+        &relay.public_key().to_hex(),
+    )
+    .expect("a delegation receipt must not break the chain");
+    assert_eq!(projected.head_seq, 2);
+    assert!(projected
+        .seats
+        .iter()
+        .any(|held| held.actor_pubkey == lead && held.role == "lead"));
+}
+
+/// A receipt that names a different project than the link it accepts is not
+/// evidence of either one: the binding refuses it the way it refuses a role
+/// or a `bodyPubkey` the two disagree about.
+#[test]
+fn a_delegation_receipt_naming_another_project_does_not_bind() {
+    let founder = Keys::generate();
+    let relay = Keys::generate();
+    let lead = Keys::generate().public_key().to_hex();
+    let delegation = project_action_grant_event(&founder, &lead, 1, None, PROJECT_REF);
+    let mut content = receipt_value(&delegation);
+    content["projectRef"] = json!(
+        "30621:efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef:other-project"
+    );
+    let error = project_receipt_backed_authority_chain(
+        &[delegation],
+        &[receipt_event(content, &relay, 1_700_000_001)],
+        CHANNEL,
+        GENESIS,
+        &founder.public_key().to_hex(),
+        &relay.public_key().to_hex(),
+    )
+    .expect_err("a scope the two disagree about must refuse");
+    assert!(
+        error.contains("do not match the accepted transition"),
+        "{error}"
+    );
+}
+
+/// The shared cross-reader vectors, run against the exact receipt decoder the
+/// live projection runs (`conformance/authority-chain/README.md`).
+#[test]
+fn shared_authority_chain_vectors_match_the_receipt_decoder() {
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../../../../conformance/authority-chain/fixtures/chain-vectors.json"
+    ))
+    .expect("fixture parses");
+    assert_eq!(
+        fixture["schema"],
+        "buzz-coding-session-authority-chain-conformance/v1"
+    );
+    let vectors = fixture["vectors"].as_array().expect("vectors");
+    assert!(!vectors.is_empty());
+    for vector in vectors {
+        let name = vector["name"].as_str().expect("name");
+        let expected = vector["receiptValid"].as_bool().expect("receiptValid");
+        assert_eq!(
+            super::super::operations_authority::decode_authority_acceptance_receipt(
+                vector["receipt"].clone()
+            )
+            .is_ok(),
+            expected,
+            "shared authority-chain vector {name}"
+        );
+    }
 }

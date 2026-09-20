@@ -502,7 +502,12 @@ impl CodingSessionAuthorityTransitionPayload {
 /// Kind 30621 is the project record; a coordinate of any other kind is not a
 /// project and is refused rather than normalized, so a delegation can never
 /// be filed against a repository or a pack coordinate instead.
-fn validate_project_ref(value: &str) -> Result<(), String> {
+///
+/// Public because the relay's kind:40099 acceptance receipt echoes the same
+/// coordinate, and every strict reader of that receipt must hold it to the
+/// *same* rule as the signed link it restates. A second hand-written copy is
+/// how the reader and the writer drift apart (ledger 204).
+pub fn validate_project_ref(value: &str) -> Result<(), String> {
     if value.len() > MAX_PROJECT_REF_BYTES {
         return Err(format!(
             "projectRef must be at most {MAX_PROJECT_REF_BYTES} bytes"

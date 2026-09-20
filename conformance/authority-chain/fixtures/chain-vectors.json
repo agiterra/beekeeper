@@ -1,0 +1,462 @@
+{
+  "schema": "buzz-coding-session-authority-chain-conformance/v1",
+  "constants": {
+    "genesisRef": "abababababababababababababababababababababababababababababababab",
+    "acceptedEventId": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+    "granteePubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+    "bodyPubkey": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "projectRef": "30621:efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef:kettle-smoke",
+    "otherProjectRef": "30621:efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef:other-project"
+  },
+  "vectors": [
+    {
+      "name": "grant-operator-legacy-five-keys",
+      "why": "The legacy shape: five content keys, six receipt keys, no role, no body, no scope.",
+      "transition": {
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "prevAccepted": null,
+        "seq": 1,
+        "type": "grant-operator",
+        "granteePubkey": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      "transitionValid": true,
+      "receipt": {
+        "type": "coding_session_authority_transition_accepted",
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "acceptedEventId": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "seq": 1,
+        "transitionType": "grant-operator",
+        "granteePubkey": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      "receiptValid": true,
+      "binds": true
+    },
+    {
+      "name": "grant-viewer-legacy-five-keys",
+      "why": "The legacy shape: five content keys, six receipt keys, no role, no body, no scope.",
+      "transition": {
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "prevAccepted": null,
+        "seq": 1,
+        "type": "grant-viewer",
+        "granteePubkey": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      "transitionValid": true,
+      "receipt": {
+        "type": "coding_session_authority_transition_accepted",
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "acceptedEventId": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "seq": 1,
+        "transitionType": "grant-viewer",
+        "granteePubkey": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      "receiptValid": true,
+      "binds": true
+    },
+    {
+      "name": "revoke-legacy-five-keys",
+      "why": "The legacy shape: five content keys, six receipt keys, no role, no body, no scope.",
+      "transition": {
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "prevAccepted": null,
+        "seq": 1,
+        "type": "revoke",
+        "granteePubkey": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      "transitionValid": true,
+      "receipt": {
+        "type": "coding_session_authority_transition_accepted",
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "acceptedEventId": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "seq": 1,
+        "transitionType": "revoke",
+        "granteePubkey": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      "receiptValid": true,
+      "binds": true
+    },
+    {
+      "name": "grant-seat-carries-role",
+      "why": "A seat link names its role and the receipt echoes it.",
+      "transition": {
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "prevAccepted": null,
+        "seq": 1,
+        "type": "grant-seat",
+        "granteePubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+        "role": "lead"
+      },
+      "transitionValid": true,
+      "receipt": {
+        "type": "coding_session_authority_transition_accepted",
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "acceptedEventId": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "seq": 1,
+        "transitionType": "grant-seat",
+        "granteePubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+        "role": "lead"
+      },
+      "receiptValid": true,
+      "binds": true
+    },
+    {
+      "name": "revoke-seat-carries-role",
+      "why": "A seat link names its role and the receipt echoes it.",
+      "transition": {
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "prevAccepted": null,
+        "seq": 1,
+        "type": "revoke-seat",
+        "granteePubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+        "role": "lead"
+      },
+      "transitionValid": true,
+      "receipt": {
+        "type": "coding_session_authority_transition_accepted",
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "acceptedEventId": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "seq": 1,
+        "transitionType": "revoke-seat",
+        "granteePubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+        "role": "lead"
+      },
+      "receiptValid": true,
+      "binds": true
+    },
+    {
+      "name": "takeover-carries-body",
+      "why": "A claim link names the execution body it fences to and the receipt echoes it.",
+      "transition": {
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "prevAccepted": null,
+        "seq": 1,
+        "type": "takeover",
+        "granteePubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+        "bodyPubkey": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      },
+      "transitionValid": true,
+      "receipt": {
+        "type": "coding_session_authority_transition_accepted",
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "acceptedEventId": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "seq": 1,
+        "transitionType": "takeover",
+        "granteePubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+        "bodyPubkey": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      },
+      "receiptValid": true,
+      "binds": true
+    },
+    {
+      "name": "transfer-carries-body",
+      "why": "A claim link names the execution body it fences to and the receipt echoes it.",
+      "transition": {
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "prevAccepted": null,
+        "seq": 1,
+        "type": "transfer",
+        "granteePubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+        "bodyPubkey": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      },
+      "transitionValid": true,
+      "receipt": {
+        "type": "coding_session_authority_transition_accepted",
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "acceptedEventId": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "seq": 1,
+        "transitionType": "transfer",
+        "granteePubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+        "bodyPubkey": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      },
+      "receiptValid": true,
+      "binds": true
+    },
+    {
+      "name": "grant-project-actions-carries-project-ref",
+      "why": "The delegation shape of ledger 186: five legacy keys plus projectRef, echoed on the receipt. This vector is the 2026-09-20 regression (ledger 204): the relay emitted the echo and the CLI's deny_unknown_fields receipt reader refused every chain that carried it.",
+      "transition": {
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "prevAccepted": null,
+        "seq": 1,
+        "type": "grant-project-actions",
+        "granteePubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+        "projectRef": "30621:efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef:kettle-smoke"
+      },
+      "transitionValid": true,
+      "receipt": {
+        "type": "coding_session_authority_transition_accepted",
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "acceptedEventId": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "seq": 1,
+        "transitionType": "grant-project-actions",
+        "granteePubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+        "projectRef": "30621:efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef:kettle-smoke"
+      },
+      "receiptValid": true,
+      "binds": true
+    },
+    {
+      "name": "revoke-project-actions-carries-project-ref",
+      "why": "The delegation shape of ledger 186: five legacy keys plus projectRef, echoed on the receipt. This vector is the 2026-09-20 regression (ledger 204): the relay emitted the echo and the CLI's deny_unknown_fields receipt reader refused every chain that carried it.",
+      "transition": {
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "prevAccepted": null,
+        "seq": 1,
+        "type": "revoke-project-actions",
+        "granteePubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+        "projectRef": "30621:efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef:kettle-smoke"
+      },
+      "transitionValid": true,
+      "receipt": {
+        "type": "coding_session_authority_transition_accepted",
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "acceptedEventId": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "seq": 1,
+        "transitionType": "revoke-project-actions",
+        "granteePubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+        "projectRef": "30621:efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef:kettle-smoke"
+      },
+      "receiptValid": true,
+      "binds": true
+    },
+    {
+      "name": "grant-project-actions-without-project-ref",
+      "why": "An unscoped delegation is not a narrower grant, it is one that reaches every project the grantee can see. Refused on the link and on the receipt.",
+      "transition": {
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "prevAccepted": null,
+        "seq": 1,
+        "type": "grant-project-actions",
+        "granteePubkey": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      "transitionValid": false,
+      "receipt": {
+        "type": "coding_session_authority_transition_accepted",
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "acceptedEventId": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "seq": 1,
+        "transitionType": "grant-project-actions",
+        "granteePubkey": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      "receiptValid": false,
+      "binds": false
+    },
+    {
+      "name": "grant-project-actions-with-foreign-kind-project-ref",
+      "why": "Kind 30621 is the project record; a repository or pack coordinate is refused rather than normalized.",
+      "transition": {
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "prevAccepted": null,
+        "seq": 1,
+        "type": "grant-project-actions",
+        "granteePubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+        "projectRef": "30617:efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef:kettle-smoke"
+      },
+      "transitionValid": false,
+      "receipt": {
+        "type": "coding_session_authority_transition_accepted",
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "acceptedEventId": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "seq": 1,
+        "transitionType": "grant-project-actions",
+        "granteePubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+        "projectRef": "30617:efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef:kettle-smoke"
+      },
+      "receiptValid": false,
+      "binds": false
+    },
+    {
+      "name": "grant-project-actions-with-malformed-owner-project-ref",
+      "why": "The owner half of the coordinate must be lowercase 64-hex.",
+      "transition": {
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "prevAccepted": null,
+        "seq": 1,
+        "type": "grant-project-actions",
+        "granteePubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+        "projectRef": "30621:NOTHEX:kettle-smoke"
+      },
+      "transitionValid": false,
+      "receipt": {
+        "type": "coding_session_authority_transition_accepted",
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "acceptedEventId": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "seq": 1,
+        "transitionType": "grant-project-actions",
+        "granteePubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+        "projectRef": "30621:NOTHEX:kettle-smoke"
+      },
+      "receiptValid": false,
+      "binds": false
+    },
+    {
+      "name": "grant-project-actions-also-carrying-role",
+      "why": "A delegation is not a seat: the exact key set refuses role beside projectRef.",
+      "transition": {
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "prevAccepted": null,
+        "seq": 1,
+        "type": "grant-project-actions",
+        "granteePubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+        "projectRef": "30621:efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef:kettle-smoke",
+        "role": "lead"
+      },
+      "transitionValid": false,
+      "receipt": {
+        "type": "coding_session_authority_transition_accepted",
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "acceptedEventId": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "seq": 1,
+        "transitionType": "grant-project-actions",
+        "granteePubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+        "projectRef": "30621:efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef:kettle-smoke",
+        "role": "lead"
+      },
+      "receiptValid": false,
+      "binds": false
+    },
+    {
+      "name": "revoke-receipt-carrying-project-ref",
+      "why": "projectRef is refused on a receipt for any type that does not carry it \u2014 a revoke echoing a scope is a relay this build does not understand, and must fail closed rather than fold.",
+      "transition": {
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "prevAccepted": null,
+        "seq": 1,
+        "type": "revoke",
+        "granteePubkey": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      "transitionValid": true,
+      "receipt": {
+        "type": "coding_session_authority_transition_accepted",
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "acceptedEventId": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "seq": 1,
+        "transitionType": "revoke",
+        "granteePubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+        "projectRef": "30621:efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef:kettle-smoke"
+      },
+      "receiptValid": false,
+      "binds": false
+    },
+    {
+      "name": "grant-seat-receipt-carrying-project-ref",
+      "why": "Same rule on a seat receipt: the role echo does not license a second echo.",
+      "transition": {
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "prevAccepted": null,
+        "seq": 1,
+        "type": "grant-seat",
+        "granteePubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+        "role": "lead"
+      },
+      "transitionValid": true,
+      "receipt": {
+        "type": "coding_session_authority_transition_accepted",
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "acceptedEventId": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "seq": 1,
+        "transitionType": "grant-seat",
+        "granteePubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+        "role": "lead",
+        "projectRef": "30621:efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef:kettle-smoke"
+      },
+      "receiptValid": false,
+      "binds": false
+    },
+    {
+      "name": "takeover-receipt-carrying-project-ref",
+      "why": "Same rule on a claim receipt.",
+      "transition": {
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "prevAccepted": null,
+        "seq": 1,
+        "type": "takeover",
+        "granteePubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+        "bodyPubkey": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      },
+      "transitionValid": true,
+      "receipt": {
+        "type": "coding_session_authority_transition_accepted",
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "acceptedEventId": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "seq": 1,
+        "transitionType": "takeover",
+        "granteePubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+        "bodyPubkey": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "projectRef": "30621:efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef:kettle-smoke"
+      },
+      "receiptValid": false,
+      "binds": false
+    },
+    {
+      "name": "project-actions-receipt-naming-a-different-project",
+      "why": "Each half is well formed on its own, and they describe different delegations: the binding check must refuse the pair the way it refuses a role or a bodyPubkey they disagree about.",
+      "transition": {
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "prevAccepted": null,
+        "seq": 1,
+        "type": "grant-project-actions",
+        "granteePubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+        "projectRef": "30621:efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef:kettle-smoke"
+      },
+      "transitionValid": true,
+      "receipt": {
+        "type": "coding_session_authority_transition_accepted",
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "acceptedEventId": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "seq": 1,
+        "transitionType": "grant-project-actions",
+        "granteePubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+        "projectRef": "30621:efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef:other-project"
+      },
+      "receiptValid": true,
+      "binds": false
+    },
+    {
+      "name": "seat-receipt-dropping-its-role",
+      "why": "The pre-existing presence rule, kept in the shared set so the projectRef rule is not the only one a new reader has to rediscover.",
+      "transition": {
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "prevAccepted": null,
+        "seq": 1,
+        "type": "grant-seat",
+        "granteePubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+        "role": "lead"
+      },
+      "transitionValid": true,
+      "receipt": {
+        "type": "coding_session_authority_transition_accepted",
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "acceptedEventId": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "seq": 1,
+        "transitionType": "grant-seat",
+        "granteePubkey": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      "receiptValid": false,
+      "binds": false
+    },
+    {
+      "name": "takeover-receipt-dropping-its-body",
+      "why": "As above, for the claim receipt's body.",
+      "transition": {
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "prevAccepted": null,
+        "seq": 1,
+        "type": "takeover",
+        "granteePubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+        "bodyPubkey": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      },
+      "transitionValid": true,
+      "receipt": {
+        "type": "coding_session_authority_transition_accepted",
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "acceptedEventId": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "seq": 1,
+        "transitionType": "takeover",
+        "granteePubkey": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      "receiptValid": false,
+      "binds": false
+    }
+  ]
+}

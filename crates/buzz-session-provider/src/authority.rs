@@ -76,6 +76,13 @@ pub struct AcceptedTransition {
     /// that dropped it would leave a returning machine knowing the session was
     /// claimed and not whether *it* is the machine now carrying the work.
     pub body_pubkey: Option<String>,
+    /// The project a `grant-project-actions`/`revoke-project-actions` named;
+    /// absent for every other type.
+    ///
+    /// Bound against the signed link below for the same reason
+    /// [`Self::body_pubkey`] is: a delegation is only as narrow as the
+    /// project it names.
+    pub project_ref: Option<String>,
 }
 
 /// A relay-signed statement that a whole-session deletion was applied.
@@ -117,6 +124,15 @@ struct ReceiptContent {
     /// already accepted.
     #[serde(default)]
     body_pubkey: Option<String>,
+    /// Present exactly on `grant-project-actions`/`revoke-project-actions`
+    /// receipts (ledger 186).
+    ///
+    /// Read, not merely tolerated: without this field the fold learned *that*
+    /// a delegation was accepted and never which project it reached, so the
+    /// receipt and the signed link could disagree about the delegation's
+    /// entire scope and nothing here would notice (ledger 204).
+    #[serde(default)]
+    project_ref: Option<String>,
 }
 
 /// Raw deletion-receipt content, held to the same strictness.
@@ -265,6 +281,26 @@ pub fn verify_acceptance_receipt(
         }
         (false, None) => {}
     }
+    // The same rule, exactly, for a delegation's scope: the two project-action
+    // types carry `projectRef` and no other type may. An unscoped delegation
+    // receipt is not a narrower statement than a scoped one, it is a wider
+    // one, so it fails closed rather than folding to something plausible.
+    match (
+        content.transition_type.is_project_actions(),
+        content.project_ref.as_deref(),
+    ) {
+        (true, Some(project_ref)) => {
+            buzz_core::coding_session_authority_transition::validate_project_ref(project_ref)
+                .map_err(|error| format!("acceptance receipt {error}"))?;
+        }
+        (true, None) => {
+            return Err("project-action acceptance receipt must carry projectRef".into());
+        }
+        (false, Some(_)) => {
+            return Err("non-project-action acceptance receipt must not carry projectRef".into());
+        }
+        (false, None) => {}
+    }
     Ok(AcceptedTransition {
         genesis_ref: content.genesis_ref,
         accepted_event_id: content.accepted_event_id,
@@ -273,6 +309,7 @@ pub fn verify_acceptance_receipt(
         grantee_pubkey: content.grantee_pubkey,
         role: content.role,
         body_pubkey: content.body_pubkey,
+        project_ref: content.project_ref,
     })
 }
 
@@ -438,6 +475,12 @@ pub fn verify_accepted_transition(
     // could be fenced onto a machine the claimant never named.
     if payload.body_pubkey != accepted.body_pubkey {
         return Err("accepted transition bodyPubkey does not match its receipt".into());
+    }
+    // And the delegation's scope, for the same reason: a provider that trusted
+    // the receipt alone could fold a delegation of a project the signer never
+    // named (the gap ledger 186 left open, closed in 204).
+    if payload.project_ref != accepted.project_ref {
+        return Err("accepted transition projectRef does not match its receipt".into());
     }
     let tags: Vec<&[String]> = event.tags.iter().map(|tag| tag.as_slice()).collect();
     if tags.len() != 3 || tags.iter().any(|tag| tag.len() != 2) {
@@ -794,6 +837,7 @@ mod tests {
             grantee_pubkey: grantee.clone(),
             role: None,
             body_pubkey: None,
+            project_ref: None,
         };
         verify_accepted_transition(
             &transition,
@@ -820,6 +864,7 @@ mod tests {
             grantee_pubkey: grantee.clone(),
             role: None,
             body_pubkey: None,
+            project_ref: None,
         };
 
         // Signed by someone other than the owner.
@@ -908,6 +953,7 @@ mod tests {
                     grantee_pubkey: actor.clone(),
                     role: Some("builder".into()),
                     body_pubkey: None,
+                    project_ref: None,
                 },
                 grant,
             ),
@@ -920,6 +966,7 @@ mod tests {
                     grantee_pubkey: actor,
                     role: Some("builder".into()),
                     body_pubkey: None,
+                    project_ref: None,
                 },
                 revoke,
             ),
@@ -1041,6 +1088,7 @@ mod tests {
             grantee_pubkey: claimant.public_key().to_hex(),
             role: None,
             body_pubkey: Some(body),
+            project_ref: None,
         };
         // The owner check does not apply to a claim: the relay's receipt is
         // what authorized it, exactly as for a seat link.
@@ -1102,6 +1150,7 @@ mod tests {
                     grantee_pubkey: claimant_hex.clone(),
                     role: None,
                     body_pubkey: None,
+                    project_ref: None,
                 },
                 grant.clone(),
             ),
@@ -1114,6 +1163,7 @@ mod tests {
                     grantee_pubkey: claimant_hex.clone(),
                     role: None,
                     body_pubkey: Some(body.clone()),
+                    project_ref: None,
                 },
                 takeover.clone(),
             ),
@@ -1167,6 +1217,7 @@ mod tests {
                 grantee_pubkey: claimant_hex.clone(),
                 role: None,
                 body_pubkey: None,
+                project_ref: None,
             },
             revoke.clone(),
         ));
@@ -1179,6 +1230,7 @@ mod tests {
                 grantee_pubkey: claimant_hex.clone(),
                 role: None,
                 body_pubkey: None,
+                project_ref: None,
             },
             regrant,
         ));
@@ -1210,6 +1262,7 @@ mod tests {
                 grantee_pubkey: grantee,
                 role: None,
                 body_pubkey: None,
+                project_ref: None,
             },
             grant,
         )];
@@ -1328,5 +1381,79 @@ mod tests {
     #[test]
     fn the_deletion_receipt_type_is_the_relays_own_word() {
         assert_eq!(DELETION_RECEIPT_TYPE, "coding_session_deletion_accepted");
+    }
+
+    /// The shared cross-reader vectors, run against the fence's own receipt
+    /// verifier (`conformance/authority-chain/README.md`).
+    ///
+    /// The provider was the reader ledger 186 called out as "tolerates
+    /// `projectRef` but does not bind it": it read past the key and folded a
+    /// delegation without ever checking which project the relay said it
+    /// reached. Ledger 204 closed that; this pins it.
+    #[test]
+    fn shared_authority_chain_vectors_match_the_receipt_verifier() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../conformance/authority-chain/fixtures/chain-vectors.json"
+        ))
+        .expect("fixture parses");
+        assert_eq!(
+            fixture["schema"],
+            "buzz-coding-session-authority-chain-conformance/v1"
+        );
+        let relay = relay_keys();
+        let relay_pubkey = relay.public_key().to_hex();
+        let channel_id = Uuid::new_v4();
+        let vectors = fixture["vectors"].as_array().expect("vectors");
+        assert!(!vectors.is_empty());
+        for vector in vectors {
+            let name = vector["name"].as_str().expect("name");
+            let expected = vector["receiptValid"].as_bool().expect("receiptValid");
+            let event = receipt_event(&relay, channel_id, vector["receipt"].to_string());
+            assert_eq!(
+                verify_acceptance_receipt(&event, &relay_pubkey, channel_id).is_ok(),
+                expected,
+                "shared authority-chain vector {name}"
+            );
+        }
+    }
+
+    /// A receipt and the link it accepts must agree about the delegation's
+    /// scope, exactly as they must agree about a role or a body.
+    #[test]
+    fn a_delegation_receipt_naming_another_project_does_not_bind() {
+        let founder = Keys::generate();
+        let channel_id = Uuid::new_v4();
+        let genesis_ref = "ab".repeat(32);
+        let grantee = "ef".repeat(32);
+        let project = format!("30621:{}:kettle-smoke", "ef".repeat(32));
+        let payload = buzz_core::coding_session_authority_transition::CodingSessionAuthorityTransitionPayload::new_grant_project_actions(
+            genesis_ref.clone(),
+            None,
+            1,
+            grantee.clone(),
+            project.clone(),
+        );
+        let event =
+            buzz_sdk::builders::build_coding_session_authority_transition(channel_id, &payload)
+                .expect("builder")
+                .sign_with_keys(&founder)
+                .expect("sign delegation");
+        let mut accepted = AcceptedTransition {
+            genesis_ref,
+            accepted_event_id: event.id.to_hex(),
+            seq: 1,
+            transition_type: CodingSessionAuthorityTransitionType::GrantProjectActions,
+            grantee_pubkey: grantee,
+            role: None,
+            body_pubkey: None,
+            project_ref: Some(project),
+        };
+        let owner = founder.public_key().to_hex();
+        verify_accepted_transition(&event, &accepted, channel_id, &owner)
+            .expect("the matching scope binds");
+        accepted.project_ref = Some(format!("30621:{}:other-project", "ef".repeat(32)));
+        let error = verify_accepted_transition(&event, &accepted, channel_id, &owner)
+            .expect_err("a scope the two disagree about must refuse");
+        assert!(error.contains("projectRef does not match"), "{error}");
     }
 }

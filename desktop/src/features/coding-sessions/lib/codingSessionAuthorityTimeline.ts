@@ -378,21 +378,25 @@ function parseReceipt(
       seatTransition
         ? [SEAT_RECEIPT_FIELDS]
         : claimTransition
-          ? // Present-or-absent: the relay writes `bodyPubkey` "when
-            // present", and either form binds the transition it names.
-            [LEGACY_RECEIPT_FIELDS, CLAIM_RECEIPT_FIELDS]
+          ? // Required, not present-or-absent. A claim link cannot be signed
+            // without a body, so the relay cannot emit a claim receipt that
+            // drops one; a receipt that did would name a claim this fold
+            // could not fence. The CLI and the provider have always refused
+            // it, and the shared vectors in `conformance/authority-chain`
+            // are what proved this reader disagreed (ledger 204).
+            [CLAIM_RECEIPT_FIELDS]
           : projectActionsTransition
-            ? // Same present-only pattern for `projectRef` (ledger 186).
-              [LEGACY_RECEIPT_FIELDS, PROJECT_ACTIONS_RECEIPT_FIELDS]
+            ? // Same rule for `projectRef` (ledger 186): a delegation
+              // receipt that dropped its scope would say a delegation was
+              // accepted without saying what it reaches, and this fold would
+              // have shown it as accepted with no scope at all.
+              [PROJECT_ACTIONS_RECEIPT_FIELDS]
             : [LEGACY_RECEIPT_FIELDS],
     ) ||
     (claimTransition &&
-      Object.hasOwn(payload, "bodyPubkey") &&
       (typeof payload.bodyPubkey !== "string" ||
         !HEX64_REGEX.test(payload.bodyPubkey))) ||
-    (projectActionsTransition &&
-      Object.hasOwn(payload, "projectRef") &&
-      !isProjectRefCoordinate(payload.projectRef)) ||
+    (projectActionsTransition && !isProjectRefCoordinate(payload.projectRef)) ||
     payload.type !== CODING_SESSION_AUTHORITY_RECEIPT_TYPE ||
     payload.genesisRef !== genesisRef ||
     typeof payload.acceptedEventId !== "string" ||
