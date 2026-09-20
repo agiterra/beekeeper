@@ -791,9 +791,13 @@ mod tests {
         let trigger_ctx = serde_json::to_value(TriggerContext::default()).expect("ctx");
         let run_id = state
             .db
-            .create_workflow_run(community, workflow_id, None, Some(&trigger_ctx))
+            .create_workflow_run(community, workflow_id, None, Some(&trigger_ctx), &hash)
             .await
             .expect("create run");
+        let run_id = match run_id {
+            buzz_db::workflow::CreateRunOutcome::Created(id) => id,
+            other => panic!("expected a run, got {other:?}"),
+        };
         let parked_trace = serde_json::json!([
             {"step_id": "build", "status": "requested_on_host"}
         ]);

@@ -18,7 +18,7 @@
 
 use std::sync::Arc;
 
-use buzz_db::workflow::{ApprovalStatus, RunStatus};
+use buzz_db::workflow::{ApprovalStatus, CreateRunOutcome, RunStatus};
 use uuid::Uuid;
 
 use crate::executor::{self, TriggerContext};
@@ -98,6 +98,39 @@ impl Fixture {
             def,
             hash,
         )
+    }
+
+    /// Start a run bound to `expected`, as a trigger handler does: the hash
+    /// names the definition the caller parsed, and a run exists only while
+    /// that is still the published one (ledger 199).
+    async fn start_run(&self, expected: &[u8]) -> Uuid {
+        match self
+            .db
+            .create_workflow_run(self.community, self.workflow_id, None, None, expected)
+            .await
+            .expect("create run")
+        {
+            CreateRunOutcome::Created(id) => id,
+            other => panic!("expected a run, got {other:?}"),
+        }
+    }
+
+    /// Ask for a run and report what the database decided, without asserting.
+    async fn try_start_run(
+        &self,
+        expected: &[u8],
+        trigger_context: Option<&serde_json::Value>,
+    ) -> CreateRunOutcome {
+        self.db
+            .create_workflow_run(
+                self.community,
+                self.workflow_id,
+                None,
+                trigger_context,
+                expected,
+            )
+            .await
+            .expect("create run")
     }
 
     /// Republish the action under the same id, as an edit does.
@@ -288,11 +321,7 @@ fn outputs_from_trace(
 #[ignore = "requires Postgres"]
 async fn a_changed_command_never_runs_under_the_earlier_approval() {
     let (fixture, def_v1, hash_v1) = Fixture::new("v1").await;
-    let run_id = fixture
-        .db
-        .create_workflow_run(fixture.community, fixture.workflow_id, None, None)
-        .await
-        .expect("create run");
+    let run_id = fixture.start_run(&hash_v1).await;
 
     // 1. The run parks on the synthetic gate: nothing has been handed to a host.
     let result = executor::execute_run(
@@ -362,11 +391,7 @@ fn requests_for_step(sink: &RecordingSink, step_id: &str) -> usize {
 #[ignore = "requires Postgres"]
 async fn a_hash_stable_approval_still_releases_the_step() {
     let (fixture, def_v1, hash_v1) = Fixture::new("v1").await;
-    let run_id = fixture
-        .db
-        .create_workflow_run(fixture.community, fixture.workflow_id, None, None)
-        .await
-        .expect("create run");
+    let run_id = fixture.start_run(&hash_v1).await;
     executor::execute_run(
         &fixture.engine,
         fixture.community,
@@ -394,23 +419,17 @@ async fn a_hash_stable_approval_still_releases_the_step() {
 #[tokio::test]
 #[ignore = "requires Postgres"]
 async fn a_bound_checkout_stays_bound_across_the_approval() {
-    let (fixture, def_v1, _hash_v1) = Fixture::new("v1").await;
+    let (fixture, def_v1, hash_v1) = Fixture::new("v1").await;
     let sha = "a".repeat(40);
     let trigger_ctx = TriggerContext {
         checkout: sha.clone(),
         ..Default::default()
     };
     let trigger_json = serde_json::to_value(&trigger_ctx).expect("trigger context");
-    let run_id = fixture
-        .db
-        .create_workflow_run(
-            fixture.community,
-            fixture.workflow_id,
-            None,
-            Some(&trigger_json),
-        )
-        .await
-        .expect("create run");
+    let run_id = match fixture.try_start_run(&hash_v1, Some(&trigger_json)).await {
+        CreateRunOutcome::Created(id) => id,
+        other => panic!("expected a run, got {other:?}"),
+    };
     executor::execute_run(
         &fixture.engine,
         fixture.community,
@@ -461,11 +480,7 @@ async fn an_edit_between_two_steps_stops_the_run() {
         )
         .await
         .expect("grant");
-    let run_id = fixture
-        .db
-        .create_workflow_run(fixture.community, fixture.workflow_id, None, None)
-        .await
-        .expect("create run");
+    let run_id = fixture.start_run(&hash_v1).await;
     executor::execute_run(
         &fixture.engine,
         fixture.community,
@@ -520,11 +535,7 @@ async fn a_duplicate_result_does_not_repeat_the_command() {
         )
         .await
         .expect("grant");
-    let run_id = fixture
-        .db
-        .create_workflow_run(fixture.community, fixture.workflow_id, None, None)
-        .await
-        .expect("create run");
+    let run_id = fixture.start_run(&hash_v1).await;
     executor::execute_run(
         &fixture.engine,
         fixture.community,
@@ -576,11 +587,7 @@ async fn an_autorun_grant_re_arms_on_a_changed_definition() {
     let (def_v2, hash_v2) = fixture
         .publish(&one_step_yaml(&fixture.project, "v2"))
         .await;
-    let run_v2 = fixture
-        .db
-        .create_workflow_run(fixture.community, fixture.workflow_id, None, None)
-        .await
-        .expect("run v2");
+    let run_v2 = fixture.start_run(&hash_v2).await;
     let result = executor::execute_run(
         &fixture.engine,
         fixture.community,
@@ -614,11 +621,7 @@ async fn an_autorun_grant_re_arms_on_a_changed_definition() {
         )
         .await
         .expect("grant v2");
-    let run_v2b = fixture
-        .db
-        .create_workflow_run(fixture.community, fixture.workflow_id, None, None)
-        .await
-        .expect("run v2b");
+    let run_v2b = fixture.start_run(&hash_v2).await;
     let result = executor::execute_run(
         &fixture.engine,
         fixture.community,
@@ -682,4 +685,142 @@ fn a_run_without_a_binding_is_unknown_not_bound() {
         crate::RUN_STOPPED_DEFINITION_CHANGED
     );
     assert!(crate::run_definition_stop(&run(Some(vec![0xab; 32])), &workflow).is_none());
+}
+
+/// How many messages the run actually posted — the observable effect of a
+/// substituted body.
+fn messages(sink: &RecordingSink) -> usize {
+    sink.messages.lock().expect("messages lock").len()
+}
+
+/// A one-step action whose message text and firing condition both depend on
+/// the published revision, so executing the wrong body is observable.
+fn conditional_yaml(project: &str, text: &str, when: &str) -> String {
+    format!(
+        "name: verify\nproject: '{project}'\ntrigger:\n  on: manual\nsteps:\n  - id: notify\n    action: send_message\n    if: \"trigger_text == \\\"{when}\\\"\"\n    text: {text}\n"
+    )
+}
+
+/// **Review finding 2, the creation race.** A trigger handler reads A; B is
+/// published; the handler asks for a run. No run may exist that carries B's
+/// binding while the handler holds A's body — so no run is created at all,
+/// and A's step never runs.
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn a_run_is_not_created_for_a_definition_that_moved() {
+    let (fixture, def_a, hash_a) =
+        Fixture::with_yaml(|project| conditional_yaml(project, "from-a", "go")).await;
+    let (_def_b, hash_b) = fixture
+        .publish(&conditional_yaml(&fixture.project, "from-b", "stop"))
+        .await;
+    assert_ne!(hash_a, hash_b);
+
+    let trigger_ctx = TriggerContext {
+        text: "go".into(),
+        ..Default::default()
+    };
+    let outcome = fixture.try_start_run(&hash_a, None).await;
+
+    // If a run were created here, it would carry B's hash while the caller
+    // holds A's body — the interleaving the review names. Execute exactly
+    // what such a caller would execute, so the effect is measurable.
+    if let CreateRunOutcome::Created(run_id) = outcome {
+        let _ = executor::execute_run(
+            &fixture.engine,
+            fixture.community,
+            run_id,
+            &def_a,
+            &trigger_ctx,
+        )
+        .await;
+    }
+
+    assert_eq!(
+        messages(&fixture.sink),
+        0,
+        "a step from a definition that is no longer published must not run"
+    );
+    match outcome {
+        CreateRunOutcome::DefinitionChanged { expected, current } => {
+            assert_eq!(expected, hash_a, "the refusal names what the caller parsed");
+            assert_eq!(current, hash_b, "and what is published now");
+        }
+        CreateRunOutcome::Created(_) => {
+            panic!("a run was created for a definition the caller no longer holds")
+        }
+    }
+}
+
+/// **Review finding 2, the execution fence.** Even given a run that *is*
+/// bound to the published definition, the engine must refuse a body that is
+/// not that definition — the two database rows agreeing says nothing about
+/// what is in the caller's hand.
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn the_engine_refuses_a_body_that_is_not_the_published_definition() {
+    let (fixture, def_a, hash_a) =
+        Fixture::with_yaml(|project| conditional_yaml(project, "from-a", "go")).await;
+    let (_def_b, hash_b) = fixture
+        .publish(&conditional_yaml(&fixture.project, "from-b", "stop"))
+        .await;
+    assert_ne!(hash_a, hash_b);
+
+    // A run legitimately bound to B: run row and workflow row agree, so the
+    // run-versus-row comparison alone permits it.
+    let run_id = fixture.start_run(&hash_b).await;
+    let trigger_ctx = TriggerContext {
+        text: "go".into(),
+        ..Default::default()
+    };
+    let result = executor::execute_run(
+        &fixture.engine,
+        fixture.community,
+        run_id,
+        &def_a,
+        &trigger_ctx,
+    )
+    .await
+    .expect("segment");
+
+    assert_eq!(
+        messages(&fixture.sink),
+        0,
+        "A's condition and step must not be evaluated under B's binding"
+    );
+    assert_eq!(
+        result.stopped.as_ref().map(|stop| stop.code()),
+        Some(crate::RUN_STOPPED_DEFINITION_CHANGED)
+    );
+    fixture
+        .engine
+        .finalize_run(fixture.community, run_id, Ok(result), None)
+        .await;
+    assert_eq!(
+        fixture.run(run_id).await.error_code.as_deref(),
+        Some(crate::RUN_STOPPED_DEFINITION_CHANGED)
+    );
+}
+
+/// The ordinary case still works: the body the caller parsed is the published
+/// one, the run is created, and the step runs.
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn an_unchanged_definition_still_starts_and_runs() {
+    let (fixture, def_a, hash_a) =
+        Fixture::with_yaml(|project| conditional_yaml(project, "from-a", "go")).await;
+    let run_id = fixture.start_run(&hash_a).await;
+    let trigger_ctx = TriggerContext {
+        text: "go".into(),
+        ..Default::default()
+    };
+    executor::execute_run(
+        &fixture.engine,
+        fixture.community,
+        run_id,
+        &def_a,
+        &trigger_ctx,
+    )
+    .await
+    .expect("segment");
+    assert_eq!(messages(&fixture.sink), 1);
 }

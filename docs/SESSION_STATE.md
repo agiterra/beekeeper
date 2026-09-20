@@ -16248,7 +16248,6 @@ removed from here.
      - Gates on `work/lane-198-contract-a2`, bare after committing:
        `cargo fmt --all --check`, `cargo clippy -p buzz-core --all-targets --
        -D warnings`, `cargo test -p buzz-core`,
-||||||| parent of 6e8e371cb (docs(nip-pw): the project-work NIP, written from the frozen contract)
        `node conformance/project-work/check-fixtures.mjs`,
        `just file-size-check`, `just current-state-check`.
      - **Addendum, amendment A3 (same day).** The implementing lane read the
@@ -16274,6 +16273,92 @@ removed from here.
        fixtures cannot drift again. Changed: `fork-descendant` and
        `goal-changed` expected folds, README § (c), `check-fixtures.mjs`. Each
        new guard was proven to bite by reintroducing the defect.
+199. **Both definition-binding races Astra's Wave 0 review named are real, and
+     both are closed (2026-09-20, lane 199; source:
+     `docs/history/2026-09-20-astra-wave0-review.md` findings 1 and 2, against
+     `c0b474548`). Item 193's fix was necessary and not sufficient.** Built,
+     gated, not landed and not exercised against a live host.
+     - **Finding 1 reproduced — an action-scope grant recorded a definition
+       nobody approved.** `handle_approval_grant` compared the run against the
+       published definition, then **reloaded the workflow** and wrote the
+       autorun grant against *that* hash. Forced with a one-shot barrier that
+       holds the handler between the comparison and the reload
+       (`tests::pause_before_autorun_grant`, `#[cfg(test)]` only): comparison
+       sees A/A, B is published in the window, the grant is written.
+       **Observed before the fix: `grant for the approved A: false, grant for
+       the unapproved B: true`, and a fresh B run reached a host with
+       `unapproved_host_requests = 1`** — consent had moved to a command the
+       person never saw, and the host cannot tell (its own file and the
+       request hash agree, `action_steps.rs:285`). After the fix: A true,
+       B false, host requests 0, and the fresh B run parks on its gate.
+     - **Fix 1.** The run's binding is read **once**, before the comparison,
+       and is what the grant is written against
+       (`ApprovalBinding::Bound(Vec<u8>)`,
+       `crates/buzz-relay/src/handlers/command_executor.rs`). The workflow row
+       is still loaded — the kind:46015 needs its channel — but its hash is no
+       longer consulted; `publish_autorun_changed` now takes the hash
+       explicitly, so the announcement names what was actually written. A run
+       with no binding cannot reach the grant at all: it is refused at the
+       comparison with `definition_unknown` (item 193), so no action-scope
+       grant can be created for one.
+     - **Finding 2 reproduced — a run could carry B's hash while the engine
+       executed A's body.** Item 193 bound the run to the hash *in the
+       database at INSERT*, and the execution check compared only the two
+       database rows; it never looked at the `def` argument. So: parse A,
+       B is published, the INSERT binds B, the check sees B/B and runs A. Two
+       measurements, each with a one-step action whose **firing condition and
+       message both change** between revisions: run creation then execution of
+       the parsed body — **before: 1 message sent, after: 0** (no run is
+       created at all); and, separately, the engine handed A's body for a run
+       legitimately bound to B — **before: 1, after: 0**.
+     - **Fix 2, at creation.** `create_workflow_run` now takes the hash of the
+       definition the caller parsed and the `INSERT … SELECT` carries
+       `AND w.definition_hash = $6`, so the binding is admitted atomically
+       against the caller's own read. It returns
+       `CreateRunOutcome::{Created, DefinitionChanged}`
+       (`crates/buzz-db/src/workflow.rs`) — a republication is an ordinary
+       outcome every trigger path must face, not an error, and **no run
+       exists** in that case. Callers, all four the review names: the manual
+       trigger answers the requester `conflict: … (definition_changed)`
+       (`command_executor.rs` `handle_workflow_trigger`); the webhook answers
+       HTTP 409 `definition_changed` (`crates/buzz-relay/src/api/bridge.rs`);
+       event triggers, `ref_updated` and schedules log it and **do not retry
+       the body they hold** (`crates/buzz-workflow/src/lib.rs`). The scheduled
+       path keeps its claim row with a NULL `workflow_run_id`, so the instant
+       is not re-fired with a stale body.
+     - **Fix 2, at execution.** `check_run_definition` now also runs
+       `executed_definition_stop`: the body about to be executed is hashed and
+       compared with the published definition, **both normalized through
+       `WorkflowDef`** — a webhook definition's injected `_webhook_secret` is
+       covered by the stored hash and not by the parsed form, so a raw
+       comparison would refuse every honest webhook run. New
+       `RunStop::ExecutingADifferentDefinition`, code `definition_changed`.
+       The resume and emission fences from item 193 are unchanged; this is a
+       third check, not a replacement.
+     - **Correction to item 193.** The doc comment at
+       `crates/buzz-db/src/workflow.rs` claimed that binding the newer hash
+       "fails closed, which is the point". That was false — the execution
+       check compared database rows to each other and would have passed. The
+       comment is replaced with what the code now does, and `schema/schema.sql`
+       says the same. Nothing in the already-applied migration 0046 was
+       touched (its checksum is fixed).
+     - **Tests** (Postgres, throwaway database; never the dev database):
+       `crates/buzz-relay/src/handlers/command_executor.rs` — the
+       barrier-controlled grant race, asserting the grant names A only and a
+       fresh B run reaches no host.
+       `crates/buzz-workflow/src/run_definition_tests.rs` — read-A /
+       publish-B / create (no run, and the refusal names both hashes);
+       the engine refusing A's body under a run legitimately bound to B; and
+       an unchanged definition still starting and running its step, so the
+       fences are not simply refusing everything. 14/14 `-p buzz-workflow
+       --lib --ignored`, 10/10 for the relay's workflow and host-step ignored
+       set, plus the whole `-p buzz-workflow -p buzz-db -p buzz-relay --lib`
+       suites.
+     - **Owed, unchanged from 193.** No wire-level e2e and no live host; no
+       relay was started on this machine. The two races were closed against
+       the relay's own handlers and the real engine, not against a running
+       relay, and the review itself was source-derived rather than a live
+       exploit.
 
 ## 3a. Environment facts that cost real time (do not rediscover)
 

@@ -406,9 +406,11 @@ CREATE TABLE workflow_runs (
     error_message       TEXT,
     error_code          TEXT,
     -- The definition this run was created from, bound in the run's own INSERT
-    -- (migration 0046). NULL only for runs that predate the column: they stay
-    -- readable and refuse to resume, because nothing can say what their
-    -- operator approved.
+    -- (migration 0046). The INSERT admits the hash the caller parsed and
+    -- succeeds only while that is still the published one (ledger 199), so a
+    -- run never carries one definition while the engine holds another's body.
+    -- NULL only for runs that predate the column: they stay readable and
+    -- refuse to resume, because nothing can say what their operator approved.
     definition_hash     BYTEA,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (community_id, id),

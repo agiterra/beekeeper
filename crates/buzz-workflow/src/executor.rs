@@ -1335,13 +1335,29 @@ pub enum RunStop {
         /// Lowercase hex of the definition stored now.
         current_definition_hash: String,
     },
+    /// The body the engine was handed is not the published definition the run
+    /// is bound to. A trigger handler parses a definition and then asks for a
+    /// run; a republication in between must not leave the engine evaluating
+    /// one definition's conditions and steps under another's binding (ledger
+    /// 199, review finding 2). Both hashes are normalized through
+    /// [`WorkflowDef`](crate::schema::WorkflowDef), so a webhook definition's
+    /// injected secret — which the stored hash covers and the parsed form
+    /// does not — cannot make an honest pair look like a substitution.
+    ExecutingADifferentDefinition {
+        /// Lowercase hex of the normalized body the engine was handed.
+        executed_definition_hash: String,
+        /// Lowercase hex of the normalized published definition.
+        current_definition_hash: String,
+    },
 }
 
 impl RunStop {
     /// Stable machine-readable reason, written to `workflow_runs.error_code`.
     pub const fn code(&self) -> &'static str {
         match self {
-            Self::DefinitionChanged { .. } => RUN_STOPPED_DEFINITION_CHANGED,
+            Self::DefinitionChanged { .. } | Self::ExecutingADifferentDefinition { .. } => {
+                RUN_STOPPED_DEFINITION_CHANGED
+            }
             Self::DefinitionUnknown { .. } => RUN_STOPPED_DEFINITION_UNKNOWN,
         }
     }
@@ -1365,6 +1381,15 @@ impl RunStop {
                 "this run predates definition binding, so nothing can say which definition it \
                  was approved for (the published definition is {current_definition_hash}); it \
                  stays readable but cannot execute — start a fresh run"
+            ),
+            Self::ExecutingADifferentDefinition {
+                executed_definition_hash,
+                current_definition_hash,
+            } => format!(
+                "the body handed to the engine ({executed_definition_hash}) is not the \
+                 published definition this run is bound to ({current_definition_hash}), so the \
+                 conditions and steps it would evaluate are not the ones anyone published; \
+                 this run stops — start a fresh run"
             ),
         }
     }
@@ -1390,7 +1415,33 @@ pub fn run_definition_stop(
     }
 }
 
-/// Load the run and its workflow and apply [`run_definition_stop`].
+/// Compare the body the engine is about to execute with the published
+/// definition, both normalized through [`WorkflowDef`](crate::schema::WorkflowDef).
+///
+/// [`run_definition_stop`] answers "is the run still the row it was created
+/// from"; this answers "is the body in my hand that row". Both are needed:
+/// the first catches an edit after creation, the second catches a body parsed
+/// before an edit and carried past it.
+pub fn executed_definition_stop(
+    def: &WorkflowDef,
+    workflow: &buzz_db::workflow::WorkflowRecord,
+) -> Result<Option<RunStop>, WorkflowError> {
+    let executed = crate::hash::definition_hash(def)?;
+    let published: WorkflowDef = serde_json::from_value(workflow.definition.clone())
+        .map_err(|error| WorkflowError::InvalidDefinition(format!("stored definition: {error}")))?;
+    let current = crate::hash::definition_hash(&published)?;
+    if executed == current {
+        return Ok(None);
+    }
+    Ok(Some(RunStop::ExecutingADifferentDefinition {
+        executed_definition_hash: hex::encode(executed),
+        current_definition_hash: hex::encode(current),
+    }))
+}
+
+/// Load the run and its workflow and apply both comparisons:
+/// [`run_definition_stop`] (the run against the published row) and
+/// [`executed_definition_stop`] (the body in hand against the same row).
 ///
 /// A database error is *not* an answer: it propagates, so a run is never
 /// allowed to proceed because the check could not be made.
@@ -1398,13 +1449,17 @@ pub async fn check_run_definition(
     engine: &WorkflowEngine,
     community_id: CommunityId,
     run_id: Uuid,
+    def: &WorkflowDef,
 ) -> Result<Option<RunStop>, WorkflowError> {
     let run = engine.db.get_workflow_run(community_id, run_id).await?;
     let workflow = engine
         .db
         .get_workflow(community_id, run.workflow_id)
         .await?;
-    Ok(run_definition_stop(&run, &workflow))
+    if let Some(stop) = run_definition_stop(&run, &workflow) {
+        return Ok(Some(stop));
+    }
+    executed_definition_stop(def, &workflow)
 }
 
 /// Rich return type from `execute_run` / `execute_from_step`.
@@ -1578,7 +1633,7 @@ async fn execute_steps(
     // an approval or a host result — starts by checking that the run is still
     // the definition it was created from. A step that already ran is not
     // re-run; a step that has not run yet does not run at all.
-    match check_run_definition(engine, community_id, run_id).await {
+    match check_run_definition(engine, community_id, run_id, def).await {
         Ok(None) => {}
         Ok(Some(stop)) => {
             warn!(

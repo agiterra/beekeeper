@@ -2407,11 +2407,41 @@ pub async fn workflow_webhook(
         .await
         .map_err(|_| not_found("workflow not found"))?;
 
-    let run_id = state
+    // Ledger 199: the run is admitted against the hash of the definition this
+    // handler read and is about to execute. A republication between the read
+    // above and this insert produces no run — the caller is told the
+    // definition changed, and the body already in hand is never retried
+    // against the new definition's binding.
+    let run_id = match state
         .db
-        .create_workflow_run(community_id, id, None, trigger_ctx_json.as_ref())
+        .create_workflow_run(
+            community_id,
+            id,
+            None,
+            trigger_ctx_json.as_ref(),
+            &workflow.definition_hash,
+        )
         .await
-        .map_err(|e| super::internal_error(&format!("db error: {e}")))?;
+        .map_err(|e| super::internal_error(&format!("db error: {e}")))?
+    {
+        buzz_db::workflow::CreateRunOutcome::Created(run_id) => run_id,
+        buzz_db::workflow::CreateRunOutcome::DefinitionChanged { current, .. } => {
+            tracing::warn!(
+                workflow_id = %id,
+                current_definition_hash = %hex::encode(current),
+                "webhook: definition_changed — the action was republished while this run was \
+                 being started; no run was created"
+            );
+            return Err((
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({
+                    "error": "definition_changed",
+                    "message": "the workflow definition changed while this run was being \
+                                started; re-send the request",
+                })),
+            ));
+        }
+    };
 
     // Spawn workflow execution asynchronously.
     let engine = Arc::clone(&state.workflow_engine);

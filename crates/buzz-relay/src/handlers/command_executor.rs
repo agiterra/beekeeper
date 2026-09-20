@@ -1223,16 +1223,34 @@ async fn handle_workflow_trigger(
     let trigger_ctx_json = serde_json::to_value(&trigger_ctx).ok();
 
     let event_id_bytes = event.id.as_bytes().to_vec();
-    let run_id = state
+    // Ledger 199: the run is admitted against the hash of the definition this
+    // handler read, validated and is about to execute. If the action was
+    // republished in between, no run is created and the requester is told so
+    // — the checks above (the `checkout: required` refusal, the owner
+    // authority check) were made against a definition that is no longer
+    // published, so starting anything under them would be a lie.
+    let run_id = match state
         .db
         .create_workflow_run(
             community_id,
             workflow_id,
             Some(&event_id_bytes),
             trigger_ctx_json.as_ref(),
+            &workflow.definition_hash,
         )
         .await
-        .map_err(|e| IngestError::Internal(format!("error: db create_workflow_run: {e}")))?;
+        .map_err(|e| IngestError::Internal(format!("error: db create_workflow_run: {e}")))?
+    {
+        buzz_db::workflow::CreateRunOutcome::Created(run_id) => run_id,
+        buzz_db::workflow::CreateRunOutcome::DefinitionChanged { current, .. } => {
+            return Err(IngestError::Rejected(format!(
+                "conflict: the action definition changed while this run was being started \
+                 (it is now {}); nothing was started — read it again and trigger it again \
+                 (definition_changed)",
+                hex::encode(current)
+            )));
+        }
+    };
 
     // Commit: event + run creation succeeded atomically.
     tx.commit()
@@ -1406,17 +1424,21 @@ async fn handle_approval_grant(
     // earlier consent. A run that carries no binding at all (created before
     // migration 0046) can never establish what was consented to, so it stops
     // too. Either way the remedy is a fresh run and a fresh approval.
-    if let Some(stop) = run_definition_stop_for_approval(state, tenant.community(), &approval)
-        .await
-        .map_err(|e| IngestError::Internal(format!("error: definition binding: {e}")))?
-    {
-        stop_run(state, tenant.community(), approval.run_id, &stop).await;
-        return Err(IngestError::Rejected(format!(
-            "invalid: {} ({})",
-            stop.message(),
-            stop.code()
-        )));
-    }
+    let approved_definition_hash =
+        match run_definition_stop_for_approval(state, tenant.community(), &approval)
+            .await
+            .map_err(|e| IngestError::Internal(format!("error: definition binding: {e}")))?
+        {
+            ApprovalBinding::Bound(hash) => hash,
+            ApprovalBinding::Stop(stop) => {
+                stop_run(state, tenant.community(), approval.run_id, &stop).await;
+                return Err(IngestError::Rejected(format!(
+                    "invalid: {} ({})",
+                    stop.message(),
+                    stop.code()
+                )));
+            }
+        };
 
     // 4. Validate caller is authorized approver
     approver_admitted(
@@ -1473,6 +1495,15 @@ async fn handle_approval_grant(
     // the definition hash as stored *now*, and the relay says so as a 46015.
     // An edit changes the hash and re-arms the gate without any revocation.
     if grant_content.scope == buzz_core::workflow_autorun::ApprovalScope::Action {
+        // The grant is bound to **the approved run's** hash, which was read
+        // once above and cannot move. Reading the workflow row again here and
+        // using *its* hash is the race review finding 1 names: a publication
+        // landing between the comparison and this insert would record consent
+        // for a definition the person never saw, and a fresh run of it would
+        // then need no approval at all. The workflow row is still loaded —
+        // the kind:46015 needs its channel — but its hash is not consulted.
+        #[cfg(test)]
+        tests::pause_before_autorun_grant().await;
         let workflow = state
             .db
             .get_workflow(tenant.community(), approval.workflow_id)
@@ -1483,7 +1514,7 @@ async fn handle_approval_grant(
             .create_autorun_grant(
                 tenant.community(),
                 approval.workflow_id,
-                &workflow.definition_hash,
+                &approved_definition_hash,
                 &self_bytes,
                 event.id.as_bytes(),
             )
@@ -1493,6 +1524,7 @@ async fn handle_approval_grant(
             state,
             tenant.community(),
             &workflow,
+            &approved_definition_hash,
             buzz_core::workflow_autorun::AutorunChange::Granted,
             &self_hex,
             &event.id.to_hex(),
@@ -1537,10 +1569,14 @@ async fn handle_approval_grant(
 /// Publish the relay-signed kind:46015 that records an autorun change. A
 /// failure is logged, not fatal: the grant row is the fact, the event is its
 /// announcement.
+/// `definition_hash` is passed explicitly rather than read off `workflow`:
+/// a grant announces the hash it was actually written for — the approved
+/// run's — which a concurrent republication must not be able to change.
 async fn publish_autorun_changed(
     state: &Arc<AppState>,
     community: CommunityId,
     workflow: &buzz_db::workflow::WorkflowRecord,
+    definition_hash: &[u8],
     change: buzz_core::workflow_autorun::AutorunChange,
     by_hex: &str,
     source_event_id: &str,
@@ -1551,7 +1587,7 @@ async fn publish_autorun_changed(
     let changed = buzz_core::workflow_autorun::AutorunChanged {
         schema: buzz_core::workflow_autorun::AUTORUN_SCHEMA.into(),
         workflow_id: workflow.id.to_string(),
-        definition_hash: hex::encode(&workflow.definition_hash),
+        definition_hash: hex::encode(definition_hash),
         change,
         by: by_hex.to_ascii_lowercase(),
         source_event_id: source_event_id.to_owned(),
@@ -1641,10 +1677,12 @@ async fn handle_autorun_revoke(
     tx.commit()
         .await
         .map_err(|e| IngestError::Internal(format!("error: commit transaction: {e}")))?;
+    let revoked_definition_hash = workflow.definition_hash.clone();
     publish_autorun_changed(
         state,
         tenant.community(),
         &workflow,
+        &revoked_definition_hash,
         buzz_core::workflow_autorun::AutorunChange::Revoked,
         &self_hex,
         &event.id.to_hex(),
@@ -1816,13 +1854,35 @@ async fn run_definition_stop_for_approval(
     state: &Arc<AppState>,
     community_id: CommunityId,
     approval: &buzz_db::workflow::ApprovalRecord,
-) -> Result<Option<buzz_workflow::RunStop>, buzz_db::error::DbError> {
+) -> Result<ApprovalBinding, buzz_db::error::DbError> {
     let run = state
         .db
         .get_workflow_run(community_id, approval.run_id)
         .await?;
     let workflow = state.db.get_workflow(community_id, run.workflow_id).await?;
-    Ok(buzz_workflow::run_definition_stop(&run, &workflow))
+    match buzz_workflow::run_definition_stop(&run, &workflow) {
+        Some(stop) => Ok(ApprovalBinding::Stop(stop)),
+        // Reachable only when the run carries a hash equal to the published
+        // one, so the `unwrap_or_default` below cannot lose a binding; it is
+        // written this way rather than with an `expect` because a panic in an
+        // ingest path is never the right answer.
+        None => Ok(ApprovalBinding::Bound(
+            run.definition_hash.unwrap_or_default(),
+        )),
+    }
+}
+
+/// What the run behind an approval is bound to.
+///
+/// The bound hash is the run's own, read once, immutable, and it is what any
+/// action-scope grant is written against — never a later read of the
+/// workflow row, which a republication can move between the comparison and
+/// the insert (ledger 199, review finding 1).
+enum ApprovalBinding {
+    /// The run is bound to this definition hash, and it is the published one.
+    Bound(Vec<u8>),
+    /// The run may not act on this approval at all.
+    Stop(buzz_workflow::RunStop),
 }
 
 /// End a run with a named terminal reason, preserving its trace.
@@ -2176,6 +2236,48 @@ mod tests {
         );
     }
 
+    /// A one-shot rendezvous the race test installs to hold
+    /// `handle_approval_grant` between its binding comparison and the autorun
+    /// grant insert, so a republication can land in exactly that window.
+    ///
+    /// `None` by default, so no other test — and no production build, which
+    /// never compiles this module — is affected.
+    pub(super) struct GrantPause {
+        reached: tokio::sync::mpsc::Sender<()>,
+        resume: tokio::sync::Mutex<tokio::sync::mpsc::Receiver<()>>,
+    }
+
+    static GRANT_PAUSE: std::sync::Mutex<Option<std::sync::Arc<GrantPause>>> =
+        std::sync::Mutex::new(None);
+
+    /// Install the pause and return the test's two ends of it.
+    fn install_grant_pause() -> (
+        tokio::sync::mpsc::Receiver<()>,
+        tokio::sync::mpsc::Sender<()>,
+    ) {
+        let (reached_tx, reached_rx) = tokio::sync::mpsc::channel(1);
+        let (resume_tx, resume_rx) = tokio::sync::mpsc::channel(1);
+        *GRANT_PAUSE.lock().expect("grant pause lock") = Some(std::sync::Arc::new(GrantPause {
+            reached: reached_tx,
+            resume: tokio::sync::Mutex::new(resume_rx),
+        }));
+        (reached_rx, resume_tx)
+    }
+
+    fn remove_grant_pause() {
+        *GRANT_PAUSE.lock().expect("grant pause lock") = None;
+    }
+
+    /// Called by the handler. A no-op unless a test installed a pause.
+    pub(super) async fn pause_before_autorun_grant() {
+        let pause = GRANT_PAUSE.lock().expect("grant pause lock").clone();
+        let Some(pause) = pause else {
+            return;
+        };
+        let _ = pause.reached.send(()).await;
+        let _ = pause.resume.lock().await.recv().await;
+    }
+
     /// A community, a channel, a published one-step project action, a run
     /// parked on its synthetic approval gate, and the raw approval token.
     async fn approval_fixture(
@@ -2235,9 +2337,13 @@ mod tests {
             .expect("create workflow");
         let run_id = state
             .db
-            .create_workflow_run(community, workflow_id, None, None)
+            .create_workflow_run(community, workflow_id, None, None, &hash)
             .await
             .expect("create run");
+        let run_id = match run_id {
+            buzz_db::workflow::CreateRunOutcome::Created(id) => id,
+            other => panic!("expected a run, got {other:?}"),
+        };
         let token = Uuid::new_v4().to_string();
         state
             .db
@@ -2296,10 +2402,14 @@ mod tests {
     }
 
     fn grant_event(keys: &Keys, token: &str) -> Event {
+        grant_event_with_scope(keys, token, "run")
+    }
+
+    fn grant_event_with_scope(keys: &Keys, token: &str, scope: &str) -> Event {
         let token_hash = hex::encode(sha2::Sha256::digest(token.as_bytes()));
         EventBuilder::new(
             Kind::Custom(KIND_APPROVAL_GRANT as u16),
-            serde_json::json!({ "note": "ok", "scope": "run" }).to_string(),
+            serde_json::json!({ "note": "ok", "scope": scope }).to_string(),
         )
         .tags(vec![Tag::parse(["d", token_hash.as_str()]).expect("d tag")])
         .sign_with_keys(keys)
@@ -2312,6 +2422,198 @@ mod tests {
             scopes: vec![buzz_auth::Scope::MessagesWrite],
             auth_method: super::super::ingest::HttpAuthMethod::Nip98,
         }
+    }
+
+    /// Records the host-step requests the engine would have published, so a
+    /// test can count what reached a host.
+    #[derive(Default)]
+    struct CountingSink {
+        host_steps: std::sync::Mutex<Vec<buzz_core::host_step::HostStepRequested>>,
+    }
+
+    impl buzz_workflow::ActionSink for CountingSink {
+        fn send_message(
+            &self,
+            _community_id: CommunityId,
+            _channel_id: &str,
+            _text: &str,
+            _author_pubkey: &str,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<Output = Result<String, buzz_workflow::ActionSinkError>>
+                    + Send
+                    + '_,
+            >,
+        > {
+            Box::pin(async { Ok("00".repeat(32)) })
+        }
+
+        fn record_ci_result(
+            &self,
+            _community_id: CommunityId,
+            _result: &buzz_core::ci_result::CiResult,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<Output = Result<String, buzz_workflow::ActionSinkError>>
+                    + Send
+                    + '_,
+            >,
+        > {
+            Box::pin(async { Ok("00".repeat(32)) })
+        }
+
+        fn request_approval(
+            &self,
+            _community_id: CommunityId,
+            _request: &buzz_workflow::ApprovalRequest,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<Output = Result<String, buzz_workflow::ActionSinkError>>
+                    + Send
+                    + '_,
+            >,
+        > {
+            Box::pin(async { Ok("aa".repeat(32)) })
+        }
+
+        fn request_host_step(
+            &self,
+            _community_id: CommunityId,
+            request: &buzz_core::host_step::HostStepRequested,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<Output = Result<String, buzz_workflow::ActionSinkError>>
+                    + Send
+                    + '_,
+            >,
+        > {
+            self.host_steps
+                .lock()
+                .expect("host steps lock")
+                .push(request.clone());
+            Box::pin(async { Ok("bb".repeat(32)) })
+        }
+    }
+
+    /// Ledger 199, review finding 1: an action-scope grant must record the
+    /// definition the person actually approved, not whatever the workflow row
+    /// says by the time the grant is written.
+    ///
+    /// The interleaving, forced with a barrier: the handler's binding
+    /// comparison sees A/A; B is published; only then is the grant created.
+    /// Before the fix the grant named B, so a fresh B run needed no approval
+    /// at all.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn an_action_grant_records_the_definition_that_was_approved() {
+        let state = crate::state::tests::test_state().await;
+        let sink = std::sync::Arc::new(CountingSink::default());
+        state.workflow_engine.set_action_sink(sink.clone());
+        let (tenant, workflow_id, run_id, token) = approval_fixture(&state, "v1").await;
+        let community = tenant.community();
+        let hash_a = state
+            .db
+            .get_workflow(community, workflow_id)
+            .await
+            .expect("workflow a")
+            .definition_hash
+            .clone();
+
+        let (mut reached, resume) = install_grant_pause();
+        let approver = Keys::generate();
+        let event = grant_event_with_scope(&approver, &token, "action");
+        let handler = {
+            let state = Arc::clone(&state);
+            let tenant = tenant.clone();
+            let auth = http_auth(&approver);
+            tokio::spawn(async move { handle_approval_grant(&tenant, &state, &event, &auth).await })
+        };
+
+        // The handler has compared A against A and is holding before the
+        // grant insert. Publish B in exactly that window.
+        reached.recv().await.expect("handler reached the pause");
+        republish(&state, community, workflow_id).await;
+        let hash_b = state
+            .db
+            .get_workflow(community, workflow_id)
+            .await
+            .expect("workflow b")
+            .definition_hash
+            .clone();
+        assert_ne!(hash_a, hash_b);
+        resume.send(()).await.expect("release the handler");
+        let accepted = handler.await.expect("handler joined");
+        remove_grant_pause();
+        assert!(accepted.is_ok(), "the grant itself is accepted");
+
+        // The grant names A. Nothing has consented to B.
+        let granted_a = state
+            .db
+            .find_active_autorun_grant(community, workflow_id, &hash_a)
+            .await
+            .expect("grant lookup a")
+            .is_some();
+        let granted_b = state
+            .db
+            .find_active_autorun_grant(community, workflow_id, &hash_b)
+            .await
+            .expect("grant lookup b")
+            .is_some();
+        assert!(
+            granted_a && !granted_b,
+            "the grant must name the approved definition and only that one \
+             (grant for the approved A: {granted_a}, grant for the unapproved B: {granted_b})"
+        );
+
+        // And a fresh run of B still asks: zero host requests without approval.
+        let workflow_b = state
+            .db
+            .get_workflow(community, workflow_id)
+            .await
+            .expect("workflow b");
+        let def_b: buzz_workflow::WorkflowDef =
+            serde_json::from_value(workflow_b.definition.clone()).expect("parse b");
+        let run_b = match state
+            .db
+            .create_workflow_run(community, workflow_id, None, None, &hash_b)
+            .await
+            .expect("create b run")
+        {
+            buzz_db::workflow::CreateRunOutcome::Created(id) => id,
+            other => panic!("expected a run, got {other:?}"),
+        };
+        let result = buzz_workflow::executor::execute_run(
+            &state.workflow_engine,
+            community,
+            run_b,
+            &def_b,
+            &TriggerContext::default(),
+        )
+        .await
+        .expect("execute b");
+        let unapproved_host_requests = sink.host_steps.lock().expect("lock").len();
+        assert_eq!(
+            unapproved_host_requests, 0,
+            "a fresh run of a definition nobody approved must reach no host"
+        );
+        assert!(
+            matches!(
+                result.suspension,
+                Some(buzz_workflow::Suspension::Approval { .. })
+            ),
+            "and it must ask: {:?}",
+            result.suspension.map(|s| s.step_id().to_owned())
+        );
+        // The originally approved run is untouched by any of this.
+        assert_eq!(
+            state
+                .db
+                .get_workflow_run(community, run_id)
+                .await
+                .expect("run")
+                .definition_hash,
+            Some(hash_a)
+        );
     }
 
     /// Ledger 193: an approval is consent for one definition. Editing the

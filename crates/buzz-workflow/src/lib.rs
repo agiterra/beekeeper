@@ -489,10 +489,24 @@ impl WorkflowEngine {
                     workflow.id,
                     Some(&trigger_event_id_bytes),
                     Some(&trigger_ctx_json),
+                    &workflow.definition_hash,
                 )
                 .await
             {
-                Ok(id) => id,
+                Ok(buzz_db::workflow::CreateRunOutcome::Created(id)) => id,
+                Ok(buzz_db::workflow::CreateRunOutcome::DefinitionChanged { current, .. }) => {
+                    // The action was republished between reading it and
+                    // starting the run. No run exists, and this body must not
+                    // be retried: the next trigger reads the new definition
+                    // (ledger 199).
+                    tracing::warn!(
+                        workflow_id = %workflow.id,
+                        current_definition_hash = %hex::encode(current),
+                        "definition_changed: the action was republished while a run was being \
+                         started; no run was created and this body is not retried"
+                    );
+                    continue;
+                }
                 Err(e) => {
                     tracing::error!(workflow_id = %workflow.id, "Failed to create run: {e}");
                     continue;
@@ -640,10 +654,24 @@ impl WorkflowEngine {
                         workflow.id,
                         Some(state_event_id),
                         Some(&trigger_ctx_json),
+                        &workflow.definition_hash,
                     )
                     .await
                 {
-                    Ok(id) => id,
+                    Ok(buzz_db::workflow::CreateRunOutcome::Created(id)) => id,
+                    Ok(buzz_db::workflow::CreateRunOutcome::DefinitionChanged {
+                        current, ..
+                    }) => {
+                        // Republished between the read and the start: no run,
+                        // and this body is not retried (ledger 199).
+                        tracing::warn!(
+                            workflow_id = %workflow.id,
+                            current_definition_hash = %hex::encode(current),
+                            "definition_changed: the action was republished while a \
+                             ref_updated run was being started; no run was created"
+                        );
+                        continue;
+                    }
                     Err(e) => {
                         tracing::error!(workflow_id = %workflow.id, "Failed to create run: {e}");
                         continue;
@@ -918,10 +946,26 @@ impl WorkflowEngine {
                         workflow.id,
                         None, // no trigger event for cron
                         trigger_ctx_json.as_ref(),
+                        &workflow.definition_hash,
                     )
                     .await
                 {
-                    Ok(id) => id,
+                    Ok(buzz_db::workflow::CreateRunOutcome::Created(id)) => id,
+                    Ok(buzz_db::workflow::CreateRunOutcome::DefinitionChanged {
+                        current, ..
+                    }) => {
+                        // Republished between the read and the claim's run
+                        // insert. The claim row stays (its `workflow_run_id`
+                        // NULL) so this instant is not re-fired with a stale
+                        // body; the next tick reads the new definition.
+                        tracing::warn!(
+                            workflow_id = %workflow.id,
+                            current_definition_hash = %hex::encode(current),
+                            "definition_changed: the action was republished while a scheduled \
+                             run was being started; no run was created"
+                        );
+                        continue;
+                    }
                     Err(e) => {
                         tracing::error!(
                             workflow_id = %workflow.id,
@@ -2510,8 +2554,12 @@ steps:
 
         // 1. Granted: straight to the host, no approval row.
         let run_id = db
-            .create_workflow_run(community, workflow_id, None, None)
+            .create_workflow_run(community, workflow_id, None, None, &hash)
             .await
+            .map(|outcome| match outcome {
+                buzz_db::workflow::CreateRunOutcome::Created(id) => id,
+                other => panic!("expected a run, got {other:?}"),
+            })
             .expect("run");
         let result = executor::execute_run(&engine, community, run_id, &def, &ctx)
             .await
@@ -2547,8 +2595,12 @@ steps:
         .await
         .expect("update");
         let run_b = db
-            .create_workflow_run(community, workflow_id, None, None)
+            .create_workflow_run(community, workflow_id, None, None, &hash_b)
             .await
+            .map(|outcome| match outcome {
+                buzz_db::workflow::CreateRunOutcome::Created(id) => id,
+                other => panic!("expected a run, got {other:?}"),
+            })
             .expect("run b");
         let result = executor::execute_run(&engine, community, run_b, &edited, &ctx)
             .await
@@ -2580,8 +2632,12 @@ steps:
             1
         );
         let run_c = db
-            .create_workflow_run(community, workflow_id, None, None)
+            .create_workflow_run(community, workflow_id, None, None, &hash)
             .await
+            .map(|outcome| match outcome {
+                buzz_db::workflow::CreateRunOutcome::Created(id) => id,
+                other => panic!("expected a run, got {other:?}"),
+            })
             .expect("run c");
         let result = executor::execute_run(&engine, community, run_c, &def, &ctx)
             .await
@@ -2603,6 +2659,9 @@ steps:
     pub(crate) struct RecordingSink {
         pub(crate) approvals: std::sync::Mutex<Vec<crate::action_sink::ApprovalRequest>>,
         pub(crate) host_steps: std::sync::Mutex<Vec<buzz_core::host_step::HostStepRequested>>,
+        /// Every message a step actually posted: the observable effect a
+        /// definition substitution would produce (ledger 199).
+        pub(crate) messages: std::sync::Mutex<Vec<String>>,
     }
 
     impl ActionSink for RecordingSink {
@@ -2610,11 +2669,15 @@ steps:
             &self,
             _community_id: CommunityId,
             _channel_id: &str,
-            _text: &str,
+            text: &str,
             _author_pubkey: &str,
         ) -> std::pin::Pin<
             Box<dyn std::future::Future<Output = Result<String, ActionSinkError>> + Send + '_>,
         > {
+            self.messages
+                .lock()
+                .expect("messages lock")
+                .push(text.to_owned());
             Box::pin(async { Ok("00".repeat(32)) })
         }
 
@@ -2693,8 +2756,12 @@ steps:
             .await
             .expect("create workflow");
         let run_id = db
-            .create_workflow_run(community, workflow_id, None, None)
+            .create_workflow_run(community, workflow_id, None, None, &hash)
             .await
+            .map(|outcome| match outcome {
+                buzz_db::workflow::CreateRunOutcome::Created(id) => id,
+                other => panic!("expected a run, got {other:?}"),
+            })
             .expect("create run");
 
         let sink = Arc::new(RecordingSink::default());

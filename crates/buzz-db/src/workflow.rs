@@ -996,27 +996,51 @@ pub async fn delete_workflow_for_owner(
 
 // -- Workflow Run CRUD --------------------------------------------------------
 
-/// Insert a new workflow run. Returns the new run's UUID.
+/// What happened when a caller tried to start a run.
+///
+/// A trigger handler parses a definition, then asks for a run. Between those
+/// two moments the action can be republished. The caller names the hash of
+/// the definition it actually parsed, and a run exists only if that is still
+/// the published one — so a run can never carry one definition's hash while
+/// the engine executes another's body (ledger 199, review finding 2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CreateRunOutcome {
+    /// The run was created, bound to the definition the caller named.
+    Created(Uuid),
+    /// The published definition is no longer the one the caller parsed, so no
+    /// run was created. The caller must re-read and decide again; it must not
+    /// retry with the body it already has.
+    DefinitionChanged {
+        /// The hash the caller named.
+        expected: Vec<u8>,
+        /// The hash published now.
+        current: Vec<u8>,
+    },
+}
+
+/// Insert a new workflow run bound to the definition the caller parsed.
 ///
 /// `trigger_context` is the serialized `TriggerContext` for this run. It is stored
 /// so that post-approval resume steps can restore the original trigger data and
 /// correctly resolve `{{trigger.*}}` template variables.
+///
+/// `expected_definition_hash` is the hash of the definition the caller read
+/// and is about to execute. The INSERT selects from the `workflows` row and
+/// only succeeds while that row still carries the same hash, so the binding
+/// is decided atomically with the run and is always the definition the caller
+/// holds. A workflow that does not exist is an error; a workflow whose
+/// definition moved on is [`CreateRunOutcome::DefinitionChanged`], not an
+/// error — it is an ordinary outcome that every trigger path must handle.
 pub async fn create_workflow_run(
     pool: &PgPool,
     community_id: CommunityId,
     workflow_id: Uuid,
     trigger_event_id: Option<&[u8]>,
     trigger_context: Option<&serde_json::Value>,
-) -> Result<Uuid> {
+    expected_definition_hash: &[u8],
+) -> Result<CreateRunOutcome> {
     let id = Uuid::new_v4();
 
-    // The definition hash is selected from the workflow row in the run's own
-    // INSERT, so the binding is atomic with the run and no caller can create
-    // an unbound one (ledger 193). If the definition were edited between the
-    // caller's read and this statement, the run binds the *newer* hash and
-    // the engine — which is about to execute the older parsed definition —
-    // stops it with `definition_changed`. That fails closed, which is the
-    // point.
     let inserted = sqlx::query(
         r#"
         INSERT INTO workflow_runs
@@ -1024,7 +1048,7 @@ pub async fn create_workflow_run(
              execution_trace, trigger_context, definition_hash)
         SELECT $1, $2, $3, 'pending', $4, 0, '[]', $5, w.definition_hash
         FROM workflows w
-        WHERE w.community_id = $1 AND w.id = $3
+        WHERE w.community_id = $1 AND w.id = $3 AND w.definition_hash = $6
         "#,
     )
     .bind(community_id.as_uuid())
@@ -1032,15 +1056,32 @@ pub async fn create_workflow_run(
     .bind(workflow_id)
     .bind(trigger_event_id)
     .bind(trigger_context)
+    .bind(expected_definition_hash)
     .execute(pool)
     .await?
     .rows_affected();
 
-    if inserted == 0 {
-        return Err(DbError::NotFound(format!("workflow {workflow_id}")));
+    if inserted == 1 {
+        return Ok(CreateRunOutcome::Created(id));
     }
 
-    Ok(id)
+    // Nothing was inserted: either the workflow is gone, or it is no longer
+    // the definition the caller parsed. Say which.
+    let current: Option<Vec<u8>> = sqlx::query_scalar(
+        r#"SELECT definition_hash FROM workflows WHERE community_id = $1 AND id = $2"#,
+    )
+    .bind(community_id.as_uuid())
+    .bind(workflow_id)
+    .fetch_optional(pool)
+    .await?;
+
+    match current {
+        Some(current) => Ok(CreateRunOutcome::DefinitionChanged {
+            expected: expected_definition_hash.to_vec(),
+            current,
+        }),
+        None => Err(DbError::NotFound(format!("workflow {workflow_id}"))),
+    }
 }
 
 /// Fetch a single workflow run by ID, scoped to its community.
@@ -2470,6 +2511,27 @@ mod tests {
     /// Insert a workflow whose tenant is `community`'s channel. Returns the
     /// workflow id and the owning community for callers that want to assert
     /// the resolved tenant.
+    /// A run bound to whatever definition its workflow currently publishes —
+    /// the shape a trigger handler produces. Tests that care about the
+    /// binding itself name the hash explicitly instead.
+    async fn make_run(pool: &PgPool, community: CommunityId, workflow_id: Uuid) -> Uuid {
+        let hash: Vec<u8> = sqlx::query_scalar(
+            r#"SELECT definition_hash FROM workflows WHERE community_id = $1 AND id = $2"#,
+        )
+        .bind(community.as_uuid())
+        .bind(workflow_id)
+        .fetch_one(pool)
+        .await
+        .expect("workflow definition hash");
+        match create_workflow_run(pool, community, workflow_id, None, None, &hash)
+            .await
+            .expect("create run")
+        {
+            CreateRunOutcome::Created(id) => id,
+            other => panic!("expected a run, got {other:?}"),
+        }
+    }
+
     async fn make_workflow_in(pool: &PgPool, community: CommunityId) -> (Uuid, CommunityId) {
         let owner = vec![0xa1; 32];
         ensure_user(pool, community, &owner)
@@ -2613,9 +2675,7 @@ mod tests {
             .expect("claim wins");
 
         // Create the run the won claim is responsible for, then attach it.
-        let run_id = create_workflow_run(&pool, community, workflow_id, None, None)
-            .await
-            .expect("create run ok");
+        let run_id = make_run(&pool, community, workflow_id).await;
 
         let attached =
             attach_scheduled_workflow_run(&pool, community, workflow_id, scheduled_for, run_id)
@@ -2642,9 +2702,7 @@ mod tests {
 
         // A second attach is a no-op: the `workflow_run_id IS NULL` guard means
         // an already-linked claim is never re-pointed to a different run.
-        let other_run = create_workflow_run(&pool, community, workflow_id, None, None)
-            .await
-            .expect("create second run ok");
+        let other_run = make_run(&pool, community, workflow_id).await;
         let reattached =
             attach_scheduled_workflow_run(&pool, community, workflow_id, scheduled_for, other_run)
                 .await
@@ -2923,12 +2981,8 @@ mod tests {
         insert_workflow_with_ids(&pool, community_a, workflow_id, channel_id, "wf-A").await;
         insert_workflow_with_ids(&pool, community_b, workflow_id, Uuid::new_v4(), "wf-B").await;
 
-        let run_a = create_workflow_run(&pool, community_a, workflow_id, None, None)
-            .await
-            .expect("run A");
-        let run_b = create_workflow_run(&pool, community_b, workflow_id, None, None)
-            .await
-            .expect("run B");
+        let run_a = make_run(&pool, community_a, workflow_id).await;
+        let run_b = make_run(&pool, community_b, workflow_id).await;
 
         let token = "shared-approval-token";
         let expires = Utc::now() + chrono::Duration::hours(1);
@@ -3111,9 +3165,7 @@ mod tests {
         let community = make_community(&pool).await;
         let workflow_id = Uuid::new_v4();
         insert_workflow_with_ids(&pool, community, workflow_id, Uuid::new_v4(), "nightly").await;
-        let run_id = create_workflow_run(&pool, community, workflow_id, None, None)
-            .await
-            .expect("run");
+        let run_id = make_run(&pool, community, workflow_id).await;
         create_host_step(
             &pool,
             CreateHostStepParams {
@@ -3224,9 +3276,7 @@ mod tests {
         );
 
         // A request whose window has closed cannot be claimed.
-        let late_run = create_workflow_run(&pool, community, workflow_id, None, None)
-            .await
-            .expect("late run");
+        let late_run = make_run(&pool, community, workflow_id).await;
         create_host_step(
             &pool,
             CreateHostStepParams {

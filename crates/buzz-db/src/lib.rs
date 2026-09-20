@@ -4448,7 +4448,11 @@ impl Db {
         workflow::find_by_owner_and_name(&self.pool, community_id, owner_pubkey, name).await
     }
 
-    /// Create a new workflow run.
+    /// Create a new workflow run bound to the definition the caller parsed.
+    ///
+    /// See [`workflow::create_workflow_run`]: a republication between the
+    /// caller's read and this call yields
+    /// [`workflow::CreateRunOutcome::DefinitionChanged`] and no run.
     #[datastore_span(name = "create_workflow_run", system = "postgresql")]
     pub async fn create_workflow_run(
         &self,
@@ -4456,13 +4460,15 @@ impl Db {
         workflow_id: Uuid,
         trigger_event_id: Option<&[u8]>,
         trigger_context: Option<&serde_json::Value>,
-    ) -> Result<Uuid> {
+        expected_definition_hash: &[u8],
+    ) -> Result<workflow::CreateRunOutcome> {
         workflow::create_workflow_run(
             &self.pool,
             community_id,
             workflow_id,
             trigger_event_id,
             trigger_context,
+            expected_definition_hash,
         )
         .await
     }
