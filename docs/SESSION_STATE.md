@@ -14669,6 +14669,119 @@ removed from here.
        note` and `bee sessions decide` take explicit flags rather than
        `--body`, so they get no `--example`; the module says so rather than
        printing an empty one.
+183. **Completion is a durable pending operation, and the settlement view
+     names the missing link (2026-09-20, lane 183, built on `fb9591cf6`;
+     fixes 179(a) and 178(e)).** Two defects with one cause: the protocol
+     could tell that an approval chain was incomplete and could not say
+     *where*, so both the CLI and a reading lead guessed. Andy's eight-seat
+     run spent six wakes and $9.33 reported collecting acknowledgements a
+     local preflight demanded, then ended 15 s after the last one arrived
+     without re-evaluating (179(a)); the kettle run's lead read three nulls
+     over a canonical approving disposition, concluded a *refutation* was
+     missing, and recalled the verifier (178(e)).
+     - (a) **`mission.completed` is published, not refused, when its
+       prerequisites are merely late.** The refusal lived in the CLI
+       (`crates/buzz-cli/src/commands/sessions/operations.rs`
+       `verify_completion_before_submit` at `fb9591cf6`), never in the relay
+       and never in the fold. It is now
+       `crates/buzz-cli/src/commands/sessions/operations_completion.rs`
+       `classify_completion_before_submit`: exactly three fold exclusion
+       classes mean *not yet* — `CompletionNotApproved`,
+       `CompletionBlockedByOpenDecision`, `CompletionNotVerified`
+       (`PENDING_COMPLETION_CODES`) — and a completion held for one of them
+       is signed, submitted, and answered `outcome: "pending"` with exit 0
+       and a `pending` object naming every unmet prerequisite. Every other
+       refusal — an unauthorized signer, a dangling or wrong-type pointer,
+       an invalid correction, a newer canonical terminal — still refuses
+       before the event reaches the relay, because no fact that later
+       arrives would make such a record terminal.
+     - (b) **The wire shape chosen is the completion itself: no new kind, no
+       new body field, nothing signed about the prerequisites.** The fold
+       has always re-derived settlement from the supplied event set, so the
+       *same* signed `mission.completed` becomes the session's canonical
+       terminal on the next read after its last prerequisite lands — proven
+       by `a_pending_completion_becomes_terminal_when_its_acknowledgement_arrives`
+       in `crates/buzz-core/src/coding_session_team_transaction_fold_settlement_tests.rs`,
+       which folds the same five events twice and gets `pending` then
+       `terminal` with nothing republished and no turn opened. A signed list
+       of unmet prerequisites was considered and rejected: it is a snapshot
+       that goes stale the instant the next record lands, and two sources of
+       one fact can disagree. The list a caller reads is therefore computed,
+       not claimed.
+     - (c) **The fold names the missing link.**
+       `CodingSessionTeamAssignmentSettlement.awaiting` is `Some` exactly
+       when `settled` is false and carries one of `report`, `disposition` or
+       `acknowledgement` plus the role and — where exactly one party can
+       supply it — the pubkey that owes it (`owedByActor` is null for a
+       disposition on purpose: founder, any active `lead` and any steer-grant
+       holder may all rule, so naming one would be a guess). It rides the
+       CLI's `fold.assignments[].awaiting` and the new
+       `fold.pendingCompletion`, so 178(e)'s reader now sees
+       `awaiting: acknowledgement by builder <pubkey>` where it saw three
+       nulls. `CodingSessionTeamFold.pending_completion` carries the held
+       completion's event id, code, the fold's own sentence and the
+       unsettled assignments it names; it is `None` when a completion did
+       fold, because a finished mission is not also a pending one.
+     - (d) **Software re-evaluates, in the provider's own pass.**
+       `crates/buzz-session-provider/src/pending_completion.rs`
+       `settlement_fact` names the only three arriving record classes that
+       can finish a held completion — an acknowledgement, a decision answer,
+       a verifier's refutation — and `Provider::on_team_transaction` now asks
+       the complete-discovery pass to re-read that channel when one lands.
+       Before this, `team_report_candidate` accepted reports and dropped
+       every other operation class silently, so those three arrived and
+       caused nothing at all. No wake intent is minted for a settlement
+       fact and no seat is woken: the re-evaluation is a fold over signed
+       facts. **`ci_continuation` was deliberately not reused**, on review of
+       its contract: it exists to deliver one model turn exactly once against
+       an exact target, and a pending completion has no turn to deliver, no
+       target, and an already-signed record — registering it there would add
+       a durable promise whose only action is to publish nothing, plus a
+       second copy of a fact the fold derives.
+     - (e) **This is an intentional contract change to the writer, and only
+       to the writer.** `docs/design/portable-team-loop/PLAN.md:123` keeps
+       provider delivery orthogonal to semantic acknowledgement, and that
+       separation is untouched: no 44220 receipt became an acknowledgement,
+       and the fold's reading of every historical ACK is byte-identical. What
+       changed is that publishing a completion early is no longer refused.
+       The `assigned -> reported -> ruled -> acknowledged -> settled` fold is
+       unchanged; only its *diagnosis* is new.
+     - (f) **Not done: a transport acknowledgement still costs a turn.** The
+       brief asked the seat's provider to publish a pure-receipt ACK on the
+       seat's behalf. It cannot, and the reason is in the code: the seat's
+       `nsec` reaches the provider as a one-shot host-local file that is
+       deleted as soon as the child is spawned
+       (`crates/buzz-session-provider/src/actor_seats.rs` `consume_seat`, and
+       its module doc's plan D6), and `CreateRequest.post_fence_env` is
+       consumed at spawn and never kept in `SessionRecord`. The only keys the
+       provider holds are its own and possibly the founder's, and the fold
+       requires an ACK signed by the **assignee**
+       (`is_authorized`'s `Acknowledgement` arm). A provider-signed ACK
+       would therefore be either a forgery or a self-approval inside the
+       disposition's own authority chain. The honest remedies are a design
+       decision, not a lane's: either the fold stops requiring a separate
+       receipt for an approval that asks the assignee for nothing (the
+       "gates must earn their delay" reading), or the host gains durable
+       seat-credential custody. **(a)–(d) already remove the six wakes and
+       the false repair**, because the lead no longer waits on the receipts
+       at all. Open for Brian/Andy.
+     - (g) **Owed: the desktop surface.** `fold.assignments[].awaiting` and
+       `fold.pendingCompletion` are on the CLI's `fold` object and in
+       `buzz-core`; the Tauri adapter
+       (`desktop/src-tauri/src/commands/coding_session_team_fold.rs`) and the
+       Mission panel still show the old four fields, so a person reading the
+       app sees the 178(e) nulls the CLI no longer prints. Desktop was
+       outside this lane's file ownership; the wire is ready for it.
+     - Gates on `work/lane-183-completion`: `cargo fmt --all --check` clean;
+       `cargo clippy --workspace --all-targets -- -D warnings` finished with
+       no diagnostics; `cargo test -p buzz-core -p buzz-cli -p
+       buzz-session-provider` 1161 + 1227 + 881 + 9 passed, 0 failed;
+       `just file-size-check` and `just current-state-check` pass. The one
+       golden re-captured on purpose is
+       `crates/buzz-core/testdata/completion_verification_no_policy_fold.txt`,
+       which gained `awaiting: None` and `pending_completion: None` and
+       changed no pre-existing line; the reason is written beside the
+       assertion.
 184. **A manual action can now name the commit it tests, and a verify-style
      action refuses to run without one (2026-09-20, lane 184; fixes 178(g)).**
      Before this, `trigger: { on: manual }` with `working_directory: "."` ran

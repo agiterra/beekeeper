@@ -58,6 +58,7 @@ mod model_catalog;
 pub mod native_restore;
 mod native_steer_authority;
 pub mod payload;
+pub mod pending_completion;
 pub mod publish;
 mod reachability;
 pub mod redaction_vault;
@@ -1902,11 +1903,47 @@ impl Provider {
         )))
     }
 
+    /// One arriving kind-44244 record, routed by what it can change.
+    ///
+    /// A report becomes an untrusted wake candidate exactly as before. A
+    /// **settlement fact** — an acknowledgement, a decision answer or a
+    /// verifier's refutation — wakes nobody and mints no intent; it asks the
+    /// complete-discovery pass to read this channel's signed set again, so a
+    /// `mission.completed` the fold is holding back is re-evaluated by
+    /// software the moment its last prerequisite is on the wire (ledger 183).
+    /// Until this existed those three classes arrived and caused nothing, and
+    /// a lead woke six seats to watch the same facts land (ledger 179(a)).
     fn on_team_transaction(&mut self, channel_id: Uuid, event: &Event) -> anyhow::Result<()> {
         let Some((scope, source)) = Self::team_report_candidate(channel_id, event)? else {
+            if let Some(fact) = pending_completion::settlement_fact(event) {
+                self.request_pending_completion_reevaluation(channel_id, fact);
+            }
             return Ok(());
         };
         self.capture_live_team_wake(scope, source)
+    }
+
+    /// Ask the next complete-discovery pass to re-read one channel.
+    ///
+    /// Dropping the scanned mark is the existing, durable-enough way to say
+    /// "read this channel's signed set again": the same thing a saturated
+    /// live-source slot does. It publishes nothing, consumes nothing and
+    /// cannot wake a seat — the re-read's only new consequence is that the
+    /// fold is recomputed, and a fold is a pure function of signed facts.
+    fn request_pending_completion_reevaluation(
+        &mut self,
+        channel_id: Uuid,
+        fact: pending_completion::SettlementFact,
+    ) {
+        let already = self.team_wake_scanned_channels.remove(&channel_id);
+        tracing::debug!(
+            target: "csp::team_wake",
+            channel_ref = %channel_id,
+            code = "pending_completion_reevaluation_requested",
+            fact = fact.as_str(),
+            rescanning = already,
+            "a settlement fact arrived; re-reading this channel's signed operations"
+        );
     }
 
     /// Persist a live wake candidate, asking the complete signed report scan

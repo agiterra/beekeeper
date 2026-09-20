@@ -396,6 +396,12 @@ fn without_the_policy_flag_the_fold_is_byte_identical_to_today() {
     // (1,436 bytes). It is therefore a real base-vs-lane comparison, not this
     // tree talking to itself. Any future change to the fold's output on a
     // no-policy session now has to edit that file on purpose.
+    //
+    // Edited on purpose once, by lane 183 (ledger 183): the golden gained
+    // `awaiting: None` on the settled assignment and `pending_completion:
+    // None` on the fold. Both are the new *absence* — this session settled and
+    // finished, so there is no missing link and nothing is waiting — and no
+    // pre-existing line of the capture changed.
     let golden = include_str!("../testdata/completion_verification_no_policy_fold.txt");
     assert_eq!(
         format!("{fold:#?}\n"),

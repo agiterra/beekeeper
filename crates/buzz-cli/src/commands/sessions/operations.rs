@@ -234,9 +234,16 @@ async fn publish_operation(
     // public protocol record.
     let event = client.sign_event_unchecked(builder)?;
 
-    if transaction_type == CodingSessionTeamTransactionType::MissionCompleted {
-        verify_completion_before_submit(&prechecked, &event)?;
-    }
+    // A completion whose prerequisites are missing is published, not refused:
+    // it is early, the fold makes it terminal when they arrive, and refusing
+    // it is what made a lead wake six seats for receipts (ledger 179(a)).
+    // Every other refusal still happens before the record reaches the relay.
+    let completion_outcome = match transaction_type {
+        CodingSessionTeamTransactionType::MissionCompleted => Some(
+            completion::classify_completion_before_submit(&prechecked, &event)?,
+        ),
+        _ => None,
+    };
 
     let operation_id = event.id.to_hex();
     // Only an assignment hands its stored `deliveryCommandId` to the wake; see
@@ -274,6 +281,9 @@ async fn publish_operation(
         operation.supersedes.as_deref(),
         prechecked.supersedes.as_deref(),
     );
+    if let Some(outcome) = &completion_outcome {
+        completion::disclose_completion_outcome(&mut output, outcome);
+    }
     println!("{output}");
     Ok(())
 }
@@ -872,50 +882,6 @@ pub(super) const COMPLETION_REFUSED_FALLBACK: &str =
     "every referenced assignment must have an active report, an approving disposition, and \
      the assigned actor's acknowledgement";
 
-/// Refuse a completion that the fold would not make this session's terminal.
-///
-/// Re-folds the session **with** the signed candidate. It reuses the set and
-/// the authority context the pre-publish check already fetched
-/// ([`PrecheckedOperation`]) rather than querying the relay a second time for
-/// the same two answers.
-fn verify_completion_before_submit(
-    prechecked: &PrecheckedOperation,
-    candidate: &Event,
-) -> Result<(), CliError> {
-    // A completion always points at assignments, so the pre-publish check
-    // never short-circuits for one and this read is always present. Saying so
-    // as a refusal rather than an `expect` keeps the production path free of
-    // panics if that ever stops being true.
-    let session = prechecked.session.as_ref().ok_or_else(|| {
-        CliError::Other(
-            "completion verification needs this session's operations and nothing read them".into(),
-        )
-    })?;
-    let mut events = session.events.clone();
-    events.push(candidate.clone());
-    let fold = fold_coding_session_team_transactions(&events, &session.context)
-        .map_err(|error| CliError::Usage(format!("completion verification failed: {error}")))?;
-    let candidate_id = candidate.id.to_hex();
-    let is_terminal = fold
-        .canonical_terminal
-        .as_ref()
-        .is_some_and(|terminal| terminal.event_id == candidate_id);
-    if !is_terminal {
-        // The fold's own reason when it gave one — since 2026-09-02 a
-        // completion can also be refused `CompletionNotVerified`, and telling
-        // the author about the approval chain when what is missing is the
-        // verifier would send it to fix the wrong thing.
-        let reason = fold
-            .excluded
-            .iter()
-            .find(|item| item.event_id == candidate_id)
-            .map(|item| item.reason.clone())
-            .unwrap_or_else(|| COMPLETION_REFUSED_FALLBACK.to_owned());
-        return Err(CliError::Usage(format!("completion refused: {reason}")));
-    }
-    Ok(())
-}
-
 fn operation_json(event: &Event, fold: &CodingSessionTeamFold) -> Result<Value, CliError> {
     let payload = parse_coding_session_team_transaction(event)
         .map_err(|error| CliError::Other(error.to_string()))?;
@@ -936,6 +902,11 @@ fn operation_json(event: &Event, fold: &CodingSessionTeamFold) -> Result<Value, 
         })),
     }))
 }
+
+// The completion outcome — terminal, waiting, or refused — lives in a sibling
+// file for the same reason (ledger 183).
+#[path = "operations_completion.rs"]
+mod completion;
 
 // The fold's JSON rendering lives in a sibling file so this one stays under
 // the repository's 1,000-line ceiling (split, never bump).

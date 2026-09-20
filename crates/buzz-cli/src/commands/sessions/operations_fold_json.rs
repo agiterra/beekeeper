@@ -38,6 +38,16 @@ pub(super) fn fold_json(fold: &CodingSessionTeamFold) -> Value {
             "dispositionEventId": item.disposition_event_id,
             "acknowledgementEventId": item.acknowledgement_event_id,
             "settled": item.settled,
+            // Ledger 178(e): the four values above say *that* a chain is
+            // incomplete and never *where*, and a lead read those nulls as a
+            // missing refutation and recalled a verifier that owed nothing.
+            // This names the one absent link and the party who owes it, and is
+            // null exactly when `settled` is true.
+            "awaiting": item.awaiting.as_ref().map(|awaiting| json!({
+                "link": awaiting.link.as_str(),
+                "owedByRole": awaiting.owed_by_role,
+                "owedByActor": awaiting.owed_by_actor,
+            })),
         })).collect::<Vec<_>>(),
         // Disclosure, not exclusion: these reports ARE canonical. The seat is
         // the separate fact — see `bee sessions seat-repair`.
@@ -73,6 +83,15 @@ pub(super) fn fold_json(fold: &CodingSessionTeamFold) -> Value {
         "canonicalTerminal": fold.canonical_terminal.as_ref().map(|item| json!({
             "eventId": item.event_id,
             "type": item.transaction_type.as_str(),
+        })),
+        // A completion that is early rather than wrong (ledger 179(a)): it is
+        // published and durable, and it becomes `canonicalTerminal` the moment
+        // the facts it names arrive, with no further turn from anybody.
+        "pendingCompletion": fold.pending_completion.as_ref().map(|item| json!({
+            "eventId": item.event_id,
+            "code": buzz_core::team_vocabulary::fold_exclusion_wire_code(item.code),
+            "reason": item.reason,
+            "unsettledAssignmentEventIds": item.unsettled_assignment_event_ids,
         })),
     })
 }

@@ -127,6 +127,7 @@ fn fold_json_discloses_unseated_reports_under_fold() {
         decisions: Vec::new(),
         waiting_on_decision: None,
         canonical_terminal: None,
+        pending_completion: None,
     };
 
     let wire = fold_json(&fold);
@@ -150,6 +151,7 @@ fn fold_json_discloses_unseated_reports_under_fold() {
         decisions: Vec::new(),
         waiting_on_decision: None,
         canonical_terminal: None,
+        pending_completion: None,
     };
     // Present and empty, never absent: an unknown disclosure and "no
     // unseated reports" are different answers.
@@ -176,6 +178,7 @@ fn fold_json_prints_the_dangling_reference_code() {
         decisions: Vec::new(),
         waiting_on_decision: None,
         canonical_terminal: None,
+        pending_completion: None,
     };
 
     let wire = fold_json(&fold);
@@ -215,6 +218,7 @@ fn fold_json_prints_the_invalid_correction_code() {
         decisions: Vec::new(),
         waiting_on_decision: None,
         canonical_terminal: None,
+        pending_completion: None,
     };
 
     let wire = fold_json(&fold);
@@ -244,6 +248,7 @@ fn fold_json_prints_the_wrong_type_reference_code() {
         decisions: Vec::new(),
         waiting_on_decision: None,
         canonical_terminal: None,
+        pending_completion: None,
     };
 
     let wire = fold_json(&fold);
@@ -285,6 +290,7 @@ fn fold_json_lists_notes_decisions_and_the_waiting_state() {
             held_on: "founder".into(),
         }),
         canonical_terminal: None,
+        pending_completion: None,
     };
 
     let wire = fold_json(&fold);
@@ -319,6 +325,7 @@ fn fold_json_lists_notes_decisions_and_the_waiting_state() {
         decisions: Vec::new(),
         waiting_on_decision: None,
         canonical_terminal: None,
+        pending_completion: None,
     };
     let quiet_wire = fold_json(&quiet);
     // Present and empty, never absent: "nothing was said" and "notes were

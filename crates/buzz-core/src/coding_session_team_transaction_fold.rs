@@ -209,22 +209,6 @@ pub struct CodingSessionTeamFoldConflict {
     pub contender_event_ids: Vec<String>,
 }
 
-/// Canonical approval state for one active assignment.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CodingSessionTeamAssignmentSettlement {
-    /// Active assignment event id.
-    pub assignment_event_id: String,
-    /// Explicitly governed report, when an approval chain is complete.
-    pub governed_report_event_id: Option<String>,
-    /// Approving disposition acknowledged by the assigned actor.
-    pub disposition_event_id: Option<String>,
-    /// Assigned actor's acknowledgement of that disposition.
-    pub acknowledgement_event_id: Option<String>,
-    /// True only for disposition `approve` or `approve-with-notes` plus the
-    /// assigned actor's explicit acknowledgement.
-    pub settled: bool,
-}
-
 /// One included report whose author holds no active seat for the role its
 /// assignment named.
 ///
@@ -301,6 +285,14 @@ pub struct CodingSessionTeamFold {
     pub waiting_on_decision: Option<CodingSessionTeamFoldWaitingOnDecision>,
     /// Newest authorized valid terminal event, never inferred from silence.
     pub canonical_terminal: Option<CodingSessionTeamCanonicalTerminal>,
+    /// A published `mission.completed` this fold held back because a
+    /// prerequisite is not on the wire *yet*, when there is one.
+    ///
+    /// A wait, never a rejection: see
+    /// [`CodingSessionTeamPendingCompletion`]. `None` and a
+    /// `canonicalTerminal` of `mission.completed` are the two ways this field
+    /// says "nothing is waiting", and they are different sentences.
+    pub pending_completion: Option<CodingSessionTeamPendingCompletion>,
 }
 
 struct Record<'a> {
@@ -470,6 +462,9 @@ pub fn fold_coding_session_team_transactions(
         .collect();
 
     let open_blocks = open_request_blocks(&records, &active);
+    // Every completion the terminal pass holds back, so the disclosure below
+    // can tell a wait from a rejection without re-reading `excluded`.
+    let mut held_completions: Vec<settlement::HeldCompletion> = Vec::new();
     // The included set as the stages left it, i.e. before any terminal is
     // projected. A verifier's ruling has to be canonical to clear anything.
     let active_set_for_terminal: HashSet<usize> = active.iter().copied().collect();
@@ -491,15 +486,26 @@ pub fn fold_coding_session_team_transactions(
                 .all(|reference| settled.get(reference.as_str()) == Some(&true))
         {
             terminal_authorized.remove(&index);
+            let reason = "mission.completed requires every named active assignment to have an acknowledged approving disposition".to_owned();
+            held_completions.push(settlement::HeldCompletion {
+                index,
+                code: CodingSessionTeamFoldExclusionCode::CompletionNotApproved,
+                reason: reason.clone(),
+            });
             excluded.push(CodingSessionTeamFoldExclusion {
                 event_id: records[index].id.clone(),
                 code: CodingSessionTeamFoldExclusionCode::CompletionNotApproved,
-                reason: "mission.completed requires every named active assignment to have an acknowledged approving disposition".into(),
+                reason,
             });
             continue;
         }
         if let Some(reason) = completion_blocked_by_open_decision(body, &open_blocks) {
             terminal_authorized.remove(&index);
+            held_completions.push(settlement::HeldCompletion {
+                index,
+                code: CodingSessionTeamFoldExclusionCode::CompletionBlockedByOpenDecision,
+                reason: reason.clone(),
+            });
             excluded.push(CodingSessionTeamFoldExclusion {
                 event_id: records[index].id.clone(),
                 code: CodingSessionTeamFoldExclusionCode::CompletionBlockedByOpenDecision,
@@ -523,6 +529,11 @@ pub fn fold_coding_session_team_transactions(
             context,
         ) {
             terminal_authorized.remove(&index);
+            held_completions.push(settlement::HeldCompletion {
+                index,
+                code: CodingSessionTeamFoldExclusionCode::CompletionNotVerified,
+                reason: reason.clone(),
+            });
             excluded.push(CodingSessionTeamFoldExclusion {
                 event_id: records[index].id.clone(),
                 code: CodingSessionTeamFoldExclusionCode::CompletionNotVerified,
@@ -542,6 +553,14 @@ pub fn fold_coding_session_team_transactions(
     );
 
     let canonical_terminal = project_terminal(&records, &mut active, &mut excluded, &mut conflicts);
+    let pending_completion = settlement::pending_completion(
+        &records,
+        &held_completions,
+        canonical_terminal
+            .as_ref()
+            .map(|terminal| terminal.transaction_type),
+        &assignments,
+    );
     sort_indices(&mut active, &records);
     assignments.sort_by(|left, right| left.assignment_event_id.cmp(&right.assignment_event_id));
     excluded.sort_by(|left, right| left.event_id.cmp(&right.event_id));
@@ -569,6 +588,7 @@ pub fn fold_coding_session_team_transactions(
         decisions,
         waiting_on_decision,
         canonical_terminal,
+        pending_completion,
     })
 }
 
@@ -626,6 +646,19 @@ use decisions::{
 pub use decisions::{
     CodingSessionTeamFoldDecision, CodingSessionTeamFoldNote,
     CodingSessionTeamFoldWaitingOnDecision,
+};
+
+// Settlement, the missing-link diagnosis and the pending completion live in a
+// sibling file for the same reason, and are children of this module so they
+// read this module's private `Record`, `sort_indices` and `compare_records`.
+#[path = "coding_session_team_transaction_fold_settlement.rs"]
+mod settlement;
+
+use settlement::settle_assignments;
+pub use settlement::{
+    completion_exclusion_is_pending, CodingSessionTeamAssignmentSettlement,
+    CodingSessionTeamPendingCompletion, CodingSessionTeamSettlementAwaiting,
+    CodingSessionTeamSettlementLink, PENDING_COMPLETION_CODES,
 };
 
 // The one rule that reads `gates.verifierRequired` lives in a sibling file for
@@ -828,92 +861,6 @@ pub fn logical_subject(payload: &CodingSessionTeamTransactionPayload) -> String 
     }
 }
 
-fn settle_assignments(
-    records: &[Record<'_>],
-    active: &[usize],
-    conflicts: &mut Vec<CodingSessionTeamFoldConflict>,
-) -> Vec<CodingSessionTeamAssignmentSettlement> {
-    let active_set: HashSet<usize> = active.iter().copied().collect();
-    let mut result = Vec::new();
-    for &assignment_index in active {
-        let CodingSessionTeamTransactionBody::Assignment(_) =
-            records[assignment_index].payload.body
-        else {
-            continue;
-        };
-        let assignment_id = &records[assignment_index].id;
-        let mut chains = Vec::new();
-        for &disposition_index in active {
-            let CodingSessionTeamTransactionBody::Verdict(CodingSessionTeamVerdict::Disposition {
-                assignment_ref,
-                report_ref,
-                decision,
-                ..
-            }) = &records[disposition_index].payload.body
-            else {
-                continue;
-            };
-            if assignment_ref != assignment_id || !decision.is_approval() {
-                continue;
-            }
-            let Some(report_index) = records.iter().position(|record| &record.id == report_ref)
-            else {
-                continue;
-            };
-            if !active_set.contains(&report_index) {
-                continue;
-            }
-            let mut acknowledgements: Vec<usize> = active
-                .iter()
-                .copied()
-                .filter(|index| {
-                    matches!(
-                        &records[*index].payload.body,
-                        CodingSessionTeamTransactionBody::Acknowledgement(body)
-                            if body.acknowledged_event_ref == records[disposition_index].id
-                    )
-                })
-                .collect();
-            sort_indices(&mut acknowledgements, records);
-            if let Some(acknowledgement) = acknowledgements.last() {
-                if acknowledgements.len() > 1 {
-                    conflicts.push(CodingSessionTeamFoldConflict {
-                        subject: format!("acknowledgement:{}", records[disposition_index].id),
-                        winner_event_id: records[*acknowledgement].id.clone(),
-                        contender_event_ids: acknowledgements
-                            .iter()
-                            .map(|index| records[*index].id.clone())
-                            .collect(),
-                    });
-                }
-                chains.push((disposition_index, report_index, *acknowledgement));
-            }
-        }
-        chains.sort_by(|left, right| compare_records(left.0, right.0, records));
-        let winner = chains.last().copied();
-        if chains.len() > 1 {
-            if let Some((winner_index, _, _)) = winner {
-                conflicts.push(CodingSessionTeamFoldConflict {
-                    subject: format!("governance:{assignment_id}"),
-                    winner_event_id: records[winner_index].id.clone(),
-                    contender_event_ids: chains
-                        .iter()
-                        .map(|chain| records[chain.0].id.clone())
-                        .collect(),
-                });
-            }
-        }
-        result.push(CodingSessionTeamAssignmentSettlement {
-            assignment_event_id: assignment_id.clone(),
-            governed_report_event_id: winner.map(|chain| records[chain.1].id.clone()),
-            disposition_event_id: winner.map(|chain| records[chain.0].id.clone()),
-            acknowledgement_event_id: winner.map(|chain| records[chain.2].id.clone()),
-            settled: winner.is_some(),
-        });
-    }
-    result
-}
-
 fn project_terminal(
     records: &[Record<'_>],
     active: &mut Vec<usize>,
@@ -973,3 +920,7 @@ fn sort_indices(indices: &mut [usize], records: &[Record<'_>]) {
 #[cfg(test)]
 #[path = "coding_session_team_transaction_fold_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "coding_session_team_transaction_fold_settlement_tests.rs"]
+mod settlement_tests;
