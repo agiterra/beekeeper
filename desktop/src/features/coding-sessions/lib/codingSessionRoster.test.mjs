@@ -1005,19 +1005,36 @@ test("a projectRef on any other transition type is refused", () => {
   assert.deepEqual([...fold.accepted.entries()], []);
 });
 
-test("a delegation receipt binds with or without projectRef, never with the wrong one", () => {
-  const without = acceptedChain([
+// Tightened by ledger 204: the echo is **required**, not present-or-absent.
+// The relay cannot emit a delegation receipt without `projectRef` (the link
+// cannot be signed without one and the echo is unconditional), and the CLI
+// and the provider have always refused the missing echo. This reader was the
+// only one that accepted it, which would have shown an accepted delegation
+// carrying no scope at all. The shared vectors in
+// `conformance/authority-chain` are what found the disagreement.
+test("a delegation receipt binds only when it echoes the exact projectRef", () => {
+  const echoed = acceptedChain([
+    {
+      type: "grant-project-actions",
+      granteePubkey: ALICE,
+      extraTransitionContent: { projectRef: PROJECT_REF },
+      extraReceiptContent: { projectRef: PROJECT_REF },
+    },
+  ]);
+  assert.equal(
+    foldRoster({ genesisRef: GENESIS_REF, ...echoed }).projectActionGrants.size,
+    1,
+  );
+  const dropped = acceptedChain([
     {
       type: "grant-project-actions",
       granteePubkey: ALICE,
       extraTransitionContent: { projectRef: PROJECT_REF },
     },
   ]);
-  assert.equal(
-    foldRoster({ genesisRef: GENESIS_REF, ...without }).projectActionGrants
-      .size,
-    1,
-  );
+  const droppedFold = foldRoster({ genesisRef: GENESIS_REF, ...dropped });
+  assert.equal(droppedFold.acceptedHead, null);
+  assert.equal(droppedFold.projectActionGrants.size, 0);
   const mismatched = acceptedChain([
     {
       type: "grant-project-actions",

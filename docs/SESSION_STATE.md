@@ -16684,8 +16684,13 @@ removed from here.
        `decode_authority_acceptance_receipt`) and in the provider fence
        (`authority.rs`, `AcceptedTransition::project_ref`). The desktop's two
        present-or-absent receipt sets became required sets, aligning it with
-       the two stricter readers. No reader was loosened to ignore unknown
-       fields and the relay's emission is unchanged.
+       the two stricter readers; 186's own
+       `codingSessionRoster.test.mjs` case that asserted the tolerance is
+       rewritten to the stricter rule, because a relay cannot emit a
+       delegation receipt without `projectRef` and a reader that accepted one
+       would show an accepted delegation carrying no scope at all. No reader
+       was loosened to ignore unknown fields and the relay's emission is
+       unchanged.
      - **Red before green.** The test
        `a_delegation_receipt_carrying_project_ref_projects_the_chain`
        (`operations_receipt_tests.rs`) builds the exact
