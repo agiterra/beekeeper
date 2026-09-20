@@ -125,4 +125,26 @@ Everything else Fable decides and reports.
 
 ## 8. Amendments
 
-_None yet._
+**A1 — preflight against `origin/main` `e26de4933`, 2026-09-20.** Binding on
+every Wave 1+ brief.
+1. `crates/buzz-core/src/kind.rs` belongs to W0 alone. W1 uses the constant and
+   never edits the file. Expected allocation: **44249**, the lowest number
+   neither used nor reserved (44231–44239 and 44241–44243 are reserved).
+2. `desktop/src-tauri/src/handlers.rs` (the `generate_handler!` list; it is not
+   in `lib.rs`) was owned by nobody: it is **W5's**. W3 keeps lane 185's
+   existing Tauri commands as adapters and adds no registration; if it must,
+   the line goes through W5.
+3. `desktop/src-tauri/src/coding_sessions/mod.rs` is **W3's**.
+4. `crates/buzz-persona/src/lib.rs` (one `mod` line for the new test) is
+   **W6's**, not the finalizer's.
+5. W3's test file is `crates/buzz-session-provider/src/tests/verification_input_tests.rs`.
+6. Ratchet: `coding_sessions/workdir_store.rs` is at **999/1000**. W3a's first
+   commit splits it into a sibling module before adding a line. Also over 850:
+   `CodingSessionMissionInspector.tsx` 951 (W5 adds a child component, not
+   lines), `coding_session_team_fold_tests.rs` 946 (W5 adds a new test file),
+   `assignment_input.rs` 865 and its tests 867 (W3a moves code out, net
+   negative).
+7. Sizing, for briefs: provider `lib.rs` is 21,149 lines, `session.rs` 6,708,
+   CLI `lib.rs` 6,820. W2 and W3 briefs name the functions they touch, not the
+   file, and lanes add new modules rather than growing these.
+8. Migration `0046` is free and is W4's.
