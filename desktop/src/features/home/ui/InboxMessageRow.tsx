@@ -17,6 +17,8 @@ import { MessageReactions } from "@/features/messages/ui/MessageReactions";
 import { UnreadDivider } from "@/features/messages/ui/UnreadDivider";
 import { useReactionHandler } from "@/features/messages/ui/useReactionHandler";
 import { useMessageEmoji } from "@/features/messages/lib/useMessageEmoji";
+import { readHostStepApprovalRequest } from "@/features/project-actions/lib/hostStepApproval";
+import { HostStepApprovalInboxCard } from "@/features/project-actions/ui/HostStepApprovalInboxCard";
 import { UserProfilePopover } from "@/features/profile/ui/UserProfilePopover";
 import { cn } from "@/shared/lib/cn";
 import { normalizePubkey } from "@/shared/lib/pubkey";
@@ -75,6 +77,17 @@ export function InboxMessageRow({
     () => toTimelineMessage(message),
     [message],
   );
+  // A kind:46010 this reader fully recognises renders as an approval card
+  // instead of its JSON body (ledger 171(b)); one it does not keeps the
+  // ordinary body, because a half-read request must carry no control.
+  const approvalEvent = React.useMemo(() => {
+    const candidate = {
+      kind: message.kind ?? 0,
+      tags: message.tags ?? [],
+      content: message.content,
+    };
+    return readHostStepApprovalRequest(candidate) === null ? null : candidate;
+  }, [message.content, message.kind, message.tags]);
   const imetaByUrl = React.useMemo(
     () => (message.tags ? parseImetaTags(message.tags) : undefined),
     [message.tags],
@@ -243,32 +256,46 @@ export function InboxMessageRow({
           )}
 
           <div className={isContinuation ? "mt-0" : "mt-0.5"}>
-            <VideoReviewCommentMarkdown
-              className={cn(
-                "max-w-full text-left text-sm text-foreground",
-                emojiOnly &&
-                  "text-4xl leading-tight [&_p]:leading-tight [&_img[data-custom-emoji]]:h-[1.45em] [&_img[data-custom-emoji]]:align-middle [&_button:has(img[data-custom-emoji])]:align-middle",
-              )}
-              // Only pass the author pubkey for agent-authored messages so
-              // config-nudge cards can authenticate the sender. Uses the
-              // raw event signer (signerPubkey), not a relay-delegated display
-              // author, because the agent itself must have signed the card.
-              configNudgeAuthorPubkey={getConfigNudgeAuthorPubkey(
-                timelineMessage,
-                isKnownAgentPubkey,
-              )}
-              content={message.content}
-              messageId={message.id}
-              linkPreviewsSuppressed={hasLinkPreviewSuppression(
-                timelineMessage.tags,
-              )}
-              customEmoji={customEmoji}
-              imetaByUrl={imetaByUrl}
-              mentionNames={message.mentionNames}
-              mentionPubkeysByName={message.mentionPubkeysByName}
-              videoReviewCommentRootId={videoReviewCommentRootId}
-              videoReviewContext={videoReviewContext}
-            />
+            {/*
+              Ledger 171(b): a kind:46010 host-step approval request is a
+              command about to run on this computer, not a message. Rendering
+              its JSON body under a reply composer left hand-signing a
+              kind:46030 as the only way to answer. The card states the
+              action, step, definition, commit and exact command, and offers
+              the answer only to whoever may give it; an event it cannot
+              fully read renders `null` and the ordinary body still shows.
+            */}
+            {approvalEvent ? (
+              <HostStepApprovalInboxCard event={approvalEvent} />
+            ) : null}
+            {approvalEvent ? null : (
+              <VideoReviewCommentMarkdown
+                className={cn(
+                  "max-w-full text-left text-sm text-foreground",
+                  emojiOnly &&
+                    "text-4xl leading-tight [&_p]:leading-tight [&_img[data-custom-emoji]]:h-[1.45em] [&_img[data-custom-emoji]]:align-middle [&_button:has(img[data-custom-emoji])]:align-middle",
+                )}
+                // Only pass the author pubkey for agent-authored messages so
+                // config-nudge cards can authenticate the sender. Uses the
+                // raw event signer (signerPubkey), not a relay-delegated display
+                // author, because the agent itself must have signed the card.
+                configNudgeAuthorPubkey={getConfigNudgeAuthorPubkey(
+                  timelineMessage,
+                  isKnownAgentPubkey,
+                )}
+                content={message.content}
+                messageId={message.id}
+                linkPreviewsSuppressed={hasLinkPreviewSuppression(
+                  timelineMessage.tags,
+                )}
+                customEmoji={customEmoji}
+                imetaByUrl={imetaByUrl}
+                mentionNames={message.mentionNames}
+                mentionPubkeysByName={message.mentionPubkeysByName}
+                videoReviewCommentRootId={videoReviewCommentRootId}
+                videoReviewContext={videoReviewContext}
+              />
+            )}
             <MessageReactions
               canToggle={canToggleReactions}
               messageId={message.id}

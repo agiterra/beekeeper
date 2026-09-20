@@ -180,13 +180,35 @@ function pendingApprovalOf(
   return null;
 }
 
+/**
+ * The two terminal reasons lanes 193 and 199 added, in words.
+ *
+ * `definition_changed` and `definition_unknown` are the whole point of the
+ * run/definition binding: a run stopped because the action's text moved under
+ * it, or because the run never named a definition at all. Printing the code
+ * alone would make a safety stop read like an internal error.
+ */
+export function runErrorSentence(
+  errorCode: string | null,
+  errorMessage: string | null,
+): string {
+  switch (errorCode) {
+    case "definition_changed":
+      return "stopped: this action's definition changed after the run was created, so nothing it approved was run (definition_changed)";
+    case "definition_unknown":
+      return "stopped: this run names no definition, so no approval could be tied to what it would run (definition_unknown)";
+    default:
+      return `failed: ${errorCode ?? errorMessage ?? "unknown"}`;
+  }
+}
+
 function runDetail(run: WorkflowRun): Detail | null {
   switch (run.status) {
     case "completed":
       return { label: "completed", tone: "ok" };
     case "failed":
       return {
-        label: `failed: ${run.errorCode ?? run.errorMessage ?? "unknown"}`,
+        label: runErrorSentence(run.errorCode, run.errorMessage),
         tone: "bad",
       };
     case "cancelled":

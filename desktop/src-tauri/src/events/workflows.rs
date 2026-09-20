@@ -31,10 +31,43 @@ pub fn build_workflow_delete(
     Ok(EventBuilder::new(Kind::Custom(5), "").tags(tags))
 }
 
-/// Kind 46020 — trigger a workflow run by id.
-pub fn build_workflow_trigger(workflow_id: &str) -> Result<EventBuilder, String> {
+/// A manual trigger's bound commit, exactly as the relay accepts it.
+///
+/// Lane 184: the relay normalizes the `checkout` field of a kind:46020 and
+/// refuses anything that is not a full 40-hex commit sha
+/// (`invalid: checkout must be a full 40-hex commit sha`). Refusing the same
+/// shape here means the operator is told before an event is signed, in the
+/// same words, rather than after a round trip.
+pub fn normalize_checkout_sha(value: &str) -> Result<String, String> {
+    let trimmed = value.trim();
+    if trimmed.len() != 40 || !trimmed.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("checkout must be a full 40-hex commit sha".to_string());
+    }
+    Ok(trimmed.to_ascii_lowercase())
+}
+
+/// Kind 46020 — trigger a workflow run by id, optionally bound to a commit.
+///
+/// With `checkout`, the content is `{"checkout": "<40-hex>"}`, which is what
+/// `bee workflows trigger --checkout` publishes and what
+/// `TriggerContext::checkout` carries into the run record. Without it the
+/// content stays empty, byte-identical to every trigger this app signed
+/// before lane 184 — an action whose step declares `checkout: required` is
+/// then refused by the relay, naming the field, instead of running against
+/// whatever the recorded project folder happens to hold.
+pub fn build_workflow_trigger(
+    workflow_id: &str,
+    checkout: Option<&str>,
+) -> Result<EventBuilder, String> {
     let tags = vec![tag(vec!["d", workflow_id])?];
-    Ok(EventBuilder::new(Kind::Custom(46020), "").tags(tags))
+    let content = match checkout {
+        None => String::new(),
+        Some(value) => {
+            let sha = normalize_checkout_sha(value)?;
+            serde_json::json!({ "checkout": sha }).to_string()
+        }
+    };
+    Ok(EventBuilder::new(Kind::Custom(46020), content).tags(tags))
 }
 
 /// Lowercase hex of the stored approval token hash, as the relay's approvals
@@ -88,4 +121,41 @@ pub fn build_autorun_revoke(workflow_id: &str, channel_id: &str) -> Result<Event
 pub fn build_approval_deny(approval_ref: &str, note: Option<&str>) -> Result<EventBuilder, String> {
     let tags = vec![approval_ref_tag(approval_ref)?];
     Ok(EventBuilder::new(Kind::Custom(46031), note.unwrap_or("")).tags(tags))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_unbound_trigger_keeps_its_empty_content() {
+        let event = build_workflow_trigger("wf-1", None).expect("builder");
+        let event = event
+            .sign_with_keys(&nostr::Keys::generate())
+            .expect("sign");
+        assert_eq!(event.content, "");
+    }
+
+    #[test]
+    fn a_bound_trigger_names_the_commit_the_relay_reads() {
+        let raw = format!("  {}  ", "AB".repeat(20));
+        let event = build_workflow_trigger("wf-1", Some(&raw))
+            .expect("builder")
+            .sign_with_keys(&nostr::Keys::generate())
+            .expect("sign");
+        assert_eq!(
+            event.content,
+            format!("{{\"checkout\":\"{}\"}}", "ab".repeat(20))
+        );
+    }
+
+    #[test]
+    fn a_short_or_non_hex_commit_is_refused_in_the_relays_own_words() {
+        for bad in ["abc", &"a".repeat(39), &"z".repeat(40), ""] {
+            assert_eq!(
+                build_workflow_trigger("wf-1", Some(bad)).unwrap_err(),
+                "checkout must be a full 40-hex commit sha"
+            );
+        }
+    }
 }

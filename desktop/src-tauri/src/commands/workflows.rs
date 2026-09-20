@@ -326,14 +326,36 @@ pub async fn delete_workflow(
     Ok(())
 }
 
+/// Start a run of a workflow, optionally bound to the commit it must test.
+///
+/// `checkout` is the full 40-hex commit a manual trigger binds (lane 184). A
+/// step declaring `checkout: required` is refused by the relay when the run
+/// names no commit, so this parameter is what lets the Actions tab start a
+/// verify-style action at all; `None` keeps the pre-184 empty content.
 #[tauri::command]
 pub async fn trigger_workflow(
     workflow_id: String,
+    checkout: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<WorkflowTriggerWire, String> {
-    let builder = events::build_workflow_trigger(&workflow_id)?;
+    let checkout = checkout.map(|value| value.trim().to_string());
+    let checkout = checkout.filter(|value| !value.is_empty());
+    let builder = events::build_workflow_trigger(&workflow_id, checkout.as_deref())?;
     let result = submit_event(builder, &state).await?;
     trigger_wire_from_message(workflow_id, &result.message)
+}
+
+/// One run resolved by run id alone, with its host steps and approvals.
+///
+/// `GET /workflow-runs/{run_id}` (lane 190). A run id is what a reader holds
+/// first — off a kind:46010 approval request, a kind:46013 host-step request
+/// or a kind:46023 result — long before it has occasion to look up the
+/// workflow, and every other run read is nested under the workflow.
+#[tauri::command]
+pub async fn get_workflow_run(run_id: String, state: State<'_, AppState>) -> Result<Value, String> {
+    let run_id =
+        uuid::Uuid::parse_str(run_id.trim()).map_err(|_| "invalid workflow run id".to_string())?;
+    get_relay_json(&state, &format!("/workflow-runs/{run_id}")).await
 }
 
 // ── Approvals ────────────────────────────────────────────────────────────────

@@ -1,15 +1,14 @@
 import * as React from "react";
-import { useMutation } from "@tanstack/react-query";
-import { toast } from "sonner";
 
-import { denyApproval, grantApproval } from "@/shared/api/tauriWorkflows";
 import { formatItemTimestamp } from "@/shared/lib/datetime";
 import { cn } from "@/shared/lib/cn";
-import { Button } from "@/shared/ui/button";
-import { Checkbox } from "@/shared/ui/checkbox";
 
 import { type ActionRunTone, describeActionRun } from "../lib/actionRunLabel";
-import type { ProjectActionRun } from "../lib/useProjectActions";
+import { runProvenanceFacts } from "../lib/actionRunProvenance";
+import { buildHostStepApprovalView } from "../lib/hostStepApproval";
+import { hostStepCommand } from "../lib/actionDefinition";
+import type { ProjectAction, ProjectActionRun } from "../lib/useProjectActions";
+import { ProjectActionApprovalCard } from "./ProjectActionApprovalCard";
 
 const TONE_CLASS: Record<ActionRunTone, string> = {
   pending: "text-amber-600 dark:text-amber-400",
@@ -18,26 +17,36 @@ const TONE_CLASS: Record<ActionRunTone, string> = {
   muted: "text-muted-foreground",
 };
 
-/** Spec § 5.4: the checkbox that turns a grant into an autorun grant. */
-export const AUTORUN_GRANT_LABEL = "allow future runs of this action";
+/** Spec § 5.4: what an action-scoped grant releases, in the card's words. */
+export const AUTORUN_GRANT_LABEL =
+  "Approve and allow future runs of this exact definition";
 
 function formatSince(unixSeconds: number): string {
   return formatItemTimestamp(unixSeconds, { withTime: true });
 }
 
-function errorSentence(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+function rfc3339ToSeconds(value: string | null): number | null {
+  if (!value) return null;
+  const millis = Date.parse(value);
+  return Number.isFinite(millis) ? Math.floor(millis / 1_000) : null;
 }
 
 /**
- * One run of an action: the sentence its records prove, and — when a live
- * approval is waiting — Approve / Deny.
+ * One run of an action: the sentence its records prove, the provenance those
+ * records carry, and — when an approval is parked — the card that states what
+ * would run before offering an answer (ledger 171(b)).
  */
 export function ProjectActionRunRow({
+  action,
   entry,
+  canApprove,
+  authoritySentence,
   onChanged,
 }: {
+  action: ProjectAction;
   entry: ProjectActionRun;
+  canApprove: boolean;
+  authoritySentence: string;
   onChanged: () => void;
 }) {
   const row = React.useMemo(
@@ -47,59 +56,52 @@ export function ProjectActionRunRow({
       }),
     [entry],
   );
-
-  const [allowFutureRuns, setAllowFutureRuns] = React.useState(false);
-  const decide = useMutation({
-    mutationFn: async (input: {
-      action: "grant" | "deny";
-      ref: string;
-      allowFutureRuns: boolean;
-    }) =>
-      input.action === "grant"
-        ? grantApproval(
-            input.ref,
-            undefined,
-            input.allowFutureRuns ? "action" : "run",
-          )
-        : denyApproval(input.ref),
-    onSuccess: (_data, input) => {
-      toast.success(
-        input.action === "deny"
-          ? "Denied"
-          : input.allowFutureRuns
-            ? "Approved, and future runs of this definition"
-            : "Approved",
-      );
-      onChanged();
-    },
-    onError: (error: unknown) => {
-      toast.error(`Approval failed: ${errorSentence(error)}`);
-    },
-  });
-  const { mutate: decideMutate, isPending: deciding } = decide;
-
-  const autorunId = React.useId();
+  const facts = React.useMemo(
+    () => runProvenanceFacts(entry.run, entry.hostSteps, entry.hostStepsError),
+    [entry],
+  );
   const pending = row.pendingApproval;
+  const approvalView = React.useMemo(() => {
+    if (!pending) return null;
+    const boundCommit =
+      entry.hostSteps.find((step) => step.stepId === pending.stepId)?.checkout
+        ?.sha ?? null;
+    return buildHostStepApprovalView({
+      request: {
+        approvalRef: pending.approvalRef,
+        runId: pending.runId,
+        workflowName: action.workflow.name,
+        stepId: pending.stepId,
+        stepIndex: pending.stepIndex,
+        approverSpec: pending.approverSpec,
+        message: null,
+        expiresAt: rfc3339ToSeconds(pending.expiresAt),
+      },
+      workflowName: action.workflow.name,
+      runDefinitionHash: entry.run.definitionHash,
+      runRead: true,
+      command: hostStepCommand(action.workflow.definition, pending.stepId),
+      definitionRead: true,
+      boundCommit,
+    });
+  }, [action.workflow, entry.hostSteps, entry.run.definitionHash, pending]);
+
   return (
     <li
-      className="flex flex-wrap items-center gap-x-3 gap-y-1 py-1.5 text-sm"
+      className="flex flex-col gap-2 py-2 text-sm"
       data-run-id={entry.run.id}
       data-testid="project-action-run"
     >
-      <span className="text-2xs tabular-nums text-muted-foreground">
-        {formatSince(entry.run.createdAt)}
-      </span>
-      <span className={cn("min-w-0 break-words", TONE_CLASS[row.tone])}>
-        {row.label}
-        {entry.hostStepsError ? (
-          <span className="text-muted-foreground">
-            {" "}
-            · host steps unreadable: {entry.hostStepsError}
-          </span>
-        ) : null}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span className="text-2xs tabular-nums text-muted-foreground">
+          {formatSince(entry.run.createdAt)}
+        </span>
+        <span className={cn("min-w-0 break-words", TONE_CLASS[row.tone])}>
+          {row.label}
+        </span>
         {entry.hostSteps.some((step) => step.artifacts.length > 0) ? (
-          <span className="text-muted-foreground">
-            {" · logs: "}
+          <span className="text-xs text-muted-foreground">
+            {"logs: "}
             {entry.hostSteps
               .flatMap((step) => step.artifacts)
               .map((artifact, index) => (
@@ -118,52 +120,38 @@ export function ProjectActionRunRow({
               ))}
           </span>
         ) : null}
-      </span>
-      {pending ? (
-        <span className="ml-auto flex items-center gap-2">
-          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <Checkbox
-              checked={allowFutureRuns}
-              data-testid="project-action-autorun"
-              id={autorunId}
-              onCheckedChange={(checked) =>
-                setAllowFutureRuns(checked === true)
-              }
-            />
-            <label htmlFor={autorunId}>{AUTORUN_GRANT_LABEL}</label>
-          </span>
-          <Button
-            data-testid="project-action-approve"
-            disabled={deciding}
-            onClick={() =>
-              decideMutate({
-                action: "grant",
-                ref: pending.approvalRef,
-                allowFutureRuns,
-              })
-            }
-            size="sm"
-            type="button"
-          >
-            Approve
-          </Button>
-          <Button
-            data-testid="project-action-deny"
-            disabled={deciding}
-            onClick={() =>
-              decideMutate({
-                action: "deny",
-                ref: pending.approvalRef,
-                allowFutureRuns: false,
-              })
-            }
-            size="sm"
-            type="button"
-            variant="outline"
-          >
-            Deny
-          </Button>
-        </span>
+      </div>
+      <dl
+        className="grid gap-x-4 gap-y-1 sm:grid-cols-2"
+        data-testid="project-action-run-provenance"
+      >
+        {facts.map((fact) => (
+          <div className="flex flex-wrap items-baseline gap-2" key={fact.label}>
+            <dt className="text-2xs uppercase tracking-wide text-muted-foreground">
+              {fact.label}
+            </dt>
+            <dd
+              className={cn(
+                "min-w-0 break-all",
+                fact.value === null
+                  ? "text-xs text-muted-foreground"
+                  : fact.mono
+                    ? "font-mono text-xs"
+                    : "text-xs",
+              )}
+            >
+              {fact.value ?? `not established — ${fact.reason}`}
+            </dd>
+          </div>
+        ))}
+      </dl>
+      {approvalView ? (
+        <ProjectActionApprovalCard
+          authoritySentence={authoritySentence}
+          canApprove={canApprove}
+          onAnswered={onChanged}
+          view={approvalView}
+        />
       ) : null}
     </li>
   );

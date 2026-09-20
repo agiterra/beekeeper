@@ -40,6 +40,12 @@ type RawTraceEntry = {
 type RawWorkflowRun = {
   id: string;
   workflow_id: string;
+  /** Added by lane 190; absent from a relay that predates it. */
+  workflow_name?: string | null;
+  trigger_event_id?: string | null;
+  trigger_author?: string | null;
+  /** Hex of the definition the run was created from (lane 193). */
+  definition_hash?: string | null;
   status: WorkflowRun["status"];
   current_step: number | null;
   execution_trace: RawTraceEntry[];
@@ -103,6 +109,13 @@ type RawWorkflowHostStep = {
   routed_command_id?: string | null;
   routed_hired_role?: string | null;
   artifacts?: { name: string; url: string; sha256: string; bytes: number }[];
+  /** How the tree the step ran in was established (lane 184). */
+  checkout?: {
+    mode?: string | null;
+    sha?: string | null;
+    headShaBefore?: string | null;
+    dirtyBefore?: boolean | null;
+  } | null;
   exited_at: string | null;
   created_at: string;
 };
@@ -123,6 +136,64 @@ type RawApprovalActionResponse = {
   run_id: string;
   workflow_id: string;
 };
+
+// ── Provenance the relay records and the Actions tab renders ──────────────
+
+/**
+ * A run with the provenance lane 190 put on the wire.
+ *
+ * Every field is nullable and every null is a *disclosed non-answer*, never a
+ * blank: a relay that predates the field, or a run created before lane 193's
+ * definition binding, answers `null`, and the surface says so in those words
+ * rather than leaving the row silent.
+ */
+export type ProjectWorkflowRun = WorkflowRun & {
+  /** The owning action's name, as the relay read it off the definition. */
+  workflowName: string | null;
+  /** Event id of the kind:46020 that started the run. */
+  triggerEventId: string | null;
+  /** Lowercase-hex pubkey that signed that trigger. */
+  triggerAuthor: string | null;
+  /**
+   * Hex of the definition this run was created from (lane 193). `null` means
+   * the run predates the binding — that is what `definition_unknown` refuses
+   * on, and it is not the same fact as "the relay declined to say".
+   */
+  definitionHash: string | null;
+};
+
+/**
+ * How the tree a host step ran in was established (lane 184, ledger 178(g)).
+ *
+ * `mode` is the host's own sentence: `commit <sha>` for a bound run, or
+ * `working directory as found` for an unbound one. `sha`, `headShaBefore` and
+ * `dirtyBefore` are present exactly when the host could establish them.
+ */
+export type WorkflowHostStepCheckout = {
+  mode: string | null;
+  sha: string | null;
+  headShaBefore: string | null;
+  dirtyBefore: boolean | null;
+};
+
+/** A host step with the checkout sub-object lane 190 exposed. */
+export type ProjectWorkflowHostStep = WorkflowHostStep & {
+  /** `null` for a result recorded before lane 184 — unknown, not "clean". */
+  checkout: WorkflowHostStepCheckout | null;
+};
+
+function readCheckout(
+  raw: RawWorkflowHostStep["checkout"],
+): WorkflowHostStepCheckout | null {
+  if (!raw || typeof raw !== "object") return null;
+  return {
+    mode: typeof raw.mode === "string" ? raw.mode : null,
+    sha: typeof raw.sha === "string" ? raw.sha : null,
+    headShaBefore:
+      typeof raw.headShaBefore === "string" ? raw.headShaBefore : null,
+    dirtyBefore: typeof raw.dirtyBefore === "boolean" ? raw.dirtyBefore : null,
+  };
+}
 
 // ── Conversion functions ──────────────────────────────────────────────────
 
@@ -158,10 +229,14 @@ function fromRawTraceEntry(raw: RawTraceEntry): TraceEntry {
   };
 }
 
-function fromRawWorkflowRun(raw: RawWorkflowRun): WorkflowRun {
+function fromRawWorkflowRun(raw: RawWorkflowRun): ProjectWorkflowRun {
   return {
     id: raw.id,
     workflowId: raw.workflow_id,
+    workflowName: raw.workflow_name ?? null,
+    triggerEventId: raw.trigger_event_id ?? null,
+    triggerAuthor: raw.trigger_author ?? null,
+    definitionHash: raw.definition_hash ?? null,
     status: raw.status,
     currentStep: raw.current_step,
     executionTrace: raw.execution_trace.map(fromRawTraceEntry),
@@ -189,7 +264,9 @@ export function fromRawApproval(raw: RawWorkflowApproval): WorkflowApproval {
   };
 }
 
-export function fromRawHostStep(raw: RawWorkflowHostStep): WorkflowHostStep {
+export function fromRawHostStep(
+  raw: RawWorkflowHostStep,
+): ProjectWorkflowHostStep {
   return {
     runId: raw.run_id,
     stepId: raw.step_id,
@@ -221,6 +298,7 @@ export function fromRawHostStep(raw: RawWorkflowHostStep): WorkflowHostStep {
     })),
     exitedAt: raw.exited_at ?? null,
     createdAt: raw.created_at,
+    checkout: readCheckout(raw.checkout),
   };
 }
 
@@ -308,7 +386,7 @@ export async function deleteWorkflow(workflowId: string): Promise<void> {
 export async function getWorkflowRuns(
   workflowId: string,
   limit?: number,
-): Promise<WorkflowRun[]> {
+): Promise<ProjectWorkflowRun[]> {
   const raw = await invokeTauri<RawWorkflowRunsResponse>("get_workflow_runs", {
     workflowId,
     limit: limit ?? null,
@@ -337,7 +415,7 @@ export async function getRunApprovals(
 export async function getRunHostSteps(
   workflowId: string,
   runId: string,
-): Promise<WorkflowHostStep[]> {
+): Promise<ProjectWorkflowHostStep[]> {
   const raw = await invokeTauri<RawWorkflowHostStepsResponse>(
     "get_run_host_steps",
     { workflowId, runId },
@@ -345,14 +423,45 @@ export async function getRunHostSteps(
   return raw.host_steps.map(fromRawHostStep);
 }
 
+/**
+ * Start a run of a workflow.
+ *
+ * `checkout` is the full 40-hex commit the run is bound to (lane 184). An
+ * action whose step declares `checkout: required` is refused by the relay
+ * when the run names none, so the caller must ask for it rather than start a
+ * run that silently tests whatever the recorded folder holds.
+ */
 export async function triggerWorkflow(
   workflowId: string,
+  checkout?: string | null,
 ): Promise<TriggerWorkflowResponse> {
   const raw = await invokeTauri<RawTriggerWorkflowResponse>(
     "trigger_workflow",
-    { workflowId },
+    { workflowId, checkout: checkout ?? null },
   );
   return fromRawTriggerResponse(raw);
+}
+
+/** One run resolved by run id alone (`GET /workflow-runs/{run_id}`, lane 190). */
+export async function getWorkflowRun(runId: string): Promise<{
+  run: ProjectWorkflowRun;
+  hostSteps: ProjectWorkflowHostStep[];
+  approvals: WorkflowApproval[];
+}> {
+  // The relay merges `host_steps` and `approvals` into the run object itself
+  // (`run_status`, crates/buzz-relay/src/api/workflows.rs) rather than nesting
+  // the run under a key, so the raw payload is a run with two extra arrays.
+  const raw = await invokeTauri<
+    RawWorkflowRun & {
+      host_steps?: RawWorkflowHostStep[];
+      approvals?: RawWorkflowApproval[];
+    }
+  >("get_workflow_run", { runId });
+  return {
+    run: fromRawWorkflowRun(raw),
+    hostSteps: (raw.host_steps ?? []).map(fromRawHostStep),
+    approvals: (raw.approvals ?? []).map(fromRawApproval),
+  };
 }
 
 /**

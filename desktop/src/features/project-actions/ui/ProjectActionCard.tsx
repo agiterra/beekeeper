@@ -1,8 +1,7 @@
-import { Play } from "lucide-react";
 import { useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
 
-import { revokeAutorun, triggerWorkflow } from "@/shared/api/tauriWorkflows";
+import { revokeAutorun } from "@/shared/api/tauriWorkflows";
 import { truncatePubkey } from "@/shared/lib/pubkey";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
@@ -10,9 +9,12 @@ import { Button } from "@/shared/ui/button";
 import {
   actionDescription,
   actionTriggerSummary,
+  requiredCheckoutStepIds,
   runOnHostStepIds,
 } from "../lib/actionDefinition";
+import type { ProjectCodeRefTip } from "../lib/useProjectCodeRefTip";
 import type { ProjectAction } from "../lib/useProjectActions";
+import { ProjectActionRunControl } from "./ProjectActionRunControl";
 import { ProjectActionRunRow } from "./ProjectActionRunRow";
 
 function errorSentence(error: unknown): string {
@@ -26,9 +28,18 @@ function errorSentence(error: unknown): string {
  */
 export function ProjectActionCard({
   action,
+  canApprove,
+  authoritySentence,
+  tip,
   onChanged,
 }: {
   action: ProjectAction;
+  /** Whether this viewer may answer a parked host-step approval. */
+  canApprove: boolean;
+  /** Who may answer, when this viewer may not. */
+  authoritySentence: string;
+  /** The code repository's delivery tip, for the Run control's prefill. */
+  tip: ProjectCodeRefTip | null;
   onChanged: () => void;
 }) {
   const { workflow, runs, autorun, autorunError } = action;
@@ -45,19 +56,8 @@ export function ProjectActionCard({
   const trigger = actionTriggerSummary(workflow.definition);
   const description = actionDescription(workflow.definition);
   const hostSteps = runOnHostStepIds(workflow.definition);
+  const requiredSteps = requiredCheckoutStepIds(workflow.definition);
   const disabled = workflow.definition.enabled === false;
-
-  const run = useMutation({
-    mutationFn: () => triggerWorkflow(workflow.id),
-    onSuccess: (result) => {
-      toast.success(`Run ${result.runId} queued for ${workflow.name}`);
-      onChanged();
-    },
-    onError: (error: unknown) => {
-      toast.error(`Run failed: ${errorSentence(error)}`);
-    },
-  });
-  const { mutate: runMutate, isPending: running } = run;
 
   const revoke = useMutation({
     mutationFn: () => {
@@ -127,23 +127,33 @@ export function ProjectActionCard({
             <p className="mt-1 text-sm text-muted-foreground">{description}</p>
           ) : null}
         </div>
-        <Button
-          data-testid="project-action-run"
-          disabled={running || disabled}
-          onClick={() => runMutate()}
-          size="sm"
-          type="button"
-        >
-          <Play />
-          Run
-        </Button>
+        <ProjectActionRunControl
+          disabled={disabled}
+          onRan={onChanged}
+          requiredStepIds={requiredSteps}
+          tip={tip}
+          workflowId={workflow.id}
+          workflowName={workflow.name}
+        />
       </div>
-      {runs.length === 0 ? (
+      {action.runsError !== null ? (
+        <p
+          className="mt-3 text-xs text-destructive"
+          data-testid="project-action-runs-unreadable"
+          role="alert"
+        >
+          This action&apos;s runs could not be read: {action.runsError}. That is
+          not the same as having no runs.
+        </p>
+      ) : runs.length === 0 ? (
         <p className="mt-3 text-xs text-muted-foreground">No runs yet.</p>
       ) : (
         <ul className="mt-3 divide-y divide-border/60 border-t border-border/60">
           {runs.map((entry) => (
             <ProjectActionRunRow
+              action={action}
+              authoritySentence={authoritySentence}
+              canApprove={canApprove}
               entry={entry}
               key={entry.run.id}
               onChanged={onChanged}

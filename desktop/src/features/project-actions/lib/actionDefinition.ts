@@ -100,3 +100,66 @@ export function actionDescription(
     ? description.trim()
     : null;
 }
+
+/**
+ * The `run_on_host` steps of a definition that declare `checkout: required`.
+ *
+ * Lane 184: such a step refuses a run that names no commit, so the Run
+ * control must ask for one. An action with none runs in the recorded project
+ * directory exactly as it is found, and the control says that plainly instead
+ * of implying an isolated checkout.
+ */
+export function requiredCheckoutStepIds(
+  definition: Record<string, unknown>,
+): string[] {
+  if (!Array.isArray(definition.steps)) return [];
+  const ids: string[] = [];
+  for (const raw of definition.steps) {
+    const step = asRecord(raw);
+    if (
+      step?.action === "run_on_host" &&
+      step.checkout === "required" &&
+      typeof step.id === "string"
+    ) {
+      ids.push(step.id);
+    }
+  }
+  return ids;
+}
+
+/**
+ * The exact command a `run_on_host` step would execute, as the published
+ * definition spells it — the argv joined by spaces, never re-quoted or
+ * summarized. `null` when the step is not in this definition or carries no
+ * command; an approval card renders that as "this definition names no
+ * command for <step>", never as an empty line.
+ */
+export function hostStepCommand(
+  definition: Record<string, unknown>,
+  stepId: string,
+): string | null {
+  if (!Array.isArray(definition.steps)) return null;
+  for (const raw of definition.steps) {
+    const step = asRecord(raw);
+    if (step?.id !== stepId || step.action !== "run_on_host") continue;
+    const command = step.command;
+    if (typeof command === "string" && command.trim().length > 0) {
+      return command.trim();
+    }
+    if (Array.isArray(command)) {
+      const parts = command.filter(
+        (part): part is string => typeof part === "string",
+      );
+      if (parts.length === command.length && parts.length > 0) {
+        return parts.join(" ");
+      }
+    }
+    return null;
+  }
+  return null;
+}
+
+/** Whether `value` is a full 40-hex commit sha, as the relay demands. */
+export function isFullCommitSha(value: string): boolean {
+  return /^[0-9a-f]{40}$/i.test(value.trim());
+}
