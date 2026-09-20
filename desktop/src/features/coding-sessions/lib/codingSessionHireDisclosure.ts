@@ -17,6 +17,11 @@ import {
   codingSessionHireRefusalNotice,
   type CodingSessionHireAnswer,
 } from "./codingSessionHireAnswer";
+import {
+  codingSessionHireAnswerWithinRequesterWindow,
+  markCodingSessionHostNoticeText,
+  markCodingSessionHostTurnText,
+} from "./codingSessionHireHostNotice";
 import { codingSessionHireRequesterLabel } from "./codingSessionHireSeat";
 import {
   codingSessionHireRequesterStanding,
@@ -44,21 +49,33 @@ export async function discloseCodingSessionHire(
     text: string;
     /** The umbrella's own line for the same fact. */
     notice: string;
+    /**
+     * Whether to also open a turn on the requesting seat, addressed to its
+     * own live target, in addition to the umbrella notice.
+     *
+     * Defaults to `true` — most disclosures (a seated model substitution, a
+     * failed grant) have no synchronous reader the way a refusal's caller
+     * does. A refusal computes this from
+     * {@link codingSessionHireAnswerWithinRequesterWindow}: `false` when the
+     * requester's own `bee sessions hire` could still be waiting on the
+     * answer this same turn would carry (ledger 178(b)).
+     */
+    openTurn?: boolean;
   },
   input: UseCodingSessionHireInput,
   deps: CodingSessionHireDeps,
 ): Promise<void> {
-  const target = input.targetForActor(
-    disclosure.channelId,
-    disclosure.requesterPubkey,
-  );
+  const target =
+    disclosure.openTurn === false
+      ? null
+      : input.targetForActor(disclosure.channelId, disclosure.requesterPubkey);
   if (target) {
     await publishCodingSessionCommand(
       {
         channelId: disclosure.channelId,
         commandId: deps.newTurnCommandId(),
         target,
-        text: disclosure.text,
+        text: markCodingSessionHostTurnText(disclosure.text),
         deliver: "boundary",
       },
       { publisher: deps.publisher, signer: deps.signer },
@@ -68,7 +85,7 @@ export async function discloseCodingSessionHire(
     {
       channelId: disclosure.channelId,
       sessionRef: disclosure.sessionRef,
-      content: disclosure.notice,
+      content: markCodingSessionHostNoticeText(disclosure.notice),
     },
     { publisher: deps.publisher, signer: deps.signer },
   ).catch(() => {});
@@ -98,6 +115,14 @@ export async function publishRefusal(
             input.agents.find((agent) => agent.pubkey === pubkey)?.name ?? null,
         }),
         text: answer.text,
+      }),
+      // See `codingSessionHireAnswerWithinRequesterWindow`: a fast refusal
+      // is already in the requester's own `bee sessions hire` poll before
+      // this ever reaches the wire; only a turn published once that window
+      // has lapsed carries anything new (ledger 178(b)).
+      openTurn: !codingSessionHireAnswerWithinRequesterWindow({
+        requestCreatedAt: request.createdAt,
+        nowSeconds: deps.now(),
       }),
     },
     input,
@@ -146,6 +171,15 @@ export async function refuseCodingSessionHireWithCode(
             input.agents.find((agent) => agent.pubkey === pubkey)?.name ?? null,
         }),
         text,
+      }),
+      // Same rule as `publishRefusal`: this code path answers a hire that
+      // failed on this computer *after* the decision — often after cutting a
+      // worktree or staging a clone, which can easily outrun the requester's
+      // own wait. Whichever side of the window it lands on, `deps.now()` is
+      // read once, at the moment this host is ready to answer.
+      openTurn: !codingSessionHireAnswerWithinRequesterWindow({
+        requestCreatedAt: request.createdAt,
+        nowSeconds: deps.now(),
       }),
     },
     input,

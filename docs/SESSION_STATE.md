@@ -14702,6 +14702,76 @@ removed from here.
        `crates/buzz-core/src/coding_session_routing.rs:3046`; adding a 14th
        key belongs with whoever next changes that schema), so the origin
        travels only in the host's own disclosure and the CLI's report.
+181. **Lane 181: a host's own refusal disclosure is now marked and, within
+     the requester's own wait, no longer opened as a turn (fixes 178(b))
+     (2026-09-20, built in `work/lane-181-refusal-turn`).** Two changes in
+     `desktop/src/features/coding-sessions/lib/codingSessionHireDisclosure.ts`
+     and a new sibling
+     `desktop/src/features/coding-sessions/lib/codingSessionHireHostNotice.ts`:
+     - **Every host disclosure is marked, never mistaken for a person's
+       words.** `markCodingSessionHostNoticeText` prefixes the umbrella
+       notice with `[Host notice — not a person] `; `markCodingSessionHostTurnText`
+       appends the same marker to the *end* of the text sent as a turn.
+       Deliberately a suffix, not the prefix the ledger item's own wording
+       suggested: `bee sessions hire` recognizes a refusal structurally by
+       the text starting with the exact `hire refused: ` prefix
+       (`HIRE_REFUSAL_PREFIX`/`parse_hire_refusal`,
+       `crates/buzz-core/src/coding_session_lifecycle_command.rs`,
+       `crates/buzz-cli/src/commands/sessions/crew.rs:2072`; its own test
+       fixes this — `"please hire refused: HIRE_OFF — x", // prefix must
+       start the text`). Putting the marker ahead of that prefix would make
+       every refusal ever published unparseable, turning every refused hire
+       into the `unconfirmed` one ledger 169 fixed. The marker is applied
+       once, inside `discloseCodingSessionHire`, so every disclosure path —
+       refusal, malformed hire, grant failure, model/provider substitution —
+       carries it without a second call site to keep in sync.
+     - **A refusal opens a turn on the requester only when the requester's
+       own `bee sessions hire` could not have read it synchronously.**
+       `codingSessionHireAnswerWithinRequesterWindow` compares `deps.now()`
+       against the hire's own `createdAt` with a 120s budget
+       (`CODING_SESSION_HIRE_ANSWER_SYNCHRONOUS_SECONDS`, matching
+       `HIRE_WAIT_SECONDS` in `crates/buzz-cli/src/commands/sessions/crew.rs`,
+       asserted there at 120 by `crew_tests.rs`). `publishRefusal` and
+       `refuseCodingSessionHireWithCode` (and, through it,
+       `refuseCodingSessionHireForSeatingFailure`) pass `openTurn: false`
+       when still inside that window; `discloseCodingSessionHire` then skips
+       `targetForActor`/`publishCodingSessionCommand` entirely and publishes
+       only the umbrella notice. Outside the window — the common case for a
+       staging failure, which runs after cutting a worktree and cloning the
+       agents repository, easily longer than 120s — both the notice and the
+       marked turn are published, exactly as before.
+     - **Open technical risk, disclosed rather than hidden**: `bee sessions
+       hire`'s own poll (`wait_for_hire`/`read_hire_answer` in
+       `crates/buzz-cli/src/commands/sessions/crew_cmds.rs`) determines
+       `HireOutcome::Refused` by reading this *same* target-addressed 44220
+       off the relay directly — it is not a separate structured answer.
+       Suppressing that publish inside the window (as this lane does) means
+       a fast refusal that used to let the CLI report `refused` within a
+       second or two will now make the CLI wait out its own 120s window and
+       report `unconfirmed` instead — and, because `discloseCodingSessionHire`
+       runs once, that event is never published later either, so
+       `bee sessions status` would show the same hire `unconfirmed`
+       indefinitely, with only the umbrella notice as its answer. This
+       matches the fix as specified and is very likely the deliberate
+       trade — a $0.59, 580k-token misread is worse than a slower
+       `unconfirmed` — but it has not been proved against a live
+       `bee sessions hire` run, and no Rust-side change makes `unconfirmed`
+       resolve to `refused` later for this case. Worth a live check before
+       calling 178(b) fully closed.
+     - Tests, beside the file: `codingSessionHireHostNotice.ts` has no test
+       file of its own — its pure functions are exercised directly by
+       `codingSessionHireDisclosure.test.mjs`, which covers the marker
+       prefix/suffix and idempotency, the within-window (notice only, no
+       turn) and past-window (marked turn + notice) cases for all three
+       refusal entry points, and the no-live-target case. Updated to match:
+       `desktop/src/features/coding-sessions/hooks/useCodingSessionHire.test.mjs`
+       (grant-failure and named-requester assertions, which now carry the
+       marker) and
+       `desktop/src/features/coding-sessions/ui/CodingSessionHireHost.test.mjs`
+       (several refusal-wording tests moved their harness `now` past the
+       120s window so the turn they inspect is still opened; one test split
+       into a past-window and a within-window case). `pnpm typecheck` and
+       `pnpm test` both green on the full desktop suite.
 182. **The `bee sessions` bodies now answer for their own shape: `--example`
      prints a valid body, a refusal names every required key, and `--verifies`
      fills the field the fence actually reads (2026-09-20, lane 182 on
