@@ -169,20 +169,30 @@ the sequence, in order, so nobody re-derives it.
    main`; your branch must sit on top of `origin/main` (rebase with
    `--signoff` if not — the pre-push branch-skew guard blocks a topic branch
    that is behind main and touches the same files).
-3. **Push with the hooks skipped, on that same SHA.**
+3. **Push with `just push` (`scripts/push-with-floor.sh`), on that same SHA.**
 
    ```sh
-   GIT_TERMINAL_PROMPT=0 git push --no-verify origin <branch>:main
+   GIT_TERMINAL_PROMPT=0 just push origin <branch>:main
    ```
 
-   Why `--no-verify`: git mints the NIP-98 credential at ref discovery,
-   *before* the pre-push hooks run. The hooks (clippy, typecheck, unit tests)
-   take longer than the relay's timestamp window, so the upload arrives with
-   an expired token and fails `HTTP 401` with every hook green — or, from a
-   tool with a short timeout, simply looks hung. The hooks add nothing here:
-   `just ci` already ran on this SHA. Never use `--no-verify` on a SHA `just
-   ci` did not pass. `GIT_TERMINAL_PROMPT=0` makes a credential problem fail
-   in a second instead of waiting on a prompt nobody can answer.
+   Why not a plain `git push`: git mints the NIP-98 credential at ref
+   discovery, *before* the pre-push hooks run, and reuses that one credential
+   for the whole push — confirmed empirically against a throwaway HTTP git
+   server (`docs/history/2026-09-20-pre-push-floor-stamp.md`): the credential
+   helper's `get` fires exactly once per `git push`, and the identical
+   Authorization value is replayed on the retried GET and the receive-pack
+   POST. The pre-push floor (clippy, typecheck, the changed crates' unit
+   tests) can outlast the relay's ±900s token window on a crate-touching
+   push, so the upload then arrives with an expired token and fails
+   `HTTP 401` with every hook green (ledger 178(n)). `just push` runs the
+   exact same floor *before* opening the connection and records a short-lived
+   pass stamp keyed to the tip sha, so the pre-push hook that `git push`
+   triggers finds a fresh stamp and returns immediately — the credential is
+   seconds old when the pack uploads. A plain `git push` still runs the floor
+   in full inside the hook and may still 401 on a long one; its summary names
+   `just push` when that happens. Never fall back to `--no-verify` on a SHA
+   `just ci` did not pass. `GIT_TERMINAL_PROMPT=0` makes a credential problem
+   fail in a second instead of waiting on a prompt nobody can answer.
 4. **Verify both heads.** `git fetch origin main && git rev-parse origin/main`
    must be your SHA; a minute later `git fetch upstream main` shows the
    GitHub mirror following.

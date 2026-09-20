@@ -226,7 +226,13 @@ and fast unit tests in parallel (Rust, desktop JS, Tauri Rust, mobile Flutter)
 all formatting in one shot. Run `just ci` for the full local gate. Run `just
 hooks` to re-install hooks after env changes. Before agents run Git or hooks,
 activate the repo's Hermit environment (`. ./bin/activate-hermit`); do not
-rewrite hook commands to compensate for an unconfigured shell `PATH`.
+rewrite hook commands to compensate for an unconfigured shell `PATH`. **Push
+with `just push`, not a plain `git push`**, on any SHA that touches crates —
+git mints the NIP-98 credential before the pre-push floor runs and reuses it
+for the whole push, so a floor long enough to outlast the relay's token
+window (as a crate change's clippy+tests can) fails `HTTP 401` with every
+check green; `just push` runs the same floor first and pushes only once it
+passes (see `docs/INTEGRATION.md` § Pushing to the relay, ledger 178(n)/191).
 
 **Commit with `git commit -s`.** The required **DCO Check** fails any PR with a commit missing a `Signed-off-by` trailer, and `just hooks` installs a `commit-msg` hook that adds it to commits you create locally (`git rebase` and `git cherry-pick` still need `--signoff`) — if you build commit commands programmatically, include `-s` every time. To repair a branch that already has unsigned commits: `git rebase --signoff main`, then force-push.
 

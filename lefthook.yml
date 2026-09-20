@@ -25,6 +25,17 @@
 #     Path filtering lives there, in a tested pure function, rather than in
 #     globs here — which is also why the repository-wide file-size ratchet is
 #     still unfiltered: its own merge-base diff is its path filter.
+#   - `floor` also checks for a pass stamp
+#     (`scripts/pre-push-floor-stamp.mjs`) naming the current HEAD sha and the
+#     exact changed-file set, and returns immediately when one is fresh and
+#     matching, consuming it either way. Only `scripts/push-with-floor.sh`
+#     (`just push`) writes that stamp, by running this same floor BEFORE `git
+#     push` opens the connection — ledger 178(n): git mints its NIP-98
+#     credential at ref discovery, before this hook runs, and reuses it for
+#     the whole push, so a floor long enough to outlive the relay's +-900s
+#     token window fails `HTTP 401` with every check green. A plain `git
+#     push` never writes a stamp, so its own hook run here still runs the
+#     floor in full, exactly as before.
 #
 # This block used to run `just test-unit` (`cargo test --workspace`) for any
 # `crates/**` change plus the Tauri clippy+test pair on the same glob. That is

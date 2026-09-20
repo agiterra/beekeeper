@@ -122,6 +122,16 @@ down:
 ps:
     docker compose ps
 
+# Run the pre-push floor BEFORE git opens the connection, then push. Fixes
+# ledger 178(n): git mints its NIP-98 credential at ref discovery, before any
+# pre-push hook runs, and reuses it for the whole push, so a floor long enough
+# to outlive the relay's +-900s token window fails `HTTP 401` with every
+# check green. Args pass straight to `git push` — `just push`, `just push
+# origin main`, `just push origin work/my-branch:main`. See
+# scripts/push-with-floor.sh and docs/INTEGRATION.md § Pushing to the relay.
+push *args:
+    ./scripts/push-with-floor.sh {{args}}
+
 # Install git-credential-nostr and configure git to push to the relay's own git
 # hosting. Config is URL-scoped to the relay's /git path, so whatever already
 # serves GitHub (osxkeychain, gh, a PAT) is untouched.

@@ -15471,6 +15471,72 @@ removed from here.
        provider's `state.json` is already
        `/Users/brian/Projects/pivot-test-wt-build-kettle-cli-lead`.
 
+191. **The pre-push floor now runs before git opens the connection, so a
+     crate-touching push does not 401 (built 2026-09-20, lane 191, not
+     landed).** Fixes 178(n): git mints the NIP-98 credential at ref
+     discovery, before pre-push hooks run, and reuses that one credential for
+     the whole push, so a floor that outlasts the relay's ±900s token window
+     fails `HTTP 401` with every check green — landing 184 measured the floor
+     at ~20 minutes and the batch 180–187 had to be gated bare and pushed
+     `--no-verify`.
+     - **Mechanism established first, empirically, before any fix.** A
+       throwaway clone under `/tmp`: a bare repo served over plain HTTP by a
+       CGI wrapper around `git http-backend`, requiring an `Authorization`
+       header or answering 401, tried both with a plain `Basic` challenge
+       and with `WWW-Authenticate: Nostr realm="buzz", method="GET"` plus a
+       stub helper shaped exactly like `git-credential-nostr`'s reply
+       (`capability[]=authtype`, `authtype=Nostr`, `ephemeral=true`,
+       `quit=true` — `crates/git-credential-nostr/src/lib.rs:513-517`), the
+       stub minting a fresh, timestamped value on every `get` call. Both
+       shapes gave the same result: the helper's `get` fires exactly once per
+       `git push`; the identical Authorization value is replayed on the
+       retried `info/refs` GET and the `git-receive-pack` POST ~46ms later.
+       `ephemeral=true` does not cause a re-ask — it only stops the later
+       `store` call from persisting into a durable cross-invocation cache.
+       No git config (`credential.useHttpPath`, `http.<url>.extraHeader`)
+       changes this; it is how git's http transport reuses one resolved auth
+       context for a whole transport object. Full transcript and both
+       challenge-shape logs:
+       [2026-09-20-pre-push-floor-stamp.md](history/2026-09-20-pre-push-floor-stamp.md).
+       Conclusion: there is no way to make git re-ask mid-push, so the floor
+       must finish before git opens the connection at all.
+     - **The fix.** `scripts/push-with-floor.sh` (`just push`) runs
+       `scripts/pre-push-floor.sh` — the exact same floor — with
+       `BUZZ_PRE_PUSH_FLOOR_STAMP_WRITE=1` before calling `git push`. On
+       success it writes a short-lived pass stamp
+       (`scripts/pre-push-floor-stamp.mjs`,
+       `.git/buzz-pre-push-floor-stamp.json`) naming the tip sha and a hash
+       of the exact changed-file set the floor ran against. `lefthook.yml`'s
+       `floor` step (still `pre-push-floor.sh`, run by git's own hook) checks
+       for a stamp first: fresh and matching returns immediately; the stamp
+       is consumed (deleted) whether it matched or not, so it can only ever
+       answer for the one push it was made for. A plain `git push` never
+       writes a stamp, so its own hook run finds none and runs the full
+       floor exactly as before — its over-budget message now names the
+       wrapper. `docs/INTEGRATION.md` § Pushing to the relay ("Landing a
+       batch") and `AGENTS.md`'s Quality Gates paragraph both now say to use
+       `just push`.
+     - **Verified.** `node --test scripts/pre-push-floor-stamp.test.mjs` (13
+       cases: fresh, expired, wrong sha, wrong scope, malformed, missing,
+       consume). End to end in a second throwaway clone of this repo (not
+       this checkout): a stamp for the wrong sha, a stamp for a different
+       changed-file set, and an expired (1s TTL) stamp each correctly fell
+       through to running the floor for real; a fresh matching stamp
+       short-circuited in under a second and was gone on the next check.
+       `bash scripts/test-pre-push-floor.sh` still 82/82 after the change.
+       One bug the verification itself caught: the stamp CLI's "am I the
+       entry point" check (`import.meta.url === file://${process.argv[1]}`)
+       silently failed for any invocation under `/tmp`, because macOS
+       resolves `/tmp` to `/private/tmp` in `import.meta.url` but not in
+       `process.argv[1]` — fixed to compare `realpathSync()` on both sides
+       before landing.
+     - **Not done.** Not landed, not exercised against the real relay (the
+       whole experiment was against a throwaway HTTP server, deliberately —
+       the task forbade touching the real relay's token window). Nobody has
+       yet run a real crate-touching `just push` against hive to confirm the
+       401 is gone in production, not just in the stamp's own unit and
+       integration tests.
+
 ## 3a. Environment facts that cost real time (do not rediscover)
 
 - **pnpm 11's answer to a stale workspace state is to DELETE `node_modules`,
