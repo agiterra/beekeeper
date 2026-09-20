@@ -16137,25 +16137,23 @@ removed from here.
        64-hex and one event cannot tell them apart — a relay test says so in
        words. All **thirteen** A2 sequences reproduce their
        `expected-fold.json` exactly, each under the permutation property.
-     - **A second contract defect, found in A2 and reported not resolved.**
-       `sequences/fork-descendant/expected-fold.json` gives `dec30000…`
-       `supersedes: []` although its signed record names `dec10000…`, and the
-       same file asserts that very edge from `dec10000…`'s `supersededBy`.
-       The only rule consistent with all thirteen fixtures is "a superseded
-       declaration reports no `supersedes`", which is what W1 implemented
-       (`project_work_fold_project.rs:151`, with the reason at the site). It
-       silently drops lineage a reader may want, and no `README` sentence
-       states it. `check-fixtures.mjs` does not catch it: it validates
-       well-formedness, not the fold, so it and this implementation do not
-       disagree — the disagreement is inside the fixture.
-     - **Not done, and owed.** Nothing is landed, deployed or run live. W2
-       owns `bee sessions work validate|adopt|bind|status`, the atomic
-       `adopt` path and the 30617 coordinate resolution; W3 the work brief;
-       W5 the surface (a reader showing coverage and mission as **two rows**,
-       never merged). The live proof is the Wave 3 control run. The relay
-       change means a relay-first landing: hive's NIP-11 `build_time` must
-       pass the landing time before a desktop depending on 44249 is
-       installed.
+     - **All three defects were ruled on and fixed in amendment A3
+       (`d031e6729`), and this lane is rebased onto it.** (1) `supersedes` is
+       reported **exactly as recorded** on every declaration in every state
+       and `supersededBy` is its derived inverse — the
+       `fork-descendant/expected-fold.json` asymmetry W1 reported (its
+       `dec30000…` carried `supersedes: []` while the same file asserted that
+       edge from `dec10000…`) was the fixture's defect, and only that file
+       changed. (2) `assignmentRefs` lists **every** valid
+       `work.assignment_bound` for that criterion under the projected
+       declaration, evidence or not, so the projection can answer "who owes
+       this" for unfinished work; only `goal-changed/expected-fold.json`
+       changed. (3) § (c)'s example is now a real two-criterion document
+       behind a `check-fixtures.mjs` marker, held to the fixtures' own rules,
+       so the prose cannot drift from them; `NIP-PW.md` points at it rather
+       than restating it. Both of W1's rules are removed from
+       `project_work_fold_project.rs`, and all thirteen sequences match again
+       under the permutation property.
      - Also owed by A2 and **not** in this lane: lanes 199 (approval races)
        and 200 (the desktop's tag-refusal fallback).
      - Gates on `work/lane-195-work-records`, bare after committing:

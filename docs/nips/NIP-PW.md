@@ -220,6 +220,8 @@ A criterion whose evidence fails a predicate is **`open` with its reason named**
 
 ### The output
 
+`supersedes` is reported **exactly as recorded** on every declaration in every state; `supersededBy` is its derived inverse. `assignmentRefs` lists every valid `work.assignment_bound` for that criterion under the projected declaration, whether or not evidence is bound — the projection's job is what remains *and who owes it*. The contract's worked example lives in `conformance/project-work/README.md` § (c), where `check-fixtures.mjs` holds it to the same structural rules as the sequence fixtures.
+
 ```json
 {
   "schema": "buzz-project-work-coverage/v1",

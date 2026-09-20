@@ -148,18 +148,11 @@ pub(super) fn project_declaration(
         declaration_ref: record.id.clone(),
         plan_ref: body.plan_ref.clone(),
         state,
-        // A superseded declaration reports no `supersedes`. This is the
-        // contract's shape, pinned by `sequences/fork-descendant`, where
-        // dec30000… carries `supersedes: []` although its record names
-        // dec10000… — an edge the same file asserts from dec10000…'s
-        // `supersededBy`. W1 reported the asymmetry rather than choosing a
-        // side; every other fixture is silent on it because no superseded
-        // declaration there has a non-empty list.
-        supersedes: if state == WorkDeclarationState::Superseded {
-            Vec::new()
-        } else {
-            body.supersedes.clone()
-        },
+        // `supersedes` is reported exactly as recorded, in every state;
+        // `supersededBy` is the derived inverse. A projection that dropped
+        // an edge in one direction while asserting it in the other would be
+        // lying about lineage (A3 ruling on W1's finding).
+        supersedes: body.supersedes.clone(),
         superseded_by,
         state_reason_code,
         state_reason,
@@ -306,11 +299,6 @@ fn project_criterion(
                     })
             })
             .max_by_key(|(binding, _)| binding.key());
-        // A criterion with no evidence binding under this declaration reports
-        // no bindings at all — not the assignment that owes it. That is the
-        // contract's shape, pinned by `sequences/goal-changed`, and the one
-        // place this projection is less informative than it could be; W1
-        // reported it rather than diverging from the fixture.
         let outcome = elsewhere.map(|(_, body)| {
             Outcome::stale(
                 WorkReasonCode::BoundToSupersededDeclaration,
@@ -326,7 +314,10 @@ fn project_criterion(
             status: outcome
                 .as_ref()
                 .map_or(WorkCriterionStatus::Open, |outcome| outcome.status),
-            assignment_refs: Vec::new(),
+            // Every valid assignment binding for this criterion under this
+            // declaration, evidence or not: the projection's job is "what
+            // remains and **who owes it**" (A3 ruling on W1's finding).
+            assignment_refs,
             evidence: Vec::new(),
             artifact_commit: None,
             reason_code: outcome.as_ref().and_then(|outcome| outcome.reason_code),
