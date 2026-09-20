@@ -14586,6 +14586,15 @@ removed from here.
        same day, first real use:** `just push origin main` ran a 616 s full
        floor, the hook found the stamp 6 s old, and
        `febe67709..084880966  main -> main` went up with no `HTTP 401`.
+     - (q) **The relay deploy (k) was waiting on happened.** Wave 0 landed
+       `ea3728af1` at 2026-09-20 19:25Z; hive's own autodeploy built and
+       restarted it at NIP-11 `build_time` `2026-09-20T19:40:52Z`, `/health`
+       `ok`, fifteen minutes later. `bee workflows run-status --run
+       6c2aeadc-5e23-4400-b14d-b5baec8fd6bd` against `wss://hive.agiterra.org`
+       now answers with the run, its approvals and its execution trace
+       (exit 0), where it 404'd before. So (k) is closed: 190 is live, not
+       merely landed. The same read shows `definition_hash: null` on that
+       pre-binding run — lane 193's disclosed non-answer, not a failure.
 
 179. **Andy's eight-seat run finished the game and never finished its own
      protocol; almost half its turns were disposition bookkeeping
