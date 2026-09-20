@@ -8,6 +8,7 @@
 //! README.md              the layout and the archive rule, for people and agents
 //! team.yml               beekeeper-team/v1: every seeded role, `lead: lead`
 //! actions.yml            buzz-project-actions/v1, no actions yet
+//! model-registry.yaml    the routing registry, so hires route per project
 //! roles/<role>.md        one per shipped `kind: role` template — an include, not a copy
 //! roles/archive/         retired roles; never hireable, never included
 //! skills/                shared by every role; empty
@@ -45,6 +46,31 @@ pub const ACTIONS_SCHEMA: &str = "buzz-project-actions/v1";
 
 /// The README the seed writes.
 pub const README_MD: &str = "README.md";
+
+/// The routing registry at the agents repository's root.
+///
+/// Named to match `buzz_core::model_registry_source::AGENTS_REPO_REGISTRY_FILE`
+/// — the name every *reader* composes — and repeated here because this crate
+/// does not depend on `buzz-core`. A test in the desktop host, which depends
+/// on both, asserts the two agree; a disagreement would be invisible, seeding
+/// a file no router would ever look at.
+pub const MODEL_REGISTRY_YML: &str = "model-registry.yaml";
+
+/// The registry the seed writes, embedded from this repository's
+/// `team/model-registry.yaml` at build time.
+///
+/// Embedded rather than copied at runtime for one reason: a project's
+/// registry must not depend on a Beekeeper checkout being present on the
+/// machine that creates the project. `include_str!` also makes drift
+/// impossible — the bytes are the file's, taken when this build was compiled
+/// — and the test `the_seeded_registry_is_this_repositorys_own_file` pins
+/// that the build's copy still matches the working tree.
+///
+/// A seeded registry is a **copy, not a reference**, unlike a seeded role.
+/// Routing is the project's own policy: once seeded, the project edits these
+/// rows and Beekeeper's later opinions do not reach into a running team's
+/// cost decisions.
+pub const SEEDED_MODEL_REGISTRY: &str = include_str!("../../../team/model-registry.yaml");
 
 /// The fragments every seeded role includes after its own template, in
 /// this order. Each must exist in the catalog or the seed refuses.
@@ -153,6 +179,10 @@ pub fn write_agents_repo_seed(
              schema: {ACTIONS_SCHEMA}\nactions: []\n"
         ),
     )?;
+    // The registry travels with the project (ledger 178(a)): without it here
+    // a routed hire is refused on every project but Beekeeper's own, and the
+    // unrouted retry runs the identity's pin — the most expensive target.
+    write(MODEL_REGISTRY_YML, SEEDED_MODEL_REGISTRY)?;
     for template in &roles {
         write(
             &format!("{FLAT_ROLES_DIR}/{}.md", template.name),
@@ -253,6 +283,7 @@ fn readme(name: &str) -> String {
          | --- | --- |\n\
          | `team.yml` | the team manifest: roles, the lead, per-role grants |\n\
          | `actions.yml` | the project's actions (`bee actions publish`) |\n\
+         | `model-registry.yaml` | the execution targets hires route against (`bee sessions route`) |\n\
          | `roles/<role>.md` | a role **in force**; an include of Beekeeper's shipped role plus the shared fragments |\n\
          | `roles/<role>/skills/` | skills private to that role |\n\
          | `roles/archive/` | **retired** roles, kept for history; never hireable, never included |\n\
@@ -268,7 +299,11 @@ fn readme(name: &str) -> String {
          takes minor revisions at its next hire and opts into a major one by\n\
          editing the line. To own a paragraph outright, clone it:\n\
          `bee pack clone-template <name>@<version> --into .` and include the copy\n\
-         with `![[./templates/<name>.md]]`.\n"
+         with `![[./templates/<name>.md]]`.\n\n\
+         `model-registry.yaml` is the opposite: a copy this project owns. Routing\n\
+         is the team's own cost policy, so edit these rows here — nothing in\n\
+         Beekeeper reaches into them again. `bee sessions registry check` says\n\
+         whether they are still true about what this host is serving.\n"
     )
 }
 
@@ -359,6 +394,7 @@ mod tests {
             "README.md",
             "team.yml",
             "actions.yml",
+            "model-registry.yaml",
             "roles/lead.md",
             "roles/builder.md",
             "roles/archive/.gitkeep",
@@ -429,6 +465,42 @@ mod tests {
         let actions = std::fs::read_to_string(root.join("actions.yml")).unwrap();
         assert!(actions.contains(&format!("schema: {ACTIONS_SCHEMA}")));
         assert!(actions.contains("actions: []"));
+    }
+
+    /// Ledger 178(a): the registry a project routes against must be this
+    /// repository's own file, byte for byte, and it must actually be written.
+    ///
+    /// `include_str!` makes the *build* honest; this makes the working tree
+    /// honest, which is the half a reader can check. A registry that drifted
+    /// from the file the team reviews would produce decisions citing a
+    /// version that was never on disk.
+    #[test]
+    fn the_seeded_registry_is_this_repositorys_own_file() {
+        let repo_registry = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("team")
+            .join("model-registry.yaml");
+        let on_disk =
+            std::fs::read_to_string(&repo_registry).expect("read team/model-registry.yaml");
+        assert_eq!(
+            SEEDED_MODEL_REGISTRY,
+            on_disk,
+            "the embedded registry and {} have drifted",
+            repo_registry.display()
+        );
+
+        let tmp = tempfile::tempdir().unwrap();
+        let catalog = catalog(&tmp.path().join("templates"));
+        let root = tmp.path().join("demo-beekeeper-agents");
+        write_agents_repo_seed(&root, &catalog, "demo").unwrap();
+        let seeded = std::fs::read_to_string(root.join(MODEL_REGISTRY_YML)).expect("seeded");
+        assert_eq!(seeded, on_disk);
+        // And it parses as a registry to the reader that matters: `version`
+        // and at least one target row, the two things routing cannot do
+        // without.
+        assert!(seeded.contains("version: 1"), "no version");
+        assert!(seeded.contains("targets:"), "no targets");
     }
 
     #[test]

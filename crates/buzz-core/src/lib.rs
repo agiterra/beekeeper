@@ -95,6 +95,9 @@ pub mod host_step;
 pub mod invite;
 /// Buzz kind number registry — custom event type constants.
 pub mod kind;
+/// Where the model registry is looked for, in order, and which copy answered:
+/// the project's agents repository, then its code checkout.
+pub mod model_registry_source;
 /// Network utilities — SSRF-safe IP classification.
 pub mod network;
 /// Agent observer frame helpers.
