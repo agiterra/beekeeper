@@ -14512,6 +14512,38 @@ removed from here.
      - (i) Fable published the action as Brian at 12:04Z with the bundled
        `bee` (workflow `61680af3…`); `target/debug/bee` is stale and lacks
        `actions`. Run continuation recorded in the runbook § 8.
+     - (j) **The lead's trigger was accepted and nothing on this host claimed
+       it.** 46020 at 12:26:55Z, relay 46010 approval request `3a104854…`
+       addressed to the project owner, approved by a hand-signed 46030
+       (`5104cbb0…`, 12:50:15Z; the inbox still has no approve control,
+       171(b)), relay 46013 host-step request `2d586ed3…` at 12:50:45Z. The
+       provider's action-step listener logged nothing after its 11:31:56Z
+       reconnect and claimed nothing for 11 minutes; after Brian relaunched
+       the app it claimed within a second (46022 at 13:01:50Z) and ran the
+       step: exit 0, `Ran 25 tests … OK`, 4070 ms, `headSha fa927fd`,
+       `dirty:false` (46023 `daf20471…`, relay 46014 at 13:03:18Z). The same
+       shape happened 2026-09-19 (313 s to claim, only after a relaunch,
+       attributed then to the outbox, 170). `LISTENER_IDLE` is 900 s
+       (`action_step_listener.rs:45`) and a silent connection is not
+       detected inside it. Open; lane owed (listener liveness: ping or
+       re-subscribe on a cadence, log the served set at connect).
+     - (k) **`bee workflows runs` returned `[]` for a run in `waiting_approval`
+       and for yesterday's completed run `537b718c`**, so the lead concluded
+       "no host workflow on this machine has ever executed". Open; lane owed.
+     - (l) **The host checkout the action runs in was stale.** The recorded
+       project directory `/Users/brian/Projects/pivot-test` sat at `e682191`
+       after the lead landed `fa927fd` on the relay; the lead noticed, did
+       not touch it, and asked. Fable fast-forwarded it by hand before
+       approving. Lane 184's commit binding is the fix.
+     - (m) **After the relaunch the lead could not be reconnected**: "this
+       role is granted the agents repository (Write) but the seat has no
+       worktree to put a clone beside, or no project source to clone"
+       (`actor_seats.rs:818`). The composer's reconnect passes no `worktree`
+       (`CodingSessionComposer.tsx:705` via `codingSessionResumeSeat.ts`),
+       and since 169 a granted role refuses to stage without one; the lead's
+       clone already existed beside its worktree. Builder and Verifier, with
+       no grant, reattached. The mission cannot complete until the lead is
+       back. Lane 187.
 
 179. **Andy's eight-seat run finished the game and never finished its own
      protocol; almost half its turns were disposition bookkeeping

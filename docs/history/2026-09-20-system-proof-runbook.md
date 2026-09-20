@@ -138,4 +138,25 @@ system's fault, not the model's, and the fix is in the briefing or the role.
 
 ## 8. Outcome
 
-_Unfilled. Date, build, cast, and the two tables above._
+Run 2026-09-20 11:27Z to 13:2xZ, single machine, installed `7b8f0a92d`.
+Cast: Brian at the keyboard, Fable orchestrating and approving as Brian,
+Astra auditing read-only. Lead `74495ca8`, Builder `6c628bef`, Verifier
+`f543d7bd`, all `opus[1m]` on `claude-primary`. Scorecard and cost rows:
+Astra's audit at cutoff 11:49Z,
+[2026-09-20-astra-kettle-audit.md](2026-09-20-astra-kettle-audit.md); ledger
+178 carries findings (a) to (m).
+
+After the audit's cutoff: Fable published `verify` as Brian (12:04Z) and
+Brian answered the ruling; the lead triggered it (12:27Z), found no run
+record for 8 minutes, ran a control against `describe-checkout`, noticed the
+host checkout was stale, and recorded an honest blocker rather than a green
+claim. Fable fast-forwarded the checkout and approved the step by a
+hand-signed 46030 (12:50Z); the host claimed nothing until the app was
+relaunched (13:01Z), then ran it green at `fa927fd` in 4 s. After the relaunch
+the lead could not be reconnected (178(m)), so the mission has no terminal
+record. Definition of done: items 1, 3, 4 met and landed; item 2 met by a real
+run (46023 `daf20471…`) the lead never got to read.
+
+Human actions the goal did not ask for: tick the bench, answer the ruling,
+publish the action, approve the step, fast-forward the checkout, relaunch the
+app. Six. That number is the result of this run.
