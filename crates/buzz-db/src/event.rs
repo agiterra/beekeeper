@@ -2553,6 +2553,12 @@ struct StoredAuthorityTransition {
     /// other type. Read back because the claim fold needs it: a claim whose
     /// body this row dropped could not be folded at all.
     body_pubkey: Option<String>,
+    /// The project a `grant-project-actions`/`revoke-project-actions` named;
+    /// `None` for every other type. Read back for the same reason as
+    /// `body_pubkey`: a delegation whose project this row dropped would fold
+    /// as a delegation of nothing, and a revoke could then never find the
+    /// grant it withdraws (ledger 186).
+    project_ref: Option<String>,
 }
 
 /// Fold accepted transitions (already sorted or not — sorted here) up to but
@@ -2579,10 +2585,13 @@ fn fold_authority_grants(
             }
             // A seat is not a steering grant, and a claim is not one either:
             // `takeover` says who is carrying the work, never who may steer.
+            // A project-action delegation is narrower than both.
             CodingSessionAuthorityTransitionType::GrantSeat
             | CodingSessionAuthorityTransitionType::RevokeSeat
             | CodingSessionAuthorityTransitionType::Takeover
-            | CodingSessionAuthorityTransitionType::Transfer => {}
+            | CodingSessionAuthorityTransitionType::Transfer
+            | CodingSessionAuthorityTransitionType::GrantProjectActions
+            | CodingSessionAuthorityTransitionType::RevokeProjectActions => {}
         }
     }
     grants
@@ -2640,10 +2649,44 @@ fn fold_authority_seats(
             | CodingSessionAuthorityTransitionType::GrantViewer
             | CodingSessionAuthorityTransitionType::Revoke
             | CodingSessionAuthorityTransitionType::Takeover
-            | CodingSessionAuthorityTransitionType::Transfer => {}
+            | CodingSessionAuthorityTransitionType::Transfer
+            | CodingSessionAuthorityTransitionType::GrantProjectActions
+            | CodingSessionAuthorityTransitionType::RevokeProjectActions => {}
         }
     }
     seats
+}
+
+/// Fold the live project-action delegations of the links before `before_seq`.
+///
+/// The signer of each link is not carried on [`StoredAuthorityTransition`],
+/// and this fold does not need it: the only question asked here is whether a
+/// `(grantee, project)` pair is live, which the types and the fields answer.
+/// The relay's admission path, which *does* need the granter, reads the chain
+/// through `buzz_db::coding_session_project_action_grant` instead.
+fn fold_project_action_grants_before(
+    transitions: &[StoredAuthorityTransition],
+    before_seq: u32,
+) -> Vec<buzz_core::coding_session_project_action_grant::ProjectActionGrant> {
+    let mut ordered: Vec<&StoredAuthorityTransition> = transitions
+        .iter()
+        .filter(|transition| transition.seq < before_seq)
+        .collect();
+    ordered.sort_by_key(|transition| transition.seq);
+    buzz_core::coding_session_project_action_grant::fold_project_action_grants(
+        ordered.into_iter().map(|transition| {
+            buzz_core::coding_session_project_action_grant::ProjectActionGrantLink {
+                seq: transition.seq,
+                accepted_event_id: hex::encode(&transition.event_id),
+                transition_type: transition.transition_type,
+                // Not read from storage, and not read by this fold: see the
+                // function's own doc comment.
+                signer_pubkey: String::new(),
+                grantee_pubkey: transition.grantee_pubkey.clone(),
+                project_ref: transition.project_ref.clone(),
+            }
+        }),
+    )
 }
 
 /// Every already-stored authority transition for `genesis_ref` in this
@@ -2693,6 +2736,7 @@ async fn stored_authority_transitions_tx(
                 grantee_pubkey: payload.grantee_pubkey,
                 role: payload.role,
                 body_pubkey: payload.body_pubkey,
+                project_ref: payload.project_ref,
             })
         })
         .collect())
@@ -2908,6 +2952,26 @@ pub async fn insert_coding_session_authority_transition_event(
             refusal: AuthorityTransitionRefusal::NoSuchGrant,
         });
     }
+    // A `revoke-project-actions` must name a delegation that is live at its
+    // point in the chain, for exactly the reason a `revoke` must: a no-op
+    // link burns a `seq` and tells a later reader that something was
+    // withdrawn when nothing was.
+    if payload.transition_type == CodingSessionAuthorityTransitionType::RevokeProjectActions {
+        let live = fold_project_action_grants_before(&others, payload.seq);
+        let named = payload.project_ref.as_deref().unwrap_or_default();
+        if buzz_core::coding_session_project_action_grant::find_project_action_grant(
+            &live,
+            &payload.grantee_pubkey,
+            named,
+        )
+        .is_none()
+        {
+            tx.rollback().await?;
+            return Ok(CodingSessionAuthorityTransitionInsertOutcome::Refused {
+                refusal: AuthorityTransitionRefusal::NoSuchGrant,
+            });
+        }
+    }
     if payload.transition_type == CodingSessionAuthorityTransitionType::RevokeSeat {
         match seats_before.get(&payload.grantee_pubkey) {
             None => {
@@ -2989,11 +3053,19 @@ pub async fn insert_coding_session_authority_transition_event(
             }
             // Neither a seat nor a claim touches the read ACL: a claim moves
             // who is *carrying* the session, and the grant that let them read
-            // it is already in this table.
+            // it is already in this table. Nor does a project-action
+            // delegation: it grants no read of this session at all, only the
+            // right to publish and trigger one project's actions, and it is
+            // read by folding the chain
+            // (`crate::coding_session_project_action_grant`) rather than from
+            // a projection, because the relay needs the granter's identity
+            // and this table does not carry it.
             CodingSessionAuthorityTransitionType::GrantSeat
             | CodingSessionAuthorityTransitionType::RevokeSeat
             | CodingSessionAuthorityTransitionType::Takeover
-            | CodingSessionAuthorityTransitionType::Transfer => {}
+            | CodingSessionAuthorityTransitionType::Transfer
+            | CodingSessionAuthorityTransitionType::GrantProjectActions
+            | CodingSessionAuthorityTransitionType::RevokeProjectActions => {}
         }
     }
 

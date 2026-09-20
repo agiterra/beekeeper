@@ -34,6 +34,8 @@ use host::{AppReadinessHost, ReadinessHost};
 mod auth_facts;
 use auth_facts::append_provider_auth_fact;
 
+#[path = "team_readiness_actions.rs"]
+pub mod actions;
 #[path = "team_readiness_wire.rs"]
 mod wire;
 #[cfg(test)]
@@ -855,7 +857,17 @@ pub async fn team_readiness(
     .map_err(|error| format!("team readiness task failed: {error}"))?;
     let wire =
         wire::observe_team_wire(&app, &project_ref, &expected_relay_url, &channel_ids).await?;
-    Ok(wire::fold_trusted_team_wire(local, wire))
+    let mut response = wire::fold_trusted_team_wire(local, wire);
+    // Asked last, and asked at all because a session was founded on a goal it
+    // could not finish: whether this session's team could publish and trigger
+    // this project's actions (ledger 186). Appended after the fold so it sits
+    // with the other `wire` facts, then re-summarized so `limitedCodes` and
+    // `unknownCodes` carry it.
+    if valid_project_ref(&project_ref) {
+        actions::append_project_action_authority_fact(&app, &project_ref, &mut response).await;
+        wire::summarize(&mut response);
+    }
+    Ok(response)
 }
 
 #[cfg(test)]

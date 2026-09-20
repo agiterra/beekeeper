@@ -60,6 +60,9 @@ pub mod coding_session_payload;
 /// NIP-CSP: the signed session policy record (44245) - posture, budget,
 /// attention, gates, bench, irreversible acts, and stop conditions.
 pub mod coding_session_policy;
+/// NIP-CSAT: the narrow, owner-signed project-action delegation carried in a
+/// session's authority chain, and the fold that says whether one is live.
+pub mod coding_session_project_action_grant;
 /// The model registry and the router: which execution target a class, a risk
 /// tier and the live catalog select, and why.
 pub mod coding_session_routing;

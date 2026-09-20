@@ -28,7 +28,11 @@ import {
 import { teamReadinessLaunchGate } from "../../lib/teamReadinessModel";
 import { useProjectTeamReadiness } from "../../lib/useProjectTeamReadiness";
 import { useCodingSessionProviderCatalog } from "../../useCodingSessionProviderCatalog";
-import type { NewCodingSessionBenchOption } from "../NewCodingSessionBenchField";
+import {
+  newCodingSessionBenchSelection,
+  newCodingSessionBenchToggle,
+  type NewCodingSessionBenchOption,
+} from "../NewCodingSessionBenchField";
 import {
   newCodingSessionEffectiveModel,
   newCodingSessionSeatModelBlocksCreate,
@@ -262,7 +266,20 @@ export function useCodingSessionFoundedSetup(input: {
     });
   const [overrideReason, setOverrideReason] = React.useState("");
 
-  const [benchSelection, setBenchIdentities] = React.useState<string[]>([]);
+  // Null until the person touches a box: "use the team" means the team, so an
+  // untouched bench is every project agent the bench shows, and an untouched
+  // runtime list is the lead's own runtime (ledger 186, finding 178(h)).
+  const [benchTicked, setBenchIdentities] = React.useState<string[] | null>(
+    null,
+  );
+  const benchSelection = React.useMemo(
+    () =>
+      newCodingSessionBenchSelection({
+        ticked: benchTicked,
+        options: benchIdentityOptions,
+      }),
+    [benchTicked, benchIdentityOptions],
+  );
   // Only what the bench can show is published: a managed identity that is no
   // longer eligible here (associated elsewhere since it was ticked) is not a
   // hidden hire. One this computer no longer manages stays, so readiness can
@@ -276,7 +293,18 @@ export function useCodingSessionFoundedSetup(input: {
       ),
     [benchSelection, candidates, eligiblePubkeys],
   );
-  const [benchProviders, setBenchProviders] = React.useState<string[]>([]);
+  const [benchProvidersTicked, setBenchProviders] = React.useState<
+    string[] | null
+  >(null);
+  // Untouched: the runtime the lead itself is launched on. Every installed
+  // runtime would publish a bench of runtimes nobody chose; none at all is
+  // what 178(h) was.
+  const benchProviders = React.useMemo(
+    () =>
+      benchProvidersTicked ??
+      (selectedTarget ? [selectedTarget.provider.providerInstanceRef] : []),
+    [benchProvidersTicked, selectedTarget],
+  );
   const [challengerRate, setChallengerRate] = React.useState<number | null>(
     null,
   );
@@ -553,17 +581,23 @@ export function useCodingSessionFoundedSetup(input: {
     benchProviderOptions,
     benchIdentities,
     benchProviders,
+    // Each toggle resolves the untouched default first, then freezes the
+    // selection to exactly what is ticked (178(h)); unticking everything
+    // leaves an empty bench rather than restoring the default.
     toggleBenchIdentity: (value: string, selected: boolean) =>
-      setBenchIdentities((previous) =>
-        selected
-          ? [...new Set([...previous, value])]
-          : previous.filter((entry) => entry !== value),
+      setBenchIdentities(
+        newCodingSessionBenchToggle({
+          ticked: benchTicked,
+          options: benchIdentityOptions,
+          value,
+          selected,
+        }),
       ),
     toggleBenchProvider: (value: string, selected: boolean) =>
-      setBenchProviders((previous) =>
+      setBenchProviders(
         selected
-          ? [...new Set([...previous, value])]
-          : previous.filter((entry) => entry !== value),
+          ? [...new Set([...benchProviders, value])]
+          : benchProviders.filter((entry) => entry !== value),
       ),
     challengerRate,
     setChallengerRate,

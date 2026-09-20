@@ -8,6 +8,7 @@ import {
 
 import {
   buildCodingSessionAuthorityTransitionEvent,
+  codingSessionProjectActionGrantKey,
   codingSessionRosterEntries,
   foldCodingSessionRoster,
   grantTypeForEntityRole,
@@ -894,4 +895,229 @@ test("head-conflict detection matches the relay's linkage refusals only", () => 
     false,
   );
   assert.equal(isCodingSessionAuthorityHeadConflict("prevAccepted"), false);
+});
+
+const PROJECT_REF = `30621:${"11".repeat(32)}:kettle`;
+
+/**
+ * The project-action delegation (ledger 186, finding 178(f)). These pin the
+ * fail-closed half: a type this fold does not know freezes the accepted head,
+ * so an accepted delegation must parse, and a malformed one must not be read
+ * as a delegation of anything.
+ */
+test("an accepted project-actions delegation folds and keeps the chain going", () => {
+  const { transitions, receipts } = acceptedChain([
+    { type: "grant-seat", granteePubkey: ALICE, role: "lead" },
+    {
+      type: "grant-project-actions",
+      granteePubkey: ALICE,
+      extraTransitionContent: { projectRef: PROJECT_REF },
+      extraReceiptContent: { projectRef: PROJECT_REF },
+    },
+    { type: "grant-viewer", granteePubkey: BOB },
+  ]);
+  const fold = foldRoster({ genesisRef: GENESIS_REF, transitions, receipts });
+  assert.deepEqual(fold.acceptedHead, { eventId: transitions[2].id, seq: 3 });
+  assert.deepEqual([...fold.accepted.entries()], [[BOB, "viewer"]]);
+  const grant = fold.projectActionGrants.get(
+    codingSessionProjectActionGrantKey(ALICE, PROJECT_REF),
+  );
+  assert.deepEqual(grant, {
+    granteePubkey: ALICE,
+    projectRef: PROJECT_REF,
+    grantedBy: FOUNDER,
+    grantEventId: transitions[1].id,
+  });
+  // The delegation is not a session access role and not a seat.
+  assert.equal(fold.accepted.has(ALICE), false);
+});
+
+test("a revocation withdraws exactly the delegated (grantee, project) pair", () => {
+  const { transitions, receipts } = acceptedChain([
+    {
+      type: "grant-project-actions",
+      granteePubkey: ALICE,
+      extraTransitionContent: { projectRef: PROJECT_REF },
+      extraReceiptContent: { projectRef: PROJECT_REF },
+    },
+    {
+      type: "revoke-project-actions",
+      granteePubkey: ALICE,
+      extraTransitionContent: { projectRef: PROJECT_REF },
+      extraReceiptContent: { projectRef: PROJECT_REF },
+    },
+  ]);
+  const fold = foldRoster({ genesisRef: GENESIS_REF, transitions, receipts });
+  assert.deepEqual([...fold.projectActionGrants.keys()], []);
+  assert.deepEqual(fold.acceptedHead, { eventId: transitions[1].id, seq: 2 });
+});
+
+test("a delegation with no projectRef, a role, or a bad coordinate is not a delegation", () => {
+  const attacks = [
+    // Unscoped: it would reach every project the grantee can see.
+    { type: "grant-project-actions", granteePubkey: ALICE },
+    // A role is not part of this shape, and the exact key set refuses it.
+    {
+      type: "grant-project-actions",
+      granteePubkey: ALICE,
+      role: "lead",
+      extraTransitionContent: { projectRef: PROJECT_REF },
+    },
+    // A repository coordinate is not a project coordinate.
+    {
+      type: "grant-project-actions",
+      granteePubkey: ALICE,
+      extraTransitionContent: { projectRef: `30617:${"11".repeat(32)}:kettle` },
+    },
+    // An empty `d`.
+    {
+      type: "grant-project-actions",
+      granteePubkey: ALICE,
+      extraTransitionContent: { projectRef: `30621:${"11".repeat(32)}: ` },
+    },
+    // An uppercase owner: the chain is lowercase hex everywhere else.
+    {
+      type: "grant-project-actions",
+      granteePubkey: ALICE,
+      extraTransitionContent: { projectRef: `30621:${"AA".repeat(32)}:kettle` },
+    },
+  ];
+  for (const attack of attacks) {
+    const { transitions, receipts } = acceptedChain([
+      { ...attack, extraReceiptContent: { projectRef: PROJECT_REF } },
+    ]);
+    const fold = foldRoster({ genesisRef: GENESIS_REF, transitions, receipts });
+    assert.equal(fold.acceptedHead, null, JSON.stringify(attack));
+    assert.deepEqual([...fold.projectActionGrants.keys()], []);
+  }
+});
+
+test("a projectRef on any other transition type is refused", () => {
+  const { transitions, receipts } = acceptedChain([
+    {
+      type: "grant-operator",
+      granteePubkey: ALICE,
+      extraTransitionContent: { projectRef: PROJECT_REF },
+    },
+  ]);
+  const fold = foldRoster({ genesisRef: GENESIS_REF, transitions, receipts });
+  assert.equal(fold.acceptedHead, null);
+  assert.deepEqual([...fold.accepted.entries()], []);
+});
+
+test("a delegation receipt binds with or without projectRef, never with the wrong one", () => {
+  const without = acceptedChain([
+    {
+      type: "grant-project-actions",
+      granteePubkey: ALICE,
+      extraTransitionContent: { projectRef: PROJECT_REF },
+    },
+  ]);
+  assert.equal(
+    foldRoster({ genesisRef: GENESIS_REF, ...without }).projectActionGrants
+      .size,
+    1,
+  );
+  const mismatched = acceptedChain([
+    {
+      type: "grant-project-actions",
+      granteePubkey: ALICE,
+      extraTransitionContent: { projectRef: PROJECT_REF },
+      extraReceiptContent: { projectRef: `30621:${"11".repeat(32)}:other` },
+    },
+  ]);
+  const fold = foldRoster({ genesisRef: GENESIS_REF, ...mismatched });
+  assert.equal(fold.acceptedHead, null);
+  assert.equal(fold.projectActionGrants.size, 0);
+});
+
+test("delegation builder emits the exact projectRef-bound six-field payload", () => {
+  const event = buildCodingSessionAuthorityTransitionEvent({
+    channelId: CHANNEL_ID,
+    genesisRef: GENESIS_REF,
+    prevAccepted: null,
+    seq: 1,
+    type: "grant-project-actions",
+    granteePubkey: ALICE,
+    projectRef: PROJECT_REF,
+  });
+  assert.deepEqual(JSON.parse(event.content), {
+    genesisRef: GENESIS_REF,
+    prevAccepted: null,
+    seq: 1,
+    type: "grant-project-actions",
+    granteePubkey: ALICE,
+    projectRef: PROJECT_REF,
+  });
+  assert.deepEqual(event.tags, [
+    ["h", CHANNEL_ID],
+    ["csat-v", "csat1-1"],
+    ["csat-genesis", GENESIS_REF],
+  ]);
+  assert.throws(
+    () =>
+      buildCodingSessionAuthorityTransitionEvent({
+        channelId: CHANNEL_ID,
+        genesisRef: GENESIS_REF,
+        prevAccepted: null,
+        seq: 1,
+        type: "grant-project-actions",
+        granteePubkey: ALICE,
+      }),
+    /projectRef must be 30621/,
+  );
+  assert.throws(
+    () =>
+      buildCodingSessionAuthorityTransitionEvent({
+        channelId: CHANNEL_ID,
+        genesisRef: GENESIS_REF,
+        prevAccepted: null,
+        seq: 1,
+        type: "grant-operator",
+        granteePubkey: ALICE,
+        projectRef: PROJECT_REF,
+      }),
+    /projectRef must be 30621/,
+  );
+});
+
+test("publish carries projectRef through to the signed delegation", async () => {
+  const signed = [];
+  await publishCodingSessionAuthorityTransition(
+    {
+      channelId: CHANNEL_ID,
+      genesisRef: GENESIS_REF,
+      type: "grant-project-actions",
+      granteePubkey: ALICE,
+      projectRef: PROJECT_REF,
+    },
+    {
+      fetchFold: async () => ({
+        accepted: new Map(),
+        activeSeats: new Map(),
+        projectActionGrants: new Map(),
+        acceptedHead: { eventId: "07".repeat(32), seq: 7 },
+        pending: [],
+      }),
+      signer: async (input) => {
+        signed.push(input);
+        return {
+          ...input,
+          id: "ee".repeat(32),
+          pubkey: FOUNDER,
+          created_at: 1,
+          sig: "",
+        };
+      },
+      publisher: { publishEvent: async (event) => event },
+    },
+  );
+  assert.deepEqual(JSON.parse(signed[0].content), {
+    genesisRef: GENESIS_REF,
+    prevAccepted: "07".repeat(32),
+    seq: 8,
+    type: "grant-project-actions",
+    granteePubkey: ALICE,
+    projectRef: PROJECT_REF,
+  });
 });

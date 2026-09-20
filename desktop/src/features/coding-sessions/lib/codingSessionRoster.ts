@@ -50,6 +50,11 @@ export type {
  */
 
 const HEX64_REGEX = /^[0-9a-f]{64}$/;
+/**
+ * A project coordinate a delegation may name: `30621:<64-hex owner>:<d>`,
+ * mirroring core's `validate_project_ref` (ledger 186, finding 178(f)).
+ */
+const PROJECT_REF_REGEX = /^30621:[0-9a-f]{64}:\S/;
 const ROLE_SLUG_REGEX = /^[a-z0-9-]{1,64}$/;
 const MAX_U32 = 0xffff_ffff;
 
@@ -69,6 +74,16 @@ export type CodingSessionRosterFold = {
    * displayable role and are omitted.
    */
   pending: { pubkey: string; role: CodingSessionRosterRole; eventId: string }[];
+  /**
+   * Live project-action delegations, by
+   * [`codingSessionProjectActionGrantKey`]. Receipt-backed like every other
+   * accepted fact here, and separate from both the legacy grant map and the
+   * seat map: a delegation is standing over one project's kind:30620 actions
+   * and kind:46020 manual runs, and nothing else (ledger 186, finding
+   * 178(f)). Without it a caller that just published a delegation had no read
+   * that could confirm the relay accepted it.
+   */
+  projectActionGrants: Map<string, CodingSessionProjectActionGrant>;
 };
 
 /** A display row: shared role vocabulary, founder pinned first as owner. */
@@ -129,6 +144,37 @@ function isClaimTransitionType(
   return value === "takeover" || value === "transfer";
 }
 
+/** The two project-action delegation links, which name a project (ledger 186). */
+function isProjectActionsTransitionType(
+  value: CodingSessionAuthorityTransitionType,
+): value is "grant-project-actions" | "revoke-project-actions" {
+  return (
+    value === "grant-project-actions" || value === "revoke-project-actions"
+  );
+}
+
+/**
+ * One live project-action delegation, keyed in the fold by grantee+project.
+ *
+ * `grantedBy` is kept because a consumer re-checks that pubkey against the
+ * project's *current* owners: a granter who has since lost ownership must not
+ * leave a capability behind (`coding_session_project_action_grant.rs`).
+ */
+export type CodingSessionProjectActionGrant = {
+  granteePubkey: string;
+  projectRef: string;
+  grantedBy: string;
+  grantEventId: string;
+};
+
+/** The fold's key for one (grantee, project) delegation pair. */
+export function codingSessionProjectActionGrantKey(
+  granteePubkey: string,
+  projectRef: string,
+): string {
+  return `${granteePubkey.toLowerCase()}|${projectRef}`;
+}
+
 function isU32Sequence(value: unknown): value is number {
   return (
     typeof value === "number" &&
@@ -167,6 +213,10 @@ export function foldCodingSessionRoster(input: {
 
   const accepted = new Map<string, CodingSessionRosterRole>();
   const activeSeats = new Map<string, string>();
+  const projectActionGrants = new Map<
+    string,
+    CodingSessionProjectActionGrant
+  >();
   let acceptedHead: { eventId: string; seq: number } | null = null;
   for (const link of analysis.links) {
     if (link.type === "revoke") {
@@ -181,6 +231,25 @@ export function foldCodingSessionRoster(input: {
       activeSeats.delete(link.granteePubkey);
     } else if (link.type === "grant-seat" && link.role !== null) {
       activeSeats.set(link.granteePubkey, link.role);
+    } else if (isProjectActionsTransitionType(link.type)) {
+      // A later link naming the same (grantee, project) pair supersedes the
+      // earlier one, and a revocation removes it — the same fold core runs.
+      if (link.projectRef !== null) {
+        const key = codingSessionProjectActionGrantKey(
+          link.granteePubkey,
+          link.projectRef,
+        );
+        if (link.type === "grant-project-actions") {
+          projectActionGrants.set(key, {
+            granteePubkey: link.granteePubkey,
+            projectRef: link.projectRef,
+            grantedBy: link.signerPubkey,
+            grantEventId: link.transitionEventId,
+          });
+        } else {
+          projectActionGrants.delete(key);
+        }
+      }
     } else if (!isSeatTransitionType(link.type)) {
       const role = rosterRoleForGrantType(link.type);
       if (role) accepted.set(link.granteePubkey, role);
@@ -217,7 +286,13 @@ export function foldCodingSessionRoster(input: {
     .sort((a, b) => a.seq - b.seq)
     .map(({ pubkey, role, eventId }) => ({ pubkey, role, eventId }));
 
-  return { accepted, activeSeats, acceptedHead, pending };
+  return {
+    accepted,
+    activeSeats,
+    acceptedHead,
+    pending,
+    projectActionGrants,
+  };
 }
 
 /**
@@ -286,6 +361,7 @@ export function buildCodingSessionAuthorityTransitionContent(input: {
   granteePubkey: string;
   role?: string;
   bodyPubkey?: string;
+  projectRef?: string;
 }): string {
   return JSON.stringify({
     genesisRef: input.genesisRef,
@@ -298,6 +374,11 @@ export function buildCodingSessionAuthorityTransitionContent(input: {
     // byte-identical, and a claim link carries the body it will run on.
     ...(isClaimTransitionType(input.type)
       ? { bodyPubkey: input.bodyPubkey }
+      : {}),
+    // Trailing and type-scoped for the same reason: a delegation carries the
+    // one project it delegates, and no earlier form gains a key.
+    ...(isProjectActionsTransitionType(input.type)
+      ? { projectRef: input.projectRef }
       : {}),
   });
 }
@@ -316,6 +397,11 @@ export function buildCodingSessionAuthorityTransitionEvent(input: {
   role?: string;
   /** Required for `takeover`/`transfer`, refused for every other type. */
   bodyPubkey?: string;
+  /**
+   * Required for `grant-project-actions`/`revoke-project-actions`, refused
+   * for every other type (ledger 186, finding 178(f)).
+   */
+  projectRef?: string;
 }): CodingSessionAuthorityTransitionEventInput {
   if (input.channelId.trim().length === 0) {
     throw new Error("channelId must not be empty");
@@ -340,6 +426,7 @@ export function buildCodingSessionAuthorityTransitionEvent(input: {
   }
   const seatTransition = isSeatTransitionType(input.type);
   const claimTransition = isClaimTransitionType(input.type);
+  const projectActionsTransition = isProjectActionsTransitionType(input.type);
   if (
     (seatTransition &&
       (typeof input.role !== "string" || !ROLE_SLUG_REGEX.test(input.role))) ||
@@ -359,6 +446,16 @@ export function buildCodingSessionAuthorityTransitionEvent(input: {
       "bodyPubkey must be one lowercase 64-hex provider authority pubkey exactly for a takeover or transfer",
     );
   }
+  if (
+    (projectActionsTransition &&
+      (typeof input.projectRef !== "string" ||
+        !PROJECT_REF_REGEX.test(input.projectRef))) ||
+    (!projectActionsTransition && input.projectRef !== undefined)
+  ) {
+    throw new Error(
+      "projectRef must be 30621:<64-hex owner>:<d> exactly for a project-actions grant or revocation",
+    );
+  }
   return {
     kind: KIND_CODING_SESSION_AUTHORITY_TRANSITION,
     content: buildCodingSessionAuthorityTransitionContent({
@@ -371,6 +468,7 @@ export function buildCodingSessionAuthorityTransitionEvent(input: {
       ...(claimTransition
         ? { bodyPubkey: input.bodyPubkey?.toLowerCase() }
         : {}),
+      ...(projectActionsTransition ? { projectRef: input.projectRef } : {}),
     }),
     tags: buildCodingSessionAuthorityTransitionTags(
       input.channelId,
@@ -500,6 +598,8 @@ export async function publishCodingSessionAuthorityTransition(
     role?: string;
     /** The body a `takeover`/`transfer` claims (§1). */
     bodyPubkey?: string;
+    /** The project a `grant-project-actions`/`revoke-project-actions` names. */
+    projectRef?: string;
   },
   dependencies: TransitionPublishDependencies = {},
 ): Promise<RelayEvent> {
@@ -526,6 +626,9 @@ export async function publishCodingSessionAuthorityTransition(
         ...(input.role !== undefined ? { role: input.role } : {}),
         ...(input.bodyPubkey !== undefined
           ? { bodyPubkey: input.bodyPubkey }
+          : {}),
+        ...(input.projectRef !== undefined
+          ? { projectRef: input.projectRef }
           : {}),
       }),
     );

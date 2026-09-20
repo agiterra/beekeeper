@@ -36,6 +36,12 @@ between, nothing beyond:
   above plus required `"role":"<normalized slug>"`. Legacy transition shapes
   remain exactly five keys and reject `role`. A role is exactly
   `[a-z0-9-]{1,64}`.
+- `grant-project-actions` and `revoke-project-actions` use their own exact
+  six-key shape: the five keys above plus required
+  `"projectRef":"30621:<64-hex owner>:<d>"`, at most 256 bytes. They reject
+  `role` and `bodyPubkey`, and every other type rejects `projectRef`. The
+  signed content ceiling is 768 bytes (raised from 512 when this shape
+  landed, so a long project `d` cannot make a grant unsignable).
 
 The event has exactly these three ordered, two-field tags — an envelope
 mirroring genesis's own:
@@ -71,6 +77,12 @@ other value as unknown rather than guessing at its meaning.
   It replaces that actor's prior seat, if any. Self-nomination is refused.
 - **`revoke-seat`** — removes the actor's exact active `role`. A missing seat
   or role mismatch is refused rather than burning a sequence number.
+- **`grant-project-actions`** — delegates the actions of the one project named
+  by `projectRef` to `granteePubkey`, and nothing else. See
+  [Project-action delegation](#project-action-delegation).
+- **`revoke-project-actions`** — withdraws that delegation for the exact same
+  `(granteePubkey, projectRef)` pair. A revoke naming a pair with no live
+  delegation is refused (`NoSuchGrant`), the same rule as `revoke`.
 
 Re-granting an already-granted pubkey with a different tier is a regrade, not
 an error: the later accepted link wins.
@@ -94,7 +106,15 @@ answer:
    with `may_steer`, or an active `lead` seat. A lead may manage only non-lead
    seats and cannot mint or revoke lead authority. Self-nomination is refused.
    The payload never restates the signer's identity; the signature settles it.
-4. A `revoke` must name a pubkey with a live grant (`NoSuchGrant`).
+4. A `revoke` must name a pubkey with a live grant (`NoSuchGrant`), and a
+   `revoke-project-actions` must name a live delegation of the same project
+   (also `NoSuchGrant`).
+5. `grant-project-actions` and `revoke-project-actions` are **owner-signed**:
+   they fall under rule 3's legacy arm, so only the session's current owner
+   may extend the chain with one. For a project team session that owner is the
+   founder, which is exactly the "signed by a project owner" requirement the
+   delegation needs — the relay checks the granter's *current* project
+   standing again at admission time (below).
 
 On acceptance the relay publishes a relay-signed **acceptance receipt** — a
 `kind:40099` system message in the same channel — naming exactly the facts a
@@ -112,7 +132,9 @@ consumer needs to establish the new canonical head:
 ```
 
 For `grant-seat` and `revoke-seat`, the receipt adds required `"role"` echoing
-the accepted link. Legacy receipts retain their original exact facts. An older
+the accepted link; for `grant-project-actions` and `revoke-project-actions` it
+adds `"projectRef"`, because a receipt that said only "a delegation was
+accepted for this key" would leave its scope to be guessed at. Legacy receipts retain their original exact facts. An older
 consumer may ignore the new seat transition semantics, but it must still
 advance its accepted chain head/sequence so a later legacy grant does not
 stall behind an accepted seat link.
@@ -131,6 +153,7 @@ by the relay's own key before trusting it (lighter clients may match by
 | Read transport channel | ✓ | ✓ | ✓ | via membership/grant |
 | Manage any role seat | ✓ | ✓ | — | — |
 | Manage non-lead seats | ✓ | ✓ | — | ✓ |
+| Publish/trigger a project's actions | via project standing | via project standing | — | only with a live `grant-project-actions` |
 
 **Steer** = founder or live operator grantee. **Read** = project member (via
 the session's project, per [NIP-MP](NIP-MP.md)) or **any** live grantee —
@@ -138,6 +161,77 @@ a viewer grant is precisely transport-channel read access for someone outside
 the project. Legacy grant transitions remain founder-only. Seat transitions
 use the accepted-chain authority matrix above; no unsigned registry or
 kind:44221/kind:44223 metadata can create role authority.
+
+## Project-action delegation
+
+`grant-project-actions` exists because a team session was founded on the goal
+"build kettle with tests and a verify action, land it on main" and could not
+finish it (ledger 186, finding 178(f)). Publishing a project action
+(`kind:30620`) and starting a manual run of one (`kind:46020`) are admitted
+for the channel owner or admin plus the project's creator, a roster owner or
+an endorsed repository's founder — and a lead seat is none of those. The lead
+was refused, opened a ruling on the founder, and the session stopped. The
+system had accepted a routine goal it lacked the standing authority to finish.
+
+**Exact shape.** Six keys, the five legacy ones plus `projectRef`:
+
+```json
+{
+  "genesisRef": "<genesis event id, 64-hex>",
+  "prevAccepted": "<previous accepted transition id, 64-hex, or null>",
+  "seq": 4,
+  "type": "grant-project-actions",
+  "granteePubkey": "<lead seat pubkey, 64-hex>",
+  "projectRef": "30621:<64-hex project owner>:<project d>"
+}
+```
+
+The tags are the unchanged three (`h`, `csat-v`, `csat-genesis`): the
+delegation is a link in one session's chain, not a free-standing record, so it
+is revoked, ordered and raced exactly like every other link and it dies with
+nothing else.
+
+**What it delegates.**
+
+| Act | Kind | Delegable |
+|-----|------|-----------|
+| Save or update this project's action definition, including one with `run_on_host` steps | 30620 | ✓ |
+| Start a manual run of one of this project's actions | 46020 | ✓ |
+| Approve a host step so a command runs on an operator's machine | 46030 | **✗** |
+| Anything about another project, or any steering, hiring or read authority | — | **✗** |
+
+Approval is deliberately outside it. Approval is the separate act of letting a
+command run on somebody's machine, and a seat that could both write the
+command and approve it would be no boundary at all. The synthetic approval
+gate before the first `run_on_host` step
+(`PROJECT_TEAMS_AND_ACTIONS_SPEC.md` § 5.4) is untouched by any delegation.
+
+**What the relay checks at admission.** The standing rules are unchanged and
+are asked first; the delegation is consulted only after they have refused, and
+it admits the act only when all of the following hold:
+
+1. the capability is one a delegation may carry at all (the table above);
+2. the caller holds a live `grant-project-actions` for this exact
+   `projectRef`, folded from a **whole** contiguous chain in the channel the
+   action is filed in — a chain that cannot be read whole decides nothing
+   rather than deciding from a prefix;
+3. the pubkey that signed the delegation is admitted to write this project
+   *now*, by the same creator/roster-owner/repository-founder rule, so a
+   granter who has since lost ownership leaves no capability behind;
+4. the grantee still holds that session's active `lead` seat, because what
+   was delegated is a lead's ability to carry out the project's work, not a
+   permanent capability attached to an identity.
+
+Every refusal names the missing fact — no live delegation, a granter who no
+longer writes, a holder who is not the lead, a chain that could not be read —
+because a bare "forbidden" is the refusal that made a lead ask a person.
+
+**Who issues it, and when.** Beekeeper's founding form signs it for the
+session's lead at Start, in the same step that signs the lead's `grant-seat`,
+when the founder is one of the project's owners; the readiness panel discloses
+either that ("This session's lead may publish and trigger this project's
+actions") or, when the founder is not an owner, that it cannot be signed and
+which keys can sign it.
 
 ## Deterministic seat projection
 

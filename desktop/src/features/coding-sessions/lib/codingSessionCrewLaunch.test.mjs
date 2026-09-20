@@ -990,3 +990,97 @@ test("an existing umbrella with no channel to seat into is refused before anythi
   assert.equal(result.genesisRef, EXISTING.genesisRef);
   assert.equal(result.channelId, null);
 });
+
+/**
+ * The project-action delegation on the grant step (ledger 186, finding
+ * 178(f)). A session whose lead cannot publish the project's actions is still
+ * a usable session, so this step discloses rather than fails — and a launch
+ * that names no project must not delegate anything.
+ */
+const DELEGATION_PROJECT_REF = `30621:${"11".repeat(32)}:kettle`;
+
+test("a project launch delegates the project's actions to the lead", async () => {
+  const asked = [];
+  const deps = recordingDeps({
+    grantProjectActions: async (request) => {
+      asked.push(request);
+      return null;
+    },
+  });
+  const result = await launchCodingSessionCrew(
+    { ...INPUT, projectRef: DELEGATION_PROJECT_REF },
+    deps,
+  );
+  assert.equal(result.ok, true);
+  assert.deepEqual(asked, [
+    {
+      channelId: "chan-1",
+      genesisRef: "genesis-1",
+      actorPubkey: LEAD.actor,
+      projectRef: DELEGATION_PROJECT_REF,
+      leadLabel: LEAD.actorLabel,
+    },
+  ]);
+  const grantStep = result.steps.find(
+    (entry) => entry.id === CODING_SESSION_CREW_LAUNCH_GRANT_STEP,
+  );
+  assert.equal(grantStep.state, "done");
+  assert.equal(grantStep.detail, null);
+});
+
+test("a launch with no project delegates nothing", async () => {
+  let asked = 0;
+  const deps = recordingDeps({
+    grantProjectActions: async () => {
+      asked += 1;
+      return null;
+    },
+  });
+  const result = await launchCodingSessionCrew(INPUT, deps);
+  assert.equal(result.ok, true);
+  assert.equal(asked, 0);
+});
+
+test("a refused delegation discloses on the grant step and still lands the team", async () => {
+  const deps = recordingDeps({
+    grantProjectActions: async () => {
+      throw new Error(
+        "blocked: only a project owner may delegate this project's actions",
+      );
+    },
+  });
+  const result = await launchCodingSessionCrew(
+    { ...INPUT, projectRef: DELEGATION_PROJECT_REF },
+    deps,
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.failedStep, null);
+  // The goal still went out: the lead is seated and steerable either way.
+  assert.ok(deps.log.includes("turn"));
+  const grantStep = result.steps.find(
+    (entry) => entry.id === CODING_SESSION_CREW_LAUNCH_GRANT_STEP,
+  );
+  assert.equal(grantStep.state, "done");
+  assert.match(
+    grantStep.detail,
+    /cannot publish or trigger this project's actions/,
+  );
+  assert.match(grantStep.detail, /a project owner must sign that delegation/);
+  assert.match(grantStep.detail, /only a project owner may delegate/);
+});
+
+test("a delegation sentence from the dependency is disclosed verbatim", async () => {
+  const deps = recordingDeps({
+    grantProjectActions: async () =>
+      "Whether Fable may publish and trigger this project's actions is unconfirmed on this computer — check the session's access list.",
+  });
+  const result = await launchCodingSessionCrew(
+    { ...INPUT, projectRef: DELEGATION_PROJECT_REF },
+    deps,
+  );
+  assert.equal(result.ok, true);
+  const grantStep = result.steps.find(
+    (entry) => entry.id === CODING_SESSION_CREW_LAUNCH_GRANT_STEP,
+  );
+  assert.match(grantStep.detail, /is unconfirmed on this computer/);
+});

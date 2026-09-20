@@ -179,9 +179,13 @@ pub fn fold_current_claim(links: impl Iterator<Item = ClaimLink>) -> ClaimState 
                 }
             }
             // A regrant restores standing to steer, never the claim itself.
+            // A project-action delegation touches neither: it is about one
+            // project's actions, not about who is carrying this session.
             CodingSessionAuthorityTransitionType::GrantOperator
             | CodingSessionAuthorityTransitionType::GrantSeat
-            | CodingSessionAuthorityTransitionType::RevokeSeat => {}
+            | CodingSessionAuthorityTransitionType::RevokeSeat
+            | CodingSessionAuthorityTransitionType::GrantProjectActions
+            | CodingSessionAuthorityTransitionType::RevokeProjectActions => {}
         }
     }
     state

@@ -13,7 +13,19 @@ import { parseExactTags } from "./codingSessionWireDecode";
 const HEX64_REGEX = /^[0-9a-f]{64}$/;
 const ROLE_SLUG_REGEX = /^[a-z0-9-]{1,64}$/;
 const MAX_U32 = 0xffff_ffff;
-const MAX_AUTHORITY_TRANSITION_CONTENT_BYTES = 512;
+/**
+ * Mirrors `MAX_AUTHORITY_TRANSITION_CONTENT_BYTES` in
+ * `crates/buzz-core/src/coding_session_authority_transition.rs`. Raised from
+ * 512 to 768 with the project-action delegation (ledger 186, finding 178(f)):
+ * that link's `projectRef` is the chain's one variable-length field, and a
+ * long project slug must not be able to make a grant unsignable. The exact
+ * key-set checks below are what stop the extra room from admitting anything
+ * new. A local copy lower than the relay's would read a transition the relay
+ * accepted as malformed and freeze this fold.
+ */
+const MAX_AUTHORITY_TRANSITION_CONTENT_BYTES = 768;
+/** Mirrors core's `MAX_PROJECT_REF_BYTES`. */
+const MAX_PROJECT_REF_BYTES = 256;
 const textEncoder = new TextEncoder();
 
 /** Version tag pinned on every 44228 transition (`csat-v`). */
@@ -32,7 +44,9 @@ export type CodingSessionAuthorityTransitionType =
   | "grant-seat"
   | "revoke-seat"
   | "takeover"
-  | "transfer";
+  | "transfer"
+  | "grant-project-actions"
+  | "revoke-project-actions";
 
 const ACCEPTED_TRANSITION_TYPES = new Set<CodingSessionAuthorityTransitionType>(
   [
@@ -51,6 +65,15 @@ const ACCEPTED_TRANSITION_TYPES = new Set<CodingSessionAuthorityTransitionType>(
     // head and every later grant would look unaccepted.
     "takeover",
     "transfer",
+    // The project-action delegation and its withdrawal (ledger 186, finding
+    // 178(f)). Same reason as the two links above, and the reason matters
+    // more here because this link is the *only* thing that lets a team
+    // session's lead publish its project's actions: this analysis fails
+    // closed on an unknown type, so one accepted delegation missing from
+    // this set would freeze the roster's accepted head and make every later
+    // grant read as unaccepted.
+    "grant-project-actions",
+    "revoke-project-actions",
   ],
 );
 const LEGACY_TRANSITION_FIELDS = [
@@ -66,6 +89,15 @@ const CLAIM_TRANSITION_FIELDS = [
   ...LEGACY_TRANSITION_FIELDS,
   "bodyPubkey",
 ] as const;
+/**
+ * A delegation names the project it delegates, and nothing else may name one.
+ * Required on write *and* on read: an unscoped delegation is not a narrower
+ * grant, it is one that would reach every project the grantee can see.
+ */
+const PROJECT_ACTIONS_TRANSITION_FIELDS = [
+  ...LEGACY_TRANSITION_FIELDS,
+  "projectRef",
+] as const;
 const LEGACY_RECEIPT_FIELDS = [
   "type",
   "genesisRef",
@@ -77,6 +109,11 @@ const LEGACY_RECEIPT_FIELDS = [
 const SEAT_RECEIPT_FIELDS = [...LEGACY_RECEIPT_FIELDS, "role"] as const;
 /** The relay carries `bodyPubkey` on a claim receipt when it has one. */
 const CLAIM_RECEIPT_FIELDS = [...LEGACY_RECEIPT_FIELDS, "bodyPubkey"] as const;
+/** And `projectRef` on a delegation receipt, by the same present-only rule. */
+const PROJECT_ACTIONS_RECEIPT_FIELDS = [
+  ...LEGACY_RECEIPT_FIELDS,
+  "projectRef",
+] as const;
 
 /** Strictly decoded transition retained for the roster's pending projection. */
 export type ParsedCodingSessionAuthorityTransition = {
@@ -90,6 +127,12 @@ export type ParsedCodingSessionAuthorityTransition = {
   role: string | null;
   /** The execution body a `takeover`/`transfer` claims; null otherwise. */
   bodyPubkey: string | null;
+  /**
+   * The project coordinate a `grant-project-actions`/`revoke-project-actions`
+   * link is scoped to; null for every other type, exactly as `role` and
+   * `bodyPubkey` are null outside the links that carry them.
+   */
+  projectRef: string | null;
 };
 
 type ParsedReceipt = {
@@ -101,11 +144,19 @@ type ParsedReceipt = {
   granteePubkey: string;
   role: string | null;
   bodyPubkey: string | null;
+  projectRef: string | null;
 };
 
 /** One fully verified, relay-accepted authority-chain link. */
 export type AcceptedCodingSessionAuthorityLink = {
   transitionEventId: string;
+  /**
+   * Who signed the transition. Carried because a project-action delegation is
+   * only as good as its granter's *current* ownership of that project, so a
+   * consumer has to be able to re-check the granter rather than assume the
+   * founder signed it (ledger 186, finding 178(f)).
+   */
+  signerPubkey: string;
   receiptEventId: string;
   acceptedAt: number;
   seq: number;
@@ -113,6 +164,8 @@ export type AcceptedCodingSessionAuthorityLink = {
   granteePubkey: string;
   role: string | null;
   bodyPubkey: string | null;
+  /** The project this link delegates actions for; null for every other type. */
+  projectRef: string | null;
 };
 
 /** Whether the supplied history proves one unambiguous contiguous chain. */
@@ -154,6 +207,39 @@ function isClaimTransitionType(
   value: CodingSessionAuthorityTransitionType,
 ): value is "takeover" | "transfer" {
   return value === "takeover" || value === "transfer";
+}
+
+function isProjectActionsTransitionType(
+  value: CodingSessionAuthorityTransitionType,
+): value is "grant-project-actions" | "revoke-project-actions" {
+  return (
+    value === "grant-project-actions" || value === "revoke-project-actions"
+  );
+}
+
+/**
+ * Whether `value` is a project coordinate a delegation may name:
+ * `30621:<64-hex owner>:<non-empty d>`, within `MAX_PROJECT_REF_BYTES`.
+ *
+ * Kind 30621 is the project record. A coordinate of any other kind is refused
+ * rather than normalized (core's `validate_project_ref`), so a delegation can
+ * never be read as filed against a repository or a pack coordinate instead.
+ */
+function isProjectRefCoordinate(value: unknown): value is string {
+  if (
+    typeof value !== "string" ||
+    textEncoder.encode(value).length > MAX_PROJECT_REF_BYTES
+  ) {
+    return false;
+  }
+  const first = value.indexOf(":");
+  const second = value.indexOf(":", first + 1);
+  if (first === -1 || second === -1) return false;
+  return (
+    value.slice(0, first) === "30621" &&
+    HEX64_REGEX.test(value.slice(first + 1, second)) &&
+    value.slice(second + 1).trim().length > 0
+  );
 }
 
 function isU32Sequence(value: unknown): value is number {
@@ -210,18 +296,24 @@ function parseTransition(
   if (!payload || !isAcceptedTransitionType(payload.type)) return null;
   const seatTransition = isSeatTransitionType(payload.type);
   const claimTransition = isClaimTransitionType(payload.type);
+  const projectActionsTransition = isProjectActionsTransitionType(payload.type);
   if (
     !hasExactFields(payload, [
       seatTransition
         ? SEAT_TRANSITION_FIELDS
         : claimTransition
           ? CLAIM_TRANSITION_FIELDS
-          : LEGACY_TRANSITION_FIELDS,
+          : projectActionsTransition
+            ? PROJECT_ACTIONS_TRANSITION_FIELDS
+            : LEGACY_TRANSITION_FIELDS,
     ]) ||
     payload.genesisRef !== genesisRef ||
     (claimTransition &&
       (typeof payload.bodyPubkey !== "string" ||
-        !HEX64_REGEX.test(payload.bodyPubkey)))
+        !HEX64_REGEX.test(payload.bodyPubkey))) ||
+    // The exact-field set above is what refuses a `projectRef` on any other
+    // type, and a delegation with no `projectRef` or with a `role`.
+    (projectActionsTransition && !isProjectRefCoordinate(payload.projectRef))
   ) {
     return null;
   }
@@ -249,6 +341,9 @@ function parseTransition(
     granteePubkey: payload.granteePubkey,
     role: seatTransition ? (payload.role as string) : null,
     bodyPubkey: claimTransition ? (payload.bodyPubkey as string) : null,
+    projectRef: projectActionsTransition
+      ? (payload.projectRef as string)
+      : null,
   };
 }
 
@@ -274,6 +369,9 @@ function parseReceipt(
     return null;
   const seatTransition = isSeatTransitionType(payload.transitionType);
   const claimTransition = isClaimTransitionType(payload.transitionType);
+  const projectActionsTransition = isProjectActionsTransitionType(
+    payload.transitionType,
+  );
   if (
     !hasExactFields(
       payload,
@@ -283,12 +381,18 @@ function parseReceipt(
           ? // Present-or-absent: the relay writes `bodyPubkey` "when
             // present", and either form binds the transition it names.
             [LEGACY_RECEIPT_FIELDS, CLAIM_RECEIPT_FIELDS]
-          : [LEGACY_RECEIPT_FIELDS],
+          : projectActionsTransition
+            ? // Same present-only pattern for `projectRef` (ledger 186).
+              [LEGACY_RECEIPT_FIELDS, PROJECT_ACTIONS_RECEIPT_FIELDS]
+            : [LEGACY_RECEIPT_FIELDS],
     ) ||
     (claimTransition &&
       Object.hasOwn(payload, "bodyPubkey") &&
       (typeof payload.bodyPubkey !== "string" ||
         !HEX64_REGEX.test(payload.bodyPubkey))) ||
+    (projectActionsTransition &&
+      Object.hasOwn(payload, "projectRef") &&
+      !isProjectRefCoordinate(payload.projectRef)) ||
     payload.type !== CODING_SESSION_AUTHORITY_RECEIPT_TYPE ||
     payload.genesisRef !== genesisRef ||
     typeof payload.acceptedEventId !== "string" ||
@@ -314,6 +418,10 @@ function parseReceipt(
       bodyPubkey:
         claimTransition && typeof payload.bodyPubkey === "string"
           ? payload.bodyPubkey
+          : null,
+      projectRef:
+        projectActionsTransition && typeof payload.projectRef === "string"
+          ? payload.projectRef
           : null,
     },
   };
@@ -354,7 +462,11 @@ function receiptBindsTransition(
     // An absent `bodyPubkey` leaves the signed transition as the only
     // statement of the body; a *different* one is not evidence of anything.
     (receipt.bodyPubkey === null ||
-      receipt.bodyPubkey === transition.bodyPubkey)
+      receipt.bodyPubkey === transition.bodyPubkey) &&
+    // And the same rule for the delegation's scope: absent leaves the signed
+    // transition as the only statement of which project it names.
+    (receipt.projectRef === null ||
+      receipt.projectRef === transition.projectRef)
   );
 }
 
@@ -364,6 +476,7 @@ function authorityLink(
 ): AcceptedCodingSessionAuthorityLink {
   return {
     transitionEventId: transition.eventId,
+    signerPubkey: transition.signerPubkey,
     receiptEventId: receipt.receiptEventId,
     acceptedAt: receipt.acceptedAt,
     seq: transition.seq,
@@ -371,6 +484,7 @@ function authorityLink(
     granteePubkey: transition.granteePubkey,
     role: transition.role,
     bodyPubkey: transition.bodyPubkey,
+    projectRef: transition.projectRef,
   };
 }
 

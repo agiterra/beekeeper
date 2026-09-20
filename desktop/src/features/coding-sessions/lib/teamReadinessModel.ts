@@ -474,6 +474,17 @@ const COPY: Record<string, TeamReadinessBlockerCopy> = {
     title: "The provider is supervised but has no live process",
     action: "Wait for it to recover, or restart it from Settings.",
   },
+  PROJECT_ACTIONS_NOT_DELEGABLE: {
+    title:
+      "This session's lead will not be able to publish this project's actions",
+    action:
+      "Publishing an action and starting a manual run of one are admitted for this project's owners, and the person founding this session is not one of them. Either a project owner signs the delegation for this session's lead, or found the session as an owner.",
+  },
+  PROJECT_ACTIONS_AUTHORITY_UNKNOWN: {
+    title: "Whether the lead may publish this project's actions is unknown",
+    action:
+      "The relay could not answer who owns this project, so this is unconfirmed rather than refused. Start is not blocked; if the lead is refused later, a project owner signs the delegation for it.",
+  },
   RUNTIME_UNAVAILABLE: {
     title: "No coding runtime is installed and signed in here",
     action:

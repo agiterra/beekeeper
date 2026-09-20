@@ -77,10 +77,16 @@ pub fn signer_may_steer_at(
             // `takeover` says who is *carrying* the work, which the fence
             // answers, and letting it grant steering here would make a claim a
             // back door into policy authorship.
+            // A project-action delegation is narrower still: it says the
+            // grantee may publish and trigger one project's actions, and
+            // reading it as steering authority here would turn the narrowest
+            // grant in the chain into the broadest.
             CodingSessionAuthorityTransitionType::GrantSeat
             | CodingSessionAuthorityTransitionType::RevokeSeat
             | CodingSessionAuthorityTransitionType::Takeover
-            | CodingSessionAuthorityTransitionType::Transfer => {}
+            | CodingSessionAuthorityTransitionType::Transfer
+            | CodingSessionAuthorityTransitionType::GrantProjectActions
+            | CodingSessionAuthorityTransitionType::RevokeProjectActions => {}
         }
     }
     active

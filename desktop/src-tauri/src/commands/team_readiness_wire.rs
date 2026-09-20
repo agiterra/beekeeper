@@ -639,7 +639,13 @@ fn apply_reached_catalog(local: &mut TeamReadinessResponse, snapshot: TrustedTea
     ));
 }
 
-fn summarize(local: &mut TeamReadinessResponse) {
+/// Recompute the code lists and the top-level status from `facts`.
+///
+/// `pub(super)` because the project-action row is appended after this fold
+/// (`team_readiness_actions.rs`) and a fact that did not reach
+/// `limitedCodes`/`unknownCodes` would be a fact the panel's own summary
+/// disagrees with.
+pub(super) fn summarize(local: &mut TeamReadinessResponse) {
     local.blocking_codes = codes(local, TeamReadinessFactState::Blocked);
     local.unknown_codes = codes(local, TeamReadinessFactState::Unknown);
     local.awaiting_codes = codes(local, TeamReadinessFactState::AwaitingFirstSession);

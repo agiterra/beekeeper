@@ -39,6 +39,7 @@ import {
   codingSessionSeatStagedFromLine,
   type PackRef,
 } from "./codingSessionPackRef";
+import { codingSessionProjectActionsGrantDisclosure } from "./codingSessionProjectActionsGrant";
 import { buildCodingSessionTranscriptGenerationId } from "./codingSessionTranscriptPresentation";
 import {
   checkCodingSessionCrewFamilies,
@@ -225,6 +226,20 @@ export type CodingSessionCrewLaunchDeps = {
     actorPubkey: string;
     role: string;
   }) => Promise<void>;
+  /**
+   * Delegate this project's action definitions and manual runs to the lead,
+   * when the launch names a project (ledger 186, finding 178(f) —
+   * `codingSessionProjectActionsGrant.ts` says what the delegation is).
+   * Absent from a caller that cannot sign one. Resolves with the sentence to
+   * disclose on the grant step, or null when the lead holds it.
+   */
+  grantProjectActions?: (input: {
+    channelId: string;
+    genesisRef: string;
+    actorPubkey: string;
+    projectRef: string;
+    leadLabel: string;
+  }) => Promise<string | null>;
   /**
    * Publish the session's kind:44245 policy, when the form set one.
    *
@@ -887,7 +902,30 @@ export async function launchCodingSessionCrew(
       genesisRef,
     );
   }
-  mark(CODING_SESSION_CREW_LAUNCH_GRANT_STEP, "done");
+  // Never fatal: a session whose lead cannot publish the project's actions is
+  // still a working session, so this is disclosed on the step rather than
+  // failing a launch that has already seated the lead (ledger 186, 178(f)).
+  let actionsDetail: string | null = null;
+  if (deps.grantProjectActions && (input.projectRef ?? null) !== null) {
+    try {
+      actionsDetail = await deps.grantProjectActions({
+        channelId: launchChannelId,
+        genesisRef,
+        actorPubkey: lead.actor,
+        projectRef: input.projectRef as string,
+        leadLabel: lead.actorLabel,
+      });
+    } catch (error) {
+      actionsDetail = describe(
+        error,
+        codingSessionProjectActionsGrantDisclosure({
+          leadLabel: lead.actorLabel,
+          detail: null,
+        }),
+      );
+    }
+  }
+  mark(CODING_SESSION_CREW_LAUNCH_GRANT_STEP, "done", actionsDetail);
 
   mark(CODING_SESSION_CREW_LAUNCH_TURN_STEP, "running");
   const leadTarget = seated.find(

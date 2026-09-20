@@ -519,9 +519,14 @@ pub fn fold_current_authority(
             }
             // A claim moves who is carrying the session, never who may steer
             // it or who holds a seat: those are the grant and seat sets above,
-            // and the claim is folded separately below.
+            // and the claim is folded separately below. A project-action
+            // delegation is outside this ACL entirely — it is the relay's
+            // admission rule for one project's kind:30620/46020, and the
+            // provider steers nothing by it (ledger 186).
             CodingSessionAuthorityTransitionType::Takeover
-            | CodingSessionAuthorityTransitionType::Transfer => {}
+            | CodingSessionAuthorityTransitionType::Transfer
+            | CodingSessionAuthorityTransitionType::GrantProjectActions
+            | CodingSessionAuthorityTransitionType::RevokeProjectActions => {}
             CodingSessionAuthorityTransitionType::RevokeSeat => {
                 let role = accepted
                     .role

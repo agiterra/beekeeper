@@ -85,12 +85,20 @@ async function harness({
   rememberWorkspace,
   /** The project's 30624 the host's reader answers with, by project ref. */
   packSources = new Map(),
+  /** What the project-actions delegation answers with (ledger 186). */
+  projectActionsGrant = async () => ({
+    status: "granted",
+    eventId: "ee".repeat(32),
+    reason: null,
+  }),
 } = {}) {
   /** Every custody and pack-source call this host made, in order. */
   const staging = [];
   const worktrees = [];
   const hints = [];
   const rememberedWorkdirs = [];
+  /** Every project-actions delegation this launch asked for, in order. */
+  const delegations = [];
   const { act, renderHook } = await import("@testing-library/react");
   const { useCodingSessionCrewLaunch } = await import(
     "./useCodingSessionCrewLaunch.ts"
@@ -167,6 +175,10 @@ async function harness({
     }),
     ensureCreateOperatorGrants: async () => ({ ok: true }),
     ensureSeatGrant: async () => ({ ok: true }),
+    ensureProjectActionsGrant: async (input) => {
+      delegations.push(input);
+      return projectActionsGrant(input);
+    },
     publishCommand: async () => ({}),
   };
 
@@ -193,6 +205,7 @@ async function harness({
     worktrees,
     hints,
     rememberedWorkdirs,
+    delegations,
     teardown: () => mounted.unmount(),
   };
 }
@@ -458,6 +471,9 @@ test("starting a founded umbrella publishes only the lead's create, joins the pr
     }),
     ensureCreateOperatorGrants: async () => ({ ok: true }),
     ensureSeatGrant: async () => ({ ok: true }),
+    ensureProjectActionsGrant: async () => {
+      throw new Error("this launch names no project");
+    },
     publishCommand: async () => ({}),
   };
   const mounted = renderHook(() =>
@@ -499,4 +515,81 @@ test("starting a founded umbrella publishes only the lead's create, joins the pr
   assert.equal(result.sessionRef, EXISTING.sessionRef);
   assert.equal(result.genesisRef, EXISTING.genesisRef);
   mounted.unmount();
+});
+
+/**
+ * The project-action delegation, through the real wiring (ledger 186, finding
+ * 178(f)): the hook is what turns the ensure-call's three statuses into the
+ * one sentence the grant step shows.
+ */
+const DELEGATION_PROJECT_REF = `30621:${"3d3b7169".padEnd(64, "0")}:rpg-test`;
+
+test("a project team launch delegates that project's actions to the lead", async () => {
+  const host = await harness({
+    launchInput: { ...LAUNCH_INPUT, projectRef: DELEGATION_PROJECT_REF },
+  });
+  assert.equal(host.result.ok, true, host.result.failureReason ?? "");
+  assert.deepEqual(host.delegations, [
+    {
+      channelId: CHANNEL_ID,
+      genesisRef: host.result.genesisRef,
+      actorPubkey: LEAD.actor,
+      projectRef: DELEGATION_PROJECT_REF,
+    },
+  ]);
+  const grantStep = host.result.steps.find(
+    (step) => step.id === "grant-operator",
+  );
+  assert.equal(grantStep.state, "done");
+  assert.equal(grantStep.detail, null);
+  host.teardown();
+});
+
+test("a launch outside a project asks for no delegation", async () => {
+  const host = await harness();
+  assert.equal(host.result.ok, true, host.result.failureReason ?? "");
+  assert.deepEqual(host.delegations, []);
+  host.teardown();
+});
+
+test("a refused delegation leaves the launch ok and says what the lead cannot do", async () => {
+  const host = await harness({
+    launchInput: { ...LAUNCH_INPUT, projectRef: DELEGATION_PROJECT_REF },
+    projectActionsGrant: async () => {
+      throw new Error(
+        "blocked: only a project owner may delegate this project's actions",
+      );
+    },
+  });
+  assert.equal(host.result.ok, true, host.result.failureReason ?? "");
+  assert.equal(host.result.failedStep, null);
+  const grantStep = host.result.steps.find(
+    (step) => step.id === "grant-operator",
+  );
+  assert.equal(grantStep.state, "done");
+  assert.match(
+    grantStep.detail,
+    /cannot publish or trigger this project's actions/,
+  );
+  assert.match(grantStep.detail, /a project owner must sign that delegation/);
+  host.teardown();
+});
+
+test("a published-but-unconfirmed delegation is disclosed as unknown, not as refused", async () => {
+  const host = await harness({
+    launchInput: { ...LAUNCH_INPUT, projectRef: DELEGATION_PROJECT_REF },
+    projectActionsGrant: async () => ({
+      status: "published-unconfirmed",
+      eventId: "ee".repeat(32),
+      reason: "The relay answered every confirmation read with back-pressure.",
+    }),
+  });
+  assert.equal(host.result.ok, true, host.result.failureReason ?? "");
+  const grantStep = host.result.steps.find(
+    (step) => step.id === "grant-operator",
+  );
+  assert.match(grantStep.detail, /is unconfirmed on this computer/);
+  assert.match(grantStep.detail, /back-pressure/);
+  assert.equal(/cannot publish/.test(grantStep.detail), false);
+  host.teardown();
 });

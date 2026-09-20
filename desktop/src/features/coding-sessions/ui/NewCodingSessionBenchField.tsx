@@ -17,6 +17,40 @@ export type NewCodingSessionBenchOption = {
 };
 
 /**
+ * What the bench is ticked with, given what the person has done to it.
+ *
+ * `ticked === null` means untouched, and untouched pre-selects **everything**
+ * the bench shows: every one of this session's project agents, and the lead's
+ * runtime (ledger 186, finding 178(h) — the bench was empty by default, so
+ * "use the team" meant ticking seven agents by hand before every launch, and
+ * a launch that skipped it gave the lead nobody to hire). The first toggle
+ * freezes the selection to exactly what is ticked, which is what keeps the
+ * control honest: unticking every box leaves an empty bench, and the lead is
+ * then told it works alone rather than quietly given the team back.
+ */
+export function newCodingSessionBenchSelection(input: {
+  ticked: readonly string[] | null;
+  options: readonly NewCodingSessionBenchOption[];
+}): string[] {
+  return input.ticked === null
+    ? input.options.map((option) => option.value)
+    : [...input.ticked];
+}
+
+/** One box's new selection, resolving the untouched default first. */
+export function newCodingSessionBenchToggle(input: {
+  ticked: readonly string[] | null;
+  options: readonly NewCodingSessionBenchOption[];
+  value: string;
+  selected: boolean;
+}): string[] {
+  const current = newCodingSessionBenchSelection(input);
+  return input.selected
+    ? [...new Set([...current, input.value])]
+    : current.filter((entry) => entry !== input.value);
+}
+
+/**
  * The bench: who the lead may hire, and on what.
  *
  * Not a roster. Nothing here is created by the launch — the lead hires each

@@ -1322,11 +1322,17 @@ bee actions publish --project 30621:<owner-hex>:<id> --channel <UUID>\n  bee act
         #[arg(long)]
         file: Option<String>,
     },
-    /// Show what the actions file would publish: name, hash, trigger, host steps
+    /// Show what the actions file would publish: name, hash, trigger, host steps, and whether this key may publish and trigger it
     Status {
         /// The project's kind:30621 coordinate (30621:<owner-hex>:<id>)
         #[arg(long)]
         project: String,
+        /// Channel UUID whose kind:44228 authority chain would carry a
+        /// project-actions delegation. Without it, `may_publish` and
+        /// `may_trigger` are reported as `null` — the grant was not read, so
+        /// there is no honest answer (ledger 186, finding 178(f))
+        #[arg(long)]
+        channel: Option<String>,
         /// Path to the actions file (default: actions.yml in the working
         /// directory — the agents repository's root; `-` for stdin)
         #[arg(long)]

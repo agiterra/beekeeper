@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   groupTeamReadinessFacts,
   normalizeTeamReadinessRoles,
+  teamReadinessBlockerCopy,
   teamReadinessLaunchGate,
 } from "./teamReadinessModel.ts";
 import { selectInitialNewCodingSessionTarget } from "./newCodingSessionModel.ts";
@@ -734,5 +735,90 @@ test("selected role start fails closed when install omitted the identity", async
       start: async () => assert.fail("must not start an unresolved identity"),
     }),
     /could not resolve one installed managed identity/,
+  );
+});
+
+/**
+ * The project-action delegation fact (ledger 186, finding 178(f)). It is about
+ * what the *lead* will be allowed to do once the session is running, so it
+ * must warn rather than gate: a founder who is not a project owner can still
+ * run a perfectly good session, and blocking Start would make the remedy
+ * ("a project owner signs the delegation") impossible to reach from here.
+ */
+test("the project-actions codes carry plain-language copy naming the remedy", () => {
+  const notDelegable = teamReadinessBlockerCopy(
+    "PROJECT_ACTIONS_NOT_DELEGABLE",
+  );
+  assert.ok(notDelegable, "PROJECT_ACTIONS_NOT_DELEGABLE has no copy");
+  assert.match(notDelegable.action, /project owner/);
+  assert.equal(notDelegable.title.endsWith("."), false);
+  const unknown = teamReadinessBlockerCopy("PROJECT_ACTIONS_AUTHORITY_UNKNOWN");
+  assert.ok(unknown, "PROJECT_ACTIONS_AUTHORITY_UNKNOWN has no copy");
+  assert.match(unknown.action, /project owner/);
+  assert.match(unknown.action, /not blocked/);
+});
+
+test("a wire-scope Unknown about project-action authority warns and does not gate Start", () => {
+  const response = readiness({
+    readyForFirstSession: true,
+    status: "unknown",
+    provider: {
+      relayUrl: "wss://hive.example",
+      provisioned: true,
+      process: "live",
+    },
+    facts: [
+      {
+        category: "actions",
+        code: "PROJECT_ACTIONS_AUTHORITY_UNKNOWN",
+        scope: "wire",
+        state: "unknown",
+        summary: "The relay could not answer who owns this project.",
+        remedy: null,
+      },
+    ],
+    unknownCodes: ["PROJECT_ACTIONS_AUTHORITY_UNKNOWN"],
+  });
+  assert.deepEqual(
+    teamReadinessLaunchGate({
+      projectRef: response.projectRef,
+      loading: false,
+      error: null,
+      readiness: response,
+    }),
+    { allowed: true, reason: null },
+  );
+});
+
+test("a Limited project-actions fact does not gate Start either", () => {
+  const response = readiness({
+    readyForFirstSession: true,
+    status: "limited",
+    provider: {
+      relayUrl: "wss://hive.example",
+      provisioned: true,
+      process: "live",
+    },
+    facts: [
+      {
+        category: "actions",
+        code: "PROJECT_ACTIONS_NOT_DELEGABLE",
+        scope: "wire",
+        state: "limited",
+        summary:
+          "This session's lead will not be able to publish or trigger this project's actions.",
+        remedy: "A project owner signs the delegation for the session's lead.",
+      },
+    ],
+    limitedCodes: ["PROJECT_ACTIONS_NOT_DELEGABLE"],
+  });
+  assert.equal(
+    teamReadinessLaunchGate({
+      projectRef: response.projectRef,
+      loading: false,
+      error: null,
+      readiness: response,
+    }).allowed,
+    true,
   );
 });

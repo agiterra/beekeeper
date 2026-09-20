@@ -30,6 +30,8 @@ pub mod moderation_notices;
 pub mod pack_source;
 /// Product-feedback validation + deployment sidecar persistence.
 pub mod product_feedback;
+/// Admission for a project action delegated to a session's lead (ledger 186).
+pub mod project_action_grant;
 #[allow(dead_code, missing_docs)]
 pub mod push_lease;
 /// NIP-43 relay membership admin command handler (kinds 9030–9032).

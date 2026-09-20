@@ -36,6 +36,10 @@ import {
   ensureCodingSessionCreateOperatorGrants,
   ensureCodingSessionSeatGrant,
 } from "../lib/codingSessionOperatorGrant";
+import {
+  codingSessionProjectActionsGrantUnconfirmedDisclosure,
+  ensureCodingSessionProjectActionsGrant,
+} from "../lib/codingSessionProjectActionsGrant";
 import { recordPendingCodingSessionLifecycle } from "../lib/codingSessionPendingLifecycle";
 import {
   buildCodingSessionCreateEvent,
@@ -101,6 +105,11 @@ export type CodingSessionCrewLaunchHostDeps = {
   awaitSeatReceipt: typeof awaitCodingSessionCreateReceipt;
   ensureCreateOperatorGrants: typeof ensureCodingSessionCreateOperatorGrants;
   ensureSeatGrant: typeof ensureCodingSessionSeatGrant;
+  /**
+   * The owner-signed delegation that lets the lead publish and trigger this
+   * project's actions (ledger 186, finding 178(f)).
+   */
+  ensureProjectActionsGrant: typeof ensureCodingSessionProjectActionsGrant;
   publishCommand: typeof publishCodingSessionCommand;
 };
 
@@ -132,6 +141,7 @@ export const DEFAULT_CODING_SESSION_CREW_LAUNCH_DEPS: CodingSessionCrewLaunchHos
     awaitSeatReceipt: awaitCodingSessionCreateReceipt,
     ensureCreateOperatorGrants: ensureCodingSessionCreateOperatorGrants,
     ensureSeatGrant: ensureCodingSessionSeatGrant,
+    ensureProjectActionsGrant: ensureCodingSessionProjectActionsGrant,
     publishCommand: publishCodingSessionCommand,
   };
 
@@ -499,6 +509,30 @@ export function useCodingSessionCrewLaunch(input: {
               actorPubkey,
               role,
             });
+          },
+          // Right after the lead's seat grant, and never fatal: the relay
+          // refuses this when the founder is not one of the project's owners,
+          // and that is a disclosure about what the lead may do — not a
+          // reason to abandon a seated session (ledger 186, finding 178(f)).
+          grantProjectActions: async ({
+            channelId,
+            genesisRef,
+            actorPubkey,
+            projectRef,
+            leadLabel,
+          }) => {
+            const granted = await deps.ensureProjectActionsGrant({
+              channelId,
+              genesisRef,
+              actorPubkey,
+              projectRef,
+            });
+            return granted.status === "published-unconfirmed"
+              ? codingSessionProjectActionsGrantUnconfirmedDisclosure({
+                  leadLabel,
+                  detail: granted.reason,
+                })
+              : null;
           },
           sendFirstTurn: async ({ channelId, target, text }) => {
             await deps.publishCommand({

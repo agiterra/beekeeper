@@ -478,8 +478,14 @@ pub(super) fn project_receipt_backed_authority_chain(
             // A claim moves who holds the whole session; it grants and revokes
             // nothing, so the grant and seat maps are untouched. The claim
             // itself is folded from `claim_links` below.
+            // A project-actions delegation grants standing over one project's
+            // kind:30620/46020 events and no session grant or seat (ledger
+            // 186), so these maps are untouched; it is folded by
+            // `buzz_core::coding_session_project_action_grant`.
             CodingSessionAuthorityTransitionType::Takeover
-            | CodingSessionAuthorityTransitionType::Transfer => {}
+            | CodingSessionAuthorityTransitionType::Transfer
+            | CodingSessionAuthorityTransitionType::GrantProjectActions
+            | CodingSessionAuthorityTransitionType::RevokeProjectActions => {}
         }
         expected_prev = Some(event_id);
     }

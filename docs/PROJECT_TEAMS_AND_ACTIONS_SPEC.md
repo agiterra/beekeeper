@@ -886,6 +886,23 @@ Revocation is kind 46032 or the GUI; both emit 46015. Relaxing the default
 later is one relay-side rule (`approval: per_run | granted | none`), never a
 host change.
 
+**The delegation, and where it stops (ledger 186).** § 5.3's publication rule
+and the manual-trigger rule above were owner-shaped, so a team session told to
+write a `verify` action and land it could not finish: a lead seat is neither
+the channel's owner nor the project's creator or roster owner, and the lead was
+refused and had to open a ruling on the founder (finding 178(f)). Both
+admissions now accept one additional party — a pubkey holding a live,
+owner-signed `grant-project-actions` delegation for *that* project, carried as
+a link in the session's own kind:44228 authority chain, whose granter still
+writes the project and whose holder still sits in the session's active `lead`
+seat ([NIP-CSAT](nips/NIP-CSAT.md) § Project-action delegation). The founding
+form signs it for the lead at Start when the founder is a project owner, and
+the readiness panel discloses whether it could be. It reaches **exactly** the
+30620 save and the 46020 manual start; it never releases the synthetic
+approval gate above, because approval is the separate act of letting a command
+run on somebody's machine, and a seat that could both write the command and
+approve it would be no boundary at all.
+
 ### 5.5 Records and kinds
 
 All new constants go in `crates/buzz-core/src/kind.rs`; none of these numbers

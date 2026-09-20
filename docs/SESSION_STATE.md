@@ -15053,6 +15053,105 @@ removed from here.
      host queue as its durable record. `coding_session_establish_assignment_input`
      stays registered as the single-assignment entry point; the hook no longer
      calls it.
+186. **A project owner can now delegate one project's actions to its team's
+     lead, and readiness says at Start whether it can: the authority the
+     kettle run lacked (built 2026-09-20, lane 186, Brian's call; not landed,
+     not live).** Closes 178(f) and 178(h). The defect, from the kettle run's
+     own transcript: the lead wrote the `verify` action (`b8cd709` in the
+     agents repository) and was refused its publication at 11:37:53Z, opening
+     ruling `a009c234…` on Brian, because a project action's save is admitted
+     for the channel owner/admin plus the project creator, a roster owner or
+     an endorsed repository's founder
+     (`crates/buzz-relay/src/handlers/command_executor.rs` — the `has_host_steps`
+     check and the `project_write_admitted` check) and its manual trigger for
+     the workflow's owner or a project Owner/Collaborator (same file,
+     `handle_workflow_trigger`). A seat holds none of those and setup could
+     not give it one, so the system accepted a routine goal it had no standing
+     to finish. `bee actions status` could not have warned anyone: it parsed
+     the local file and read nothing from the relay
+     (`crates/buzz-cli/src/commands/actions.rs`).
+     - **The grant shape.** Two new types on the existing kind:44228
+       authority chain — no new kind, so the delegation is ordered, raced,
+       revoked and disposed of exactly like every other link and it dies with
+       the session. `grant-project-actions` and `revoke-project-actions` carry
+       an exact six-key content: the five legacy keys plus required
+       `projectRef` (`30621:<64-hex owner>:<d>`, ≤256 bytes); `role` and
+       `bodyPubkey` are refused on them and `projectRef` is refused on every
+       other type, on write and on read. The three tags are unchanged (`h`,
+       `csat-v` `csat1-1`, `csat-genesis`). The signed-content ceiling rose
+       512 → 768 bytes so a long project `d` cannot make a grant unsignable.
+       The relay's 40099 acceptance receipt echoes `projectRef` when present,
+       beside the existing `role`/`bodyPubkey` echoes
+       (`crates/buzz-relay/src/handlers/side_effects.rs:1457`). Types and
+       validation: `crates/buzz-core/src/coding_session_authority_transition.rs`;
+       what it means:
+       `crates/buzz-core/src/coding_session_project_action_grant.rs`;
+       documented in `docs/nips/NIP-CSAT.md` § Project-action delegation with
+       the exact JSON, and in
+       `docs/PROJECT_TEAMS_AND_ACTIONS_SPEC.md` § 5.4.
+     - **What it delegates, and the line it does not cross.** The 30620 save
+       (including a definition with `run_on_host` steps) and the 46020 manual
+       start, for that one project. **Not** the 46030 host-step approval:
+       `ProjectActionCapability::ApproveHostStep.is_delegable()` is `false`
+       and the admission path refuses it before reading anything, because a
+       seat that could both write the command and approve its run on a
+       person's machine would be no boundary at all. Not any other project,
+       and no steering, hiring or read authority.
+     - **Admission.** Every standing rule is unchanged and asked first; the
+       delegation is consulted only after one has refused
+       (`crates/buzz-relay/src/handlers/project_action_grant.rs`). It admits
+       only when the capability is delegable, the caller holds a live grant of
+       that exact project folded from a **whole** contiguous chain, the
+       granter is admitted to write the project *now* by the same
+       creator/roster-owner/repository-founder rule (so a granter who lost
+       ownership leaves no capability behind), and the holder still sits in
+       that session's active `lead` seat. A chain longer than
+       `MAX_PROJECT_ACTION_GRANT_TRANSITIONS` (10,000) or a failed read
+       returns `Undecidable` and refuses — no decision is ever taken from a
+       chain prefix. Every refusal names the missing fact, because the bare
+       `forbidden` is what made the lead ask a person. Read side:
+       `crates/buzz-db/src/coding_session_project_action_grant.rs`; a
+       `revoke-project-actions` naming no live delegation is refused
+       `NoSuchGrant` like an ordinary `revoke`
+       (`crates/buzz-db/src/event.rs`).
+     - **Issued at Start, disclosed before it.** The founding form signs the
+       delegation for the lead in the same step that signs its `grant-seat`,
+       and a failure there does not fail the launch — the session is still
+       usable, it just cannot publish actions, which is said on the step
+       rather than swallowed. Readiness gains one `actions`-category `wire`
+       row (`desktop/src-tauri/src/commands/team_readiness_actions.rs`):
+       `PROJECT_ACTIONS_DELEGABLE` when the founder is one of the project's
+       owners (creator or an `owner` row on the relay-signed 39010 roster),
+       `PROJECT_ACTIONS_NOT_DELEGABLE` naming the owner keys that can grant it
+       when not, `PROJECT_ACTIONS_AUTHORITY_UNKNOWN` when ownership could not
+       be read or this computer could not read its own founding key. `wire`
+       scope on purpose: it warns and never gates Start, because most team
+       sessions never publish an action and "gates must earn their delay" —
+       what it must not do is stay silent while a session is founded on a goal
+       it cannot finish. An unverifiable roster is `Unknown`, never "no
+       owners": a forged 39010 must not be able to make this row say Ready.
+     - **178(h).** The founder form's bench pre-selects every project agent
+       and the lead's runtime; a person may untick. "Use the team" means the
+       team.
+     - **Tests.** buzz-core: the six-key round trip, the refusals for a
+       missing/foreign `projectRef`, and the longest legal grant inside the
+       768-byte ceiling
+       (`coding_session_authority_transition_project_action_tests.rs`); the
+       grant fold, its revocation, its per-project scoping and
+       `ApproveHostStep` never being delegable. buzz-relay: the seven
+       admission cases including refused-for-46030, refused with no grant,
+       refused when the granter no longer writes, refused for a non-lead
+       holder and refused-undecidable
+       (`handlers/project_action_grant_tests.rs`). Desktop native: the
+       readiness row's five states (`team_readiness_actions_tests.rs`).
+       Desktop TS and CLI tests ship with their own surfaces.
+     - **Owed live.** Nothing here has been exercised against hive: no
+       delegation has been signed by a real founder, no seat has published a
+       30620 under one, and no `bee actions status` has reported a real
+       authority. The first proof is a re-run of the kettle goal — the lead
+       publishing `verify` and triggering it without a ruling — and the
+       approval gate is expected to stop the *run* at the host step, which is
+       the boundary working, not a defect.
 
 ## 3a. Environment facts that cost real time (do not rediscover)
 

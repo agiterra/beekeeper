@@ -16,6 +16,7 @@ use nostr::Event;
 use tracing::warn;
 use uuid::Uuid;
 
+use buzz_core::coding_session_project_action_grant::ProjectActionCapability;
 use buzz_core::kind::*;
 use buzz_core::tenant::{CommunityId, TenantContext};
 use buzz_datastore_tracing::datastore_span;
@@ -804,6 +805,13 @@ async fn handle_workflow_def(
     // A `run_on_host` step runs a command on an operator's machine (spec
     // § 5.6), so saving one takes the same standing authority as saving an
     // exfiltration-capable action: the channel owner or an admin. Fail closed.
+    //
+    // One additional way in, and only for a definition bound to a project: a
+    // live, owner-signed project-action delegation held by that session's
+    // active lead seat (ledger 186). Saving the definition is still not
+    // permission to *run* it — the synthetic approval gate before the first
+    // host step is untouched, and no delegation can release it
+    // (`ProjectActionCapability::ApproveHostStep`).
     if def.has_host_steps() {
         let role = state
             .db
@@ -811,10 +819,31 @@ async fn handle_workflow_def(
             .await
             .map_err(|e| IngestError::Internal(format!("error: role check: {e}")))?;
         if !matches!(role.as_deref(), Some("owner") | Some("admin")) {
-            return Err(IngestError::Rejected(
-                "forbidden: workflows with run_on_host actions require the owner or admin role"
-                    .into(),
-            ));
+            let delegation = match def.project.as_deref() {
+                Some(project) => {
+                    crate::handlers::project_action_grant::project_action_delegation_admitted(
+                        state,
+                        tenant.community(),
+                        channel_id,
+                        project,
+                        &self_bytes,
+                        ProjectActionCapability::PublishDefinition,
+                    )
+                    .await
+                }
+                None => crate::handlers::project_action_grant::ProjectActionDelegation::Refused(
+                    crate::handlers::project_action_grant::ProjectActionDelegationRefusal::NoLiveGrant,
+                ),
+            };
+            if let crate::handlers::project_action_grant::ProjectActionDelegation::Refused(
+                refusal,
+            ) = delegation
+            {
+                return Err(IngestError::Rejected(format!(
+                    "forbidden: workflows with run_on_host actions require the owner or admin                      role, or a project-action delegation — {}",
+                    refusal.detail()
+                )));
+            }
         }
     }
 
@@ -848,10 +877,34 @@ async fn handle_workflow_def(
         {
             Ok(Ok(_)) => {}
             Ok(Err(refusal)) => {
-                return Err(IngestError::Rejected(format!(
-                    "forbidden: a project action must be saved by the project creator, a \
-                     roster owner or a repository founder ({refusal:?})"
-                )));
+                // Second way in, and the narrowest one that lets a team
+                // finish a goal like "write a verify action and land it": a
+                // live delegation of *this* project's actions, signed by a
+                // key that writes the project now, held by this session's
+                // active lead seat (ledger 186, finding 178(f)). The standing
+                // rule above is unchanged; this is consulted only after it
+                // has already refused.
+                let delegation =
+                    crate::handlers::project_action_grant::project_action_delegation_admitted(
+                        state,
+                        tenant.community(),
+                        channel_id,
+                        project,
+                        &self_bytes,
+                        ProjectActionCapability::PublishDefinition,
+                    )
+                    .await;
+                if let crate::handlers::project_action_grant::ProjectActionDelegation::Refused(
+                    delegation_refusal,
+                ) = delegation
+                {
+                    return Err(IngestError::Rejected(format!(
+                        "forbidden: a project action must be saved by the project creator, a \
+                         roster owner or a repository founder ({refusal:?}), or by a key \
+                         holding a project-action delegation — {}",
+                        delegation_refusal.detail()
+                    )));
+                }
             }
             Err(()) => {
                 return Err(IngestError::Internal(
@@ -1034,9 +1087,35 @@ async fn handle_workflow_trigger(
             Some(buzz_core::channel::ProjectRole::Owner)
                 | Some(buzz_core::channel::ProjectRole::Collaborator)
         ) {
-            return Err(IngestError::Rejected(
-                "forbidden: not authorized to trigger this workflow".into(),
-            ));
+            // Third way in, the same delegation as publication and scoped the
+            // same way: a live, owner-signed project-action delegation held by
+            // this session's active lead seat may start a manual run of this
+            // project's own actions (ledger 186). It is read against the
+            // workflow's channel, which is where both the action and the
+            // session's authority chain live.
+            let delegated = match (&workflow.project_ref, workflow.channel_id) {
+                (Some(project), Some(workflow_channel)) => matches!(
+                    crate::handlers::project_action_grant::project_action_delegation_admitted(
+                        state,
+                        community_id,
+                        workflow_channel,
+                        project,
+                        &self_bytes,
+                        ProjectActionCapability::TriggerManualRun,
+                    )
+                    .await,
+                    crate::handlers::project_action_grant::ProjectActionDelegation::Admitted { .. }
+                ),
+                _ => false,
+            };
+            if !delegated {
+                return Err(IngestError::Rejected(
+                    "forbidden: not authorized to trigger this workflow — a project action is \
+                     started by the workflow's owner, a project Owner or Collaborator, or a key \
+                     holding a live project-action delegation for it"
+                        .into(),
+                ));
+            }
         }
     }
 

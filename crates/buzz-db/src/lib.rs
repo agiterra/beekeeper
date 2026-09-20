@@ -23,6 +23,8 @@ pub mod ci_result;
 pub mod coding_session_acl;
 /// Immutable lifecycle command/receipt authority resolution for session generations.
 pub mod coding_session_generation;
+/// The narrow, owner-signed project-action delegation read side (ledger 186).
+pub mod coding_session_project_action_grant;
 /// Durable whole-community deletion lifecycle and PostgreSQL adapter.
 pub mod deletion;
 /// Direct message channel persistence.
@@ -2480,6 +2482,29 @@ impl Db {
             channel_id,
             genesis_ref,
             session_ref,
+        )
+        .await
+    }
+
+    /// Every live project-action delegation of `project_ref` held by
+    /// `grantee` in `channel_id` (ledger 186).
+    ///
+    /// Returns [`coding_session_project_action_grant::ProjectActionGrantLookup::Undecidable`]
+    /// when the channel holds more authority transitions than the lookup
+    /// reads, so a caller never admits an act from a truncated chain.
+    pub async fn live_project_action_grants(
+        &self,
+        community: CommunityId,
+        channel_id: uuid::Uuid,
+        project_ref: &str,
+        grantee: &[u8],
+    ) -> Result<coding_session_project_action_grant::ProjectActionGrantLookup> {
+        coding_session_project_action_grant::live_project_action_grants(
+            &self.pool,
+            community,
+            channel_id,
+            project_ref,
+            grantee,
         )
         .await
     }

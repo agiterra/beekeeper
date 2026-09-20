@@ -1,5 +1,8 @@
 /// `bee actions` — a project's `actions.yml` (the agents repository's root), published as kind:30620s.
 pub mod actions;
+/// Whether the caller may actually publish and trigger a project's actions
+/// (ledger 186, finding 178(f)).
+pub mod actions_authority;
 pub mod agents;
 pub mod channel_templates;
 pub mod channels;

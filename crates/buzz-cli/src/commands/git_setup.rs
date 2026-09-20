@@ -2216,10 +2216,15 @@ fn prediction_operators(authority: &[nostr::Event], genesis_ref: &str) -> Vec<St
             // raises is decided by
             // `buzz_core::coding_session_authority_claim::fold_current_claim`,
             // not here.
+            // A project-actions delegation confers publishing and triggering
+            // one project's actions and no steering at all (ledger 186), so
+            // the operator set is likewise unchanged by it.
             CodingSessionAuthorityTransitionType::GrantSeat
             | CodingSessionAuthorityTransitionType::RevokeSeat
             | CodingSessionAuthorityTransitionType::Takeover
-            | CodingSessionAuthorityTransitionType::Transfer => {}
+            | CodingSessionAuthorityTransitionType::Transfer
+            | CodingSessionAuthorityTransitionType::GrantProjectActions
+            | CodingSessionAuthorityTransitionType::RevokeProjectActions => {}
         }
     }
     operators

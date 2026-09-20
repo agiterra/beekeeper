@@ -8,7 +8,8 @@
 //! # Closed transition types today
 //!
 //! `grant-operator`, `grant-viewer`, `revoke`, `grant-seat`, `revoke-seat`,
-//! `takeover` and `transfer` are implemented — see
+//! `takeover`, `transfer`, `grant-project-actions` and
+//! `revoke-project-actions` are implemented — see
 //! [`CodingSessionAuthorityTransitionType`]. The type is carried as a string
 //! enum precisely so further types are additive later: adding a variant does
 //! not change the shape of an existing, already-signed transition, and a relay
@@ -16,7 +17,10 @@
 //! unknown rather than guessing at its meaning. `takeover` and `transfer` were
 //! the two names this module reserved from the start; they landed with the
 //! absent-participant handover (`docs/HANDOVER_IMPL.md` §1) and each carries
-//! one extra field, `bodyPubkey`.
+//! one extra field, `bodyPubkey`. The two project-action links landed with
+//! ledger 186 and each carries one extra field, `projectRef`; what they
+//! delegate is spelled out in [`crate::coding_session_project_action_grant`]
+//! and in `docs/nips/NIP-CSAT.md`.
 //!
 //! # The claim, and why it is not a grant
 //!
@@ -64,12 +68,25 @@ use serde_json::Value;
 pub const CODING_SESSION_AUTHORITY_TRANSITION_TAG_VERSION: &str = "csat1-1";
 /// Maximum UTF-8 byte length for the complete signed event content.
 ///
-/// Content is five fixed fields for legacy transitions and six for seat
-/// transitions. The largest realistic encoding (two 64-hex event ids, a small
-/// integer, the longest transition type, a 64-hex pubkey, and a role slug)
-/// totals well under 400 bytes — the same "no room to grow"
-/// reasoning as genesis's content ceiling.
-pub const MAX_AUTHORITY_TRANSITION_CONTENT_BYTES: usize = 512;
+/// Content is five fixed fields for legacy transitions and six for seat,
+/// claim and project-action transitions. The largest realistic encoding is a
+/// project-action grant: two 64-hex event ids, a `u32`, the longest
+/// transition type, a 64-hex pubkey, and a project coordinate whose `d` tag
+/// this crate does not bound — about 390 bytes before the coordinate. The
+/// ceiling is 768 rather than the original 512 so a long project slug cannot
+/// make a grant unsignable; [`MAX_PROJECT_REF_BYTES`] is what actually bounds
+/// the one variable-length field, and the exact-key-set check in
+/// [`decode_coding_session_authority_transition`] is what stops the extra
+/// room from admitting anything new.
+pub const MAX_AUTHORITY_TRANSITION_CONTENT_BYTES: usize = 768;
+
+/// Maximum UTF-8 byte length of a `projectRef` coordinate.
+///
+/// `30621:<64-hex owner>:<d>` is 71 bytes before the `d` tag, so this leaves
+/// 185 bytes of project identifier — far more than any slug a project has
+/// carried — while keeping the whole content inside
+/// [`MAX_AUTHORITY_TRANSITION_CONTENT_BYTES`] by construction.
+pub const MAX_PROJECT_REF_BYTES: usize = 256;
 
 /// One transition type. The enum exists so further types (`transfer`,
 /// `takeover`) are additive variants in a future revision rather than a
@@ -109,6 +126,19 @@ pub enum CodingSessionAuthorityTransitionType {
     /// self-claim, which is exactly why the relay checks the signer against the
     /// folded current claim rather than against the grantee.
     Transfer,
+    /// Delegates this project's **actions** to one pubkey — nothing else.
+    ///
+    /// Signed by the session's owner (a project owner founded the session, so
+    /// the chain's owner rule is exactly the "signed by a project owner"
+    /// requirement), it lets `granteePubkey` publish the named project's
+    /// kind:30620 action definitions and start manual kind:46020 runs of
+    /// them. It does **not** approve host steps (kind:46030), does not reach
+    /// any other project, and confers no steering, hiring or read authority.
+    /// See [`crate::coding_session_project_action_grant`].
+    GrantProjectActions,
+    /// Withdraws a [`Self::GrantProjectActions`] delegation for the exact
+    /// same `(granteePubkey, projectRef)` pair.
+    RevokeProjectActions,
 }
 
 impl CodingSessionAuthorityTransitionType {
@@ -127,7 +157,15 @@ impl CodingSessionAuthorityTransitionType {
             Self::RevokeSeat => "revoke-seat",
             Self::Takeover => "takeover",
             Self::Transfer => "transfer",
+            Self::GrantProjectActions => "grant-project-actions",
+            Self::RevokeProjectActions => "revoke-project-actions",
         }
+    }
+
+    /// Whether this type carries `projectRef` and speaks about a project's
+    /// actions rather than about the session itself.
+    pub const fn is_project_actions(self) -> bool {
+        matches!(self, Self::GrantProjectActions | Self::RevokeProjectActions)
     }
 
     /// Whether this type sets the session's execution claim.
@@ -181,6 +219,20 @@ pub struct CodingSessionAuthorityTransitionPayload {
     /// field existed keeps its exact five- or six-key shape on the wire.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub body_pubkey: Option<String>,
+    /// The project coordinate (`30621:<owner>:<d>`) whose actions this
+    /// transition grants or revokes — required for
+    /// [`CodingSessionAuthorityTransitionType::GrantProjectActions`] and
+    /// [`CodingSessionAuthorityTransitionType::RevokeProjectActions`], absent
+    /// for every other type.
+    ///
+    /// A delegation with no project named would be a delegation of every
+    /// project the grantee can see, which is the opposite of what this link
+    /// is for, so it is required on write *and* on read.
+    ///
+    /// Serialized only when present, so every transition signed before this
+    /// field existed keeps its exact five- or six-key shape on the wire.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_ref: Option<String>,
 }
 
 impl CodingSessionAuthorityTransitionPayload {
@@ -200,6 +252,7 @@ impl CodingSessionAuthorityTransitionPayload {
             grantee_pubkey: grantee_pubkey.into(),
             role: None,
             body_pubkey: None,
+            project_ref: None,
         }
     }
 
@@ -219,6 +272,7 @@ impl CodingSessionAuthorityTransitionPayload {
             grantee_pubkey: grantee_pubkey.into(),
             role: Some(role.into()),
             body_pubkey: None,
+            project_ref: None,
         }
     }
 
@@ -238,6 +292,7 @@ impl CodingSessionAuthorityTransitionPayload {
             grantee_pubkey: grantee_pubkey.into(),
             role: Some(role.into()),
             body_pubkey: None,
+            project_ref: None,
         }
     }
 
@@ -261,6 +316,7 @@ impl CodingSessionAuthorityTransitionPayload {
             grantee_pubkey: claimant.into(),
             role: None,
             body_pubkey: Some(body_pubkey.into()),
+            project_ref: None,
         }
     }
 
@@ -283,6 +339,7 @@ impl CodingSessionAuthorityTransitionPayload {
             grantee_pubkey: claimant.into(),
             role: None,
             body_pubkey: Some(body_pubkey.into()),
+            project_ref: None,
         }
     }
 
@@ -300,6 +357,50 @@ impl CodingSessionAuthorityTransitionPayload {
             seq,
             grantee_pubkey,
         )
+    }
+
+    /// Build a `grant-project-actions` transition payload.
+    ///
+    /// `project_ref` is the coordinate whose actions `grantee_pubkey` may
+    /// publish and trigger; the signer must be the session's owner, which the
+    /// relay checks against the chain, not this payload.
+    pub fn new_grant_project_actions(
+        genesis_ref: impl Into<String>,
+        prev_accepted: Option<String>,
+        seq: u32,
+        grantee_pubkey: impl Into<String>,
+        project_ref: impl Into<String>,
+    ) -> Self {
+        Self {
+            transition_type: CodingSessionAuthorityTransitionType::GrantProjectActions,
+            genesis_ref: genesis_ref.into(),
+            prev_accepted,
+            seq,
+            grantee_pubkey: grantee_pubkey.into(),
+            role: None,
+            body_pubkey: None,
+            project_ref: Some(project_ref.into()),
+        }
+    }
+
+    /// Build a `revoke-project-actions` transition payload.
+    pub fn new_revoke_project_actions(
+        genesis_ref: impl Into<String>,
+        prev_accepted: Option<String>,
+        seq: u32,
+        grantee_pubkey: impl Into<String>,
+        project_ref: impl Into<String>,
+    ) -> Self {
+        Self {
+            transition_type: CodingSessionAuthorityTransitionType::RevokeProjectActions,
+            genesis_ref: genesis_ref.into(),
+            prev_accepted,
+            seq,
+            grantee_pubkey: grantee_pubkey.into(),
+            role: None,
+            body_pubkey: None,
+            project_ref: Some(project_ref.into()),
+        }
     }
 
     /// Validate this payload's self-consistency before signing an event.
@@ -337,7 +438,9 @@ impl CodingSessionAuthorityTransitionPayload {
             | CodingSessionAuthorityTransitionType::GrantViewer
             | CodingSessionAuthorityTransitionType::Revoke
             | CodingSessionAuthorityTransitionType::Takeover
-            | CodingSessionAuthorityTransitionType::Transfer => {
+            | CodingSessionAuthorityTransitionType::Transfer
+            | CodingSessionAuthorityTransitionType::GrantProjectActions
+            | CodingSessionAuthorityTransitionType::RevokeProjectActions => {
                 if self.role.is_some() {
                     return Err("non-seat authority transition must not carry role".into());
                 }
@@ -365,7 +468,61 @@ impl CodingSessionAuthorityTransitionPayload {
             }
             (false, None) => {}
         }
+        // A project-action delegation names the project it delegates, and
+        // nothing else may name one. Both halves refuse rather than tolerate,
+        // for the same reason `bodyPubkey` does: an unscoped delegation and a
+        // stray coordinate are each a shape a consumer would have to guess at.
+        match (
+            self.transition_type.is_project_actions(),
+            self.project_ref.as_deref(),
+        ) {
+            (true, Some(project_ref)) => validate_project_ref(project_ref)?,
+            (true, None) => {
+                return Err(
+                    "grant-project-actions and revoke-project-actions require projectRef: an \
+                     unscoped delegation would reach every project the grantee can see"
+                        .into(),
+                )
+            }
+            (false, Some(_)) => {
+                return Err(
+                    "only grant-project-actions and revoke-project-actions may carry projectRef"
+                        .into(),
+                )
+            }
+            (false, None) => {}
+        }
         Ok(())
+    }
+}
+
+/// Check that `value` is a project coordinate this transition may delegate:
+/// `30621:<64-hex owner>:<non-empty d>`, within [`MAX_PROJECT_REF_BYTES`].
+///
+/// Kind 30621 is the project record; a coordinate of any other kind is not a
+/// project and is refused rather than normalized, so a delegation can never
+/// be filed against a repository or a pack coordinate instead.
+fn validate_project_ref(value: &str) -> Result<(), String> {
+    if value.len() > MAX_PROJECT_REF_BYTES {
+        return Err(format!(
+            "projectRef must be at most {MAX_PROJECT_REF_BYTES} bytes"
+        ));
+    }
+    let mut parts = value.splitn(3, ':');
+    let kind_ok = parts.next() == Some("30621");
+    let owner_ok = parts.next().is_some_and(|owner| {
+        owner.len() == 64
+            && owner
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    });
+    let d_ok = parts.next().is_some_and(|d| !d.trim().is_empty());
+    if kind_ok && owner_ok && d_ok {
+        Ok(())
+    } else {
+        Err(format!(
+            "projectRef must be 30621:<64-hex owner>:<d> (got {value:?})"
+        ))
     }
 }
 
@@ -430,9 +587,21 @@ pub fn decode_coding_session_authority_transition(
         "granteePubkey",
         "bodyPubkey",
     ];
+    /// A project-action delegation's exact shape: the five legacy keys plus
+    /// the project it is scoped to. Required on write *and* on read — an
+    /// unscoped delegation is not a narrower grant, it is a wider one.
+    const PROJECT_ACTIONS_EXPECTED: [&str; 6] = [
+        "genesisRef",
+        "prevAccepted",
+        "seq",
+        "type",
+        "granteePubkey",
+        "projectRef",
+    ];
     let expected: &[&str] = match object.get("type").and_then(Value::as_str) {
         Some("grant-seat" | "revoke-seat") => &SEAT_EXPECTED,
         Some("takeover" | "transfer") => &CLAIM_EXPECTED,
+        Some("grant-project-actions" | "revoke-project-actions") => &PROJECT_ACTIONS_EXPECTED,
         _ => &LEGACY_EXPECTED,
     };
     let complete = expected.iter().all(|key| object.contains_key(*key));
@@ -910,3 +1079,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "coding_session_authority_transition_project_action_tests.rs"]
+mod project_action_tests;

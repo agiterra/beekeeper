@@ -1454,7 +1454,8 @@ pub async fn emit_system_message(
 /// existing relay-signed-emission pattern) naming exactly the facts a
 /// consumer needs to establish the new canonical head: the genesis, the
 /// accepted transition, its sequence number, its type, and the grantee. Seat
-/// transition receipts additionally echo their required role.
+/// transition receipts additionally echo their required role, and a
+/// project-action delegation echoes the project it is scoped to.
 async fn handle_coding_session_authority_transition_accepted(
     tenant: &TenantContext,
     event: &Event,
@@ -1491,6 +1492,14 @@ async fn handle_coding_session_authority_transition_accepted(
     // existed keeps its exact shape.
     if let (Some(object), Some(body_pubkey)) = (receipt.as_object_mut(), payload.body_pubkey) {
         object.insert("bodyPubkey".into(), serde_json::Value::String(body_pubkey));
+    }
+    // Same rule for the project a `grant-project-actions` delegates
+    // (ledger 186): a receipt that said only "a delegation was accepted for
+    // this key" would leave a reader to guess its scope, and the scope is the
+    // entire point of the link. Present exactly when the transition carried
+    // one, so every earlier receipt keeps its exact shape.
+    if let (Some(object), Some(project_ref)) = (receipt.as_object_mut(), payload.project_ref) {
+        object.insert("projectRef".into(), serde_json::Value::String(project_ref));
     }
     emit_system_message(tenant, state, channel_id, receipt).await
 }

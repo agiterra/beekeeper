@@ -16,6 +16,9 @@ use buzz_workflow::{parse_actions_yml, ActionEntry, ACTIONS_YML};
 use uuid::Uuid;
 
 use crate::client::BuzzClient;
+use crate::commands::actions_authority::{
+    decide_project_action_authority, project_action_grant_remedy, read_project_action_authority,
+};
 use crate::error::CliError;
 use crate::validate::{parse_uuid, read_file_or_stdin, sdk_err};
 
@@ -67,6 +70,7 @@ pub async fn cmd_publish(
 ) -> Result<(), CliError> {
     let channel_uuid = parse_uuid(channel)?;
     let entries = parse_file(file, project)?;
+    let caller_pubkey = client.keys().public_key().to_hex().to_ascii_lowercase();
     let mut refused = 0usize;
     for entry in &entries {
         let workflow_id = action_workflow_id(project, &entry.name);
@@ -99,6 +103,14 @@ pub async fn cmd_publish(
         if !accepted {
             refused += 1;
         }
+        // The relay's own words stay in `message` verbatim — a refusal must
+        // never be paraphrased — and the remedy is added beside it only for
+        // the refusals the delegation can actually fix (ledger 186, finding
+        // 178(f)). A transport error or an `invalid:` refusal gets none: a
+        // grant would not help, and offering one would send the caller to ask
+        // an owner for something they already have.
+        let remedy = (!accepted && is_authority_refusal(&message))
+            .then(|| project_action_grant_remedy(project, &caller_pubkey));
         let line = serde_json::json!({
             "name": entry.name,
             "workflow_id": workflow_id,
@@ -106,6 +118,7 @@ pub async fn cmd_publish(
             "event_id": event_id,
             "accepted": accepted,
             "message": message,
+            "remedy": remedy,
         });
         println!("{line}");
     }
@@ -118,19 +131,62 @@ pub async fn cmd_publish(
     Ok(())
 }
 
+/// Whether a relay refusal is one a project-actions delegation could fix.
+///
+/// The relay prefixes its authority refusals with `forbidden:` and its shape
+/// refusals with `invalid:` (`crates/buzz-relay/src/handlers/command_executor.rs`),
+/// so the prefix is the discriminator rather than a match on wording that
+/// would rot the first time a message is reworded.
+fn is_authority_refusal(message: &str) -> bool {
+    message.trim_start().starts_with("forbidden:")
+}
+
+/// Whether publishing this entry additionally needs the channel owner/admin
+/// role — a `run_on_host` step, or a `call_webhook` that can carry channel
+/// content outward (`command_executor.rs:789-818`).
+fn needs_channel_elevation(entry: &ActionEntry) -> bool {
+    entry.def.has_host_steps() || entry.def.requires_elevated_authority()
+}
+
 /// `bee actions status`: what the file would publish — name, hash, trigger,
-/// and whether any step runs on a host. Reads nothing from the relay.
-pub fn cmd_status(project: &str, file: &str) -> Result<(), CliError> {
+/// and whether any step runs on a host — plus whether this key may actually
+/// publish and trigger it.
+///
+/// The authority half is a prediction of the relay's answer, read once for the
+/// project and narrowed per entry; it exists because the file half alone let a
+/// team session accept a goal it had no standing to finish (ledger 186,
+/// finding 178(f)). `channel` is the channel whose kind:44228 authority chain
+/// would carry a delegation; without it the two predictions are `null`, with
+/// the missing read named, because a `false` nobody checked is a lie the same
+/// size as a `true`.
+pub async fn cmd_status(
+    client: &BuzzClient,
+    project: &str,
+    channel: Option<&str>,
+    file: &str,
+) -> Result<(), CliError> {
     let entries = parse_file(file, project)?;
+    let channel = match channel {
+        Some(channel) => Some(parse_uuid(channel)?.to_string()),
+        None => None,
+    };
+    let inputs = read_project_action_authority(client, project, channel.as_deref()).await;
+    let authority = decide_project_action_authority(&inputs);
     let lines: Vec<serde_json::Value> = entries
         .iter()
         .map(|entry| {
+            let entry_authority = authority
+                .clone()
+                .narrowed_by_channel_elevation(needs_channel_elevation(entry));
             serde_json::json!({
                 "name": entry.name,
                 "workflow_id": action_workflow_id(project, &entry.name),
                 "hash": entry.hash,
                 "trigger": trigger_name(entry),
                 "run_on_host": runs_on_host(entry),
+                "may_publish": entry_authority.may_publish,
+                "may_trigger": entry_authority.may_trigger,
+                "authority": entry_authority.to_json(),
             })
         })
         .collect();
@@ -157,8 +213,18 @@ pub async fn dispatch(cmd: crate::ActionsCmd, client: &BuzzClient) -> Result<(),
             )
             .await
         }
-        ActionsCmd::Status { project, file } => {
-            cmd_status(&project, file.as_deref().unwrap_or(ACTIONS_YML))
+        ActionsCmd::Status {
+            project,
+            channel,
+            file,
+        } => {
+            cmd_status(
+                client,
+                &project,
+                channel.as_deref(),
+                file.as_deref().unwrap_or(ACTIONS_YML),
+            )
+            .await
         }
     }
 }
@@ -196,6 +262,31 @@ mod tests {
         let other = PROJECT.replace("pulse", "other");
         assert_ne!(a, action_workflow_id(&other, "nightly-build"));
         assert_eq!(a.get_version_num(), 5);
+    }
+
+    #[test]
+    fn only_an_authority_refusal_gets_the_grant_remedy() {
+        // The relay's two prefixes, verbatim (`command_executor.rs`).
+        assert!(is_authority_refusal(
+            "forbidden: a project action must be saved by the project creator, a roster owner or \
+             a repository founder"
+        ));
+        assert!(is_authority_refusal(
+            "forbidden: not authorized to trigger this workflow"
+        ));
+        // A shape refusal, and a transport error, are not fixed by a grant.
+        assert!(!is_authority_refusal(
+            "invalid: a tag names a project the definition does not declare"
+        ));
+        assert!(!is_authority_refusal("error sending request for url"));
+    }
+
+    #[test]
+    fn a_host_step_entry_is_flagged_as_needing_channel_elevation() {
+        let entries = parse_actions_yml(FILE, PROJECT).expect("parse");
+        // The first entry runs a command on a host; the second sends a message.
+        assert!(needs_channel_elevation(&entries[0]));
+        assert!(!needs_channel_elevation(&entries[1]));
     }
 
     #[test]

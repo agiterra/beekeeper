@@ -6565,10 +6565,16 @@ impl Provider {
                 // moves who is *carrying* the session, not who may steer it,
                 // and it is applied by the claim fold immediately below rather
                 // than by this ACL.
+                // A project-action delegation is a third case again: it says
+                // the grantee may publish and trigger one project's actions,
+                // which is the relay's admission rule and no part of this
+                // steering ACL (ledger 186).
                 CodingSessionAuthorityTransitionType::GrantSeat
                 | CodingSessionAuthorityTransitionType::RevokeSeat
                 | CodingSessionAuthorityTransitionType::Takeover
-                | CodingSessionAuthorityTransitionType::Transfer => {}
+                | CodingSessionAuthorityTransitionType::Transfer
+                | CodingSessionAuthorityTransitionType::GrantProjectActions
+                | CodingSessionAuthorityTransitionType::RevokeProjectActions => {}
             }
             // §3 claim consumption. Every accepted link is offered to the
             // canonical claim fold, not just the `takeover`/`transfer` ones:

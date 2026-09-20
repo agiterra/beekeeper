@@ -297,7 +297,11 @@ pub async fn session_authority_for_hire(
             | CodingSessionAuthorityTransitionType::GrantViewer
             | CodingSessionAuthorityTransitionType::Revoke
             | CodingSessionAuthorityTransitionType::Takeover
-            | CodingSessionAuthorityTransitionType::Transfer => {}
+            | CodingSessionAuthorityTransitionType::Transfer
+            // Nor does a project-action delegation: it is about one project's
+            // actions, never about this session's seats (ledger 186).
+            | CodingSessionAuthorityTransitionType::GrantProjectActions
+            | CodingSessionAuthorityTransitionType::RevokeProjectActions => {}
         }
         expected_prev = Some(event_id);
     }
