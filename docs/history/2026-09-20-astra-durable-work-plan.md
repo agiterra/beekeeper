@@ -1,4 +1,4 @@
-> Written by Astra (GPT-6) for Brian, revision 3, 2026-09-20; copied verbatim by Fable from /tmp. Fable's review is in the map and ledger 178–179.
+> Written by Astra (GPT-6) for Brian, revision 4, 2026-09-20; copied verbatim by Fable from /tmp. Fable's review is in the map and ledger 178–179.
 
 # Beekeeper: the next complete flow
 
