@@ -398,8 +398,19 @@ pub async fn run(
 /// `after`, else `ci_result`'s `commit`. A deleted ref has an empty (or
 /// all-zero) `after` and names nothing.
 pub fn triggering_commit(trigger_context: &serde_json::Value) -> Option<String> {
-    ["after", "commit"]
-        .iter()
+    commit_field(trigger_context, &["after", "commit"])
+}
+
+/// The commit a manual trigger bound the run to: `bee workflows trigger
+/// --checkout <sha>`, carried verbatim on the trigger context. `None` when
+/// the run bound none, which is the legacy manual case — the command then
+/// runs in the recorded project directory as found, and says so.
+pub fn bound_checkout(trigger_context: &serde_json::Value) -> Option<String> {
+    commit_field(trigger_context, &["checkout"])
+}
+
+fn commit_field(trigger_context: &serde_json::Value, keys: &[&str]) -> Option<String> {
+    keys.iter()
         .filter_map(|key| {
             trigger_context
                 .get(*key)

@@ -1256,7 +1256,7 @@ pub enum WorkflowsCmd {
     },
     /// Trigger a workflow run
     #[command(
-        after_help = "Examples:\n  bee workflows trigger --workflow <UUID>\n  bee workflows trigger --workflow <UUID> --inputs '{\"key\":\"value\"}'"
+        after_help = "Examples:\n  bee workflows trigger --workflow <UUID>\n  bee workflows trigger --workflow <UUID> --inputs '{\"key\":\"value\"}'\n  bee workflows trigger --workflow <UUID> --checkout <40-hex sha>\n\nA host step that declares `checkout: required` refuses a run that names no \ncommit; --checkout binds the run to one and the host runs it in a fresh \ndetached worktree at that commit."
     )]
     Trigger {
         /// Workflow UUID
@@ -1265,6 +1265,11 @@ pub enum WorkflowsCmd {
         /// JSON object of input variables passed to the workflow as event content
         #[arg(long)]
         inputs: Option<String>,
+        /// Full 40-hex commit the run is about: the host runs its `run_on_host`
+        /// steps in a fresh detached worktree at this commit, so the result
+        /// names what was actually tested
+        #[arg(long)]
+        checkout: Option<String>,
     },
     /// List runs for a workflow
     Runs {

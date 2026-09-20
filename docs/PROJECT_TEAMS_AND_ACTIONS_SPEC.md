@@ -748,7 +748,21 @@ actions:
           on_success: "Review the build log for unexpected warnings."
           on_failure: "Try to correct the build errors, then report."
 
-  # (3) agent-managed: no host step; the agent runs and watches the process
+  # (3) a verify-style action that refuses to test the wrong tree: the
+  # manual trigger must name the commit (`bee workflows trigger --checkout
+  # <sha>`), and the host runs it in a fresh detached worktree at that
+  # commit, reporting the sha before and after (ledger 178(g))
+  - name: verify
+    trigger: { on: manual }
+    steps:
+      - id: verify
+        action: run_on_host
+        command: ["python3", "-m", "unittest", "discover", "-s", "tests"]
+        working_directory: "."
+        checkout: required          # current (default) | triggering_commit | required
+        timeout: 300s
+
+  # (4) agent-managed: no host step; the agent runs and watches the process
   - name: flaky-e2e
     trigger: { on: manual }
     steps:
@@ -768,9 +782,12 @@ actions:
 ```
 
 Host-side validation refuses an absolute or parent-escaping
-`working_directory`, a `timeout` above 3600 s, and a `wake_agent` naming an
-agent absent from `team.yml`; it warns on an `env` value that looks like a
-secret. `brief.on_success/on_failure` is sugar the host compiles into two
+`working_directory`, a `timeout` above 3600 s, a `wake_agent` naming an
+agent absent from `team.yml`, and `checkout: required` on a trigger that can
+name no commit (only `manual`, `ref_updated` and `ci_result` can); it warns on
+an `env` value that looks like a secret. `checkout: required` also makes the
+relay refuse a kind:46020 that binds no commit, naming `--checkout` in the
+refusal, so the run never exists. `brief.on_success/on_failure` is sugar the host compiles into two
 `wake_agent` steps with opposite `if` on the preceding step's exit code.
 
 ### 5.2 Routing modes, and what "monitor" can honestly mean

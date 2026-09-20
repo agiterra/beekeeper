@@ -162,26 +162,79 @@ pub async fn cmd_delete_workflow(client: &BuzzClient, workflow_id: &str) -> Resu
     Ok(())
 }
 
+/// Normalize a `--checkout` value: a full 40-hex commit, lowercased.
+///
+/// The relay applies the same rule, so a typo is refused here rather than
+/// becoming a run whose record names a commit nothing checked out.
+pub fn normalize_checkout_sha(value: &str) -> Result<String, CliError> {
+    let trimmed = value.trim();
+    if trimmed.len() == 40 && trimmed.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        Ok(trimmed.to_ascii_lowercase())
+    } else {
+        Err(CliError::Usage(
+            "--checkout must be a full 40-hex commit sha".into(),
+        ))
+    }
+}
+
+/// The kind:46020 content a trigger carries: the `--inputs` object, plus the
+/// `checkout` commit when `--checkout` bound one.
+///
+/// Returns `None` when neither was given, so a plain trigger keeps using the
+/// SDK builder and its empty content exactly as before.
+pub fn trigger_content(
+    inputs: Option<&str>,
+    checkout: Option<&str>,
+) -> Result<Option<serde_json::Value>, CliError> {
+    let mut map = match inputs {
+        None => serde_json::Map::new(),
+        Some(raw) => {
+            let parsed: serde_json::Value = serde_json::from_str(raw)
+                .map_err(|e| CliError::Usage(format!("--inputs is not valid JSON: {e}")))?;
+            match parsed {
+                serde_json::Value::Object(map) => map,
+                _ => return Err(CliError::Usage("--inputs must be a JSON object".into())),
+            }
+        }
+    };
+    let checkout = match checkout {
+        None => None,
+        Some(value) => Some(normalize_checkout_sha(value)?),
+    };
+    if let Some(sha) = checkout {
+        if let Some(existing) = map.get("checkout").and_then(serde_json::Value::as_str) {
+            if existing.trim().to_ascii_lowercase() != sha {
+                return Err(CliError::Usage(
+                    "--checkout and the 'checkout' field of --inputs name different commits".into(),
+                ));
+            }
+        }
+        map.insert("checkout".into(), serde_json::Value::String(sha));
+    }
+    if map.is_empty() && inputs.is_none() {
+        return Ok(None);
+    }
+    Ok(Some(serde_json::Value::Object(map)))
+}
+
 /// Trigger a workflow — sign and submit a kind:46020 event.
 ///
 /// When `inputs` is provided, it is parsed as a JSON object and used as the
-/// event content (MCP parity). When omitted, the event content is `{}`.
+/// event content (MCP parity). `checkout` binds the run to a commit: the
+/// host runs the action's `run_on_host` steps in a fresh detached worktree at
+/// that commit, and a step declaring `checkout: required` refuses a run
+/// without one. When neither is given, the event content is `{}`.
 pub async fn cmd_trigger_workflow(
     client: &BuzzClient,
     workflow_id: &str,
     inputs: Option<&str>,
+    checkout: Option<&str>,
 ) -> Result<(), CliError> {
     let wf_uuid = parse_uuid(workflow_id)?;
 
-    if let Some(raw) = inputs {
-        // Parse and validate it is a JSON object, then build the event manually
-        // so we can embed the inputs as the event content.
-        let parsed: serde_json::Value = serde_json::from_str(raw)
-            .map_err(|e| CliError::Usage(format!("--inputs is not valid JSON: {e}")))?;
-        if !parsed.is_object() {
-            return Err(CliError::Usage("--inputs must be a JSON object".into()));
-        }
-        let content = serde_json::to_string(&parsed).unwrap_or_default();
+    if let Some(content_value) = trigger_content(inputs, checkout)? {
+        // Build the event manually so the inputs ride as the event content.
+        let content = serde_json::to_string(&content_value).unwrap_or_default();
         use nostr::{EventBuilder, Kind, Tag};
         let tags = vec![Tag::parse(["d", &wf_uuid.to_string()])
             .map_err(|e| CliError::Other(format!("tag error: {e}")))?];
@@ -254,9 +307,11 @@ pub async fn dispatch(cmd: crate::WorkflowsCmd, client: &BuzzClient) -> Result<(
             yaml,
         } => cmd_update_workflow(client, &channel, &workflow, &yaml).await,
         WorkflowsCmd::Delete { workflow } => cmd_delete_workflow(client, &workflow).await,
-        WorkflowsCmd::Trigger { workflow, inputs } => {
-            cmd_trigger_workflow(client, &workflow, inputs.as_deref()).await
-        }
+        WorkflowsCmd::Trigger {
+            workflow,
+            inputs,
+            checkout,
+        } => cmd_trigger_workflow(client, &workflow, inputs.as_deref(), checkout.as_deref()).await,
         WorkflowsCmd::Runs { workflow, limit } => {
             cmd_get_workflow_runs(client, &workflow, limit).await
         }
@@ -269,5 +324,49 @@ pub async fn dispatch(cmd: crate::WorkflowsCmd, client: &BuzzClient) -> Result<(
             // approved is already a bool — no parse_bool_flag needed
             cmd_approve_step(client, &token, approved, note.as_deref(), allow_future_runs).await
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_plain_trigger_still_carries_no_content() {
+        assert!(trigger_content(None, None).expect("no content").is_none());
+    }
+
+    #[test]
+    fn checkout_rides_the_content_as_a_lowercase_sha() {
+        let content = trigger_content(None, Some(&"AB".repeat(20)))
+            .expect("valid")
+            .expect("content");
+        assert_eq!(content["checkout"], "ab".repeat(20));
+        let merged = trigger_content(Some(r#"{"reason":"verify"}"#), Some(&"cd".repeat(20)))
+            .expect("valid")
+            .expect("content");
+        assert_eq!(merged["reason"], "verify");
+        assert_eq!(merged["checkout"], "cd".repeat(20));
+    }
+
+    #[test]
+    fn a_short_or_non_hex_checkout_is_a_usage_error() {
+        for value in ["fa927fd", "main", &"z".repeat(40)] {
+            let error = trigger_content(None, Some(value)).expect_err("refused");
+            assert!(
+                matches!(error, CliError::Usage(ref message) if message.contains("40-hex")),
+                "{value} should be refused by name, got {error:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn two_different_commits_in_one_trigger_are_refused() {
+        let inputs = format!("{{\"checkout\":\"{}\"}}", "ab".repeat(20));
+        let error = trigger_content(Some(&inputs), Some(&"cd".repeat(20)))
+            .expect_err("a run cannot name two commits");
+        assert!(matches!(error, CliError::Usage(_)), "{error:?}");
+        // The same commit twice is fine.
+        trigger_content(Some(&inputs), Some(&"AB".repeat(20))).expect("agreeing values");
     }
 }

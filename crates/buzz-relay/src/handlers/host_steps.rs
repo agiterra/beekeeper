@@ -876,6 +876,7 @@ mod tests {
                 duration_ms: Some(42),
                 head_sha: Some("b".repeat(40)),
                 dirty: Some(false),
+                checkout: None,
                 stdout_tail: "ok".into(),
                 stderr_tail: String::new(),
                 truncated: false,

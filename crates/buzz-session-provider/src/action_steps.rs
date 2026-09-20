@@ -45,8 +45,10 @@ enum StepPlan {
         checkout: PathBuf,
         prepared: PreparedCommand,
         spec: ResolvedRunOnHost,
-        /// The commit to cut a worktree at, when `spec.checkout` asks for it.
-        triggering_commit: Option<String>,
+        /// The commit to cut a worktree at: the one the trigger names, or
+        /// the one a manual trigger bound with `--checkout`. `None` runs in
+        /// the recorded project directory as found.
+        bound_commit: Option<String>,
     },
     /// Deliver a brief to an open execution on this computer.
     Wake {
@@ -350,6 +352,43 @@ pub fn verify_request(
     })
 }
 
+/// The commit a `run_on_host` step must run at, given its `checkout` mode and
+/// the run's trigger context.
+///
+/// - `current` runs in the recorded project directory as found — unless the
+///   run bound a commit anyway, which is then honoured rather than silently
+///   ignored.
+/// - `triggering_commit` needs `ref_updated`'s `after` or `ci_result`'s
+///   `commit` (spec § 7 C6).
+/// - `required` takes either, and refuses a run that names neither — the
+///   manual case, where the remedy is `--checkout <sha>` (ledger 178(g)).
+pub fn bound_commit(
+    spec: &ResolvedRunOnHost,
+    trigger_context: &serde_json::Value,
+) -> Result<Option<String>, HostStepRefusal> {
+    use buzz_workflow::schema::HostCheckout;
+    match spec.checkout {
+        HostCheckout::Current => Ok(host_command::bound_checkout(trigger_context)),
+        HostCheckout::TriggeringCommit => host_command::triggering_commit(trigger_context)
+            .map(Some)
+            .ok_or_else(|| HostStepRefusal {
+                code: ACTION_NO_TRIGGER_COMMIT.to_owned(),
+                message: "checkout: triggering_commit, but this run's trigger names no commit (a \
+                          deleted ref, or a trigger without one)"
+                    .into(),
+            }),
+        HostCheckout::Required => host_command::bound_checkout(trigger_context)
+            .or_else(|| host_command::triggering_commit(trigger_context))
+            .map(Some)
+            .ok_or_else(|| HostStepRefusal {
+                code: ACTION_NO_TRIGGER_COMMIT.to_owned(),
+                message: "checkout: required, but this run names no commit; start it with `bee \
+                          workflows trigger --checkout <sha>`"
+                    .into(),
+            }),
+    }
+}
+
 fn short(hash: &str) -> &str {
     hash.get(..12).unwrap_or(hash)
 }
@@ -370,6 +409,7 @@ pub fn lost_on_restart_result(record: &ActionStepRecord, claim_event_id: &str) -
         duration_ms: None,
         head_sha: None,
         dirty: None,
+        checkout: None,
         stdout_tail: String::new(),
         stderr_tail: String::new(),
         truncated: false,
@@ -399,6 +439,7 @@ pub fn refused_result(
         duration_ms: None,
         head_sha: None,
         dirty: None,
+        checkout: None,
         stdout_tail: String::new(),
         stderr_tail: String::new(),
         truncated: false,
@@ -437,6 +478,7 @@ pub fn exited_result(
     outcome: &HostCommandOutcome,
     head_sha: Option<String>,
     dirty: Option<bool>,
+    checkout: Option<buzz_core::host_step::HostStepCheckout>,
 ) -> HostStepResult {
     HostStepResult {
         schema: HOST_STEP_SCHEMA.into(),
@@ -456,6 +498,7 @@ pub fn exited_result(
         duration_ms: Some(outcome.duration_ms),
         head_sha,
         dirty,
+        checkout,
         stdout_tail: outcome.stdout_tail.clone(),
         stderr_tail: outcome.stderr_tail.clone(),
         truncated: outcome.truncated,
@@ -620,12 +663,14 @@ impl Provider {
                 outcome,
                 head_sha,
                 dirty,
+                checkout,
                 artifacts,
             } => self.handle_host_step_finished(
                 &requested_event_id,
                 &outcome,
                 head_sha,
                 dirty,
+                checkout.map(|checkout| *checkout),
                 artifacts,
             ),
         }
@@ -671,28 +716,13 @@ impl Provider {
         let plan = match files.and_then(|files| verify_request(&request, &projects.projects, &files).map(|verified| (verified, files))).and_then(|(verified, files)| {
             match verified.action {
                 VerifiedAction::Command(spec) => {
-                    // Spec § 7 C6: a step that runs at the triggering commit
-                    // needs a trigger that named one.
-                    let triggering_commit = match spec.checkout {
-                        buzz_workflow::schema::HostCheckout::Current => None,
-                        buzz_workflow::schema::HostCheckout::TriggeringCommit => Some(
-                            host_command::triggering_commit(&request.trigger_context).ok_or_else(
-                                || HostStepRefusal {
-                                    code: ACTION_NO_TRIGGER_COMMIT.to_owned(),
-                                    message: "checkout: triggering_commit, but this run's trigger \
-                                              names no commit (a deleted ref, or a trigger \
-                                              without one)"
-                                        .into(),
-                                },
-                            )?,
-                        ),
-                    };
+                    let bound_commit = bound_commit(&spec, &request.trigger_context)?;
                     host_command::prepare(&spec, &verified.checkout, &host_env)
                         .map(|prepared| StepPlan::Command {
                             checkout: verified.checkout,
                             prepared,
                             spec,
-                            triggering_commit,
+                            bound_commit,
                         })
                         .map_err(|refusal| HostStepRefusal {
                             code: refusal.code,
@@ -897,7 +927,7 @@ impl Provider {
                 checkout,
                 prepared,
                 spec,
-                triggering_commit,
+                bound_commit,
             } => {
                 self.spawn_host_step(
                     requested_event_id,
@@ -905,7 +935,7 @@ impl Provider {
                     checkout,
                     prepared,
                     spec,
-                    triggering_commit,
+                    bound_commit,
                 )
                 .await
             }
@@ -1127,7 +1157,7 @@ impl Provider {
         checkout: PathBuf,
         prepared: PreparedCommand,
         spec: ResolvedRunOnHost,
-        triggering_commit: Option<String>,
+        bound_commit: Option<String>,
     ) -> anyhow::Result<()> {
         let Some(record) = self.action_steps.record(requested_event_id).cloned() else {
             return Ok(());
@@ -1144,7 +1174,7 @@ impl Provider {
         // commit when asked. Cut after the claim (it costs a fetch and a
         // checkout), re-prepared against the worktree so the working
         // directory and its escape check are resolved there.
-        let (prepared, run_dir, worktree) = match &triggering_commit {
+        let (prepared, run_dir, worktree) = match &bound_commit {
             None => (prepared, checkout.clone(), None),
             Some(commit) => {
                 let worktree = artifact_dir.join("worktree");
@@ -1199,6 +1229,19 @@ impl Provider {
             )
         } else {
             None
+        };
+        // Sample the tree the command is about to run in, before it runs:
+        // a post-execution sample alone cannot say what was tested (ledger
+        // 178(g)). For a bound run this is the commit itself on a clean tree.
+        let (head_before, dirty_before) = host_command::git_head_and_dirty(&run_dir).await;
+        let checkout_record = buzz_core::host_step::HostStepCheckout {
+            mode: match &bound_commit {
+                Some(commit) => buzz_core::host_step::host_step_checkout_commit(commit),
+                None => buzz_core::host_step::HOST_STEP_CHECKOUT_AS_FOUND.to_owned(),
+            },
+            sha: bound_commit.clone(),
+            head_sha_before: head_before,
+            dirty_before,
         };
         let secrets = prepared.secrets.clone();
         let command = host_command::spawn(prepared, &artifact_dir).await?;
@@ -1263,6 +1306,7 @@ impl Provider {
                     outcome: Box::new(outcome),
                     head_sha,
                     dirty,
+                    checkout: Some(Box::new(checkout_record)),
                     artifacts,
                 })
                 .await;
@@ -1276,6 +1320,7 @@ impl Provider {
         outcome: &HostCommandOutcome,
         head_sha: Option<String>,
         dirty: Option<bool>,
+        checkout: Option<buzz_core::host_step::HostStepCheckout>,
         artifacts: Vec<buzz_core::host_step::HostStepArtifact>,
     ) -> anyhow::Result<()> {
         let Some(record) = self.action_steps.record(requested_event_id).cloned() else {
@@ -1289,7 +1334,7 @@ impl Provider {
             );
             return Ok(());
         };
-        let mut result = exited_result(&record, claim_event_id, outcome, head_sha, dirty);
+        let mut result = exited_result(&record, claim_event_id, outcome, head_sha, dirty, checkout);
         result.artifacts = artifacts;
         self.action_steps
             .mark_exited(requested_event_id, result.clone())?;
@@ -1381,6 +1426,227 @@ mod tests {
         parse_actions_yml(ACTIONS, PROJECT).expect("parse")[0]
             .hash
             .clone()
+    }
+
+    fn command_spec(
+        command: &[&str],
+        checkout: buzz_workflow::schema::HostCheckout,
+    ) -> ResolvedRunOnHost {
+        ResolvedRunOnHost {
+            command: command.iter().map(|part| (*part).to_owned()).collect(),
+            working_directory: ".".into(),
+            timeout_secs: 60,
+            env: BTreeMap::new(),
+            env_from_host: Vec::new(),
+            tail_bytes: 4096,
+            artifact_max_bytes: 8192,
+            upload: false,
+            checkout,
+        }
+    }
+
+    async fn git(dir: &std::path::Path, args: &[&str]) -> String {
+        let out = tokio::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@example")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@example")
+            .output()
+            .await
+            .expect("git");
+        assert!(
+            out.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).trim().to_owned()
+    }
+
+    /// A repository whose first commit holds `f: one` and whose tip holds
+    /// `f: two`, plus an uncommitted `f: dirty` on top. Returns the first
+    /// commit's sha.
+    async fn stub_repo(dir: &std::path::Path) -> String {
+        git(dir, &["init", "-q", "-b", "main"]).await;
+        tokio::fs::write(dir.join("f"), "one").await.expect("write");
+        git(dir, &["add", "f"]).await;
+        git(dir, &["commit", "-q", "-m", "one"]).await;
+        let first = git(dir, &["rev-parse", "HEAD"]).await;
+        tokio::fs::write(dir.join("f"), "two").await.expect("write");
+        git(dir, &["commit", "-q", "-am", "two"]).await;
+        tokio::fs::write(dir.join("f"), "dirty")
+            .await
+            .expect("write");
+        first
+    }
+
+    #[test]
+    fn a_required_checkout_refuses_a_run_that_names_no_commit() {
+        let spec = command_spec(&["true"], buzz_workflow::schema::HostCheckout::Required);
+        let refusal = bound_commit(&spec, &serde_json::json!({}))
+            .expect_err("a required checkout cannot run against whatever is checked out");
+        assert_eq!(refusal.code, ACTION_NO_TRIGGER_COMMIT);
+        assert!(
+            refusal.message.contains("--checkout"),
+            "the refusal names the flag that fixes it: {}",
+            refusal.message
+        );
+    }
+
+    #[test]
+    fn a_bound_manual_trigger_satisfies_every_checkout_mode() {
+        let sha = "ab".repeat(20);
+        let context = serde_json::json!({ "checkout": sha });
+        for mode in [
+            buzz_workflow::schema::HostCheckout::Required,
+            buzz_workflow::schema::HostCheckout::Current,
+        ] {
+            assert_eq!(
+                bound_commit(&command_spec(&["true"], mode), &context).expect("bound"),
+                Some(sha.clone()),
+                "a bound commit is honoured, never silently ignored: {mode:?}"
+            );
+        }
+        // An unbound legacy manual run still runs in the directory as found.
+        assert_eq!(
+            bound_commit(
+                &command_spec(&["true"], buzz_workflow::schema::HostCheckout::Current),
+                &serde_json::json!({})
+            )
+            .expect("unbound"),
+            None
+        );
+        // `required` also accepts the commit a push or a CI result names.
+        assert_eq!(
+            bound_commit(
+                &command_spec(&["true"], buzz_workflow::schema::HostCheckout::Required),
+                &serde_json::json!({ "after": sha })
+            )
+            .expect("bound"),
+            Some(sha)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_bound_run_executes_at_the_commit_and_the_record_says_so() {
+        let repo = tempfile::tempdir().expect("tempdir");
+        let first = stub_repo(repo.path()).await;
+        let scratch = tempfile::tempdir().expect("tempdir");
+        let worktree = scratch.path().join("worktree");
+        host_command::cut_worktree(repo.path(), &first, &worktree)
+            .await
+            .expect("cut the worktree the bound run executes in");
+
+        let (head_before, dirty_before) = host_command::git_head_and_dirty(&worktree).await;
+        assert_eq!(head_before.as_deref(), Some(first.as_str()));
+        assert_eq!(dirty_before, Some(false));
+
+        let spec = command_spec(&["cat", "f"], buzz_workflow::schema::HostCheckout::Required);
+        let outcome = host_command::run(
+            &spec,
+            &worktree,
+            &scratch.path().join("artifacts"),
+            &HashMap::new(),
+        )
+        .await
+        .expect("run");
+        assert_eq!(
+            outcome.stdout_tail.trim(),
+            "one",
+            "the command saw the bound commit's tree, not the checkout's dirty tip"
+        );
+
+        let (head_after, dirty_after) = host_command::git_head_and_dirty(&worktree).await;
+        let record = ActionStepRecord {
+            run_id: "00000000-0000-0000-0000-000000000001".into(),
+            step_id: "verify".into(),
+            requested_event_id: "cd".repeat(32),
+            project: PROJECT.into(),
+            workflow_name: "verify".into(),
+            channel_id: "00000000-0000-0000-0000-000000000009".into(),
+            created_at: 0,
+            state: StepState::Requested,
+        };
+        let result = exited_result(
+            &record,
+            &"ef".repeat(32),
+            &outcome,
+            head_after,
+            dirty_after,
+            Some(buzz_core::host_step::HostStepCheckout {
+                mode: buzz_core::host_step::host_step_checkout_commit(&first),
+                sha: Some(first.clone()),
+                head_sha_before: head_before,
+                dirty_before,
+            }),
+        );
+        let checkout = result.checkout.clone().expect("the record names the tree");
+        assert_eq!(checkout.sha.as_deref(), Some(first.as_str()));
+        assert_eq!(checkout.head_sha_before.as_deref(), Some(first.as_str()));
+        assert_eq!(checkout.dirty_before, Some(false), "clean before");
+        assert_eq!(result.head_sha.as_deref(), Some(first.as_str()));
+        assert_eq!(result.dirty, Some(false), "clean after");
+        assert_eq!(checkout.mode, format!("commit {first}"));
+        build_host_step_result(&result).expect("the result is a valid kind:46023");
+
+        host_command::remove_worktree(repo.path(), &worktree).await;
+    }
+
+    #[tokio::test]
+    async fn an_unbound_run_says_it_used_the_directory_as_found() {
+        let repo = tempfile::tempdir().expect("tempdir");
+        stub_repo(repo.path()).await;
+        let scratch = tempfile::tempdir().expect("tempdir");
+        let (head_before, dirty_before) = host_command::git_head_and_dirty(repo.path()).await;
+        assert_eq!(
+            dirty_before,
+            Some(true),
+            "the stub's working tree is deliberately dirty"
+        );
+        let outcome = host_command::run(
+            &command_spec(&["cat", "f"], buzz_workflow::schema::HostCheckout::Current),
+            repo.path(),
+            &scratch.path().join("artifacts"),
+            &HashMap::new(),
+        )
+        .await
+        .expect("run");
+        assert_eq!(outcome.stdout_tail.trim(), "dirty");
+        let record = ActionStepRecord {
+            run_id: "00000000-0000-0000-0000-000000000001".into(),
+            step_id: "verify".into(),
+            requested_event_id: "cd".repeat(32),
+            project: PROJECT.into(),
+            workflow_name: "verify".into(),
+            channel_id: "00000000-0000-0000-0000-000000000009".into(),
+            created_at: 0,
+            state: StepState::Requested,
+        };
+        let (head_after, dirty_after) = host_command::git_head_and_dirty(repo.path()).await;
+        let result = exited_result(
+            &record,
+            &"ef".repeat(32),
+            &outcome,
+            head_after,
+            dirty_after,
+            Some(buzz_core::host_step::HostStepCheckout {
+                mode: buzz_core::host_step::HOST_STEP_CHECKOUT_AS_FOUND.to_owned(),
+                sha: None,
+                head_sha_before: head_before,
+                dirty_before,
+            }),
+        );
+        let checkout = result.checkout.clone().expect("the record names the tree");
+        assert_eq!(
+            checkout.mode,
+            buzz_core::host_step::HOST_STEP_CHECKOUT_AS_FOUND,
+            "an unbound run says so explicitly rather than implying a commit"
+        );
+        assert!(checkout.sha.is_none());
+        assert_eq!(checkout.dirty_before, Some(true));
+        assert_eq!(result.dirty, Some(true));
+        build_host_step_result(&result).expect("the result is a valid kind:46023");
     }
 
     #[test]
@@ -1579,6 +1845,7 @@ mod tests {
             &outcome,
             Some("a".repeat(40)),
             Some(true),
+            None,
         );
         assert_eq!(result.disposition, HostStepDisposition::TimedOut);
         assert_eq!(

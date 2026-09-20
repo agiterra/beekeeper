@@ -14669,6 +14669,68 @@ removed from here.
        note` and `bee sessions decide` take explicit flags rather than
        `--body`, so they get no `--example`; the module says so rather than
        printing an empty one.
+184. **A manual action can now name the commit it tests, and a verify-style
+     action refuses to run without one (2026-09-20, lane 184; fixes 178(g)).**
+     Before this, `trigger: { on: manual }` with `working_directory: "."` ran
+     in the recorded project directory exactly as checked out, dirty or clean
+     (`crates/buzz-workflow/src/schema.rs`, `HostCheckout::Current`), and the
+     provider sampled `headSha`/`dirty` only *after* execution
+     (`crates/buzz-session-provider/src/action_steps.rs`), so the kettle
+     lead's `verify` action could not have proved it tested `fa927fd`.
+     Commit isolation existed, but only for `ref_updated`/`ci_result`.
+     Four changes, no change to who may publish or trigger (178(f) is
+     untouched and remains Andy's design point):
+     - (a) **A manual trigger may bind a commit.** `bee workflows trigger
+       --checkout <sha>` puts a full 40-hex sha on the kind:46020 content;
+       the relay normalizes it, refuses anything shorter or non-hex
+       (`invalid: checkout must be a full 40-hex commit sha`), carries it on
+       `TriggerContext::checkout` into the run record, and the host cuts the
+       same fresh detached worktree `ref_updated` already used
+       (`host_command::cut_worktree`), never mutating the recorded project
+       directory. `crates/buzz-relay/src/handlers/command_executor.rs`
+       `handle_workflow_trigger`; `crates/buzz-cli/src/commands/workflows.rs`
+       `trigger_content`.
+     - (b) **`checkout: required` refuses a run that names no commit.** A
+       third `HostCheckout` variant. The relay refuses the kind:46020 before
+       the run exists, naming the flag: *step 'verify' declares checkout:
+       required, so this run must name the commit to test — start it with
+       `bee workflows trigger --checkout <sha>`*
+       (`WorkflowDef::step_requiring_bound_checkout`). Save-time validation
+       refuses `required` on a trigger that can name no commit (schedule,
+       webhook, message_posted, reaction_added, diff_posted).
+     - (c) **The record says what was established, before and after.**
+       `HostStepResult.checkout` (`buzz-core/src/host_step.rs`,
+       `HostStepCheckout`) carries `mode`, `sha`, `headShaBefore` and
+       `dirtyBefore`; the existing `headSha`/`dirty` stay the post-execution
+       sample. A bound run reports `mode: "commit <sha>"`, `sha`, and
+       `dirtyBefore: false`; an unbound legacy manual run reports
+       `mode: "working directory as found"` with **no** sha and the real
+       pre-execution `headSha`/`dirty`, rather than implying a commit. The
+       four facts are also exposed to later steps as
+       `steps_<id>_output_checkout_sha`, `_checkout_mode`,
+       `_head_sha_before`, `_dirty_before` (`buzz-workflow/src/suspend.rs`),
+       so a routed brief can name the commit that was tested.
+     - (d) **A bound commit is never silently ignored.** `checkout: current`
+       with a bound run still executes in the isolated worktree
+       (`action_steps::bound_commit`), because accepting `--checkout` and
+       then testing the working tree would be exactly the lie 178(g)
+       reports.
+     Tests: `checkout_required_parses_and_names_its_step`,
+     `checkout_required_is_refused_for_a_trigger_that_can_name_no_commit`,
+     `checkout_required_is_accepted_for_ref_updated_and_ci_result`,
+     `a_verify_action_declares_its_required_checkout_through_the_file`
+     (buzz-workflow); `a_required_checkout_refuses_a_run_that_names_no_commit`,
+     `a_bound_manual_trigger_satisfies_every_checkout_mode`,
+     `a_bound_run_executes_at_the_commit_and_the_record_says_so` (a stub git
+     repo whose tip and working tree differ from the bound commit: the
+     command reads the bound commit's file, and the record's before/after
+     pair proves it), `an_unbound_run_says_it_used_the_directory_as_found`
+     (buzz-session-provider); four `trigger_content` cases (buzz-cli).
+     Owed: the desktop Run button signs kind:46020 without a `checkout`, so
+     a `required` action can only be started from the CLI until that surface
+     carries the field — the refusal names the flag rather than failing
+     silently. The relay's own refusal path has no unit test (its handler
+     needs Postgres); the decision it calls is covered in buzz-workflow.
 
 ## 3a. Environment facts that cost real time (do not rediscover)
 

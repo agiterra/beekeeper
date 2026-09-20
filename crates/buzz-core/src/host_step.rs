@@ -193,6 +193,41 @@ pub struct HostStepArtifact {
     pub bytes: u64,
 }
 
+/// How a host step's working tree was established, and what it held before
+/// the command ran.
+///
+/// Present on every `run_on_host` result, including a refusal made after the
+/// tree was established, so a reader never has to infer the commit from a
+/// post-execution sample alone (ledger 178(g)). `mode` is the disclosure a
+/// person reads: [`HOST_STEP_CHECKOUT_AS_FOUND`] when the run named no commit
+/// and the command ran in the recorded project directory as it was found, or
+/// [`host_step_checkout_commit`] when the host cut a detached worktree.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct HostStepCheckout {
+    /// One line naming how the tree was established. Never a guess.
+    pub mode: String,
+    /// The commit the host checked out, lowercase 40-hex. Absent exactly when
+    /// the run bound no commit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha: Option<String>,
+    /// `git rev-parse HEAD` of that tree *before* the command ran; `None`
+    /// when git could not answer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head_sha_before: Option<String>,
+    /// Whether that tree had uncommitted changes before the command ran.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dirty_before: Option<bool>,
+}
+
+/// `mode` of a host step that ran in the recorded project directory as found.
+pub const HOST_STEP_CHECKOUT_AS_FOUND: &str = "working directory as found";
+
+/// `mode` of a host step the host cut a detached worktree for.
+pub fn host_step_checkout_commit(sha: &str) -> String {
+    format!("commit {sha}")
+}
+
 /// Content of a host-signed kind:46023 result.
 ///
 /// Tags: `d` = `<runId>:<stepId>`, `e` = the requested event id, `h` =
@@ -228,12 +263,19 @@ pub struct HostStepResult {
     /// Wall-clock duration of the command, when it ran.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
-    /// `git rev-parse HEAD` of the checkout the command ran in.
+    /// `git rev-parse HEAD` of the checkout the command ran in, sampled
+    /// *after* it ran. The pre-execution sample and how the tree was
+    /// established are in [`HostStepResult::checkout`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub head_sha: Option<String>,
-    /// Whether that checkout had uncommitted changes.
+    /// Whether that checkout had uncommitted changes after the command ran.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dirty: Option<bool>,
+    /// How the working tree was established, and what it held before the
+    /// command ran. Absent on a result for a step that never established one
+    /// (a routed brief, or a refusal made before the tree was touched).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkout: Option<HostStepCheckout>,
     /// Last bytes of standard output, secrets scrubbed.
     #[serde(default)]
     pub stdout_tail: String,
@@ -541,6 +583,30 @@ fn validate_result(result: &HostStepResult) -> Result<(), String> {
             return Err("host step headSha must be lowercase 40-hex".into());
         }
     }
+    if let Some(checkout) = &result.checkout {
+        validate_nonempty_bounded(
+            "host step checkout mode",
+            &checkout.mode,
+            MAX_HOST_STEP_TEXT_BYTES,
+        )?;
+        for (label, value) in [
+            ("host step checkout sha", &checkout.sha),
+            (
+                "host step checkout headShaBefore",
+                &checkout.head_sha_before,
+            ),
+        ] {
+            if let Some(sha) = value {
+                if sha.len() != 40
+                    || !sha
+                        .bytes()
+                        .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+                {
+                    return Err(format!("{label} must be lowercase 40-hex"));
+                }
+            }
+        }
+    }
     if result.stdout_tail.len() > MAX_HOST_STEP_TAIL_BYTES {
         return Err(format!(
             "host step stdoutTail exceeds {MAX_HOST_STEP_TAIL_BYTES} bytes"
@@ -709,6 +775,12 @@ mod tests {
             duration_ms: Some(1234),
             head_sha: Some("a".repeat(40)),
             dirty: Some(false),
+            checkout: Some(HostStepCheckout {
+                mode: host_step_checkout_commit(&"a".repeat(40)),
+                sha: Some("a".repeat(40)),
+                head_sha_before: Some("a".repeat(40)),
+                dirty_before: Some(false),
+            }),
             stdout_tail: "ok".into(),
             stderr_tail: String::new(),
             truncated: false,

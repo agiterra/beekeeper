@@ -1065,6 +1065,44 @@ async fn handle_workflow_trigger(
             IngestError::Rejected("forbidden: not authorized to trigger this workflow".into())
         })?;
 
+    // Spec § 5.1, ledger 178(g): a manual trigger may bind the run to a
+    // commit with `checkout`, and a definition whose `run_on_host` step
+    // declares `checkout: required` is refused without one — so a
+    // verify-style action cannot be answered by whatever the recorded
+    // project directory happens to have checked out. The refusal comes
+    // before the run exists, and names the flag.
+    let content_fields: serde_json::Map<String, serde_json::Value> = if event.content.is_empty() {
+        serde_json::Map::new()
+    } else {
+        match serde_json::from_str(&event.content) {
+            Ok(serde_json::Value::Object(map)) => map,
+            _ => serde_json::Map::new(),
+        }
+    };
+    let bound_checkout = match content_fields
+        .get(buzz_workflow::schema::MANUAL_CHECKOUT_FIELD)
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        None => None,
+        Some(value) if value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit()) => {
+            Some(value.to_ascii_lowercase())
+        }
+        Some(_) => {
+            return Err(IngestError::Rejected(
+                "invalid: checkout must be a full 40-hex commit sha".into(),
+            ))
+        }
+    };
+    if let Some(step_id) = def.step_requiring_bound_checkout() {
+        if bound_checkout.is_none() {
+            return Err(IngestError::Rejected(format!(
+                "invalid: step '{step_id}' declares checkout: required, so this run must name the                  commit to test — start it with `bee workflows trigger --checkout <sha>`"
+            )));
+        }
+    }
+
     // Persist the command event under the workflow channel even though the
     // trigger event itself only carries the workflow UUID. Storing channel
     // triggers as global events leaks workflow IDs to unrelated relay members.
@@ -1088,16 +1126,20 @@ async fn handle_workflow_trigger(
         author: hex::encode(&self_bytes),
         ..Default::default()
     };
-    if !event.content.is_empty() {
-        if let Ok(serde_json::Value::Object(map)) = serde_json::from_str(&event.content) {
-            for (k, v) in map {
-                let val_str = match v {
-                    serde_json::Value::String(s) => s,
-                    other => other.to_string(),
-                };
-                trigger_ctx.webhook_fields.insert(k, val_str);
-            }
+    for (k, v) in content_fields {
+        if k == buzz_workflow::schema::MANUAL_CHECKOUT_FIELD {
+            // Carried on its own field, normalized; not duplicated as a
+            // webhook body value.
+            continue;
         }
+        let val_str = match v {
+            serde_json::Value::String(s) => s,
+            other => other.to_string(),
+        };
+        trigger_ctx.webhook_fields.insert(k, val_str);
+    }
+    if let Some(checkout) = bound_checkout {
+        trigger_ctx.checkout = checkout;
     }
     let trigger_ctx_json = serde_json::to_value(&trigger_ctx).ok();
 

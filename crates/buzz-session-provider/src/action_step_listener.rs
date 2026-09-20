@@ -70,6 +70,9 @@ pub enum ActionStepEvent {
         head_sha: Option<String>,
         /// Whether the checkout had uncommitted changes after the run.
         dirty: Option<bool>,
+        /// How the tree the command ran in was established, and what it held
+        /// before it ran. `None` when no tree was established.
+        checkout: Option<Box<buzz_core::host_step::HostStepCheckout>>,
         /// The scrubbed logs uploaded after the run, when the step asked.
         artifacts: Vec<buzz_core::host_step::HostStepArtifact>,
     },

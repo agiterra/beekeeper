@@ -283,6 +283,22 @@ mod tests {
         assert!(entries[0].canonical_json.contains("Europe/London"));
     }
 
+    /// The verify-style action of spec § 5.1: a manual trigger whose host
+    /// step declares `checkout: required`, so the run must name its commit
+    /// (ledger 178(g)).
+    #[test]
+    fn a_verify_action_declares_its_required_checkout_through_the_file() {
+        let text = "schema: buzz-project-actions/v1\nactions:\n  - name: verify\n    trigger: { on: manual }\n    steps:\n      - id: verify\n        action: run_on_host\n        command: [\"python3\", \"-m\", \"unittest\", \"discover\", \"-s\", \"tests\"]\n        working_directory: '.'\n        checkout: required\n        timeout: 300s\n";
+        let entries = parse_actions_yml(text, PROJECT).expect("parse");
+        assert_eq!(
+            entries[0].def.step_requiring_bound_checkout(),
+            Some("verify")
+        );
+        assert!(entries[0]
+            .canonical_json
+            .contains("\"checkout\":\"required\""));
+    }
+
     #[test]
     fn refuses_wrong_schema_timezone_duplicates_and_foreign_project() {
         let bad_schema = file("").replace("buzz-project-actions/v1", "nope/v9");

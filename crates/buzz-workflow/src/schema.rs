@@ -306,7 +306,20 @@ pub enum HostCheckout {
     /// `ref_updated`'s `after` or `ci_result`'s `commit` — removed after the
     /// run. Refused at save time for triggers that name no commit.
     TriggeringCommit,
+    /// A fresh detached worktree at the commit the *run* is bound to, and no
+    /// run without one: `ref_updated`'s `after`, `ci_result`'s `commit`, or
+    /// the `--checkout <sha>` a manual trigger carries. A manual trigger
+    /// without a commit is refused when the run is created, naming the flag,
+    /// so a verify-style action cannot be answered by whatever the recorded
+    /// project directory happens to have checked out (ledger 178(g)).
+    Required,
 }
+
+/// Which commit a run is bound to, when the workflow demands one.
+///
+/// Returned by [`WorkflowDef::step_requiring_bound_checkout`] so the relay can
+/// refuse a manual trigger that names no commit before it creates the run.
+pub const MANUAL_CHECKOUT_FIELD: &str = "checkout";
 
 /// Output capture limits for a `run_on_host` step.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -497,6 +510,27 @@ impl WorkflowDef {
             .any(|s| matches!(s.action, ActionDef::CallWebhook { .. }))
     }
 
+    /// The id of the first `run_on_host` step that demands the run name a
+    /// commit (`checkout: required`), or `None` when no step does.
+    ///
+    /// A manual trigger for such a definition is refused unless it carries a
+    /// commit, so the run record and the step's result can name the commit
+    /// the command actually ran against rather than describing the recorded
+    /// project directory as it happened to be (ledger 178(g)).
+    pub fn step_requiring_bound_checkout(&self) -> Option<&str> {
+        self.steps.iter().find_map(|step| {
+            if !matches!(step.action, ActionDef::RunOnHost { .. }) {
+                return None;
+            }
+            match resolve_run_on_host(&step.action) {
+                Ok(resolved) if resolved.checkout == HostCheckout::Required => {
+                    Some(step.id.as_str())
+                }
+                _ => None,
+            }
+        })
+    }
+
     /// True when any step asks an operator's host to execute a command.
     pub fn has_host_steps(&self) -> bool {
         self.steps
@@ -622,6 +656,20 @@ impl WorkflowDef {
                     return Err(WorkflowError::InvalidDefinition(format!(
                         "step '{}': checkout: triggering_commit needs a ref_updated or ci_result \
                          trigger, which names the commit",
+                        step.id
+                    )));
+                }
+                if resolved.checkout == HostCheckout::Required
+                    && !matches!(
+                        self.trigger,
+                        TriggerDef::RefUpdated { .. }
+                            | TriggerDef::CiResult { .. }
+                            | TriggerDef::Manual
+                    )
+                {
+                    return Err(WorkflowError::InvalidDefinition(format!(
+                        "step '{}': checkout: required needs a trigger that can name a commit — \
+                         ref_updated, ci_result, or manual (which takes --checkout <sha>)",
                         step.id
                     )));
                 }
@@ -845,6 +893,82 @@ pub fn parse_yaml(yaml: &str) -> Result<(WorkflowDef, String), WorkflowError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn verify_action_yaml(trigger: &str, checkout: &str) -> String {
+        format!(
+            "name: verify\nproject: '30621:{owner}:pulse'\ntrigger: {trigger}\nsteps:\n  - id: verify\n    action: run_on_host\n    command: ['python3', '-m', 'unittest', 'discover', '-s', 'tests']\n    working_directory: '.'\n    checkout: {checkout}\n",
+            owner = "1".repeat(64)
+        )
+    }
+
+    #[test]
+    fn checkout_required_parses_and_names_its_step() {
+        let (def, _) = parse_yaml(&verify_action_yaml("{ on: manual }", "required"))
+            .expect("a manual verify action with checkout: required parses");
+        let ActionDef::RunOnHost { .. } = &def.steps[0].action else {
+            panic!("expected a run_on_host step");
+        };
+        assert_eq!(
+            resolve_run_on_host(&def.steps[0].action)
+                .expect("resolves")
+                .checkout,
+            HostCheckout::Required
+        );
+        assert_eq!(def.step_requiring_bound_checkout(), Some("verify"));
+    }
+
+    #[test]
+    fn checkout_defaults_to_current_and_binds_nothing() {
+        let (def, _) = parse_yaml(&verify_action_yaml("{ on: manual }", "current"))
+            .expect("checkout: current parses");
+        assert_eq!(
+            resolve_run_on_host(&def.steps[0].action)
+                .expect("resolves")
+                .checkout,
+            HostCheckout::Current
+        );
+        assert_eq!(def.step_requiring_bound_checkout(), None);
+        // An omitted `checkout` is the same thing.
+        let yaml = format!(
+            "name: verify\nproject: '30621:{owner}:pulse'\ntrigger: {{ on: manual }}\nsteps:\n  - id: verify\n    action: run_on_host\n    command: ['true']\n",
+            owner = "1".repeat(64)
+        );
+        let yaml = yaml.as_str();
+        let (def, _) = parse_yaml(yaml).expect("an omitted checkout parses");
+        assert_eq!(def.step_requiring_bound_checkout(), None);
+    }
+
+    #[test]
+    fn checkout_required_is_refused_for_a_trigger_that_can_name_no_commit() {
+        let error = parse_yaml(&verify_action_yaml(
+            "{ on: schedule, cron: '0 2 * * *' }",
+            "required",
+        ))
+        .expect_err("a schedule can name no commit");
+        let message = error.to_string();
+        assert!(
+            message.contains("checkout: required") && message.contains("--checkout"),
+            "the refusal names the field and the flag: {message}"
+        );
+    }
+
+    #[test]
+    fn checkout_required_is_accepted_for_ref_updated_and_ci_result() {
+        for trigger in [
+            "{ on: ref_updated, ref: 'refs/heads/main' }",
+            "{ on: ci_result, check: gate, conclusion: [success] }",
+        ] {
+            parse_yaml(&verify_action_yaml(trigger, "required"))
+                .unwrap_or_else(|error| panic!("{trigger} should accept required: {error}"));
+        }
+    }
+
+    #[test]
+    fn checkout_triggering_commit_still_refuses_a_manual_trigger() {
+        let error = parse_yaml(&verify_action_yaml("{ on: manual }", "triggering_commit"))
+            .expect_err("triggering_commit needs a trigger that names one");
+        assert!(error.to_string().contains("triggering_commit"));
+    }
 
     #[test]
     fn parse_simple_message_posted_workflow() {

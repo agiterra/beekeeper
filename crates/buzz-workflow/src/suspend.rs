@@ -345,6 +345,12 @@ pub fn host_step_output(result: &buzz_core::host_step::HostStepResult) -> serde_
         "duration_ms": result.duration_ms,
         "head_sha": result.head_sha,
         "dirty": result.dirty,
+        // How the tree was established, so a later step's brief can name the
+        // commit that was actually tested rather than implying one.
+        "checkout_mode": result.checkout.as_ref().map(|c| c.mode.clone()),
+        "checkout_sha": result.checkout.as_ref().and_then(|c| c.sha.clone()),
+        "head_sha_before": result.checkout.as_ref().and_then(|c| c.head_sha_before.clone()),
+        "dirty_before": result.checkout.as_ref().and_then(|c| c.dirty_before),
         "stdout_tail": result.stdout_tail,
         "stderr_tail": result.stderr_tail,
         "truncated": result.truncated,
@@ -397,6 +403,7 @@ mod tests {
             duration_ms: Some(5),
             head_sha: None,
             dirty: None,
+            checkout: None,
             stdout_tail: "x".into(),
             stderr_tail: String::new(),
             truncated: false,

@@ -389,6 +389,7 @@ mod tests {
             duration_ms: Some(10),
             head_sha: None,
             dirty: None,
+            checkout: None,
             stdout_tail: String::new(),
             stderr_tail: String::new(),
             truncated: false,

@@ -76,6 +76,12 @@ pub struct TriggerContext {
     /// The CI result's evidence URL, if it carried one (ci_result trigger).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub evidence_url: String,
+    /// The commit a manual trigger bound the run to — `bee workflows trigger
+    /// --checkout <sha>`, lowercase 40-hex. Empty when the run named none, in
+    /// which case a host step runs in the recorded project directory as it is
+    /// found and says so (ledger 178(g)).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub checkout: String,
 }
 
 impl TriggerContext {
@@ -104,6 +110,7 @@ impl TriggerContext {
             "check" if !self.check.is_empty() => Some(&self.check),
             "conclusion" if !self.conclusion.is_empty() => Some(&self.conclusion),
             "evidence_url" if !self.evidence_url.is_empty() => Some(&self.evidence_url),
+            "checkout" if !self.checkout.is_empty() => Some(&self.checkout),
             other => self.webhook_fields.get(other).map(|s| s.as_str()),
         }
     }
