@@ -1,8 +1,5 @@
 import { invokeTauri, TauriInvokeError } from "@/shared/api/tauri";
-import type {
-  ModelRegistryHostRead,
-  ProjectFileRead,
-} from "@/shared/api/types";
+import type { ProjectFileRead } from "@/shared/api/types";
 
 /**
  * Reading one allowlisted file out of a project checkout.
@@ -12,6 +9,31 @@ import type {
  * See `desktop/src-tauri/src/commands/project_files.rs` for the whole policy.
  * This module is only the invoke boundary and the refusal it hands back.
  */
+
+/**
+ * A project's model registry, and which copy of it answered.
+ *
+ * Mirrors the Rust `ModelRegistryRead` in
+ * `desktop/src-tauri/src/commands/model_registry.rs`. It lives here rather
+ * than in `types.ts` because that file is at its size ceiling; the invoke
+ * boundary is the honest home for a shape only this boundary produces.
+ */
+export type ModelRegistryHostRead = {
+  /** The absolute, symlink-resolved path the bytes came from. */
+  path: string;
+  /** The file's contents, as UTF-8 and unparsed. */
+  text: string;
+  /** `agents-repo` or `checkout`. */
+  origin: string;
+  /** That origin as a clause: "the project's code checkout". */
+  originLabel: string;
+  /**
+   * Every place that was looked at, in order, ending with the one that
+   * answered. A skipped place carries its own refusal code, so a reader can
+   * tell "no file there" from "a file this host would not read".
+   */
+  lookedIn: string[];
+};
 
 /** Why a read was refused, as the host worded it. */
 export type ProjectFileRefusal = {

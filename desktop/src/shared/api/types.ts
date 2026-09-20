@@ -997,26 +997,3 @@ export type ProjectFileRead = {
   /** The file's contents, as UTF-8. */
   text: string;
 };
-
-/**
- * A project's model registry, and which copy of it answered.
- *
- * Mirrors the Rust `ModelRegistryRead` in
- * `desktop/src-tauri/src/commands/model_registry.rs`. The host looks in the
- * project's agents repository first and its code checkout second; before
- * 2026-09-20 there was only the checkout, which is why a routed hire on any
- * project but Beekeeper's own was refused for a registry that existed (ledger
- * 178(a)).
- */
-export type ModelRegistryHostRead = {
-  /** The absolute, symlink-resolved path the bytes came from. */
-  path: string;
-  /** The file's contents, as UTF-8 and unparsed. */
-  text: string;
-  /** `agents-repo` or `checkout`. */
-  origin: string;
-  /** That origin as a clause: "the project's agents repository". */
-  originLabel: string;
-  /** Every place that was looked at, in order, ending with the one that answered. */
-  lookedIn: string[];
-};
