@@ -27,33 +27,64 @@ export const CODING_SESSION_HOST_ANSWER_TAG_NAME = "buzz-host-answer";
 export const CODING_SESSION_HOST_ANSWER_TAG_HIRE = "hire";
 
 /**
- * Substring of the relay's ingest rejection when its allowlist predates this
- * tag (ledger 192, 2026-09-20).
+ * The relay's ingest rejection reason, unprefixed, when its allowlist
+ * predates this tag entirely (ledger 192, 2026-09-20; matching narrowed to
+ * exact equality in ledger 200 after an adversarial review, finding 8).
  *
  * Lane 181 taught `validate_coding_session_command_envelope`
  * (`crates/buzz-relay/src/handlers/ingest.rs`) to accept exactly one
  * `buzz-host-answer` tag with the value `hire`, but a relay built before that
  * lane still ends its match arm `_ => return Err("unsupported coding-session
  * command tag")`. Ingest wraps that into the publish rejection this client
- * sees as `invalid: unsupported coding-session command tag`. Matched here by
- * substring, not exact equality, because the `invalid: ` prefix belongs to
- * ingest's own `IngestError::Rejected` formatting, not to this validator, and
- * could gain more of its own without changing what this refusal means.
+ * sees, verbatim, as `invalid: unsupported coding-session command tag`
+ * (`IngestError::Rejected(format!("invalid: {error}"))`,
+ * `crates/buzz-relay/src/handlers/ingest.rs`, the
+ * `KIND_CODING_SESSION_COMMAND` arm) — `relayClientSession.ts`'s `handleOk`
+ * rejects the pending publish with that exact string as `Error.message`, no
+ * further wrapping.
+ *
+ * A sibling rejection in the same validator, `"unsupported coding-session
+ * command tag version"` (the `cs-v` arm, a few lines above the one this
+ * constant names), contains this string as a substring — a stale `cs-v`
+ * value, not an unknown tag — so a substring match wrongly matched it too
+ * and triggered the same untagged retry, harmlessly (the retry fails for the
+ * same reason) but not narrowly. {@link
+ * isCodingSessionHostAnswerTagUnsupportedRejection} strips the rejection's
+ * `<word>: ` classifier prefix and compares what remains for exact equality
+ * instead.
  */
 export const CODING_SESSION_HOST_ANSWER_TAG_UNSUPPORTED_MESSAGE =
   "unsupported coding-session command tag";
 
 /**
- * True for exactly the rejection above — an older relay's allowlist, never
- * any other reason a tagged host-answer turn could be refused (a bad
- * signature, a membership gate, a network failure, a generic rate limit).
+ * Strip the leading `<word>: ` classifier every relay rejection reason
+ * carries (`invalid: `, `restricted: `, `blocked: `, `rate-limited: `,
+ * `duplicate: `, `error: `, `auth-required: ` — the same vocabulary ledger
+ * 170 names for the outbox's own final/retryable split), and surrounding
+ * whitespace. A message with no such prefix is returned trimmed and
+ * unchanged, so a rejection this client did not expect still compares
+ * safely rather than throwing.
+ */
+function stripRelayRejectionPrefix(message: string): string {
+  return message
+    .trim()
+    .replace(/^[a-z][a-z-]*:\s*/i, "")
+    .trim();
+}
+
+/**
+ * True for exactly the rejection above — an older relay's allowlist refusing
+ * the tag itself — never the tag-version rejection, and never any other
+ * reason a tagged host-answer turn could be refused (a bad signature, a
+ * membership gate, a network failure, a generic rate limit).
  */
 export function isCodingSessionHostAnswerTagUnsupportedRejection(
   error: unknown,
 ): boolean {
   return (
     error instanceof Error &&
-    error.message.includes(CODING_SESSION_HOST_ANSWER_TAG_UNSUPPORTED_MESSAGE)
+    stripRelayRejectionPrefix(error.message) ===
+      CODING_SESSION_HOST_ANSWER_TAG_UNSUPPORTED_MESSAGE
   );
 }
 /** Maximum UTF-8 byte length for a command or target identifier. */

@@ -16586,6 +16586,19 @@ removed from here.
        relay, and the review itself was source-derived rather than a live
        exploit.
 
+200. **Ledger 192's fallback matcher used `.includes`, so the unrelated
+     `"unsupported coding-session command tag version"` rejection (a stale
+     `cs-v` value) also matched the unknown-tag string as a substring and
+     triggered the same untagged retry — harmless since that retry failed
+     too, but not narrow (Astra's Wave 0 review, finding 8,
+     `work/lane-200-exact-tag-match`).
+     `isCodingSessionHostAnswerTagUnsupportedRejection`
+     (`desktop/src/features/coding-sessions/lib/codingSessionCommand.ts:81`)
+     now strips the rejection's `<word>: ` classifier prefix and compares the
+     remainder for exact equality instead. New cases cover both rejection
+     strings in `codingSessionCommand.test.mjs` and
+     `codingSessionHireDisclosure.test.mjs`; 33/33 green.
+
 ## 3a. Environment facts that cost real time (do not rediscover)
 
 - **pnpm 11's answer to a stale workspace state is to DELETE `node_modules`,

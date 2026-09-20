@@ -390,3 +390,29 @@ test("(192d) when the untagged retry also fails, both messages are logged and th
   );
   assert.ok(String(untaggedError?.message).includes("relay unreachable"));
 });
+
+test("(200) the tag-*version* rejection is a superstring of the unknown-tag one and must not trigger a retry", async (t) => {
+  const errors = t.mock.method(console, "error", () => {});
+  const host = harnessWithScript([
+    new Error(
+      `invalid: ${CODING_SESSION_HOST_ANSWER_TAG_UNSUPPORTED_MESSAGE} version`,
+    ),
+  ]);
+  await refuseCodingSessionHireWithCode(
+    request(),
+    { code: "HIRE_OFF", reason: "hiring is switched off" },
+    host.input,
+    host.deps,
+  );
+  const turns = host.turns();
+  assert.equal(
+    turns.length,
+    1,
+    "a stale cs-v value is not the unknown-tag rejection and must not retry untagged",
+  );
+  assert.equal(host.notices().length, 1, "the refusal is never dropped");
+  assert.ok(
+    !host.notices()[0].includes(CODING_SESSION_HOST_ANSWER_DOWNGRADE_NOTE),
+  );
+  assert.equal(errors.mock.callCount(), 1);
+});

@@ -4,11 +4,13 @@ import test from "node:test";
 import {
   buildCodingSessionCommandEvent,
   CODING_SESSION_CI_CONTINUATION_ACTION_TYPE,
+  CODING_SESSION_HOST_ANSWER_TAG_UNSUPPORTED_MESSAGE,
   CODING_SESSION_TURN_DELIVERIES,
   buildCodingSessionInterruptEvent,
   buildCodingSessionTargetKey,
   codingSessionTargetSupportsInterrupt,
   isCodingSessionCiContinuationAction,
+  isCodingSessionHostAnswerTagUnsupportedRejection,
   MAX_CODING_SESSION_IDENTIFIER_BYTES,
   MAX_CODING_SESSION_TEXT_BYTES,
   publishCodingSessionCommand,
@@ -358,6 +360,72 @@ test("hostAnswer adds exactly one buzz-host-answer tag, and is omitted by defaul
   });
   assert.equal(
     ordinary.tags.some((tag) => tag[0] === "buzz-host-answer"),
+    false,
+  );
+});
+
+/**
+ * Ledger 200 (adversarial review, finding 8): the unknown-tag rejection
+ * ("unsupported coding-session command tag") is a substring of the
+ * *different* unsupported-tag-*version* rejection ("unsupported
+ * coding-session command tag version"), so a substring match wrongly
+ * recognized the version refusal too and triggered the same untagged retry
+ * for it. Matching must strip the rejection's classifier prefix and compare
+ * the remainder exactly.
+ */
+test("isCodingSessionHostAnswerTagUnsupportedRejection: matches only the exact unknown-tag rejection, prefixed as the relay sends it", () => {
+  assert.equal(
+    isCodingSessionHostAnswerTagUnsupportedRejection(
+      new Error(
+        `invalid: ${CODING_SESSION_HOST_ANSWER_TAG_UNSUPPORTED_MESSAGE}`,
+      ),
+    ),
+    true,
+  );
+  // Trimmed and prefix-stripped, but otherwise exact — no fuzzier than the
+  // relay's own wire format requires.
+  assert.equal(
+    isCodingSessionHostAnswerTagUnsupportedRejection(
+      new Error(
+        `  invalid:   ${CODING_SESSION_HOST_ANSWER_TAG_UNSUPPORTED_MESSAGE}  `,
+      ),
+    ),
+    true,
+  );
+});
+
+test("isCodingSessionHostAnswerTagUnsupportedRejection: the tag-*version* rejection is a superstring, and must not match", () => {
+  assert.equal(
+    isCodingSessionHostAnswerTagUnsupportedRejection(
+      new Error(
+        `invalid: ${CODING_SESSION_HOST_ANSWER_TAG_UNSUPPORTED_MESSAGE} version`,
+      ),
+    ),
+    false,
+  );
+});
+
+test("isCodingSessionHostAnswerTagUnsupportedRejection: unrelated rejections and non-Error values never match", () => {
+  assert.equal(
+    isCodingSessionHostAnswerTagUnsupportedRejection(
+      new Error("restricted: not a member"),
+    ),
+    false,
+  );
+  assert.equal(
+    isCodingSessionHostAnswerTagUnsupportedRejection(
+      new Error(
+        CODING_SESSION_HOST_ANSWER_TAG_UNSUPPORTED_MESSAGE.slice(0, -1),
+      ),
+    ),
+    false,
+  );
+  assert.equal(
+    isCodingSessionHostAnswerTagUnsupportedRejection("not an error"),
+    false,
+  );
+  assert.equal(
+    isCodingSessionHostAnswerTagUnsupportedRejection(undefined),
     false,
   );
 });
