@@ -17058,6 +17058,60 @@ removed from here.
        redeploying; a re-run of a team hire on an installed build carrying
        this fix is the proof that `created_ungranted` is gone.
 
+205. **Kettle Smoke: a second kettle run on the Wave 0–1 build delivered with
+     zero human repairs and no terminal record (2026-09-20 22:33–23:46Z,
+     installed `a5be5c1a5`, hive at the same commit; Brian at the keyboard,
+     Fable orchestrating; measured by `bee sessions measure`, not by hand).**
+     Fresh project Kettle Smoke (`30621:3d3b7169…:kettle-smoke`), session
+     `f9e0c67f-e326-410a-87ce-ebf613bdd437` in channel
+     `971fb28d-990f-438b-adb1-e5100a71a718`, plan `plans/kettle.md` (schema
+     `beekeeper-plan/v1`) at agents commit `c355424`. One goal typed at
+     22:33:04Z. Measured: 5 completed turns, 0 open, 21.94 active minutes, 142
+     tool calls, 8,530,737 cache-inclusive input (244 fresh), 89,811 output,
+     $2.955081 reported with 2 of 5 results priced; 0 acknowledgement-only
+     turns, 0 polling turns. Code on `main` (`6ea2e0db`, 23 tests) about 13
+     minutes after the goal; the `verify` action ran green on that exact
+     commit (run `8f9552c9…`, `checkout.mode commit 6ea2e0db…`, `dirtyBefore
+     false`, exit 0, definition hash `b5e45b1e…`) after one approval. Compare
+     ledger 178: 5 h 34 m and six operator repairs the same morning.
+     - **Proved live:** bench pre-selected and the founder-signed action
+       delegation (186) — the lead published and triggered `verify` itself, no
+       ruling; routed hire from the agents-repository registry (180) —
+       `--class builder --risk 3,2,2` → `claude-primary/sonnet`, where 178(a)
+       was refused; `checkout: required` with `trigger --checkout` (184) and
+       `run-status` (190); `bee workflows approve --token <approval ref>`
+       accepted first time (190, closes 171(c) live); the host step claimed
+       within 45 s of the grant with no relaunch (189); role templates 1.1.0
+       (196) — two seats hired, not seven, `assign --verifies` used, and the
+       lead corrected on the record its own misreading of the router's
+       `proposed` target as the seated one.
+     - (a) **Regression, ours: every hire `created_ungranted`, every `sessions
+       report` and `sessions complete` refused** — `malformed authority
+       acceptance receipt: unknown field projectRef`. Lane 186 made the relay
+       echo `projectRef` on the 40099 receipt and the CLI's strict reader was
+       never updated; every owner-founded team session carries that grant. The
+       rule violated is UNIFIED_WORK_PLAN § 2.2. Fixed by 204 with a
+       cross-reader conformance fixture. The mission was delivered on evidence
+       and recorded in `sessions note ff396ed6`; no terminal exists.
+     - (b) **The `actions.yml` shape cost the lead six probe rounds**;
+       orientation was 30 of its 88 tool calls (34%). `bee actions` has no
+       example or schema help; the seat's own engram names the traps. Lane
+       206.
+     - (c) **Readiness said `REGISTRY_UNREADABLE` for a project whose registry
+       resolved minutes later**: the readiness check reads the code checkout
+       only. (d) **“Use roles” defaulted to off** on a project with a seeded
+       role source. (e) **Overview said “Agents 0”** under a Members list
+       holding the eight agents, shown as hex keys. (f) **The creation result
+       vanished** before it could be read. Lane 207 for (c)–(f).
+     - (g) **The approval was a 55-minute human round trip** (raw JSON in the
+       inbox; approved by CLI). Closed by 203's approval card and the
+       action-scope grant.
+     - (h) `bee sessions measure` reported 5 human actions of which 3 were the
+       host's own `session.create` answers to the lead's hires, signed with
+       the founder key. Lane 206.
+     - Observations, no lane: agents named “Lead 2”… because another project
+       owns “Lead” on this computer; the default checkout path contains a
+       space (`…/Kettle Smoke/kettle-smoke`) and caused no failure.
 
 ## 3a. Environment facts that cost real time (do not rediscover)
 
