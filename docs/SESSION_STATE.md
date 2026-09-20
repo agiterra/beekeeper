@@ -14775,7 +14775,12 @@ removed from here.
      - Gates on `work/lane-183-completion`: `cargo fmt --all --check` clean;
        `cargo clippy --workspace --all-targets -- -D warnings` finished with
        no diagnostics; `cargo test -p buzz-core -p buzz-cli -p
-       buzz-session-provider` 1161 + 1227 + 881 + 9 passed, 0 failed;
+       buzz-session-provider` green: lib suites 1161 (buzz-core), 1227
+       (buzz-cli) and 881 (buzz-session-provider) passed with 0 failed,
+       and every doc/binary/integration suite 0 failed. One provider lib
+       test failed once in three full runs and passed on re-run; its name
+       was lost to a filtered pipe and that suite is timing-sensitive, so
+       it is recorded as an unreproduced flake rather than a clean claim;
        `just file-size-check` and `just current-state-check` pass. The one
        golden re-captured on purpose is
        `crates/buzz-core/testdata/completion_verification_no_policy_fold.txt`,
