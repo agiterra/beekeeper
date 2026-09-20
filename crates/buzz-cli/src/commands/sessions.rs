@@ -64,6 +64,9 @@ use crate::validate::{validate_lower_hex64, validate_uuid};
 pub mod audit;
 #[cfg(test)]
 mod audit_tests;
+// Ledger 182: the typed bodies answer for their own shape, so no seat learns
+// them by writing to a live relay again.
+pub mod body_schema;
 pub mod catalog;
 // A deletion is not a closure (ledger 135(f)): closing from a terminal needs
 // its own verb, and it is the desktop dialog's event, built by the same SDK
@@ -2642,38 +2645,44 @@ pub async fn dispatch(
         SessionsCmd::Roster { channel, genesis } => {
             cmd_authority_roster(client, &channel, &genesis).await
         }
-        SessionsCmd::Assign(args) => operations::cmd_write(
+        SessionsCmd::Assign(args) => body_schema::dispatch_write(
             client,
+            "assign",
             args,
             buzz_core::coding_session_team_transaction::CodingSessionTeamTransactionType::Assignment,
         )
         .await,
-        SessionsCmd::Report(args) => operations::cmd_write(
+        SessionsCmd::Report(args) => body_schema::dispatch_write(
             client,
+            "report",
             args,
             buzz_core::coding_session_team_transaction::CodingSessionTeamTransactionType::Report,
         )
         .await,
-        SessionsCmd::Verdict(args) => operations::cmd_write(
+        SessionsCmd::Verdict(args) => body_schema::dispatch_write(
             client,
+            "verdict",
             args,
             buzz_core::coding_session_team_transaction::CodingSessionTeamTransactionType::Verdict,
         )
         .await,
-        SessionsCmd::Acknowledge(args) => operations::cmd_write(
+        SessionsCmd::Acknowledge(args) => body_schema::dispatch_write(
             client,
+            "acknowledge",
             args,
             buzz_core::coding_session_team_transaction::CodingSessionTeamTransactionType::Acknowledgement,
         )
         .await,
-        SessionsCmd::Complete(args) => operations::cmd_write(
+        SessionsCmd::Complete(args) => body_schema::dispatch_write(
             client,
+            "complete",
             args,
             buzz_core::coding_session_team_transaction::CodingSessionTeamTransactionType::MissionCompleted,
         )
         .await,
-        SessionsCmd::Block(args) => operations::cmd_write(
+        SessionsCmd::Block(args) => body_schema::dispatch_write(
             client,
+            "block",
             args,
             buzz_core::coding_session_team_transaction::CodingSessionTeamTransactionType::MissionBlocked,
         )

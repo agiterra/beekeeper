@@ -1860,6 +1860,8 @@ bee channels delete --channel "$FORUM_ID" | jq .
 | 70 | `sessions hire` (44221 `session.hire`) | ☐ | Historical founder/operator run is recorded above. Re-run current receipt-backed authority: founder + operator any role; active lead non-lead only; revoked/stale/wrong-genesis refused; created includes an accepted exact-role `grant-seat`; `created_ungranted` is live and must not be rehired. Open: `failed`/`seating` and old-relay wording. |
 | 69 | `sessions status` / `list` founder | ☐ | `founder`/`createSigner` per row, `founders` array on `--format json` status (an envelope key — not in bare piped NDJSON); `null` when the channel holds no joined create; never the provider's key |
 | 71 | `sessions assign/report/verdict/acknowledge/complete/block` | ☐ | Body accepts inline JSON, `@path`, or stdin; malformed/wrong-operation body is refused before write; `complete` refuses without an acknowledged approving disposition |
+| 71a | `--example` on every `--body` verb | ☐ | Prints a complete valid body to stdout and labels to stderr, exit 0, with `BUZZ_PRIVATE_KEY` and `BUZZ_RELAY_URL` **unset** and no relay reachable; `assign` offers `builder`/`verifier`/`runner` and `verdict` offers `refutation`/`disposition`; an unknown label lists the ones that exist; a body that does not decode is refused with every required key plus the `--example` command in one message |
+| 71b | `sessions assign --verifies <report-id>` | ☐ | Fills `baseSha` from that report's `headSha`; agreement with an explicit `baseSha` passes; disagreement is refused naming both values and writes nothing; a report with no `headSha`, an id that is not a report, or a report from another session is refused |
 | 72 | `sessions operation get/list` | ☐ | `get --id` verifies the exact signed 44244 and derives `h`/`d`/genesis scope from it; explicit scope remains all-three-or-none; signed provenance, exclusions, conflicts, settlement and canonical terminal disclosed |
 | 73 | team-operation provider wake | ☐ | 44244 is stored first; 44220 text contains only `operationId` and `type`; every installed seat pack tells the recipient to run `operation get --id`; an **assignment** shares its `deliveryCommandId` with its wake, every other class derives `cli-wake-v1:<operationId>:<12 hex>` and records none; failed wake leaves stored operation visible and delivery unconfirmed |
 | 74 | `sessions audit` | ☐ | Per-turn rows carry the frozen shape; an unreported number is `null`, never `0`; `costUsd` is the producer's own number off the `result` item; `handedTwice`/`roomDownloads`/`retryLoops` populate on a night with waste; a clipped execution's rows carry `toolCallsTruncated: true`; `--format compact` prints the turn rows **and** the `bounds` rows |
@@ -1871,6 +1873,79 @@ bee channels delete --channel "$FORUM_ID" | jq .
 ---
 
 ## Signed team transactions (kind 44244)
+
+### Read the body before you write one: `--example` (ledger 182)
+
+**A seat's first command on any `--body` verb is `--example`, never a probe.**
+Every verb that takes `--body` prints a complete, valid, minimal body for
+itself, reaches no relay, signs nothing and needs no `BUZZ_PRIVATE_KEY`:
+
+```bash
+bee sessions assign  --example builder    > assignment.json
+bee sessions assign  --example verifier   > verifier-assignment.json   # carries baseSha
+bee sessions assign  --example runner     > runner-assignment.json     # carries baseSha
+bee sessions report  --example            > report.json
+bee sessions verdict --example refutation > refutation.json
+bee sessions verdict --example disposition > disposition.json
+bee sessions acknowledge --example        > acknowledgement.json
+bee sessions complete    --example        > completion.json
+bee sessions block       --example        > blocked.json
+```
+
+The JSON goes to **stdout** and the labels/notes to **stderr**, so the
+redirects above produce files `--body @<file>` accepts as-is. Edit the
+placeholder ids and prose; keep every key, including the ones whose value is
+`null`.
+
+The examples are serialized from the same Rust types that validate a body
+(`crates/buzz-cli/src/commands/sessions/body_schema.rs`), and
+`cargo test -p buzz-cli body_schema` round-trips each one through the
+publication validator — an example that stopped being publishable fails the
+build rather than a mission.
+
+**A body that does not decode is refused with the whole schema**, in one
+message, so the second attempt succeeds:
+
+```bash
+bee sessions assign --channel "$CHANNEL" --session-ref "$SESSION" \
+  --genesis "$GENESIS" --body '{"objective":"x"}'
+# invalid assignment body: missing field `assigneeActor`. An assignment body must
+# carry every one of these keys, nullable ones as explicit JSON null:
+# acceptanceSteps, assigneeActor, assigneeRole, baseSha, branch, brief,
+# fileOwnership, objective. Variants: builder, verifier, runner
+# (`bee sessions assign --example <label>`). Run `bee sessions assign --example`
+# for a complete valid body and edit it — do not discover this shape by publishing.
+```
+
+Why this exists: in two team runs every seat learned these bodies by publishing
+wrong ones to the live relay and reading `missing field X` one field at a time
+(15 CLI `user_error` records in the kettle run's lead, 11 in its builder, 26 in
+its verifier; seven seats on Andy's run, one of which grepped the `bee` binary
+for strings). One such probe published a real placeholder verdict the relay
+stored. **A probe is a write.** If you are briefing a seat, brief `--example`.
+
+### `--verifies`: the fence reads `baseSha`, not your objective
+
+A `verifier` or `runner` assignment must name the exact revision it is about,
+and the provider establishes the seat's worktree from `baseSha` **alone**
+(`crates/buzz-session-provider/src/verification_input.rs:142,265`). An
+objective that names `fa927fd` while `baseSha` says `e682191` sends the seat to
+`e682191` and nothing warns you (ledger 178(d)). Take the commit from the
+report being verified instead of from memory:
+
+```bash
+bee sessions assign --channel "$CHANNEL" --session-ref "$SESSION" \
+  --genesis "$GENESIS" --body @verifier-assignment.json \
+  --wake-to verifier --verifies "$REPORT_EVENT_ID"
+# baseSha is filled from that report's headSha.
+```
+
+`--base-sha` as such does not exist: `baseSha` is a field of `--body`, and
+setting it there is still supported. Passing both is fine when they agree and
+**refused** when they disagree, naming both values — neither is silently
+overwritten. A report carrying no `headSha` is refused rather than guessed at.
+
+### The envelope
 
 Operation bodies are the exact NIP-CSTX `body` object, not free-form prose:
 
@@ -2652,6 +2727,15 @@ byte-for-byte. Spot-check:
 ```bash
 bee sessions seat-repair --help | tail -6
 bee sessions report --help | tail -6
+```
+
+Every verb that takes `--body` additionally lists `--example` in its `--help`
+and names it in its `Examples:` block, so a seat reading `--help` first sees
+the offline path before any write (ledger 182):
+
+```bash
+bee sessions assign --help | grep -A3 -- '--example'
+bee sessions hire --help | grep -A6 'Briefing rule'
 ```
 
 ### The exclusion-code read contract CHANGED (batch 3, lane L13 / REVIEW-L13 F5)

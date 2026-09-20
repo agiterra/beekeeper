@@ -3010,33 +3010,48 @@ pub enum SessionsCmd {
         genesis: String,
     },
     /// Publish a signed team assignment (kind 44244).
+    ///
+    /// Read the body's shape before you write one: `bee sessions assign
+    /// --example` prints a complete valid assignment and publishes nothing.
+    /// The required fields differ by role, so there is one example per role
+    /// that differs — `--example builder`, `--example verifier`, `--example
+    /// runner`.
+    ///
+    /// **`baseSha` is the fence, not the objective.** A `verifier` or `runner`
+    /// assignment must name the exact revision it is about, and the provider
+    /// establishes the seat's worktree from `baseSha` and nothing else
+    /// (`crates/buzz-session-provider/src/verification_input.rs`). Prose in
+    /// `objective` or `brief` naming a commit is read by nobody. Pass
+    /// `--verifies <report event id>` to take `baseSha` from that report's
+    /// `headSha`, or set `baseSha` in `--body` yourself; passing both is
+    /// refused when they disagree.
     #[command(
-        after_help = "Recipe:\n  bee sessions assign --channel <uuid> --session-ref <uuid> --genesis <hex64> --body @assignment.json --wake-to builder"
+        after_help = "Examples:\n  bee sessions assign --example verifier > assignment.json\n  bee sessions assign --channel <uuid> --session-ref <uuid> --genesis <hex64> --body @assignment.json --wake-to verifier --verifies <report-event-id>\n\nRule:\n  a verifier or runner assignment carries baseSha; the seat's tree is established from that field alone\n\nRecipe:\n  bee sessions assign --channel <uuid> --session-ref <uuid> --genesis <hex64> --body @assignment.json --wake-to builder"
     )]
     Assign(TeamTransactionWriteArgs),
     /// Publish a signed assignment report (kind 44244).
     #[command(
-        after_help = "Rule:\n  reports **included** by assignee-equality whose author holds no active seat for the assignment's `assignee_role`.\n\nRecipe:\n  bee sessions report --channel <uuid> --session-ref <uuid> --genesis <hex64> --body @report.json --wake-to lead"
+        after_help = "Examples:\n  bee sessions report --example > report.json\n\nRule:\n  reports **included** by assignee-equality whose author holds no active seat for the assignment's `assignee_role`.\n\nRecipe:\n  bee sessions report --channel <uuid> --session-ref <uuid> --genesis <hex64> --body @report.json --wake-to lead"
     )]
     Report(TeamTransactionWriteArgs),
     /// Publish a signed refutation or disposition (kind 44244).
     #[command(
-        after_help = "Recipe:\n  bee sessions verdict --channel <uuid> --session-ref <uuid> --genesis <hex64> --body @disposition.json --wake-to builder"
+        after_help = "Examples:\n  bee sessions verdict --example refutation > refutation.json\n  bee sessions verdict --example disposition > disposition.json\n\nRecipe:\n  bee sessions verdict --channel <uuid> --session-ref <uuid> --genesis <hex64> --body @disposition.json --wake-to builder"
     )]
     Verdict(TeamTransactionWriteArgs),
     /// Acknowledge receipt of a governing disposition (kind 44244).
     #[command(
-        after_help = "Recipe:\n  bee sessions acknowledge --channel <uuid> --session-ref <uuid> --genesis <hex64> --body @acknowledgement.json"
+        after_help = "Examples:\n  bee sessions acknowledge --example > acknowledgement.json\n\nRecipe:\n  bee sessions acknowledge --channel <uuid> --session-ref <uuid> --genesis <hex64> --body @acknowledgement.json"
     )]
     Acknowledge(TeamTransactionWriteArgs),
     /// Publish mission completion after locally verifying every approval chain.
     #[command(
-        after_help = "Recipe:\n  bee sessions complete --channel <uuid> --session-ref <uuid> --genesis <hex64> --body @completion.json"
+        after_help = "Examples:\n  bee sessions complete --example > completion.json\n\nRecipe:\n  bee sessions complete --channel <uuid> --session-ref <uuid> --genesis <hex64> --body @completion.json"
     )]
     Complete(TeamTransactionWriteArgs),
     /// Publish an explicit terminal blocker (kind 44244).
     #[command(
-        after_help = "Recipe:\n  bee sessions block --channel <uuid> --session-ref <uuid> --genesis <hex64> --body @blocked.json"
+        after_help = "Examples:\n  bee sessions block --example > blocked.json\n\nRecipe:\n  bee sessions block --channel <uuid> --session-ref <uuid> --genesis <hex64> --body @blocked.json"
     )]
     Block(TeamTransactionWriteArgs),
     /// Say something without changing any mission state (kind 44244).
@@ -3348,7 +3363,7 @@ pub enum SessionsCmd {
     /// no answer at all, and a request that gets no answer is a crash with
     /// better manners.
     #[command(
-        after_help = "Examples:\n  bee projects agents\n  bee sessions hire --channel <uuid> --session-ref <uuid> --role builder --brief ./briefs/lane-c.md\n  bee sessions hire --channel <uuid> --session-ref <uuid> --role architect --model <id> --content 'Read §3 and report' --no-wait\n\n`bee projects agents` lists a public session project's agents by role; for a\nprivate project use the agent list in the session's first message. The host\nseats only the project's agents, and a hire refused HIRE_NO_PROJECT_AGENT names\nthe remedy.\n\nA relay that predates session.hire refuses the request as malformed; the\ncommand says so in those words rather than blaming the request.\n\nRule:\n  coding-session lifecycle command action.brief exceeds 12272 bytes (got <n>): a hire's brief becomes the seat's first turn behind the host's 16-byte \"[From the lead] \" prefix, so its ceiling is the initial-turn ceiling minus that prefix\n\nRecipe:\n  bee sessions hire --channel <uuid> --session-ref <uuid> --role builder --brief <path>"
+        after_help = "Examples:\n  bee projects agents\n  bee sessions hire --channel <uuid> --session-ref <uuid> --role builder --brief ./briefs/lane-c.md\n  bee sessions hire --channel <uuid> --session-ref <uuid> --role architect --model <id> --content 'Read §3 and report' --no-wait\n\n`bee projects agents` lists a public session project's agents by role; for a\nprivate project use the agent list in the session's first message. The host\nseats only the project's agents, and a hire refused HIRE_NO_PROJECT_AGENT names\nthe remedy.\n\nA relay that predates session.hire refuses the request as malformed; the\ncommand says so in those words rather than blaming the request.\n\nBriefing rule:\n  never tell a seat to discover a wire body by probing the relay. Every\n  `bee sessions` verb that takes --body prints its own complete valid body:\n  `bee sessions report --example`, `bee sessions verdict --example\n  disposition`, `bee sessions assign --example verifier`. A probe publishes a\n  real record (ledger 178(c)); --example publishes nothing.\n\nRule:\n  coding-session lifecycle command action.brief exceeds 12272 bytes (got <n>): a hire's brief becomes the seat's first turn behind the host's 16-byte \"[From the lead] \" prefix, so its ceiling is the initial-turn ceiling minus that prefix\n\nRecipe:\n  bee sessions hire --channel <uuid> --session-ref <uuid> --role builder --brief <path>"
     )]
     Hire {
         /// Channel UUID the umbrella lives in
@@ -3665,20 +3680,45 @@ pub enum SessionsCmd {
 }
 
 /// Common envelope and JSON-body input for one typed team transaction.
+///
+/// `--example` is the one flag that reaches nothing: it prints a complete,
+/// valid, minimal body for this verb and exits 0, which is why the four
+/// envelope flags below are not unconditionally required. A write that omits
+/// one is refused by name
+/// (`crates/buzz-cli/src/commands/sessions/body_schema.rs`), never published
+/// with an empty coordinate.
 #[derive(clap::Args, Clone)]
 pub struct TeamTransactionWriteArgs {
     /// Channel UUID containing the session.
-    #[arg(long)]
+    #[arg(long, default_value = "", required_unless_present = "example")]
     pub channel: String,
     /// Canonical umbrella session UUID.
-    #[arg(long = "session-ref")]
+    #[arg(
+        long = "session-ref",
+        default_value = "",
+        required_unless_present = "example"
+    )]
     pub session_ref: String,
     /// Session genesis event id.
-    #[arg(long)]
+    #[arg(long, default_value = "", required_unless_present = "example")]
     pub genesis: String,
     /// Exact operation body as JSON, `@path`, or `-` for stdin.
-    #[arg(long)]
+    #[arg(long, default_value = "", required_unless_present = "example")]
     pub body: String,
+    /// Print a complete valid body for this verb and exit 0, touching no
+    /// relay. Pass a label to pick a variant: `--example verifier` on an
+    /// assignment, `--example disposition` on a verdict. The JSON goes to
+    /// stdout and the labels to stderr, so `--example > body.json` gives you a
+    /// file `--body @body.json` accepts.
+    #[arg(long, num_args = 0..=1, default_missing_value = "default")]
+    pub example: Option<String>,
+    /// Event id of the report this assignment verifies. Fills the
+    /// assignment's `baseSha` from that report's `headSha`, because the
+    /// provider's fence establishes the seat's tree from `baseSha` alone and
+    /// reads nothing in the objective. Refused when `--body` already carries a
+    /// different `baseSha`.
+    #[arg(long = "verifies")]
+    pub verifies: Option<String>,
     /// Same-author correction event id; never a causal workflow reference.
     #[arg(long)]
     pub supersedes: Option<String>,
@@ -5092,6 +5132,24 @@ async fn run(cli: Cli) -> Result<(), CliError> {
             &cli.format,
         )
         .await;
+    }
+
+    // Every `bee sessions` verb that takes `--body` answers for its own schema
+    // offline: `--example` prints a complete valid body, reaches no relay and
+    // signs nothing (ledger 182). Dispatched here, ahead of the key gate, for
+    // the same reason `sessions explain` is — a seat learning the wire must not
+    // need the wire to learn it, and on this path there is no client to write
+    // with.
+    if let Cmd::Sessions(ref sub) = cli.command {
+        if let Some((command, transaction_type, requested)) =
+            commands::sessions::body_schema::example_request(sub)
+        {
+            return commands::sessions::body_schema::print_team_body_example(
+                command,
+                transaction_type,
+                &requested,
+            );
+        }
     }
 
     // `sessions explain` answers from a data file compiled into this binary.
