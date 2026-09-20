@@ -160,3 +160,9 @@ run (46023 `daf20471…`) the lead never got to read.
 Human actions the goal did not ask for: tick the bench, answer the ruling,
 publish the action, approve the step, fast-forward the checkout, relaunch the
 app. Six. That number is the result of this run.
+
+Closed 16:58:51Z on the rebuilt bundle `60c2e7e55` (batch 180–188): the lead
+reconnected as generation 2 with its agents clone reused, read the 46023
+result itself, and published `mission.completed` `72dd23c8…`, canonical on
+the first attempt. Goal to terminal record: 5 h 31 m, about 35 minutes of it
+the team's own work.

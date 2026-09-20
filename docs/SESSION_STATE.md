@@ -14555,6 +14555,21 @@ removed from here.
        `--no-verify`. Open; lane owed: the helper or the hook must re-mint
        for the upload (git `credential.useHttpPath`/per-request helper call,
        or run the floor before connecting).
+     - (o) **Closed live 2026-09-20 16:58:51Z on installed `60c2e7e55`.** The
+       lead reconnected as generation 2 ("Resumed — reconnected to the
+       provider's native session"; 187 failed its first live proof, 188
+       fixed it: a launch-cut lead's tree was recorded only under
+       `pending[<create command>]`), its agents clone was reused, not recut
+       (`.git` birth time still 07:27:12 EDT, head `b8cd709`), and one prompt
+       later it read the 46023 result itself, corrected its own blocker
+       (its candidate (a) was wrong, (b) right: `bee workflows runs` does
+       not report host-action runs, 178(k)), and published
+       `mission.completed` `72dd23c8…`, canonical on the first attempt with
+       both assignments' report, disposition and acknowledgement chains
+       complete. Ruling `a009c234…` remains formally unanswered; it names no
+       blocked assignment, so it did not gate completion. Wall clock from
+       goal to terminal record 5 h 31 m, of which the team's own work was
+       about 35 minutes; the rest was six human repairs and one fix batch.
 
 179. **Andy's eight-seat run finished the game and never finished its own
      protocol; almost half its turns were disposition bookkeeping
