@@ -3700,6 +3700,27 @@ pub enum SessionsCmd {
         /// The word to define. Omit to list every word once.
         word: Option<String>,
     },
+    /// Measure one team session: timeline, per-seat cost, coordination
+    /// accounting, and every metric the wire cannot support named `unknown`
+    #[command(
+        after_help = "Examples:\n  bee sessions measure --channel <uuid> --session-ref <uuid>\n  bee sessions measure --channel <uuid> --since 2026-09-20T11:27:00Z --until 2026-09-20T11:49:46Z\n  bee --format compact sessions measure --channel <uuid> --session-ref <uuid>\n\nRecipe:\n  bee sessions measure --channel <uuid> --session-ref <uuid>"
+    )]
+    Measure {
+        /// Channel UUID the session was published into
+        #[arg(long)]
+        channel: String,
+        /// Restrict every number to one umbrella's executions
+        #[arg(long = "session-ref")]
+        session_ref: Option<String>,
+        /// Lower time bound: RFC 3339 or Unix seconds. The goal, genesis and
+        /// name are read without it — they precede the first turn
+        #[arg(long)]
+        since: Option<String>,
+        /// Upper time bound: RFC 3339 or Unix seconds. Also the cutoff every
+        /// open-turn and waiting figure is measured against
+        #[arg(long)]
+        until: Option<String>,
+    },
 }
 
 /// Common envelope and JSON-body input for one typed team transaction.
@@ -6185,6 +6206,7 @@ mod tests {
                 "hire",
                 "inbox",
                 "list",
+                "measure",
                 "note",
                 "observations",
                 "observe",
@@ -6318,7 +6340,7 @@ mod tests {
             // appended here and two of them independently wrote 35 (item 108's
             // exact-count trap); the finalizer set it once, after every lane,
             // and both tests re-run green.
-            ("sessions", 38),
+            ("sessions", 39),
             ("social", 7),
             ("terminals", 6),
             ("upload", 1),

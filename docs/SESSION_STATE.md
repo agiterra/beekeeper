@@ -16267,6 +16267,125 @@ removed from here.
        (`docs/UNIFIED_WORK_PLAN.md` § 4), measured by M against the kettle
        audit's numbers. Not landed, not installed, no seat has run 1.1.0.
 
+197. **The two 2026-09-20 audits are now a command: `bee sessions measure`
+     reproduces every number in both, from the same relay events, in under a
+     second.** Astra wrote the kettle and RPG audits by hand, reading kind
+     44225 one row at a time; the unified work plan § 3 made the next one a
+     tool (lane M, Wave 1). It is read-only, adds no event kind, writes
+     nothing, and touches the relay only through four bounded, fully paged
+     queries. All the arithmetic is pure functions over a vector of events, so
+     the oracle tests need no relay.
+     - **Where it lives.** `crates/buzz-cli/src/commands/sessions/measure.rs`
+       (~900 lines) with `measure_tests.rs` beside it; two registration lines
+       in `sessions.rs` and one variant in `lib.rs`; frozen captures under
+       `crates/buzz-cli/tests/fixtures/measure/`.
+     - **What it reads.** Three channel-scoped filters and one repo-scoped
+       one. The session kinds (44220, 44221, 44223, 44224, 44225, 44244) take
+       the window; the **umbrella identity kinds (44226, 44227, 44229, 44230)
+       are read without a lower bound**, because the goal precedes the first
+       turn — the kettle goal is at 11:24:49Z and the audit's window starts at
+       11:27:00Z, so a `--since` applied to it would have made the tool print
+       `unknown` for the one timestamp it exists to report. Kind 30618 is
+       repo-scoped by its own `d` tag and is fetched per repository name taken
+       from 44223's `repoRef`/`projectRef`, which is the only way the landed
+       sha gets an observed delivery.
+     - **Reproduced exactly, from the relay and from the fixtures.** Kettle at
+       the audit's cutoff `1789904986`: 5 completed turns and 2 open,
+       9,250,152 input / 106,661 output, 155 tool calls, 24.84 active minutes,
+       `$2.297416` reported over **2 priced results of 5**; the per-seat cache
+       split (lead 112 / 4,195,840 / 106,285; builder 78 / 2,332,655 / 71,912;
+       verifier 70 / 2,449,322 / 93,878); waiting 10.22 / 12.83 / 0.87
+       minutes; lead queue→start `0,43,0,0` with max 43 and the builder's
+       initial hire correctly reported as a start with no queue receipt; the
+       `user_error` counts 15 / 11 / 26. RPG: 32 turns, 66,492,119 /
+       714,115, 63,744,991 cache-read + 2,738,740 cache-write + 8,388 fresh,
+       632 tool calls, 171.44 seat-minutes, `$38.540707` with 24 of 32 priced,
+       every per-seat row, all eight no-open-turn wall figures (232.78,
+       234.87, 237.97, 244.04, 94.16, 16.10, 15.82, 93.33) and the CLI error
+       counts 20/2/5/9/2/1/0/1 = 40.
+     - **Where the tool and the audits disagree, and who is right.**
+       1. **The RPG "14/32 disposition/ACK turns" is reproducible, but not as
+          Astra derived it.** Astra read sequences. Mechanically the two
+          classes are *turns opened by a `cli-wake-v1:<event id>:` command
+          naming a 44244 `verdict`* (8) and *turns whose only relay write is an
+          acknowledgement* (7) — 15 rows, but their **union is 14**, because
+          project setup's ACK landed inside the same turn its verdict wake
+          opened. The union is the right number and it matches. Astra's
+          narrative "six repair turns" is the ack-only count minus that same
+          overlapping seat: a subset of a different question, not a rival
+          measurement. Both are now printed separately.
+       2. **The kettle verifier's waiting is 0.865 minutes, and the 167 ms
+          that decides it is a real fact.** Taking the cutoff as the `--until`
+          second exactly gives 0.8639 → 0.86; the verifier's open turn has a
+          transcript item at `…986167`, inside the inclusive cutoff second.
+          The tool therefore measures against **the later of `--until` and the
+          last observed transcript instant**, which yields 51.915 s — the
+          figure Astra's own prose names. Astra's table value 0.87 is right;
+          a naive second-boundary cutoff would have been wrong.
+       3. **`user_error` is counted as occurrences, not as rows.** Astra's
+          15/11/26 and 40 are occurrence counts; the tool-result rows carrying
+          at least one are 7/9/13 and 32. Both are printed; the occurrence
+          count is the one that matches, and it is the one to compare across
+          runs.
+       4. **"Six unrequested human actions" is not a wire number and the tool
+          does not claim it.** What the wire carries is founder-signed 44220 /
+          44221 commands that are not host answers: for the whole kettle run,
+          **7** — three `session.create` (the host signs a seat's creation as
+          the founder) and four `thread.turn.start`. Ticking the bench,
+          fast-forwarding a checkout and relaunching the app leave no signed
+          command at all. The runbook's six and the tool's seven measure
+          different things; neither is wrong and the tool says which it means.
+       5. **Goal→terminal is 20,042 s (5 h 34 m 2 s); the runbook's "5 h 31 m"
+          is first-turn→terminal, 19,898 s.** Both ends are now named on the
+          report, so the two can never again be quoted as the same number.
+       6. **The kettle audit's "zero 46010/46013/46020 events were returned"
+          holds only for its 11:49Z cutoff.** Over the whole run those kinds
+          *are* h-tagged to the channel and returned: trigger, approval
+          request, host request, claim (46022) and result (46023) all appear.
+          The hand-signed 46030 grant does not — it carries no `h` tag — so
+          the timeline shows an approval requested and then a host request
+          with no grant between them, which is the honest picture.
+     - **What it refuses to guess.** Every metric the wire cannot support is
+       printed in an `honesty` block as `unknown` with its reason, never as
+       zero: the tokens and cost of an open turn; the dollar total whenever
+       any result is unpriced (with the coverage count beside it); the action
+       chain when no 46023 is in the window; observed delivery when no 30618
+       names the repository; and — for both audited runs — **whether a prompt
+       was a person or this computer's own notice**, because neither build
+       carries `hostAnswer` (ledger 178(b) postdates them), so a recovered
+       refusal re-queued as a founder-signed turn is indistinguishable from
+       Brian typing. Orientation, polling, waiting and publication refusals
+       are labelled `detector` with the exact rule, since the wire carries no
+       such label. A p-gated or refused read is an error, never an empty
+       result.
+     - **Fixtures, and the projection.** Captured read-only from hive on
+       2026-09-20 with Brian's key; both channels were readable. Sig-stripped.
+       The raw captures are 2.0 MB and 5.4 MB, so kind 44225's item is
+       projected to the fields the functions read: `assistant_text` and
+       `reasoning` keep only `kind`; `tool_result`, `tool_call` and
+       `user_prompt` keep their identifying fields with text clipped at 8192 /
+       2048 / 4096 characters; **every `result` row is verbatim**. The clip
+       ceilings sit above the furthest offset at which any detector substring
+       occurs in the raw capture (8567) and above the provider's own 8 KiB
+       tool-result clip, and every assertion above was computed on the
+       unprojected capture first and then again on the projection, with the
+       same answer. The RPG capture is split into two files only to keep each
+       under 3 MB. The projection is documented at the top of
+       `measure_tests.rs`.
+     - **Verified.** `cargo test -p buzz-cli` (19 new tests in
+       `measure_tests.rs`, all green) and a live read against hive:
+       `bee sessions measure --channel 85b8db75… --session-ref e8338b95…
+       --since 2026-09-20T11:27:00Z --until 2026-09-20T11:49:46Z` printed the
+       audit's subtotal from the relay itself. Not landed, not installed.
+     - **Not done.** `--format` is the global flag: `json` (default) prints
+       the whole report, `compact` prints the tables; there is no separate
+       `--format table`. Orientation is a text detector and its count is
+       tool-call-level, so it is **not** comparable to either audit's
+       "orientation turns" column, which was a human judgement about whole
+       turns. Polling is zero in both runs, which agrees with both audits but
+       is weak evidence that the detector works — nothing in either fixture
+       exercises it positively.
+
 198. **Contract amendment A2: the work contract now says what evidence
      *proves* a criterion, against which single artifact, signed by whom,
      naming which goal, and when a fork is still a fork (built 2026-09-20,

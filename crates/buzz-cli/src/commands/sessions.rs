@@ -93,6 +93,7 @@ pub mod handover_render;
 mod hire_evidence;
 #[cfg(test)]
 mod hire_evidence_tests;
+pub mod measure;
 pub mod observations;
 pub mod operations;
 pub(crate) mod operations_authority;
@@ -2952,6 +2953,22 @@ pub async fn dispatch(
                 counterpart_provider.as_deref(),
             )?;
             route::cmd_route(client, &channel, registry.as_deref(), &request, format).await
+        }
+        SessionsCmd::Measure {
+            channel,
+            session_ref,
+            since,
+            until,
+        } => {
+            measure::cmd_measure(
+                client,
+                &channel,
+                session_ref.as_deref(),
+                since.as_deref(),
+                until.as_deref(),
+                format,
+            )
+            .await
         }
         SessionsCmd::Whoami => whoami::cmd_whoami(client, format).await,
         // Also reached before any key is required, in `run()`: the
