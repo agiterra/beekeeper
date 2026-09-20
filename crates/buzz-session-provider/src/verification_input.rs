@@ -42,6 +42,11 @@ pub const VERIFICATION_INPUT_TREE_DIRTY: &str = "VERIFICATION_INPUT_TREE_DIRTY";
 /// The provider could not read the seat's checkout at all.
 pub const VERIFICATION_INPUT_UNOBSERVED: &str = "VERIFICATION_INPUT_UNOBSERVED";
 
+/// The seat's tree was not put on the assignment's commit: the establishment
+/// this provider ran refused, or was abandoned after two interrupted attempts.
+/// Carries git's own words.
+pub const VERIFICATION_INPUT_NOT_ESTABLISHED: &str = "VERIFICATION_INPUT_NOT_ESTABLISHED";
+
 /// The assignment itself could not be verified right now — the fold, the relay
 /// query or the scope was unavailable. Refused rather than opened on a guess.
 pub const VERIFICATION_INPUT_UNVERIFIED: &str = "VERIFICATION_INPUT_UNVERIFIED";
@@ -203,6 +208,17 @@ pub enum TurnInput {
     /// command. Bounded by the command's own freshness horizon, after which
     /// `decide_turn` ignores it as `PastHorizon`.
     Undecided(&'static str),
+    /// This provider owes the seat's tree an establishment and has not
+    /// finished it yet.
+    ///
+    /// Deliberately its own outcome rather than a refusal: the wake is not
+    /// wrong, it is *early*, and the work that will make it right is already
+    /// recorded durably in this host's `assignmentInputs` row. Like
+    /// [`TurnInput::Undecided`] it publishes nothing and consumes nothing, so
+    /// the same `commandId` is still deliverable and the delivery is not spent
+    /// on a tree that is about to move. What is different is the reason, and
+    /// that the answer is owed by this computer rather than by a relay.
+    Deferred(&'static str),
 }
 
 /// Reasons that describe the *transport* rather than the assignment.
@@ -237,6 +253,61 @@ pub fn unresolved(reason: &'static str) -> TurnInput {
              nothing was verified against an unknown input. To continue, {REMEDY}"
         ),
     })
+}
+
+/// Refuse a turn whose seat's input this provider tried and failed to
+/// establish, in git's own words.
+///
+/// The one bounded blocker a failed establishment publishes: the lead needs
+/// the sentence git produced — a dirty tree, an object no remote has — because
+/// every remedy for those is a thing a person or a host step does, and a
+/// paraphrase would send them looking for the wrong thing. Bounded and
+/// control-free, because it travels in signed content.
+pub fn establishment_blocked(
+    assignment_ref: &str,
+    outcome: &str,
+    detail: Option<&str>,
+) -> InputRefusal {
+    let words = detail
+        .map(bounded_git_words)
+        .filter(|words| !words.is_empty())
+        .map_or_else(
+            || "this computer recorded no reason".to_owned(),
+            |words| format!("git said: {words}"),
+        );
+    InputRefusal {
+        code: VERIFICATION_INPUT_NOT_ESTABLISHED,
+        message: format!(
+            "this computer tried to put the commit assignment {assignment_ref} names into the \
+             seat's checkout and could not ({outcome}); {words}. The turn was not opened and \
+             nothing was verified. To continue, {REMEDY}"
+        ),
+    }
+}
+
+/// Keep one diagnostic useful without letting git's output grow a record or a
+/// published message.
+#[must_use]
+pub fn bounded_git_words(detail: &str) -> String {
+    const MAX_BYTES: usize = 512;
+    let cleaned = detail
+        .chars()
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut end = cleaned.len().min(MAX_BYTES);
+    while !cleaned.is_char_boundary(end) {
+        end = end.saturating_sub(1);
+    }
+    cleaned[..end].to_owned()
 }
 
 /// Refuse a turn whose seat has no working directory to read.

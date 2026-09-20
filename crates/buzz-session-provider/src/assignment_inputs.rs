@@ -545,49 +545,89 @@ pub fn drain_pending_assignment_inputs(
         let Some(record) = assignment_input(records, &assignment_id).cloned() else {
             continue;
         };
-        drained.push(assignment_id.clone());
-        if record.attempts >= MAX_ESTABLISH_ATTEMPTS {
-            let mut abandoned = record;
-            abandoned.outcome = ASSIGNMENT_INPUT_ABANDONED.to_owned();
-            abandoned.message = Some(format!(
-                "{} attempts to establish this input were started on this computer and none \
-                 finished, so it will not be tried again on its own",
-                abandoned.attempts
-            ));
-            abandoned.recorded_at = now_iso();
-            record_assignment_input(records, abandoned);
-            persist(records);
-            continue;
-        }
         let checkout = resolve(&record);
-        let mut started = record;
-        started.outcome = ASSIGNMENT_INPUT_ESTABLISHING.to_owned();
-        started.attempts += 1;
-        started.message = None;
-        started.recorded_at = now_iso();
-        record_assignment_input(records, started);
-        persist(records);
-        // The attempt files its own terminal record, carrying the count
-        // forward. Its refusal is the record; nothing here re-reads it, and
-        // nothing here tries again.
-        let _ = establish(
-            records,
-            &EstablishAssignmentInputRequest {
-                assignment_id: assignment_id.clone(),
-                ..EstablishAssignmentInputRequest::default()
-            },
-            checkout.as_ref(),
-        );
-        persist(records);
+        if drain_one_assignment_input(records, &assignment_id, checkout.as_ref(), &mut persist) {
+            drained.push(assignment_id);
+        }
     }
     drained
+}
+
+/// Take one pending assignment from `intended` to a terminal outcome.
+///
+/// Returns false for a record that is absent or already settled — the only
+/// two states in which nothing is owed. The attempt count is written and
+/// persisted *before* the git work, because the count is only a bound if it
+/// reaches the disk before the thing it is counting.
+pub fn drain_one_assignment_input(
+    records: &mut AssignmentInputRecords,
+    assignment_id: &str,
+    checkout: Option<&SeatCheckout>,
+    persist: &mut impl FnMut(&AssignmentInputRecords),
+) -> bool {
+    let Some(record) = assignment_input(records, assignment_id).cloned() else {
+        return false;
+    };
+    if !record.is_pending() {
+        return false;
+    }
+    if record.attempts >= MAX_ESTABLISH_ATTEMPTS {
+        record_assignment_input(records, abandon(record));
+        persist(records);
+        return true;
+    }
+    record_assignment_input(records, start_attempt(record));
+    persist(records);
+    // The attempt files its own terminal record, carrying the count forward.
+    // Its refusal is the record; nothing here re-reads it, and nothing here
+    // tries again.
+    let _ = establish(
+        records,
+        &EstablishAssignmentInputRequest {
+            assignment_id: assignment_id.to_owned(),
+            ..EstablishAssignmentInputRequest::default()
+        },
+        checkout,
+    );
+    persist(records);
+    true
+}
+
+/// The record an attempt that took the app down twice settles as.
+fn abandon(record: AssignmentInputRecord) -> AssignmentInputRecord {
+    let mut abandoned = record;
+    abandoned.outcome = ASSIGNMENT_INPUT_ABANDONED.to_owned();
+    abandoned.message = Some(format!(
+        "{} attempts to establish this input were started on this computer and none finished, so \
+         it will not be tried again on its own",
+        abandoned.attempts
+    ));
+    abandoned.recorded_at = now_iso();
+    abandoned
+}
+
+/// The record that says an attempt has been started, count already raised.
+fn start_attempt(record: AssignmentInputRecord) -> AssignmentInputRecord {
+    let mut started = record;
+    started.outcome = ASSIGNMENT_INPUT_ESTABLISHING.to_owned();
+    started.attempts += 1;
+    started.message = None;
+    started.recorded_at = now_iso();
+    started
 }
 
 /// The inputs an attempt will run with, after the recorded attempt has filled
 /// in whatever the caller left out.
 struct ResolvedRequest {
     session_ref: String,
-    seat_label: String,
+    /// The seat's label, when the caller knows one.
+    ///
+    /// Optional because the two callers know different things: the desktop
+    /// resolves a tree *by* `<sessionRef>/<seatLabel>`, while the provider
+    /// resolves it from the session record it is about to open a turn against
+    /// and has no label to offer. It is descriptive either way — the tree
+    /// itself is always supplied by the caller.
+    seat_label: Option<String>,
     commit: String,
     branch: Option<String>,
 }
@@ -631,9 +671,6 @@ fn resolve_request(
     if session_ref.is_none() {
         missing.push("sessionRef");
     }
-    if seat_label.is_none() {
-        missing.push("seatLabel");
-    }
     if commit.is_none() {
         missing.push("commit");
     }
@@ -647,8 +684,7 @@ fn resolve_request(
             None,
         ));
     }
-    let (Some(session_ref), Some(seat_label), Some(commit)) = (session_ref, seat_label, commit)
-    else {
+    let (Some(session_ref), Some(commit)) = (session_ref, commit) else {
         // Unreachable: `missing` is empty exactly when all three are `Some`.
         return Err(refuse(
             EstablishAssignmentInputCode::InvalidInput,
@@ -838,7 +874,7 @@ fn attempt(
 ) -> Result<EstablishedAssignmentInput, EstablishAssignmentInputError> {
     let resolved = resolve_request(records, request)?;
     facts.session_ref = Some(resolved.session_ref.clone());
-    facts.seat_label = Some(resolved.seat_label.clone());
+    facts.seat_label.clone_from(&resolved.seat_label);
     facts.commit = Some(resolved.commit.clone());
     facts.branch.clone_from(&resolved.branch);
 
@@ -846,7 +882,11 @@ fn attempt(
         return Err(refuse(
             EstablishAssignmentInputCode::UnrecordedTree,
             "this host did not record cutting a worktree for that seat",
-            Some(format!("{}/{}", resolved.session_ref, resolved.seat_label)),
+            Some(format!(
+                "{}/{}",
+                resolved.session_ref,
+                resolved.seat_label.as_deref().unwrap_or("<unnamed seat>")
+            )),
         ));
     };
     let tree = checkout.path.clone();
@@ -1283,6 +1323,110 @@ fn save_document(path: &Path, document: &AssignmentInputDocument) -> Result<(), 
     write_restricted(&temporary, &payload)?;
     std::fs::rename(&temporary, path)
         .map_err(|error| format!("failed to replace the host workdir store: {error}"))
+}
+
+/// Take one assignment from its recorded intent to a terminal outcome,
+/// holding the store's lock only around the two writes.
+///
+/// The git work — which may include a fetch, and may take as long as a network
+/// takes — runs **outside** the lock. Holding an advisory lock on a file the
+/// desktop app writes on every preference change, for the length of a fetch,
+/// would stall a person's UI on somebody else's network.
+///
+/// What the lock still covers is what it has to: the started-attempt count
+/// reaches the disk before the git work begins, and the terminal record
+/// replaces it afterwards. A process that dies in between leaves
+/// `establishing` with the count already raised, which is exactly the state
+/// [`MAX_ESTABLISH_ATTEMPTS`] bounds — one replay, then
+/// [`ASSIGNMENT_INPUT_ABANDONED`].
+///
+/// Returns the record as it stands afterwards. A record that was already
+/// settled is returned unchanged and nothing runs, so two callers racing over
+/// one assignment cost one establishment.
+pub fn establish_recorded_assignment(
+    store: &AssignmentInputStore,
+    assignment_id: &str,
+    checkout: &SeatCheckout,
+) -> Result<AssignmentInputRecord, String> {
+    enum Step {
+        Settled(AssignmentInputRecord),
+        Started(AssignmentInputRecord),
+    }
+
+    let step = store.with_records(|records, persist| {
+        let record = assignment_input(records, assignment_id).cloned()?;
+        if !record.is_pending() {
+            return Some(Step::Settled(record));
+        }
+        if record.attempts >= MAX_ESTABLISH_ATTEMPTS {
+            let abandoned = abandon(record);
+            record_assignment_input(records, abandoned.clone());
+            persist(records);
+            return Some(Step::Settled(abandoned));
+        }
+        let started = start_attempt(record);
+        record_assignment_input(records, started.clone());
+        persist(records);
+        Some(Step::Started(started))
+    })?;
+    let started = match step {
+        None => return Err(format!("no assignment-input record for {assignment_id}")),
+        Some(Step::Settled(record)) => return Ok(record),
+        Some(Step::Started(started)) => started,
+    };
+
+    // Unlocked, against a scratch record set holding only this assignment:
+    // the inputs it replays are the ones just written, and nothing else in the
+    // store can be touched by a failure here.
+    let mut scratch = AssignmentInputRecords::new();
+    record_assignment_input(&mut scratch, started);
+    let _ = establish(
+        &mut scratch,
+        &EstablishAssignmentInputRequest {
+            assignment_id: assignment_id.to_owned(),
+            ..EstablishAssignmentInputRequest::default()
+        },
+        Some(checkout),
+    );
+    let Some(mut terminal) = scratch.get(assignment_id).cloned() else {
+        return Err(format!("the attempt for {assignment_id} filed no record"));
+    };
+
+    store.with_records(|records, _| {
+        // Whether a blocker was already published belongs to the assignment,
+        // not to this attempt, and another writer may have set it while the
+        // git work ran.
+        terminal.blocker_published =
+            assignment_input(records, assignment_id).is_some_and(|record| record.blocker_published);
+        record_assignment_input(records, terminal.clone());
+    })?;
+    Ok(terminal)
+}
+
+/// Claim the one blocker a failed establishment is allowed to publish.
+///
+/// Answers true exactly once per assignment: the flag is durable, so a restart
+/// between the claim and the publish costs the message rather than repeating
+/// it, and a lead is never told the same thing twice by a retry loop.
+/// [`requeue_assignment_input`] clears it, because a person asking again is a
+/// new question.
+pub fn claim_establishment_blocker(
+    store: &AssignmentInputStore,
+    assignment_id: &str,
+) -> Result<bool, String> {
+    store.with_records(|records, persist| {
+        let Some(record) = assignment_input(records, assignment_id).cloned() else {
+            return false;
+        };
+        if record.blocker_published {
+            return false;
+        }
+        let mut claimed = record;
+        claimed.blocker_published = true;
+        record_assignment_input(records, claimed);
+        persist(records);
+        true
+    })
 }
 
 /// Write `payload` to `path` through a temporary file, owner-readable only.

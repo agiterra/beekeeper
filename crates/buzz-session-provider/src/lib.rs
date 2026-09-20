@@ -2308,6 +2308,13 @@ impl Provider {
         };
         intent.last_reason_detail = None;
 
+        // Every canonical assignment in this channel's verified set that names
+        // a seat this provider runs, recorded as an intent before anybody
+        // wakes it (ledger 202). Nothing here moves a tree: the establishment
+        // itself runs in `prepare_assignment_input`, which holds the seat's
+        // own checkout. No surface is involved at any point.
+        self.queue_assignment_inputs_from_snapshot(&intent.scope, &snapshot);
+
         // The handover fence, ahead of the authority check and of anything
         // that would mint a command (§3). A wake is a turn this provider
         // sends on its own behalf, so it is admitted exactly where every
@@ -4685,6 +4692,23 @@ impl Provider {
                     self.state.record_refusal(command_id, now_secs())?;
                     self.enqueue_receipt(channel_id, command_id, &receipt)?;
                     return Ok(TurnDisposition::Answered(refusal.code.to_owned()));
+                }
+                verification_input::TurnInput::Deferred(reason) => {
+                    // The wake is not wrong, it is early. Nothing durable and
+                    // nothing published: this provider owes the seat's tree an
+                    // establishment, that work is recorded in the host store,
+                    // and the same `commandId` is decided when it reaches a
+                    // terminal outcome. Refusing here would consume a delivery
+                    // and cost a re-issued assignment for a tree that was
+                    // already moving (ledger 185, 202).
+                    tracing::info!(
+                        target: "csp::verification_input",
+                        %command_id,
+                        reason,
+                        code = "assignment_turn_deferred",
+                        "holding an assignment turn while its input is established"
+                    );
+                    return Ok(TurnDisposition::Undecided);
                 }
                 verification_input::TurnInput::Undecided(reason) => {
                     // Nothing durable, nothing published. The command keeps
@@ -7765,6 +7789,30 @@ impl Provider {
             &target.session_id,
             &recorded_cwd,
         );
+        // Preparation, before the fence and after the assignment is known to be
+        // canonical and bound to this seat: put the tree on the commit the
+        // assignment names, or say in git's own words why it is not there
+        // (ledger 202). The fence below still has the last word, and still
+        // measures the tree itself rather than believing this step.
+        if let Some(cwd) = resolved.present() {
+            match self
+                .prepare_assignment_input(
+                    &assignment_ref,
+                    base_sha.as_deref(),
+                    &scope.session_ref,
+                    cwd,
+                )
+                .await
+            {
+                AssignmentInputPreparation::Ready | AssignmentInputPreparation::Unmanaged => {}
+                AssignmentInputPreparation::Deferred(reason) => {
+                    return TurnInput::Deferred(reason);
+                }
+                AssignmentInputPreparation::Blocked(refusal) => {
+                    return TurnInput::Refused(refusal);
+                }
+            }
+        }
         let tree = match resolved.present() {
             Some(cwd) => match git_probe::probe_verification_input(cwd).await {
                 Ok(tree) => tree,
@@ -7809,6 +7857,321 @@ impl Provider {
             }
             Err(refusal) => TurnInput::Refused(refusal),
         }
+    }
+}
+
+/// How long a turn waits for its own input to be established before it is
+/// deferred rather than held.
+///
+/// Long enough for a fetch on an ordinary connection, short enough that a
+/// provider tick is not hostage to one. Past it the record still says
+/// `establishing`, the work carries on, and the same command is decided
+/// against whatever it settles as.
+const ASSIGNMENT_INPUT_ESTABLISH_BOUND: Duration = Duration::from_secs(120);
+
+/// What preparation had to say about one assignment turn.
+#[derive(Debug)]
+enum AssignmentInputPreparation {
+    /// The tree holds the commit the assignment names.
+    Ready,
+    /// Nothing for this step to do: no commit named, no host store to share,
+    /// or a checkout on no branch. The fence measures the tree as before.
+    Unmanaged,
+    /// An establishment is recorded and has not settled. Nothing published,
+    /// nothing consumed.
+    Deferred(&'static str),
+    /// The establishment reached a terminal outcome that is not the commit.
+    Blocked(verification_input::InputRefusal),
+}
+
+impl Provider {
+    /// Record an intent for every canonical assignment this provider's own
+    /// seats are bound to.
+    ///
+    /// The sighting comes from the provider's **verified** complete set — the
+    /// same snapshot the wake is judged against, folded under the session's
+    /// authority context — so an excluded, superseded or forged 44244 records
+    /// nothing. An assignment for a seat this provider does not run records
+    /// nothing either: the tree belongs to whoever holds the session.
+    fn queue_assignment_inputs_from_snapshot(
+        &mut self,
+        scope: &team_wake::WakeScope,
+        snapshot: &team_wake::VerifiedWakeSnapshot,
+    ) {
+        use buzz_core::coding_session_team_transaction as team;
+
+        let Some(store) = crate::assignment_inputs::host_store_from_pointer(&self.config.state_dir)
+        else {
+            return;
+        };
+        let context = team_wake::fold_context(scope, &snapshot.founder_pubkey, &snapshot.authority);
+        let Ok(fold) = team::fold_coding_session_team_transactions(&snapshot.team_events, &context)
+        else {
+            return;
+        };
+        let mut intents = Vec::new();
+        for event in &snapshot.team_events {
+            let event_id = event.id.to_hex();
+            if !fold.included_event_ids.iter().any(|id| id == &event_id) {
+                continue;
+            }
+            let Ok(payload) = team::validate_coding_session_team_transaction_envelope(event) else {
+                continue;
+            };
+            let team::CodingSessionTeamTransactionBody::Assignment(assignment) = payload.body
+            else {
+                continue;
+            };
+            if !team::role_requires_verification_input(&assignment.assignee_role) {
+                continue;
+            }
+            let Some(base_sha) = assignment.base_sha else {
+                continue;
+            };
+            let runs_here = self.state.sessions().any(|record| {
+                record.actor.as_deref() == Some(assignment.assignee_actor.as_str())
+                    && record.session_ref.as_deref() == Some(scope.session_ref.as_str())
+            });
+            if !runs_here {
+                continue;
+            }
+            intents.push(crate::assignment_inputs::AssignmentIntent {
+                assignment_id: event_id,
+                session_ref: scope.session_ref.clone(),
+                seat_label: None,
+                base_sha,
+                branch: None,
+            });
+        }
+        if intents.is_empty() {
+            return;
+        }
+        // The tree is deliberately not resolved here: recording the intent is
+        // a fact about the assignment, and the seat's checkout is resolved by
+        // the turn that is about to run against it. `None` would refuse the
+        // intent as off-host, so the checkout is carried as the seat's own
+        // recorded working directory when this provider holds one.
+        let checkouts: Vec<_> = intents
+            .iter()
+            .map(|intent| self.seat_checkout_for_assignment(&intent.session_ref))
+            .collect();
+        tokio::task::spawn_blocking(move || {
+            let outcome = store.with_records(|records, persist| {
+                for (intent, checkout) in intents.iter().zip(checkouts.iter()) {
+                    crate::assignment_inputs::queue_intent(records, intent, checkout.as_ref());
+                }
+                persist(records);
+            });
+            if let Err(error) = outcome {
+                tracing::warn!(
+                    target: "csp::verification_input",
+                    %error,
+                    "canonical assignment intents could not be recorded"
+                );
+            }
+        });
+    }
+
+    /// The working directory of the seat this provider runs for one umbrella,
+    /// with the branch it is on, or `None` when it runs none.
+    fn seat_checkout_for_assignment(
+        &self,
+        session_ref: &str,
+    ) -> Option<crate::assignment_inputs::SeatCheckout> {
+        let record = self
+            .state
+            .sessions()
+            .find(|record| record.session_ref.as_deref() == Some(session_ref))?;
+        let cwd = gate_cwd::resolve(
+            self.config.projects_file.as_deref(),
+            &record.session_id,
+            &record.cwd,
+        )
+        .present()?
+        .to_path_buf();
+        // The branch is filled in by the establishment itself, which reads it
+        // from the tree; an intent only has to name a tree that exists.
+        Some(crate::assignment_inputs::SeatCheckout {
+            path: cwd,
+            branch: String::new(),
+        })
+    }
+
+    /// Put this seat's tree on the commit its assignment names, or say why
+    /// not.
+    ///
+    /// Runs before the fence and only for a turn that has already been proven
+    /// to carry a canonical assignment bound to this actor, role and command
+    /// — so a raw, ungoverned kind-44244 never moves a tree. The work itself
+    /// is the shared durable queue
+    /// ([`crate::assignment_inputs`]): the intent is recorded in this
+    /// computer's `coding-session-workdirs.json` under the same lock the
+    /// desktop takes, the started-attempt count reaches the disk before git
+    /// runs, and a terminal outcome is never retried on its own.
+    ///
+    /// Bounded: if the attempt has not finished within
+    /// [`ASSIGNMENT_INPUT_ESTABLISH_BOUND`] the turn is *deferred* rather than
+    /// refused — nothing is published and nothing is consumed, the record
+    /// stays `establishing`, and the next delivery of the same command is
+    /// decided against whatever it settled as.
+    async fn prepare_assignment_input(
+        &mut self,
+        assignment_ref: &str,
+        base_sha: Option<&str>,
+        session_ref: &str,
+        cwd: &Path,
+    ) -> AssignmentInputPreparation {
+        use crate::assignment_inputs as inputs;
+
+        // No commit named is not this step's question: the fence answers it
+        // with `VERIFICATION_INPUT_UNNAMED`, which is the sentence that tells
+        // a lead to re-issue the assignment.
+        let Some(base_sha) = base_sha.map(str::trim).filter(|sha| !sha.is_empty()) else {
+            return AssignmentInputPreparation::Unmanaged;
+        };
+        let Some(store) = inputs::host_store_from_pointer(&self.config.state_dir) else {
+            return AssignmentInputPreparation::Unmanaged;
+        };
+        // The branch is read from the tree rather than assumed: only a branch
+        // the seat is already on, or one no branch holds, may be moved, and
+        // guessing a name here is how somebody else's work would get reset.
+        let Some(branch) = git_probe::probe(cwd).await.branch else {
+            tracing::info!(
+                target: "csp::verification_input",
+                %assignment_ref,
+                code = "assignment_input_unbranched",
+                "the seat's checkout is on no branch, so this computer establishes nothing for it"
+            );
+            return AssignmentInputPreparation::Unmanaged;
+        };
+        let checkout = inputs::SeatCheckout {
+            path: cwd.to_path_buf(),
+            branch,
+        };
+        let intent = inputs::AssignmentIntent {
+            assignment_id: assignment_ref.to_owned(),
+            session_ref: session_ref.to_owned(),
+            // This provider resolves the tree from its own session record, so
+            // it has no seat label to offer and says so rather than inventing
+            // one; the record is keyed by assignment id either way.
+            seat_label: None,
+            base_sha: base_sha.to_owned(),
+            branch: None,
+        };
+
+        let assignment_id = assignment_ref.to_owned();
+        let queued = {
+            let store = store.clone();
+            let checkout = checkout.clone();
+            let assignment_id = assignment_id.clone();
+            tokio::task::spawn_blocking(move || {
+                store.with_records(|records, persist| {
+                    inputs::queue_intent(records, &intent, Some(&checkout));
+                    persist(records);
+                    inputs::assignment_input(records, &assignment_id).cloned()
+                })
+            })
+            .await
+        };
+        let record = match queued {
+            Ok(Ok(Some(record))) => record,
+            Ok(Ok(None)) => return AssignmentInputPreparation::Unmanaged,
+            Ok(Err(error)) => {
+                tracing::warn!(
+                    target: "csp::verification_input",
+                    %error,
+                    "the host's assignment-input record could not be read; leaving the fence to \
+                     measure the tree"
+                );
+                return AssignmentInputPreparation::Unmanaged;
+            }
+            Err(error) => {
+                tracing::warn!(target: "csp::verification_input", %error, "recording the assignment input panicked");
+                return AssignmentInputPreparation::Unmanaged;
+            }
+        };
+        if record.is_established() && record.commit.as_deref() == Some(base_sha) {
+            return AssignmentInputPreparation::Ready;
+        }
+        if record.is_pending() {
+            let settled = {
+                let store = store.clone();
+                let assignment_id = assignment_id.clone();
+                let checkout = checkout.clone();
+                tokio::time::timeout(
+                    ASSIGNMENT_INPUT_ESTABLISH_BOUND,
+                    tokio::task::spawn_blocking(move || {
+                        inputs::establish_recorded_assignment(&store, &assignment_id, &checkout)
+                    }),
+                )
+                .await
+            };
+            match settled {
+                Ok(Ok(Ok(settled))) => {
+                    if settled.is_established() && settled.commit.as_deref() == Some(base_sha) {
+                        tracing::info!(
+                            target: "csp::verification_input",
+                            %assignment_ref,
+                            outcome = %settled.outcome,
+                            code = "assignment_input_established",
+                            "this computer established the assignment's input before the turn"
+                        );
+                        return AssignmentInputPreparation::Ready;
+                    }
+                    return self.block_on_establishment(&store, assignment_ref, &settled);
+                }
+                Ok(Ok(Err(error))) => {
+                    tracing::warn!(target: "csp::verification_input", %error, "the establishment could not be recorded");
+                    return AssignmentInputPreparation::Deferred("establishment_unrecorded");
+                }
+                Ok(Err(error)) => {
+                    tracing::warn!(target: "csp::verification_input", %error, "the establishment task did not finish");
+                    return AssignmentInputPreparation::Deferred("establishment_interrupted");
+                }
+                Err(_) => {
+                    // Still running, or waiting on the lock another writer
+                    // holds. The record says `establishing`, so nothing is
+                    // lost and nothing is repeated.
+                    return AssignmentInputPreparation::Deferred("establishment_in_flight");
+                }
+            }
+        }
+        self.block_on_establishment(&store, assignment_ref, &record)
+    }
+
+    /// Turn a settled-but-unestablished record into the one bounded blocker
+    /// this assignment is allowed to publish.
+    ///
+    /// Published through the ordinary turn-refused receipt, which is how every
+    /// other fence answer reaches the lead: it opens no model turn for the
+    /// worker, carries git's own words, and is already fenced against being
+    /// said twice under one command id. The *assignment* is fenced too, by
+    /// `blockerPublished` in the durable record, so a re-issued delivery does
+    /// not repeat it either.
+    fn block_on_establishment(
+        &self,
+        store: &crate::assignment_inputs::AssignmentInputStore,
+        assignment_ref: &str,
+        record: &crate::assignment_inputs::AssignmentInputRecord,
+    ) -> AssignmentInputPreparation {
+        match crate::assignment_inputs::claim_establishment_blocker(store, assignment_ref) {
+            Ok(true) => {}
+            Ok(false) => {
+                tracing::debug!(
+                    target: "csp::verification_input",
+                    %assignment_ref,
+                    "this assignment's establishment blocker was already published"
+                );
+            }
+            Err(error) => {
+                tracing::warn!(target: "csp::verification_input", %error, "the establishment blocker could not be claimed");
+            }
+        }
+        AssignmentInputPreparation::Blocked(verification_input::establishment_blocked(
+            assignment_ref,
+            &record.outcome,
+            record.message.as_deref(),
+        ))
     }
 
     /// Two facts, from the seat's own `cwd` as the provider's own record holds

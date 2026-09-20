@@ -494,3 +494,331 @@ async fn an_undecided_wake_stays_decidable_under_the_same_command_id() {
         "a durable refusal reaches the outbox this test just found empty for wake-1"
     );
 }
+
+// ------------------------------------------------- preparation (ledger 202)
+
+use crate::assignment_inputs::{
+    assignment_input, host_store_from_pointer, record_assignment_input, AssignmentInputRecord,
+    AssignmentIntent, SeatCheckout, ASSIGNMENT_INPUT_ABANDONED, ASSIGNMENT_INPUT_ESTABLISHED,
+    ASSIGNMENT_INPUT_ESTABLISHING, HOST_STORE_POINTER_VERSION, MAX_ESTABLISH_ATTEMPTS,
+};
+
+/// A desktop-shaped store file, plus the pointer that tells this provider
+/// where it is.
+fn host_store(state_dir: &Path, root: &Path) -> std::path::PathBuf {
+    std::fs::create_dir_all(state_dir).expect("state dir");
+    let store = root.join("coding-session-workdirs.json");
+    std::fs::write(
+        &store,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "version": 2,
+            "byProject": {},
+            "byChannel": {},
+            "mru": [],
+            "pending": {},
+            "worktrees": {},
+            "worktreeParents": {},
+            "prunes": [],
+            "assignmentInputs": {}
+        }))
+        .expect("serialize"),
+    )
+    .expect("write the store");
+    std::fs::write(
+        state_dir.join(crate::assignment_inputs::HOST_STORE_POINTER_FILE),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "version": HOST_STORE_POINTER_VERSION,
+            "path": store,
+        }))
+        .expect("serialize"),
+    )
+    .expect("write the pointer");
+    store
+}
+
+/// A repository on `main` with two commits, returned oldest first.
+fn repo_with_two_commits(cwd: &Path) -> (String, String) {
+    let first = repo_with_commit(cwd);
+    std::fs::write(cwd.join("second.txt"), "next\n").expect("write");
+    git(cwd, &["add", "second.txt"]);
+    git(cwd, &["commit", "-q", "--no-gpg-sign", "-m", "second"]);
+    let second = String::from_utf8_lossy(
+        &std::process::Command::new("git")
+            .arg("-C")
+            .arg(cwd)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .expect("git")
+            .stdout,
+    )
+    .trim()
+    .to_owned();
+    (first, second)
+}
+
+fn head_of(cwd: &Path) -> String {
+    String::from_utf8_lossy(
+        &std::process::Command::new("git")
+            .arg("-C")
+            .arg(cwd)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .expect("git")
+            .stdout,
+    )
+    .trim()
+    .to_owned()
+}
+
+fn records_of(store: &Path) -> serde_json::Value {
+    serde_json::from_slice::<serde_json::Value>(&std::fs::read(store).expect("read")).expect("json")
+        ["assignmentInputs"]
+        .clone()
+}
+
+/// The wake raced ahead of the checkout: the provider puts the tree on the
+/// assignment's commit itself, and the turn opens. A second delivery of the
+/// same wake finds the work done and starts no second attempt — released once.
+#[tokio::test]
+async fn a_wake_that_races_the_checkout_establishes_the_input_and_opens_once() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let state = dir.path().join("state");
+    let store_path = host_store(&state, dir.path());
+    let seat = dir.path().join("seat");
+    std::fs::create_dir_all(&seat).expect("seat");
+    let (first, second) = repo_with_two_commits(&seat);
+    git(&seat, &["checkout", "-q", "-B", "seat/verifier", &first]);
+    assert_eq!(head_of(&seat), first);
+
+    let mut provider = provider(&state, None);
+    let preparation = provider
+        .prepare_assignment_input(&operation_id(), Some(&second), "session-1", &seat)
+        .await;
+    assert!(
+        matches!(preparation, AssignmentInputPreparation::Ready),
+        "the input must be established before the turn: {preparation:?}"
+    );
+    assert_eq!(head_of(&seat), second, "git, not the return value");
+    assert_eq!(records_of(&store_path)[operation_id()]["attempts"], 1);
+
+    // The same wake again: nothing to do, and no second attempt.
+    let again = provider
+        .prepare_assignment_input(&operation_id(), Some(&second), "session-1", &seat)
+        .await;
+    assert!(matches!(again, AssignmentInputPreparation::Ready));
+    assert_eq!(
+        records_of(&store_path)[operation_id()]["attempts"],
+        1,
+        "a duplicate delivery costs one establishment, not two"
+    );
+    assert_eq!(
+        records_of(&store_path)[operation_id()]["outcome"],
+        ASSIGNMENT_INPUT_ESTABLISHED
+    );
+}
+
+/// A quit mid-checkout leaves `establishing` with the count already raised.
+/// The next wake finishes it; a second interruption is abandoned, and the turn
+/// is blocked in git's own words rather than opened on the wrong tree.
+#[tokio::test]
+async fn a_restart_mid_checkout_replays_once_and_then_blocks() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let state = dir.path().join("state");
+    let store_path = host_store(&state, dir.path());
+    let seat = dir.path().join("seat");
+    std::fs::create_dir_all(&seat).expect("seat");
+    let (first, second) = repo_with_two_commits(&seat);
+    git(&seat, &["checkout", "-q", "-B", "seat/verifier", &first]);
+
+    let store = host_store_from_pointer(&state).expect("pointer");
+    store
+        .with_records(|records, _| {
+            let mut interrupted = AssignmentInputRecord::intended(
+                &AssignmentIntent {
+                    assignment_id: operation_id(),
+                    session_ref: "session-1".to_owned(),
+                    seat_label: None,
+                    base_sha: second.clone(),
+                    branch: None,
+                },
+                Some(&SeatCheckout {
+                    path: seat.clone(),
+                    branch: "seat/verifier".to_owned(),
+                }),
+            );
+            interrupted.outcome = ASSIGNMENT_INPUT_ESTABLISHING.to_owned();
+            interrupted.attempts = 1;
+            record_assignment_input(records, interrupted);
+        })
+        .expect("seed the interrupted attempt");
+
+    let mut provider = provider(&state, None);
+    let finished = provider
+        .prepare_assignment_input(&operation_id(), Some(&second), "session-1", &seat)
+        .await;
+    assert!(matches!(finished, AssignmentInputPreparation::Ready));
+    assert_eq!(head_of(&seat), second);
+    assert_eq!(
+        records_of(&store_path)[operation_id()]["attempts"],
+        MAX_ESTABLISH_ATTEMPTS,
+        "the replay is the second started attempt, not a third"
+    );
+
+    // Now interrupt it again at the bound: the next pass abandons rather than
+    // replaying forever, and the turn is blocked.
+    git(&seat, &["checkout", "-q", "-B", "seat/verifier", &first]);
+    store
+        .with_records(|records, _| {
+            let mut again = assignment_input(records, &operation_id())
+                .cloned()
+                .expect("record");
+            again.outcome = ASSIGNMENT_INPUT_ESTABLISHING.to_owned();
+            again.attempts = MAX_ESTABLISH_ATTEMPTS;
+            record_assignment_input(records, again);
+        })
+        .expect("seed the second interruption");
+
+    let blocked = provider
+        .prepare_assignment_input(&operation_id(), Some(&second), "session-1", &seat)
+        .await;
+    let AssignmentInputPreparation::Blocked(refusal) = blocked else {
+        panic!("an abandoned establishment must not open the turn: {blocked:?}");
+    };
+    assert_eq!(
+        refusal.code,
+        crate::verification_input::VERIFICATION_INPUT_NOT_ESTABLISHED
+    );
+    assert!(
+        refusal.message.contains("none finished"),
+        "the blocker carries this computer's own words: {}",
+        refusal.message
+    );
+    assert_eq!(head_of(&seat), first, "nothing moved");
+    assert_eq!(
+        records_of(&store_path)[operation_id()]["outcome"],
+        ASSIGNMENT_INPUT_ABANDONED
+    );
+    assert_eq!(
+        records_of(&store_path)[operation_id()]["blockerPublished"],
+        serde_json::json!(true),
+        "the one bounded blocker is claimed durably"
+    );
+}
+
+/// A seat with uncommitted work keeps it, the turn is blocked, and the blocker
+/// is published exactly once however many times the wake is re-delivered.
+#[tokio::test]
+async fn a_dirty_seat_is_preserved_blocked_and_told_about_once() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let state = dir.path().join("state");
+    let store_path = host_store(&state, dir.path());
+    let seat = dir.path().join("seat");
+    std::fs::create_dir_all(&seat).expect("seat");
+    let (first, second) = repo_with_two_commits(&seat);
+    git(&seat, &["checkout", "-q", "-B", "seat/verifier", &first]);
+    std::fs::write(seat.join("wip.txt"), "work nobody else has\n").expect("write");
+
+    let mut provider = provider(&state, None);
+    let blocked = provider
+        .prepare_assignment_input(&operation_id(), Some(&second), "session-1", &seat)
+        .await;
+    assert!(
+        matches!(blocked, AssignmentInputPreparation::Blocked(_)),
+        "{blocked:?}"
+    );
+    assert_eq!(head_of(&seat), first);
+    assert_eq!(
+        std::fs::read_to_string(seat.join("wip.txt")).expect("read"),
+        "work nobody else has\n"
+    );
+    assert_eq!(
+        records_of(&store_path)[operation_id()]["outcome"],
+        "dirty_tree"
+    );
+    assert_eq!(
+        records_of(&store_path)[operation_id()]["blockerPublished"],
+        serde_json::json!(true)
+    );
+
+    // A second delivery blocks again — the seat must not start — but the
+    // blocker was already claimed, so nobody is told twice.
+    let again = provider
+        .prepare_assignment_input(&operation_id(), Some(&second), "session-1", &seat)
+        .await;
+    assert!(matches!(again, AssignmentInputPreparation::Blocked(_)));
+    assert_eq!(
+        records_of(&store_path)[operation_id()]["attempts"],
+        1,
+        "a terminal outcome is never retried on its own"
+    );
+}
+
+/// With no host store to share, preparation does nothing at all and the fence
+/// measures the tree exactly as it did before this existed.
+#[tokio::test]
+async fn without_a_host_store_pointer_preparation_is_a_no_op() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let state = dir.path().join("state");
+    std::fs::create_dir_all(&state).expect("state dir");
+    let seat = dir.path().join("seat");
+    std::fs::create_dir_all(&seat).expect("seat");
+    let (_first, second) = repo_with_two_commits(&seat);
+
+    let mut provider = provider(&state, None);
+    let preparation = provider
+        .prepare_assignment_input(&operation_id(), Some(&second), "session-1", &seat)
+        .await;
+    assert!(
+        matches!(preparation, AssignmentInputPreparation::Unmanaged),
+        "{preparation:?}"
+    );
+}
+
+/// An assignment that names no commit is not this step's question, and a
+/// checkout on no branch is not one it will guess at.
+#[tokio::test]
+async fn an_unnamed_commit_or_a_detached_checkout_prepares_nothing() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let state = dir.path().join("state");
+    let store_path = host_store(&state, dir.path());
+    let seat = dir.path().join("seat");
+    std::fs::create_dir_all(&seat).expect("seat");
+    let (first, second) = repo_with_two_commits(&seat);
+
+    let mut provider = provider(&state, None);
+    assert!(matches!(
+        provider
+            .prepare_assignment_input(&operation_id(), None, "session-1", &seat)
+            .await,
+        AssignmentInputPreparation::Unmanaged
+    ));
+
+    git(&seat, &["checkout", "-q", "--detach", &first]);
+    assert!(matches!(
+        provider
+            .prepare_assignment_input(&operation_id(), Some(&second), "session-1", &seat)
+            .await,
+        AssignmentInputPreparation::Unmanaged
+    ));
+    assert_eq!(head_of(&seat), first, "nothing moved");
+    assert_eq!(
+        records_of(&store_path)
+            .as_object()
+            .map(serde_json::Map::len),
+        Some(0),
+        "nothing was recorded about a question this step did not answer"
+    );
+}
+
+/// Git's words reach a signed message bounded and control-free.
+#[test]
+fn the_blocker_carries_gits_words_without_carrying_its_control_characters() {
+    let words = crate::verification_input::bounded_git_words(
+        "fatal:\n\tcould not read Username for 'https://example.invalid'\r\n",
+    );
+    assert_eq!(
+        words,
+        "fatal: could not read Username for 'https://example.invalid'"
+    );
+    assert!(crate::verification_input::bounded_git_words(&"x".repeat(4096)).len() <= 512);
+}
