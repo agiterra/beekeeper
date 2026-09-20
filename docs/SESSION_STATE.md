@@ -14544,6 +14544,17 @@ removed from here.
        clone already existed beside its worktree. Builder and Verifier, with
        no grant, reattached. The mission cannot complete until the lead is
        back. Lane 187.
+     - (n) **A crate-touching push cannot pass the pre-push floor before its
+       relay token expires.** Landing 184 alone: the floor ran fmt, clippy
+       and five crates' tests for ~20 min, then the pack upload answered
+       `HTTP 401` (git reuses the NIP-98 credential minted at the first
+       request; the relay's window is ±900 s). Docs-only pushes (2 s floor)
+       are unaffected. The batch 180–187 was therefore gated bare on its tip
+       (`/tmp/gate-tip.log`: fmt, clippy, workspace tests, tauri fmt/clippy/
+       tests, desktop-check, file-size, current-state all exit 0) and pushed
+       `--no-verify`. Open; lane owed: the helper or the hook must re-mint
+       for the upload (git `credential.useHttpPath`/per-request helper call,
+       or run the floor before connecting).
 
 179. **Andy's eight-seat run finished the game and never finished its own
      protocol; almost half its turns were disposition bookkeeping
