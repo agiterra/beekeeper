@@ -7913,7 +7913,7 @@ mod tests {
 
     /// Every coding-session kind, in kind order. Kept next to the tests that
     /// sweep it so the next kind lands in the sweep the moment it exists.
-    const CODING_SESSION_TEST_KINDS: [u32; 15] = [
+    const CODING_SESSION_TEST_KINDS: [u32; 16] = [
         KIND_CODING_SESSION_COMMAND,
         KIND_CODING_SESSION_LIFECYCLE_COMMAND,
         KIND_CODING_SESSION_PROVIDER_CATALOG,
@@ -7929,6 +7929,7 @@ mod tests {
         KIND_CODING_SESSION_POLICY,
         KIND_CODING_SESSION_OBSERVATION,
         KIND_CODING_SESSION_HANDOVER,
+        buzz_core::kind::KIND_PROJECT_WORK_RECORD,
     ];
 
     #[test]
@@ -7940,7 +7941,11 @@ mod tests {
                     || kind == KIND_CODING_SESSION_TEAM_TRANSACTION
                     || kind == KIND_CODING_SESSION_POLICY
                     || kind == KIND_CODING_SESSION_OBSERVATION
-                    || kind == KIND_CODING_SESSION_HANDOVER,
+                    || kind == KIND_CODING_SESSION_HANDOVER
+                    // NIP-PW work records (44249) are coding-session kinds:
+                    // their `h` tag is the gate, exactly as for 44244. The
+                    // `a` tag selects a project and never admits one.
+                    || kind == buzz_core::kind::KIND_PROJECT_WORK_RECORD,
                 "is_coding_session_kind disagrees at kind {kind}"
             );
         }

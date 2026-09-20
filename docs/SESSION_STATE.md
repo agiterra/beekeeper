@@ -16073,7 +16073,10 @@ removed from here.
        gate for a sibling kind would have been a claim about enforcement that
        no other kind here makes. A test in
        `handlers/project_work_tests.rs` states this division explicitly
-       rather than leaving it to be inferred. Refusals carry the contract's
+       rather than leaving it to be inferred. `ingest.rs`'s existing
+       whole-`u16` sweep `coding_session_predicate_covers_the_registered_session_kinds`
+       caught the new kind and was extended to include it — the sweep exists
+       for exactly that, and it failed until 44249 was named in it. Refusals carry the contract's
        stable code, so an unknown `pwk-type` is `record-type:` and an unknown
        version is `schema:`, never a bare "invalid".
      - **Compatibility, proven not asserted.**
