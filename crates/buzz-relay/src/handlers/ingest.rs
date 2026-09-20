@@ -494,6 +494,11 @@ fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static s
         // project's shared list. Same scope and the same per-project write
         // admission as Pulse (`project_scoped_write_admitted`).
         buzz_core::kind::KIND_PROJECT_TODO_OP => Ok(Scope::MessagesWrite),
+        // NIP-PW: a project work record is authored member content inside a
+        // session's channel. Same scope as its 4424x siblings; the `a` tag
+        // selects a project but does not gate, so there is no project-write
+        // admission here.
+        buzz_core::kind::KIND_PROJECT_WORK_RECORD => Ok(Scope::MessagesWrite),
         KIND_GIT_PATCH
         | KIND_GIT_PULL_REQUEST
         | KIND_GIT_PR_UPDATE
@@ -819,6 +824,9 @@ pub(crate) fn requires_h_channel_scope(kind: u32) -> bool {
             | KIND_CODING_SESSION_POLICY
             | KIND_CODING_SESSION_OBSERVATION
             | KIND_CODING_SESSION_HANDOVER
+            // NIP-PW: a work record's `h` is its membership gate, exactly as
+            // for 44244. Its `a` tag is a selector and never a substitute.
+            | buzz_core::kind::KIND_PROJECT_WORK_RECORD
     )
 }
 
@@ -844,6 +852,7 @@ pub(crate) fn is_coding_session_kind(kind: u32) -> bool {
             | KIND_CODING_SESSION_POLICY
             | KIND_CODING_SESSION_OBSERVATION
             | KIND_CODING_SESSION_HANDOVER
+            | buzz_core::kind::KIND_PROJECT_WORK_RECORD
     )
 }
 
@@ -4157,6 +4166,20 @@ async fn ingest_event_inner(
             &event,
         )
         .map_err(|error| IngestError::Rejected(format!("invalid: {error}")))?;
+    }
+
+    // NIP-PW, and the same division as the team transaction above: structure
+    // only. The schema, the six ordered two-field tags, the three closed
+    // record types, every bound and the tag-to-content parity are all
+    // answerable from this one event. Whether the signer held `may_lead` in
+    // this project and session is not, and is left to the consuming fold —
+    // this lane deliberately did not give 44249 a stronger relay gate than
+    // its sibling 44244 has. The refusal carries the contract's stable code,
+    // so an unknown `pwk-type` or schema version is named rather than lumped
+    // into a bare "invalid".
+    if kind_u32 == buzz_core::kind::KIND_PROJECT_WORK_RECORD {
+        super::project_work::validate_project_work_record(&event)
+            .map_err(|error| IngestError::Rejected(format!("invalid: {error}")))?;
     }
 
     // NIP-CSP: structure only. Schema, the four ordered tags, closed

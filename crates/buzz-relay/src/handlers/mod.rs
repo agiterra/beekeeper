@@ -32,6 +32,9 @@ pub mod pack_source;
 pub mod product_feedback;
 /// Admission for a project action delegated to a session's lead (ledger 186).
 pub mod project_action_grant;
+/// NIP-PW: ingest admission for project work records (kind 44249) —
+/// structure only, as for its 4424x siblings.
+pub mod project_work;
 #[allow(dead_code, missing_docs)]
 pub mod push_lease;
 /// NIP-43 relay membership admin command handler (kinds 9030–9032).
