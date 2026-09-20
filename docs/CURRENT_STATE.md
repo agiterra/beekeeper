@@ -16,9 +16,9 @@ unknown and both links are kept. "Ledger §" means a heading in
 
 | Surface | Observed | How |
 | --- | --- | --- |
-| `main` on the relay | `084880966`, checked 2026-09-20 18:10 EDT; 180–191 landed gated bare, 189–191 via `just push`. Read the remote, not a local ref | `GIT_TERMINAL_PROMPT=0 git ls-remote origin refs/heads/main` (`upstream` mirrors to GitHub) |
+| `main` on the relay | `084880966`, checked 2026-09-20 14:00 EDT; 180–191 landed gated bare, 189–191 via `just push`. Read the remote, not a local ref | `GIT_TERMINAL_PROMPT=0 git ls-remote origin refs/heads/main` (`upstream` mirrors to GitHub) |
 | Relay at hive.agiterra.org | `build_time` `2026-09-18T00:31:49Z`, image `71efd0da1` (C6), checked 2026-09-18; `software_commit` `unknown` (see Blockers, ledger §3a) | `curl -sH 'Accept: application/nostr+json' https://hive.agiterra.org/ \| jq .` |
-| Installed Mac dev bundle | `~/Applications/Beekeeper Dev.app`, running `60c2e7e55`; `bee 0.1.0 (60c2e7e5)`, installed 2026-09-20 12:55 EDT. Live: granted lead reconnects (187–188), kettle terminal (178(o)) | `scripts/app-from.sh <sha>`; `bee --version` |
+| Installed Mac dev bundle | `~/Applications/Beekeeper Dev.app`, running `084880966`; `bee 0.1.0 (08488096)`, installed 2026-09-20 14:02 EDT, signature verified. Live: granted lead reconnects (187–188), kettle terminal (178(o)) | `scripts/app-from.sh <sha>`; `bee --version` |
 | Windows | unavailable: Brian no longer has the Windows machine (2026-09-09). Native Windows agent setup and cross-account acceptance are deferred, not done | ledger § "September 9 checkpoint published; Windows testing deferred" |
 | Mobile | not independently checked for this map. Last recorded claim: the phone drops a deleted session only on its next channel refresh (Andy, 2026-09-11) | ledger § "Fixed 2026-09-11 — Discard deletes a never-started session" |
 
