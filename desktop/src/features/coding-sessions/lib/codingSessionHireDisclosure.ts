@@ -12,12 +12,17 @@ import type {
   CodingSessionHireOutcome,
   UseCodingSessionHireInput,
 } from "../hooks/useCodingSessionHire";
-import { publishCodingSessionCommand } from "./codingSessionCommand";
+import {
+  isCodingSessionHostAnswerTagUnsupportedRejection,
+  publishCodingSessionCommand,
+  type CodingSessionCommandTarget,
+} from "./codingSessionCommand";
 import {
   codingSessionHireRefusalNotice,
   type CodingSessionHireAnswer,
 } from "./codingSessionHireAnswer";
 import {
+  CODING_SESSION_HOST_ANSWER_DOWNGRADE_NOTE,
   markCodingSessionHostNoticeText,
   markCodingSessionHostTurnText,
 } from "./codingSessionHireHostNotice";
@@ -57,6 +62,20 @@ import { publishCodingSessionLaneMessage } from "./codingSessionLanePublish";
  * the provider's turn intake reads to record the answer in the transcript
  * without ever opening a turn from it
  * (`crates/buzz-session-provider/src/lib.rs`).
+ *
+ * **A desktop must work against a relay one release behind (ledger 192).**
+ * Lane 181 taught the relay's ingest allowlist to accept the
+ * `buzz-host-answer` tag alongside the desktop that writes it, but the
+ * production relay at hive.agiterra.org still ran the 2026-09-18 image as of
+ * 2026-09-20, whose allowlist refuses any tag it does not recognize —
+ * `invalid: unsupported coding-session command tag`. Against that relay
+ * *every* tagged turn published here was rejected at ingest, so the
+ * requesting seat never saw an answer at all and `bee sessions hire` waited
+ * out its full window and reported `unconfirmed` — exactly ledger 169's
+ * failure, reopened by 181's own fix. {@link publishCodingSessionHostAnswerTurn}
+ * retries once, untagged, on that one rejection and discloses the downgrade;
+ * it is owed only until hive reports a `software_commit` that contains 181,
+ * and should be removed then.
  */
 export async function discloseCodingSessionHire(
   disclosure: {
@@ -75,27 +94,85 @@ export async function discloseCodingSessionHire(
     disclosure.channelId,
     disclosure.requesterPubkey,
   );
-  if (target) {
+  const downgraded = target
+    ? await publishCodingSessionHostAnswerTurn(disclosure, target, deps)
+    : false;
+  const notice = downgraded
+    ? `${disclosure.notice} ${CODING_SESSION_HOST_ANSWER_DOWNGRADE_NOTE}`
+    : disclosure.notice;
+  await publishCodingSessionLaneMessage(
+    {
+      channelId: disclosure.channelId,
+      sessionRef: disclosure.sessionRef,
+      content: markCodingSessionHostNoticeText(notice),
+    },
+    { publisher: deps.publisher, signer: deps.signer },
+  ).catch(() => {});
+}
+
+/**
+ * Publish the requester-addressed turn, falling back to an untagged republish
+ * exactly once when — and only when — an older relay refuses the tag itself.
+ *
+ * Returns whether the fallback was the one that landed, so the caller can say
+ * so in the umbrella notice. Never throws: a turn this host cannot get
+ * published, tagged or not, is logged to the host's own console rather than
+ * blocking the umbrella notice that follows it — the same "never drop the
+ * refusal" rule that already governs every other failure on this path, and
+ * unchanged from before this fix for any rejection other than the one named
+ * above.
+ */
+async function publishCodingSessionHostAnswerTurn(
+  disclosure: { channelId: string; text: string },
+  target: CodingSessionCommandTarget,
+  deps: CodingSessionHireDeps,
+): Promise<boolean> {
+  const text = markCodingSessionHostTurnText(disclosure.text);
+  let taggedError: unknown;
+  try {
     await publishCodingSessionCommand(
       {
         channelId: disclosure.channelId,
         commandId: deps.newTurnCommandId(),
         target,
-        text: markCodingSessionHostTurnText(disclosure.text),
+        text,
         deliver: "boundary",
         hostAnswer: true,
       },
       { publisher: deps.publisher, signer: deps.signer },
-    ).catch(() => {});
+    );
+    return false;
+  } catch (error) {
+    taggedError = error;
   }
-  await publishCodingSessionLaneMessage(
-    {
-      channelId: disclosure.channelId,
-      sessionRef: disclosure.sessionRef,
-      content: markCodingSessionHostNoticeText(disclosure.notice),
-    },
-    { publisher: deps.publisher, signer: deps.signer },
-  ).catch(() => {});
+  if (!isCodingSessionHostAnswerTagUnsupportedRejection(taggedError)) {
+    console.error("coding-session host answer turn was refused", taggedError);
+    return false;
+  }
+  try {
+    await publishCodingSessionCommand(
+      {
+        channelId: disclosure.channelId,
+        // A fresh id and a fresh signature for the retry — never the
+        // rejected event resent. `hostAnswer` is omitted, not `false`: this
+        // relay's allowlist does not know the tag exists, so the event must
+        // carry none of it, exactly the shape an ordinary turn already has.
+        commandId: deps.newTurnCommandId(),
+        target,
+        text,
+        deliver: "boundary",
+      },
+      { publisher: deps.publisher, signer: deps.signer },
+    );
+    return true;
+  } catch (untaggedError) {
+    console.error(
+      "coding-session host answer turn was refused both tagged and untagged",
+      taggedError,
+      untaggedError,
+    );
+    return false;
+  }
 }
 
 export async function publishRefusal(

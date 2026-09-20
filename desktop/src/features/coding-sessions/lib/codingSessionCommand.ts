@@ -25,6 +25,37 @@ export const CODING_SESSION_COMMAND_TAG_VERSION = "csc1-1";
 export const CODING_SESSION_HOST_ANSWER_TAG_NAME = "buzz-host-answer";
 /** The one recognized host-answer tag value today. */
 export const CODING_SESSION_HOST_ANSWER_TAG_HIRE = "hire";
+
+/**
+ * Substring of the relay's ingest rejection when its allowlist predates this
+ * tag (ledger 192, 2026-09-20).
+ *
+ * Lane 181 taught `validate_coding_session_command_envelope`
+ * (`crates/buzz-relay/src/handlers/ingest.rs`) to accept exactly one
+ * `buzz-host-answer` tag with the value `hire`, but a relay built before that
+ * lane still ends its match arm `_ => return Err("unsupported coding-session
+ * command tag")`. Ingest wraps that into the publish rejection this client
+ * sees as `invalid: unsupported coding-session command tag`. Matched here by
+ * substring, not exact equality, because the `invalid: ` prefix belongs to
+ * ingest's own `IngestError::Rejected` formatting, not to this validator, and
+ * could gain more of its own without changing what this refusal means.
+ */
+export const CODING_SESSION_HOST_ANSWER_TAG_UNSUPPORTED_MESSAGE =
+  "unsupported coding-session command tag";
+
+/**
+ * True for exactly the rejection above — an older relay's allowlist, never
+ * any other reason a tagged host-answer turn could be refused (a bad
+ * signature, a membership gate, a network failure, a generic rate limit).
+ */
+export function isCodingSessionHostAnswerTagUnsupportedRejection(
+  error: unknown,
+): boolean {
+  return (
+    error instanceof Error &&
+    error.message.includes(CODING_SESSION_HOST_ANSWER_TAG_UNSUPPORTED_MESSAGE)
+  );
+}
 /** Maximum UTF-8 byte length for a command or target identifier. */
 export const MAX_CODING_SESSION_IDENTIFIER_BYTES = 256;
 /** Maximum UTF-8 byte length for a coding-session turn. */

@@ -15725,6 +15725,53 @@ removed from here.
        401 is gone in production, not just in the stamp's own unit and
        integration tests.
 
+192. **A live regression: every host hire-refusal was silently swallowed at
+     ingest against the production relay, reopening ledger 169
+     (2026-09-20, found by reading, `work/lane-192-host-answer-fallback`).**
+     Lane 181 made the desktop tag every host-authored hire-answer turn
+     `["buzz-host-answer","hire"]` and taught the relay's ingest allowlist
+     (`validate_coding_session_command_envelope`,
+     `crates/buzz-relay/src/handlers/ingest.rs:3141`) to accept exactly that
+     tag. But hive.agiterra.org was still running the 2026-09-18 image
+     (`71efd0da1`), whose copy of that function ends its match arm
+     `_ => return Err("unsupported coding-session command tag")`
+     (`ingest.rs:3195`) — it refuses any tag it does not recognize. So on the
+     installed desktop, every host hire refusal published against hive was
+     rejected at ingest (`invalid: unsupported coding-session command tag`),
+     the requesting lead's `bee sessions hire` never saw an answer, and it
+     waited out its 120s window and reported `unconfirmed` — exactly ledger
+     169's failure, reopened by 181's own fix. A desktop must work against a
+     relay one release behind.
+     - **Fix.** `publishCodingSessionHostAnswerTurn`
+       (`desktop/src/features/coding-sessions/lib/codingSessionHireDisclosure.ts:125`),
+       called from `discloseCodingSessionHire` (`:80`), publishes the tagged
+       turn first; on a rejection matching the substring above
+       (`isCodingSessionHostAnswerTagUnsupportedRejection`,
+       `codingSessionCommand.ts`, next to the new
+       `CODING_SESSION_HOST_ANSWER_TAG_UNSUPPORTED_MESSAGE` constant) it
+       rebuilds and republishes the same text once, with a fresh commandId
+       and signature and no `buzz-host-answer` tag. Any other rejection is
+       not retried and is logged with `console.error` rather than dropped;
+       the umbrella notice is published either way — the requester's turn
+       publish never blocks it. When the fallback is the one that lands, the
+       umbrella notice gets one more sentence,
+       `CODING_SESSION_HOST_ANSWER_DOWNGRADE_NOTE`
+       (`codingSessionHireHostNotice.ts`), disclosing that this relay does
+       not know the tag and the seat's provider will open a turn for the
+       answer instead of recording it silently.
+     - **Tests**, all in `codingSessionHireDisclosure.test.mjs`: tagged
+       accepted publishes once with no downgrade note (192a); the exact
+       older-relay rejection retries once, untagged, with a fresh commandId,
+       and the umbrella notice carries the downgrade sentence (192b); a
+       rejection for any other reason is not retried and is logged, the
+       notice still publishes (192c); when the untagged retry also fails,
+       both messages are logged, no downgrade is claimed, and the notice for
+       the refusal itself still publishes (192d). 10/10 green
+       (`node --import ./test-loader.mjs --experimental-strip-types --test
+       "src/features/coding-sessions/lib/codingSessionHireDisclosure.test.mjs"`).
+     - **Owed.** A relay deploy makes the fallback unnecessary; remove it
+       only after hive reports a `software_commit` that contains 181.
+
 ## 3a. Environment facts that cost real time (do not rediscover)
 
 - **pnpm 11's answer to a stale workspace state is to DELETE `node_modules`,
