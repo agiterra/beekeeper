@@ -63,6 +63,10 @@ anyhow = { workspace = true }
 # Process-group kill and pid liveness for host-executed action steps; the
 # same version and features `buzz-dev-mcp` pins for its shell runner.
 nix = { version = "0.31", default-features = false, features = ["signal", "process", "hostname"] }
+# `O_NOFOLLOW` for the host store lock, so the same lock protocol the desktop
+# uses (`desktop/src-tauri/src/coding_sessions/workdir_store_lock.rs`) is one
+# implementation rather than two that can drift.
+libc = "0.2"
 
 [dev-dependencies]
 axum = { workspace = true }

@@ -36,7 +36,10 @@ pub mod action_steps;
 pub mod actor_seats;
 mod agent_fence;
 pub mod agents_checkout;
+// The durable host-owned queue that puts a seat on its exact input (lane 185,
+// moved here by lane 202 so the party holding the turn gate owns the order).
 mod artifact_upload;
+pub mod assignment_inputs;
 pub mod attachments;
 pub mod authority;
 pub mod catalog;
