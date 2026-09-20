@@ -17,3 +17,10 @@ Ledger item 171 holds the findings; this file is the run.
 
 Also seen: hive answered 502 for about six seconds at 11:47:47Z and rate-gated
 the provider's burst of catch-up publishes after the relaunch; both recovered.
+
+## 2026-09-20 — Andy's 173–177 on this machine
+
+Installed `7b8f0a92d` 06:59 EDT. Finish repository setup on Pivot Test
+(Project settings → Packs) added the eight agents to the roster and left the
+code repository and folder as they were; hive's roster and ref state agree
+(ledger 171 addendum). The Actions tab is still blind to the published action.

@@ -14162,6 +14162,15 @@ removed from here.
      Andy authored the code under test and should review 169–171. The
      consolidated list for him is
      [findings for Andy](history/2026-09-19-findings-for-andy.md).
+     **2026-09-20 07:10 EDT, second-machine proof of Andy's 173–177** (Brian,
+     installed `7b8f0a92d`): Finish repository setup on Pivot Test, created
+     the day before these fixes, reported `roster: 8 agents added to the
+     project roster`, `code seed: already had commits`, folder already
+     recorded; hive agrees — `bee projects members pivot-test` lists two
+     owners and the eight agents as collaborators, and `ls-remote` of the
+     code repository answers `refs/heads/main e682191`, the initial commit
+     Brian pushed on 2026-09-19, so no seed was owed. The Actions tab still
+     shows nothing for the published `describe-checkout` (171(a), open).
 
 172. **Even after item 169's file-transport fix, a synced packs cache still
      seated a seat on the cache's seed commit, because `--branch main` names
