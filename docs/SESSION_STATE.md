@@ -16156,10 +16156,13 @@ removed from here.
        under the permutation property.
      - Also owed by A2 and **not** in this lane: lanes 199 (approval races)
        and 200 (the desktop's tag-refusal fallback).
-     - Gates on `work/lane-195-work-records`, bare after committing:
-       `cargo fmt --all --check`,
-       `cargo clippy --workspace --all-targets -- -D warnings`,
-       `cargo test -p buzz-core -p buzz-sdk`, `cargo test -p buzz-relay --lib`,
+     - Gates on `work/lane-195-work-records`, bare after committing, all
+       exit 0: `cargo fmt --all --check`;
+       `cargo clippy --workspace --all-targets -- -D warnings`;
+       `cargo test -p buzz-core -p buzz-sdk` (1222 / 327 / 4 / 1 passed);
+       `cargo test -p buzz-relay --lib` (1102 passed, 178 ignored);
+       `node conformance/project-work/check-fixtures.mjs`;
+       `just file-size-check`; `just current-state-check`; NUL check clean.
 
 196. **Role templates 1.1.0: each role is taught only the judgment and
      procedure it actually owes, now that the software does the rest
@@ -16262,6 +16265,17 @@ removed from here.
        over prose: necessary, not sufficient.** They prove the instruction is
        present and spelled the way a seat searches for it; they cannot prove
        a seat behaves differently.
+     - **Gating.** A `personas/templates/**` change is a cross-crate change:
+       seats resolve `@^1.0.0` and take the new minor, so it is gated by the
+       whole workspace *and* the Tauri crate, never by `buzz-persona` alone.
+       This lane learned it by breaking two tests that pinned a 1.0.0
+       sentence —
+       `session_setup_authoring_tests.rs`'s
+       `setup_first_turn_reaches_real_child_with_draft_cwd_brief_and_shipped_role`
+       and `project_team_setup_actor_tests.rs`'s
+       `real_shipped_bytes_and_identity_survive_interrupted_store_save_and_app_update`
+       — both of which now derive the expected paragraph from the template
+       version the code under test resolves.
      - **Owed live.** Everything behavioural. The claim that seats stop
        paying for orientation is the Wave 3 control run's to make or refute
        (`docs/UNIFIED_WORK_PLAN.md` § 4), measured by M against the kettle

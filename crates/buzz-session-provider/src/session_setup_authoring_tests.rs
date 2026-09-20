@@ -240,7 +240,29 @@ async fn setup_first_turn_reaches_real_child_with_draft_cwd_brief_and_shipped_ro
         .as_str()
         .expect("Claude system prompt");
     assert!(prompt.contains("seated with the role \"project-setup\""));
-    assert!(prompt.contains("Turn the project's intent into useful, versioned working procedures."));
+    // What must reach the child is the *shipped* role's own paragraph, so
+    // take it from the template version the thin pack's `@^1.0.0` include
+    // actually resolves to rather than pinning a sentence here; a new
+    // template version is then proved, not broken, by this test.
+    let setup_role = catalog
+        .resolve(
+            "project-setup",
+            &buzz_persona::template::TemplateRange::parse("project-setup", "^1.0.0")
+                .expect("caret range parses"),
+        )
+        .expect("project-setup@^1.0.0 resolves")
+        .template;
+    let paragraph = setup_role
+        .body
+        .trim()
+        .lines()
+        .next()
+        .expect("the role template's own paragraph");
+    assert!(
+        prompt.contains(paragraph),
+        "the first prompt does not carry project-setup@{}: {paragraph}",
+        setup_role.version
+    );
     assert!(prompt.contains(&format!(
         "setup-project — {}",
         bundle_dir

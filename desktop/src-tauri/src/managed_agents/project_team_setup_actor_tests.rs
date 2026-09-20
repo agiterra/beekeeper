@@ -57,10 +57,31 @@ fn real_shipped_bytes_and_identity_survive_interrupted_store_save_and_app_update
     )
     .expect("the copied setup pack composes");
     assert!(!composed.skills.is_empty());
-    assert!(composed
-        .persona
-        .prompt
-        .contains("Turn the project's intent into useful, versioned working procedures."));
+    // The copied pack must still carry the *shipped* role's own paragraph.
+    // Take it from the template version the copy's `@^1.0.0` include
+    // resolves to, not from a sentence pinned here: this test is about the
+    // bytes surviving a store save and an app update, not about which
+    // template version is current.
+    let setup_role = catalog
+        .resolve(
+            pack::ROLE,
+            &buzz_persona_pkg::template::TemplateRange::parse(pack::ROLE, "^1.0.0")
+                .expect("caret range parses"),
+        )
+        .expect("the shipped setup role resolves")
+        .template;
+    let paragraph = setup_role
+        .body
+        .trim()
+        .lines()
+        .next()
+        .expect("the role template's own paragraph");
+    assert!(
+        composed.persona.prompt.contains(paragraph),
+        "the copied pack lost {}@{}",
+        setup_role.name,
+        setup_role.version
+    );
     assert_eq!(first.pack_ref.repo, "app:shipped");
     let before = std::fs::read(root.path().join("setup-actor.enc")).expect("receipt");
     // No instance save happened. A new app build may ship different packs or no old resources.
