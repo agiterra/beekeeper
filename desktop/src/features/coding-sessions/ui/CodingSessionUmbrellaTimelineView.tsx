@@ -185,9 +185,9 @@ export function CodingSessionUmbrellaTimelineView({
     missionTransactions,
     resolveMissionActor,
   ]);
-  // Every signed assignment, as the verification-input trigger takes them. The
-  // trigger itself decides which are candidates — role and a named revision —
-  // so nothing here filters, and a session with no verifier costs no host call.
+  // Every signed assignment, as the host takes them. The *host* decides which
+  // need an input established — role and a named revision — so nothing here
+  // filters, and a session with no verifier costs no establishment.
   const assignmentInputTargets = React.useMemo(
     () =>
       (missionTransactions ?? [])
@@ -208,11 +208,12 @@ export function CodingSessionUmbrellaTimelineView({
     (actor: string) => actorNames?.(actor) ?? null,
     [actorNames],
   );
+  // Reported whatever the density: handing the host an observation is how it
+  // learns the work exists, and gating that on which panel is open is the
+  // defect this stopped being (ledger 185). Mission is still the only surface
+  // that *draws* a row.
   const verificationInputs = useCodingSessionAssignmentInputs({
     assignments: assignmentInputTargets,
-    // Mission is where an assignment row is drawn at all; Conversation renders
-    // none, so it triggers none.
-    enabled: missionDensity !== null,
     resolveSeatLabel,
     sessionRef: umbrella.sessionRef,
   });

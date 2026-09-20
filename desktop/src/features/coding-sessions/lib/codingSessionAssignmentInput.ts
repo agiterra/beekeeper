@@ -20,7 +20,18 @@ import { invokeTauri } from "@/shared/api/tauri";
  *    — a disclosure, never an establishment.
  * 3. **It is not ordered against the wake.** Establishing the input and waking
  *    the seat are independent; the seat may take a turn before the commit
- *    lands in its tree. Every sentence this file produces says so.
+ *    lands in its tree. What makes that safe is the provider's fence, which
+ *    refuses a verifier or runner turn whose tree does not hold the
+ *    assignment's commit — and needs a re-issued assignment afterwards. Every
+ *    sentence this file produces says so.
+ *
+ * **Who decides when.** Nothing on this side does, any more. The host owns a
+ * durable queue (`desktop/src-tauri/src/coding_sessions/assignment_establishment.rs`):
+ * a surface hands over the assignments it folded, the host records an intent,
+ * establishes it, and finishes anything a quit left pending at the next
+ * launch. Before that, a React effect in the mission panel held the whole
+ * sequence, so closing the panel decided whether the work happened at all
+ * (ledger 185).
  */
 
 /** The native command that moves a seat's tree onto its assignment's commit. */
@@ -30,6 +41,72 @@ export const CODING_SESSION_ESTABLISH_ASSIGNMENT_INPUT_COMMAND =
 /** The read-only companion: the last attempt this host recorded. */
 export const CODING_SESSION_ASSIGNMENT_INPUT_RECORD_COMMAND =
   "coding_session_assignment_input_record";
+
+/**
+ * Hand the host the assignments a surface folded, and read back what it did.
+ *
+ * The only call a surface makes on this path now: the host queues, establishes
+ * and records. It is safe to call again with the same assignments — a record
+ * that already names the same commit is dispositive, refusal included, so
+ * nothing loops.
+ */
+export const CODING_SESSION_OBSERVE_ASSIGNMENT_INPUTS_COMMAND =
+  "coding_session_observe_assignment_inputs";
+
+/** A person's click: put one settled assignment back in the host's queue. */
+export const CODING_SESSION_REQUEUE_ASSIGNMENT_INPUT_COMMAND =
+  "coding_session_requeue_assignment_input";
+
+/**
+ * The outcome words the host writes that are not an attempt's result.
+ *
+ * `intended` is queued and untried, `establishing` is an attempt the host
+ * started, and `establish_abandoned` is two started attempts that never
+ * finished — the bounded end of a replay, not a git refusal. They share the
+ * record's `outcome` field with the refusal codes on purpose: one field, one
+ * answer, and a build that has not heard of a word says so by name.
+ */
+export const CODING_SESSION_ASSIGNMENT_INPUT_QUEUED = "intended";
+export const CODING_SESSION_ASSIGNMENT_INPUT_ESTABLISHING = "establishing";
+export const CODING_SESSION_ASSIGNMENT_INPUT_ABANDONED = "establish_abandoned";
+
+/**
+ * Why the host has, or has not, a record for one observed assignment.
+ *
+ * Mirrors `CodingSessionAssignmentInputDisposition` in
+ * `assignment_establishment.rs`; an unrecognised word is read as
+ * `unreadable` rather than as any of the five, because guessing which one it
+ * meant is exactly how a surface comes to show "nothing to do" for work that
+ * was never done.
+ */
+export const CODING_SESSION_ASSIGNMENT_INPUT_DISPOSITIONS = [
+  "not_required",
+  "unnamed",
+  "invalid",
+  "off_host",
+  "recorded",
+] as const;
+
+export type CodingSessionAssignmentInputDisposition =
+  (typeof CODING_SESSION_ASSIGNMENT_INPUT_DISPOSITIONS)[number];
+
+/** One assignment as the host takes it: signed fields plus this host's seat. */
+export type ObservedCodingSessionAssignment = {
+  assignmentId: string;
+  sessionRef: string;
+  /** The seat label this host cut the tree under, when one resolves. */
+  seatLabel: string | null;
+  assigneeRole: string | null;
+  baseSha: string | null;
+  branch?: string | null;
+};
+
+/** The host's answer for one observed assignment. */
+export type CodingSessionAssignmentInputStatus = {
+  assignmentId: string;
+  disposition: CodingSessionAssignmentInputDisposition | "unreadable";
+  record: CodingSessionAssignmentInputRecord | null;
+};
 
 /**
  * The roles whose assignment carries a `baseSha` the seat must start from.
@@ -108,7 +185,22 @@ export type CodingSessionAssignmentInputRecord = {
   message?: string | null;
   /** Uncommitted-change count on a `dirty_tree` record, when the host has one. */
   changes: number | null;
-  recordedAt: number;
+  /**
+   * Attempts the host has *started* for this assignment.
+   *
+   * Counted before the git work, which is the only count that can bound a
+   * replay across a quit. Absent on a record written before the host counted.
+   */
+  attempts: number;
+  /**
+   * When the host wrote the record, ISO-8601 — the host's own string.
+   *
+   * A string, not a number: `recordedAt` is `now_iso()` on the Rust side and
+   * always has been, so the `number` this field used to be parsed into was
+   * `0` for every record ever written. Nothing rendered it, so nothing lied;
+   * it is a string now so that nothing can start to.
+   */
+  recordedAt: string | null;
 };
 
 /**
@@ -299,27 +391,136 @@ export async function readCodingSessionAssignmentInputRecord(input: {
       CODING_SESSION_ASSIGNMENT_INPUT_RECORD_COMMAND,
       { assignmentId: input.assignmentId },
     );
-    const shaped = asRecord(answer);
-    if (shaped === null || asString(shaped.outcome) === null) {
-      return { kind: "none" };
+    const record = decodeCodingSessionAssignmentInputRecord(
+      answer,
+      input.assignmentId,
+    );
+    return record === null ? { kind: "none" } : { kind: "record", record };
+  } catch (error) {
+    return { kind: "unavailable", message: messageOf(error) };
+  }
+}
+
+/**
+ * Read one durable record, or `null` when the value is not one.
+ *
+ * Exported because two commands answer with the same record shape and a
+ * second reader of it would drift — which is how a field like `attempts`
+ * comes to be read on one path and dropped on the other.
+ */
+export function decodeCodingSessionAssignmentInputRecord(
+  value: unknown,
+  fallbackAssignmentId: string,
+): CodingSessionAssignmentInputRecord | null {
+  const shaped = asRecord(value);
+  const outcome = shaped ? asString(shaped.outcome) : null;
+  if (shaped === null || outcome === null) return null;
+  return {
+    assignmentId: asString(shaped.assignmentId) ?? fallbackAssignmentId,
+    sessionRef: asString(shaped.sessionRef),
+    seatLabel: asString(shaped.seatLabel),
+    commit: asString(shaped.commit),
+    branch: asString(shaped.branch),
+    path: asString(shaped.path),
+    remote: asString(shaped.remote),
+    outcome,
+    message: asString(shaped.message),
+    changes: changeCount(shaped.changes),
+    attempts: changeCount(shaped.attempts) ?? 0,
+    recordedAt: asString(shaped.recordedAt),
+  };
+}
+
+function decodeStatus(
+  value: unknown,
+  fallbackAssignmentId: string,
+): CodingSessionAssignmentInputStatus {
+  const shaped = asRecord(value);
+  const word = shaped ? asString(shaped.disposition) : null;
+  const disposition = (
+    CODING_SESSION_ASSIGNMENT_INPUT_DISPOSITIONS as readonly string[]
+  ).includes(word ?? "")
+    ? (word as CodingSessionAssignmentInputDisposition)
+    : "unreadable";
+  return {
+    assignmentId: asString(shaped?.assignmentId) ?? fallbackAssignmentId,
+    disposition,
+    record:
+      shaped === undefined || shaped === null
+        ? null
+        : decodeCodingSessionAssignmentInputRecord(
+            shaped.record,
+            asString(shaped.assignmentId) ?? fallbackAssignmentId,
+          ),
+  };
+}
+
+/**
+ * Hand the host every assignment this surface folded; read back what it did.
+ *
+ * Never throws. A build without the command registered, or a host that went
+ * away, answers `unavailable` for the whole batch — which a row states rather
+ * than showing as "nothing to establish".
+ */
+export async function observeCodingSessionAssignmentInputs(
+  assignments: readonly ObservedCodingSessionAssignment[],
+): Promise<
+  | { kind: "statuses"; statuses: CodingSessionAssignmentInputStatus[] }
+  | { kind: "unavailable"; message: string }
+> {
+  try {
+    const answer = await invokeTauri<unknown>(
+      CODING_SESSION_OBSERVE_ASSIGNMENT_INPUTS_COMMAND,
+      {
+        assignments: assignments.map((assignment) => ({
+          assignmentId: assignment.assignmentId,
+          sessionRef: assignment.sessionRef,
+          seatLabel: assignment.seatLabel,
+          assigneeRole: assignment.assigneeRole,
+          baseSha: assignment.baseSha,
+          branch: assignment.branch ?? null,
+        })),
+      },
+    );
+    if (!Array.isArray(answer)) {
+      return {
+        kind: "unavailable",
+        message:
+          "This computer answered a verification-input shape this build does not recognise.",
+      };
     }
     return {
-      kind: "record",
-      record: {
-        assignmentId: asString(shaped.assignmentId) ?? input.assignmentId,
-        sessionRef: asString(shaped.sessionRef),
-        seatLabel: asString(shaped.seatLabel),
-        commit: asString(shaped.commit),
-        branch: asString(shaped.branch),
-        path: asString(shaped.path),
-        remote: asString(shaped.remote),
-        outcome: asString(shaped.outcome) ?? "",
-        message: asString(shaped.message),
-        changes: changeCount(shaped.changes),
-        recordedAt:
-          typeof shaped.recordedAt === "number" ? shaped.recordedAt : 0,
-      },
+      kind: "statuses",
+      statuses: answer.map((entry, index) =>
+        decodeStatus(entry, assignments[index]?.assignmentId ?? ""),
+      ),
     };
+  } catch (error) {
+    return { kind: "unavailable", message: messageOf(error) };
+  }
+}
+
+/**
+ * Ask the host to establish one assignment's input again.
+ *
+ * `none` when this host holds no record of that assignment — a truer answer
+ * than an empty success, and the one a row shows when a person clicks on
+ * somebody else's seat.
+ */
+export async function requeueCodingSessionAssignmentInput(input: {
+  assignmentId: string;
+}): Promise<
+  | { kind: "status"; status: CodingSessionAssignmentInputStatus }
+  | { kind: "none" }
+  | { kind: "unavailable"; message: string }
+> {
+  try {
+    const answer = await invokeTauri<unknown>(
+      CODING_SESSION_REQUEUE_ASSIGNMENT_INPUT_COMMAND,
+      { assignmentId: input.assignmentId },
+    );
+    if (asRecord(answer) === null) return { kind: "none" };
+    return { kind: "status", status: decodeStatus(answer, input.assignmentId) };
   } catch (error) {
     return { kind: "unavailable", message: messageOf(error) };
   }

@@ -546,6 +546,23 @@ pub fn run() {
                 }
             });
 
+            // Finish any verifier/runner input establishment a previous run
+            // left pending. Durable and host-owned on purpose: before this,
+            // checking out an assignment's commit in a seat's tree ran from a
+            // React effect in the mission panel, so closing the panel — or
+            // quitting — decided whether the work became executable
+            // (ledger 185). One shot, not a loop: the queue is only added to
+            // by an observation, and a terminal outcome is never retried.
+            let resume_inputs_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let _ = tauri::async_runtime::spawn_blocking(move || {
+                    coding_sessions::assignment_establishment::resume_assignment_inputs_at_launch(
+                        &resume_inputs_handle,
+                    );
+                })
+                .await;
+            });
+
             // Drain events the retention store flagged `pending_sync` (UI
             // create/edit, delete tombstones, launch reconcile) to the relay.
             // One loop is the sole publisher for persona, team, and managed-

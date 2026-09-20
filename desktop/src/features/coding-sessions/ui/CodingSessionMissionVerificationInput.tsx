@@ -38,10 +38,15 @@ export function CodingSessionMissionVerificationInput({
   // quiet as a live one, a recorded refusal as loud.
   const reading = state.kind === "recorded" ? state.inner.kind : state.kind;
   // An assignment that named no commit is a fact about the signed body, not a
-  // failure of this computer, so it is quiet — as is a move still in flight.
-  // Only a refusal, an unanswerable build, or a commit with no attempt behind
+  // failure of this computer, so it is quiet — as is a move still in flight,
+  // queued on this computer, or under way. Only a refusal, an abandoned
+  // establishment, an unanswerable build, or a commit with no attempt behind
   // it wears the amber.
-  const quiet = reading === "pending" || reading === "unnamed";
+  const quiet =
+    reading === "pending" ||
+    reading === "queued" ||
+    reading === "establishing" ||
+    reading === "unnamed";
   const settled = reading === "established";
   const Icon = settled ? CheckCircle2 : quiet ? CircleDashed : OctagonAlert;
   const tone =

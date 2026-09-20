@@ -188,6 +188,18 @@ pub struct CodingSessionAssignmentInputRecord {
     /// later reader has the number without re-running git.
     #[serde(default)]
     pub changes: Option<u32>,
+    /// How many attempts have been *started* for this assignment on this host.
+    ///
+    /// Counted before the git work rather than after it, which is the only
+    /// count that can bound a replay: a record left mid-attempt by a quit or a
+    /// crash is indistinguishable from one never tried, and without this the
+    /// durable queue would start the same attempt again at every launch. See
+    /// [`crate::coding_sessions::assignment_establishment`].
+    ///
+    /// `#[serde(default)]`, so a record written before the queue existed reads
+    /// as zero attempts — which is what it is: nobody was counting.
+    #[serde(default)]
+    pub attempts: u32,
     /// When the attempt finished, ISO-8601.
     pub recorded_at: String,
 }
@@ -314,7 +326,7 @@ fn refuse(
 }
 
 /// A lowercase hex object id of one of git's two widths.
-fn is_object_id(value: &str) -> bool {
+pub(super) fn is_object_id(value: &str) -> bool {
     (value.len() == 40 || value.len() == 64)
         && value
             .chars()
@@ -758,6 +770,12 @@ pub(crate) fn establish(
             None,
         ));
     }
+    // Read before the attempt: the count belongs to the assignment, not to
+    // this attempt's record, and `record_assignment_input` replaces the row
+    // rather than merging it.
+    let attempts = store
+        .assignment_input(&assignment_id)
+        .map_or(0, |record| record.attempts);
     let mut facts = AttemptFacts::default();
     let outcome = attempt(store, request, &mut facts);
     let (result_outcome, message) = match &outcome {
@@ -777,6 +795,7 @@ pub(crate) fn establish(
         outcome: result_outcome,
         message,
         changes,
+        attempts,
         recorded_at: now_iso(),
     });
     outcome

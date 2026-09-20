@@ -74,7 +74,7 @@ test("an established input names the commit, the tree, and is not ordered agains
   assert.match(markup, /in \/Users\/x\/Code\/repo-verifier-1/);
   assert.match(
     markup,
-    /This is not ordered against the lead&#x27;s wake, so a turn may have started first\./,
+    /not ordered against the seat&#x27;s wake: a turn that started first is refused rather than run on the wrong tree, and that refusal needs a re-issued assignment\./,
   );
 });
 
@@ -91,7 +91,7 @@ test("a tree that already held the commit says so, with the same ordering clause
     },
   });
   assert.match(markup, /Verification input already current: d698c77/);
-  assert.match(markup, /not ordered against the lead&#x27;s wake/);
+  assert.match(markup, /not ordered against the seat&#x27;s wake/);
 });
 
 test("every refusal code produces its own plain sentence and a Try again", () => {
@@ -209,4 +209,41 @@ test("a record for another commit is shown as no attempt for this one", () => {
 test("a row with nothing to say about an input renders no disclosure at all", () => {
   const markup = render(null);
   assert.equal(markup.includes("coding-session-verification-input"), false);
+});
+
+test("the host's own queue states each read as themselves", () => {
+  // The three words only the durable queue can produce. A row that showed any
+  // of them as nothing, or as established, would hide work that has not
+  // happened yet — which is the defect this queue exists to close.
+  const queued = render({ kind: "queued", commit: COMMIT });
+  assert.match(queued, /data-kind="queued"/);
+  assert.match(
+    queued,
+    /queued on this computer: it will be established whether or not this panel stays open/,
+  );
+
+  const establishing = render({
+    kind: "establishing",
+    commit: COMMIT,
+    attempts: 1,
+  });
+  assert.match(establishing, /started establishing verification input d698c77/);
+  assert.match(establishing, /attempt 1/);
+
+  const abandoned = render(
+    {
+      kind: "abandoned",
+      commit: COMMIT,
+      message: "2 attempts were started and none finished",
+    },
+    () => {},
+  );
+  assert.match(abandoned, /Verification input not established: 2 attempts/);
+  assert.match(abandoned, /seat is on whatever its tree already held/);
+  // Loud, and offering the one way back.
+  assert.match(abandoned, /text-amber-700/);
+  assert.match(
+    abandoned,
+    /data-testid="coding-session-verification-input-retry"/,
+  );
 });

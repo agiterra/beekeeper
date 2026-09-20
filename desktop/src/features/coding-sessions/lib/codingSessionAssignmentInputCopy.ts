@@ -1,7 +1,10 @@
-import type {
-  CodingSessionAssignmentInputEstablished,
-  CodingSessionAssignmentInputOutcome,
-  CodingSessionAssignmentInputRecord,
+import {
+  CODING_SESSION_ASSIGNMENT_INPUT_ABANDONED,
+  CODING_SESSION_ASSIGNMENT_INPUT_ESTABLISHING,
+  CODING_SESSION_ASSIGNMENT_INPUT_QUEUED,
+  type CodingSessionAssignmentInputEstablished,
+  type CodingSessionAssignmentInputOutcome,
+  type CodingSessionAssignmentInputRecord,
 } from "./codingSessionAssignmentInput";
 
 /**
@@ -14,14 +17,17 @@ import type {
  * surface is how those two came to look alike.
  *
  * Every established sentence carries the ordering disclosure. Establishing the
- * input is not sequenced against the lead's wake — the seat can be woken, and
- * can take a whole turn, before this host moves its tree — and a row that
- * stated the commit without saying so would be read as a guarantee it is not.
+ * input is not sequenced against the seat's wake — the wake is minted by the
+ * lead's CLI and no host step can run before it — and a row that stated the
+ * commit without saying so would be read as a guarantee it is not. What the
+ * disclosure now names is the consequence rather than only the gap: a turn
+ * that started first is refused by the provider's fence instead of running
+ * against the wrong tree, and that refusal costs a re-issued assignment.
  */
 
 /** The clause every established sentence ends with. */
 export const CODING_SESSION_ASSIGNMENT_INPUT_NOT_ORDERED =
-  "This is not ordered against the lead's wake, so a turn may have started first.";
+  "This is not ordered against the seat's wake: a turn that started first is refused rather than run on the wrong tree, and that refusal needs a re-issued assignment.";
 
 /**
  * The clause that marks an answer as this computer's durable record rather
@@ -70,6 +76,31 @@ export type CodingSessionAssignmentInputState =
     }
   /** Attempting now. */
   | { readonly kind: "pending"; readonly commit: string }
+  /**
+   * The host has a durable intent and has not started the git work yet.
+   *
+   * Its own arm rather than a flavour of `pending`, because the two differ in
+   * exactly the way that matters: `pending` is in flight in this window and
+   * dies with it, `queued` is on disk and outlives it.
+   */
+  | { readonly kind: "queued"; readonly commit: string }
+  /** The host started an attempt; this is what an interrupted one looks like. */
+  | {
+      readonly kind: "establishing";
+      readonly commit: string;
+      readonly attempts: number;
+    }
+  /**
+   * Two attempts were started and neither finished, so the host stopped.
+   *
+   * Loud, not quiet: nothing further will happen on its own, and the seat is
+   * on whatever its tree already held.
+   */
+  | {
+      readonly kind: "abandoned";
+      readonly commit: string;
+      readonly message: string;
+    }
   | {
       readonly kind: "established";
       readonly commit: string;
@@ -127,6 +158,21 @@ export function codingSessionAssignmentInputStateFromRecord(
   record: CodingSessionAssignmentInputRecord,
 ): CodingSessionAssignmentInputState {
   const commit = record.commit ?? "";
+  if (record.outcome === CODING_SESSION_ASSIGNMENT_INPUT_QUEUED) {
+    return { kind: "queued", commit };
+  }
+  if (record.outcome === CODING_SESSION_ASSIGNMENT_INPUT_ESTABLISHING) {
+    return { kind: "establishing", commit, attempts: record.attempts };
+  }
+  if (record.outcome === CODING_SESSION_ASSIGNMENT_INPUT_ABANDONED) {
+    return {
+      kind: "abandoned",
+      commit,
+      message:
+        record.message ??
+        "This computer started this establishment twice and finished neither.",
+    };
+  }
   if (
     record.outcome === "established" ||
     record.outcome === "already_current"
@@ -254,6 +300,30 @@ export function codingSessionAssignmentInputCopy(
       sentence: `Establishing verification input ${shortCommit(state.commit)} in the seat's tree…`,
       detail: null,
       retryable: false,
+    };
+  }
+  if (state.kind === "queued") {
+    return {
+      badge: "queued",
+      sentence: `Verification input ${shortCommit(state.commit)} is queued on this computer: it will be established whether or not this panel stays open.`,
+      detail: null,
+      retryable: false,
+    };
+  }
+  if (state.kind === "establishing") {
+    return {
+      badge: "establishing",
+      sentence: `This computer started establishing verification input ${shortCommit(state.commit)} in the seat's tree; attempt ${state.attempts}.`,
+      detail: null,
+      retryable: false,
+    };
+  }
+  if (state.kind === "abandoned") {
+    return {
+      badge: "abandoned",
+      sentence: `Verification input not established: ${state.message} The seat is on whatever its tree already held.`,
+      detail: null,
+      retryable: true,
     };
   }
   if (state.kind === "established") {

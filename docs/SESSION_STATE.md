@@ -14967,6 +14967,92 @@ removed from here.
      carries the field — the refusal names the flag rather than failing
      silently. The relay's own refusal path has no unit test (its handler
      needs Postgres); the decision it calls is covered in buzz-workflow.
+185. **Whether a panel was open decided whether a verifier's exact input was
+     ever established (2026-09-20, fixed the same day).** Establishing a
+     verifier's or runner's input — checking out the assignment's `baseSha` in
+     that seat's own worktree — ran from a React effect,
+     `desktop/src/features/coding-sessions/hooks/useCodingSessionAssignmentInputs.ts:46`
+     before this change: it ran only while the Mission surface was mounted
+     (`enabled: boolean` at `:187`, passed
+     `enabled: missionDensity !== null` from
+     `CodingSessionUmbrellaTimelineView.tsx:215`, both as of `origin/main`
+     `fb9591cf6`), stopped
+     when the panel closed, and kept its whole "already attempted" set in a
+     React ref, so a relaunch knew nothing. Item 131 disclosed the ordering gap
+     honestly and item 133 fenced the consequence in the provider, but neither
+     made the work *durable*: a refused turn consumes its delivery and needs a
+     re-issued assignment (133), so a tree that never moved costs a whole
+     assignment cycle. Evidence it cost one: 178(d) — assignment `0ceddfb2…`
+     named `fa927fd` in prose and `baseSha: e682191` in the field the fence
+     reads, the verifier's tree stayed on the README commit, and the seat
+     tested `fa927fd` from a scratch archive by hand
+     ([Astra's kettle audit](history/2026-09-20-astra-kettle-audit.md) § 4.C).
+     The fix moves "accept assignment → establish input → record result" into a
+     durable host-owned queue,
+     `desktop/src-tauri/src/coding_sessions/assignment_establishment.rs`:
+     - an observation records an **intent** in the existing host-local store
+       (`assignment_inputs` in `coding-session-workdirs.json`, no new file
+       format and no store-version bump — `queue_observed_assignments`,
+       `assignment_establishment.rs:169`). A record already naming the *same*
+       commit is dispositive, refusal included, so nothing loops; a record for
+       a different commit is no answer about this one and is replaced;
+     - the host drains the queue itself (`drain_pending_assignment_inputs`,
+       `:278`), reusing the existing checkout command's own
+       `assignment_input::establish` unchanged, and persisting **before** the
+       git work so the count survives a crash;
+     - `coding_session_resume_assignment_inputs` and
+       `resume_assignment_inputs_at_launch` (`:463`) finish at the next launch
+       whatever a quit interrupted — no arguments, no surface. Wired one-shot
+       at startup, `desktop/src-tauri/src/lib.rs:556`;
+     - a failed establishment is disclosed, not silent: git's own words are in
+       the record's `message`, and the Mission inspector states them
+       (`codingSessionAssignmentInputCopy.ts`, three new states — `queued`,
+       `establishing`, `abandoned`);
+     - the hook is now display plus one report
+       (`codingSessionAssignmentInputObservations` +
+       `codingSessionAssignmentInputStateFromStatus`); it checks out nothing,
+       and it reports **whatever the density**, because handing the host an
+       observation is how the host learns the work exists.
+     **The provider needs no new signal, and no new kind.** The fence reads
+     `HEAD` and the `git status --porcelain` count in the seat's own `cwd`
+     (`crates/buzz-session-provider/src/verification_input.rs:169,265`,
+     `git_probe::probe_verification_input`), never by being told, so a commit
+     this host has established is a fact the provider reads for itself; the
+     established commit already reaches the wire through the existing
+     observed-commit refresh (133). No provider file was touched.
+     **Retry discipline.** A terminal outcome is never retried automatically;
+     only a person's `coding_session_requeue_assignment_input` re-queues, and
+     it zeroes the count. An *interrupted* attempt replays once and is then
+     recorded `establish_abandoned` with the reason — because an attempt that
+     took the app down twice will take it down again.
+     Tests: twelve host cases against real repositories and real linked seat
+     worktrees (`assignment_establishment_tests.rs`) — queued-then-established
+     with the tree measured by git, a pending intent replayed by a later run
+     with the store round-tripped through JSON, a dirty-tree refusal recorded
+     and never retried (nothing discarded), one interruption finished, two
+     abandoned, requeue, off-host, unnamed, invalid, and the outcome words
+     pinned against serde. Thirteen hook cases
+     (`useCodingSessionAssignmentInputs.test.mjs`) pin that the only host calls
+     are report and requeue, that each disposition reads as exactly one row and
+     none as silence, and that a host which cannot answer is stated and asked
+     again rather than remembered as answered. `cargo test` on the Tauri crate:
+     3468 passed. Also fixed in passing: the record's `recordedAt` was decoded
+     as a number while the host has always written `now_iso()`, so every
+     decoded record carried `0`; nothing rendered it, so nothing lied, and it
+     is a string now so that nothing can start to.
+     **Owed, live.** Nothing here has run against a live seat. And the first
+     *sighting* of an assignment still comes from a surface: this host has no
+     relay subscription of its own for kind 44244 — every team transaction
+     arrives as an argument to `fold_coding_session_team_transactions` — and
+     that boundary is deliberate as well as unfinished, because an assignment
+     is only worth acting on after the governed fold has admitted it under the
+     session's authority context, and a poller decoding 44244 without that
+     context could move a seat's tree on an excluded or forged assignment. The
+     honest next step is establishment driven from the party that already holds
+     both the subscription and the authority context — the provider — with the
+     host queue as its durable record. `coding_session_establish_assignment_input`
+     stays registered as the single-assignment entry point; the hook no longer
+     calls it.
 
 ## 3a. Environment facts that cost real time (do not rediscover)
 

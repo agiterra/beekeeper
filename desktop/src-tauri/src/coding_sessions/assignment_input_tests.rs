@@ -780,6 +780,7 @@ fn records_are_bounded_and_the_oldest_attempt_is_evicted_first() {
             outcome: "unrecorded_tree".to_string(),
             message: None,
             changes: None,
+            attempts: 0,
             // Ordered by construction, so "oldest" is not a guess about clocks.
             recorded_at: format!("2026-09-15T00:00:{:02}Z", index % 60),
         });

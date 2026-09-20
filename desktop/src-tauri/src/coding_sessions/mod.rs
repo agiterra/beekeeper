@@ -12,6 +12,8 @@
 
 // NATIVE: establish the revision a seat was hired to work on, in its own tree.
 pub(crate) mod assignment_input;
+// The durable queue that owns *when* that happens, so no panel decides it.
+pub(crate) mod assignment_establishment;
 pub(crate) mod naming;
 // The seat's skills live outside every checkout, so removing them is its own
 // job, beside the tree's.
