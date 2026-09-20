@@ -68,8 +68,10 @@ bee dms list
 # Workflows
 bee workflows list --channel <uuid>
 bee workflows trigger --workflow <uuid>
-bee workflows approve --token <uuid>
-bee workflows approve --token <uuid> --approved false --note "needs revision"
+bee workflows runs --workflow <uuid>          # relay-recorded run state, not a Nostr query
+bee workflows run-status --run <uuid>         # one run's status + host steps + approvals, by run id alone
+bee workflows approve --token <approval-ref>  # approval-ref is 64-hex (a kind:46010 `d` tag), never a UUID
+bee workflows approve --token <approval-ref> --approved false --note "needs revision"
 
 # Forum
 bee messages vote --event <event-id> --direction up

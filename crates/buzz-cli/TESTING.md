@@ -407,16 +407,30 @@ steps:
 # been indexed yet, the trigger handler won't find it.
 bee workflows trigger --workflow "$WF_ID" | jq .
 
-# workflows runs
+# workflows runs — reads GET /workflows/{id}/runs (a relay-owned DB read,
+# never a Nostr query; ledger 178(k) fixed the CLI querying dead kinds
+# 46001-46003 that nothing ever publishes). [] here means the trigger above
+# has not produced a run row yet — it is not a blanket "empty is normal".
 bee workflows runs --workflow "$WF_ID" | jq .
-# Expected: [] — relay stores runs in DB, not as Nostr events; empty is normal
 
-# workflows approve — requires a workflow run waiting for approval
+# workflows run-status — one run's full state by run id alone (status, host
+# steps, approvals), once you have a run id from `runs` above or from a
+# kind:46010/46013/46023 event:
+bee workflows run-status --run "<run-id from workflows runs>" | jq .
+
+# workflows approve — requires a workflow run waiting for approval.
+# --token is the 64-hex approval ref (the kind:46010 request's `d` tag, or
+# `approval_ref` from GET /workflows/{id}/runs/{run_id}/approvals) — never a
+# UUID; a UUID is now refused locally as a usage error (ledger 171(c)).
 # This is hard to test ad-hoc without a workflow that has an approval gate.
 # Test the validation instead:
 bee workflows approve --token "00000000-0000-0000-0000-000000000000" 2>&1 || true
-# Should fail with relay error (token not found), not a validation error
-# To test the deny path: bee workflows approve --token <UUID> --approved false
+# Expected: local usage error ("must be a 64-character hex string"), not a
+# relay round trip — a UUID can never be a stored approval ref.
+bee workflows approve --token "$(printf 'a%.0s' {1..64})" 2>&1 || true
+# Expected: relay error (approval not found) — the ref is well-formed but
+# does not name a pending approval.
+# To test the deny path: bee workflows approve --token <approval-ref> --approved false
 
 # workflows delete
 bee workflows delete --workflow "$WF_ID" | jq .
@@ -1828,9 +1842,9 @@ bee channels delete --channel "$FORUM_ID" | jq .
 | 37 | `workflows update` | ☐ | |
 | 38 | `workflows delete` | ☐ | |
 | 39 | `workflows trigger` | ☐ | |
-| 40 | `workflows runs` | ☐ | |
+| 40 | `workflows runs` | ☐ | Reads `GET /workflows/{id}/runs` (relay-owned DB rows), never kinds 46001-46003 (nothing publishes those; ledger 178(k)); each row's `status` is the run's real lifecycle state |
 | 41 | `workflows get` | ☐ | |
-| 42 | `workflows approve` | ☐ | Validation only (needs approval gate); bare = approve, `--approved false` = deny |
+| 42 | `workflows approve` | ☐ | `--token` is the 64-hex approval ref, never a UUID (ledger 171(c)); a UUID is refused locally; bare = approve, `--approved false` = deny |
 | 43 | `feed get` | ☐ | |
 | 44 | `social publish` | ☐ | |
 | 45 | `social set-contacts` | ☐ | |
@@ -1869,6 +1883,7 @@ bee channels delete --channel "$FORUM_ID" | jq .
 | 76 | `sessions grant-seat` / `revoke-seat` | ☐ | Seat granted by founder / steering operator / lead; a lead cannot grant `lead`; second run is `already_granted` with no write; `revoke-seat` refuses a pubkey with no seat and one holding a different role, and the roster loses the seat after it; `grant --role <slug>` is a parse error naming the two tiers |
 | 77 | `sessions policy set/get/clear` | ☐ | `set` refuses a signer who is neither the founder nor the holder of an accepted operator grant, **before signing**; a sub-object nobody set is omitted, never `{}`; a closed-vocabulary miss carries serde's own sentence, listing the four legal words (it does not name the field — see the ledger residual); `set` with no policy flag names `policy clear`; `get` prints `null` (not `{}`) when nobody set one and lists every record it refused with author, time, code and reason; a stranger's later record never wins; all three print the enforcement disclosure |
 | 78 | pre-publish fold check on every 44244 verb | ☐ | A causal reference that is absent, excluded or present-but-not-included is refused before signing, naming the id and the rule; a `--supersedes` that changes the subject, the author or the type is refused; a record that points at nothing makes zero relay reads; `complete` adopts your own canonical `mission.blocked` and the answer carries `supersedes` (present and `null` when it corrected nothing) plus a `correctedTerminal` sentence |
+| 79 | `workflows run-status` | ☐ | `GET /workflow-runs/{run_id}` resolves a run by run id alone (no workflow id needed); response carries the run's status, `workflow_name`, `trigger_event_id`/`trigger_author`, every host step (exit code, `headSha`, `dirty`, `checkout`, duration, result event id) and every approval; 404 on an unknown run id, 403 when the caller's key cannot read the workflow's channel |
 
 ---
 

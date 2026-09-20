@@ -1271,7 +1271,9 @@ pub enum WorkflowsCmd {
         #[arg(long)]
         checkout: Option<String>,
     },
-    /// List runs for a workflow
+    /// List runs for a workflow — the run's own relay-recorded state
+    /// (`pending`/`running`/`waiting_approval`/`waiting_host`/`completed`/
+    /// `failed`/`cancelled`), never a Nostr event query
     Runs {
         /// Workflow UUID
         #[arg(long)]
@@ -1280,12 +1282,22 @@ pub enum WorkflowsCmd {
         #[arg(long)]
         limit: Option<u32>,
     },
+    /// One run's full state by run id alone: status, host steps (exit code,
+    /// headSha, dirty, duration, result event id) and approvals. Use this
+    /// when you have a run id from a kind:46010/46013/46023 event but do not
+    /// already know which workflow it belongs to
+    RunStatus {
+        /// Run UUID
+        #[arg(long)]
+        run: String,
+    },
     /// Approve or deny a workflow step
     #[command(
-        after_help = "Examples:\n  bee workflows approve --token <UUID>\n  bee workflows approve --token <UUID> --approved false --note \"needs revision\""
+        after_help = "Examples:\n  bee workflows approve --token <approval-ref>\n  bee workflows approve --token <approval-ref> --approved false --note \"needs revision\"\n\n--token is the 64-hex approval ref named in a kind:46010 request's `d` tag or\nGET /workflows/{workflow_id}/runs/{run_id}/approvals — never a UUID; the relay\nnever discloses the raw token it hashed to produce that ref."
     )]
     Approve {
-        /// The approval token UUID (from the approval request)
+        /// The 64-hex approval ref (the kind:46010 request's `d` tag, or
+        /// `approval_ref` from the approvals read) — not a UUID
         #[arg(long)]
         token: String,
         /// Approve (true) or deny (false) the step
@@ -6066,7 +6078,17 @@ mod tests {
         );
         assert_eq!(
             names(&cmd, "workflows"),
-            vec!["approve", "create", "delete", "get", "list", "runs", "trigger", "update"]
+            vec![
+                "approve",
+                "create",
+                "delete",
+                "get",
+                "list",
+                "run-status",
+                "runs",
+                "trigger",
+                "update"
+            ]
         );
         assert_eq!(names(&cmd, "feed"), vec!["get"]);
         assert_eq!(
@@ -6301,7 +6323,7 @@ mod tests {
             ("terminals", 6),
             ("upload", 1),
             ("users", 5),
-            ("workflows", 8),
+            ("workflows", 9),
         ];
 
         let cmd = Cli::command();

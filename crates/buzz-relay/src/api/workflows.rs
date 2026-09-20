@@ -133,6 +133,11 @@ pub async fn workflow_runs(
     let path = format!("/workflows/{workflow_id}/runs");
     let tenant =
         authorize_workflow_read(&state, &headers, &path, raw_query.as_deref(), workflow_id).await?;
+    let workflow = state
+        .db
+        .get_workflow(tenant.community(), workflow_id)
+        .await
+        .map_err(|error| internal_error(&format!("get workflow for run read: {error}")))?;
     let mut rows = state
         .db
         .list_workflow_runs_page(
@@ -159,9 +164,129 @@ pub async fn workflow_runs(
     };
 
     Ok(Json(serde_json::json!({
-        "runs": rows.iter().map(run_json).collect::<Vec<_>>(),
+        "runs": rows
+            .iter()
+            .map(|run| run_json(run, &workflow.name))
+            .collect::<Vec<_>>(),
         "next": next,
     })))
+}
+
+/// Authorize a read keyed by `run_id` alone: resolve the run's owning
+/// workflow, then apply the same channel-accessibility check
+/// [`authorize_workflow_read`] applies when the caller already knows the
+/// workflow id. Returns the tenant, the run and its workflow so the caller
+/// does not have to look either up again.
+async fn authorize_run_read(
+    state: &Arc<AppState>,
+    headers: &HeaderMap,
+    path: &str,
+    run_id: Uuid,
+) -> Result<
+    (
+        TenantContext,
+        buzz_db::workflow::WorkflowRunRecord,
+        buzz_db::workflow::WorkflowRecord,
+    ),
+    (StatusCode, Json<Value>),
+> {
+    let raw_host = headers
+        .get(axum::http::header::HOST)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("");
+    let tenant = crate::tenant::bind_community(&state.db, raw_host)
+        .await
+        .map_err(|_| {
+            api_error(
+                StatusCode::NOT_FOUND,
+                "relay: no community is configured for this host",
+            )
+        })?;
+
+    let url = bridge::nip98_expected_url(&state.config.relay_url, &tenant, path);
+    let bridge::VerifiedBridgeAuth {
+        pubkey,
+        event_id_bytes,
+        signed_created_at,
+    } = bridge::verify_bridge_auth(headers, "GET", &url, None, state.config.require_auth_token)?;
+    bridge::enforce_http_admission(state, &tenant, &pubkey).await?;
+    bridge::check_nip98_replay(state, &tenant, event_id_bytes).await?;
+
+    let pubkey_bytes = pubkey.to_bytes().to_vec();
+    let auth_tag = super::relay_members::extract_auth_tag_header(headers);
+    super::relay_members::enforce_relay_membership(
+        state,
+        tenant.community(),
+        &pubkey_bytes,
+        auth_tag,
+        signed_created_at,
+    )
+    .await?;
+
+    let run = state
+        .db
+        .get_workflow_run(tenant.community(), run_id)
+        .await
+        .map_err(|error| match error {
+            buzz_db::error::DbError::NotFound(_) => {
+                api_error(StatusCode::NOT_FOUND, "workflow run not found")
+            }
+            other => internal_error(&format!("get workflow run for run-status read: {other}")),
+        })?;
+    let workflow = state
+        .db
+        .get_workflow(tenant.community(), run.workflow_id)
+        .await
+        .map_err(|error| internal_error(&format!("get workflow for run-status read: {error}")))?;
+    let channel_id = workflow
+        .channel_id
+        .ok_or_else(|| api_error(StatusCode::FORBIDDEN, "workflow is not channel-scoped"))?;
+    let accessible = state
+        .get_accessible_channel_ids_cached(tenant.community(), &pubkey_bytes)
+        .await
+        .map_err(|error| internal_error(&format!("workflow channel access lookup: {error}")))?;
+    if !accessible.contains(&channel_id) {
+        return Err(api_error(
+            StatusCode::FORBIDDEN,
+            "workflow is not accessible",
+        ));
+    }
+
+    Ok((tenant, run, workflow))
+}
+
+/// `GET /workflow-runs/{run_id}` — one run's full state keyed by run id alone
+/// (the caller does not have to already know the workflow id): the run row,
+/// its host steps and its approvals, in one authorized read.
+///
+/// Exists because every other run read is nested under
+/// `/workflows/{workflow_id}/...`, and a run id surfaces on its own — in a
+/// kind:46010 approval request's content, a kind:46013 host-step request's
+/// `d` tag, a kind:46023 host result — long before a caller has occasion to
+/// look up which workflow it belongs to.
+pub async fn run_status(
+    State(state): State<Arc<AppState>>,
+    Path(run_id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let path = format!("/workflow-runs/{run_id}");
+    let (tenant, run, workflow) = authorize_run_read(&state, &headers, &path, run_id).await?;
+
+    let host_steps = state
+        .db
+        .list_run_host_steps(tenant.community(), run_id)
+        .await
+        .map_err(|error| internal_error(&format!("list run host steps: {error}")))?;
+    let approvals = state
+        .db
+        .get_run_approvals(tenant.community(), workflow.id, run_id)
+        .await
+        .map_err(|error| internal_error(&format!("list run approvals: {error}")))?;
+
+    let mut run_wire = run_json(&run, &workflow.name);
+    run_wire["host_steps"] = Value::Array(host_steps.iter().map(host_step_json).collect());
+    run_wire["approvals"] = Value::Array(approvals.iter().map(approval_json).collect());
+    Ok(Json(run_wire))
 }
 
 /// `GET /workflows/{workflow_id}/runs/{run_id}/approvals` — approvals for a run.
@@ -279,13 +404,25 @@ pub async fn run_host_steps(
     })))
 }
 
-fn run_json(run: &buzz_db::workflow::WorkflowRunRecord) -> Value {
+/// `name` is the owning workflow's current name — not stored on the run row
+/// itself, so every call site passes it in from its own `get_workflow` read
+/// rather than this function re-deriving it.
+fn run_json(run: &buzz_db::workflow::WorkflowRunRecord, workflow_name: &str) -> Value {
+    let trigger_author = run
+        .trigger_context
+        .as_ref()
+        .and_then(|context| context.get("author"))
+        .and_then(Value::as_str)
+        .filter(|author| !author.is_empty());
     serde_json::json!({
         "id": run.id,
         "workflow_id": run.workflow_id,
+        "workflow_name": workflow_name,
         "status": run.status,
         "current_step": run.current_step,
         "execution_trace": run.execution_trace,
+        "trigger_event_id": run.trigger_event_id.as_ref().map(hex::encode),
+        "trigger_author": trigger_author,
         "started_at": run.started_at.map(|value| value.timestamp()),
         "completed_at": run.completed_at.map(|value| value.timestamp()),
         "error_code": run.error_code,
@@ -360,6 +497,16 @@ fn host_step_json(step: &buzz_db::workflow::HostStepRecord) -> Value {
             .and_then(|result| result.get("routed"))
             .and_then(|routed| routed.get("hiredRole"))
             .and_then(Value::as_str),
+        // How the tree this step ran in was established (lane 184,
+        // ledger 178(g)/(l)): `mode` names a detached-worktree commit or
+        // "working directory as found"; `sha`/`headShaBefore`/`dirtyBefore`
+        // are present exactly when the host could establish them. `null`
+        // on a result recorded before lane 184.
+        "checkout": step
+            .result
+            .as_ref()
+            .and_then(|result| result.get("checkout"))
+            .cloned(),
         "exited_at": step.exited_at,
         "created_at": step.created_at,
     })
@@ -449,5 +596,90 @@ mod tests {
         );
         assert_eq!(wire["step_id"], "build");
         assert_eq!(wire["step_index"], 1);
+        assert!(
+            wire["checkout"].is_null(),
+            "no checkout sub-object on this result"
+        );
+    }
+
+    #[test]
+    fn host_step_wire_surfaces_the_checkout_sub_object() {
+        // Lane 184 / ledger 178(g)/(l): a result recorded after that fix
+        // carries `checkout` (mode, and sha/headShaBefore/dirtyBefore when
+        // the host could establish them). `bee workflows run-status` is the
+        // one place this reaches a caller, so it must not be dropped here.
+        let step = buzz_db::workflow::HostStepRecord {
+            run_id: Uuid::new_v4(),
+            step_id: "build".to_string(),
+            workflow_id: Uuid::new_v4(),
+            step_index: 0,
+            status: buzz_db::workflow::HostStepStatus::Exited,
+            requested_event_id: Some(vec![0xaa; 32]),
+            expires_at: Utc::now(),
+            claimed_by: None,
+            claimed_at: None,
+            claim_event_id: None,
+            result_event_id: Some(vec![0xcc; 32]),
+            exited_event_id: None,
+            exit_code: Some(0),
+            disposition: Some("ok".to_string()),
+            timed_out: Some(false),
+            duration_ms: Some(4070),
+            head_sha: Some("fa927fd".repeat(6)),
+            dirty: Some(false),
+            artifact_ref: None,
+            result: Some(serde_json::json!({
+                "checkout": {
+                    "mode": "commit fa927fd",
+                    "sha": "fa927fd".repeat(6),
+                    "headShaBefore": "e682191".repeat(6),
+                    "dirtyBefore": false,
+                },
+            })),
+            exited_at: Some(Utc::now()),
+            created_at: Utc::now(),
+        };
+        let wire = host_step_json(&step);
+        assert_eq!(wire["checkout"]["mode"], "commit fa927fd");
+        assert_eq!(wire["checkout"]["sha"], "fa927fd".repeat(6));
+        assert_eq!(wire["checkout"]["dirtyBefore"], false);
+    }
+
+    fn sample_run(status: buzz_db::workflow::RunStatus) -> buzz_db::workflow::WorkflowRunRecord {
+        buzz_db::workflow::WorkflowRunRecord {
+            id: Uuid::new_v4(),
+            community_id: buzz_core::tenant::CommunityId::from_uuid(Uuid::new_v4()),
+            workflow_id: Uuid::new_v4(),
+            status,
+            trigger_event_id: Some(vec![0xde; 32]),
+            current_step: 0,
+            execution_trace: serde_json::json!([]),
+            trigger_context: Some(serde_json::json!({"author": "abc123"})),
+            started_at: None,
+            completed_at: None,
+            error_message: None,
+            error_code: None,
+            created_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn run_wire_names_the_workflow_and_the_trigger() {
+        let run = sample_run(buzz_db::workflow::RunStatus::WaitingHost);
+        let wire = run_json(&run, "nightly build");
+        assert_eq!(wire["workflow_name"], "nightly build");
+        assert_eq!(wire["status"], "waiting_host");
+        assert_eq!(wire["trigger_event_id"], hex::encode([0xde; 32]));
+        assert_eq!(wire["trigger_author"], "abc123");
+    }
+
+    #[test]
+    fn run_wire_trigger_author_is_null_without_a_trigger_context() {
+        let mut run = sample_run(buzz_db::workflow::RunStatus::Completed);
+        run.trigger_context = None;
+        run.trigger_event_id = None;
+        let wire = run_json(&run, "nightly build");
+        assert!(wire["trigger_event_id"].is_null());
+        assert!(wire["trigger_author"].is_null());
     }
 }

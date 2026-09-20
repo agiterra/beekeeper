@@ -15471,6 +15471,98 @@ removed from here.
        provider's `state.json` is already
        `/Users/brian/Projects/pivot-test-wt-build-kettle-cli-lead`.
 
+190. **`bee workflows runs` returned `[]` for every run because it queried a
+     kind range nothing on this relay has ever published — the fix is a CLI
+     read, not a write-path bug — and `bee workflows approve --token <UUID>`
+     could not answer a host-step approval because the relay never hands out
+     the raw token the flag hashed (lane 190, closing 178(k) and 171(c)).**
+     `cmd_get_workflow_runs`
+     (`crates/buzz-cli/src/commands/workflows.rs`, pre-fix) queried
+     `{"kinds": [46001, 46002, 46003], "#d": [workflow_id]}` over
+     `POST /query`. Those kinds (`KIND_WORKFLOW_TRIGGERED`,
+     `KIND_WORKFLOW_STEP_STARTED`, `KIND_WORKFLOW_STEP_COMPLETED`, declared
+     in `buzz-core::kind` alongside 46004-46012) are never emitted by
+     `buzz-workflow` or `buzz-relay` — `rg` for each constant outside
+     `kind.rs` finds only a range-bound test in `buzz-db/src/feed.rs` and a
+     range check in `buzz-workflow/src/lib.rs`, no publisher. Every actual
+     run — the 178(k) run in `waiting_approval`, the completed
+     `537b718c` from the day before — lives as a row in the relay's
+     `workflow_runs` table (plus `workflow_host_steps` and
+     `workflow_approvals`), written by `buzz-workflow::suspend` and
+     `buzz-relay::handlers::{command_executor,host_steps}` and already served
+     over authorized REST reads the CLI never called:
+     `GET /workflows/{workflow_id}/runs`,
+     `.../runs/{run_id}/approvals`, `.../runs/{run_id}/host-steps`,
+     `.../autorun` (`crates/buzz-relay/src/api/workflows.rs`, all four
+     routed in `router.rs` before this lane). The write path was never the
+     defect: `host_steps.rs`/`command_executor.rs` correctly drive
+     `RunStatus::{WaitingApproval,WaitingHost,Completed,Failed,Cancelled}`
+     transitions on every run this session hit — `cmd_get_workflow_runs`
+     simply never read them.
+     - **Fix.** `cmd_get_workflow_runs` now calls
+       `GET /workflows/{workflow_id}/runs?limit=…` via the existing
+       `BuzzClient::get_authed` (NIP-98, the same helper `bee moderation`
+       reads use) and prints the relay's own page. `run_json` (relay side)
+       now also names the owning workflow (`workflow_name`, one extra
+       `get_workflow` read per listing, not per row) and the trigger
+       (`trigger_event_id`, `trigger_author` off `trigger_context.author`) —
+       both were captured on the run row already but never left the relay.
+       A 403/404 from the relay surfaces as `CliError::Relay{status,body}`
+       with the relay's own refusal text (e.g. "workflow is not
+       accessible") — never a silently-empty `[]` standing in for a refusal
+       the caller never received the memo about.
+     - **New: `bee workflows run-status --run <runId>`.** Every existing run
+       read is nested under `/workflows/{workflow_id}/...`, but a run id is
+       what a caller actually has first — a kind:46010 approval request's
+       `runId`, a kind:46013 host-step request's `d` tag
+       (`<runId>:<stepId>`), a kind:46023 host result — long before it has
+       occasion to look up the workflow. New relay endpoint
+       `GET /workflow-runs/{run_id}` (`run_status`, `authorize_run_read` in
+       `api/workflows.rs`, registered in `router.rs`) resolves the run by id
+       alone, checks the same channel-accessibility gate
+       `authorize_workflow_read` applies, and returns the run plus every
+       host step (exit code, `head_sha`, `dirty`, duration, result event id,
+       and now `checkout` — the mode/sha/headShaBefore/dirtyBefore lane 184
+       added to `HostStepResult`, present in `step.result` but never
+       exposed on the wire before this lane) and every approval, in one
+       authorized read.
+     - **The approve fix, and why `--token <UUID>` could never have
+       worked.** `buzz-workflow::suspend::persist_and_publish` generates a
+       random UUID, hashes it immediately
+       (`approval_ref = hex(SHA256(token))`), stores only the hash
+       (`create_approval`/`hash_approval_token`), and publishes only the
+       hash — the kind:46010 request's `d` tag is `approval_ref`, and the
+       raw token is never written anywhere retrievable; the run's own
+       `approvals` read exposes the same hash as `approval_ref`, never a
+       token. `cmd_approve_step` (pre-fix) called `validate_uuid` on
+       `--token`, then hashed it again with SHA-256 before signing the
+       46030/46031 — a `d` tag the relay had never stored, and a UUID input
+       the relay's own approval refs (64-hex) can never even pass through
+       `validate_uuid`. `buzz_sdk::build_workflow_approval` already asserts
+       its `token_hash` argument is 64-hex, so the SDK was correct and the
+       CLI was the only place re-hashing. Fixed: `--token` is now validated
+       as 64-hex (`validate_hex64`), lowercased, and signed straight
+       through — no hashing — matching the relay's
+       `get_approval_by_stored_hash` lookup exactly. Flag name kept for
+       compatibility; help text and `README.md`/`TESTING.md` rewritten to
+       say "approval ref," never "UUID."
+     - **Evidence.** `crates/buzz-cli/src/commands/workflows.rs`: new tests
+       `approval_ref_is_lowercased_not_rehashed`,
+       `a_uuid_is_refused_as_an_approval_ref`,
+       `a_short_approval_ref_is_a_usage_error`. `crates/buzz-relay/src/api/workflows.rs`:
+       new tests `run_wire_names_the_workflow_and_the_trigger`,
+       `run_wire_trigger_author_is_null_without_a_trigger_context`,
+       `host_step_wire_surfaces_the_checkout_sub_object`. Full crate suites
+       green: `buzz-cli` 1268 passed, `buzz-relay --lib` 1092 passed (176
+       ignored, Postgres). Gated bare on the tip: `cargo fmt --all --check`,
+       `cargo clippy --workspace --all-targets -- -D warnings`,
+       `just file-size-check`, `just current-state-check` all exit 0.
+     - **Not done.** No live proof against hive — this lane found and fixed
+       the defect by reading the code the 178(k) transcript pointed at, not
+       by re-running the kettle mission. The next live run of a host-step
+       approval or a `workflows runs` read on an installed build is the
+       proof still owed.
+
 191. **The pre-push floor now runs before git opens the connection, so a
      crate-touching push does not 401 (built 2026-09-20, lane 191, not
      landed).** Fixes 178(n): git mints the NIP-98 credential at ref

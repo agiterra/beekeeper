@@ -1,11 +1,9 @@
-use sha2::{Digest, Sha256};
-
 use crate::client::{
     extract_d_tag, extract_relay_response_field, normalize_write_response, print_create_response,
     BuzzClient,
 };
 use crate::error::CliError;
-use crate::validate::{parse_uuid, read_or_stdin, sdk_err, validate_uuid};
+use crate::validate::{parse_uuid, read_or_stdin, sdk_err, validate_hex64, validate_uuid};
 
 // TODO(phase-4): Replace raw nostr::EventBuilder usage with buzz-sdk builder functions
 
@@ -57,12 +55,19 @@ pub async fn cmd_get_workflow(client: &BuzzClient, workflow_id: &str) -> Result<
     Ok(())
 }
 
-/// Get workflow run history — query kinds [46001, 46002, 46003].
+/// Get workflow run history — `GET /workflows/{workflow_id}/runs`.
 ///
-/// NOTE: The relay does not currently emit workflow execution events (46001-46003).
-/// Run history is stored in the workflow_runs DB table, not as Nostr events.
-/// This command will return an empty array until the relay adds event emission
-/// or a dedicated REST endpoint for run history.
+/// Runs, approvals and host steps are relay-owned database rows, never
+/// Nostr events: kinds 46001-46008 are declared in `buzz-core::kind` but
+/// nothing publishes them (`buzz-workflow` and `buzz-relay` only ever write
+/// the 46010-46032 range plus the `workflow_runs`/`workflow_host_steps`/
+/// `workflow_approvals` tables — see `crates/buzz-relay/src/api/workflows.rs`).
+/// Querying those dead kinds, as this command used to, returns `[]` for
+/// every run regardless of its real state (ledger 178(k)). Each row already
+/// carries the run's actual lifecycle state — `pending` | `running` |
+/// `waiting_approval` | `waiting_host` | `completed` | `failed` |
+/// `cancelled` — read straight off the relay's own status column, plus the
+/// triggering event id and author when the trigger context recorded one.
 pub async fn cmd_get_workflow_runs(
     client: &BuzzClient,
     workflow_id: &str,
@@ -70,27 +75,29 @@ pub async fn cmd_get_workflow_runs(
 ) -> Result<(), CliError> {
     validate_uuid(workflow_id)?;
     let limit = limit.unwrap_or(20).min(100);
-    let filter = serde_json::json!({
-        "kinds": [46001, 46002, 46003],
-        "#d": [workflow_id],
-        "limit": limit
-    });
-    let resp = client.query(&filter).await?;
-    let events: Vec<serde_json::Value> = serde_json::from_str(&resp).unwrap_or_default();
-    let normalized: Vec<serde_json::Value> = events
-        .iter()
-        .map(|e| {
-            serde_json::json!({
-                "event_id": e.get("id").and_then(|v| v.as_str()).unwrap_or(""),
-                "kind": e.get("kind").and_then(|v| v.as_u64()).unwrap_or(0),
-                "content": e.get("content").and_then(|v| v.as_str()).unwrap_or(""),
-                "created_at": e.get("created_at").and_then(|v| v.as_u64()).unwrap_or(0),
-                "tags": e.get("tags").cloned().unwrap_or(serde_json::json!([])),
-            })
-        })
-        .collect();
-    let output = serde_json::to_string(&normalized).unwrap_or_default();
-    println!("{output}");
+    let resp = client
+        .get_authed(&format!("/workflows/{workflow_id}/runs?limit={limit}"))
+        .await?;
+    println!("{resp}");
+    Ok(())
+}
+
+/// Get one run's full state by run id alone — `GET /workflow-runs/{run_id}`.
+///
+/// Every other run read is nested under `/workflows/{workflow_id}/...`, but
+/// a run id is what actually surfaces first: a kind:46010 approval request's
+/// `runId`, a kind:46013 host-step request's `d` tag (`<runId>:<stepId>`), a
+/// kind:46023 host result. This is the one-shot read for "what happened to
+/// this run": its status, the triggering event, and every host step —
+/// exit code, `headSha`, `dirty`, duration, and the result event id — plus
+/// every approval, so a caller never has to first resolve the workflow id
+/// just to ask about a run it already has by hand.
+pub async fn cmd_get_run_status(client: &BuzzClient, run_id: &str) -> Result<(), CliError> {
+    validate_uuid(run_id)?;
+    let resp = client
+        .get_authed(&format!("/workflow-runs/{run_id}"))
+        .await?;
+    println!("{resp}");
     Ok(())
 }
 
@@ -255,15 +262,37 @@ pub async fn cmd_trigger_workflow(
     Ok(())
 }
 
+/// Normalize `--token`: a full 64-hex approval ref, lowercased.
+///
+/// The relay stores and looks up approvals by this exact hash
+/// (`get_approval_by_stored_hash`); it is never a UUID and is never hashed
+/// again here — see [`cmd_approve_step`].
+pub fn normalize_approval_ref(value: &str) -> Result<String, CliError> {
+    validate_hex64(value)?;
+    Ok(value.to_ascii_lowercase())
+}
+
 /// Approve or deny a workflow step — sign and submit a kind:46030 (grant) or 46031 (deny) event.
+///
+/// `--token` is the approval ref: the 64-hex `hex(SHA256(raw token))` the
+/// relay names in a kind:46010 approval request's `d` tag and in
+/// `GET /workflows/{workflow_id}/runs/{run_id}/approvals`. The relay never
+/// discloses the raw token it hashed to produce that ref — only the ref
+/// leaves the process that generated it (`buzz-workflow`'s
+/// `suspend::persist_and_publish` hashes and discards the raw UUID in the
+/// same statement) — so this command used to hash an already-hashed ref a
+/// second time, producing a `d` tag the relay had never stored and refusing
+/// every host-step approval by hand (ledger 171(c)). It now signs the ref
+/// through unchanged, exactly as `buzz_sdk::build_workflow_approval` and the
+/// relay's own lookup (`get_approval_by_stored_hash`) expect.
 pub async fn cmd_approve_step(
     client: &BuzzClient,
-    approval_token: &str,
+    approval_ref: &str,
     approved: bool,
     note: Option<&str>,
     allow_future_runs: bool,
 ) -> Result<(), CliError> {
-    validate_uuid(approval_token)?;
+    let approval_ref = normalize_approval_ref(approval_ref)?;
 
     // Spec § 5.4: a grant's content is `{note, scope}`; `scope: action` also
     // records an autorun grant bound to the definition as stored now. A deny
@@ -282,10 +311,8 @@ pub async fn cmd_approve_step(
     };
     let content = content_owned.as_str();
 
-    // The relay expects d-tag = hex(SHA256(token)), not the raw token UUID.
-    let token_hash = hex::encode(Sha256::digest(approval_token.as_bytes()));
     let builder =
-        buzz_sdk::build_workflow_approval(&token_hash, approved, content).map_err(sdk_err)?;
+        buzz_sdk::build_workflow_approval(&approval_ref, approved, content).map_err(sdk_err)?;
     let event = client.sign_event(builder)?;
 
     let resp = client.submit_event(event).await?;
@@ -315,6 +342,7 @@ pub async fn dispatch(cmd: crate::WorkflowsCmd, client: &BuzzClient) -> Result<(
         WorkflowsCmd::Runs { workflow, limit } => {
             cmd_get_workflow_runs(client, &workflow, limit).await
         }
+        WorkflowsCmd::RunStatus { run } => cmd_get_run_status(client, &run).await,
         WorkflowsCmd::Approve {
             token,
             approved,
@@ -368,5 +396,31 @@ mod tests {
         assert!(matches!(error, CliError::Usage(_)), "{error:?}");
         // The same commit twice is fine.
         trigger_content(Some(&inputs), Some(&"AB".repeat(20))).expect("agreeing values");
+    }
+
+    #[test]
+    fn approval_ref_is_lowercased_not_rehashed() {
+        // A 64-hex ref, as named in a kind:46010 request's `d` tag or the
+        // approvals read, passes through unchanged apart from case.
+        let ref_hex = "AB".repeat(32);
+        let normalized = normalize_approval_ref(&ref_hex).expect("valid ref");
+        assert_eq!(normalized, "ab".repeat(32));
+    }
+
+    #[test]
+    fn a_uuid_is_refused_as_an_approval_ref() {
+        // ledger 171(c): the old `--token <UUID>` contract cannot be
+        // satisfied by any value the relay actually hands out, so a UUID is
+        // refused by name rather than silently hashed into a `d` tag the
+        // relay never stored.
+        let error = normalize_approval_ref("00000000-0000-0000-0000-000000000000")
+            .expect_err("a UUID is not a stored approval ref");
+        assert!(matches!(error, CliError::Usage(_)), "{error:?}");
+    }
+
+    #[test]
+    fn a_short_approval_ref_is_a_usage_error() {
+        let error = normalize_approval_ref("ab").expect_err("too short");
+        assert!(matches!(error, CliError::Usage(_)), "{error:?}");
     }
 }
