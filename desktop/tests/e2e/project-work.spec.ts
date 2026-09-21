@@ -48,7 +48,10 @@ async function waitForBridge(page: import("@playwright/test").Page) {
       );
     },
     null,
-    { timeout: 10_000 },
+    // Stays under Playwright's own per-test timeout so a slow bridge is
+    // reported as a bridge failure rather than as an unattributable test
+    // timeout.
+    { timeout: 20_000 },
   );
 }
 
@@ -84,6 +87,10 @@ test("the native work-coverage projection crosses the bridge verbatim", async ({
         sessionRef: "11111111-2222-4333-8444-555555555555",
         projectRef: "30621:1ead:kettle",
         founderPubkey: "1e".repeat(32),
+        // Required since lane 213: the assembler folds the 44244 records
+        // with the canonical team fold, which is scoped by these.
+        channelRef: "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2",
+        genesisRef: "ab".repeat(32),
         relaySelfKey: null,
         activeSeats: [],
         activeGrants: [],
@@ -105,7 +112,21 @@ test("the native work-coverage projection crosses the bridge verbatim", async ({
 test("a coverage read that cannot answer fails, and never returns an empty contract", async ({
   page,
 }) => {
-  await installMockBridge(page);
+  // A mock configuration of the same *shape* as the other two cases, with
+  // only the coverage response withheld — which is the fact under test. A
+  // bare `installMockBridge(page)` and a `{}` both leave this case's bridge
+  // globals undefined when it runs after another test in the same worker
+  // (in isolation either passes), and `waitForBridge` then burns its whole
+  // budget: that is the cold "waitForBridge timed out" seen in a landing,
+  // and it is this spec's setup rather than the shared helper.
+  await installMockBridge(page, {
+    globalAgentConfig: {
+      env_vars: {},
+      model: null,
+      preferred_runtime: null,
+      provider: null,
+    },
+  });
   await page.goto("/");
 
   await waitForBridge(page);
@@ -126,4 +147,43 @@ test("a coverage read that cannot answer fails, and never returns an empty contr
   });
 
   expect(outcome.kind).toBe("threw");
+});
+
+test("a request missing what the native fold requires is refused, not answered", async ({
+  page,
+}) => {
+  // Lane 213 added two required fields to the Rust struct and every
+  // TypeScript unit test stayed green while the view would have failed at
+  // runtime. The mock bridge holds the same contract, so the next drift of
+  // this class fails here.
+  await installMockBridge(page, { projectWorkCoverageResponse: response() });
+  await page.goto("/");
+  await waitForBridge(page);
+
+  const outcome = await page.evaluate(async () => {
+    const bridge = window as BridgeWindow;
+    const invoke =
+      bridge.__BUZZ_E2E_INVOKE_MOCK_COMMAND__ ??
+      bridge.__TAURI_INTERNALS__?.invoke;
+    if (!invoke) throw new Error("the mock Tauri bridge is not installed");
+    try {
+      await invoke("project_work_coverage", {
+        request: {
+          schema: "buzz-project-work-request/v1",
+          sessionRef: "11111111-2222-4333-8444-555555555555",
+          projectRef: "30621:1ead:kettle",
+          founderPubkey: "1e".repeat(32),
+          workEvents: [],
+          teamEvents: [],
+        },
+      });
+      return { kind: "answered", message: "" };
+    } catch (error) {
+      return { kind: "threw", message: String(error) };
+    }
+  });
+
+  expect(outcome.kind).toBe("threw");
+  expect(outcome.message).toContain("channelRef");
+  expect(outcome.message).toContain("genesisRef");
 });

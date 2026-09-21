@@ -6,7 +6,8 @@ import { cn } from "@/shared/lib/cn";
 import { type ActionRunTone, describeActionRun } from "../lib/actionRunLabel";
 import { runProvenanceFacts } from "../lib/actionRunProvenance";
 import { buildHostStepApprovalView } from "../lib/hostStepApproval";
-import { hostStepCommand } from "../lib/actionDefinition";
+import { matchBoundDefinition } from "../lib/resolveBoundDefinition";
+import { useApprovalAuthority } from "../lib/useApprovalAuthority";
 import type { ProjectAction, ProjectActionRun } from "../lib/useProjectActions";
 import { ProjectActionApprovalCard } from "./ProjectActionApprovalCard";
 
@@ -39,14 +40,10 @@ function rfc3339ToSeconds(value: string | null): number | null {
 export function ProjectActionRunRow({
   action,
   entry,
-  canApprove,
-  authoritySentence,
   onChanged,
 }: {
   action: ProjectAction;
   entry: ProjectActionRun;
-  canApprove: boolean;
-  authoritySentence: string;
   onChanged: () => void;
 }) {
   const row = React.useMemo(
@@ -61,11 +58,15 @@ export function ProjectActionRunRow({
     [entry],
   );
   const pending = row.pendingApproval;
+  // The one resolver, the same one the inbox card uses: authority is the
+  // project's, read from the request's own `approverSpec` (finding 9).
+  const authority = useApprovalAuthority(pending?.approverSpec ?? null);
+  // Finding 1: the definition put in front of the approver must be the one
+  // the run is bound to. `autorun.definitionHash` is the relay's own hash of
+  // the currently published definition, so comparing it to the run's binding
+  // is a check rather than a second implementation of the hash.
   const approvalView = React.useMemo(() => {
     if (!pending) return null;
-    const boundCommit =
-      entry.hostSteps.find((step) => step.stepId === pending.stepId)?.checkout
-        ?.sha ?? null;
     return buildHostStepApprovalView({
       request: {
         approvalRef: pending.approvalRef,
@@ -80,11 +81,25 @@ export function ProjectActionRunRow({
       workflowName: action.workflow.name,
       runDefinitionHash: entry.run.definitionHash,
       runRead: true,
-      command: hostStepCommand(action.workflow.definition, pending.stepId),
-      definitionRead: true,
-      boundCommit,
+      definition: matchBoundDefinition({
+        runHash: entry.run.definitionHash,
+        currentHash: action.autorun?.definitionHash ?? null,
+        definition: action.workflow.definition,
+        stepId: pending.stepId,
+        readError: action.autorunError,
+      }),
+      // Finding 10: off the run, not off a host result that cannot exist
+      // until this very approval is granted.
+      checkout: entry.run.checkout,
     });
-  }, [action.workflow, entry.hostSteps, entry.run.definitionHash, pending]);
+  }, [
+    action.autorun,
+    action.autorunError,
+    action.workflow,
+    entry.run.checkout,
+    entry.run.definitionHash,
+    pending,
+  ]);
 
   return (
     <li
@@ -147,8 +162,8 @@ export function ProjectActionRunRow({
       </dl>
       {approvalView ? (
         <ProjectActionApprovalCard
-          authoritySentence={authoritySentence}
-          canApprove={canApprove}
+          authoritySentence={authority.sentence}
+          canApprove={authority.canApprove}
           onAnswered={onChanged}
           view={approvalView}
         />

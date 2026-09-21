@@ -28,16 +28,10 @@ function errorSentence(error: unknown): string {
  */
 export function ProjectActionCard({
   action,
-  canApprove,
-  authoritySentence,
   tip,
   onChanged,
 }: {
   action: ProjectAction;
-  /** Whether this viewer may answer a parked host-step approval. */
-  canApprove: boolean;
-  /** Who may answer, when this viewer may not. */
-  authoritySentence: string;
   /** The code repository's delivery tip, for the Run control's prefill. */
   tip: ProjectCodeRefTip | null;
   onChanged: () => void;
@@ -152,8 +146,6 @@ export function ProjectActionCard({
           {runs.map((entry) => (
             <ProjectActionRunRow
               action={action}
-              authoritySentence={authoritySentence}
-              canApprove={canApprove}
               entry={entry}
               key={entry.run.id}
               onChanged={onChanged}

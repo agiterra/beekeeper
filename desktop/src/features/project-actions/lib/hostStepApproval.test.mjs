@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  approvalAuthority,
   buildHostStepApprovalView,
   readHostStepApprovalRequest,
+  resolveApprovalAuthority,
 } from "./hostStepApproval.ts";
 
 const REF = "ab".repeat(32);
@@ -66,16 +66,16 @@ test("every fact it cannot establish is named, never blank", () => {
     request: readHostStepApprovalRequest(event()),
     runDefinitionHash: null,
     runRead: true,
-    command: null,
-    definitionRead: true,
-    boundCommit: null,
+    definition: { kind: "hash-unknown" },
+    checkout: { state: "not-reported" },
   });
   assert.equal(view.definitionHash.value, null);
   assert.match(view.definitionHash.reason, /no definition binding/);
   assert.equal(view.command.value, null);
-  assert.match(view.command.reason, /names no command for step verify/);
+  assert.match(view.command.reason, /names no definition/);
   assert.equal(view.boundCommit.value, null);
-  assert.match(view.boundCommit.reason, /no record of this run names a commit/);
+  assert.match(view.boundCommit.reason, /does not report a run's bound commit/);
+  assert.equal(view.grantAvailable, false);
 });
 
 test("an unread run and an unbound run are different sentences", () => {
@@ -84,12 +84,11 @@ test("an unread run and an unbound run are different sentences", () => {
     request,
     runDefinitionHash: null,
     runRead: false,
-    command: null,
-    definitionRead: false,
-    boundCommit: null,
+    definition: { kind: "unread", reason: "the read has not settled" },
+    checkout: { state: "not-reported" },
   });
   assert.match(unread.definitionHash.reason, /has not been read yet/);
-  assert.match(unread.command.reason, /has not been read yet/);
+  assert.match(unread.command.reason, /could not be read/);
 });
 
 test("the run's own binding is shown, and the command verbatim", () => {
@@ -97,38 +96,45 @@ test("the run's own binding is shown, and the command verbatim", () => {
     request: readHostStepApprovalRequest(event()),
     runDefinitionHash: "cd".repeat(32),
     runRead: true,
-    command: "just ci",
-    definitionRead: true,
-    boundCommit: "e6".repeat(20),
+    definition: {
+      kind: "resolved",
+      hash: "cd".repeat(32),
+      command: { form: "shell", text: "just ci" },
+    },
+    checkout: { state: "commit", sha: "e6".repeat(20) },
   });
   assert.equal(view.definitionHash.value, "cd".repeat(32));
   assert.equal(view.command.value, "just ci");
   assert.equal(view.boundCommit.value, "e6".repeat(20));
   assert.equal(view.actionName, "verify");
+  assert.equal(view.grantAvailable, true);
 });
 
-test("only the project owner is offered an answer", () => {
-  const owner = approvalAuthority({
+test("only a project owner is offered an answer", () => {
+  const coordinate = `30621:${OWNER}:kettle`;
+  const owner = resolveApprovalAuthority({
     viewerPubkey: OWNER.toUpperCase(),
-    projectOwner: OWNER,
-    approverSpec: "owner",
+    approverSpec: `project-owner:${coordinate}`,
+    roster: [],
+    rosterRead: true,
   });
   assert.equal(owner.canApprove, true);
 
-  const other = approvalAuthority({
+  const other = resolveApprovalAuthority({
     viewerPubkey: "11".repeat(32),
-    projectOwner: OWNER,
-    approverSpec: "owner",
+    approverSpec: `project-owner:${coordinate}`,
+    roster: [],
+    rosterRead: true,
   });
   assert.equal(other.canApprove, false);
   assert.match(other.sentence, /never delegated/);
 
-  for (const missing of [
-    { viewerPubkey: null, projectOwner: OWNER },
-    { viewerPubkey: OWNER, projectOwner: null },
-  ]) {
-    const answer = approvalAuthority({ ...missing, approverSpec: null });
-    assert.equal(answer.canApprove, false);
-    assert.match(answer.sentence, /unknown/);
-  }
+  const noIdentity = resolveApprovalAuthority({
+    viewerPubkey: null,
+    approverSpec: `project-owner:${coordinate}`,
+    roster: [],
+    rosterRead: true,
+  });
+  assert.equal(noIdentity.canApprove, false);
+  assert.match(noIdentity.sentence, /unknown/);
 });

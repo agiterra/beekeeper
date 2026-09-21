@@ -270,6 +270,7 @@ export function useCodingSessionMissionSurface(input: {
     if (
       !input.active ||
       input.umbrella.sessionRef === null ||
+      input.umbrella.genesisRef === null ||
       input.umbrella.founderPubkey === null ||
       projectRef === null
     ) {
@@ -278,6 +279,7 @@ export function useCodingSessionMissionSurface(input: {
     return {
       channelRef: input.channelId,
       sessionRef: input.umbrella.sessionRef,
+      genesisRef: input.umbrella.genesisRef,
       projectRef,
       founderPubkey: input.umbrella.founderPubkey,
       activeSeats: (input.seatAuthorities ?? [])
@@ -296,6 +298,7 @@ export function useCodingSessionMissionSurface(input: {
     input.channelId,
     input.seatAuthorities,
     input.umbrella.founderPubkey,
+    input.umbrella.genesisRef,
     input.umbrella.sessionRef,
     projectRef,
     repoRef,

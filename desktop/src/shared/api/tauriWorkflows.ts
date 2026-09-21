@@ -1,4 +1,5 @@
 import { invokeTauri } from "@/shared/api/tauri";
+import type { RunCheckout } from "@/features/project-actions/lib/hostStepApproval";
 import type {
   ApprovalActionResponse,
   TriggerWorkflowResponse,
@@ -46,6 +47,14 @@ type RawWorkflowRun = {
   trigger_author?: string | null;
   /** Hex of the definition the run was created from (lane 193). */
   definition_hash?: string | null;
+  /**
+   * The commit the run is bound to, added by lane 206.
+   *
+   * Three states, and the key's **absence** is one of them: an older relay
+   * omits the field entirely, `null` means the run names no commit, and a
+   * string is the bound sha. `?? null` would collapse the first two.
+   */
+  checkout?: string | null;
   status: WorkflowRun["status"];
   current_step: number | null;
   execution_trace: RawTraceEntry[];
@@ -147,6 +156,23 @@ type RawApprovalActionResponse = {
  * definition binding, answers `null`, and the surface says so in those words
  * rather than leaving the row silent.
  */
+/**
+ * Read the run's bound commit, preserving the three states apart.
+ *
+ * `"checkout" in raw` is the whole point: a relay that predates lane 206
+ * sends no key at all, which is "this relay does not report it" — a
+ * different claim from the run naming no commit, and collapsing them is how
+ * a card comes to promise an isolated checkout that will not happen.
+ */
+function readRunCheckout(raw: RawWorkflowRun): RunCheckout {
+  if (!("checkout" in raw)) return { state: "not-reported" };
+  const value = raw.checkout;
+  if (typeof value === "string" && value.trim().length > 0) {
+    return { state: "commit", sha: value.trim().toLowerCase() };
+  }
+  return { state: "working-directory" };
+}
+
 export type ProjectWorkflowRun = WorkflowRun & {
   /** The owning action's name, as the relay read it off the definition. */
   workflowName: string | null;
@@ -160,6 +186,8 @@ export type ProjectWorkflowRun = WorkflowRun & {
    * on, and it is not the same fact as "the relay declined to say".
    */
   definitionHash: string | null;
+  /** The commit this run is bound to, as the run itself reports it. */
+  checkout: RunCheckout;
 };
 
 /**
@@ -237,6 +265,7 @@ function fromRawWorkflowRun(raw: RawWorkflowRun): ProjectWorkflowRun {
     triggerEventId: raw.trigger_event_id ?? null,
     triggerAuthor: raw.trigger_author ?? null,
     definitionHash: raw.definition_hash ?? null,
+    checkout: readRunCheckout(raw),
     status: raw.status,
     currentStep: raw.current_step,
     executionTrace: raw.execution_trace.map(fromRawTraceEntry),
@@ -568,3 +597,12 @@ export async function denyApproval(
   });
   return fromRawApprovalResponse(raw);
 }
+
+/**
+ * `fromRawWorkflowRun`, exported for the lane-211 regression test.
+ *
+ * The mapper is where absent / null / sha are kept apart, and a test that
+ * could not reach it would have to reproduce the distinction rather than
+ * check it.
+ */
+export const fromRawWorkflowRunForTest = fromRawWorkflowRun;

@@ -20,6 +20,64 @@ function errorSentence(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/**
+ * The command, as argument rows plus the JSON array beside them.
+ *
+ * Never one space-joined line: `["sh","-c","a b"]` must not be able to read
+ * as four arguments (finding 1). The numbered rows show the split and the
+ * JSON line shows it unambiguously in a form that can be compared by eye
+ * with the definition.
+ */
+function CommandFact({ fact }: { fact: ApprovalFact }) {
+  const rows = fact.argumentRows;
+  if (fact.value === null || !rows) {
+    return (
+      <div
+        className="flex flex-col gap-0.5"
+        data-testid="host-step-approval-command"
+      >
+        <span className="text-2xs uppercase tracking-wide text-muted-foreground">
+          Command
+        </span>
+        <span
+          className="text-xs text-muted-foreground"
+          data-testid="host-step-approval-command-unavailable"
+        >
+          not shown — {fact.reason}
+        </span>
+      </div>
+    );
+  }
+  return (
+    <div
+      className="flex flex-col gap-0.5 sm:col-span-2"
+      data-testid="host-step-approval-command"
+    >
+      <span className="text-2xs uppercase tracking-wide text-muted-foreground">
+        Command · {rows.length} argument
+        {rows.length === 1 ? "" : "s"}
+      </span>
+      <ol className="flex flex-col gap-0.5">
+        {rows.map((row) => (
+          <li
+            className="flex gap-2 font-mono text-xs"
+            data-testid="host-step-approval-argument"
+            key={row.key}
+          >
+            <span className="shrink-0 text-muted-foreground">{row.index}</span>
+            <span className="break-all">{row.value}</span>
+          </li>
+        ))}
+      </ol>
+      {fact.json ? (
+        <span className="break-all font-mono text-2xs text-muted-foreground">
+          {fact.json}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
 function Fact({
   label,
   fact,
@@ -128,12 +186,7 @@ export function ProjectActionApprovalCard({
         <p className="mt-2 text-sm text-foreground">{view.message}</p>
       ) : null}
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
-        <Fact
-          fact={view.command}
-          label="Command"
-          mono
-          testid="host-step-approval-command"
-        />
+        <CommandFact fact={view.command} />
         <Fact
           fact={view.boundCommit}
           label="Commit"
@@ -159,11 +212,21 @@ export function ProjectActionApprovalCard({
       >
         {authoritySentence}
       </p>
+      {canApprove && !view.grantAvailable ? (
+        <p
+          className="mt-3 text-xs text-amber-600 dark:text-amber-400"
+          data-testid="host-step-approval-grant-blocked"
+          role="status"
+        >
+          Approve is unavailable: {view.grantBlockedReason} You can still deny
+          this request.
+        </p>
+      ) : null}
       {canApprove ? (
         <div className="mt-3 flex flex-wrap gap-2">
           <Button
             data-testid="host-step-approve-once"
-            disabled={isPending}
+            disabled={isPending || !view.grantAvailable}
             onClick={() => mutate({ kind: "once" })}
             size="sm"
             type="button"
@@ -172,7 +235,7 @@ export function ProjectActionApprovalCard({
           </Button>
           <Button
             data-testid="host-step-approve-action"
-            disabled={isPending}
+            disabled={isPending || !view.grantAvailable}
             onClick={() => mutate({ kind: "action" })}
             size="sm"
             type="button"

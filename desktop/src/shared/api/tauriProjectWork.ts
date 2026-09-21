@@ -31,6 +31,73 @@ export const PROJECT_WORK_RESPONSE_SCHEMA = "buzz-project-work-response/v1";
 /** The frozen contract's own schema string (`conformance/project-work`). */
 export const PROJECT_WORK_COVERAGE_SCHEMA = "buzz-project-work-coverage/v1";
 
+/**
+ * One signed event, exactly as it was signed.
+ *
+ * The same seven fields the team-transaction fold already sends
+ * (`ImmutableCodingSessionTeamWireEvent`): nothing is reshaped, and nothing
+ * that was not signed is carried.
+ */
+export type SignedWireEvent = {
+  id: string;
+  pubkey: string;
+  created_at: number;
+  kind: number;
+  tags: readonly (readonly string[])[];
+  content: string;
+  sig: string;
+};
+
+/** Narrow a fetched event to the fields its signature covers. */
+export function toSignedWireEvent(event: RelayEvent): SignedWireEvent {
+  return {
+    id: event.id,
+    pubkey: event.pubkey,
+    created_at: event.created_at,
+    kind: event.kind,
+    tags: event.tags,
+    content: event.content,
+    sig: event.sig,
+  };
+}
+
+/**
+ * The keys the native command requires on every request.
+ *
+ * Named here so a drift like lane 213's — the Rust struct gaining two
+ * required fields while every TypeScript unit test stayed green — fails a
+ * test instead of failing at runtime in front of a person.
+ */
+export const PROJECT_WORK_REQUIRED_KEYS = [
+  "schema",
+  "sessionRef",
+  "projectRef",
+  "founderPubkey",
+  "channelRef",
+  "genesisRef",
+  "workEvents",
+  "teamEvents",
+] as const;
+
+/**
+ * Refuse a request that is missing a key the native side requires.
+ *
+ * Called before the invoke, so the failure names the missing field rather
+ * than arriving as a serde error about a struct the caller cannot see.
+ */
+export function assertProjectWorkRequestComplete(
+  request: Record<string, unknown>,
+): void {
+  const missing = PROJECT_WORK_REQUIRED_KEYS.filter(
+    (key) => request[key] === undefined || request[key] === null,
+  );
+  if (missing.length > 0) {
+    throw new Error(
+      `the project-work request is missing ${missing.join(", ")}, which the native fold requires`,
+    );
+  }
+}
+
 /** One active seat, from the accepted kind:44228 projection. */
 export type ProjectWorkSeatInput = {
   actorPubkey: string;
@@ -61,7 +128,21 @@ export type ProjectWorkRequest = {
   activeSeats: readonly ProjectWorkSeatInput[];
   activeGrants: readonly ProjectWorkGrantInput[];
   workEvents: readonly RelayEvent[];
-  teamEvents: readonly RelayEvent[];
+  /**
+   * The session's kind:44244 team transactions **with their signatures**.
+   *
+   * Lane 213 made the assembler fold these with the canonical 44244 fold,
+   * which verifies what it judges, so they cross the boundary as full signed
+   * events rather than the plain shape the other lists use. Exactly the seven
+   * signed fields are sent: the local-only render keys `localKey` and
+   * `pending` were never part of a signature and a strict Rust decoder is
+   * entitled to refuse them.
+   */
+  teamEvents: readonly SignedWireEvent[];
+  /** The session's channel uuid, which scopes that fold. */
+  channelRef: string;
+  /** The session genesis event id, for the same reason. */
+  genesisRef: string;
   goalEvents: readonly RelayEvent[];
   /** kind 46023 / 46014 / 46013, in one list; the native side splits them. */
   hostEvents: readonly RelayEvent[];
@@ -205,6 +286,9 @@ export function decodeProjectWorkResponse(
 export async function invokeProjectWorkCoverage(
   request: ProjectWorkRequest,
 ): Promise<ProjectWorkResponse> {
+  assertProjectWorkRequestComplete(
+    request as unknown as Record<string, unknown>,
+  );
   const raw = await invokeTauri<unknown>(PROJECT_WORK_COVERAGE_COMMAND, {
     request,
   });

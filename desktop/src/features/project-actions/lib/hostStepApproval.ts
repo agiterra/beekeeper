@@ -13,6 +13,14 @@
  * present an unknown as a blank.
  */
 
+import { truncatePubkey } from "@/shared/lib/pubkey";
+
+import {
+  hostStepCommandJson,
+  hostStepCommandLines,
+  type HostStepCommand,
+} from "./actionDefinition";
+
 /** A kind:46010's content, as `approval_request_wire` writes it. */
 export const APPROVAL_REQUEST_SCHEMA = "buzz-approval-request/v1";
 
@@ -94,7 +102,54 @@ export type ApprovalFact = {
   value: string | null;
   /** Why there is no value. `null` exactly when `value` is set. */
   reason: string | null;
+  /** For a command, the argument vector behind `value`; never re-split. */
+  argv?: readonly string[];
+  /**
+   * The same vector as rows, each with its own stable key.
+   *
+   * Arguments repeat legitimately (`["cp","a","a"]`), so position *is* the
+   * identity here; the key is built once, in the data, rather than from a
+   * render-time index.
+   */
+  argumentRows?: readonly { key: string; index: number; value: string }[];
+  /** For a command, the unambiguous JSON form shown beside the lines. */
+  json?: string;
 };
+
+/**
+ * Whether the definition the **run is bound to** could be put in front of the
+ * approver.
+ *
+ * Finding 1: the card used to show the run's bound hash beside a command read
+ * off whatever definition was current, which are different objects the moment
+ * anyone republishes. A command is displayed only when a definition with the
+ * run's exact hash resolved; otherwise the card says which of these is true
+ * and Approve is unavailable.
+ */
+export type DefinitionResolution =
+  /** A definition whose hash equals the run's binding was resolved. */
+  | { kind: "resolved"; hash: string; command: HostStepCommand | null }
+  /** The only fetchable definition has a different hash. */
+  | { kind: "not-current"; currentHash: string | null }
+  /** The definition read failed; the relay's own words. */
+  | { kind: "unread"; reason: string }
+  /** The run names no definition, so nothing can be matched against it. */
+  | { kind: "hash-unknown" };
+
+/**
+ * The commit the run is bound to, as the **run** reports it (lane 206).
+ *
+ * Three states, kept apart because they are three different claims:
+ * `not-reported` is an older relay that does not carry the field at all,
+ * `working-directory` is the run naming no commit (a host step runs in the
+ * recorded project directory as found), and `commit` is a bound sha. Reading
+ * the first as the second is how a card comes to promise an isolated
+ * checkout that will not happen.
+ */
+export type RunCheckout =
+  | { state: "not-reported" }
+  | { state: "working-directory" }
+  | { state: "commit"; sha: string };
 
 /** Everything the card renders, each fact established or explicitly absent. */
 export type HostStepApprovalView = {
@@ -109,19 +164,30 @@ export type HostStepApprovalView = {
   expiresAt: number | null;
   /** Hex of the definition this run is bound to (lane 193). */
   definitionHash: ApprovalFact;
-  /** The exact argv of the gated step in the published definition. */
+  /** The exact command of the gated step in **that** definition. */
   command: ApprovalFact;
-  /** The commit the run is bound to (lane 184). */
+  /** The commit the run is bound to, off the run itself (lane 206). */
   boundCommit: ApprovalFact;
+  /**
+   * Whether a grant may be offered at all: what is shown is what would run.
+   *
+   * `false` unless the run's hash is known, a definition with that exact hash
+   * resolved, the step was found in it, and the run's checkout state is
+   * known. Deny is not gated by this — refusing something you cannot fully
+   * see is always a safe answer, and withholding it would strand a run.
+   */
+  grantAvailable: boolean;
+  /** Why a grant is withheld; `null` exactly when `grantAvailable`. */
+  grantBlockedReason: string | null;
 };
 
 /**
  * Compose the card's facts.
  *
  * `definitionHash` is the run's binding, never the workflow's current hash:
- * approving against a hash re-read from the workflow row is precisely the race
- * lane 199 closed, and showing that hash would tell the operator they are
- * approving something they are not.
+ * approving against a hash re-read from the workflow row is precisely the
+ * race lane 199 closed. `command` comes from the definition that **matched**
+ * that hash, or is withheld with its reason.
  */
 export function buildHostStepApprovalView(input: {
   request: Pick<
@@ -141,14 +207,106 @@ export function buildHostStepApprovalView(input: {
   runDefinitionHash: string | null;
   /** True when the run was read and answered `null` for its binding. */
   runRead: boolean;
-  /** The published definition of the gated step, or `null` when unread. */
-  command: string | null;
-  /** True when the definition was read and names no command for the step. */
-  definitionRead: boolean;
-  /** The commit a host step of this run recorded, when one has. */
-  boundCommit: string | null;
+  /** Whether the bound definition could be put in front of the approver. */
+  definition: DefinitionResolution;
+  /** The run's own checkout state (lane 206). */
+  checkout: RunCheckout;
 }): HostStepApprovalView {
   const { request } = input;
+  const blocked: string[] = [];
+
+  const definitionHash: ApprovalFact = input.runDefinitionHash
+    ? { value: input.runDefinitionHash, reason: null }
+    : {
+        value: null,
+        reason: input.runRead
+          ? "this run carries no definition binding — it was created before the binding existed, and an approval cannot be tied to a definition it does not name"
+          : "the run record has not been read yet",
+      };
+  if (definitionHash.value === null) {
+    blocked.push(definitionHash.reason ?? "the run's definition is unknown");
+  }
+  const block = (reason: string | null) => {
+    if (reason !== null) blocked.push(reason);
+  };
+
+  let command: ApprovalFact;
+  switch (input.definition.kind) {
+    case "resolved": {
+      const resolved = input.definition.command;
+      if (resolved === null) {
+        command = {
+          value: null,
+          reason: `the definition this run is bound to names no command for step ${request.stepId}`,
+        };
+        block(command.reason);
+      } else {
+        command = {
+          value: hostStepCommandLines(resolved).join("\n"),
+          reason: null,
+          argv: hostStepCommandLines(resolved),
+          argumentRows: hostStepCommandLines(resolved).map((value, index) => ({
+            key: `${index}:${value}`,
+            index,
+            value,
+          })),
+          json: hostStepCommandJson(resolved),
+        };
+      }
+      break;
+    }
+    case "not-current": {
+      const current = input.definition.currentHash
+        ? ` The published definition now hashes to ${input.definition.currentHash.slice(0, 12)}….`
+        : "";
+      command = {
+        value: null,
+        reason: `this run is bound to a definition that is no longer the current one, and the bound text is not fetchable from here, so no command is shown.${current}`,
+      };
+      block(command.reason);
+      break;
+    }
+    case "unread": {
+      command = {
+        value: null,
+        reason: `the definition this run is bound to could not be read: ${input.definition.reason}`,
+      };
+      block(command.reason);
+      break;
+    }
+    case "hash-unknown": {
+      command = {
+        value: null,
+        reason:
+          "this run names no definition, so no definition can be matched against it",
+      };
+      block(command.reason);
+      break;
+    }
+  }
+
+  let boundCommit: ApprovalFact;
+  switch (input.checkout.state) {
+    case "commit":
+      boundCommit = { value: input.checkout.sha, reason: null };
+      break;
+    case "working-directory":
+      boundCommit = {
+        value: null,
+        reason:
+          "this run names no commit: the step runs in the project's recorded folder, in the working directory as found",
+      };
+      break;
+    case "not-reported":
+      boundCommit = {
+        value: null,
+        reason:
+          "this relay does not report a run's bound commit, so what would be checked out cannot be established from here",
+      };
+      block(boundCommit.reason);
+      break;
+  }
+
   return {
     approvalRef: request.approvalRef,
     runId: request.runId,
@@ -159,70 +317,101 @@ export function buildHostStepApprovalView(input: {
     message: request.message,
     approverSpec: request.approverSpec,
     expiresAt: request.expiresAt,
-    definitionHash: input.runDefinitionHash
-      ? { value: input.runDefinitionHash, reason: null }
-      : {
-          value: null,
-          reason: input.runRead
-            ? "this run carries no definition binding — it was created before the binding existed, and an approval cannot be tied to a definition it does not name"
-            : "the run record has not been read yet",
-        },
-    command: input.command
-      ? { value: input.command, reason: null }
-      : {
-          value: null,
-          reason: input.definitionRead
-            ? `the published definition names no command for step ${request.stepId}`
-            : "the published definition has not been read yet",
-        },
-    boundCommit: input.boundCommit
-      ? { value: input.boundCommit, reason: null }
-      : {
-          value: null,
-          // The relay's run wire carries `trigger_context.author` and not its
-          // `checkout`, so before the host claims the step there is no
-          // record of the bound commit to read. Saying so is the honest
-          // answer; guessing "the working directory" would not be.
-          reason:
-            "no record of this run names a commit yet — the host writes it when it establishes the tree",
-        },
+    definitionHash,
+    command,
+    boundCommit,
+    grantAvailable: blocked.length === 0,
+    grantBlockedReason: blocked.length === 0 ? null : blocked[0],
   };
 }
 
-/** Whether the viewer may answer, and the sentence that says who may. */
-export function approvalAuthority(input: {
+/** `project-owner:30621:<creator>:<d>` split into the parts it names. */
+export function parseProjectOwnerSpec(
+  approverSpec: string | null,
+): { coordinate: string; creator: string } | null {
+  const spec = approverSpec?.trim() ?? "";
+  const coordinate = spec.startsWith("project-owner:")
+    ? spec.slice("project-owner:".length).trim()
+    : null;
+  if (!coordinate) return null;
+  // The relay takes the creator from index 1 of the coordinate and nothing
+  // else (`approver_admitted`, command_executor.rs). Mirroring that exactly
+  // is the point: a reader that computed it differently would offer a
+  // control the relay refuses, or withhold one it would admit.
+  const creator = coordinate.split(":")[1] ?? "";
+  return /^[0-9a-f]{64}$/i.test(creator) ? { coordinate, creator } : null;
+}
+
+/** One roster entry, as the kind:39010 projection holds it. */
+export type ApprovalRosterEntry = { pubkey: string; role: string };
+
+/**
+ * Whether the viewer may answer, and the sentence that says who may.
+ *
+ * Finding 9: authority is the **project's**, never the publisher's. The relay
+ * admits the project creator or a current roster `Owner` of the project the
+ * `approverSpec` names (`approver_admitted`); with lane 186's delegation the
+ * publisher is often a lead seat, whose key says nothing about who may
+ * approve. `publisherPubkey` is accepted and deliberately unused, so a caller
+ * that still holds it cannot quietly reintroduce it.
+ */
+export function resolveApprovalAuthority(input: {
   viewerPubkey: string | null;
-  projectOwner: string | null;
   approverSpec: string | null;
+  roster: readonly ApprovalRosterEntry[];
+  /** False while the roster read is pending or failed: unknown, not empty. */
+  rosterRead: boolean;
+  /** The workflow owner / `p` tag. Never consulted; see above. */
+  publisherPubkey?: string | null;
 }): { canApprove: boolean; sentence: string } {
-  const viewer = input.viewerPubkey?.toLowerCase() ?? null;
-  const owner = input.projectOwner?.toLowerCase() ?? null;
-  if (viewer === null) {
+  const viewer = input.viewerPubkey?.trim().toLowerCase() ?? "";
+  if (!viewer) {
     return {
       canApprove: false,
       sentence: "This computer's identity is unknown, so no answer is offered.",
     };
   }
-  if (owner === null) {
+  const project = parseProjectOwnerSpec(input.approverSpec);
+  if (!project) {
+    return {
+      canApprove: false,
+      sentence: input.approverSpec
+        ? `This request's approver rule is ${input.approverSpec}, which this view cannot resolve to a project; answer it with \`bee workflows approve\`.`
+        : "This request names no approver rule this view can resolve, so no answer is offered.",
+    };
+  }
+  if (viewer === project.creator.toLowerCase()) {
+    return {
+      canApprove: true,
+      sentence: "You may answer this as the project's creator.",
+    };
+  }
+  if (!input.rosterRead) {
     return {
       canApprove: false,
       sentence:
-        "The project owner is unknown here, so no answer is offered from this view.",
+        "This project's roster has not been read, so whether you are one of its owners is unknown; no answer is offered.",
     };
   }
-  if (viewer === owner) {
+  const isOwner = input.roster.some(
+    (entry) =>
+      entry.pubkey.trim().toLowerCase() === viewer &&
+      entry.role.trim().toLowerCase() === "owner",
+  );
+  if (isOwner) {
     return {
       canApprove: true,
-      sentence: "You may answer this as the project owner.",
+      sentence: "You may answer this as an owner on this project's roster.",
     };
   }
-  // Ledger 186: approving a host step is the one project-action capability
-  // that is *not* delegable, so a lead seat or a collaborator sees the
-  // request and no control, with the reason named.
+  const others = input.roster
+    .filter((entry) => entry.role.trim().toLowerCase() === "owner")
+    .map((entry) => truncatePubkey(entry.pubkey));
+  const who = [`${truncatePubkey(project.creator)} (creator)`, ...others].join(
+    ", ",
+  );
   return {
     canApprove: false,
-    sentence: `Only the project owner ${owner.slice(0, 8)}… may answer this${
-      input.approverSpec ? ` (the relay's rule is ${input.approverSpec})` : ""
-    }. Approving a host step is never delegated.`,
+    sentence: `Only a project owner may answer this: ${who}. Approving a host step is never delegated (ledger 186).`,
   };
 }

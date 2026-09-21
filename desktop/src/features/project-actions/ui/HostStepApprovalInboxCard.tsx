@@ -1,17 +1,19 @@
 import { useQuery } from "@tanstack/react-query";
 
-import { useIdentityQuery } from "@/shared/api/hooks";
-import { getWorkflow, getWorkflowRun } from "@/shared/api/tauriWorkflows";
+import { getWorkflowRun } from "@/shared/api/tauriWorkflows";
 
-import { hostStepCommand } from "../lib/actionDefinition";
 import {
-  approvalAuthority,
   buildHostStepApprovalView,
   readHostStepApprovalRequest,
 } from "../lib/hostStepApproval";
+import {
+  matchBoundDefinition,
+  readBoundDefinition,
+} from "../lib/resolveBoundDefinition";
+import { useApprovalAuthority } from "../lib/useApprovalAuthority";
 import { ProjectActionApprovalCard } from "./ProjectActionApprovalCard";
 
-/** React Query key for one parked approval's run and definition. */
+/** React Query key for one parked approval's run and bound definition. */
 export function hostStepApprovalQueryKey(approvalRef: string) {
   return ["host-step-approval", approvalRef] as const;
 }
@@ -19,13 +21,19 @@ export function hostStepApprovalQueryKey(approvalRef: string) {
 /**
  * A kind:46010 in the inbox, rendered as the approval it is (ledger 171(b)).
  *
- * Before this the inbox printed the request's raw JSON under a reply
- * composer, so the only way to answer a command about to run on this computer
- * was to hand-sign a kind:46030. The event alone carries neither the
- * definition the run is bound to nor the command, so this reads the run
- * (`GET /workflow-runs/{run_id}`, lane 190) and the published definition and
- * hands both to the card — which states every fact it could not establish
- * rather than leaving it blank.
+ * Two rules this card exists to hold, both from Astra's Wave 2 review:
+ *
+ * - **What is shown is what is approved.** The command comes from the
+ *   definition whose hash equals the run's binding, never from whatever is
+ *   current; when they differ, or either read fails, no command is shown and
+ *   Approve is unavailable. Deny stays available to an approver, because
+ *   refusing what you cannot fully see is always a safe answer (finding 1).
+ * - **The approver is the project's**, resolved from the `approverSpec`'s
+ *   coordinate, never from the publisher's key or the `p` tag (finding 9).
+ *
+ * The bound commit is read from the **run** (lane 206), so a run awaiting its
+ * first approval — which has no host result yet and never will until it is
+ * approved — still names the commit it would test (finding 10).
  *
  * Renders `null` for an event whose shape this reader does not fully
  * recognise, so the ordinary message body still shows: a half-read request
@@ -33,25 +41,21 @@ export function hostStepApprovalQueryKey(approvalRef: string) {
  */
 export function HostStepApprovalInboxCard({
   event,
-  /** The project owner, when the caller knows one; authority is theirs. */
-  projectOwner = null,
 }: {
   event: {
     kind: number;
     tags: readonly (readonly string[])[];
     content: string;
   };
-  projectOwner?: string | null;
 }) {
   const request = readHostStepApprovalRequest(event);
-  const identity = useIdentityQuery();
   const detail = useQuery({
     queryKey: hostStepApprovalQueryKey(request?.approvalRef ?? ""),
     enabled: request !== null,
     queryFn: async () => {
       const runId = request?.runId ?? "";
       const workflowId = request?.workflowId ?? "";
-      const [run, workflow] = await Promise.all([
+      const [run, definition] = await Promise.all([
         getWorkflowRun(runId).then(
           (value) => ({ value, error: null as string | null }),
           (error: unknown) => ({
@@ -59,45 +63,31 @@ export function HostStepApprovalInboxCard({
             error: error instanceof Error ? error.message : String(error),
           }),
         ),
-        getWorkflow(workflowId).then(
-          (value) => ({ value, error: null as string | null }),
-          (error: unknown) => ({
-            value: null,
-            error: error instanceof Error ? error.message : String(error),
-          }),
-        ),
+        readBoundDefinition(workflowId),
       ]);
-      return { run, workflow };
+      return { run, definition };
     },
   });
+  const authority = useApprovalAuthority(request?.approverSpec ?? null);
 
   if (request === null) return null;
 
   const run = detail.data?.run.value ?? null;
-  const workflow = detail.data?.workflow.value ?? null;
-  const boundCommit =
-    run?.hostSteps.find((step) => step.stepId === request.stepId)?.checkout
-      ?.sha ?? null;
+  const read = detail.data?.definition ?? null;
   const view = buildHostStepApprovalView({
     request,
-    workflowName: workflow?.name ?? null,
+    workflowName: read?.workflow?.name ?? null,
     runDefinitionHash: run?.run.definitionHash ?? null,
     runRead: run !== null,
-    command: workflow
-      ? hostStepCommand(workflow.definition, request.stepId)
-      : null,
-    definitionRead: workflow !== null,
-    boundCommit,
-  });
-  // The owner the request itself attributes to (`p`) is the workflow owner,
-  // which for a project action is the project's own writer. It is the best
-  // authority fact this surface holds without a project read.
-  const owner =
-    projectOwner ?? event.tags.find((tag) => tag[0] === "p")?.[1] ?? null;
-  const authority = approvalAuthority({
-    viewerPubkey: identity.data?.pubkey ?? null,
-    projectOwner: owner,
-    approverSpec: request.approverSpec,
+    definition: matchBoundDefinition({
+      runHash: run?.run.definitionHash ?? null,
+      currentHash: read?.currentHash ?? null,
+      definition: read?.workflow?.definition ?? null,
+      stepId: request.stepId,
+      readError: read?.error ?? null,
+    }),
+    // From the run, not from a host result: the result cannot exist yet.
+    checkout: run?.run.checkout ?? { state: "not-reported" },
   });
 
   return (

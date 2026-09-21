@@ -1,12 +1,12 @@
 import { ProjectPageTabs } from "@/features/projects-container/ui/ProjectPageTabs";
 import { useIdentityQuery } from "@/shared/api/hooks";
+import { Button } from "@/shared/ui/button";
 import { useFeatureEnabled } from "@/shared/features";
 import { Skeleton } from "@/shared/ui/skeleton";
 
-import { approvalAuthority } from "../lib/hostStepApproval";
 import { useProjectActions } from "../lib/useProjectActions";
 import { useProjectCodeRefTip } from "../lib/useProjectCodeRefTip";
-import { useRecordProjectAgentsRepo } from "../lib/useRecordProjectAgentsRepo";
+import { useProjectAgentsRepo } from "../lib/useProjectAgentsRepo";
 import { ProjectActionCard } from "./ProjectActionCard";
 
 export const PROJECT_ACTIONS_MISSING =
@@ -16,28 +16,24 @@ export const PROJECT_ACTIONS_MISSING =
  * `/projects/$projectId/actions` — the project's `actions.yml` entries (the
  * agents repository's root, spec § 4.11) as the relay holds them (kind:30620
  * definitions that name this project), each with its latest runs and what
- * their records prove. Opening the tab also records this computer's clone
- * of the agents repository for the provider, which reads the file from it.
+ * their records prove.
+ *
+ * **Opening it changes nothing.** It reads where this computer keeps the
+ * project's agents repository; establishing that clone — which synchronizes
+ * a managed cache with a forced checkout and clean, and writes this
+ * computer's execution configuration — is the Prepare control, offered to
+ * the project's owner (Astra's Wave 2 review, finding 11).
  */
 export function ProjectActionsScreen({ projectId }: { projectId: string }) {
   const { project, actions, isLoading, error, readability, refresh } =
     useProjectActions(projectId);
   const pulseEnabled = useFeatureEnabled("project-pulse");
-  const agentsRepo = useRecordProjectAgentsRepo(project?.address ?? null);
+  const agentsRepo = useProjectAgentsRepo(project?.address ?? null);
   const identity = useIdentityQuery();
   const tipQuery = useProjectCodeRefTip(
     project?.address ?? null,
     project?.repoAddrs ?? [],
   );
-  // Ledger 186: the host-step approval is the one project-action capability
-  // that is never delegated, so the control is offered to the project owner
-  // and to nobody else. A read-only viewer sees the same card, read-only.
-  const authority = approvalAuthority({
-    viewerPubkey: identity.data?.pubkey ?? null,
-    projectOwner: project?.owner ?? null,
-    approverSpec: null,
-  });
-
   if (!project) {
     return (
       <div
@@ -71,14 +67,28 @@ export function ProjectActionsScreen({ projectId }: { projectId: string }) {
           Could not read this project's actions: {error}
         </p>
       ) : null}
-      {agentsRepo.note ? (
-        <p
-          className="mb-3 text-xs text-muted-foreground"
-          data-testid="project-actions-agents-repo-note"
-        >
-          {agentsRepo.note}
-        </p>
-      ) : null}
+      <p
+        className="mb-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground"
+        data-testid="project-actions-agents-repo-note"
+      >
+        <span>{agentsRepo.prepareNote ?? agentsRepo.note}</span>
+        {agentsRepo.prepareError ? (
+          <span className="text-destructive">{agentsRepo.prepareError}</span>
+        ) : null}
+        {agentsRepo.status?.recorded === false &&
+        identity.data?.pubkey?.toLowerCase() === project.owner.toLowerCase() ? (
+          <Button
+            data-testid="project-actions-prepare-agents-repo"
+            disabled={agentsRepo.preparing}
+            onClick={() => agentsRepo.prepare()}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            {agentsRepo.preparing ? "Preparing…" : "Prepare"}
+          </Button>
+        ) : null}
+      </p>
       {isLoading ? (
         <div className="space-y-3" data-testid="project-actions-loading">
           <Skeleton className="h-24 w-full rounded-xl" />
@@ -129,8 +139,6 @@ export function ProjectActionsScreen({ projectId }: { projectId: string }) {
           {actions.map((action) => (
             <ProjectActionCard
               action={action}
-              authoritySentence={authority.sentence}
-              canApprove={authority.canApprove}
               key={action.workflow.id}
               onChanged={refresh}
               tip={tipQuery.data ?? null}

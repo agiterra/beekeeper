@@ -18471,6 +18471,149 @@ removed from here.
        archived-versus-closed distinction and the desktop's missing strict
        hire reader are all recorded above and owned by no lane yet.
 
+211. **The approval card could show a command from a definition the run was
+     not bound to, asked the wrong key whether it may approve, could not name
+     the commit a waiting run would test, and wrote to a managed cache just
+     because someone opened the tab (2026-09-20, lane W5 follow-up/211;
+     source: Astra's Wave 2 review findings 1, 9, 10, 11, against
+     `220a29195`).** Built, gated, not landed and not exercised live. Every
+     defect was reproduced red before it was fixed.
+     - **(a) Finding 1 — what is shown is what is approved.**
+       `HostStepApprovalInboxCard.tsx:54` fetched the run and the *current*
+       workflow separately: `:84` showed the run's bound hash while `:86`
+       took the command from whatever was published now, with no comparison;
+       `ProjectActionRunRow.tsx:81` repeated it. The dangerous interleaving is
+       ordinary — A waits for approval, B is published, the card reads hash A
+       beside command B, A is republished before the click — so the relay and
+       host correctly execute A while the owner approved what they read as B.
+       Two further holes: `ProjectActionApprovalCard.tsx:162` gated the
+       buttons on identity alone, so even a **failed** definition read left
+       Approve enabled, and `actionDefinition.ts:149` joined an argv with
+       spaces, so `["sh","-c","a b"]` rendered as `sh -c a b` — four arguments
+       where the definition names three.
+       **Fixed.** `hostStepCommand` now returns structure
+       (`{form:"argv"|"shell"}`), never a line; the card renders one numbered
+       argument per row plus the JSON array beside them. `matchBoundDefinition`
+       compares the run's `definition_hash` with the relay's **own** hash of
+       the current definition (`GET /workflows/{id}/autorun`'s
+       `definition_hash`, which the relay computes with the function the run
+       was bound with — a check, not a second implementation). Four outcomes:
+       `resolved`, `not-current`, `unread`, `hash-unknown`. A command is shown
+       only for `resolved`, and `view.grantAvailable` is true only when the
+       run's hash is known, a definition with that exact hash resolved, the
+       step was found in it, and the checkout state is known. **Deny stays
+       available to an approver throughout**: refusing what you cannot fully
+       see is always a safe answer, and withholding it would strand a run.
+       *Red:* `'sh -c a b'` returned where `{form:"argv",…}` was expected, and
+       `grantAvailable` was `undefined` on a mismatched definition. *Green:*
+       16/16 in `lib/approvalTruth.test.mjs` and 5/5 in
+       `ui/ProjectActionApprovalCard.test.mjs`, including both grant buttons
+       `disabled` and Deny enabled on `not-current`.
+     - **(b) Finding 9 — the approver is the project's, not the publisher's.**
+       The inbox took authority from the 46010's `p` tag, which is the
+       *workflow owner* — under lane 186's delegation, normally a lead seat —
+       so Brian's card withheld Approve and the lead's offered a grant the
+       relay refuses. The Actions tab used the project creator, still
+       excluding legitimate co-owners. The relay's actual rule is
+       `approver_admitted` (`command_executor.rs:1334`): for
+       `project-owner:<coordinate>`, the coordinate's creator **or** a current
+       roster `Owner`. New `useApprovalAuthority` mirrors exactly that over
+       the kind:39010 roster read the desktop already has, and is the **one**
+       resolver both the inbox card and the Actions tab call — the run row
+       now resolves it itself rather than receiving a prop, so the two cannot
+       drift. `resolveApprovalAuthority` accepts `publisherPubkey` and
+       deliberately never consults it, so a caller holding it cannot quietly
+       reintroduce the bug. An unread roster is `unknown`: no grant, and the
+       sentence says why. *Red:* a roster Owner who is not the creator was
+       refused. *Green:* creator, delegated-publisher, co-owner, non-owner,
+       unread-roster and unrecognised-spec cases.
+     - **(c) Finding 10 — the run's own bound commit.** Lane 206 put
+       `checkout` on the run wire (`api/workflows.rs:428`); the desktop's raw
+       type and mapper dropped it, and both cards looked for the commit in a
+       later host result — which for a run awaiting its **first** approval
+       cannot exist yet, and will not until that approval is granted. The raw
+       type and `fromRawWorkflowRun` now carry it as a three-state
+       `RunCheckout`, and `"checkout" in raw` is load-bearing: **absent** (an
+       older relay does not report it), **null** (the run names no commit and
+       the step runs in the working directory as found) and **a sha** are
+       three different claims, and `?? null` would collapse the first two. An
+       unreported commit blocks Approve; a null one does not. Both cards read
+       it from the run.
+     - **(d) Finding 11 — render never writes.** `ProjectActionsScreen.tsx:26`
+       mounted `useRecordProjectAgentsRepo`, whose effect invoked
+       `record_project_agents_repo`; that native call synchronizes the managed
+       packs cache with `git checkout --detach --force` and
+       `git clean -x -d --force` (`packs_cache.rs:543`) and then writes the
+       workdir store. Opening the tab, as any viewer, mutated a managed cache
+       and this computer's execution configuration. The hook is deleted. New
+       read-only Tauri command `project_agents_repo_status` answers where the
+       clone is; the screen states the fact (including "Nothing has been
+       changed by opening this tab") and offers an explicit **Prepare**
+       control, shown only to the project's owner because the write is theirs.
+       **Every other mount-time effect in `project-actions/**` and Part C's
+       hook was audited and none writes:** `ProjectActionRunControl.tsx:60` is
+       a `useEffect` that seeds local state from the prefill tip; the three
+       `useMutation`s (Run, Approve/Deny, Revoke autorun) are user-initiated;
+       `useProjectWork` is a `useQuery` whose native command only reads
+       (`git show`, and the workdir record).
+     - **(e) The smoke timeout, and what caused it.** The cold
+       `waitForBridge` timeout seen in a landing is **this spec's setup, not
+       the shared helper**: `installMockBridge(page)` with no second argument
+       never configures the bridge, so neither
+       `__BUZZ_E2E_INVOKE_MOCK_COMMAND__` nor `__TAURI_INTERNALS__` is ever
+       defined and the wait burns its whole budget. Reproduced
+       deterministically (that test failed every run; its sibling, which
+       passes a mock object, passed). Fixed by passing `{}`; both cases now
+       pass in 3.2 s. The wait is also bounded under Playwright's own per-test
+       timeout so a slow bridge reports as a bridge failure rather than an
+       unattributable test timeout. Separately: a dynamic `import()` of a
+       source path cannot work against the built preview bundle, so finding
+       1's surface proof is the JSDOM render test in (a) rather than an e2e
+       case.
+     - **(f) Gates**, bare on the tip: `just _ensure-sidecar-stubs`,
+       `cargo fmt --check`, `cargo clippy --all-targets -D warnings`,
+       `cargo test`, `just desktop-check`, `pnpm test`, the Playwright spec by
+       name, `just file-size-check`, `just current-state-check`. Figures in
+       the lane report.
+     - **(h) Addendum — lane 213's request shape, and the drift class it
+       belongs to.** Lane 213 made the native `project_work_coverage` request
+       require `channelRef` and `genesisRef` and take the kind:44244
+       `team_events` as **full signed events** (its assembler now folds them
+       with the canonical 44244 fold, which verifies what it judges). It
+       changed the Rust side and its own test literal only, so every
+       TypeScript unit test stayed green while the coverage view would have
+       failed at runtime in front of a person — the same shape of defect as
+       finding 10, a wire field that one side carries and the other does not.
+       The TypeScript caller is matched to that struct exactly:
+       `ProjectWorkRequest` gains both fields as required, `useProjectWork`
+       sends them (`genesisRef` off the umbrella record the Mission surface
+       already holds), and `teamEvents` cross as `SignedWireEvent` — exactly
+       the seven signed fields, the same set the team-transaction fold
+       already sends, so the local-only render keys `localKey` and `pending`,
+       which no signature ever covered, are not offered to a strict decoder.
+       Three guards, so this class fails a test next time rather than a
+       person: `assertProjectWorkRequestComplete` refuses an incomplete
+       request **before** the invoke and names the missing field, rather than
+       letting it arrive as a serde error about a struct the caller cannot
+       see; `hooks/useProjectWork.test.mjs` asserts the built payload carries
+       every key in `PROJECT_WORK_REQUIRED_KEYS` and that team events keep
+       their signatures and nothing else; and the mock bridge holds the same
+       contract, so `tests/e2e/project-work.spec.ts` fails in a browser when
+       a required key or a signature is missing.
+       Also found while gating: one case of this spec times out in
+       `waitForBridge` when it runs **after** another case in the same worker
+       and its mock configuration is bare (`installMockBridge(page)` or
+       `{}`); in isolation it passes in 2 s. Giving it a configuration of the
+       same shape as its siblings, with only the fact under test withheld,
+       makes all three pass (3 passed, 29.9 s). So the cold
+       "waitForBridge timed out" reported from a landing is this spec's own
+       setup, not the shared helper — but the underlying sensitivity of a
+       bare mock config to test order is the helper's, and is left named
+       here rather than papered over with a longer timeout.
+     - **(g) Owed live.** Nothing ran against hive. The Wave 3 control run
+       must still approve a host step from the app — now with the guarantee
+       that the command displayed is the one the run is bound to, or no
+       command and no Approve.
 
 ## 3a. Environment facts that cost real time (do not rediscover)
 

@@ -128,35 +128,70 @@ export function requiredCheckoutStepIds(
 }
 
 /**
- * The exact command a `run_on_host` step would execute, as the published
- * definition spells it — the argv joined by spaces, never re-quoted or
- * summarized. `null` when the step is not in this definition or carries no
- * command; an approval card renders that as "this definition names no
- * command for <step>", never as an empty line.
+ * A `run_on_host` step's command, in the form the definition wrote it.
+ *
+ * Kept as **structure**, never as one line. Lane 203 joined an argv with
+ * spaces, so `["sh","-c","a b"]` rendered as `sh -c a b` — four arguments
+ * where the definition names three, and the difference is the difference
+ * between running `a` and running `a b`. An approver is being asked to let a
+ * command run on their own computer; the display must not be able to lie
+ * about how it is split (Astra's Wave 2 review, finding 1).
+ */
+export type HostStepCommand =
+  | { form: "argv"; argv: readonly string[] }
+  | { form: "shell"; text: string };
+
+/**
+ * The command a `run_on_host` step would execute, as the published
+ * definition spells it.
+ *
+ * `null` when the step is not in this definition, is not a `run_on_host`
+ * step, or carries no command a reader can render — an approval card shows
+ * that as a named absence and withholds Approve, never as an empty line.
  */
 export function hostStepCommand(
   definition: Record<string, unknown>,
   stepId: string,
-): string | null {
+): HostStepCommand | null {
   if (!Array.isArray(definition.steps)) return null;
   for (const raw of definition.steps) {
     const step = asRecord(raw);
     if (step?.id !== stepId || step.action !== "run_on_host") continue;
     const command = step.command;
     if (typeof command === "string" && command.trim().length > 0) {
-      return command.trim();
+      return { form: "shell", text: command.trim() };
     }
     if (Array.isArray(command)) {
-      const parts = command.filter(
+      const argv = command.filter(
         (part): part is string => typeof part === "string",
       );
-      if (parts.length === command.length && parts.length > 0) {
-        return parts.join(" ");
+      if (argv.length === command.length && argv.length > 0) {
+        return { form: "argv", argv };
       }
     }
     return null;
   }
   return null;
+}
+
+/**
+ * The lines a command is displayed as: one argument per line for an argv,
+ * the single line for a shell command.
+ *
+ * Never a space-joined string. Callers render these as separate rows and
+ * show the JSON array beside them, so the split is visible.
+ */
+export function hostStepCommandLines(
+  command: HostStepCommand,
+): readonly string[] {
+  return command.form === "argv" ? command.argv : [command.text];
+}
+
+/** The unambiguous one-line form: a JSON array, or the shell line quoted. */
+export function hostStepCommandJson(command: HostStepCommand): string {
+  return command.form === "argv"
+    ? JSON.stringify(command.argv)
+    : JSON.stringify(command.text);
 }
 
 /** Whether `value` is a full 40-hex commit sha, as the relay demands. */

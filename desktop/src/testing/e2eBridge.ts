@@ -15005,6 +15005,44 @@ export function maybeInstallE2eTauriMocks() {
         return structuredClone(response);
       }
       case "project_work_coverage": {
+        // The mock refuses an incomplete request for the same reason the
+        // native command does: lane 213 added `channelRef` and `genesisRef`
+        // to the Rust struct and every TypeScript unit test stayed green
+        // while the coverage view would have failed in front of a person.
+        // Checking it here makes that class of drift fail a browser test.
+        const request = (payload as { request?: Record<string, unknown> })
+          ?.request;
+        const required = [
+          "schema",
+          "sessionRef",
+          "projectRef",
+          "founderPubkey",
+          "channelRef",
+          "genesisRef",
+          "workEvents",
+          "teamEvents",
+        ];
+        const missing = required.filter(
+          (key) => request?.[key] === undefined || request?.[key] === null,
+        );
+        if (missing.length > 0) {
+          throw new Error(
+            `project_work_coverage: request is missing ${missing.join(", ")}`,
+          );
+        }
+        const teamEvents = request?.teamEvents;
+        if (Array.isArray(teamEvents)) {
+          const unsigned = teamEvents.filter(
+            (event) =>
+              typeof (event as { sig?: unknown })?.sig !== "string" ||
+              ((event as { sig: string }).sig ?? "").length === 0,
+          );
+          if (unsigned.length > 0) {
+            throw new Error(
+              "project_work_coverage: team transactions must cross with their signatures",
+            );
+          }
+        }
         const response = mockProjectWorkCoverageResponse;
         if (!response) {
           throw new Error(

@@ -136,7 +136,10 @@ test("a required checkout is read off the step, and the command verbatim", () =>
     ],
   };
   assert.deepEqual(requiredCheckoutStepIds(definition), ["verify"]);
-  assert.equal(hostStepCommand(definition, "verify"), "just ci");
+  assert.deepEqual(hostStepCommand(definition, "verify"), {
+    form: "argv",
+    argv: ["just", "ci"],
+  });
   assert.equal(hostStepCommand(definition, "note"), null);
   assert.equal(hostStepCommand(definition, "missing"), null);
   assert.equal(requiredCheckoutStepIds({}).length, 0);

@@ -19,6 +19,7 @@ import { relayClient } from "@/shared/api/relayClient";
 import {
   invokeProjectWorkCoverage,
   PROJECT_WORK_REQUEST_SCHEMA,
+  toSignedWireEvent,
   type ProjectWorkGrantInput,
   type ProjectWorkResponse,
   type ProjectWorkSeatInput,
@@ -40,6 +41,8 @@ export const PROJECT_WORK_READ_LIMIT = 500;
 export type ProjectWorkScope = {
   channelRef: string;
   sessionRef: string;
+  /** The session genesis event id; lane 213's fold is scoped by it. */
+  genesisRef: string;
   projectRef: string;
   founderPubkey: string;
   activeSeats: readonly ProjectWorkSeatInput[];
@@ -126,8 +129,12 @@ export async function loadProjectWorkCoverage(
     relaySelfKey,
     activeSeats: scope.activeSeats,
     activeGrants: scope.activeGrants,
+    channelRef: scope.channelRef,
+    genesisRef: scope.genesisRef,
     workEvents,
-    teamEvents,
+    // With signatures: lane 213's assembler folds these with the canonical
+    // 44244 fold, which verifies what it judges.
+    teamEvents: teamEvents.map(toSignedWireEvent),
     goalEvents,
     hostEvents,
     refStates,

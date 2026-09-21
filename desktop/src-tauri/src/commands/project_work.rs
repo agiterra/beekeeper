@@ -431,3 +431,28 @@ pub async fn project_work_coverage(
 #[cfg(test)]
 #[path = "project_work_tests.rs"]
 mod tests;
+
+/// Whether this computer has a recorded clone of a project's agents
+/// repository, and where.
+///
+/// A **read**. Astra's Wave 2 review, finding 11: opening the Actions tab
+/// mounted a hook whose effect called `record_project_agents_repo`, which
+/// synchronizes the managed packs cache with `checkout --detach --force` and
+/// `clean -x -d --force` and then writes the workdir store — so merely
+/// looking at the tab, as anyone, mutated a managed cache and this
+/// computer's execution configuration. Establishing that clone is now an
+/// explicit action; rendering asks this instead.
+#[tauri::command]
+pub async fn project_agents_repo_status(
+    app: tauri::AppHandle,
+    project_ref: String,
+) -> Result<serde_json::Value, String> {
+    let path = crate::coding_sessions::workdir_store::agents_repo_path_for_project(
+        &app,
+        project_ref.trim(),
+    );
+    Ok(serde_json::json!({
+        "recorded": path.is_some(),
+        "path": path,
+    }))
+}
