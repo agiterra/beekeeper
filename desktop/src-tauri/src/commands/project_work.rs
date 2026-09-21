@@ -94,9 +94,20 @@ pub struct ProjectWorkRequest {
     pub active_grants: Vec<ProjectWorkGrantInput>,
     /// Signed kind:44249 work records for this session.
     pub work_events: Vec<ProjectWorkEvent>,
-    /// Signed kind:44244 team transactions for this session.
+    /// Signed kind:44244 team transactions for this session, **with their
+    /// signatures**.
+    ///
+    /// The assembler folds them with the canonical 44244 fold, which verifies
+    /// what it judges, so these cross the boundary as full signed events
+    /// rather than the plain shape the other lists use (A5 decision 23).
     #[serde(default)]
-    pub team_events: Vec<ProjectWorkEvent>,
+    pub team_events: Vec<nostr::Event>,
+    /// The session's channel uuid, needed to scope that fold.
+    #[serde(default)]
+    pub channel_ref: Option<String>,
+    /// The session genesis event id, for the same reason.
+    #[serde(default)]
+    pub genesis_ref: Option<String>,
     /// Signed kind:44227 goal events for this session.
     #[serde(default)]
     pub goal_events: Vec<ProjectWorkEvent>,
@@ -357,6 +368,8 @@ pub(crate) fn project_work_coverage_inner(
         ref_states: request.ref_states,
         goal_events: request.goal_events,
         authority: RawAuthorityContext {
+            channel_ref: request.channel_ref,
+            genesis_ref: request.genesis_ref,
             genesis_event: None,
             founder_pubkey: Some(request.founder_pubkey),
             active_seats: request

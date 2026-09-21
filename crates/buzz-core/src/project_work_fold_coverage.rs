@@ -13,6 +13,7 @@ use super::*;
 /// Decide `coverageComplete` and compose its reason.
 pub(super) fn coverage(
     state: WorkDeclarationState,
+    plan_ref: &ProjectWorkPlanRef,
     plan_resolved: bool,
     criteria: &[WorkCriterionProjection],
     competing_heads: usize,
@@ -39,14 +40,18 @@ pub(super) fn coverage(
         }
         WorkDeclarationState::Head | WorkDeclarationState::Stale => {}
     }
+    // No plan blob means no criterion rows at all when nothing is bound yet.
+    // The declaration still says why it is not complete, so "nothing to show"
+    // can never be read as "nothing outstanding" (A5 decision 25).
     if !plan_resolved {
         return (
             false,
-            Some(WorkCoverageReasonCode::PlanUnreadable),
-            Some(
-                "the plan blob for this declaration was not supplied, so coverage is unknown"
-                    .to_owned(),
-            ),
+            Some(WorkCoverageReasonCode::PlanUnavailable),
+            Some(format!(
+                "the plan blob at {} was not supplied, so no criterion of this declaration can \
+                 be evaluated",
+                short_commit(&plan_ref.commit)
+            )),
         );
     }
     let total = criteria.len();
@@ -82,6 +87,22 @@ pub(super) fn coverage(
             Some(WorkCoverageReasonCode::CriteriaNotCovered),
             Some(format!(
                 "the declaration is stale against the session's current goal, and all {total} criteria are open"
+            )),
+        );
+    }
+    // Two templates, both the contract's. When some criteria are covered and
+    // the rest are too many to name, the fixture states the positive form —
+    // "1 of 5 criteria is covered … the other four are open" — because the
+    // list of what remains is a group, not a set of names.
+    let covered = total - not_covered.len();
+    if covered > 0 && not_covered.len() > 3 {
+        return (
+            false,
+            Some(WorkCoverageReasonCode::CriteriaNotCovered),
+            Some(format!(
+                "{covered} of {total} criteria {} covered under this declaration: {}",
+                if covered == 1 { "is" } else { "are" },
+                not_covered_sentence(criteria)
             )),
         );
     }
@@ -125,7 +146,7 @@ fn mixed_artifacts_reason(artifact_commits: &[String], candidate: Option<&str>) 
 /// criteria nothing has been bound to. Each group names its criteria when
 /// there are at most three of them, and counts them otherwise.
 fn not_covered_sentence(criteria: &[WorkCriterionProjection]) -> String {
-    let failed: Vec<String> = criteria
+    let failed_criteria: Vec<&WorkCriterionProjection> = criteria
         .iter()
         .filter(|criterion| {
             matches!(
@@ -133,6 +154,10 @@ fn not_covered_sentence(criteria: &[WorkCriterionProjection]) -> String {
                 WorkCriterionStatus::Open | WorkCriterionStatus::Unknown
             ) && criterion.reason.is_some()
         })
+        .collect();
+    let failed_kind = failed_kind(&failed_criteria);
+    let failed: Vec<String> = failed_criteria
+        .iter()
         .map(|criterion| criterion.criterion_id.clone())
         .collect();
     let unresolved = criteria
@@ -155,7 +180,13 @@ fn not_covered_sentence(criteria: &[WorkCriterionProjection]) -> String {
         .into_iter()
         .filter(|(_, ids)| !ids.is_empty())
         .collect();
-    let only_group = groups.len() == 1;
+    // "all four" only when four is everything. With one criterion already
+    // covered the remainder is "the other four", which is what the reader
+    // needs to hear.
+    let any_covered = criteria
+        .iter()
+        .any(|criterion| criterion.status == WorkCriterionStatus::Covered);
+    let only_group = groups.len() == 1 && !any_covered;
 
     let mut sentence = String::new();
     for (index, (kind, ids)) in groups.iter().enumerate() {
@@ -169,12 +200,59 @@ fn not_covered_sentence(criteria: &[WorkCriterionProjection]) -> String {
                 "; "
             });
         }
-        sentence.push_str(&group_phrase(kind, ids, index == 0, only_group, unresolved));
+        sentence.push_str(&group_phrase(
+            kind,
+            ids,
+            index == 0 && !any_covered,
+            only_group,
+            unresolved,
+            failed_kind,
+        ));
     }
     sentence
 }
 
-fn group_phrase(kind: &str, ids: &[String], first: bool, only: bool, unresolved: bool) -> String {
+/// What a whole failed group has in common, when it has something.
+///
+/// The three A5 reasons read as facts about the *record*, not about a
+/// predicate: evidence the team projection excludes, an approval that was
+/// replaced, a run of another definition. Saying "failed its predicate"
+/// about any of them would hide which of those three it is.
+fn failed_kind(failed: &[&WorkCriterionProjection]) -> Option<WorkReasonCode> {
+    let first = failed.first()?.reason_code?;
+    let shared = failed
+        .iter()
+        .all(|criterion| criterion.reason_code == Some(first));
+    // `wrong_run_or_hash` covers two different facts, and the fixtures
+    // phrase them differently: a run of **another commit's** definition of
+    // this action ("a run of another definition", `same-action-two-commits`)
+    // and a run of an unrelated hash ("evidence that failed its predicate",
+    // `action-hash-mismatch`). The per-criterion reason already distinguishes
+    // them, and this reads that distinction rather than inventing a second
+    // reason code the contract does not have.
+    let another_definition = failed.iter().all(|criterion| {
+        criterion
+            .reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("this declaration's plan commit"))
+    });
+    matches!(
+        first,
+        WorkReasonCode::ReportNotCanonical | WorkReasonCode::DispositionNotCanonical
+    )
+    .then_some(first)
+    .or((first == WorkReasonCode::WrongRunOrHash && another_definition).then_some(first))
+    .filter(|_| shared)
+}
+
+fn group_phrase(
+    kind: &str,
+    ids: &[String],
+    first: bool,
+    only: bool,
+    unresolved: bool,
+    failed_kind: Option<WorkReasonCode>,
+) -> String {
     let named = ids.len() <= 3;
     let subject = if named {
         join_ids(ids)
@@ -188,6 +266,21 @@ fn group_phrase(kind: &str, ids: &[String], first: bool, only: bool, unresolved:
     let singular = named && ids.len() == 1;
     match kind {
         "failed" => {
+            match failed_kind {
+                Some(WorkReasonCode::ReportNotCanonical) => {
+                    let verb = if singular { "carries" } else { "carry" };
+                    return format!("{subject} {verb} evidence the team projection excludes");
+                }
+                Some(WorkReasonCode::DispositionNotCanonical) => {
+                    let verb = if singular { "was" } else { "were" };
+                    return format!("{subject}'s approving disposition {verb} replaced");
+                }
+                Some(WorkReasonCode::WrongRunOrHash) => {
+                    let verb = if singular { "carries" } else { "carry" };
+                    return format!("{subject} {verb} a run of another definition");
+                }
+                _ => {}
+            }
             let verb = if singular { "carries" } else { "carry" };
             let what = if unresolved {
                 "evidence that failed its predicate or could not be resolved"

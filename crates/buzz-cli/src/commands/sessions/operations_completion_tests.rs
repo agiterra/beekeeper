@@ -359,7 +359,7 @@ fn a_head_whose_plan_could_not_be_read_is_refused() {
         Vec::new(),
         false,
         false,
-        Some(WorkCoverageReasonCode::PlanUnreadable),
+        Some(WorkCoverageReasonCode::PlanUnavailable),
     );
     let open = incomplete_head(&unreadable).expect("an unreadable plan blocks a completion");
     assert!(open.criteria.is_empty(), "there are no rows to list");

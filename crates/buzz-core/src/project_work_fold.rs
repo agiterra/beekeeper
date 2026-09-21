@@ -52,8 +52,21 @@ mod evidence_facts;
 pub use evidence_facts::{
     WorkActionDefinition, WorkActiveGrant, WorkActiveSeat, WorkAuthority, WorkCheckoutFact,
     WorkCoverageReasonCode, WorkEvidenceFact, WorkReasonCode, WorkStateReasonCode,
-    SIGNER_NOT_MAY_LEAD_MESSAGE,
+    WorkTeamAssignment, WorkTeamProjection, SIGNER_NOT_MAY_LEAD_MESSAGE,
 };
+
+/// The key an action definition is held under: `<30617 coordinate>@<commit>#<action>`.
+///
+/// **Never by name alone** (A5 decision 24, review finding 7). Two plan
+/// commits can define one action name with different hashes; collapsed to the
+/// name, one wins by sort order, the amended head's correct evidence fails
+/// and the superseded plan's evidence passes. The commit is part of the key
+/// so a declaration's action criteria are judged only against the definitions
+/// compiled at **its own** `planRef.commit`.
+#[must_use]
+pub fn action_definition_key(repository: &str, commit: &str, name: &str) -> String {
+    format!("{repository}@{commit}#{name}")
+}
 
 /// Exact `schema` value a coverage projection carries.
 pub const PROJECT_WORK_COVERAGE_SCHEMA: &str = "buzz-project-work-coverage/v1";
@@ -86,10 +99,12 @@ pub struct WorkFoldInputs {
     /// Plan blobs keyed by [`ProjectWorkPlanRef::blob_key`].
     pub plan_blobs: BTreeMap<String, String>,
     /// Action definitions the **caller** compiled from `actions.yml` at the
-    /// declaration's plan commit. The fold compares hashes; it does not
-    /// compile, because evidence that nominated its own expected hash would
-    /// prove nothing.
+    /// declaration's plan commit, keyed by [`action_definition_key`]. The
+    /// fold compares hashes; it does not compile, because evidence that
+    /// nominated its own expected hash would prove nothing.
     pub action_definitions: BTreeMap<String, WorkActionDefinition>,
+    /// The canonical kind:44244 projection, from the team fold itself.
+    pub team_projection: WorkTeamProjection,
     /// Verified evidence facts, keyed by event id.
     pub evidence: BTreeMap<String, WorkEvidenceFact>,
     /// Every known relay-signed kind:30618 for the code repository, because

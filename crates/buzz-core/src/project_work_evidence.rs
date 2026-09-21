@@ -109,6 +109,51 @@ impl WorkAuthority {
     }
 }
 
+/// The canonical kind:44244 projection this fold judges evidence against.
+///
+/// **Work coverage never admits what the team contract excludes** (A5
+/// decision 23, review finding 6). The 44244 fold already requires a report's
+/// signer to be its assignment's assignee and drops a ruling that a later one
+/// replaced; relay ingest validates structure and cannot see either. So the
+/// caller folds the session's team transactions with
+/// `fold_coding_session_team_transactions` — the existing fold, never a second
+/// implementation — and hands its answer here.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkTeamProjection {
+    /// Every record that projection **includes**: not excluded, not
+    /// superseded, not corrected away.
+    pub included_event_ids: std::collections::BTreeSet<String>,
+    /// Its projected assignments, by event id.
+    pub assignments: std::collections::BTreeMap<String, WorkTeamAssignment>,
+}
+
+impl WorkTeamProjection {
+    /// Whether the canonical projection includes this record.
+    #[must_use]
+    pub fn includes(&self, event_id: &str) -> bool {
+        self.included_event_ids.contains(event_id)
+    }
+
+    /// The actor an assignment names, when the projection carries it.
+    #[must_use]
+    pub fn assignee(&self, assignment_ref: &str) -> Option<&str> {
+        self.assignments
+            .get(assignment_ref)
+            .map(|assignment| assignment.assignee_actor.as_str())
+    }
+}
+
+/// One projected assignment: who owes it, under which role.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkTeamAssignment {
+    /// Canonical lowercase-hex actor the assignment names.
+    pub assignee_actor: String,
+    /// The role it names, as recorded.
+    pub assignee_role: String,
+}
+
 /// One action definition the **caller** compiled from `actions.yml` at the
 /// declaration's plan commit, with the publication compiler.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -230,6 +275,13 @@ pub enum WorkReasonCode {
     ActionFailed,
     /// The tree was dirty before or after the command.
     DirtyRevision,
+    /// The team projection excludes the report, it was signed by somebody who
+    /// is not the assignment's assignee, or it answers an assignment this
+    /// criterion is not bound to.
+    ReportNotCanonical,
+    /// The team projection excludes the disposition — most often because a
+    /// later ruling replaced it.
+    DispositionNotCanonical,
     /// The late-green-for-P case.
     BoundToSupersededDeclaration,
     /// A newer ref state names another commit.
@@ -249,6 +301,8 @@ impl WorkReasonCode {
             Self::WrongRunOrHash => "wrong_run_or_hash",
             Self::ActionFailed => "action_failed",
             Self::DirtyRevision => "dirty_revision",
+            Self::ReportNotCanonical => "report_not_canonical",
+            Self::DispositionNotCanonical => "disposition_not_canonical",
             Self::BoundToSupersededDeclaration => "bound_to_superseded_declaration",
             Self::RefObservationSuperseded => "ref_observation_superseded",
         }
@@ -291,8 +345,12 @@ pub enum WorkCoverageReasonCode {
     Superseded,
     /// Coverage is not computed while heads compete.
     Conflict,
-    /// The plan blob was not supplied.
-    PlanUnreadable,
+    /// The plan blob was not supplied, so no criterion could be evaluated.
+    ///
+    /// A declaration-level answer on purpose: with no plan **and** no
+    /// bindings there are no criterion rows at all, and an empty list must
+    /// never read as "nothing outstanding" (A5 decision 25, finding 5).
+    PlanUnavailable,
 }
 
 impl WorkCoverageReasonCode {
@@ -304,7 +362,7 @@ impl WorkCoverageReasonCode {
             Self::MixedArtifacts => "mixed_artifacts",
             Self::Superseded => "superseded",
             Self::Conflict => "conflict",
-            Self::PlanUnreadable => "plan_unreadable",
+            Self::PlanUnavailable => "plan_unavailable",
         }
     }
 }

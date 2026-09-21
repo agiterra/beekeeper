@@ -17594,6 +17594,92 @@ removed from here.
        `just file-size-check`, `just current-state-check` — all green;
        `cargo test -p buzz-core` red exactly as listed above.
 
+213. **The four Wave 2 review defects in `bee sessions work` and its fold,
+     each reproduced as a failing test before it was fixed (built 2026-09-21,
+     `work/lane-213-coverage-fixes`, rebased onto A5 `96b16f0ae`).** Findings
+     5–8 of `/tmp/astra-wave2-review.md`, at `220a29195`.
+     - **(a) The completion gate failed open (finding 5).** It selected an
+       incomplete declaration only when that declaration had *rendered
+       criterion rows*, and the two cases that most need refusing render
+       none: a head whose plan blob could not be read, and a conflicted fork,
+       which carries no criteria because it is not a current contract. Red
+       first: `a_head_whose_plan_could_not_be_read_is_refused` and
+       `conflicted_heads_are_refused` both passed `None` before the fix. The
+       gate now reads state ∈ {head, stale, conflict} **and**
+       `coverageComplete`, and prints a declaration-level sentence naming the
+       fork or the unreadable plan. `superseded` still blocks nothing, and
+       the no-declaration and `--without-coverage` paths are unchanged
+       (`operations_completion.rs`).
+     - **(b) Evidence came from raw events, not the canonical projection
+       (finding 6).** A channel peer's well-formed report about somebody
+       else's assignment, approved and bound by the lead, was accepted as
+       coverage although the 44244 fold excludes it — and a historical
+       approval a later ruling replaced stayed usable. The assembler now
+       **calls** `fold_coding_session_team_transactions` (never a second
+       implementation) and hands the fold `teamProjection`; `team_events`
+       crossed to signed `nostr::Event`s for that reason, and a fold that
+       refuses the set is `team_projection_refused` rather than a silent
+       empty projection. New reasons `report_not_canonical` and
+       `disposition_not_canonical`, with A5's six-step precedence implemented
+       exactly so `wrong_signer` / `not_approving` / `revision_mismatch` keep
+       their existing fixtures. Red first:
+       `a_report_by_someone_who_is_not_the_assignee_is_not_evidence` and
+       `an_approval_a_later_ruling_replaced_is_not_evidence`, both built from
+       **real signed records**.
+     - **(c) Action definitions lost their plan commit (finding 7).** The
+       assembler collapsed `(repository, commit, name)` to the name, so of two
+       same-named definitions one won by sort order: the amended head's
+       correct evidence failed and the superseded plan's passed. The key is
+       now `<30617 coordinate>@<commit>#<action>` end to end
+       (`action_definition_key`), and evaluation looks up **the declaration's
+       own** `planRef.commit`. Both lexicographic orders pass
+       (`same-action-two-commits`, `…-reversed`). The desktop reads through
+       the same function, and its plan reader already compiled per commit.
+     - **(d) Initial adoption minted a new work identity on retry (finding
+       8).** A publish whose response was lost produced a second `workId` and
+       a second set of obligations. The initial id is now derived —
+       `derive_work_id`, UUID v5 over (project, session, plan repository,
+       plan path, plan id), **no clock and no randomness**, the commit
+       deliberately excluded so a new commit of the same plan is an
+       amendment. Re-adopting without `--supersedes` is refused naming the
+       declaration to supersede, and the dedupe compares the whole body it
+       always claimed to. Red first:
+       `an_initial_adoption_whose_response_was_lost_republishes_nothing`
+       (two publishes before, one after).
+     - **(e) `--verifies` parsed on five verbs and meant one (lane 209).**
+       Six verbs share `TeamTransactionWriteArgs`. The refusal existed but
+       said only that the flag was "only meaningful on an assignment"; it now
+       says where the id belongs — "`--verifies` applies to `sessions
+       assign`; a report/verdict names its assignment in the body's
+       `assignmentRef`" — and `work_contract.rs` pins it on all five verbs,
+       plus that `report`/`verdict` take no `--assignment` flag and their
+       `--example` body carries `assignmentRef`. The refusal is **behind the
+       key gate**: a keyless run answers `auth` first, which is why the test
+       supplies one.
+     - **Two contract disagreements, reported not resolved.** (1)
+       `action-hash-mismatch` keeps the old wording "compiled at the plan
+       commit" while `same-action-two-commits` states "compiled at this
+       declaration's plan commit <commit>"; both are the same code path, so
+       the implementation prints the commit-naming form only when the run
+       executed *another commit's* definition of that action, which is the
+       only rule that satisfies both. (2) `same-action-two-commits` expects
+       `candidateArtifact` at the single covering commit while its `git-ref`
+       criterion is still open, which contradicts the README sentence "it is
+       `null` … when the plan has a `git-ref` criterion that is not yet
+       covered"; the fixtures won, `coverageComplete` is unaffected, and the
+       README sentence needs an amendment.
+     - **One test could not survive A5 in its old form.**
+       `project_work_inputs::tests::folding_an_assembled_input_matches_every_expected_fold`
+       rebuilt each sequence's `inputs.json` from a raw event set. Canonical
+       derivation keys every record by its own **event id**, and the frozen
+       fixtures state fake ids, so no signed record can carry `1ea1…`. The
+       18-sequence oracle is pinned in `project_work_fold_tests.rs`
+       (all 18, under permutation); the assembler file now pins the
+       derivation with real signed records plus the non-id-bound fixture
+       parts (goals, ref states, authority, blob and action keys). The CLI's
+       stub-relay status test skips the six sequences carrying 44244 records
+       for the same reason, and names them.
+
 ## 3a. Environment facts that cost real time (do not rediscover)
 
 - **pnpm 11's answer to a stale workspace state is to DELETE `node_modules`,

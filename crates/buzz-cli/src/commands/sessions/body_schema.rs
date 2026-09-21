@@ -496,10 +496,14 @@ pub async fn dispatch_write(
     let mut body = read_body_argument(&args.body)?;
     if let Some(report_ref) = args.verifies.clone() {
         if transaction_type != CodingSessionTeamTransactionType::Assignment {
+            // Ledger 213(e): six verbs share these args, so clap parses
+            // `--verifies` on all of them. A flag that is accepted and
+            // changes nothing is a lie in the interface — this names where
+            // it applies and where the id the caller meant actually goes.
             return Err(CliError::Usage(format!(
-                "--verifies is only meaningful on an assignment: it fills the assignment's \
-                 baseSha from a report's headSha, and `bee sessions {command}` publishes no \
-                 baseSha"
+                "--verifies applies to `sessions assign`; a report/verdict names its assignment \
+                 in the body's `assignmentRef`. It fills an assignment's baseSha from a \
+                 report's headSha, and `bee sessions {command}` publishes no baseSha"
             )));
         }
         apply_verifies(client, &args, &report_ref, &mut body).await?;

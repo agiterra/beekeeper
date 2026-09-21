@@ -1094,6 +1094,9 @@ async fn current_goal(wire: &impl WorkWire, session: &SessionContext) -> Result<
     let raw = RawWorkInputs {
         goal_events: events,
         authority: RawAuthorityContext {
+            channel_ref: Some(session.channel.clone()),
+            genesis_ref: Some(session.genesis_ref.clone()),
+            genesis_event: None,
             founder_pubkey: Some(session.context.founder_pubkey.clone()),
             ..RawAuthorityContext::default()
         },
@@ -1628,15 +1631,27 @@ async fn coverage_with(
         }
     }
 
+    // The signed 44244 records, because the assembler folds them with the
+    // canonical team fold: coverage never admits what that contract excludes
+    // (A5 decision 23). These are the same events `operations_reads` reads.
     let team_rows = client
         .query_events(
             json!({"kinds": [KIND_CODING_SESSION_TEAM_TRANSACTION], "#h": [args_channel],
-                   "#d": [session_ref]}),
+                   "#d": [session_ref], "#cstx-genesis": [session.genesis_ref]}),
             Some(READ_LIMIT),
         )
         .await
         .map_err(|error| read_failed("kind:44244 team transactions", error))?;
-    let team_events = decode_rows(team_rows, "kind:44244 team transaction")?;
+    let team_events: Vec<nostr::Event> = team_rows
+        .into_iter()
+        .map(|row| {
+            serde_json::from_value(row).map_err(|error| {
+                CliError::Other(format!(
+                    "relay returned a malformed kind:44244 team transaction: {error}"
+                ))
+            })
+        })
+        .collect::<Result<_, CliError>>()?;
     let goal_rows = client
         .query_events(
             json!({"kinds": [KIND_CODING_SESSION_GOAL], "#h": [args_channel],
@@ -1685,6 +1700,9 @@ async fn coverage_with(
         ref_states,
         goal_events: decode_rows(goal_rows, "kind:44227 goal")?,
         authority: RawAuthorityContext {
+            channel_ref: Some(session.channel.clone()),
+            genesis_ref: Some(session.genesis_ref.clone()),
+            genesis_event: None,
             founder_pubkey: Some(session.context.founder_pubkey.clone()),
             active_seats: session
                 .context
@@ -1705,7 +1723,6 @@ async fn coverage_with(
                     may_steer: grant.may_steer,
                 })
                 .collect(),
-            genesis_event: None,
         },
         relay_self_key: session.relay_self.clone(),
         plan_blobs,

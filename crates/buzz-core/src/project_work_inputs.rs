@@ -40,15 +40,19 @@ use crate::coding_session_goal::{
     validate_coding_session_goal_content, validate_coding_session_goal_session_ref,
     CODING_SESSION_GOAL_TAG_VERSION,
 };
+use crate::coding_session_team_transaction::{
+    fold_coding_session_team_transactions, validate_coding_session_team_transaction_envelope,
+    CodingSessionTeamActiveGrant, CodingSessionTeamActiveSeat, CodingSessionTeamFoldContext,
+    CodingSessionTeamTransactionBody,
+};
 use crate::kind::{
-    KIND_CODING_SESSION_GOAL, KIND_CODING_SESSION_TEAM_TRANSACTION, KIND_GIT_REPO_STATE,
-    KIND_HOST_STEP_RESULT, KIND_PROJECT_WORK_RECORD, KIND_WORKFLOW_HOST_STEP_EXITED,
-    KIND_WORKFLOW_HOST_STEP_REQUESTED,
+    KIND_CODING_SESSION_GOAL, KIND_GIT_REPO_STATE, KIND_HOST_STEP_RESULT, KIND_PROJECT_WORK_RECORD,
+    KIND_WORKFLOW_HOST_STEP_EXITED, KIND_WORKFLOW_HOST_STEP_REQUESTED,
 };
 use crate::project_work::ProjectWorkEvent;
 use crate::project_work_fold::{
-    WorkActionDefinition, WorkActiveGrant, WorkActiveSeat, WorkAuthority, WorkCheckoutFact,
-    WorkEvidenceFact, WorkFoldInputs,
+    action_definition_key, WorkActionDefinition, WorkActiveGrant, WorkActiveSeat, WorkAuthority,
+    WorkCheckoutFact, WorkEvidenceFact, WorkFoldInputs, WorkTeamAssignment, WorkTeamProjection,
 };
 
 /// The authority facts the 44244 fold judges standing with.
@@ -64,6 +68,10 @@ use crate::project_work_fold::{
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RawAuthorityContext {
+    /// The session's channel uuid, needed to fold the team transactions.
+    pub channel_ref: Option<String>,
+    /// The session genesis event id, for the same reason.
+    pub genesis_ref: Option<String>,
     /// The session genesis event, whose **signer** is the founder. Supplying
     /// it is how a caller proves the founder rather than asserting it.
     pub genesis_event: Option<ProjectWorkEvent>,
@@ -90,10 +98,14 @@ pub struct RawWorkInputs {
     /// `{"kinds":[44249],"#h":[channel],"#d":[sessionRef]}`. Other kinds in
     /// this list are ignored by the fold, exactly as a mixed stream must be.
     pub work_events: Vec<ProjectWorkEvent>,
-    /// The session's kind:44244 team transactions, from the same session
-    /// query the 44244 fold uses. Reports, verdicts (dispositions) and
-    /// assignments are read; every other subtype is ignored.
-    pub team_events: Vec<ProjectWorkEvent>,
+    /// The session's kind:44244 team transactions, **as signed events**, from
+    /// the same query the 44244 fold uses.
+    ///
+    /// Signed, not plain, because this is what
+    /// [`fold_coding_session_team_transactions`] takes: the canonical
+    /// projection is *called*, never re-implemented, and it verifies the
+    /// signatures it judges (A5 decision 23).
+    pub team_events: Vec<nostr::Event>,
     /// Host-signed kind:46023 results for the project's action runs.
     pub host_results: Vec<ProjectWorkEvent>,
     /// The relay-signed kind:46014 echoes that carry those results. A result
@@ -123,6 +135,10 @@ pub struct RawWorkInputs {
     /// Action definitions the caller compiled with the publication compiler
     /// from `actions.yml` **at the declaration's plan commit**, keyed by
     /// `(repository coordinate, commit, action name)`.
+    ///
+    /// The commit stays in the key all the way through evaluation: two plan
+    /// commits can define one action name with different hashes, and the
+    /// collapse to a bare name let the wrong one answer (A5 decision 24).
     pub action_definitions: BTreeMap<(String, String, String), WorkActionDefinition>,
     /// The session this projection is about; derived from the records when
     /// absent.
@@ -146,6 +162,12 @@ pub enum AssembleRefusalCode {
     FounderUnknown,
     /// The supplied genesis event is not a 64-hex-signed event.
     FounderMalformed,
+    /// The canonical kind:44244 fold refused the supplied team events.
+    ///
+    /// Fails closed on purpose: without that projection, a report the team
+    /// contract excludes would be admitted as coverage, which is exactly the
+    /// defect decision 23 closes.
+    TeamProjectionRefused,
 }
 
 impl AssembleRefusalCode {
@@ -155,6 +177,7 @@ impl AssembleRefusalCode {
         match self {
             Self::FounderUnknown => "founder_unknown",
             Self::FounderMalformed => "founder_malformed",
+            Self::TeamProjectionRefused => "team_projection_refused",
         }
     }
 }
@@ -220,6 +243,8 @@ pub fn assemble_fold_inputs(raw: RawWorkInputs) -> Result<WorkFoldInputs, Assemb
 
     let (current_goal_ref, goal_events) = derive_goals(&raw.goal_events);
 
+    let team_projection = derive_team_projection(&raw)?;
+
     let mut evidence: BTreeMap<String, WorkEvidenceFact> = BTreeMap::new();
     for fact in derive_team_facts(&raw.team_events) {
         evidence.insert(fact.event_id().to_owned(), fact);
@@ -265,14 +290,20 @@ pub fn assemble_fold_inputs(raw: RawWorkInputs) -> Result<WorkFoldInputs, Assemb
             .into_iter()
             .map(|((repository, commit, path), blob)| (blob_key(&repository, &commit, &path), blob))
             .collect(),
-        // The fold keys action definitions by name alone: a declaration's
-        // criteria all resolve against one plan commit, so the caller's
-        // (repository, commit, name) key collapses to the name it compiled.
+        // The (repository, commit, name) provenance is kept, not collapsed:
+        // a declaration's action criteria are judged only against the
+        // definitions compiled at its own planRef.commit.
         action_definitions: raw
             .action_definitions
             .into_iter()
-            .map(|((_, _, name), definition)| (name, definition))
+            .map(|((repository, commit, name), definition)| {
+                (
+                    action_definition_key(&repository, &commit, &name),
+                    definition,
+                )
+            })
             .collect(),
+        team_projection,
         evidence,
         ref_states,
         session_ref: raw.session_ref,
@@ -352,69 +383,183 @@ fn is_goal_envelope(event: &ProjectWorkEvent) -> bool {
         && event.tags[2][1] == CODING_SESSION_GOAL_TAG_VERSION
 }
 
-/// The kind:44244 body shapes this assembler reads, and nothing else.
-#[derive(Debug, Deserialize)]
-struct TeamEnvelope {
-    #[serde(rename = "type")]
-    transaction_type: String,
-    body: serde_json::Value,
+/// The canonical kind:44244 projection, from the team fold itself.
+///
+/// **Called, never re-implemented** (A5 decision 23). The team fold is the
+/// only place that knows a report's signer must be its assignment's assignee
+/// and that a replaced ruling is history; a second copy of those rules here
+/// would be a second answer to one question.
+///
+/// With no channel, genesis or session to scope it — a caller that did not
+/// establish the session — the projection is left **empty**, and the coverage
+/// fold then judges no record on canonicity rather than guessing, exactly as
+/// an empty `goalEvents` leaves staleness unjudged. A fold that *refuses* the
+/// supplied set is a refusal here, because carrying on would admit records
+/// the team contract excludes.
+fn derive_team_projection(raw: &RawWorkInputs) -> Result<WorkTeamProjection, AssembleRefusal> {
+    let (Some(channel_ref), Some(genesis_ref), Some(session_ref)) = (
+        raw.authority.channel_ref.clone(),
+        raw.authority.genesis_ref.clone(),
+        raw.session_ref.clone(),
+    ) else {
+        return Ok(WorkTeamProjection::default());
+    };
+    if raw.team_events.is_empty() {
+        return Ok(WorkTeamProjection::default());
+    }
+    let context = CodingSessionTeamFoldContext {
+        channel_ref,
+        session_ref,
+        genesis_ref,
+        founder_pubkey: resolve_founder(&raw.authority)?,
+        active_seats: raw
+            .authority
+            .active_seats
+            .iter()
+            .map(|seat| CodingSessionTeamActiveSeat {
+                actor_pubkey: seat.actor_pubkey.clone(),
+                role: seat.role.clone(),
+            })
+            .collect(),
+        active_grants: raw
+            .authority
+            .active_grants
+            .iter()
+            .map(|grant| CodingSessionTeamActiveGrant {
+                actor_pubkey: grant.actor_pubkey.clone(),
+                grant_event_ref: grant.grant_event_ref.clone(),
+                may_steer: grant.may_steer,
+            })
+            .collect(),
+        // This projection is read for inclusion and assignees, never for the
+        // verifier gate, which kind 44245 owns and this caller has not read.
+        verifier_required: false,
+    };
+    let fold =
+        fold_coding_session_team_transactions(&raw.team_events, &context).map_err(|error| {
+            AssembleRefusal {
+                code: AssembleRefusalCode::TeamProjectionRefused,
+                message: format!(
+                "the canonical kind:44244 fold refused this session's team transactions, so no \
+                 report or ruling can be judged canonical: {error}"
+            ),
+            }
+        })?;
+    let included: BTreeSet<String> = fold.included_event_ids.iter().cloned().collect();
+    let mut assignments = BTreeMap::new();
+    for event in &raw.team_events {
+        let id = event.id.to_hex();
+        if !included.contains(&id) {
+            continue;
+        }
+        let Ok(payload) = validate_coding_session_team_transaction_envelope(event) else {
+            continue;
+        };
+        if let CodingSessionTeamTransactionBody::Assignment(body) = payload.body {
+            assignments.insert(
+                id,
+                WorkTeamAssignment {
+                    assignee_actor: body.assignee_actor.to_ascii_lowercase(),
+                    assignee_role: body.assignee_role,
+                },
+            );
+        }
+    }
+    Ok(WorkTeamProjection {
+        included_event_ids: included,
+        assignments,
+    })
 }
 
 /// Report and verdict facts from a session's kind:44244 records.
 ///
+/// **Every decodable record yields its fact, included or not.** Whether the
+/// canonical projection admits it is a separate question the coverage fold
+/// asks: a binding naming an excluded report must read `report_not_canonical`
+/// — "somebody claimed it and the claim did not hold" — not
+/// `evidence_unavailable`, which would say nobody had looked.
+///
 /// The record's **signer** is its event's `pubkey`: a body never restates who
-/// wrote it, and the fold judges the verdict's signer against `may_lead`.
-/// A report with no `headSha` yields no fact — a report that does not name a
-/// revision cannot say a criterion was met at one — and a refutation verdict
-/// yields none either, because only a disposition rules on a report.
-fn derive_team_facts(events: &[ProjectWorkEvent]) -> Vec<WorkEvidenceFact> {
+/// wrote it. A report with no `headSha` yields no fact — a report that does
+/// not name a revision cannot say a criterion was met at one.
+fn derive_team_facts(events: &[nostr::Event]) -> Vec<WorkEvidenceFact> {
     let mut facts = Vec::new();
     for event in events {
-        if event.kind != KIND_CODING_SESSION_TEAM_TRANSACTION || !is_hex(&event.id, 64) {
-            continue;
-        }
-        let Ok(envelope) = serde_json::from_str::<TeamEnvelope>(&event.content) else {
+        let Ok(payload) = validate_coding_session_team_transaction_envelope(event) else {
             continue;
         };
-        let signer = event.pubkey.to_ascii_lowercase();
-        let body = &envelope.body;
-        let text = |key: &str| body.get(key).and_then(serde_json::Value::as_str);
-        match envelope.transaction_type.as_str() {
-            "report" => {
-                let (Some(assignment_ref), Some(head_sha)) =
-                    (text("assignmentRef"), text("headSha"))
-                else {
+        let event_id = event.id.to_hex();
+        let signer = event.pubkey.to_hex().to_ascii_lowercase();
+        match payload.body {
+            CodingSessionTeamTransactionBody::Report(body) => {
+                let Some(head_sha) = body.head_sha else {
                     continue;
                 };
                 facts.push(WorkEvidenceFact::Report {
-                    event_id: event.id.clone(),
+                    event_id,
                     signer,
-                    assignment_ref: assignment_ref.to_owned(),
+                    assignment_ref: body.assignment_ref,
                     head_sha: head_sha.to_ascii_lowercase(),
                 });
             }
-            "verdict" => {
-                let Some(subtype) = text("subtype") else {
-                    continue;
-                };
-                let (Some(decision), Some(assignment_ref), Some(report_ref)) =
-                    (text("decision"), text("assignmentRef"), text("reportRef"))
-                else {
-                    continue;
+            CodingSessionTeamTransactionBody::Verdict(verdict) => {
+                let (subtype, decision, assignment_ref, report_ref) = match verdict {
+                    crate::coding_session_team_transaction::CodingSessionTeamVerdict::Disposition {
+                        assignment_ref,
+                        report_ref,
+                        decision,
+                        ..
+                    } => (
+                        "disposition".to_owned(),
+                        disposition_token(decision),
+                        assignment_ref,
+                        report_ref,
+                    ),
+                    crate::coding_session_team_transaction::CodingSessionTeamVerdict::Refutation {
+                        assignment_ref,
+                        report_ref,
+                        decision,
+                        ..
+                    } => (
+                        "refutation".to_owned(),
+                        refutation_token(decision),
+                        assignment_ref,
+                        report_ref,
+                    ),
                 };
                 facts.push(WorkEvidenceFact::Verdict {
-                    event_id: event.id.clone(),
+                    event_id,
                     signer,
-                    subtype: subtype.to_owned(),
-                    decision: decision.to_owned(),
-                    assignment_ref: assignment_ref.to_owned(),
-                    report_ref: report_ref.to_owned(),
+                    subtype,
+                    decision,
+                    assignment_ref,
+                    report_ref,
                 });
             }
             _ => {}
         }
     }
     facts
+}
+
+/// The exact wire token a disposition decision carries.
+fn disposition_token(
+    decision: crate::coding_session_team_transaction::CodingSessionTeamDispositionDecision,
+) -> String {
+    serde_json::to_value(decision)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_default()
+}
+
+/// The exact wire token a refutation decision carries.
+fn refutation_token(
+    decision: crate::coding_session_team_transaction::CodingSessionTeamRefutationDecision,
+) -> String {
+    serde_json::to_value(decision)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_default()
 }
 
 /// One host run's pairing: the result, the relay's echo of it, and the

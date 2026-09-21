@@ -54,7 +54,24 @@ struct Sequence {
 const KETTLE_PLAN: &str =
     include_str!("../../../../../conformance/project-work/fixtures/plans/valid/kettle.md");
 
-const SEQUENCES: [Sequence; 13] = [
+/// Sequences whose evidence includes kind:44244 records.
+///
+/// Their facts are stated with fixed fake ids, and a real signed record's id
+/// is the hash of its bytes, so a stub relay cannot serve them: the canonical
+/// projection the assembler folds would reject the id it was given. The fold
+/// itself is pinned against all 18 in `project_work_fold_tests.rs`; what this
+/// file pins is the command's read path, over the 12 sequences that need no
+/// 44244 record.
+const TEAM_RECORD_SEQUENCES: [&str; 6] = [
+    "happy-path",
+    "amendment",
+    "evidence-refusals",
+    "mixed-artifacts",
+    "wrong-assignee-report",
+    "superseded-disposition",
+];
+
+const SEQUENCES: [Sequence; 18] = [
     sequence!("happy-path"),
     sequence!("amendment"),
     sequence!("fork"),
@@ -68,6 +85,11 @@ const SEQUENCES: [Sequence; 13] = [
     sequence!("action-failed"),
     sequence!("action-dirty"),
     sequence!("mixed-artifacts"),
+    sequence!("wrong-assignee-report"),
+    sequence!("superseded-disposition"),
+    sequence!("same-action-two-commits"),
+    sequence!("same-action-two-commits-reversed"),
+    sequence!("plan-unavailable-before-bindings"),
 ];
 
 const FIXTURE_CHANNEL: &str = "22222222-3333-4444-8555-666666666666";
@@ -157,16 +179,53 @@ impl WorkWire for StubWire {
 
 /// The plan every sequence names, with no git anywhere, and the action
 /// definitions the contract states the caller compiled at that commit.
-struct FixturePlans(BTreeMap<String, WorkActionDefinition>);
+struct FixturePlans {
+    /// Definitions by plan commit, then by action name.
+    by_commit: BTreeMap<String, BTreeMap<String, WorkActionDefinition>>,
+    /// Whether the fixture supplied a plan blob at all. A sequence that
+    /// supplies none is the `plan_unavailable` case, and the source must say
+    /// so rather than inventing a plan nobody read.
+    has_plan: bool,
+}
 
 impl FixturePlans {
     fn from(fixture: &Value) -> Self {
-        Self(serde_json::from_value(fixture["actionDefinitions"].clone()).unwrap_or_default())
+        // The fixture states the contract key `<coord>@<commit>#<action>`. A
+        // plan source answers **per declaration**, and `same-action-two-commits`
+        // is the sequence that proves it must: two commits define one action
+        // name with different hashes, and handing both to every declaration
+        // is the collapse finding 7 is about, one level up.
+        let keyed: BTreeMap<String, WorkActionDefinition> =
+            serde_json::from_value(fixture["actionDefinitions"].clone()).unwrap_or_default();
+        let mut by_commit: BTreeMap<String, BTreeMap<String, WorkActionDefinition>> =
+            BTreeMap::new();
+        for (key, definition) in keyed {
+            let (coordinate, name) = key.rsplit_once('#').expect("an action key names an action");
+            let (_, commit) = coordinate
+                .rsplit_once('@')
+                .expect("an action key names a commit");
+            by_commit
+                .entry(commit.to_owned())
+                .or_default()
+                .insert(name.to_owned(), definition);
+        }
+        Self {
+            by_commit,
+            has_plan: fixture["planBlobs"]
+                .as_object()
+                .is_some_and(|blobs| !blobs.is_empty()),
+        }
     }
 }
 
 impl PlanSource for FixturePlans {
-    fn plan(&self, _plan_ref: &ProjectWorkPlanRef) -> Result<String, CliError> {
+    fn plan(&self, plan_ref: &ProjectWorkPlanRef) -> Result<String, CliError> {
+        if !self.has_plan {
+            return Err(CliError::Usage(format!(
+                "no plan blob at {}",
+                plan_ref.commit
+            )));
+        }
         Ok(KETTLE_PLAN.to_owned())
     }
 
@@ -176,9 +235,14 @@ impl PlanSource for FixturePlans {
 
     fn compiled(
         &self,
-        _plan_ref: &ProjectWorkPlanRef,
+        plan_ref: &ProjectWorkPlanRef,
     ) -> Option<BTreeMap<String, WorkActionDefinition>> {
-        Some(self.0.clone())
+        Some(
+            self.by_commit
+                .get(&plan_ref.commit)
+                .cloned()
+                .unwrap_or_default(),
+        )
     }
 }
 
@@ -273,21 +337,11 @@ fn fixture_rows(sequence: &Sequence) -> Vec<Value> {
     let empty = serde_json::Map::new();
     for fact in fixture["evidence"].as_object().unwrap_or(&empty).values() {
         match fact["kind"].as_str().unwrap_or_default() {
-            "report" => rows.push(json!({
-                "id": fact["eventId"], "pubkey": fact["signer"], "created_at": 1_789_000_200u64,
-                "kind": 44244, "tags": [],
-                "content": json!({"type": "report", "body": {
-                    "assignmentRef": fact["assignmentRef"], "headSha": fact["headSha"]}})
-                    .to_string(),
-            })),
-            "verdict" => rows.push(json!({
-                "id": fact["eventId"], "pubkey": fact["signer"], "created_at": 1_789_000_300u64,
-                "kind": 44244, "tags": [],
-                "content": json!({"type": "verdict", "body": {
-                    "subtype": fact["subtype"], "decision": fact["decision"],
-                    "assignmentRef": fact["assignmentRef"], "reportRef": fact["reportRef"]}})
-                    .to_string(),
-            })),
+            // A kind:44244 record cannot be fabricated here any more: the
+            // assembler folds them with the canonical team fold, which
+            // verifies signatures and keys every record by its own event id
+            // (A5 decision 23). Sequences that need them are named below.
+            "report" | "verdict" => {}
             "action_result" => {
                 rows.push(json!({
                     "id": fact["eventId"], "pubkey": fact["resultSigner"],
@@ -302,7 +356,8 @@ fn fixture_rows(sequence: &Sequence) -> Vec<Value> {
                     "content": json!({"resultEventId": fact["eventId"]}).to_string(),
                 }));
                 rows.push(json!({
-                    "id": format!("{:0>64}", "9e9"), "pubkey": fact["echoSigner"],
+                    "id": format!("{:0>64}", fact["eventId"].as_str().unwrap_or("9e9")),
+                    "pubkey": fact["echoSigner"],
                     "created_at": 1_789_000_390u64, "kind": 46013, "tags": [],
                     "content": json!({"runId": fact["runId"], "stepId": fact["stepId"],
                         "workflowName": fact["actionName"],
@@ -324,6 +379,9 @@ fn fixture_rows(sequence: &Sequence) -> Vec<Value> {
 #[tokio::test]
 async fn status_reproduces_every_frozen_sequence() {
     for sequence in &SEQUENCES {
+        if TEAM_RECORD_SEQUENCES.contains(&sequence.name) {
+            continue;
+        }
         let fixture: Value = serde_json::from_str(sequence.inputs).expect("inputs");
         let wire = StubWire::new(fixture_rows(sequence));
         let session = fixture_session(&fixture);

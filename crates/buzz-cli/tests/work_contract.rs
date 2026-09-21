@@ -29,6 +29,18 @@ fn bee(args: &[&str]) -> Output {
         .expect("bee runs")
 }
 
+/// The same runner with an identity: the flag checks below live behind the
+/// key gate, so a keyless run answers `auth` before it ever sees the flag.
+fn bee_with_key(args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_bee"))
+        .env("BUZZ_PRIVATE_KEY", "1".repeat(64))
+        .env_remove("BUZZ_AUTH_TAG")
+        .env("BUZZ_RELAY_URL", "http://127.0.0.1:1/")
+        .args(args)
+        .output()
+        .expect("bee runs")
+}
+
 fn stdout(output: &Output) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
@@ -273,4 +285,88 @@ fn a_relay_verb_without_a_key_is_an_auth_error() {
         "11111111-2222-4333-8444-555555555555",
     ]);
     assert_eq!(output.status.code(), Some(3), "{}", stdout(&output));
+}
+
+// ── ledger 213(e): a flag that parses everywhere but means one thing ───────
+
+/// `--verifies` is refused, by name, on every verb but `assign`.
+///
+/// Six verbs share `TeamTransactionWriteArgs`, so clap parses the flag on all
+/// of them (lane 209). A flag that is accepted and changes nothing is a lie
+/// in the interface: the refusal says where it applies and where the id the
+/// caller meant actually travels.
+#[test]
+fn verifies_is_refused_on_every_verb_but_assign() {
+    let report_id = "cd".repeat(32);
+    for verb in ["report", "verdict", "acknowledge", "complete", "block"] {
+        let output = bee_with_key(&[
+            "sessions",
+            verb,
+            "--channel",
+            "22222222-3333-4444-8555-666666666666",
+            "--session-ref",
+            "11111111-2222-4333-8444-555555555555",
+            "--genesis",
+            &"ab".repeat(32),
+            "--body",
+            "{}",
+            "--verifies",
+            &report_id,
+        ]);
+        assert_eq!(output.status.code(), Some(1), "{verb} accepted --verifies");
+        // The refusal is printed on stderr for some verbs and stdout for
+        // others; what the contract fixes is the sentence, not the stream.
+        let printed = format!(
+            "{}{}",
+            stdout(&output),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let message = printed.as_str();
+        assert!(
+            message.contains("--verifies applies to `sessions assign`"),
+            "{verb}: {message}"
+        );
+        assert!(message.contains("assignmentRef"), "{verb}: {message}");
+    }
+}
+
+/// A report and a verdict take no `--assignment` flag at all: the assignment
+/// id travels in the body, and the example says so.
+#[test]
+fn a_report_and_a_verdict_name_their_assignment_in_the_body() {
+    for verb in ["report", "verdict"] {
+        let rejected = bee_with_key(&[
+            "sessions",
+            verb,
+            "--channel",
+            "22222222-3333-4444-8555-666666666666",
+            "--session-ref",
+            "11111111-2222-4333-8444-555555555555",
+            "--genesis",
+            &"ab".repeat(32),
+            "--body",
+            "{}",
+            "--assignment",
+            &"cd".repeat(32),
+        ]);
+        assert_ne!(
+            rejected.status.code(),
+            Some(0),
+            "{verb} accepted an --assignment flag"
+        );
+        let usage = String::from_utf8_lossy(&rejected.stderr);
+        assert!(
+            usage.contains("unexpected argument") || usage.contains("--assignment"),
+            "{verb}: {usage}"
+        );
+
+        let example = bee(&["sessions", verb, "--example"]);
+        assert!(example.status.success(), "{verb} --example");
+        let body: serde_json::Value =
+            serde_json::from_str(&stdout(&example)).expect("the example is JSON");
+        assert!(
+            body.get("assignmentRef").is_some(),
+            "{verb}'s example body must name assignmentRef: {body}"
+        );
+    }
 }

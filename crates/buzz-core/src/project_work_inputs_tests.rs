@@ -1,40 +1,47 @@
-//! Tests for the shared input assembler, bound to the frozen sequences.
+//! Tests for the shared input assembler.
 //!
-//! The oracle is not written here. Every sequence's `inputs.json` is the
-//! contract's own statement of what the fold must be given; these tests build
-//! a **raw event set** that would have produced it — 44244 reports and
-//! verdicts, 46023/46014/46013 host-run triples, 44227 goals, 30618 ref state
-//! — hand it to [`assemble_fold_inputs`], and assert the assembler rebuilds
-//! that same input and that `fold_work` over it still equals
-//! `expected-fold.json`.
+//! **What moved here at A5.** The assembler now derives the canonical 44244
+//! projection by *calling* the team fold, which verifies signatures and keys
+//! every record by its own event id. The frozen sequences state their facts
+//! with fixed fake ids, so a raw set cannot be rebuilt from them any more —
+//! a real signed report's id is the hash of its bytes, never `1ea1…`. The
+//! 18-sequence oracle therefore lives in `project_work_fold_tests.rs`, where
+//! the fold reads the contract's stated input directly, and this file proves
+//! the *derivation*: real signed kind:44244 events in, the projection and the
+//! facts the fold needs out, with the two cases A5 added
+//! (`report_not_canonical`, `disposition_not_canonical`) reproduced
+//! end-to-end through `assemble_fold_inputs` + `fold_work`.
 //!
-//! That is the property W5 and W3b depend on: whatever a caller fetched, one
-//! assembler turns it into the one input the contract fixes.
+//! The parts of the sequences that are not id-bound — goals, ref states,
+//! authority, plan-blob keys and the action-definition keys finding 7 is
+//! about — are still checked against the fixtures.
 
 use super::*;
 
 use serde_json::{json, Value};
 
-use crate::project_work_fold::fold_work;
+use crate::coding_session_team_transaction::{
+    CodingSessionTeamAssignment, CodingSessionTeamDispositionDecision, CodingSessionTeamReport,
+    CodingSessionTeamTransactionPayload, CodingSessionTeamTransactionType,
+    CodingSessionTeamVerdict, CODING_SESSION_TEAM_TRANSACTION_SCHEMA,
+};
+use crate::kind::KIND_CODING_SESSION_TEAM_TRANSACTION;
+use crate::project_work::{
+    ProjectWorkAssignmentBound, ProjectWorkBody, ProjectWorkDeclared, ProjectWorkEvidenceBound,
+    ProjectWorkEvidenceKind, ProjectWorkEvidenceRef, ProjectWorkPayload, ProjectWorkPlanRef,
+    PROJECT_WORK_SCHEMA,
+};
+use crate::project_work_fold::{fold_work, WorkCriterionStatus, WorkReasonCode};
+use nostr::{EventBuilder, Keys, Kind, Tag, Timestamp};
 
 macro_rules! sequence {
     ($name:literal) => {
         Sequence {
             name: $name,
-            events: include_str!(concat!(
-                "../../../conformance/project-work/fixtures/sequences/",
-                $name,
-                "/events.json"
-            )),
             inputs: include_str!(concat!(
                 "../../../conformance/project-work/fixtures/sequences/",
                 $name,
                 "/inputs.json"
-            )),
-            expected: include_str!(concat!(
-                "../../../conformance/project-work/fixtures/sequences/",
-                $name,
-                "/expected-fold.json"
             )),
         }
     };
@@ -42,15 +49,13 @@ macro_rules! sequence {
 
 struct Sequence {
     name: &'static str,
-    events: &'static str,
     inputs: &'static str,
-    expected: &'static str,
 }
 
 const KETTLE_PLAN: &str =
     include_str!("../../../conformance/project-work/fixtures/plans/valid/kettle.md");
 
-const SEQUENCES: [Sequence; 13] = [
+const SEQUENCES: [Sequence; 18] = [
     sequence!("happy-path"),
     sequence!("amendment"),
     sequence!("fork"),
@@ -64,16 +69,28 @@ const SEQUENCES: [Sequence; 13] = [
     sequence!("action-failed"),
     sequence!("action-dirty"),
     sequence!("mixed-artifacts"),
+    sequence!("wrong-assignee-report"),
+    sequence!("superseded-disposition"),
+    sequence!("same-action-two-commits"),
+    sequence!("same-action-two-commits-reversed"),
+    sequence!("plan-unavailable-before-bindings"),
 ];
 
+const CHANNEL: &str = "22222222-3333-4444-8555-666666666666";
+const SESSION: &str = "11111111-2222-4333-8444-555555555555";
+
 /// Split a fold blob key `<coordinate>@<commit>:<path>` back into its parts.
-///
-/// The coordinate itself carries colons, so the commit is taken after the
-/// last `@` and the path after the first `:` that follows it.
 fn split_blob_key(key: &str) -> (String, String, String) {
     let (repository, rest) = key.rsplit_once('@').expect("a blob key names a commit");
     let (commit, path) = rest.split_once(':').expect("a blob key names a path");
     (repository.to_owned(), commit.to_owned(), path.to_owned())
+}
+
+/// Split an action-definition key `<coordinate>@<commit>#<name>`.
+fn split_action_key(key: &str) -> (String, String, String) {
+    let (repository, rest) = key.rsplit_once('@').expect("an action key names a commit");
+    let (commit, name) = rest.split_once('#').expect("an action key names an action");
+    (repository.to_owned(), commit.to_owned(), name.to_owned())
 }
 
 fn event(id: &str, pubkey: &str, created_at: u64, kind: u32, content: Value) -> ProjectWorkEvent {
@@ -95,23 +112,18 @@ fn goal_event(id: &str, created_at: u64) -> ProjectWorkEvent {
         created_at,
         kind: KIND_CODING_SESSION_GOAL,
         tags: vec![
-            vec!["h".into(), "22222222-3333-4444-8555-666666666666".into()],
-            vec!["d".into(), "11111111-2222-4333-8444-555555555555".into()],
+            vec!["h".into(), CHANNEL.into()],
+            vec!["d".into(), SESSION.into()],
             vec!["csgl-v".into(), CODING_SESSION_GOAL_TAG_VERSION.into()],
         ],
         content: "ship the kettle".to_owned(),
     }
 }
 
-/// Everything the assembler is handed for one sequence, derived from the
-/// facts the fixture states — never from the fold's own types.
+/// Everything the assembler is handed for one sequence, minus the team
+/// records: those are id-bound and are exercised by the scenarios below.
 fn raw_from_fixture(sequence: &Sequence) -> RawWorkInputs {
     let fixture: Value = serde_json::from_str(sequence.inputs).expect("sequence inputs");
-    let work_events: Vec<ProjectWorkEvent> =
-        serde_json::from_str(sequence.events).expect("sequence events");
-
-    // Goals: the current one is made the newest, because "current" is the
-    // newest by (created_at, id) and the fixture states it directly.
     let current = fixture["currentGoalRef"].as_str().map(str::to_owned);
     let mut goal_events = Vec::new();
     for (index, id) in fixture["goalEvents"]
@@ -130,120 +142,79 @@ fn raw_from_fixture(sequence: &Sequence) -> RawWorkInputs {
         goal_events.push(goal_event(id, created_at));
     }
 
-    // Evidence: one raw event set per stated fact.
-    let mut team_events = Vec::new();
+    let empty = serde_json::Map::new();
     let mut host_results = Vec::new();
     let mut host_echoes = Vec::new();
     let mut host_requests = Vec::new();
-    let empty = serde_json::Map::new();
     for fact in fixture["evidence"].as_object().unwrap_or(&empty).values() {
-        match fact["kind"].as_str().expect("fact kind") {
-            "report" => team_events.push(event(
-                fact["eventId"].as_str().expect("event id"),
-                fact["signer"].as_str().expect("signer"),
-                1_789_000_200,
-                KIND_CODING_SESSION_TEAM_TRANSACTION,
-                json!({
-                    "schema": "buzz-coding-session-team-transaction/v1",
-                    "type": "report",
-                    "body": {
-                        "assignmentRef": fact["assignmentRef"],
-                        "summary": "done",
-                        "headSha": fact["headSha"],
-                    },
-                }),
-            )),
-            "verdict" => team_events.push(event(
-                fact["eventId"].as_str().expect("event id"),
-                fact["signer"].as_str().expect("signer"),
-                1_789_000_300,
-                KIND_CODING_SESSION_TEAM_TRANSACTION,
-                json!({
-                    "schema": "buzz-coding-session-team-transaction/v1",
-                    "type": "verdict",
-                    "body": {
-                        "subtype": fact["subtype"],
-                        "decision": fact["decision"],
-                        "assignmentRef": fact["assignmentRef"],
-                        "reportRef": fact["reportRef"],
-                        "summary": "ruled",
-                    },
-                }),
-            )),
-            "action_result" => {
-                host_results.push(event(
-                    fact["eventId"].as_str().expect("event id"),
-                    fact["resultSigner"].as_str().expect("result signer"),
-                    1_789_000_400,
-                    KIND_HOST_STEP_RESULT,
-                    json!({
-                        "schema": "buzz-host-step/v1",
-                        "runId": fact["runId"],
-                        "stepId": fact["stepId"],
-                        "disposition": fact["disposition"],
-                        "exitCode": fact["exitCode"],
-                        "dirty": fact["dirty"],
-                        "checkout": fact["checkout"],
-                    }),
-                ));
-                host_echoes.push(event(
-                    fact["exitedEventId"].as_str().expect("echo id"),
-                    fact["echoSigner"].as_str().expect("echo signer"),
-                    1_789_000_410,
-                    KIND_WORKFLOW_HOST_STEP_EXITED,
-                    json!({
-                        "schema": "buzz-host-step/v1",
-                        "resultEventId": fact["eventId"],
-                        "claimedBy": fact["resultSigner"],
-                    }),
-                ));
-                host_requests.push(event(
-                    &format!("{:0>64}", "9e9"),
-                    fact["echoSigner"].as_str().expect("echo signer"),
-                    1_789_000_390,
-                    KIND_WORKFLOW_HOST_STEP_REQUESTED,
-                    json!({
-                        "schema": "buzz-host-step/v1",
-                        "runId": fact["runId"],
-                        "stepId": fact["stepId"],
-                        "workflowName": fact["actionName"],
-                        "definitionHash": fact["definitionHash"],
-                    }),
-                ));
-            }
-            other => panic!("{}: unknown evidence fact kind {other}", sequence.name),
+        if fact["kind"].as_str() != Some("action_result") {
+            continue;
         }
+        host_results.push(event(
+            fact["eventId"].as_str().expect("event id"),
+            fact["resultSigner"].as_str().expect("result signer"),
+            1_789_000_400,
+            KIND_HOST_STEP_RESULT,
+            json!({
+                "schema": "buzz-host-step/v1",
+                "runId": fact["runId"],
+                "stepId": fact["stepId"],
+                "disposition": fact["disposition"],
+                "exitCode": fact["exitCode"],
+                "dirty": fact["dirty"],
+                "checkout": fact["checkout"],
+            }),
+        ));
+        host_echoes.push(event(
+            fact["exitedEventId"].as_str().expect("echo id"),
+            fact["echoSigner"].as_str().expect("echo signer"),
+            1_789_000_410,
+            KIND_WORKFLOW_HOST_STEP_EXITED,
+            json!({
+                "schema": "buzz-host-step/v1",
+                "resultEventId": fact["eventId"],
+                "claimedBy": fact["resultSigner"],
+            }),
+        ));
+        host_requests.push(event(
+            &format!("{:0>64}", fact["eventId"].as_str().unwrap_or("9e9")),
+            fact["echoSigner"].as_str().expect("echo signer"),
+            1_789_000_390,
+            KIND_WORKFLOW_HOST_STEP_REQUESTED,
+            json!({
+                "schema": "buzz-host-step/v1",
+                "runId": fact["runId"],
+                "stepId": fact["stepId"],
+                "workflowName": fact["actionName"],
+                "definitionHash": fact["definitionHash"],
+            }),
+        ));
     }
 
-    // Plan blobs and action definitions, re-keyed as a caller holds them:
-    // by the repository and commit it read them at.
     let mut plan_blobs = BTreeMap::new();
-    let mut coordinate = None;
     for key in fixture["planBlobs"].as_object().unwrap_or(&empty).keys() {
         let (repository, commit, path) = split_blob_key(key);
-        coordinate = Some((repository.clone(), commit.clone()));
         plan_blobs.insert((repository, commit, path), KETTLE_PLAN.to_owned());
     }
     let mut action_definitions = BTreeMap::new();
-    for (name, definition) in fixture["actionDefinitions"].as_object().unwrap_or(&empty) {
-        let (repository, commit) = coordinate
-            .clone()
-            .expect("a sequence with an action also names a plan blob");
+    for (key, definition) in fixture["actionDefinitions"].as_object().unwrap_or(&empty) {
         action_definitions.insert(
-            (repository, commit, name.clone()),
+            split_action_key(key),
             serde_json::from_value(definition.clone()).expect("action definition"),
         );
     }
 
     RawWorkInputs {
-        work_events,
-        team_events,
+        work_events: Vec::new(),
+        team_events: Vec::new(),
         host_results,
         host_echoes,
         host_requests,
         ref_states: serde_json::from_value(fixture["refStates"].clone()).expect("ref states"),
         goal_events,
         authority: RawAuthorityContext {
+            channel_ref: Some(CHANNEL.to_owned()),
+            genesis_ref: None,
             genesis_event: None,
             founder_pubkey: fixture["authority"]["founderPubkey"]
                 .as_str()
@@ -256,12 +227,12 @@ fn raw_from_fixture(sequence: &Sequence) -> RawWorkInputs {
         relay_self_key: fixture["relaySelfKey"].as_str().map(str::to_owned),
         plan_blobs,
         action_definitions,
-        session_ref: None,
+        session_ref: Some(SESSION.to_owned()),
         project_ref: None,
     }
 }
 
-/// Every sequence's `inputs.json`, rebuilt from a raw event set.
+/// Every sequence's non-id-bound inputs, rebuilt from raw events.
 #[test]
 fn assembling_a_raw_event_set_reproduces_every_sequence_input() {
     for sequence in &SEQUENCES {
@@ -295,16 +266,6 @@ fn assembling_a_raw_event_set_reproduces_every_sequence_input() {
             sequence.name
         );
         assert_eq!(
-            serde_json::to_value(&assembled.evidence).expect("evidence"),
-            if fixture["evidence"].is_null() {
-                json!({})
-            } else {
-                fixture["evidence"].clone()
-            },
-            "{}: evidence",
-            sequence.name
-        );
-        assert_eq!(
             serde_json::to_value(&assembled.ref_states).expect("ref states"),
             fixture["refStates"],
             "{}: refStates",
@@ -316,6 +277,8 @@ fn assembling_a_raw_event_set_reproduces_every_sequence_input() {
             .map(|blobs| blobs.keys().collect())
             .unwrap_or_default();
         assert_eq!(blob_keys, expected_keys, "{}: planBlobs", sequence.name);
+        // Finding 7: the key an action definition is held under keeps its
+        // repository and commit, exactly as the contract writes it.
         assert_eq!(
             serde_json::to_value(&assembled.action_definitions).expect("definitions"),
             if fixture["actionDefinitions"].is_null() {
@@ -326,20 +289,485 @@ fn assembling_a_raw_event_set_reproduces_every_sequence_input() {
             "{}: actionDefinitions",
             sequence.name
         );
+        // The action-result facts the fixture states are still derived from
+        // their raw 46023/46014/46013 triples.
+        for (event_id, fact) in fixture["evidence"]
+            .as_object()
+            .unwrap_or(&serde_json::Map::new())
+            .iter()
+            .filter(|(_, fact)| fact["kind"].as_str() == Some("action_result"))
+        {
+            assert_eq!(
+                serde_json::to_value(assembled.evidence.get(event_id).expect("a derived fact"))
+                    .expect("fact"),
+                *fact,
+                "{}: {event_id}",
+                sequence.name
+            );
+        }
     }
 }
 
-/// The whole point: assemble, then fold, and the contract's expected output
-/// still comes out.
-#[test]
-fn folding_an_assembled_input_matches_every_expected_fold() {
-    for sequence in &SEQUENCES {
-        let assembled =
-            assemble_fold_inputs(raw_from_fixture(sequence)).expect("the fixture assembles");
-        let projection = serde_json::to_value(fold_work(&assembled)).expect("projection");
-        let expected: Value = serde_json::from_str(sequence.expected).expect("expected fold");
-        assert_eq!(projection, expected, "{}", sequence.name);
+// ── the canonical projection, from real signed records ─────────────────────
+
+/// One signed kind:44244 record in the exact five-tag envelope.
+fn team_event(
+    keys: &Keys,
+    genesis: &str,
+    transaction_type: CodingSessionTeamTransactionType,
+    body: crate::coding_session_team_transaction::CodingSessionTeamTransactionBody,
+    created_at: u64,
+    supersedes: Option<String>,
+) -> nostr::Event {
+    let payload = CodingSessionTeamTransactionPayload {
+        schema: CODING_SESSION_TEAM_TRANSACTION_SCHEMA.to_owned(),
+        session_ref: SESSION.to_owned(),
+        genesis_ref: genesis.to_owned(),
+        transaction_type,
+        supersedes,
+        delivery_command_id: None,
+        body,
+    };
+    payload.validate().expect("a valid team transaction");
+    EventBuilder::new(
+        Kind::Custom(KIND_CODING_SESSION_TEAM_TRANSACTION as u16),
+        serde_json::to_string(&payload).expect("payload"),
+    )
+    .tags([
+        Tag::parse(["h", CHANNEL]).expect("h"),
+        Tag::parse(["d", SESSION]).expect("d"),
+        Tag::parse(["cstx-v", CODING_SESSION_TEAM_TRANSACTION_SCHEMA]).expect("v"),
+        Tag::parse(["cstx-genesis", genesis]).expect("genesis"),
+        Tag::parse(["cstx-type", transaction_type.as_str()]).expect("type"),
+    ])
+    .custom_created_at(Timestamp::from(created_at))
+    .sign_with_keys(keys)
+    .expect("signed")
+}
+
+fn assignment_body(
+    assignee: &str,
+) -> crate::coding_session_team_transaction::CodingSessionTeamTransactionBody {
+    crate::coding_session_team_transaction::CodingSessionTeamTransactionBody::Assignment(
+        CodingSessionTeamAssignment {
+            assignee_actor: assignee.to_owned(),
+            assignee_role: "builder".to_owned(),
+            objective: "ship the kettle CLI".to_owned(),
+            brief: "build it".to_owned(),
+            branch: None,
+            base_sha: None,
+            file_ownership: vec!["crates/buzz-cli/".to_owned()],
+            acceptance_steps: vec!["cargo test".to_owned()],
+        },
+    )
+}
+
+fn report_body(
+    assignment_ref: &str,
+    head_sha: &str,
+) -> crate::coding_session_team_transaction::CodingSessionTeamTransactionBody {
+    crate::coding_session_team_transaction::CodingSessionTeamTransactionBody::Report(
+        CodingSessionTeamReport {
+            assignment_ref: assignment_ref.to_owned(),
+            summary: "done".to_owned(),
+            branch: None,
+            base_sha: None,
+            head_sha: Some(head_sha.to_owned()),
+            files: vec!["crates/buzz-cli/src/lib.rs".to_owned()],
+            tests: Vec::new(),
+            red_before_green: None,
+            deviations: Vec::new(),
+            residuals: Vec::new(),
+            anomalies: Vec::new(),
+        },
+    )
+}
+
+fn disposition_body(
+    assignment_ref: &str,
+    report_ref: &str,
+    decision: CodingSessionTeamDispositionDecision,
+) -> crate::coding_session_team_transaction::CodingSessionTeamTransactionBody {
+    crate::coding_session_team_transaction::CodingSessionTeamTransactionBody::Verdict(
+        CodingSessionTeamVerdict::Disposition {
+            assignment_ref: assignment_ref.to_owned(),
+            report_ref: report_ref.to_owned(),
+            refutation_ref: None,
+            decision,
+            summary: "ruled".to_owned(),
+            findings: Vec::new(),
+            required_action: None,
+        },
+    )
+}
+
+/// One signed kind:44249 record.
+fn work_event(
+    keys: &Keys,
+    genesis: &str,
+    body: ProjectWorkBody,
+    created_at: u64,
+) -> ProjectWorkEvent {
+    let payload = ProjectWorkPayload {
+        schema: PROJECT_WORK_SCHEMA.to_owned(),
+        session_ref: SESSION.to_owned(),
+        genesis_ref: genesis.to_owned(),
+        project_ref: format!("30621:{}:kettle", keys.public_key().to_hex()),
+        record_type: body.record_type(),
+        body,
+    };
+    let content = payload.canonical_content().expect("content");
+    let tags = payload.canonical_tags(CHANNEL);
+    let event = EventBuilder::new(Kind::Custom(KIND_PROJECT_WORK_RECORD as u16), content)
+        .tags(
+            tags.iter()
+                .map(|parts| Tag::parse(parts.clone()).expect("tag"))
+                .collect::<Vec<_>>(),
+        )
+        .custom_created_at(Timestamp::from(created_at))
+        .sign_with_keys(keys)
+        .expect("signed");
+    ProjectWorkEvent::from(&event)
+}
+
+/// A whole session built from real signed records: the founder leads, one
+/// builder owns the assignment, and the plan has one `review` criterion.
+struct Scenario {
+    lead: Keys,
+    builder: Keys,
+    genesis: String,
+    raw: RawWorkInputs,
+    declaration: String,
+    assignment: String,
+}
+
+const REVIEW_PLAN: &str = r#"---
+schema: beekeeper-plan/v1
+id: kettle-cli
+status: in-force
+title: Kettle
+code_repository: pivot-test
+delivery_ref: refs/heads/main
+criteria:
+  - id: cli-behaviour
+    accept: the CLI does what the plan says
+    proof: {kind: review}
+retired_criteria: []
+---
+
+Body.
+"#;
+
+impl Scenario {
+    fn new() -> Self {
+        let lead = Keys::generate();
+        let builder = Keys::generate();
+        let genesis = "ab".repeat(32);
+        let repository = format!(
+            "30617:{}:kettle-beekeeper-agents",
+            lead.public_key().to_hex()
+        );
+        let commit = "ab".repeat(20);
+        let goal_id = "90a1".to_owned() + &"0".repeat(60);
+
+        let assignment = team_event(
+            &lead,
+            &genesis,
+            CodingSessionTeamTransactionType::Assignment,
+            assignment_body(&builder.public_key().to_hex()),
+            1_789_000_100,
+            None,
+        );
+        let declared = work_event(
+            &lead,
+            &genesis,
+            ProjectWorkBody::Declared(ProjectWorkDeclared {
+                work_id: "9d0f0f0f-1111-4222-8333-444444444444".to_owned(),
+                goal_ref: goal_id.clone(),
+                decision_ref: None,
+                responsible_actor: builder.public_key().to_hex(),
+                plan_ref: ProjectWorkPlanRef {
+                    repository: repository.clone(),
+                    commit: commit.clone(),
+                    path: "plans/kettle.md".to_owned(),
+                },
+                supersedes: Vec::new(),
+            }),
+            1_789_000_200,
+        );
+        let bound = work_event(
+            &lead,
+            &genesis,
+            ProjectWorkBody::AssignmentBound(ProjectWorkAssignmentBound {
+                declaration_ref: declared.id.clone(),
+                criterion_ids: vec!["cli-behaviour".to_owned()],
+                assignment_ref: assignment.id.to_hex(),
+                replaces_binding: None,
+            }),
+            1_789_000_210,
+        );
+        let mut plan_blobs = BTreeMap::new();
+        plan_blobs.insert(
+            (repository, commit, "plans/kettle.md".to_owned()),
+            REVIEW_PLAN.to_owned(),
+        );
+        let raw = RawWorkInputs {
+            work_events: vec![declared.clone(), bound],
+            team_events: vec![assignment.clone()],
+            goal_events: vec![goal_event(&goal_id, 1_789_000_050)],
+            authority: RawAuthorityContext {
+                channel_ref: Some(CHANNEL.to_owned()),
+                genesis_ref: Some(genesis.clone()),
+                genesis_event: None,
+                founder_pubkey: Some(lead.public_key().to_hex()),
+                active_seats: Vec::new(),
+                active_grants: Vec::new(),
+            },
+            relay_self_key: Some("4e".repeat(32)),
+            plan_blobs,
+            session_ref: Some(SESSION.to_owned()),
+            project_ref: Some(format!("30621:{}:kettle", lead.public_key().to_hex())),
+            ..RawWorkInputs::default()
+        };
+        Self {
+            declaration: declared.id.clone(),
+            assignment: assignment.id.to_hex(),
+            lead,
+            builder,
+            genesis,
+            raw,
+        }
     }
+
+    /// Bind evidence to the one criterion, at the artifact commit.
+    fn bind_evidence(&mut self, refs: Vec<ProjectWorkEvidenceRef>, artifact: &str) {
+        let bound = work_event(
+            &self.lead,
+            &self.genesis,
+            ProjectWorkBody::EvidenceBound(ProjectWorkEvidenceBound {
+                declaration_ref: self.declaration.clone(),
+                criterion_ids: vec!["cli-behaviour".to_owned()],
+                artifact_commit: artifact.to_owned(),
+                evidence_refs: refs,
+                completion_ref: None,
+            }),
+            1_789_000_400,
+        );
+        self.raw.work_events.push(bound);
+    }
+
+    /// Fold what the assembler makes of it, and return the one criterion.
+    fn criterion(self) -> (WorkCriterionStatus, Option<WorkReasonCode>, String) {
+        let inputs = assemble_fold_inputs(self.raw).expect("assembles");
+        let projection = fold_work(&inputs);
+        let declaration = projection
+            .declarations
+            .first()
+            .expect("one declaration")
+            .clone();
+        let criterion = declaration.criteria.first().expect("one criterion").clone();
+        (
+            criterion.status,
+            criterion.reason_code,
+            criterion.reason.unwrap_or_default(),
+        )
+    }
+}
+
+/// The canonical chain covers the criterion: the assignee reported, the lead
+/// approved, and the team fold includes both.
+#[test]
+fn a_canonical_report_and_approval_cover_the_criterion() {
+    let mut scenario = Scenario::new();
+    let artifact = "e7".repeat(20);
+    let report = team_event(
+        &scenario.builder,
+        &scenario.genesis,
+        CodingSessionTeamTransactionType::Report,
+        report_body(&scenario.assignment, &artifact),
+        1_789_000_300,
+        None,
+    );
+    let disposition = team_event(
+        &scenario.lead,
+        &scenario.genesis,
+        CodingSessionTeamTransactionType::Verdict,
+        disposition_body(
+            &scenario.assignment,
+            &report.id.to_hex(),
+            CodingSessionTeamDispositionDecision::Approve,
+        ),
+        1_789_000_310,
+        None,
+    );
+    scenario.bind_evidence(
+        vec![
+            ProjectWorkEvidenceRef {
+                kind: ProjectWorkEvidenceKind::Report,
+                event_id: report.id.to_hex(),
+            },
+            ProjectWorkEvidenceRef {
+                kind: ProjectWorkEvidenceKind::Verdict,
+                event_id: disposition.id.to_hex(),
+            },
+        ],
+        &artifact,
+    );
+    scenario.raw.team_events.push(report);
+    scenario.raw.team_events.push(disposition);
+    let (status, reason_code, _) = scenario.criterion();
+    assert_eq!(status, WorkCriterionStatus::Covered);
+    assert_eq!(reason_code, None);
+}
+
+/// **Reproduces finding 6.** A channel peer publishes a well-formed report
+/// about the builder's assignment and the lead approves and binds it. The
+/// team fold excludes the report — its signer is not the assignee — and work
+/// coverage must reach the same answer, not a second one.
+#[test]
+fn a_report_by_someone_who_is_not_the_assignee_is_not_evidence() {
+    let mut scenario = Scenario::new();
+    let peer = Keys::generate();
+    let artifact = "e7".repeat(20);
+    let report = team_event(
+        &peer,
+        &scenario.genesis,
+        CodingSessionTeamTransactionType::Report,
+        report_body(&scenario.assignment, &artifact),
+        1_789_000_300,
+        None,
+    );
+    let disposition = team_event(
+        &scenario.lead,
+        &scenario.genesis,
+        CodingSessionTeamTransactionType::Verdict,
+        disposition_body(
+            &scenario.assignment,
+            &report.id.to_hex(),
+            CodingSessionTeamDispositionDecision::Approve,
+        ),
+        1_789_000_310,
+        None,
+    );
+    scenario.bind_evidence(
+        vec![
+            ProjectWorkEvidenceRef {
+                kind: ProjectWorkEvidenceKind::Report,
+                event_id: report.id.to_hex(),
+            },
+            ProjectWorkEvidenceRef {
+                kind: ProjectWorkEvidenceKind::Verdict,
+                event_id: disposition.id.to_hex(),
+            },
+        ],
+        &artifact,
+    );
+    scenario.raw.team_events.push(report);
+    scenario.raw.team_events.push(disposition);
+    let (status, reason_code, reason) = scenario.criterion();
+    assert_eq!(status, WorkCriterionStatus::Open);
+    assert_eq!(reason_code, Some(WorkReasonCode::ReportNotCanonical));
+    assert!(reason.contains("assignee"), "{reason}");
+}
+
+/// **Reproduces finding 6's other half.** An approval the lead later replaced
+/// with changes-requested is history: the projection carries the replacement,
+/// and a binding still naming the old ruling proves nothing.
+#[test]
+fn an_approval_a_later_ruling_replaced_is_not_evidence() {
+    let mut scenario = Scenario::new();
+    let artifact = "e7".repeat(20);
+    let report = team_event(
+        &scenario.builder,
+        &scenario.genesis,
+        CodingSessionTeamTransactionType::Report,
+        report_body(&scenario.assignment, &artifact),
+        1_789_000_300,
+        None,
+    );
+    let approval = team_event(
+        &scenario.lead,
+        &scenario.genesis,
+        CodingSessionTeamTransactionType::Verdict,
+        disposition_body(
+            &scenario.assignment,
+            &report.id.to_hex(),
+            CodingSessionTeamDispositionDecision::Approve,
+        ),
+        1_789_000_310,
+        None,
+    );
+    let replacement = team_event(
+        &scenario.lead,
+        &scenario.genesis,
+        CodingSessionTeamTransactionType::Verdict,
+        disposition_body(
+            &scenario.assignment,
+            &report.id.to_hex(),
+            CodingSessionTeamDispositionDecision::ChangesRequested,
+        ),
+        1_789_000_320,
+        Some(approval.id.to_hex()),
+    );
+    scenario.bind_evidence(
+        vec![
+            ProjectWorkEvidenceRef {
+                kind: ProjectWorkEvidenceKind::Report,
+                event_id: report.id.to_hex(),
+            },
+            ProjectWorkEvidenceRef {
+                kind: ProjectWorkEvidenceKind::Verdict,
+                event_id: approval.id.to_hex(),
+            },
+        ],
+        &artifact,
+    );
+    scenario.raw.team_events.push(report);
+    scenario.raw.team_events.push(approval);
+    scenario.raw.team_events.push(replacement.clone());
+    let (status, reason_code, reason) = scenario.criterion();
+    assert_eq!(status, WorkCriterionStatus::Open);
+    assert_eq!(reason_code, Some(WorkReasonCode::DispositionNotCanonical));
+    assert!(
+        reason.contains(&replacement.id.to_hex()[..8]),
+        "the refusal names the ruling that replaced it: {reason}"
+    );
+}
+
+/// A team fold that refuses the supplied set is a refusal here: carrying on
+/// would admit records the team contract excludes.
+#[test]
+fn a_team_fold_refusal_refuses_the_assembly() {
+    let scenario = Scenario::new();
+    let mut raw = scenario.raw;
+    // A record from another session: the team fold refuses the whole set.
+    let stranger = team_event(
+        &scenario.lead,
+        &"cd".repeat(32),
+        CodingSessionTeamTransactionType::Assignment,
+        assignment_body(&scenario.builder.public_key().to_hex()),
+        1_789_000_150,
+        None,
+    );
+    raw.team_events.push(stranger);
+    let refusal = assemble_fold_inputs(raw).expect_err("refused");
+    assert_eq!(refusal.code, AssembleRefusalCode::TeamProjectionRefused);
+    assert_eq!(refusal.code.as_str(), "team_projection_refused");
+}
+
+/// The projection carries the assignee of every included assignment, read
+/// from the record the projection includes.
+#[test]
+fn the_projection_names_each_assignments_assignee() {
+    let scenario = Scenario::new();
+    let assignment = scenario.assignment.clone();
+    let builder = scenario.builder.public_key().to_hex();
+    let inputs = assemble_fold_inputs(scenario.raw).expect("assembles");
+    assert_eq!(
+        inputs.team_projection.assignee(&assignment),
+        Some(builder.as_str())
+    );
+    assert!(inputs.team_projection.includes(&assignment));
 }
 
 /// The founder is the genesis **signer**, not a field anyone asserts.
@@ -491,24 +919,35 @@ fn a_result_missing_its_exit_code_or_checkout_never_reads_as_a_pass() {
     }
 }
 
-/// A refutation verdict rules on nothing a criterion can be covered by, and a
-/// report that names no revision cannot say a criterion was met at one — but
-/// both are read, because the fold names the reason a claim did not hold.
+/// A report that names no revision cannot say a criterion was met at one.
 #[test]
 fn a_report_with_no_head_sha_yields_no_fact() {
+    let lead = Keys::generate();
+    let genesis = "ab".repeat(32);
+    let mut body = report_body(&"a5".repeat(32), &"e7".repeat(20));
+    if let crate::coding_session_team_transaction::CodingSessionTeamTransactionBody::Report(
+        report,
+    ) = &mut body
+    {
+        report.head_sha = None;
+    }
+    let report = team_event(
+        &lead,
+        &genesis,
+        CodingSessionTeamTransactionType::Report,
+        body,
+        1_789_000_300,
+        None,
+    );
     let assembled = assemble_fold_inputs(RawWorkInputs {
-        team_events: vec![event(
-            &format!("{:0>64}", "1ea"),
-            &"b0".repeat(32),
-            1_789_000_200,
-            KIND_CODING_SESSION_TEAM_TRANSACTION,
-            json!({"type": "report", "body": {"assignmentRef": "a5".repeat(32),
-                   "summary": "done", "headSha": null}}),
-        )],
+        team_events: vec![report],
         authority: RawAuthorityContext {
-            founder_pubkey: Some("1".repeat(64)),
+            channel_ref: Some(CHANNEL.to_owned()),
+            genesis_ref: Some(genesis),
+            founder_pubkey: Some(lead.public_key().to_hex()),
             ..RawAuthorityContext::default()
         },
+        session_ref: Some(SESSION.to_owned()),
         ..RawWorkInputs::default()
     })
     .expect("assembles");

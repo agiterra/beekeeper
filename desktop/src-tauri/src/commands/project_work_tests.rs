@@ -40,6 +40,11 @@ fn request(work_events: Vec<ProjectWorkEvent>) -> ProjectWorkRequest {
         active_grants: Vec::new(),
         work_events,
         team_events: Vec::new(),
+        // No team records in these fixtures, so no canonical projection is
+        // scoped: the assembler leaves it empty and judges no record on
+        // canonicity, exactly as an empty goal set leaves staleness unjudged.
+        channel_ref: None,
+        genesis_ref: None,
         goal_events: Vec::new(),
         host_events: Vec::new(),
         ref_states: Vec::new(),

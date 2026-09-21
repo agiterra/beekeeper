@@ -137,6 +137,7 @@ pub(super) fn project_declaration(
     let candidate_artifact = candidate_artifact(plan.as_ref(), &criteria, &artifact_commits);
     let (coverage_complete, coverage_reason_code, coverage_reason) = coverage(
         state,
+        &body.plan_ref,
         plan_resolved,
         &criteria,
         heads.len(),
@@ -200,13 +201,22 @@ fn candidate_artifact(
             .any(|criterion| criterion.proof == PlanProof::GitRef)
     });
     if has_git_ref {
-        return criteria
+        // A **covered** git-ref criterion is the delivered revision, and it
+        // wins. While it is still open, the candidate falls through to the
+        // single commit the covering evidence shares — a fact about what has
+        // been proven so far, which is what the fixtures state
+        // (`same-action-two-commits`), and `coverageComplete` stays false
+        // until delivery itself is observed.
+        if let Some(delivered) = criteria
             .iter()
             .find(|criterion| {
                 criterion.proof.as_ref() == Some(&PlanProof::GitRef)
                     && criterion.status == WorkCriterionStatus::Covered
             })
-            .and_then(|criterion| criterion.artifact_commit.clone());
+            .and_then(|criterion| criterion.artifact_commit.clone())
+        {
+            return Some(delivered);
+        }
     }
     match artifact_commits {
         [only] => Some(only.clone()),
@@ -344,6 +354,7 @@ fn project_criterion(
         &artifact_commit,
         &assignment_refs,
         plan,
+        &declared.plan_ref,
         inputs,
     );
     WorkCriterionProjection {
@@ -352,7 +363,15 @@ fn project_criterion(
         status: outcome.status,
         assignment_refs,
         evidence: refs,
-        artifact_commit: Some(artifact_commit),
+        // A binding whose evidence the team contract excludes names no
+        // revision this projection will repeat: nothing canonical claims that
+        // commit, and printing it would lend the claim standing.
+        artifact_commit: (!matches!(
+            outcome.reason_code,
+            Some(WorkReasonCode::ReportNotCanonical)
+                | Some(WorkReasonCode::DispositionNotCanonical)
+        ))
+        .then_some(artifact_commit),
         reason_code: outcome.reason_code,
         reason: outcome.reason,
     }
@@ -370,6 +389,7 @@ fn evaluate(
     artifact_commit: &str,
     assignment_refs: &[String],
     plan: &Plan,
+    plan_ref: &ProjectWorkPlanRef,
     inputs: &WorkFoldInputs,
 ) -> Outcome {
     for reference in refs {
@@ -393,14 +413,23 @@ fn evaluate(
     match &criterion.proof {
         PlanProof::Review => evaluate_review(refs, artifact_commit, assignment_refs, inputs),
         PlanProof::Action { name, step } => {
-            evaluate_action(refs, artifact_commit, name, step, inputs)
+            evaluate_action(refs, artifact_commit, name, step, plan_ref, inputs)
         }
         PlanProof::GitRef => evaluate_git_ref(refs, artifact_commit, plan, inputs),
     }
 }
 
-/// `review` — an approving 44244 disposition by an actor `may_lead` admits,
-/// on a report for a bound assignment at the binding's artifact commit.
+/// `review` — an approving 44244 disposition the **canonical team
+/// projection includes**, on a report that projection also includes, signed
+/// by that assignment's assignee, for an assignment bound to this criterion,
+/// at the binding's artifact commit.
+///
+/// The precedence below is the contract's, step for step
+/// (`conformance/project-work/README.md` § (c) "The three proof predicates"),
+/// so two implementations name the same reason for the same fact:
+/// (1) evidence missing, (2) report not canonical, (3) disposition signer not
+/// `may_lead`, (4) disposition not included, (5) not an approval,
+/// (6) revision mismatch.
 fn evaluate_review(
     refs: &[ProjectWorkEvidenceRef],
     artifact_commit: &str,
@@ -417,8 +446,8 @@ fn evaluate_review(
             signer,
             subtype,
             decision,
-            assignment_ref,
             report_ref,
+            ..
         }) = inputs.evidence.get(&reference.event_id)
         else {
             continue;
@@ -433,42 +462,12 @@ fn evaluate_review(
             ));
             continue;
         }
-        if !inputs.authority.may_lead(signer) {
-            last = Some(Outcome::open(
-                WorkReasonCode::WrongSigner,
-                format!(
-                    "verdict {} is signed by {}, who does not satisfy may_lead for this session",
-                    short(event_id),
-                    short(signer)
-                ),
-            ));
-            continue;
-        }
-        if !matches!(decision.as_str(), "approve" | "approve-with-notes") {
-            last = Some(Outcome::open(
-                WorkReasonCode::NotApproving,
-                format!(
-                    "disposition {} decided {decision}; only approve or approve-with-notes satisfy a review criterion",
-                    short(event_id)
-                ),
-            ));
-            continue;
-        }
-        if !assignment_refs.is_empty() && !assignment_refs.iter().any(|id| id == assignment_ref) {
-            last = Some(Outcome::open(
-                WorkReasonCode::RevisionMismatch,
-                format!(
-                    "disposition {} governs assignment {}, which this criterion is not bound to",
-                    short(event_id),
-                    short(assignment_ref)
-                ),
-            ));
-            continue;
-        }
+        // (1) The report the ruling is about must have been supplied.
         let Some(WorkEvidenceFact::Report {
             event_id: report_id,
+            signer: report_signer,
+            assignment_ref: report_assignment,
             head_sha,
-            ..
         }) = inputs.evidence.get(report_ref)
         else {
             last = Some(Outcome::unknown(
@@ -480,6 +479,55 @@ fn evaluate_review(
             ));
             continue;
         };
+        // (2) The report must be one the team contract admits: included in
+        // the canonical projection, signed by its assignment's assignee, and
+        // answering an assignment bound to this criterion. A lead binding a
+        // channel peer's well-formed report about somebody else's assignment
+        // changes nothing (A5 decision 23).
+        if let Some(reason) = report_not_canonical(
+            report_id,
+            report_signer,
+            report_assignment,
+            assignment_refs,
+            inputs,
+        ) {
+            last = Some(Outcome::open(WorkReasonCode::ReportNotCanonical, reason));
+            continue;
+        }
+        // (3) The ruling's signer.
+        if !inputs.authority.may_lead(signer) {
+            last = Some(Outcome::open(
+                WorkReasonCode::WrongSigner,
+                format!(
+                    "verdict {} is signed by {}, who does not satisfy may_lead for this session",
+                    short(event_id),
+                    short(signer)
+                ),
+            ));
+            continue;
+        }
+        // (4) A ruling a later one replaced is history, not a current fact.
+        if !inputs.team_projection.included_event_ids.is_empty()
+            && !inputs.team_projection.includes(event_id)
+        {
+            last = Some(Outcome::open(
+                WorkReasonCode::DispositionNotCanonical,
+                disposition_not_canonical_reason(event_id, report_ref, inputs),
+            ));
+            continue;
+        }
+        // (5) The decision itself.
+        if !matches!(decision.as_str(), "approve" | "approve-with-notes") {
+            last = Some(Outcome::open(
+                WorkReasonCode::NotApproving,
+                format!(
+                    "disposition {} decided {decision}; only approve or approve-with-notes satisfy a review criterion",
+                    short(event_id)
+                ),
+            ));
+            continue;
+        }
+        // (6) The revision the report is about.
         if head_sha != artifact_commit {
             last = Some(Outcome::open(
                 WorkReasonCode::RevisionMismatch,
@@ -502,6 +550,88 @@ fn evaluate_review(
     })
 }
 
+/// Why this report is not one the team contract admits, if it is not.
+///
+/// An empty projection means the caller established none, and this fold does
+/// not invent one: the signer relationship is then unjudged rather than
+/// guessed at, exactly as an empty `goalEvents` leaves staleness unjudged.
+fn report_not_canonical(
+    report_id: &str,
+    report_signer: &str,
+    report_assignment: &str,
+    assignment_refs: &[String],
+    inputs: &WorkFoldInputs,
+) -> Option<String> {
+    let projection = &inputs.team_projection;
+    let assignee = projection.assignee(report_assignment);
+    if let Some(assignee) = assignee {
+        if assignee != report_signer {
+            return Some(format!(
+                "report {} is signed by {}, not by assignment {}'s assignee {}, and the team \
+                 projection excludes it",
+                short(report_id),
+                short(report_signer),
+                short(report_assignment),
+                short(assignee)
+            ));
+        }
+    }
+    if !projection.included_event_ids.is_empty() && !projection.includes(report_id) {
+        return Some(format!(
+            "report {} is not in the team projection, so nothing here says it answers \
+             assignment {}",
+            short(report_id),
+            short(report_assignment)
+        ));
+    }
+    if !assignment_refs.is_empty() && !assignment_refs.iter().any(|id| id == report_assignment) {
+        return Some(format!(
+            "report {} answers assignment {}, which this criterion is not bound to",
+            short(report_id),
+            short(report_assignment)
+        ));
+    }
+    None
+}
+
+/// Name the ruling that replaced this one, when the projection carries it.
+fn disposition_not_canonical_reason(
+    event_id: &str,
+    report_ref: &str,
+    inputs: &WorkFoldInputs,
+) -> String {
+    let replacement = inputs
+        .evidence
+        .values()
+        .filter_map(|fact| match fact {
+            WorkEvidenceFact::Verdict {
+                event_id: other,
+                subtype,
+                report_ref: other_report,
+                ..
+            } if subtype == "disposition"
+                && other_report == report_ref
+                && other != event_id
+                && inputs.team_projection.includes(other) =>
+            {
+                Some(other.as_str())
+            }
+            _ => None,
+        })
+        .next();
+    match replacement {
+        Some(replacement) => format!(
+            "disposition {} is not in the team projection: it was superseded by {}",
+            short(event_id),
+            short(replacement)
+        ),
+        None => format!(
+            "disposition {} is not in the team projection, so it is not a current ruling",
+            short(event_id)
+        ),
+    }
+}
+
 /// `action` — a clean, exit-0 host result for the definition the caller
 /// compiled at the plan commit, on the artifact commit.
 fn evaluate_action(
@@ -509,14 +639,25 @@ fn evaluate_action(
     artifact_commit: &str,
     name: &str,
     step: &str,
+    plan_ref: &ProjectWorkPlanRef,
     inputs: &WorkFoldInputs,
 ) -> Outcome {
-    let Some(definition) = inputs.action_definitions.get(name) else {
+    // Only the definition compiled at **this declaration's** plan commit. The
+    // same action name at another commit is another definition, and letting
+    // it answer here is what made an amended head's correct evidence fail
+    // while the superseded plan's evidence passed (A5 decision 24).
+    let key = crate::project_work_fold::action_definition_key(
+        &plan_ref.repository,
+        &plan_ref.commit,
+        name,
+    );
+    let Some(definition) = inputs.action_definitions.get(&key) else {
         return Outcome::unknown(
             WorkReasonCode::EvidenceUnavailable,
             format!(
-                "the {name} action was not compiled at the plan commit, \
-                 so nothing here says what its result proves"
+                "the {name} action was not compiled at this declaration's plan commit {}, \
+                 so nothing here says what its result proves",
+                short_commit(&plan_ref.commit)
             ),
         );
     };
@@ -553,12 +694,28 @@ fn evaluate_action(
         if definition_hash != &definition.definition_hash || action_name != name {
             last = Some(Outcome::open(
                 WorkReasonCode::WrongRunOrHash,
-                format!(
-                    "host result {} ran definition hash {}, not the {name} definition compiled at the plan commit ({})",
-                    short(event_id),
-                    short(definition_hash),
-                    short(&definition.definition_hash)
-                ),
+                // Naming the commit earns its words exactly when the run
+                // *did* execute a definition of this action — at another
+                // plan commit. Then the whole point is which commit's
+                // definition was expected; otherwise it is noise.
+                if ran_another_commits_definition(name, definition_hash, inputs) {
+                    format!(
+                        "host result {} ran definition hash {}, not the {name} definition \
+                         compiled at this declaration's plan commit {} ({})",
+                        short(event_id),
+                        short(definition_hash),
+                        short_commit(&plan_ref.commit),
+                        short(&definition.definition_hash)
+                    )
+                } else {
+                    format!(
+                        "host result {} ran definition hash {}, not the {name} definition \
+                         compiled at the plan commit ({})",
+                        short(event_id),
+                        short(definition_hash),
+                        short(&definition.definition_hash)
+                    )
+                },
             ));
             continue;
         }
@@ -619,6 +776,20 @@ fn evaluate_action(
             format!("no host result for {name}/{step} is bound"),
         )
     })
+}
+
+/// Whether the hash a run executed is this action's definition at **another**
+/// plan commit.
+///
+/// The disclosure differs because the fact differs: a run of the same action
+/// at a superseded commit is a provenance mismatch and the reader needs the
+/// commit; an unrelated hash is simply the wrong definition.
+fn ran_another_commits_definition(name: &str, hash: &str, inputs: &WorkFoldInputs) -> bool {
+    let suffix = format!("#{name}");
+    inputs
+        .action_definitions
+        .iter()
+        .any(|(key, definition)| key.ends_with(&suffix) && definition.definition_hash == hash)
 }
 
 /// `git-ref` — judge delivery **at evaluation time**, from the newest

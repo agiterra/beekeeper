@@ -48,7 +48,7 @@ struct Sequence {
 const KETTLE_PLAN: &str =
     include_str!("../../../conformance/project-work/fixtures/plans/valid/kettle.md");
 
-const SEQUENCES: [Sequence; 13] = [
+const SEQUENCES: [Sequence; 18] = [
     sequence!("happy-path"),
     sequence!("amendment"),
     sequence!("fork"),
@@ -62,6 +62,11 @@ const SEQUENCES: [Sequence; 13] = [
     sequence!("action-failed"),
     sequence!("action-dirty"),
     sequence!("mixed-artifacts"),
+    sequence!("wrong-assignee-report"),
+    sequence!("superseded-disposition"),
+    sequence!("same-action-two-commits"),
+    sequence!("same-action-two-commits-reversed"),
+    sequence!("plan-unavailable-before-bindings"),
 ];
 
 impl Sequence {
@@ -108,6 +113,10 @@ impl Sequence {
             plan_blobs,
             action_definitions: serde_json::from_value(optional("actionDefinitions"))
                 .expect("actionDefinitions"),
+            // The canonical 44244 projection is an input the contract states
+            // (A5): the fold judges canonicity, the assembler establishes it.
+            team_projection: serde_json::from_value(optional("teamProjection"))
+                .expect("teamProjection"),
             evidence: serde_json::from_value(optional("evidence")).expect("evidence"),
             ref_states: serde_json::from_value(raw["refStates"].clone()).expect("refStates"),
             session_ref: None,

@@ -182,7 +182,12 @@ The fold reads **no events but the 44249 records**. Everything else arrives as f
   "currentGoalRef": "<64-hex>",
   "goalEvents": ["<64-hex>"],
   "planBlobs": {"<30617 coordinate>@<commit>:plans/x.md": "<blob bytes>"},
-  "actionDefinitions": {"verify": {"definitionHash": "<64-hex>", "steps": ["verify"]}},
+  "actionDefinitions": {"<30617 coordinate>@<commit>#verify":
+                        {"definitionHash": "<64-hex>", "steps": ["verify"]}},
+  "teamProjection": {"includedEventIds": ["<64-hex>"],
+                     "assignments": {"<assignment event id>":
+                                     {"assigneeActor": "<64-hex>",
+                                      "assigneeRole": "builder"}}},
   "evidence": {"<event id>": {"…one fact per kind…"}},
   "refStates": ["<relay-signed kind:30618 events>"]
 }
@@ -190,14 +195,15 @@ The fold reads **no events but the 44249 records**. Everything else arrives as f
 
 - **`authority`** is the 44244 fold's own context shape, and the predicate is that fold's own `may_lead` — founder, active `lead` seat, or active `may_steer` grantee. One predicate serves both folds; a second copy is a copy that drifts.
 - **`goalEvents`** is the session's kind:44227 goal set, which is what makes `goal_ref_not_a_goal` decidable. An empty set means the caller did not establish it, and the fold judges no declaration on that question rather than guessing.
-- **`actionDefinitions`** is compiled **by the caller** at the declaration's plan commit, with the publication compiler. Evidence that nominated its own expected hash would prove nothing.
+- **`actionDefinitions`** is compiled **by the caller** at the declaration's plan commit, with the publication compiler. Evidence that nominated its own expected hash would prove nothing. It is keyed `<30617 coordinate>@<commit>#<action name>`, **never by name alone**, and a declaration's `action` criteria are evaluated only against the definitions compiled at *its own* `planRef.commit` (A5, amendment): two plan commits can define one action name with different hashes, and collapsed to the name one of them wins by sort order — the amended head's correct evidence fails while the superseded plan's passes.
+- **`teamProjection`** is the canonical kind:44244 projection, produced by `fold_coding_session_team_transactions` over this session's team transactions and **called, never re-implemented**. `includedEventIds` is every record that projection includes; `assignments` carries each projected assignment's `assigneeActor` and `assigneeRole`. Work coverage never admits what the team contract excludes: relay ingest validates structure and cannot see the authorship relationship the team fold requires.
 - **`evidence`** is keyed by event id and holds report, verdict and action-result facts. **`refStates`** holds every known relay-signed 30618 for the code repository, because freshness needs the newest one, not only the bound one.
 
 ### The three proof predicates
 
 A **signed binding is a claim to verify.** A criterion is `covered` only when its bound evidence satisfies the predicate for its `proof` form:
 
-- **`review`** — a 44244 verdict whose `subtype` is `disposition` and whose `decision` is `approve` or `approve-with-notes`, signed by an actor `authority` admits, on a report for an assignment bound to that criterion, whose report `headSha` equals the binding's `artifactCommit`.
+- **`review`** — a 44244 verdict whose `subtype` is `disposition` and whose `decision` is `approve` or `approve-with-notes`, signed by an actor `authority` admits and **included in `teamProjection.includedEventIds`**, on a report that is itself included there, is signed by that assignment's `assigneeActor`, names an assignment bound to that criterion, and whose `headSha` equals the binding's `artifactCommit`. The precedence, so two implementations name the same reason for the same fact: (1) evidence missing → `evidence_unavailable`; (2) report not canonical → `report_not_canonical`; (3) disposition signer not `may_lead` → `wrong_signer`; (4) disposition not included → `disposition_not_canonical`; (5) not an approval → `not_approving`; (6) `headSha` ≠ `artifactCommit` → `revision_mismatch`.
 - **`action`** — a host result (kind:46023, carried by the relay's kind:46014 echo signed with `relaySelfKey`) for a run whose `definitionHash` equals the compiled definition's, whose `stepId` is the criterion's `step`, with `exitCode` 0, `checkout.sha` equal to `artifactCommit`, and neither `checkout.dirtyBefore` nor `dirty`.
 - **`git-ref`** — the newest relay-signed 30618 for the plan's `code_repository` still names `refs/heads/<branch of delivery_ref>` at `artifactCommit`.
 
@@ -208,7 +214,9 @@ A **signed binding is a claim to verify.** A criterion is `covered` only when it
 | `evidence_unavailable` | `unknown` | a bound evidence id is in neither `evidence` nor `refStates` |
 | `plan_unreadable` | `unknown` | the plan blob at `planRef.commit` was not supplied |
 | `wrong_signer` | `open` | the verdict's signer does not satisfy `may_lead` |
-| `not_approving` | `open` | the disposition is not an approval |
+| `not_approving` | `open` | the disposition is present in the team projection and is not an approval |
+| `report_not_canonical` | `open` | the team projection excludes the report, it was signed by somebody who is not the assignment's assignee, or it answers an assignment not bound to this criterion |
+| `disposition_not_canonical` | `open` | the team projection excludes the disposition — most often because a later ruling replaced it |
 | `revision_mismatch` | `open` | the report or run is about another revision |
 | `wrong_run_or_hash` | `open` | the run executed another definition, or another step |
 | `action_failed` | `open` | the run exited non-zero |
@@ -278,6 +286,14 @@ An amendment does not carry evidence forward. Evidence bound to P stays bound to
 - `artifactCommits` lists the distinct commits the covering evidence names.
 
 `coverageComplete` is `true` when **all** of: `state == "head"`; `planResolved == true`; every criterion in the plan's `criteria` is `covered`; its `workId` is in no entry of `conflicts`; and `artifactCommits` has exactly one member, equal to `candidateArtifact`.
+
+**A declaration with no criterion rows still says why it is not complete**
+(A5, amendment). Two carry none: a head whose plan blob is unavailable
+(`coverageReasonCode: "plan_unavailable"`) and any declaration in `conflict`
+(`coverageReasonCode: "conflict"`). A consumer gating a completion **MUST**
+gate on `state`, `planResolved` and `coverageComplete`, never on the presence
+of criterion rows — an empty list is not an answer, and reading it as one let
+an unreadable plan and two competing heads through.
 
 **Mixed artifacts.** Tests green at A, the documentation review at B and the delivery observation at C is five individually-covered criteria and **nothing verified at the delivered commit**. Those criteria keep their `covered` status — they are true statements about the commits they name — but the declaration reads `coverageComplete: false` with `coverageReasonCode: "mixed_artifacts"` and lists the commits.
 
