@@ -168,3 +168,21 @@ accepted; the Wave 0 gate reopens until 198–200 land.
 4. Process: the implementer never writes its own oracle. W1 builds the parts
    A2 does not touch and takes the amended fixtures from lane 198's branch.
 
+**A3 — Wave 2 landing and the Kettle Smoke run, 2026-09-20** (ledger 201–205).
+1. **One assembler.** `buzz_core::project_work_inputs::assemble_fold_inputs`
+   is the only path from fetched events to the fold's inputs. The CLI, the
+   desktop and the provider call it; no surface decodes 44244 reports, pairs
+   a host result with its echo and request, or picks a goal on its own.
+2. **The CLI surface in `conformance/project-work/README.md` § (d) was
+   under-specified.** It omitted the channel a 44249 needs for its `h` gate
+   and the genesis and project its envelope carries, and named no
+   `--responsible`. The landed CLI's spelling is normative; the README is
+   corrected by the next contract touch.
+3. **Every additive key on a closed record lands with a shared conformance
+   fixture loaded by every strict reader** — the 204 rule, after a `projectRef`
+   echoed by the relay but unknown to the CLI's `deny_unknown_fields` reader
+   made every owner-founded team session's authority chain unreadable. A lane
+   that adds such a key names every reader in its report.
+4. **Findings from a run are triaged by the orchestrator the same day** into
+   exactly three dispositions: a lane now, already in flight, or a recorded
+   observation with no lane.
