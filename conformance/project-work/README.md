@@ -500,29 +500,85 @@ its bound evidence satisfies the predicate for its `proof` form:
 
 ### The exact reason strings
 
-One code path, one wording. An implementer reads these here rather than
-inferring them from a fixture; `<id>` is the first 8 hex of an event id
-followed by `…`, `<sha>` the first 12 of a commit followed by `…`.
+**One *branch*, one wording — not one code, one wording.** A reason code is a
+class of answer; a branch is a single code path, and a code with four ways to
+fail has four rows here. The earlier one-row-per-code table forced four
+distinct facts into one sentence and made `wrong_run_or_hash` report a
+definition-hash mismatch for a host result whose echo the relay never signed
+(A7.4, and the tail of the re-check's R5). A sentence that names the wrong
+fact is the kind of comfortable guess this repo treats as a bug.
 
-| `reasonCode` | `reason` |
-|---|---|
-| `evidence_unavailable` | `evidence <id> was not supplied to the fold; nothing here says what it proves` |
-| `plan_unreadable` | `the plan blob at <sha> was not supplied` |
-| `wrong_signer` | `verdict <id> is signed by <id>, who does not satisfy may_lead for this session` |
-| `not_approving` | `disposition <id> decided <decision>; only approve or approve-with-notes satisfy a review criterion` |
-| `report_not_canonical` | `report <id> is signed by <id>, not by assignment <id>'s assignee <id>, and the team projection excludes it` |
-| `disposition_not_canonical` | `disposition <id> is not in the team projection: it was superseded by <id>` |
-| `revision_mismatch` | `report <id> names headSha <sha>, not the binding's artifactCommit <sha>` |
-| `wrong_run_or_hash` | `host result <id> ran definition hash <id>, not the <action> definition compiled at this declaration's plan commit <sha> (<id>)` |
-| `action_failed` | `host result <id> exited <code>` |
-| `dirty_revision` | `host result <id> ran on a tree that was already dirty before the command` |
-| `bound_to_superseded_declaration` | `evidence for this criterion is bound to declaration <id>, which is not the head` |
-| `ref_observation_superseded` | `the newest relay-signed ref state for <repo> (<id>) names refs/heads/<branch> at <sha>, not the bound artifact commit` |
+An implementer reads these here rather than inferring them from a fixture.
+Placeholder shapes, which `check-fixtures.mjs` enforces as a regex: `<id>` is
+the first 8 hex of an event id followed by `…`; `<sha>` the first 12 of a
+commit followed by `…`; `<code>` a signed integer; `<decision>`, `<subtype>`,
+`<action>`, `<step>` and `<branch>` slugs; `<repo>` a repository name.
 
-**`wrong_run_or_hash` always names the commit.** The definition that was
-expected is only meaningful with the plan commit it was compiled at — that is
-the whole of finding 7 — so the shorter "compiled at the plan commit" wording
-is not permitted anywhere.
+The `branch` column is a stable name for the code path, cited by the fixture
+that exercises it. **Every row is exercised by at least one sequence**, and
+`check-fixtures.mjs` fails if one is not: a documented sentence nothing
+produces is a promise, not a contract.
+
+<!-- check-fixtures: reason-templates -->
+
+| `reasonCode` | branch | `reason` |
+|---|---|---|
+| `plan_unreadable` | blob-missing | `the plan blob at <sha> was not supplied, so this criterion cannot be judged` |
+| `evidence_unavailable` | binding-unresolved | `evidence <id> was not supplied to the fold; nothing here says what it proves` |
+| `evidence_unavailable` | report-unresolved | `the report <id> rules on was not supplied to the fold` |
+| `evidence_unavailable` | action-not-compiled | `the <action> action was not compiled at this declaration's plan commit <sha>, so nothing here says what its result proves` |
+| `evidence_unavailable` | no-relay-self-key | `the relay's self key was not supplied, so a ref observation cannot be judged` |
+| `evidence_unavailable` | no-ref-state | `no relay-signed ref state for <repo> was supplied, so delivery cannot be judged` |
+| `evidence_unavailable` | ref-state-names-no-branch | `the newest relay-signed ref state for <repo> (<id>) names no refs/heads/<branch>` |
+| `report_not_canonical` | signer-not-assignee | `report <id> is signed by <id>, not by assignment <id>'s assignee <id>` |
+| `report_not_canonical` | not-included | `report <id> is not in the team projection, so nothing here says it answers assignment <id>` |
+| `report_not_canonical` | projection-empty | `report <id> cannot be shown canonical: the team projection includes no records at all` |
+| `report_not_canonical` | no-assignment-row | `report <id> answers assignment <id>, which the team projection does not carry, so nothing names its assignee` |
+| `report_not_canonical` | criterion-unassigned | `report <id> answers assignment <id>, and no assignment is bound to this criterion under this declaration` |
+| `report_not_canonical` | assignment-not-bound | `report <id> answers assignment <id>, which this criterion is not bound to` |
+| `wrong_signer` | not-may-lead | `verdict <id> is signed by <id>, who does not satisfy may_lead for this session` |
+| `disposition_not_canonical` | superseded | `disposition <id> is not in the team projection: it was superseded by <id>` |
+| `disposition_not_canonical` | not-included | `disposition <id> is not in the team projection, so it is not a current ruling` |
+| `not_approving` | decision | `disposition <id> decided <decision>; only approve or approve-with-notes satisfy a review criterion` |
+| `not_approving` | not-a-disposition | `verdict <id> is a <subtype>; only an approving disposition satisfies a review criterion` |
+| `not_approving` | none-bound | `no approving disposition is bound; a review criterion is answered by one` |
+| `revision_mismatch` | report-head-sha | `report <id> names headSha <sha>, not the binding's artifactCommit <sha>` |
+| `revision_mismatch` | action-checkout | `host result <id> ran on <sha>, not the binding's artifactCommit <sha>` |
+| `revision_mismatch` | no-ref-observation | `a git-ref proof is answered by a relay-signed ref state, and none is bound` |
+| `wrong_run_or_hash` | echo-signer | `host result <id> was echoed by <id>, not the relay's self key; the <action> definition compiled at this declaration's plan commit <sha> is unproved` |
+| `wrong_run_or_hash` | definition-hash | `host result <id> ran definition hash <id>, not the <action> definition compiled at this declaration's plan commit <sha> (<id>)` |
+| `wrong_run_or_hash` | step | `host result <id> ran step <step>, not <step> of the <action> definition compiled at this declaration's plan commit <sha>` |
+| `wrong_run_or_hash` | none-bound | `no host result for <action>/<step> of the definition compiled at this declaration's plan commit <sha> is bound` |
+| `action_failed` | exit-code | `host result <id> exited <code>` |
+| `dirty_revision` | before | `host result <id> ran on a tree that was already dirty before the command` |
+| `dirty_revision` | after | `host result <id> left the tree dirty after the command` |
+| `bound_to_superseded_declaration` | other-declaration | `evidence for this criterion is bound to declaration <id>, which is not the head` |
+| `ref_observation_superseded` | newer-state | `the newest relay-signed ref state for <repo> (<id>) names refs/heads/<branch> at <sha>, not the bound artifact commit` |
+
+**`wrong_run_or_hash` always names the declaration's plan commit** — all four
+of its branches do, including the two that are not about a hash at all. The
+definition that was expected is only meaningful with the plan commit it was
+compiled at (the whole of finding 7), so the shorter "compiled at the plan
+commit" wording is not permitted anywhere. What A6 does **not** license is the
+reverse substitution: naming the plan commit does not entitle a branch to
+claim a hash mismatch it did not observe, which is why `echo-signer`, `step`
+and `none-bound` each say what actually failed and then name the commit whose
+definition stays unproved.
+
+Two more consequences of the same rule, both new here:
+
+- **`report_not_canonical` has six branches, and three of them exist only
+  because empty is unproved** (A7.4). A report whose assignment the projection
+  does not carry, a projection that includes no records at all, and a criterion
+  with no assignment binding are three different facts, and none of them is
+  "the team projection excludes it". The `signer-not-assignee` branch lost its
+  old ", and the team projection excludes it" tail for the same reason: a wrong
+  signer is one fact, and exclusion is another that may or may not hold.
+- **`revision_mismatch` and `evidence_unavailable` each span the review, action
+  and git-ref predicates.** A report about another revision and a host result
+  from another checkout are one code and two sentences; so are an unresolved
+  binding, an uncompiled action, a missing relay self key, an absent ref state
+  and a ref state that names no delivery branch.
 
 A criterion whose evidence fails a predicate is **`open` with its reason
 named**, not `covered` and not silently empty: the binding exists, and saying
@@ -935,7 +991,7 @@ File conventions:
   commits resolve to the *same* plan fixture on purpose: identical criterion
   ids must not carry evidence forward.
 
-The three sequences:
+The sequences:
 
 | sequence | what it pins |
 |---|---|
@@ -955,11 +1011,84 @@ The three sequences:
 | `same-action-two-commits`, `same-action-two-commits-reversed` | one action name, two plan commits, both lexicographic orders: the head is covered only by the run of *its* definition, and the old definition's run re-bound under a head reads `wrong_run_or_hash` |
 | `plan-unavailable-before-bindings` | a head with no plan blob and no bindings: no criterion rows, and `coverageComplete: false` with `plan_unavailable` |
 
+**Amendment A7.4 — the negative sequences (lane 221).** The twelve below were
+authored as the oracle for R5 and for branch-specific reasons, before any
+implementation. The first four are the ruling itself; the rest exist because
+a branch with no fixture is a wording nobody checked.
+
+| sequence | what it pins |
+|---|---|
+| `report-absent-assignment` | **R5 counterexample 1.** A report and a lead's approval name an assignment the canonical projection does not carry, so it includes neither record. `report_not_canonical/no-assignment-row` — **not** covered. Empty is unproved |
+| `criterion-unassigned-report` | **R5 counterexample 2.** The same canonical report and approval that legitimately cover `cli-behaviour` are re-bound to `usage-documentation`, which has no assignment binding. `report_not_canonical/criterion-unassigned`; the positive control stays `covered`, so the negative is not an artefact of a broken input |
+| `projection-empty` | the assignment row exists and its assignee did sign the report, but `includedEventIds` is empty: `report_not_canonical/projection-empty`. An empty inclusion set is never permission to omit the predicate |
+| `canonical-exclusions` | the sibling negatives with a **non-empty** projection: an excluded disposition under an included report (`disposition_not_canonical/not-included`, no replacement to name), an excluded report under an included disposition (`report_not_canonical/not-included`), and a canonical report answering an assignment bound to another criterion (`report_not_canonical/assignment-not-bound`) |
+| `plan-unreadable-after-bindings` | the sibling of `plan-unavailable-before-bindings`: the plan blob is missing **after** bindings arrived, so the fold reports exactly the criteria they named, every one `unknown`/`plan_unreadable` with `proof: null`, no bindings and no commit. The declaration still reads `plan_unavailable` |
+| `review-unresolved-and-unanswered` | five branches in one declaration: a disposition ruling on a report nobody supplied (`evidence_unavailable/report-unresolved`), a refutation offered as a review (`not_approving/not-a-disposition`), a report with no disposition at all (`not_approving/none-bound`), a host result from another checkout (`revision_mismatch/action-checkout`), and a `git-ref` criterion carrying a report (`revision_mismatch/no-ref-observation`) |
+| `action-wrong-echo-signer` | a host result whose echo the relay did not sign — `wrong_run_or_hash/echo-signer`, which is not a hash mismatch and still names the plan commit whose definition stays unproved — and a ref state for the right repository naming no delivery branch (`evidence_unavailable/ref-state-names-no-branch`) |
+| `action-wrong-step` | the right definition at the right commit, the wrong step (`wrong_run_or_hash/step`), and a bound ref observation describing another repository (`evidence_unavailable/no-ref-state`) |
+| `action-no-host-result` | an action criterion bound to a human report and no run at all: `wrong_run_or_hash/none-bound`, naming the action, the step and the plan commit |
+| `action-dirty-after` | a clean checkout whose command left the tree dirty: `dirty_revision/after`, the sibling of `action-dirty`'s dirty-before |
+| `action-not-compiled` | the caller could not compile `verify` at this declaration's plan commit: `evidence_unavailable/action-not-compiled`, `unknown` — never a hash mismatch, because evidence must not nominate its own expected definition |
+| `relay-self-key-absent` | `relaySelfKey: null` with a bound ref observation that resolves: `evidence_unavailable/no-relay-self-key`. An owner-signed claim about its own branch is never promoted to fill the gap |
+
 `node conformance/project-work/check-fixtures.mjs` asserts every fixture
 parses and that ids, hex lengths, uuids and byte limits are well-formed, so a
 later edit cannot silently break them. It is deliberately **not** a parser or
 a fold — those are W1's, and the fixtures are what they bind to. It is wired
 into no CI recipe.
+
+Since A7.4 it also checks the oracle for holes, which is the part a fixture
+corpus cannot do for itself:
+
+- **Every reason code and every branch template in § (c) is exercised by some
+  sequence.** Deleting the only sequence that reaches a branch, or restating
+  its sentence in another branch's words, fails with the branch named.
+- **Every expected `reason` matches exactly one template**, anchored end to
+  end with each placeholder's shape enforced. Two templates matching one
+  sentence is a table defect and fails too: a branch's sentence must identify
+  its branch.
+- **Coverage is positive.** No criterion may read `covered` while
+  `includedEventIds` is empty, while the report's assignment has no projected
+  row, while its signer is not that assignment's assignee, while the report
+  answers an assignment not in the criterion's `assignmentRefs`, or while a
+  host result's echo is not the relay's self key.
+
+Proven to bite (each perturbation applied to the green corpus, one at a
+time): restating the `echo-signer` reason in the `definition-hash` wording
+failed as an unexercised branch; marking `report-absent-assignment` covered
+failed four ways at once (empty projection, excluded report, signer ≠
+assignee, excluded disposition); marking `criterion-unassigned-report`'s
+unassigned criterion covered failed on the criterion→assignment relationship;
+giving a `plan_unreadable` row a proof form failed; deleting the
+`dirty_revision/after` row from the table failed as an unmatched reason; and
+deleting `action-no-host-result` failed as an unexercised branch.
+
+### For lane 222
+
+The oracle landed first, so the fold disagrees with it on purpose. What is
+expected to go red on `work/lane-221-coverage-oracle`, and why:
+
+1. `project_work_fold::tests::every_sequence_folds_to_exactly_its_expected_output`
+   and `project_work_inputs::tests::folding_an_assembled_input_matches_every_expected_fold`
+   — the twelve new sequences, and every branch whose sentence changed.
+2. `project_work_fold::tests::every_reason_string_matches_the_contracts_table`
+   — it parses a two-column table and asserts twelve rows
+   (`project_work_fold_tests.rs:565`). The table is three columns and 31 rows
+   now. Its "four unexercised codes" allowance (`:635`) must go: every code
+   and every branch is exercised, and the checker enforces it.
+3. `report_not_canonical` and `disposition_not_canonical` must stop waiving
+   their checks when `includedEventIds` or `assignments` is empty
+   (`project_work_fold_project.rs:525`, `:594`, `:602`) and must stop waiving
+   the assignment relationship when `assignmentRefs` is empty. Each waiver
+   becomes one of the new branches.
+4. `wrong_run_or_hash` needs its four sentences separated
+   (`:698` echo-signer, `:711` definition-hash, `:726` step, `:779`
+   none-bound), `dirty_revision` its two (`:757`, `:767`), and the
+   `signer-not-assignee` sentence loses its exclusion tail.
+5. `unresolved_criteria` (`:245`) is now contract, not an accident: keep the
+   rows, `proof: null`, and the declaration's `plan_unavailable`.
+6. Any strict reader of the coverage document that requires a non-null
+   `proof` on a criterion row.
 
 ---
 

@@ -1,0 +1,51 @@
+{
+  "schema": "buzz-project-work-coverage/v1",
+  "sessionRef": "11111111-2222-4333-8444-555555555555",
+  "projectRef": "30621:1ead000000000000000000000000000000000000000000000000000000000000:kettle",
+  "declarations": [
+    {
+      "workId": "9d0f0f0f-1111-4222-8333-444444444444",
+      "declarationRef": "dec1000000000000000000000000000000000000000000000000000000000000",
+      "planRef": {
+        "repository": "30617:1ead000000000000000000000000000000000000000000000000000000000000:pivot-test-beekeeper-agents",
+        "commit": "9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c",
+        "path": "plans/kettle.md"
+      },
+      "state": "head",
+      "supersedes": [],
+      "supersededBy": [],
+      "stateReasonCode": null,
+      "stateReason": null,
+      "planResolved": false,
+      "candidateArtifact": null,
+      "artifactCommits": [],
+      "criteria": [
+        {
+          "criterionId": "cli-behaviour",
+          "proof": null,
+          "status": "unknown",
+          "assignmentRefs": [],
+          "evidence": [],
+          "artifactCommit": null,
+          "reasonCode": "plan_unreadable",
+          "reason": "the plan blob at 9c9c9c9c9c9c… was not supplied, so this criterion cannot be judged"
+        },
+        {
+          "criterionId": "usage-documentation",
+          "proof": null,
+          "status": "unknown",
+          "assignmentRefs": [],
+          "evidence": [],
+          "artifactCommit": null,
+          "reasonCode": "plan_unreadable",
+          "reason": "the plan blob at 9c9c9c9c9c9c… was not supplied, so this criterion cannot be judged"
+        }
+      ],
+      "coverageComplete": false,
+      "coverageReasonCode": "plan_unavailable",
+      "coverageReason": "the plan blob at 9c9c9c9c9c9c… was not supplied, so no criterion of this declaration can be evaluated"
+    }
+  ],
+  "excluded": [],
+  "conflicts": []
+}

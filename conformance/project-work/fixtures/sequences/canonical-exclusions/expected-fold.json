@@ -32,7 +32,7 @@
           "evidence": [
             {
               "kind": "report",
-              "eventId": "1eac000000000000000000000000000000000000000000000000000000000000"
+              "eventId": "1ea1000000000000000000000000000000000000000000000000000000000000"
             },
             {
               "kind": "verdict",
@@ -40,8 +40,8 @@
             }
           ],
           "artifactCommit": null,
-          "reasonCode": "report_not_canonical",
-          "reason": "report 1eac0000… is signed by c0ee0000…, not by assignment a5510000…'s assignee b0110000…"
+          "reasonCode": "disposition_not_canonical",
+          "reason": "disposition bed10000… is not in the team projection, so it is not a current ruling"
         },
         {
           "criterionId": "shared-storage-and-parser",
@@ -49,11 +49,22 @@
             "kind": "review"
           },
           "status": "open",
-          "assignmentRefs": [],
-          "evidence": [],
+          "assignmentRefs": [
+            "a552000000000000000000000000000000000000000000000000000000000000"
+          ],
+          "evidence": [
+            {
+              "kind": "report",
+              "eventId": "1ea2000000000000000000000000000000000000000000000000000000000000"
+            },
+            {
+              "kind": "verdict",
+              "eventId": "bed2000000000000000000000000000000000000000000000000000000000000"
+            }
+          ],
           "artifactCommit": null,
-          "reasonCode": null,
-          "reason": null
+          "reasonCode": "report_not_canonical",
+          "reason": "report 1ea20000… is not in the team projection, so nothing here says it answers assignment a5520000…"
         },
         {
           "criterionId": "verified-landed-revision",
@@ -75,11 +86,22 @@
             "kind": "review"
           },
           "status": "open",
-          "assignmentRefs": [],
-          "evidence": [],
+          "assignmentRefs": [
+            "a553000000000000000000000000000000000000000000000000000000000000"
+          ],
+          "evidence": [
+            {
+              "kind": "report",
+              "eventId": "1ea3000000000000000000000000000000000000000000000000000000000000"
+            },
+            {
+              "kind": "verdict",
+              "eventId": "bed3000000000000000000000000000000000000000000000000000000000000"
+            }
+          ],
           "artifactCommit": null,
-          "reasonCode": null,
-          "reason": null
+          "reasonCode": "report_not_canonical",
+          "reason": "report 1ea30000… answers assignment a5540000…, which this criterion is not bound to"
         },
         {
           "criterionId": "delivered-main",
@@ -96,7 +118,7 @@
       ],
       "coverageComplete": false,
       "coverageReasonCode": "criteria_not_covered",
-      "coverageReason": "5 of 5 criteria are not covered under this declaration: cli-behaviour carries evidence the team projection excludes, and the other four are open"
+      "coverageReason": "5 of 5 criteria are not covered under this declaration: cli-behaviour, shared-storage-and-parser and usage-documentation carry evidence that failed its predicate, and verified-landed-revision and delivered-main are open"
     }
   ],
   "excluded": [],

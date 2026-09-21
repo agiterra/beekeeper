@@ -306,6 +306,76 @@ const CRITERION_KEYS = [
 const keysOf = (o) => Object.keys(o).join(",");
 const short = (id) => `${id.slice(0, 8)}…`;
 
+// ------------------------------------------------- the branch reason templates
+// § (c) "The exact reason strings" carries one row per *branch* — one code path
+// producing one sentence — not one row per code. A code with four ways to fail
+// gets four rows, because forcing four facts into one sentence is how
+// `wrong_run_or_hash` came to claim a hash mismatch for an unsigned echo (A7.4).
+//
+// Every placeholder has a shape, so a template is a regex and "matches exactly"
+// means exactly: anchored, whole string, no leftovers.
+const PLACEHOLDERS = {
+  id: "[0-9a-f]{8}…",
+  sha: "[0-9a-f]{12}…",
+  code: "-?[0-9]+",
+  decision: "[a-z][a-z-]*",
+  subtype: "[a-z][a-z-]*",
+  action: "[a-z0-9][a-z0-9-]*",
+  step: "[a-z0-9][a-z0-9-]*",
+  repo: "[A-Za-z0-9._-]+",
+  branch: "[A-Za-z0-9._/-]+",
+};
+const TEMPLATE_MARKER = "<!-- check-fixtures: reason-templates -->";
+
+function templateRegex(template, where) {
+  let pattern = "^";
+  for (const [index, part] of template.split(/[<>]/).entries()) {
+    if (index % 2 === 0) {
+      pattern += part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      continue;
+    }
+    const shape = PLACEHOLDERS[part];
+    if (!shape) {
+      fail(where, `template placeholder <${part}> has no declared shape in check-fixtures.mjs`);
+      return null;
+    }
+    pattern += `(?:${shape})`;
+  }
+  return new RegExp(`${pattern}$`);
+}
+
+/// Parse the README's branch table: `| reasonCode | branch | reason |`.
+function readReasonTemplates() {
+  const where = "README.md § (c) reason templates";
+  const text = readFileSync(join(HERE, "README.md"), "utf8");
+  const at = text.indexOf(TEMPLATE_MARKER);
+  if (!check(at >= 0, where, `no ${TEMPLATE_MARKER} in README.md`)) return [];
+  const rows = [];
+  for (const line of text.slice(at).split("\n").slice(1)) {
+    if (!line.startsWith("|")) {
+      if (rows.length > 0) break;
+      continue;
+    }
+    const cells = line.replace(/^\|/, "").replace(/\|\s*$/, "").split("|").map((c) => c.trim());
+    if (cells.length !== 3 || /^-+$/.test(cells[0]) || cells[0] === "`reasonCode`") continue;
+    const code = cells[0].replace(/`/g, "");
+    const branch = cells[1].replace(/`/g, "");
+    const template = cells[2].replace(/^`|`$/g, "");
+    check(REASON_CODES.includes(code), where, `template row names unknown reasonCode "${code}"`);
+    check(/^[a-z0-9-]+$/.test(branch), where, `branch name "${branch}" is not a slug`);
+    const regex = templateRegex(template, where);
+    if (regex) rows.push({ code, branch, template, regex });
+  }
+  check(rows.length > 0, where, "the reason-template table is empty");
+  const ids = rows.map((r) => `${r.code}/${r.branch}`);
+  check(new Set(ids).size === ids.length, where, "two template rows name the same code and branch");
+  return rows;
+}
+
+const TEMPLATES = readReasonTemplates();
+// `${code}/${branch}` -> the sequence that first produced it.
+const exercisedBranches = new Map();
+
 /// Every rule a coverage document must satisfy on its own. `ctx` supplies the
 /// sequence's events and inputs when there are any; the README's embedded
 /// example is checked without one, so the two cannot drift apart in key names
@@ -344,7 +414,7 @@ function checkFold(fold, where, planCriteria, ctx) {
       // There is no candidate until delivery is observed: a plan with a
       // `git-ref` criterion that is not covered has `candidateArtifact: null`,
       // however many other criteria are covered.
-      const gitRefRow = d.criteria.find((c) => c.proof.kind === "git-ref");
+      const gitRefRow = d.criteria.find((c) => c.proof?.kind === "git-ref");
       if (gitRefRow && gitRefRow.status !== "covered") {
         check(d.candidateArtifact === null, where,
           `candidateArtifact is set while the git-ref criterion "${gitRefRow.criterionId}" is ${gitRefRow.status}: there is no candidate until delivery is observed`);
@@ -368,11 +438,22 @@ function checkFold(fold, where, planCriteria, ctx) {
       if ((d.state === "head" || d.state === "stale") && d.planResolved) {
         check(d.criteria.length > 0, where, "a head declaration must project its criteria");
       } else if (d.state === "head" || d.state === "stale") {
-        // Finding 5: no criterion rows must never read as nothing to do.
-        check(d.criteria.length === 0, where, "an unresolved plan cannot yield criterion rows");
+        // Finding 5: no criterion rows must never read as nothing to do. An
+        // unresolved plan may still project the criteria its *bindings* named
+        // — every one `unknown`/`plan_unreadable` with no proof form, because
+        // the fold knows the id was claimed and not what it requires — and the
+        // declaration still says `plan_unavailable` either way.
         check(d.coverageReasonCode === "plan_unavailable", where,
           "a head whose plan blob is unavailable must say plan_unavailable at the declaration level");
         check(d.coverageComplete === false, where, "an un-evaluable declaration is never complete");
+        for (const c of d.criteria) {
+          check(c.proof === null, where,
+            `criterion "${c.criterionId}" carries a proof form while the plan blob is unavailable: the fold cannot know it`);
+          check(c.status === "unknown" && c.reasonCode === "plan_unreadable", where,
+            `criterion "${c.criterionId}" under an unreadable plan is ${c.status}/${c.reasonCode}, not unknown/plan_unreadable`);
+          check(c.assignmentRefs.length === 0 && c.evidence.length === 0 && c.artifactCommit === null, where,
+            `criterion "${c.criterionId}" under an unreadable plan reports bindings it cannot evaluate`);
+        }
       } else {
         check(d.criteria.length === 0, where, `a ${d.state} declaration projects no criteria`);
       }
@@ -388,6 +469,20 @@ function checkFold(fold, where, planCriteria, ctx) {
         check(c.status !== "covered" || c.reasonCode === null, where, `criterion "${c.criterionId}" is covered and still names a reason`);
         check(c.status === "covered" || c.evidence.length === 0 || c.reasonCode !== null, where, `criterion "${c.criterionId}" is ${c.status} with evidence and no reason: say which predicate failed`);
         check(c.status !== "unknown" || c.reasonCode !== null, where, `criterion "${c.criterionId}" is unknown with no reason`);
+        if (c.reasonCode !== null && c.reason !== null) {
+          const candidates = TEMPLATES.filter((t) => t.code === c.reasonCode);
+          const hit = candidates.filter((t) => t.regex.test(c.reason));
+          if (check(hit.length > 0, where,
+            `criterion "${c.criterionId}": ${c.reasonCode} reason ${JSON.stringify(c.reason)} follows none of the ${candidates.length} template(s) in the README's table`)) {
+            check(hit.length === 1, where,
+              `criterion "${c.criterionId}": ${c.reasonCode} reason ${JSON.stringify(c.reason)} matches ${hit.length} templates (${hit.map((t) => t.branch).join(", ")}); a branch's sentence must identify its branch`);
+            for (const t of hit) {
+              if (!exercisedBranches.has(`${t.code}/${t.branch}`)) {
+                exercisedBranches.set(`${t.code}/${t.branch}`, where);
+              }
+            }
+          }
+        }
         check(c.status !== "covered" || COMMIT.test(c.artifactCommit ?? ""), where, `criterion "${c.criterionId}" is covered with no artifact commit`);
         for (const e of c.evidence) {
           check(EVIDENCE_KINDS.includes(e.kind) && HEX64.test(e.eventId), where, "malformed evidence ref in expected fold");
@@ -400,6 +495,13 @@ function checkFold(fold, where, planCriteria, ctx) {
           }
           if (ctx && known && e.kind !== "ref_observation") {
             check((ctx.inputs.evidence[e.eventId].kind) === e.kind, where, `evidence ${e.eventId} is bound as ${e.kind} but supplied as ${ctx.inputs.evidence[e.eventId].kind}`);
+          }
+          // A7.4: coverage is a POSITIVE proof. An empty canonical projection
+          // establishes nothing, so it can never leave a criterion covered —
+          // "empty" is unproved, never permission to omit the predicate.
+          if (ctx && known && c.status === "covered" && (e.kind === "verdict" || e.kind === "report")) {
+            check(projection.includedEventIds.length > 0, where,
+              `criterion "${c.criterionId}" is covered while the team projection includes no records at all: empty is unproved`);
           }
           if (ctx && known && c.status === "covered" && e.kind === "verdict") {
             const f = ctx.inputs.evidence[e.eventId];
@@ -428,6 +530,8 @@ function checkFold(fold, where, planCriteria, ctx) {
             const def = (ctx.inputs.actionDefinitions ?? {})[key];
             check(Boolean(def) && def.definitionHash === f.definitionHash, where, `criterion "${c.criterionId}" is covered by a run of another definition than the one compiled at ${d.planRef.commit.slice(0, 12)}…`);
             check(Boolean(def) && def.steps.includes(f.stepId), where, `criterion "${c.criterionId}" is covered by a step the definition does not define`);
+            check(f.echoSigner === ctx.inputs.relaySelfKey, where,
+              `criterion "${c.criterionId}" is covered by a host result the relay did not echo`);
             check(f.exitCode === 0 && f.dirty === false && f.checkout.dirtyBefore === false, where, `criterion "${c.criterionId}" is covered by a failed or dirty run`);
             check(f.checkout.sha === c.artifactCommit, where, `criterion "${c.criterionId}" is covered by a run on another commit`);
           }
@@ -497,12 +601,10 @@ function checkSequences(planCriteria) {
       check(HEX64.test(row.assigneeActor ?? ""), where, `assignment ${asg} names no assignee`);
       check(typeof row.assigneeRole === "string" && row.assigneeRole.length > 0, where, `assignment ${asg} names no role`);
     }
-    for (const fact of Object.values(inputs.evidence ?? {})) {
-      if (fact.kind === "report") {
-        check(Boolean((tp.assignments ?? {})[fact.assignmentRef]), where,
-          `report ${fact.eventId} names assignment ${fact.assignmentRef}, which teamProjection.assignments does not carry`);
-      }
-    }
+    // A report naming an assignment the projection does not carry is a
+    // deliberate NEGATIVE input (A7.4, R5 counterexample 1) — empty is
+    // unproved, so the sequence must exist and must not cover anything with
+    // it. The constraint is on the expected fold, in `checkFold`, not here.
     for (const [key, fact] of Object.entries(inputs.evidence ?? {})) {
       check(key === fact.eventId, where, `evidence is keyed ${key} but the fact names ${fact.eventId}`);
       check(HEX64.test(fact.eventId ?? ""), where, "an evidence fact id is not 64 hex");
@@ -521,7 +623,10 @@ function checkSequences(planCriteria) {
       if (fact.kind === "action_result") {
         check(HEX64.test(fact.exitedEventId ?? ""), where, "an action result carries no relay 46014 echo id");
         check(HEX64.test(fact.resultSigner ?? ""), where, "an action result has no result signer");
-        check(fact.echoSigner === inputs.relaySelfKey, where, "an action result's echo is not signed by the relay self key");
+        // An echo the relay did not sign is a negative input with its own
+        // branch (`wrong_run_or_hash/echo-signer`), so this only asserts the
+        // field is an event signer at all; `checkFold` forbids covering with it.
+        check(HEX64.test(fact.echoSigner ?? ""), where, "an action result's echo signer is not 64 hex");
         check(HEX64.test(fact.definitionHash ?? ""), where, "an action result has no 64-hex definitionHash");
         check(UUID.test(fact.runId ?? ""), where, "an action result has no run uuid");
         check(SLUG.test(fact.stepId ?? ""), where, "an action result has no step id");
@@ -532,11 +637,19 @@ function checkSequences(planCriteria) {
       }
     }
     check(HEX64.test(inputs.currentGoalRef ?? ""), where, "inputs.currentGoalRef is not a 64-hex goal event id");
-    check(HEX64.test(inputs.relaySelfKey ?? ""), where, "inputs.relaySelfKey is not 64 hex");
+    // `null` is a supplied fact, not an omission: the caller could not
+    // establish the relay's self key, and `relay-self-key-absent` pins what
+    // a git-ref criterion reads then.
+    check(inputs.relaySelfKey === null || HEX64.test(inputs.relaySelfKey ?? ""), where,
+      "inputs.relaySelfKey is neither null nor 64 hex");
+    check("relaySelfKey" in inputs, where, "inputs omits relaySelfKey; nullable keys are written as null");
     check(Array.isArray(inputs.goalEvents) && inputs.goalEvents.every((g) => HEX64.test(g)), where, "inputs.goalEvents is not a list of 64-hex goal ids");
     for (const rs of inputs.refStates ?? []) {
       check(rs.kind === KIND_GIT_REPO_STATE, where, `a ref state is kind ${rs.kind}, not ${KIND_GIT_REPO_STATE}`);
-      check(rs.pubkey === inputs.relaySelfKey, where, "a ref state is not signed by the relay's self key");
+      check(HEX64.test(rs.pubkey ?? ""), where, "a ref state has no 64-hex signer");
+      if (inputs.relaySelfKey !== null) {
+        check(rs.pubkey === inputs.relaySelfKey, where, "a ref state is not signed by the relay's self key");
+      }
       check(HEX64.test(rs.id ?? ""), where, "a ref state id is not 64 hex");
       check(Number.isInteger(rs.created_at), where, "a ref state has no fixed timestamp");
       const d = (rs.tags ?? []).find((t) => t[0] === "d");
@@ -564,7 +677,9 @@ function checkSequences(planCriteria) {
         check(JSON.stringify(d.supersedes) === JSON.stringify(record.body.body.supersedes), where,
           `declaration ${short(d.declarationRef)} projects supersedes ${JSON.stringify(d.supersedes)} but its event recorded ${JSON.stringify(record.body.body.supersedes)}`);
       }
-      for (const c of d.criteria) {
+      // An unresolved plan projects no bindings on its rows at all (checked in
+      // `checkFold`), so there is nothing to derive here.
+      for (const c of d.planResolved ? d.criteria : []) {
         const expected = [...new Set(records
           .filter((r) => r.body.type === "work.assignment_bound" && valid(r)
             && r.body.body.declarationRef === d.declarationRef
@@ -599,6 +714,27 @@ function checkReadmeExample(planCriteria) {
   checkFold(fold, where, planCriteria, null);
 }
 
+// ------------------------------------------------- coverage of the oracle itself
+// An oracle that names a failure nothing demonstrates is a promise, not a test.
+// Two directions, both required (A7.4): every reason CODE the contract defines
+// is produced by some sequence, and every BRANCH template in the README's table
+// is produced by some sequence. The second is the stronger one — it is what
+// stops a code path from borrowing another branch's sentence.
+function checkOracleCoverage() {
+  const where = "oracle coverage";
+  for (const code of REASON_CODES) {
+    const branches = TEMPLATES.filter((t) => t.code === code);
+    if (!check(branches.length > 0, where,
+      `reasonCode "${code}" has no template row in the README's table`)) continue;
+    check(branches.some((t) => exercisedBranches.has(`${code}/${t.branch}`)), where,
+      `no sequence exercises reasonCode "${code}": add one rather than documenting a reason nothing produces`);
+  }
+  for (const t of TEMPLATES) {
+    check(exercisedBranches.has(`${t.code}/${t.branch}`), where,
+      `no sequence exercises the template "${t.code}/${t.branch}": every branch the contract spells out needs a fixture`);
+  }
+}
+
 // ---------------------------------------------------------------------- main
 const planCriteria = checkValidPlan(join(FIX, "plans/valid/kettle.md")) ?? new Set();
 for (const name of readdirSync(join(FIX, "plans/invalid")).sort()) {
@@ -607,6 +743,7 @@ for (const name of readdirSync(join(FIX, "plans/invalid")).sort()) {
 checkRecords();
 checkSequences(planCriteria);
 checkReadmeExample(planCriteria);
+checkOracleCoverage();
 
 if (failures.length > 0) {
   console.error(`conformance/project-work: ${failures.length} fixture problem(s)`);

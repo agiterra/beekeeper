@@ -26,22 +26,11 @@
             "kind": "review"
           },
           "status": "open",
-          "assignmentRefs": [
-            "a551000000000000000000000000000000000000000000000000000000000000"
-          ],
-          "evidence": [
-            {
-              "kind": "report",
-              "eventId": "1eac000000000000000000000000000000000000000000000000000000000000"
-            },
-            {
-              "kind": "verdict",
-              "eventId": "bed1000000000000000000000000000000000000000000000000000000000000"
-            }
-          ],
+          "assignmentRefs": [],
+          "evidence": [],
           "artifactCommit": null,
-          "reasonCode": "report_not_canonical",
-          "reason": "report 1eac0000… is signed by c0ee0000…, not by assignment a5510000…'s assignee b0110000…"
+          "reasonCode": null,
+          "reason": null
         },
         {
           "criterionId": "shared-storage-and-parser",
@@ -86,17 +75,24 @@
           "proof": {
             "kind": "git-ref"
           },
-          "status": "open",
-          "assignmentRefs": [],
-          "evidence": [],
-          "artifactCommit": null,
-          "reasonCode": null,
-          "reason": null
+          "status": "unknown",
+          "assignmentRefs": [
+            "a555000000000000000000000000000000000000000000000000000000000000"
+          ],
+          "evidence": [
+            {
+              "kind": "ref_observation",
+              "eventId": "0b51000000000000000000000000000000000000000000000000000000000000"
+            }
+          ],
+          "artifactCommit": "e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7",
+          "reasonCode": "evidence_unavailable",
+          "reason": "the relay's self key was not supplied, so a ref observation cannot be judged"
         }
       ],
       "coverageComplete": false,
       "coverageReasonCode": "criteria_not_covered",
-      "coverageReason": "5 of 5 criteria are not covered under this declaration: cli-behaviour carries evidence the team projection excludes, and the other four are open"
+      "coverageReason": "5 of 5 criteria are not covered under this declaration: delivered-main carries evidence that failed its predicate or could not be resolved, and the other four are open"
     }
   ],
   "excluded": [],

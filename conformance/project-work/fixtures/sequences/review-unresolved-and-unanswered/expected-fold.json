@@ -1,0 +1,132 @@
+{
+  "schema": "buzz-project-work-coverage/v1",
+  "sessionRef": "11111111-2222-4333-8444-555555555555",
+  "projectRef": "30621:1ead000000000000000000000000000000000000000000000000000000000000:kettle",
+  "declarations": [
+    {
+      "workId": "9d0f0f0f-1111-4222-8333-444444444444",
+      "declarationRef": "dec1000000000000000000000000000000000000000000000000000000000000",
+      "planRef": {
+        "repository": "30617:1ead000000000000000000000000000000000000000000000000000000000000:pivot-test-beekeeper-agents",
+        "commit": "abababababababababababababababababababab",
+        "path": "plans/kettle.md"
+      },
+      "state": "head",
+      "supersedes": [],
+      "supersededBy": [],
+      "stateReasonCode": null,
+      "stateReason": null,
+      "planResolved": true,
+      "candidateArtifact": null,
+      "artifactCommits": [],
+      "criteria": [
+        {
+          "criterionId": "cli-behaviour",
+          "proof": {
+            "kind": "review"
+          },
+          "status": "unknown",
+          "assignmentRefs": [
+            "a551000000000000000000000000000000000000000000000000000000000000"
+          ],
+          "evidence": [
+            {
+              "kind": "verdict",
+              "eventId": "bed1000000000000000000000000000000000000000000000000000000000000"
+            }
+          ],
+          "artifactCommit": "e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7",
+          "reasonCode": "evidence_unavailable",
+          "reason": "the report bed10000… rules on was not supplied to the fold"
+        },
+        {
+          "criterionId": "shared-storage-and-parser",
+          "proof": {
+            "kind": "review"
+          },
+          "status": "open",
+          "assignmentRefs": [
+            "a552000000000000000000000000000000000000000000000000000000000000"
+          ],
+          "evidence": [
+            {
+              "kind": "report",
+              "eventId": "1ea2000000000000000000000000000000000000000000000000000000000000"
+            },
+            {
+              "kind": "verdict",
+              "eventId": "bed2000000000000000000000000000000000000000000000000000000000000"
+            }
+          ],
+          "artifactCommit": "e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7",
+          "reasonCode": "not_approving",
+          "reason": "verdict bed20000… is a refutation; only an approving disposition satisfies a review criterion"
+        },
+        {
+          "criterionId": "verified-landed-revision",
+          "proof": {
+            "kind": "action",
+            "name": "verify",
+            "step": "verify"
+          },
+          "status": "open",
+          "assignmentRefs": [
+            "a554000000000000000000000000000000000000000000000000000000000000"
+          ],
+          "evidence": [
+            {
+              "kind": "action_result",
+              "eventId": "ac71000000000000000000000000000000000000000000000000000000000000"
+            }
+          ],
+          "artifactCommit": "e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7",
+          "reasonCode": "revision_mismatch",
+          "reason": "host result ac710000… ran on b4b4b4b4b4b4…, not the binding's artifactCommit e7e7e7e7e7e7…"
+        },
+        {
+          "criterionId": "usage-documentation",
+          "proof": {
+            "kind": "review"
+          },
+          "status": "open",
+          "assignmentRefs": [
+            "a553000000000000000000000000000000000000000000000000000000000000"
+          ],
+          "evidence": [
+            {
+              "kind": "report",
+              "eventId": "1ea3000000000000000000000000000000000000000000000000000000000000"
+            }
+          ],
+          "artifactCommit": "e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7",
+          "reasonCode": "not_approving",
+          "reason": "no approving disposition is bound; a review criterion is answered by one"
+        },
+        {
+          "criterionId": "delivered-main",
+          "proof": {
+            "kind": "git-ref"
+          },
+          "status": "open",
+          "assignmentRefs": [
+            "a555000000000000000000000000000000000000000000000000000000000000"
+          ],
+          "evidence": [
+            {
+              "kind": "report",
+              "eventId": "1ea5000000000000000000000000000000000000000000000000000000000000"
+            }
+          ],
+          "artifactCommit": "e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7",
+          "reasonCode": "revision_mismatch",
+          "reason": "a git-ref proof is answered by a relay-signed ref state, and none is bound"
+        }
+      ],
+      "coverageComplete": false,
+      "coverageReasonCode": "criteria_not_covered",
+      "coverageReason": "5 of 5 criteria are not covered under this declaration: all five carry evidence that failed its predicate or could not be resolved"
+    }
+  ],
+  "excluded": [],
+  "conflicts": []
+}

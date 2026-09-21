@@ -1,0 +1,59 @@
+{
+  "relaySelfKey": null,
+  "authority": {
+    "founderPubkey": "1ead000000000000000000000000000000000000000000000000000000000000",
+    "activeSeats": [
+      {
+        "actorPubkey": "1ead000000000000000000000000000000000000000000000000000000000000",
+        "role": "lead"
+      }
+    ],
+    "activeGrants": [
+      {
+        "actorPubkey": "57ee000000000000000000000000000000000000000000000000000000000000",
+        "grantEventRef": "47a1000000000000000000000000000000000000000000000000000000000000",
+        "maySteer": true
+      }
+    ]
+  },
+  "currentGoalRef": "90a1000000000000000000000000000000000000000000000000000000000000",
+  "goalEvents": [
+    "90a1000000000000000000000000000000000000000000000000000000000000",
+    "90a2000000000000000000000000000000000000000000000000000000000000"
+  ],
+  "planBlobs": {
+    "30617:1ead000000000000000000000000000000000000000000000000000000000000:pivot-test-beekeeper-agents@abababababababababababababababababababab:plans/kettle.md": "../../plans/valid/kettle.md"
+  },
+  "actionDefinitions": {
+    "30617:1ead000000000000000000000000000000000000000000000000000000000000:pivot-test-beekeeper-agents@abababababababababababababababababababab#verify": {
+      "definitionHash": "d1f0000000000000000000000000000000000000000000000000000000000000",
+      "steps": [
+        "verify"
+      ]
+    }
+  },
+  "teamProjection": {
+    "includedEventIds": [],
+    "assignments": {}
+  },
+  "evidence": {},
+  "refStates": [
+    {
+      "id": "0b51000000000000000000000000000000000000000000000000000000000000",
+      "pubkey": "4e1a000000000000000000000000000000000000000000000000000000000000",
+      "created_at": 1789000100,
+      "kind": 30618,
+      "tags": [
+        [
+          "d",
+          "pivot-test"
+        ],
+        [
+          "refs/heads/main",
+          "e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7"
+        ]
+      ]
+    }
+  ],
+  "note": "A bound ref observation that resolves while the caller supplied no relay self key. Delivery cannot be judged, so the criterion is unknown with the missing input named; an owner-signed claim about its own branch is never promoted to an observation to fill the gap."
+}

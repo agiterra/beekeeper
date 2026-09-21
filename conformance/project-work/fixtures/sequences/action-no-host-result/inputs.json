@@ -1,0 +1,57 @@
+{
+  "relaySelfKey": "4e1a000000000000000000000000000000000000000000000000000000000000",
+  "authority": {
+    "founderPubkey": "1ead000000000000000000000000000000000000000000000000000000000000",
+    "activeSeats": [
+      {
+        "actorPubkey": "1ead000000000000000000000000000000000000000000000000000000000000",
+        "role": "lead"
+      }
+    ],
+    "activeGrants": [
+      {
+        "actorPubkey": "57ee000000000000000000000000000000000000000000000000000000000000",
+        "grantEventRef": "47a1000000000000000000000000000000000000000000000000000000000000",
+        "maySteer": true
+      }
+    ]
+  },
+  "currentGoalRef": "90a1000000000000000000000000000000000000000000000000000000000000",
+  "goalEvents": [
+    "90a1000000000000000000000000000000000000000000000000000000000000",
+    "90a2000000000000000000000000000000000000000000000000000000000000"
+  ],
+  "planBlobs": {
+    "30617:1ead000000000000000000000000000000000000000000000000000000000000:pivot-test-beekeeper-agents@abababababababababababababababababababab:plans/kettle.md": "../../plans/valid/kettle.md"
+  },
+  "actionDefinitions": {
+    "30617:1ead000000000000000000000000000000000000000000000000000000000000:pivot-test-beekeeper-agents@abababababababababababababababababababab#verify": {
+      "definitionHash": "d1f0000000000000000000000000000000000000000000000000000000000000",
+      "steps": [
+        "verify"
+      ]
+    }
+  },
+  "teamProjection": {
+    "includedEventIds": [
+      "1ea4000000000000000000000000000000000000000000000000000000000000"
+    ],
+    "assignments": {
+      "a554000000000000000000000000000000000000000000000000000000000000": {
+        "assigneeActor": "b011000000000000000000000000000000000000000000000000000000000000",
+        "assigneeRole": "builder"
+      }
+    }
+  },
+  "evidence": {
+    "1ea4000000000000000000000000000000000000000000000000000000000000": {
+      "kind": "report",
+      "eventId": "1ea4000000000000000000000000000000000000000000000000000000000000",
+      "signer": "b011000000000000000000000000000000000000000000000000000000000000",
+      "assignmentRef": "a554000000000000000000000000000000000000000000000000000000000000",
+      "headSha": "e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7"
+    }
+  },
+  "refStates": [],
+  "note": "An action criterion whose binding carries a human report and no host result. A review record is not an action proof: the criterion is open, and the reason names the action, the step and the plan commit the missing run would have had to execute."
+}

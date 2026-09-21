@@ -18758,6 +18758,99 @@ removed from here.
        the file 20/20 under 12 CPU burners, three full suites
        2101/2101 each.
 
+221. **The coverage oracle waived its own proof wherever a canonical fact was
+     empty, and one reason code spoke for four different failures. The oracle
+     moves first: two R5 negative sequences, a branch-per-row reason table and
+     a fixture for every branch (built 2026-09-21, lane 221 on
+     `work/lane-221-coverage-oracle`; `conformance/project-work/**` and this
+     item only, no `crates/` change).** Closes the oracle half of A7.4
+     (`docs/UNIFIED_WORK_PLAN.md` § 8 A7.4,
+     `docs/history/2026-09-21-astra-wave2-recheck.md` § R5 and its "Are the 12
+     reasons and 18 sequences an adequate oracle?"). Lane 222 implements
+     against it; the implementer authored neither the fixtures nor the table.
+     - **(A) Empty is unproved (A7.4 ruling), as two named negatives.**
+       `sequences/report-absent-assignment` is R5 counterexample 1: a report
+       and a lead's approval name an assignment the canonical projection does
+       not carry, so the team fold includes neither record, and binding them
+       as work evidence leaves the criterion `open` with
+       `report_not_canonical`, never `covered`.
+       `sequences/criterion-unassigned-report` is counterexample 2: the same
+       canonical report and approval that legitimately cover `cli-behaviour`
+       are re-bound to `usage-documentation`, which carries no assignment
+       binding at all — a positive criterion → assignment → assignee
+       relationship is required, and an empty `assignmentRefs` is not
+       permission to omit it. The positive control in that sequence stays
+       `covered`, so the negative cannot be an artefact of a broken input.
+       Two sibling negatives the ruling implies: `sequences/projection-empty`
+       (the assignment row exists and its assignee signed, but
+       `includedEventIds` is empty) and `sequences/canonical-exclusions`
+       (excluded disposition under an included report, and the reverse, and a
+       canonical report answering an assignment bound to another criterion).
+     - **(B) The reason table is one row per BRANCH, not per code.** A6 ruled
+       that `wrong_run_or_hash` always names the declaration's plan commit;
+       the re-check showed four distinct failures — wrong echo signer, wrong
+       step, no host result, dirty-after against a dirty-before template —
+       forced into one misleading sentence
+       (`crates/buzz-core/src/project_work_fold_project.rs:698`, `:726`,
+       `:765`, `:777`). § (c) "The exact reason strings" now carries **31
+       rows over the 12 codes**, each naming its branch, each saying what
+       actually failed, and each still naming the plan commit where A6
+       requires it. `wrong_run_or_hash` has four; `report_not_canonical` six
+       (three of them exist only because empty is unproved, and
+       `signer-not-assignee` lost its untrue ", and the team projection
+       excludes it" tail); `evidence_unavailable` six, spanning all three
+       predicates; `revision_mismatch` and `dirty_revision` and
+       `not_approving` and `disposition_not_canonical` two or three each.
+     - **(C) A fixture per branch, and the four unexercised codes closed.**
+       Twelve new sequences (30 total): the four above plus
+       `plan-unreadable-after-bindings`, `review-unresolved-and-unanswered`,
+       `action-wrong-echo-signer`, `action-wrong-step`,
+       `action-no-host-result`, `action-dirty-after`, `action-not-compiled`
+       and `relay-self-key-absent`. All 31 branches are exercised; the
+       previously unexercised `plan_unreadable` gets its only reachable
+       shape, a head whose plan blob is missing **after** bindings arrived,
+       which projects the criteria the bindings named with `proof: null` and
+       `unknown`/`plan_unreadable` while the declaration still reads
+       `plan_unavailable`. Expected folds are authored from the contract's
+       own declaration-level grammar, not read out of the fold.
+     - **(D) The checker now checks the oracle for holes.**
+       `check-fixtures.mjs` parses the marked template table, compiles each
+       row to an anchored regex with a declared shape per placeholder, and
+       fails unless every reason code **and every branch template** is
+       produced by some sequence and every expected `reason` matches exactly
+       one template. It also refuses any `covered` row reached with an empty
+       `includedEventIds`, without a projected assignment row, with a signer
+       who is not the assignee, on an assignment outside the criterion's
+       `assignmentRefs`, or on a host result the relay did not echo. Proven
+       to bite, one perturbation at a time on the green corpus: restating
+       the `echo-signer` reason in `definition-hash` words failed as an
+       unexercised branch; marking `report-absent-assignment` covered failed
+       **four** ways at once; covering `criterion-unassigned-report`'s
+       unassigned criterion failed on the relationship; giving a
+       `plan_unreadable` row a proof form failed; deleting the
+       `dirty_revision/after` table row failed as an unmatched reason; and
+       deleting `action-no-host-result` failed as an unexercised branch.
+     - **Expected Rust disagreement — lane 222's work, listed in the README
+       under "For lane 222".** `every_reason_string_matches_the_contracts_table`
+       (`project_work_fold_tests.rs:565`) parses a two-column table and
+       asserts twelve rows; the table is three columns and 31 rows, and its
+       explicit "four unexercised codes" allowance (`:635`) is now false.
+       `every_sequence_folds_to_exactly_its_expected_output` and
+       `project_work_inputs::tests::folding_an_assembled_input_matches_every_
+       expected_fold` load the twelve new sequences and the reworded
+       branches. The waivers at `project_work_fold_project.rs:525`, `:594`
+       and `:602` must go, each becoming one of the new branches; the four
+       `wrong_run_or_hash` sentences and the two `dirty_revision` sentences
+       must separate; `unresolved_criteria` (`:245`) is contract now rather
+       than an accident; and any strict reader requiring a non-null `proof`
+       on a criterion row will refuse a `plan_unreadable` row.
+     - Gates on `work/lane-221-coverage-oracle`, bare after committing:
+       `node conformance/project-work/check-fixtures.mjs` green,
+       `just conformance-check` 61 passed / 0 failed,
+       `just file-size-check` exit 0, and a Python NUL/binary scan of all 39
+       changed files clean. No Rust, Tauri, desktop or mobile gate was run:
+       this lane touched no code, and the Rust fold tests are red by design.
+
 ## 3a. Environment facts that cost real time (do not rediscover)
 
 - **pnpm 11's answer to a stale workspace state is to DELETE `node_modules`,

@@ -26,22 +26,11 @@
             "kind": "review"
           },
           "status": "open",
-          "assignmentRefs": [
-            "a551000000000000000000000000000000000000000000000000000000000000"
-          ],
-          "evidence": [
-            {
-              "kind": "report",
-              "eventId": "1eac000000000000000000000000000000000000000000000000000000000000"
-            },
-            {
-              "kind": "verdict",
-              "eventId": "bed1000000000000000000000000000000000000000000000000000000000000"
-            }
-          ],
+          "assignmentRefs": [],
+          "evidence": [],
           "artifactCommit": null,
-          "reasonCode": "report_not_canonical",
-          "reason": "report 1eac0000… is signed by c0ee0000…, not by assignment a5510000…'s assignee b0110000…"
+          "reasonCode": null,
+          "reason": null
         },
         {
           "criterionId": "shared-storage-and-parser",
@@ -63,11 +52,18 @@
             "step": "verify"
           },
           "status": "open",
-          "assignmentRefs": [],
-          "evidence": [],
-          "artifactCommit": null,
-          "reasonCode": null,
-          "reason": null
+          "assignmentRefs": [
+            "a554000000000000000000000000000000000000000000000000000000000000"
+          ],
+          "evidence": [
+            {
+              "kind": "report",
+              "eventId": "1ea4000000000000000000000000000000000000000000000000000000000000"
+            }
+          ],
+          "artifactCommit": "e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7",
+          "reasonCode": "wrong_run_or_hash",
+          "reason": "no host result for verify/verify of the definition compiled at this declaration's plan commit abababababab… is bound"
         },
         {
           "criterionId": "usage-documentation",
@@ -96,7 +92,7 @@
       ],
       "coverageComplete": false,
       "coverageReasonCode": "criteria_not_covered",
-      "coverageReason": "5 of 5 criteria are not covered under this declaration: cli-behaviour carries evidence the team projection excludes, and the other four are open"
+      "coverageReason": "5 of 5 criteria are not covered under this declaration: verified-landed-revision carries evidence that failed its predicate, and the other four are open"
     }
   ],
   "excluded": [],

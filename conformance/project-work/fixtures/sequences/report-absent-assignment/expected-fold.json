@@ -32,7 +32,7 @@
           "evidence": [
             {
               "kind": "report",
-              "eventId": "1eac000000000000000000000000000000000000000000000000000000000000"
+              "eventId": "1ea1000000000000000000000000000000000000000000000000000000000000"
             },
             {
               "kind": "verdict",
@@ -41,7 +41,7 @@
           ],
           "artifactCommit": null,
           "reasonCode": "report_not_canonical",
-          "reason": "report 1eac0000… is signed by c0ee0000…, not by assignment a5510000…'s assignee b0110000…"
+          "reason": "report 1ea10000… answers assignment a5510000…, which the team projection does not carry, so nothing names its assignee"
         },
         {
           "criterionId": "shared-storage-and-parser",

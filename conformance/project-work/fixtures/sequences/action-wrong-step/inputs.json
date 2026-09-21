@@ -1,0 +1,79 @@
+{
+  "relaySelfKey": "4e1a000000000000000000000000000000000000000000000000000000000000",
+  "authority": {
+    "founderPubkey": "1ead000000000000000000000000000000000000000000000000000000000000",
+    "activeSeats": [
+      {
+        "actorPubkey": "1ead000000000000000000000000000000000000000000000000000000000000",
+        "role": "lead"
+      }
+    ],
+    "activeGrants": [
+      {
+        "actorPubkey": "57ee000000000000000000000000000000000000000000000000000000000000",
+        "grantEventRef": "47a1000000000000000000000000000000000000000000000000000000000000",
+        "maySteer": true
+      }
+    ]
+  },
+  "currentGoalRef": "90a1000000000000000000000000000000000000000000000000000000000000",
+  "goalEvents": [
+    "90a1000000000000000000000000000000000000000000000000000000000000",
+    "90a2000000000000000000000000000000000000000000000000000000000000"
+  ],
+  "planBlobs": {
+    "30617:1ead000000000000000000000000000000000000000000000000000000000000:pivot-test-beekeeper-agents@abababababababababababababababababababab:plans/kettle.md": "../../plans/valid/kettle.md"
+  },
+  "actionDefinitions": {
+    "30617:1ead000000000000000000000000000000000000000000000000000000000000:pivot-test-beekeeper-agents@abababababababababababababababababababab#verify": {
+      "definitionHash": "d1f0000000000000000000000000000000000000000000000000000000000000",
+      "steps": [
+        "verify"
+      ]
+    }
+  },
+  "teamProjection": {
+    "includedEventIds": [],
+    "assignments": {}
+  },
+  "evidence": {
+    "ac71000000000000000000000000000000000000000000000000000000000000": {
+      "kind": "action_result",
+      "eventId": "ac71000000000000000000000000000000000000000000000000000000000000",
+      "exitedEventId": "46e1000000000000000000000000000000000000000000000000000000000000",
+      "resultSigner": "5051000000000000000000000000000000000000000000000000000000000000",
+      "echoSigner": "4e1a000000000000000000000000000000000000000000000000000000000000",
+      "actionName": "verify",
+      "runId": "7ab1c0de-1111-4222-8333-999999999999",
+      "stepId": "build",
+      "definitionHash": "d1f0000000000000000000000000000000000000000000000000000000000000",
+      "disposition": "exited",
+      "exitCode": 0,
+      "checkout": {
+        "mode": "commit e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7",
+        "sha": "e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7",
+        "dirtyBefore": false
+      },
+      "dirty": false
+    }
+  },
+  "refStates": [
+    {
+      "id": "0b51000000000000000000000000000000000000000000000000000000000000",
+      "pubkey": "4e1a000000000000000000000000000000000000000000000000000000000000",
+      "created_at": 1789000100,
+      "kind": 30618,
+      "tags": [
+        [
+          "d",
+          "other-repository"
+        ],
+        [
+          "refs/heads/main",
+          "e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7"
+        ]
+      ]
+    }
+  ],
+  "note": "A run of the right definition at the right commit but of the wrong step, and a bound ref observation that resolves but describes another repository, so no ref state for the plan's code_repository was supplied. Neither is a definition-hash mismatch."
+}
