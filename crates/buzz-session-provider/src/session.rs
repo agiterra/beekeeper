@@ -826,6 +826,16 @@ pub struct SessionHandle {
     shutdown: watch::Sender<bool>,
     /// Late-refusal bookkeeping shared with the actor. See [`FenceState`].
     fenced: Arc<Mutex<FenceState>>,
+    /// The agent child's pid, read once at spawn.
+    ///
+    /// Needed only on the abort path: an aborted actor cannot run its own
+    /// `AcpClient::shutdown`, so whoever aborted it has to kill that child's
+    /// **process group** and watch it go before anything else touches the
+    /// seat. `kill_on_drop` is not that proof — it signals the direct child
+    /// only, waits for nothing, and leaves a grandchild (a `git`, a shell the
+    /// agent spawned) free to keep writing the tree (ledger 227, the A8.1
+    /// amendment).
+    child_pid: Option<u32>,
     /// The actor task, kept so a successor can prove the predecessor ended.
     ///
     /// Detaching it — which is what this did before Astra's third look —
@@ -848,6 +858,91 @@ pub enum ActorQuiescence {
     Aborted,
     /// There was no live actor to end.
     AlreadyGone,
+    /// The task was aborted and its child's process group could **not** be
+    /// shown to be gone. The seat stays fenced: every later turn on it
+    /// answers `seat_busy` rather than share a tree with whatever is still
+    /// running there.
+    Unproven,
+}
+
+/// How long a killed agent child is given to be reaped before the seat is
+/// left fenced.
+///
+/// The kill is a `SIGKILL` to the whole process group, so this is the time the
+/// kernel needs to tear those processes down, not time an agent is given to
+/// cooperate.
+pub const CHILD_REAP_BOUND: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Kill an agent child's process group and watch until it is gone.
+///
+/// Returns true only when nothing of that group is left. `kill_on_drop` is
+/// what this replaces: it signals the direct child, does not wait, and does
+/// not touch the group, so a grandchild the agent spawned — a `git`, a shell —
+/// can still be writing the seat's tree when a successor takes custody
+/// (ledger 227, the A8.1 amendment).
+///
+/// Pid reuse is the one thing this cannot rule out: the window between the
+/// group kill and the last poll is milliseconds, and the alternative —
+/// trusting a drop — rules out nothing at all.
+async fn kill_process_group_and_watch(
+    child_pid: Option<u32>,
+    session_id: &str,
+    bound: std::time::Duration,
+) -> bool {
+    let Some(pid) = child_pid else {
+        // Nothing was ever spawned under this handle, so there is nothing to
+        // outlive it. (The registry's own stub handles are the only ones.)
+        return true;
+    };
+    #[cfg(unix)]
+    {
+        use nix::sys::signal::{killpg, Signal};
+        use nix::unistd::Pid;
+
+        let group = Pid::from_raw(i32::try_from(pid).unwrap_or(i32::MAX));
+        match killpg(group, Signal::SIGKILL) {
+            Ok(()) => {}
+            // Already gone: nothing to wait for.
+            Err(nix::errno::Errno::ESRCH) => return true,
+            Err(error) => {
+                tracing::error!(
+                    target: "csp::session",
+                    %session_id,
+                    pid,
+                    %error,
+                    code = "child_group_kill_failed",
+                    "could not kill a predecessor's process group; the seat stays fenced"
+                );
+                return false;
+            }
+        }
+        let deadline = tokio::time::Instant::now() + bound;
+        loop {
+            match killpg(group, None) {
+                Err(nix::errno::Errno::ESRCH) => return true,
+                _ => {
+                    if tokio::time::Instant::now() >= deadline {
+                        tracing::error!(
+                            target: "csp::session",
+                            %session_id,
+                            pid,
+                            bound_secs = bound.as_secs(),
+                            code = "child_group_reap_timed_out",
+                            "a predecessor's process group is still alive after SIGKILL; the \
+                             seat stays fenced"
+                        );
+                        return false;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                }
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (pid, session_id, bound);
+        false
+    }
 }
 
 /// What the provider learned when it refused a command it had already
@@ -971,6 +1066,12 @@ impl SessionHandle {
         let _ = self.shutdown.send(true);
     }
 
+    /// The agent child's pid, for the test that has to watch its group die.
+    #[cfg(test)]
+    pub(crate) fn child_pid_for_tests(&self) -> Option<u32> {
+        self.child_pid
+    }
+
     /// Ask the actor to retire, and wait for proof that it has.
     ///
     /// Proof, not inference: the task is joined. Its own `run` ends by calling
@@ -988,6 +1089,7 @@ impl SessionHandle {
         let Some(handle) = handle else {
             return ActorQuiescence::AlreadyGone;
         };
+        let abort = handle.abort_handle();
         match tokio::time::timeout(grace, handle).await {
             Ok(_) => ActorQuiescence::Joined,
             Err(_) => {
@@ -998,7 +1100,24 @@ impl SessionHandle {
                     code = "actor_join_timed_out",
                     "a predecessor execution did not retire inside its grace; aborting it"
                 );
-                ActorQuiescence::Aborted
+                // Fence the seat *before* the abort, so there is no window in
+                // which the guard the aborted task drops is available to a
+                // successor while the agent's children are still running.
+                crate::assignment_custody::fence_seat(&self.session_id);
+                abort.abort();
+                match kill_process_group_and_watch(
+                    self.child_pid,
+                    &self.session_id,
+                    CHILD_REAP_BOUND,
+                )
+                .await
+                {
+                    true => {
+                        crate::assignment_custody::clear_seat_fence(&self.session_id);
+                        ActorQuiescence::Aborted
+                    }
+                    false => ActorQuiescence::Unproven,
+                }
             }
         }
     }
@@ -1072,6 +1191,7 @@ impl SessionManager {
         // report, and the read loop that sees it may be a later turn's.
         let (late_tx, late_rx) = mpsc::unbounded_channel();
         client.set_late_steer_sink(late_tx);
+        let child_pid = client.child_pid();
         let actor = SessionActor {
             client,
             acp_session_id: startup.acp_session_id.clone(),
@@ -1098,6 +1218,7 @@ impl SessionManager {
                 tx,
                 shutdown,
                 fenced,
+                child_pid,
                 actor: Arc::new(Mutex::new(Some(task))),
             },
         })
@@ -1139,6 +1260,7 @@ impl SessionManager {
                 tx,
                 shutdown,
                 fenced: Arc::default(),
+                child_pid: None,
                 actor: Arc::new(Mutex::new(None)),
             },
         );
@@ -3486,6 +3608,33 @@ pub(crate) mod testing {
         perms.set_mode(0o755);
         std::fs::set_permissions(&path, perms).expect("chmod");
         path.to_string_lossy().into_owned()
+    }
+
+    /// An agent that spawns a **grandchild** which keeps writing into the
+    /// seat's tree, and never answers the prompt or the cancel.
+    ///
+    /// The shape the A8.1 amendment is about: `kill_on_drop` signals the
+    /// direct child only, so this loop goes on appending to `marker_path`
+    /// after the actor is aborted unless somebody kills the whole process
+    /// group and waits for it. A test asserts nothing lands after the
+    /// successor takes custody.
+    pub(crate) fn grandchild_writing_agent(marker_path: &str) -> String {
+        format!(
+            r#"
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '{{"jsonrpc":"2.0","id":%s,"result":{{"protocolVersion":2}}}}\n' "$id" ;;
+    *'"method":"session/new"'*)
+      printf '{{"jsonrpc":"2.0","id":%s,"result":{{"sessionId":"acp-session-1"}}}}\n' "$id" ;;
+    *'"method":"session/prompt"'*)
+      ( while true; do printf 'x' >> "{marker_path}"; sleep 0.02; done ) &
+      ;;
+  esac
+done
+"#
+        )
     }
 
     /// A cooperative agent that first writes its own environment to
@@ -6512,6 +6661,7 @@ done
             tx,
             shutdown,
             fenced: Arc::default(),
+            child_pid: None,
             actor: Arc::new(Mutex::new(None)),
         };
         handle
@@ -6536,6 +6686,7 @@ done
             tx,
             shutdown,
             fenced: Arc::default(),
+            child_pid: None,
             actor: Arc::new(Mutex::new(None)),
         };
         handle
@@ -6563,6 +6714,7 @@ done
             tx,
             shutdown,
             fenced: Arc::default(),
+            child_pid: None,
             actor: Arc::new(Mutex::new(None)),
         };
         assert_eq!(
@@ -6585,6 +6737,7 @@ done
                 tx: live_tx,
                 shutdown: live_shutdown,
                 fenced: Arc::default(),
+                child_pid: None,
                 actor: Arc::new(Mutex::new(None)),
             },
         );
@@ -6598,6 +6751,7 @@ done
                 tx: dead_tx,
                 shutdown: dead_shutdown,
                 fenced: Arc::default(),
+                child_pid: None,
                 actor: Arc::new(Mutex::new(None)),
             },
         );

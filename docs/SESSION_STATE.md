@@ -19382,11 +19382,44 @@ removed from here.
        provider releases its seats and a successor takes *the same* identity.
        The compressed dequeue wait two of them need is a test-only override,
        serialized by a test mutex so the two cannot unset each other.
-     - (f) **Design choices A8 did not dictate, so they can be attacked:** the
-       two bounds (300s dequeue wait, 240s git) and their ordering; treating
-       an aborted actor as quiescent for the *actor* while the child's death
-       rests on `kill_on_drop`; and `seat_busy` being a discharge (the lead
-       re-sends) rather than a durable refusal.
+     - (f) **Amendment, 2026-09-21 (A8.1 as ruled after review): an aborted
+       actor is not quiescent on the strength of `kill_on_drop`.** That
+       signals the **direct child** only, waits for nothing, and does not
+       touch the process group, so a grandchild the agent spawned — a `git`, a
+       shell — can still be writing the seat's tree when a successor takes
+       custody. The abort path now **fences the seat first**, aborts, kills
+       the child's whole **process group** (`SIGKILL` via `killpg`), and polls
+       until `killpg(pid, 0)` answers `ESRCH`, bounded by `CHILD_REAP_BOUND`
+       (5s). Only that proof lifts the fence. If the kill or the watch fails
+       or times out the seat **stays fenced** and every later turn and
+       establishment on it answers `seat_busy` — a stuck seat that says so
+       beats two executions sharing a tree — which is the new
+       `ActorQuiescence::Unproven`. The fence is deliberately not the mutex:
+       it survives the guard the aborted task drops, so there is no window
+       between the abort and the proof.
+       One minimal `buzz-acp` addition: `AcpClient::child_pid`, because a
+       caller that aborts an actor cannot run that actor's own `shutdown`.
+       **Red, three times:** with the pre-amendment shape (abort, trust
+       `kill_on_drop`) the new test fails at "custody was handed over while
+       the predecessor's process group was still alive"; green after. The
+       agent stub for it spawns a grandchild that appends to a file in the
+       seat tree and answers no cancel (`session::testing::
+       grandchild_writing_agent`), and the test also asserts nothing lands in
+       that file after the successor holds custody. Pid reuse is the one thing
+       the proof cannot exclude, and is written down where it is relied on.
+     - (g) **The four design choices this lane made that A8 did not dictate,
+       recorded so they can be attacked:**
+       1. `CUSTODY_WAIT_BOUND` 300s and `GIT_PROCESS_BOUND` 240s, and the
+          ordering between them (a working establishment keeps the tree; a
+          wedged one is answered).
+       2. `CHILD_REAP_BOUND` 5s, and treating `ESRCH` from `killpg` as the
+          proof of death — with pid reuse unexcluded.
+       3. `seat_busy` as a **re-sendable discharge** (the lead sends the turn
+          again) rather than a durable refusal.
+       4. The conflicting registration's answer staged under
+          `{commandId}:conflict:{eventId}` rather than the command id, so a
+          rejected second event cannot close a command whose original promise
+          still stands (ledger 228(d)).
 
 228. **A refusal recorded before its answer was published could lose that
      answer for good (2026-09-21, lane 228, same branch).** Astra's third

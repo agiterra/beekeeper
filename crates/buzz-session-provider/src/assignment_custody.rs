@@ -109,6 +109,8 @@ struct Registry {
     /// custody-unavailable answer without waiting minutes for it.
     #[cfg(test)]
     test_wait_bound: Option<Duration>,
+    /// Seats whose predecessor could not be proven dead.
+    fenced: std::collections::HashSet<String>,
 }
 
 fn registry() -> &'static Mutex<Registry> {
@@ -128,6 +130,41 @@ fn seat_lock(session_id: &str) -> Arc<tokio::sync::Mutex<()>> {
             .entry(session_id.to_owned())
             .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(()))),
     )
+}
+
+/// Seats no execution may take, because the predecessor that held them could
+/// not be proven dead.
+///
+/// A fence, not a lock: it survives the guard the aborted actor dropped, so
+/// there is no window between "the holder was aborted" and "somebody proved
+/// its process group is gone" in which a successor could take the tree
+/// (ledger 227, the A8.1 amendment). A fenced seat answers `seat_busy`
+/// forever — a stuck seat that says so beats two executions sharing a tree.
+pub fn fence_seat(session_id: &str) {
+    let mut registry = match registry().lock() {
+        Ok(registry) => registry,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    registry.fenced.insert(session_id.to_owned());
+}
+
+/// Lift a fence, once the predecessor is proven gone.
+pub fn clear_seat_fence(session_id: &str) {
+    let mut registry = match registry().lock() {
+        Ok(registry) => registry,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    registry.fenced.remove(session_id);
+}
+
+/// Whether this seat is fenced against every execution.
+#[must_use]
+pub fn is_fenced(session_id: &str) -> bool {
+    let registry = match registry().lock() {
+        Ok(registry) => registry,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    registry.fenced.contains(session_id)
 }
 
 /// Take custody of a seat's checkout, waiting for whoever holds it.
@@ -162,6 +199,15 @@ pub const CUSTODY_WAIT_BOUND: Duration = Duration::from_secs(300);
 /// and a turn that cannot get custody is a delivery to discharge, not a turn
 /// to open.
 pub async fn hold_for_turn(session_id: &str, bound: Duration) -> Option<CustodyGuard> {
+    if is_fenced(session_id) {
+        tracing::warn!(
+            target: "csp::assignment_custody",
+            %session_id,
+            code = "seat_custody_fenced",
+            "this seat is fenced: a predecessor execution could not be proven dead"
+        );
+        return None;
+    }
     match tokio::time::timeout(bound, hold(session_id)).await {
         Ok(guard) => Some(guard),
         Err(_) => {
@@ -264,6 +310,11 @@ pub async fn establish_for_turn(
         return join_attempt(existing, bound).await;
     }
 
+    if is_fenced(session_id) {
+        // Same answer an ordinary turn gets: nothing may touch a tree whose
+        // last holder cannot be shown to have stopped.
+        return Establishment::SeatBusy;
+    }
     if is_busy(session_id) {
         // The seat has a turn in flight. Nothing is spawned: an attempt
         // queued behind that turn would take the tree the moment the turn

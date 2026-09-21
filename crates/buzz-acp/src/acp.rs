@@ -1340,6 +1340,18 @@ impl AcpClient {
     /// `Drop` only calls `start_kill()` (sends SIGKILL but doesn't reap).
     /// Call this when you need guaranteed cleanup — e.g., in `run_models`
     /// before process exit.
+    /// The agent child's pid, while it is still running.
+    ///
+    /// The only thing a *caller* needs to end that child itself: a provider
+    /// aborting a wedged actor cannot await the actor's own `shutdown`, and
+    /// must still kill the child's process group and watch it go before it
+    /// lets anything else touch that seat's checkout (Beekeeper ledger 227,
+    /// the A8.1 amendment). `None` once the child has been reaped.
+    #[must_use]
+    pub fn child_pid(&self) -> Option<u32> {
+        self.child.id()
+    }
+
     pub async fn shutdown(&mut self) {
         // Kill the entire process group when possible. The child was spawned
         // with process_group(0), so its PID == its PGID. Killing the group

@@ -777,3 +777,179 @@ async fn a_dropped_provider_releases_its_seats() {
         "and a successor takes the same custody identity, not a new one"
     );
 }
+
+/// The A8.1 amendment: an **aborted** actor is not quiescent because
+/// `kill_on_drop` exists. That signals the direct child, waits for nothing,
+/// and does not touch the process group — so a grandchild the agent spawned
+/// can still be writing the seat's tree when a successor takes custody.
+///
+/// The agent here spawns exactly that grandchild and ignores the cancel. The
+/// abort path must kill the whole group, watch it go, and only then release
+/// custody; nothing may land in the tree afterwards.
+#[cfg(unix)]
+#[tokio::test]
+async fn an_aborted_actor_leaves_no_grandchild_writing_the_seats_tree() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let state = dir.path().join("state");
+    let seat = dir.path().join("checkout");
+    std::fs::create_dir_all(&seat).expect("mkdir");
+    seat_repo(&seat);
+    let marker = seat.join("grandchild-writes.txt");
+    let channel_id = Uuid::new_v4();
+    let projects = write_projects(dir.path(), channel_id, &seat);
+    let agent = fake_agent(
+        dir.path(),
+        "grandchild-agent",
+        &crate::session::testing::grandchild_writing_agent(&marker.to_string_lossy()),
+    );
+    let mut provider = Provider::new(config_of(Keys::generate(), &state, Some(&projects), agent))
+        .expect("provider");
+    provider
+        .handle_command_event(
+            channel_id,
+            &create_event_with_initial_turn(&provider, channel_id, "create-1", "go"),
+        )
+        .await
+        .expect("handle");
+    let started = tokio::time::timeout(Duration::from_secs(10), provider.next_session_event())
+        .await
+        .expect("the prompt is sent")
+        .expect("event");
+    provider.handle_session_event(started).expect("record");
+    let session_id = provider
+        .state()
+        .sessions()
+        .next()
+        .expect("session")
+        .session_id
+        .clone();
+    let child_pid = provider
+        .sessions
+        .handle(&session_id)
+        .expect("live handle")
+        .child_pid_for_tests()
+        .expect("a spawned agent has a pid");
+
+    // The grandchild is alive and writing.
+    let mut alive = false;
+    for _ in 0..200 {
+        if marker.metadata().is_ok_and(|meta| meta.len() > 0) {
+            alive = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(alive, "the grandchild never started writing");
+
+    // Abort: the grace is short on purpose — this agent answers no cancel, so
+    // the join always times out, which is the path under test.
+    let quiescence = provider
+        .sessions
+        .shutdown_and_join(&session_id, Duration::from_millis(150))
+        .await;
+    assert!(
+        matches!(
+            quiescence,
+            crate::session::ActorQuiescence::Aborted | crate::session::ActorQuiescence::Unproven
+        ),
+        "{quiescence:?}"
+    );
+
+    if matches!(quiescence, crate::session::ActorQuiescence::Unproven) {
+        // The honest other outcome: nothing could be proven dead, so the seat
+        // is fenced and no successor may run on it at all.
+        assert!(
+            crate::assignment_custody::is_fenced(&session_id),
+            "an unproven predecessor leaves its seat fenced"
+        );
+        assert!(
+            crate::assignment_custody::hold_for_turn(&session_id, Duration::from_millis(50))
+                .await
+                .is_none(),
+            "and a successor is refused custody"
+        );
+        return;
+    }
+
+    // Proven dead. Custody is released only after that proof, so at the
+    // instant a successor holds the seat the whole group is already gone —
+    // this is the assertion the pre-amendment shape could not make, because
+    // it released custody with the kill merely scheduled.
+    let successor = crate::assignment_custody::hold_for_turn(&session_id, Duration::from_secs(5))
+        .await
+        .expect("custody is free once the predecessor is proven gone");
+    assert!(
+        group_is_gone(child_pid),
+        "custody was handed over while the predecessor's process group was still alive"
+    );
+    let at_handover = marker.metadata().map(|meta| meta.len()).unwrap_or_default();
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let later = marker.metadata().map(|meta| meta.len()).unwrap_or_default();
+    assert_eq!(
+        later, at_handover,
+        "something the predecessor spawned is still writing the seat's tree after the successor \
+         took custody"
+    );
+    drop(successor);
+}
+
+/// Whether nothing of `pid`'s process group is left.
+#[cfg(unix)]
+fn group_is_gone(pid: u32) -> bool {
+    use nix::sys::signal::killpg;
+    use nix::unistd::Pid;
+
+    matches!(
+        killpg(Pid::from_raw(i32::try_from(pid).unwrap_or(i32::MAX)), None),
+        Err(nix::errno::Errno::ESRCH)
+    )
+}
+
+/// A fenced seat is refused to **everything**, which is the honest answer
+/// when a predecessor could not be shown to be dead: a stuck seat that says
+/// so beats two executions sharing one tree (ledger 227, A8.1 amendment).
+#[tokio::test]
+async fn a_fenced_seat_refuses_every_turn_and_every_establishment() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let state = dir.path().join("state");
+    let seat = dir.path().join("checkout");
+    std::fs::create_dir_all(&seat).expect("mkdir");
+    let (first, second) = seat_repo(&seat);
+    let session_id = format!("seat-{}", Uuid::new_v4());
+    let assignment = "78".repeat(32);
+    let store = queued_store(&state, dir.path(), &seat, &assignment, &second);
+
+    crate::assignment_custody::fence_seat(&session_id);
+    assert!(crate::assignment_custody::is_fenced(&session_id));
+    assert!(
+        crate::assignment_custody::hold_for_turn(&session_id, Duration::from_millis(50))
+            .await
+            .is_none(),
+        "no turn takes a fenced seat"
+    );
+    let outcome = crate::assignment_custody::establish_for_turn(
+        &session_id,
+        &crate::assignment_custody::TurnRequirement {
+            assignment_ref: assignment.clone(),
+            base_sha: second.clone(),
+            cwd: seat.clone(),
+            store,
+            branch: "seat/verifier".to_owned(),
+        },
+        Duration::from_millis(50),
+    )
+    .await;
+    assert!(
+        matches!(outcome, crate::assignment_custody::Establishment::SeatBusy),
+        "and no establishment either: {outcome:?}"
+    );
+    assert_eq!(head_of(&seat), first, "nothing moved");
+
+    // The fence lifts only when somebody proves the predecessor is gone.
+    crate::assignment_custody::clear_seat_fence(&session_id);
+    assert!(
+        crate::assignment_custody::hold_for_turn(&session_id, Duration::from_millis(50))
+            .await
+            .is_some()
+    );
+}
