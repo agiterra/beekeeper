@@ -101,7 +101,7 @@ impl WorkWire for BuzzClient {
 /// A fixed constant, never generated: the whole point is that two runs of the
 /// same command on two machines derive the same id.
 const WORK_ID_NAMESPACE: uuid::Uuid =
-    uuid::Uuid::from_u128(0x7f2c_9d41_5a83_4e16_9b02_c7d5e1a80f34);
+    uuid::Uuid::from_u128(0x7f2c_9d41_5a83_4e16_9b02_c7d5_e1a8_0f34);
 
 /// The `workId` an initial adoption uses, derived from stable inputs alone.
 ///
