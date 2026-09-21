@@ -341,10 +341,16 @@ function checkFold(fold, where, planCriteria, ctx) {
       const covering = d.criteria.filter((c) => c.status === "covered");
       const commits = [...new Set(covering.map((c) => c.artifactCommit))].sort();
       check(JSON.stringify(commits) === JSON.stringify([...d.artifactCommits].sort()), where, `artifactCommits ${d.artifactCommits} does not list the covering evidence's commits ${commits}`);
-      if (covering.length > 0) {
+      // There is no candidate until delivery is observed: a plan with a
+      // `git-ref` criterion that is not covered has `candidateArtifact: null`,
+      // however many other criteria are covered.
+      const gitRefRow = d.criteria.find((c) => c.proof.kind === "git-ref");
+      if (gitRefRow && gitRefRow.status !== "covered") {
+        check(d.candidateArtifact === null, where,
+          `candidateArtifact is set while the git-ref criterion "${gitRefRow.criterionId}" is ${gitRefRow.status}: there is no candidate until delivery is observed`);
+      } else if (covering.length > 0) {
         check(d.candidateArtifact !== null, where, "covered criteria with no candidate artifact");
-        const gitRef = covering.find((c) => c.proof.kind === "git-ref");
-        if (gitRef) check(d.candidateArtifact === gitRef.artifactCommit, where, "the candidate is not the git-ref evidence's commit");
+        if (gitRefRow) check(d.candidateArtifact === gitRefRow.artifactCommit, where, "the candidate is not the git-ref evidence's commit");
       }
       if (commits.length > 1) {
         check(d.coverageReasonCode === "mixed_artifacts", where, "covering evidence at several commits must read mixed_artifacts");

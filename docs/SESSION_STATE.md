@@ -17565,6 +17565,29 @@ removed from here.
        first on purpose: this lane owns `conformance/project-work/**` alone and
        touched no Rust. W1/W2 close them by implementing A–C; the assembler
        boundary of (A) and `docs/nips/NIP-PW.md` are theirs, not this lane's.
+     - **Addendum, amendment A6 (same day).** Two defects the implementing
+       lane hit, both of them the fixtures disagreeing with themselves or with
+       the prose. (1) `wrong_run_or_hash` had two wordings for one code path —
+       `action-hash-mismatch` said "compiled at the plan commit" while the two
+       `same-action-two-commits*` sequences named the declaration's commit.
+       Ruled: that reason **always** names the commit, since the expected
+       definition is meaningless without the plan commit it was compiled at
+       (the whole of finding 7). `action-hash-mismatch` was corrected, and the
+       README now carries a table of the **exact reason string** for all twelve
+       codes, so an implementer never infers wording from a fixture.
+       (2) `candidateArtifact`: the README says there is no candidate until
+       delivery is observed, and the two `same-action-two-commits*` expected
+       folds set one while their `git-ref` criterion was still open. Ruled:
+       **the README wins** — `candidateArtifact` is `null` whenever the plan
+       has an uncovered `git-ref` criterion, however many others are covered;
+       `coverageComplete` is unaffected. Both expected folds corrected and
+       `check-fixtures.mjs` now asserts the rule across all 18 sequences,
+       proven to bite on `same-action-two-commits` and on `happy-path` with its
+       delivery demoted. Changed: `fixtures/sequences/action-hash-mismatch/`,
+       `fixtures/sequences/same-action-two-commits/`,
+       `fixtures/sequences/same-action-two-commits-reversed/`, `README.md`,
+       `check-fixtures.mjs`. The Rust disagreement listed above is unchanged in
+       kind by this addendum.
      - Gates on `work/lane-214-contract-a5`, bare after committing:
        `cargo fmt --all --check`, `cargo clippy -p buzz-core --all-targets --
        -D warnings`, `node conformance/project-work/check-fixtures.mjs`,

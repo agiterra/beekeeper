@@ -19,7 +19,7 @@
       "stateReasonCode": null,
       "stateReason": null,
       "planResolved": true,
-      "candidateArtifact": "e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7",
+      "candidateArtifact": null,
       "artifactCommits": [
         "e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7"
       ],

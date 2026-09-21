@@ -63,7 +63,7 @@
           ],
           "artifactCommit": "e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7",
           "reasonCode": "wrong_run_or_hash",
-          "reason": "host result ac720000… ran definition hash d2f00000…, not the verify definition compiled at the plan commit (d1f00000…)"
+          "reason": "host result ac720000… ran definition hash d2f00000…, not the verify definition compiled at this declaration's plan commit abababababab… (d1f00000…)"
         },
         {
           "criterionId": "usage-documentation",

@@ -498,6 +498,32 @@ its bound evidence satisfies the predicate for its `proof` form:
 | `bound_to_superseded_declaration` | `stale` | the late-green-for-P case |
 | `ref_observation_superseded` | `stale` | a newer ref state names another commit |
 
+### The exact reason strings
+
+One code path, one wording. An implementer reads these here rather than
+inferring them from a fixture; `<id>` is the first 8 hex of an event id
+followed by `…`, `<sha>` the first 12 of a commit followed by `…`.
+
+| `reasonCode` | `reason` |
+|---|---|
+| `evidence_unavailable` | `evidence <id> was not supplied to the fold; nothing here says what it proves` |
+| `plan_unreadable` | `the plan blob at <sha> was not supplied` |
+| `wrong_signer` | `verdict <id> is signed by <id>, who does not satisfy may_lead for this session` |
+| `not_approving` | `disposition <id> decided <decision>; only approve or approve-with-notes satisfy a review criterion` |
+| `report_not_canonical` | `report <id> is signed by <id>, not by assignment <id>'s assignee <id>, and the team projection excludes it` |
+| `disposition_not_canonical` | `disposition <id> is not in the team projection: it was superseded by <id>` |
+| `revision_mismatch` | `report <id> names headSha <sha>, not the binding's artifactCommit <sha>` |
+| `wrong_run_or_hash` | `host result <id> ran definition hash <id>, not the <action> definition compiled at this declaration's plan commit <sha> (<id>)` |
+| `action_failed` | `host result <id> exited <code>` |
+| `dirty_revision` | `host result <id> ran on a tree that was already dirty before the command` |
+| `bound_to_superseded_declaration` | `evidence for this criterion is bound to declaration <id>, which is not the head` |
+| `ref_observation_superseded` | `the newest relay-signed ref state for <repo> (<id>) names refs/heads/<branch> at <sha>, not the bound artifact commit` |
+
+**`wrong_run_or_hash` always names the commit.** The definition that was
+expected is only meaningful with the plan commit it was compiled at — that is
+the whole of finding 7 — so the shorter "compiled at the plan commit" wording
+is not permitted anywhere.
+
 A criterion whose evidence fails a predicate is **`open` with its reason
 named**, not `covered` and not silently empty: the binding exists, and saying
 so is the difference between "nobody has done this" and "somebody claimed it
@@ -665,7 +691,10 @@ statement about *one delivered revision*, not a per-criterion scoreboard.
 - `candidateArtifact` is the `artifactCommit` of the valid `git-ref` evidence
   when the plan has a `git-ref` criterion; otherwise it is the single commit
   shared by all covering evidence. It is `null` when nothing is covered, and
-  when the plan has a `git-ref` criterion that is not yet covered.
+  **`null` whenever the plan has a `git-ref` criterion that is not yet
+  covered, however many other criteria are** — there is no candidate until
+  delivery is observed. `coverageComplete` is unaffected by this: it is false
+  in that case for the ordinary reason, the uncovered criterion.
 - `artifactCommits` lists the distinct commits the covering evidence names.
 
 `coverageComplete` is `true` for a declaration when **all** of:
