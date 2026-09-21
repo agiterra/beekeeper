@@ -265,3 +265,12 @@ Review: `docs/history/2026-09-21-astra-wave2-recheck.md` at `ce6df5633`. Seven f
 5. **Readers, lane 223 — not a control blocker, built now.** Raw-content vectors including duplicate keys; `web/` loads the shared vectors; desktop ingress and mobile reject duplicates as core does. Until it lands nobody claims the strict readers agree.
 6. **The control run waits on 218–222 landed, deployed and installed.** Astra is asked for a narrow third look at R1–R5 only. R3 is included now rather than deferred, because Wave 4's disruption run needs it and the code is already open.
 
+### A8 — rulings on Astra's third look (2026-09-21)
+
+Review: `docs/history/2026-09-21-astra-wave2-third-look.md` at `aa055b233`. R1, R3, R5 closed; readers no blocker. R2 and R4 partially closed; both counterexamples accepted. The R2 hole was introduced by lane 219's own unplanned fix for a restart deadlock (`supersede_seat`), which is the case the review was asked to attack.
+
+1. **R2, lane 227 (built as lane 224) — one custody identity per seat, for the life of the provider.** The seat's lock is never replaced. A restart deadlock is cured by ending the holder, not by minting a second lock: quiescence of the predecessor is proven (actor task joined, agent child exited) and never inferred from the successor's existence; a live establishment is respected until it ends, and the blocking Git helper gets a process timeout so it does end. A successor that cannot obtain custody answers `seat_busy`; it does not run.
+2. **R4, lane 228 (built as lane 225) — the answer is staged before the door is shut.** Every refusal reached through admission (stale generation, authority, verification input, conflicting command) stages its terminal decision and signed answer through the existing durable terminal mechanism before the refusal is recorded; a retry that finds a refusal with an unpublished answer publishes that original answer. An unreadable deferred store is not an empty one: the file is kept, deferral refuses with `VERIFICATION_INPUT_UNHELD`, and the condition is visible. The test named for the provider's failure branch must exercise that branch.
+3. **The control run waits on 227–228 landed, deployed, installed, and a fourth look limited to those two.** The goal-membership waiver at `project_work_fold.rs:419` stays as documented; it is recorded as an observation, not a lane.
+4. **Lanes 224/225 were renumbered 227/228 on landing:** `origin/main` had claimed 224–226 (Andy's agents-repository batch) before ours was pushed, and ledger numbers are frozen once pushed.
+
