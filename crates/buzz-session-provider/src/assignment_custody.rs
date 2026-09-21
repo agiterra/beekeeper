@@ -126,6 +126,39 @@ fn seat_lock(session_id: &str) -> Arc<tokio::sync::Mutex<()>> {
     )
 }
 
+/// Hand this seat's custody to a new execution.
+///
+/// One live actor per session id is an invariant the provider already keeps: a
+/// resume replaces the actor, and a provider that goes away takes its actors
+/// with it. Custody follows that, so a fresh actor starts with a lock nobody
+/// else holds. Without this, an actor whose prompt will never be answered —
+/// or one whose provider was dropped mid-turn — would hold the seat against
+/// its own successor forever, and every turn the new actor dequeued would
+/// wait on a turn that no longer exists.
+///
+/// It does **not** weaken the fence it serves: what it replaces is the lock
+/// belonging to an execution that is over, and establishments take the lock
+/// through [`hold`] just as before.
+pub fn supersede_seat(session_id: &str) {
+    let mut registry = match registry().lock() {
+        Ok(registry) => registry,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    if let Some(previous) = registry
+        .seats
+        .insert(session_id.to_owned(), Arc::new(tokio::sync::Mutex::new(())))
+    {
+        if previous.try_lock().is_err() {
+            tracing::warn!(
+                target: "csp::assignment_custody",
+                %session_id,
+                code = "seat_custody_superseded",
+                "a new execution took this seat's checkout from a predecessor that still held it"
+            );
+        }
+    }
+}
+
 /// Take custody of a seat's checkout, waiting for whoever holds it.
 ///
 /// Held by a turn from the actor's dequeue until the turn ends, which is what

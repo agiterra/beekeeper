@@ -2399,6 +2399,14 @@ impl SessionActor {
         );
         let mut queued: VecDeque<SessionCommand> = VecDeque::new();
         let mut reason = ExitReason::Requested;
+        // This actor is now the one live execution for this session id, so it
+        // is the party that holds that seat's checkout. Any custody left by a
+        // predecessor — an actor whose provider is gone, or one wedged in a
+        // prompt nobody will answer — belonged to an execution that no longer
+        // exists, and leaving it in place would block every turn this actor
+        // is about to dequeue. Superseding it is the only answer that keeps
+        // the guarantee *and* stays live.
+        crate::assignment_custody::supersede_seat(&self.session_id);
 
         'actor: loop {
             if *shutdown.borrow() {

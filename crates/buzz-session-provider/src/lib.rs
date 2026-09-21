@@ -4631,8 +4631,87 @@ impl Provider {
                 );
             }
         }
-        self.apply_turn_decision(channel_id, created_at, operator_pubkey, event_id, decision)
-            .await
+        // The pieces a deferral has to keep, taken before the decision is
+        // consumed. `content` is the whole signed command, which is what
+        // makes a release a re-admission (R4).
+        let deferrable = match &decision {
+            TurnDecision::Start {
+                command_id,
+                target,
+                text,
+                attachments,
+                deliver,
+                operation_key,
+            } => Some(deferred_turns::DeferredTurn {
+                command_id: command_id.clone(),
+                channel_id,
+                created_at,
+                operator_pubkey: operator_pubkey.to_owned(),
+                event_id: event_id.to_owned(),
+                target: target.clone(),
+                text: text.clone(),
+                content: content.to_owned(),
+                attachments: attachments.clone(),
+                deliver: *deliver,
+                operation_key: operation_key.clone(),
+                assignment_ref: verification_input::assignment_pointer(text).unwrap_or_default(),
+                reason: String::new(),
+                deferred_at: chrono::Utc::now().to_rfc3339(),
+            }),
+            _ => None,
+        };
+        let disposition = self
+            .apply_turn_decision(channel_id, created_at, operator_pubkey, event_id, decision)
+            .await?;
+        if disposition == TurnDisposition::Undecided {
+            if let Some(turn) = deferrable {
+                self.hold_undecided_turn(turn).await?;
+            }
+        }
+        Ok(disposition)
+    }
+
+    /// Keep an undecided wake durably, or answer it rather than lose it.
+    ///
+    /// The durable record is what owns the redelivery: without it the command
+    /// was dropped on the floor with its watermark unmoved and nothing ever
+    /// brought it back. A store that cannot hold it is said out loud and the
+    /// command is **refused**, because a wake nobody is holding and nobody has
+    /// answered is the one outcome a lead cannot see (R4).
+    async fn hold_undecided_turn(
+        &mut self,
+        mut turn: deferred_turns::DeferredTurn,
+    ) -> anyhow::Result<()> {
+        if turn.reason.is_empty() {
+            turn.reason = "input_not_established".to_owned();
+        }
+        let (channel_id, command_id, target) = (
+            turn.channel_id,
+            turn.command_id.clone(),
+            turn.target.clone(),
+        );
+        let Err(error) = deferred_turns::defer(&self.config.state_dir, turn) else {
+            return Ok(());
+        };
+        let message = format!(
+            "this computer could not hold this wake while its seat's input is established              ({error}), so it is refused rather than left owed by nobody; re-issue the assignment"
+        );
+        let receipt = LifecycleReceipt::turn_refused(
+            &command_id,
+            &target,
+            verification_input::VERIFICATION_INPUT_UNHELD,
+            &message,
+        );
+        tracing::error!(
+            target: "csp::deferred_turns",
+            %command_id,
+            code = verification_input::VERIFICATION_INPUT_UNHELD,
+            "{message}"
+        );
+        self.enqueue_terminal_receipt(channel_id, &command_id, &receipt)?;
+        self.state.record_refusal(&command_id, now_secs())?;
+        assignment_custody::forget_requirement(&target.session_id, &command_id);
+        Ok(())
     }
 
     /// Record a host-answer command in the session's transcript without
@@ -4697,10 +4776,10 @@ impl Provider {
             {
                 verification_input::TurnInput::Open => {
                     // Decided: this command is nobody's to hold any more.
-                    deferred_turns::release(&self.config.state_dir, command_id);
+                    self.forget_deferred_turn(command_id);
                 }
                 verification_input::TurnInput::Refused(refusal) => {
-                    deferred_turns::release(&self.config.state_dir, command_id);
+                    self.forget_deferred_turn(command_id);
                     assignment_custody::forget_requirement(&target.session_id, command_id);
                     let receipt = LifecycleReceipt::turn_refused(
                         command_id,
@@ -4723,43 +4802,10 @@ impl Provider {
                     return Ok(TurnDisposition::Answered(refusal.code.to_owned()));
                 }
                 verification_input::TurnInput::Deferred(reason) => {
-                    // Durable, and owned. Before this the command was simply
-                    // dropped on the floor with its watermark unmoved, and
-                    // nothing ever brought it back (review finding 4).
-                    if let TurnDecision::Start {
-                        attachments,
-                        deliver,
-                        operation_key,
-                        ..
-                    } = &decision
-                    {
-                        deferred_turns::defer(
-                            &self.config.state_dir,
-                            deferred_turns::DeferredTurn {
-                                command_id: command_id.clone(),
-                                channel_id,
-                                created_at,
-                                operator_pubkey: operator_pubkey.to_owned(),
-                                event_id: registration_event_id.to_owned(),
-                                target: target.clone(),
-                                text: text.clone(),
-                                attachments: attachments.clone(),
-                                deliver: *deliver,
-                                operation_key: operation_key.clone(),
-                                assignment_ref: verification_input::assignment_pointer(text)
-                                    .unwrap_or_default(),
-                                reason: reason.to_owned(),
-                                deferred_at: chrono::Utc::now().to_rfc3339(),
-                            },
-                        );
-                    }
-                    // The wake is not wrong, it is early. Nothing durable and
-                    // nothing published: this provider owes the seat's tree an
-                    // establishment, that work is recorded in the host store,
-                    // and the same `commandId` is decided when it reaches a
-                    // terminal outcome. Refusing here would consume a delivery
-                    // and cost a re-issued assignment for a tree that was
-                    // already moving (ledger 185, 202).
+                    // The wake is not wrong, it is early. Nothing published
+                    // and nothing consumed; `on_turn` holds the command
+                    // durably — with its signed bytes, so its release is a
+                    // re-admission and not a re-start (R4).
                     tracing::info!(
                         target: "csp::verification_input",
                         %command_id,
@@ -8186,19 +8232,42 @@ impl Provider {
 
     /// Decide every held wake whose seat can now be prepared, oldest first.
     ///
-    /// The release side of the durable deferral (review finding 4). It runs on
-    /// the ordinary tick, so a fetch that finishes at 130 seconds is followed
-    /// by the turn opening on its own — no reconnect, and no second command
-    /// from a lead or a person. One wake per seat per pass, oldest first,
-    /// because a later assignment must not be prepared before an earlier one
-    /// that is still waiting for the same tree (review finding 2).
+    /// The release side of the durable deferral. It runs on the ordinary tick,
+    /// so a fetch that finishes after the waiter gave up is followed by the
+    /// turn opening on its own — no reconnect, and no second command from a
+    /// lead or a person.
     ///
-    /// A wake whose decision comes back undecided again is simply left where
-    /// it is: the record on disk is unchanged, and the next tick asks again.
+    /// # Re-admitted, never re-started
+    ///
+    /// The **original signed bytes** go back through [`Self::on_turn`], the
+    /// one function that admits a command: the consumed/in-flight fence, the
+    /// freshness horizon, the target generation and the signer's authority are
+    /// all asked again, under the command's own identity. Rebuilding a
+    /// `TurnDecision` here skipped every one of them, so a generation-N wake
+    /// could reach generation N+1, and a signer whose authority had been
+    /// revoked could still be delivered (Astra's Wave 2 re-check, R4).
+    ///
+    /// # Nothing is held forever
+    ///
+    /// A wake older than the command horizon is **expired**: discharged with
+    /// a terminal receipt a person can see, and removed, so it stops clamping
+    /// its channel's floor and stops standing in front of that seat's later
+    /// work. An expired wake does not consume the seat's one attempt per
+    /// pass, so a queue of stale wakes drains in a single tick.
     pub async fn release_deferred_turns(&mut self) {
         let held = deferred_turns::held(&self.config.state_dir);
+        let horizon = self.config.command_horizon.as_secs();
+        let now = now_secs();
         let mut seats_served: HashSet<String> = HashSet::new();
         for turn in held {
+            let age = now.saturating_sub(turn.created_at);
+            if age > horizon || turn.content.is_empty() {
+                // Past the horizon the command is undeliverable by every
+                // other path too, and a record with no bytes can never be
+                // re-admitted. Either way, say so and stop holding it.
+                self.expire_deferred_turn(&turn, age, horizon).await;
+                continue;
+            }
             if !seats_served.insert(turn.target.session_id.clone()) {
                 continue;
             }
@@ -8207,21 +8276,14 @@ impl Provider {
                 // the wake keeps waiting.
                 continue;
             }
-            let decision = TurnDecision::Start {
-                command_id: turn.command_id.clone(),
-                target: turn.target.clone(),
-                text: turn.text.clone(),
-                attachments: turn.attachments.clone(),
-                deliver: turn.deliver,
-                operation_key: turn.operation_key.clone(),
-            };
             let disposition = self
-                .apply_turn_decision(
+                .on_turn(
                     turn.channel_id,
                     turn.created_at,
                     &turn.operator_pubkey,
                     &turn.event_id,
-                    decision,
+                    &turn.content,
+                    false,
                 )
                 .await;
             match disposition {
@@ -8229,6 +8291,7 @@ impl Provider {
                     tracing::debug!(
                         target: "csp::deferred_turns",
                         command_id = %turn.command_id,
+                        age,
                         "a held wake is still waiting for its seat's input"
                     );
                 }
@@ -8239,9 +8302,9 @@ impl Provider {
                         assignment_ref = %turn.assignment_ref,
                         disposition = ?other,
                         code = "deferred_turn_released",
-                        "a held assignment wake was decided once its input settled"
+                        "a held assignment wake was re-admitted once its input settled"
                     );
-                    deferred_turns::release(&self.config.state_dir, &turn.command_id);
+                    self.forget_deferred_turn(&turn.command_id);
                 }
                 Err(error) => {
                     tracing::warn!(
@@ -8252,6 +8315,81 @@ impl Provider {
                     );
                 }
             }
+        }
+    }
+
+    /// Discharge a held wake nobody can deliver any more, visibly.
+    ///
+    /// A silent drop would leave a lead watching an assignment this computer
+    /// had quietly stopped owing, which is the failure the durable record
+    /// exists to prevent. The receipt names the age and the horizon.
+    async fn expire_deferred_turn(
+        &mut self,
+        turn: &deferred_turns::DeferredTurn,
+        age: u64,
+        horizon: u64,
+    ) {
+        let message = if turn.content.is_empty() {
+            format!(
+                "this computer held assignment {}'s wake without the signed command it would \
+                 have to re-admit, so it can never be delivered; re-issue the assignment",
+                turn.assignment_ref
+            )
+        } else {
+            format!(
+                "this computer held assignment {}'s wake for {age}s waiting for its seat's \
+                 input, past the {horizon}s command horizon, so it will not be delivered; \
+                 re-issue the assignment",
+                turn.assignment_ref
+            )
+        };
+        let receipt = LifecycleReceipt::turn_refused(
+            &turn.command_id,
+            &turn.target,
+            verification_input::VERIFICATION_INPUT_EXPIRED,
+            &message,
+        );
+        tracing::warn!(
+            target: "csp::deferred_turns",
+            command_id = %turn.command_id,
+            age,
+            horizon,
+            code = verification_input::VERIFICATION_INPUT_EXPIRED,
+            "expiring a held wake: {message}"
+        );
+        if let Err(error) =
+            self.enqueue_terminal_receipt(turn.channel_id, &turn.command_id, &receipt)
+        {
+            tracing::warn!(
+                target: "csp::deferred_turns",
+                command_id = %turn.command_id,
+                %error,
+                "the expiry receipt could not be staged; the wake stays held"
+            );
+            return;
+        }
+        if let Err(error) = self.state.record_refusal(&turn.command_id, now_secs()) {
+            tracing::warn!(
+                target: "csp::deferred_turns",
+                command_id = %turn.command_id,
+                %error,
+                "the expiry could not be recorded durably"
+            );
+        }
+        assignment_custody::forget_requirement(&turn.target.session_id, &turn.command_id);
+        self.forget_deferred_turn(&turn.command_id);
+    }
+
+    /// Stop holding one wake, saying so if the store refuses.
+    fn forget_deferred_turn(&self, command_id: &str) {
+        if let Err(error) = deferred_turns::release(&self.config.state_dir, command_id) {
+            tracing::error!(
+                target: "csp::deferred_turns",
+                %command_id,
+                %error,
+                "a decided wake could not be removed from the held set; its own durable fence \
+                 answers it again rather than running it twice"
+            );
         }
     }
 
@@ -9157,7 +9295,7 @@ impl Provider {
                     // remedy the message names is a new assignment.
                     self.state.record_refusal(&command_id, now_secs())?;
                     assignment_custody::forget_requirement(&session_id, &command_id);
-                    deferred_turns::release(&self.config.state_dir, &command_id);
+                    self.forget_deferred_turn(&command_id);
                 }
                 self.enqueue_transcript(
                     channel_id,
@@ -10394,6 +10532,9 @@ mod tests {
     // Custody through the real actor path (lane 219, re-check R2/R3).
     #[path = "custody_boundary_tests.rs"]
     mod custody_boundary_tests;
+    // Re-admission and expiry of held wakes (lane 220, re-check R4).
+    #[path = "deferred_admission_tests.rs"]
+    mod deferred_admission_tests;
 
     struct CollectingSink {
         events: Mutex<Vec<Event>>,

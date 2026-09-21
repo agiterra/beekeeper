@@ -255,6 +255,19 @@ pub fn unresolved(reason: &'static str) -> TurnInput {
     })
 }
 
+/// A wake this provider held for an unestablished input was held past the
+/// command horizon, so it will never be delivered.
+///
+/// Its own code because the remedy is different again: nothing is wrong with
+/// the tree or the assignment — the input simply never became establishable
+/// inside the window the command itself is valid for, and what a lead does
+/// about it is issue a new one (Astra's Wave 2 re-check, R4).
+pub const VERIFICATION_INPUT_EXPIRED: &str = "VERIFICATION_INPUT_EXPIRED";
+
+/// A wake this provider could not hold durably, so it was answered instead of
+/// being silently forgotten.
+pub const VERIFICATION_INPUT_UNHELD: &str = "VERIFICATION_INPUT_UNHELD";
+
 /// The seat's tree stopped holding the assignment's commit between the
 /// provider's decision and the moment its prompt would have been sent.
 ///

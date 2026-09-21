@@ -980,6 +980,21 @@ async fn a_held_wake_stops_a_newer_event_moving_the_floor_past_it() {
                 generation: 1,
             },
             text: assignment_pointer(&operation_id()),
+            content: serde_json::json!({
+                "schema": "buzz-coding-session-command/v1",
+                "commandId": "wake-1",
+                "target": {
+                    "driver": "claude",
+                    "instanceId": "instance",
+                    "sessionId": "seat-1",
+                    "generation": 1,
+                },
+                "action": {
+                    "type": "thread.turn.start",
+                    "text": assignment_pointer(&operation_id()),
+                },
+            })
+            .to_string(),
             attachments: Vec::new(),
             deliver: buzz_core::coding_session_command::CodingSessionDelivery::Boundary,
             operation_key: None,
@@ -987,7 +1002,8 @@ async fn a_held_wake_stops_a_newer_event_moving_the_floor_past_it() {
             reason: "establishment_in_flight".to_owned(),
             deferred_at: "2026-09-21T00:00:00Z".to_owned(),
         },
-    );
+    )
+    .expect("held");
     assert_eq!(
         provider.watermark_ceiling(channel),
         Some(1_700_000_100),
@@ -1027,6 +1043,21 @@ async fn a_held_wake_is_decided_by_the_next_pass_and_released_once() {
                 generation: 1,
             },
             text: assignment_pointer(&operation_id()),
+            content: serde_json::json!({
+                "schema": "buzz-coding-session-command/v1",
+                "commandId": "wake-1",
+                "target": {
+                    "driver": "claude",
+                    "instanceId": "instance",
+                    "sessionId": "seat-1",
+                    "generation": 1,
+                },
+                "action": {
+                    "type": "thread.turn.start",
+                    "text": assignment_pointer(&operation_id()),
+                },
+            })
+            .to_string(),
             attachments: Vec::new(),
             deliver: buzz_core::coding_session_command::CodingSessionDelivery::Boundary,
             operation_key: None,
@@ -1034,7 +1065,8 @@ async fn a_held_wake_is_decided_by_the_next_pass_and_released_once() {
             reason: "establishment_in_flight".to_owned(),
             deferred_at: "2026-09-21T00:00:00Z".to_owned(),
         },
-    );
+    )
+    .expect("held");
     assert_eq!(crate::deferred_turns::held(&state).len(), 1);
 
     provider.release_deferred_turns().await;
@@ -1077,6 +1109,21 @@ async fn the_release_pass_leaves_a_busy_seats_wake_held() {
                 generation: 1,
             },
             text: assignment_pointer(&operation_id()),
+            content: serde_json::json!({
+                "schema": "buzz-coding-session-command/v1",
+                "commandId": "wake-1",
+                "target": {
+                    "driver": "claude",
+                    "instanceId": "instance",
+                    "sessionId": "seat-1",
+                    "generation": 1,
+                },
+                "action": {
+                    "type": "thread.turn.start",
+                    "text": assignment_pointer(&operation_id()),
+                },
+            })
+            .to_string(),
             attachments: Vec::new(),
             deliver: buzz_core::coding_session_command::CodingSessionDelivery::Boundary,
             operation_key: None,
@@ -1084,7 +1131,8 @@ async fn the_release_pass_leaves_a_busy_seats_wake_held() {
             reason: "seat_busy".to_owned(),
             deferred_at: "2026-09-21T00:00:00Z".to_owned(),
         },
-    );
+    )
+    .expect("held");
     let running = crate::assignment_custody::hold(&session_key).await;
     provider.release_deferred_turns().await;
     assert_eq!(

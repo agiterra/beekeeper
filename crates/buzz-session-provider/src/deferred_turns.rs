@@ -69,6 +69,21 @@ pub struct DeferredTurn {
     pub target: CodingSessionTarget,
     /// The prompt text, exactly as it was signed.
     pub text: String,
+    /// The **signed command, whole**, as it arrived.
+    ///
+    /// This is what makes a release a re-admission rather than a re-start
+    /// (Astra's Wave 2 re-check, R4): the release hands these same bytes back
+    /// to the one function that admits a command, so the consumed/in-flight
+    /// check, the freshness horizon, the target generation and the signer's
+    /// authority are all asked again, about the original command, under its
+    /// original identity. Reconstructing a `TurnDecision` skipped every one
+    /// of them.
+    ///
+    /// `#[serde(default)]`: a record written before this field replays
+    /// nothing and is expired by the pass instead, which is the honest
+    /// answer for a command whose bytes were never kept.
+    #[serde(default)]
+    pub content: String,
     /// Images the operator attached.
     #[serde(default)]
     pub attachments: Vec<TurnAttachment>,
@@ -151,7 +166,15 @@ fn write_file(state_dir: &Path, turns: &[DeferredTurn]) -> Result<(), String> {
 }
 
 /// Run `act` against the current list, writing it back if it changed.
-fn with_turns<T>(state_dir: &Path, act: impl FnOnce(&mut Vec<DeferredTurn>) -> T) -> (T, bool) {
+///
+/// A failed write is returned, and the mirror is **not** updated (R4): a
+/// store that claims durable custody of a wake and then keeps it only in
+/// memory is the same lie as not keeping it at all. On failure the mirror
+/// still holds what the file holds, so the next caller reads the truth.
+fn with_turns<T>(
+    state_dir: &Path,
+    act: impl FnOnce(&mut Vec<DeferredTurn>) -> T,
+) -> Result<T, String> {
     let mut guard = match mirror().lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
@@ -162,17 +185,13 @@ fn with_turns<T>(state_dir: &Path, act: impl FnOnce(&mut Vec<DeferredTurn>) -> T
     };
     let mut turns = loaded.clone();
     let answer = act(&mut turns);
-    let changed = turns != loaded;
-    if changed {
-        while turns.len() > MAX_DEFERRED_TURNS {
-            turns.remove(0);
-        }
-        if let Err(error) = write_file(state_dir, &turns) {
-            tracing::error!(target: "csp::deferred_turns", %error, "a deferred wake could not be saved");
-        }
+    if turns == loaded {
+        *guard = Some((state_dir.to_path_buf(), turns));
+        return Ok(answer);
     }
+    write_file(state_dir, &turns)?;
     *guard = Some((state_dir.to_path_buf(), turns));
-    (answer, changed)
+    Ok(answer)
 }
 
 /// Hold one wake until its seat's input settles.
@@ -180,30 +199,53 @@ fn with_turns<T>(state_dir: &Path, act: impl FnOnce(&mut Vec<DeferredTurn>) -> T
 /// Idempotent by command id: a wake deferred twice is one wake, and the
 /// original `created_at` — the one the watermark is measured against — is the
 /// one kept.
-pub fn defer(state_dir: &Path, turn: DeferredTurn) {
-    let (_, _) = with_turns(state_dir, |turns| {
+///
+/// Two failures are returned rather than swallowed (R4). A write that does
+/// not reach the disk means nothing is holding this wake, and the caller has
+/// to answer the command instead of pretending. A full store **refuses the
+/// new deferral**; it never evicts an older owed wake to make room, because
+/// the evicted one would be owed by nobody and answered by nothing.
+pub fn defer(state_dir: &Path, turn: DeferredTurn) -> Result<(), String> {
+    let command_id = turn.command_id.clone();
+    let outcome = with_turns(state_dir, move |turns| {
         if let Some(existing) = turns
             .iter_mut()
             .find(|existing| existing.command_id == turn.command_id)
         {
             existing.reason.clone_from(&turn.reason);
-            return;
+            return Ok(());
+        }
+        if turns.len() >= MAX_DEFERRED_TURNS {
+            return Err(format!(
+                "this provider is already holding {MAX_DEFERRED_TURNS} deferred wakes, and \
+                 nothing owed is dropped to make room"
+            ));
         }
         turns.push(turn);
-    });
+        Ok(())
+    })?;
+    if let Err(error) = &outcome {
+        tracing::error!(
+            target: "csp::deferred_turns",
+            %command_id,
+            %error,
+            "a wake could not be held"
+        );
+    }
+    outcome
 }
 
 /// Forget a wake, because it has been decided.
-pub fn release(state_dir: &Path, command_id: &str) {
-    let (_, _) = with_turns(state_dir, |turns| {
+pub fn release(state_dir: &Path, command_id: &str) -> Result<(), String> {
+    with_turns(state_dir, |turns| {
         turns.retain(|turn| turn.command_id != command_id);
-    });
+    })
 }
 
 /// Every wake this provider is holding, oldest first.
 #[must_use]
 pub fn held(state_dir: &Path) -> Vec<DeferredTurn> {
-    let (mut turns, _) = with_turns(state_dir, |turns| turns.clone());
+    let mut turns = with_turns(state_dir, |turns| turns.clone()).unwrap_or_default();
     turns.sort_by(|left, right| {
         left.created_at
             .cmp(&right.created_at)
@@ -219,14 +261,15 @@ pub fn held(state_dir: &Path) -> Vec<DeferredTurn> {
 /// next subscription — the exact loss the deferral exists to prevent.
 #[must_use]
 pub fn floor_for_channel(state_dir: &Path, channel_id: Uuid) -> Option<u64> {
-    let (floor, _) = with_turns(state_dir, |turns| {
+    with_turns(state_dir, |turns| {
         turns
             .iter()
             .filter(|turn| turn.channel_id == channel_id)
             .map(|turn| turn.created_at)
             .min()
-    });
-    floor
+    })
+    .ok()
+    .flatten()
 }
 
 /// Forget everything this process mirrored, so a test can start clean.

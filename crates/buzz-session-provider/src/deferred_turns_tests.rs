@@ -21,6 +21,7 @@ fn turn(command_id: &str, channel_id: Uuid, created_at: u64) -> DeferredTurn {
             generation: 1,
         },
         text: serde_json::json!({"type": "assignment", "operationId": "ef".repeat(32)}).to_string(),
+        content: String::new(),
         attachments: Vec::new(),
         deliver: CodingSessionDelivery::Boundary,
         operation_key: Some("key".to_owned()),
@@ -38,9 +39,9 @@ fn a_held_wake_survives_this_process_and_clamps_its_channels_floor() {
     let channel = Uuid::new_v4();
     assert_eq!(floor_for_channel(&state, channel), None);
 
-    defer(&state, turn("wake-1", channel, 1_700_000_100));
-    defer(&state, turn("wake-2", channel, 1_700_000_050));
-    defer(&state, turn("wake-3", Uuid::new_v4(), 1_700_000_001));
+    defer(&state, turn("wake-1", channel, 1_700_000_100)).expect("held");
+    defer(&state, turn("wake-2", channel, 1_700_000_050)).expect("held");
+    defer(&state, turn("wake-3", Uuid::new_v4(), 1_700_000_001)).expect("held");
 
     assert_eq!(
         floor_for_channel(&state, channel),
@@ -74,10 +75,10 @@ fn deferring_the_same_wake_twice_keeps_one_and_keeps_its_first_created_at() {
     let root = tempfile::tempdir().expect("temp");
     let state = root.path().join("state");
     let channel = Uuid::new_v4();
-    defer(&state, turn("wake-1", channel, 1_700_000_100));
+    defer(&state, turn("wake-1", channel, 1_700_000_100)).expect("held");
     let mut again = turn("wake-1", channel, 1_700_000_900);
     again.reason = "seat_busy".to_owned();
-    defer(&state, again);
+    defer(&state, again).expect("held");
 
     let held = held(&state);
     assert_eq!(held.len(), 1);
@@ -91,8 +92,8 @@ fn a_released_wake_stops_clamping_anything() {
     let root = tempfile::tempdir().expect("temp");
     let state = root.path().join("state");
     let channel = Uuid::new_v4();
-    defer(&state, turn("wake-1", channel, 1_700_000_100));
-    release(&state, "wake-1");
+    defer(&state, turn("wake-1", channel, 1_700_000_100)).expect("held");
+    release(&state, "wake-1").expect("released");
     assert!(held(&state).is_empty());
     assert_eq!(floor_for_channel(&state, channel), None);
 
