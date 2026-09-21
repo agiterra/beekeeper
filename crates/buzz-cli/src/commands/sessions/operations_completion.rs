@@ -233,6 +233,7 @@ pub(super) async fn refuse_incomplete_coverage(
                 "publishedAnyway": true,
                 "reason": reason,
                 "criteria": open.criteria,
+                "why": open.message,
                 "recordedIn": "nowhere on the wire",
                 "message": format!(
                     "published without coverage: {reason}. This reason is NOT on the wire: the                      kind:44244 completion body is a closed shape and this command will not add                      a key to it. Record it in Pulse (`bee pulse note`) so the next reader finds                      it beside the terminal."
@@ -242,39 +243,65 @@ pub(super) async fn refuse_incomplete_coverage(
         return Ok(());
     }
     Err(CliError::Usage(format!(
-        "coverage-incomplete: work {} ({}) is not covered — {}. Bind the evidence that answers          them (`bee sessions work bind evidence`), read the whole picture with `bee sessions          work status --channel {channel} --session-ref {session_ref}`, or publish anyway with          --without-coverage \"<reason>\" and record the reason in Pulse.",
+        "coverage-incomplete: work {} ({}) is not covered — {}{}. Bind the evidence that answers          them (`bee sessions work bind evidence`), read the whole picture with `bee sessions          work status --channel {channel} --session-ref {session_ref}`, or publish anyway with          --without-coverage \"<reason>\" and record the reason in Pulse.",
         &open.work_id,
         open.coverage_reason,
-        open.criteria.join("; ")
+        open.message,
+        if open.criteria.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", open.criteria.join("; "))
+        }
     )))
 }
 
-/// One head declaration that is not fully covered, rendered for a refusal.
+/// One current declaration that is not fully covered, rendered for a refusal.
 struct IncompleteCoverage {
     work_id: String,
     coverage_reason: String,
+    /// Every criterion row that is not `covered`. **May be empty**, and an
+    /// empty list is never permission: a plan that could not be read and a
+    /// conflicted fork both render no rows at all (ledger 213, finding 5).
     criteria: Vec<String>,
+    /// The declaration-level sentence: which clause of coverage failed, in
+    /// words, whether or not any criterion row exists to list.
+    message: String,
 }
 
-/// The first head declaration whose coverage is incomplete, if any.
+/// The first current declaration whose coverage is incomplete, if any.
 ///
-/// Only `head` and `stale` declarations carry criteria — they are the two
-/// states that *are* a current contract — so a superseded or conflicted
-/// declaration never blocks a completion by itself; a conflict shows up as
-/// its heads' own incomplete coverage.
+/// **This gate fails closed** (ledger 213, finding 5). It reads the
+/// declaration's own facts — its state, whether its plan resolved, whether
+/// its work is forked, and `coverageComplete` — and never the *availability
+/// of rendered criterion rows*. Those rows are absent in exactly the two
+/// cases that most need refusing: a plan the reader could not open renders
+/// none (`project_work_fold_project.rs`), and a conflicted declaration
+/// deliberately carries none because it is not a current contract.
+///
+/// `superseded` is the one state that never blocks: it is not a current
+/// contract, and its successor is judged on its own.
 fn incomplete_head(
     coverage: &buzz_core::project_work_fold::WorkProjection,
 ) -> Option<IncompleteCoverage> {
+    use buzz_core::project_work_fold::WorkDeclarationState;
     coverage
         .declarations
         .iter()
-        .find(|declaration| !declaration.criteria.is_empty() && !declaration.coverage_complete)
+        .find(|declaration| {
+            matches!(
+                declaration.state,
+                WorkDeclarationState::Head
+                    | WorkDeclarationState::Stale
+                    | WorkDeclarationState::Conflict
+            ) && !declaration.coverage_complete
+        })
         .map(|declaration| IncompleteCoverage {
             work_id: declaration.work_id.clone(),
             coverage_reason: declaration
                 .coverage_reason
                 .clone()
                 .unwrap_or_else(|| "coverage is incomplete".to_owned()),
+            message: incomplete_sentence(declaration, coverage),
             criteria: declaration
                 .criteria
                 .iter()
@@ -294,6 +321,41 @@ fn incomplete_head(
                 })
                 .collect(),
         })
+}
+
+/// Why this declaration blocks a terminal, in one sentence a person can act
+/// on — including the two cases that render no criterion rows at all.
+fn incomplete_sentence(
+    declaration: &buzz_core::project_work_fold::WorkDeclarationProjection,
+    coverage: &buzz_core::project_work_fold::WorkProjection,
+) -> String {
+    use buzz_core::project_work_fold::WorkDeclarationState;
+    if declaration.state == WorkDeclarationState::Conflict {
+        let heads = coverage
+            .conflicts
+            .iter()
+            .find(|conflict| conflict.work_id == declaration.work_id)
+            .map(|conflict| conflict.heads.join(", "))
+            .unwrap_or_default();
+        return format!(
+            "this work is in conflict: more than one declaration is a head ({heads}), so \
+             nothing here is a single current contract. Resolve it by adopting one declaration \
+             that supersedes every head"
+        );
+    }
+    if !declaration.plan_resolved {
+        return format!(
+            "this declaration's plan could not be read at the commit it pins ({}@{}), so its \
+             criteria are unknown rather than met. Pass --agents-repo <dir> so the plan can be \
+             read at that commit",
+            declaration.plan_ref.path,
+            &declaration.plan_ref.commit[..declaration.plan_ref.commit.len().min(12)]
+        );
+    }
+    declaration
+        .coverage_reason
+        .clone()
+        .unwrap_or_else(|| "this declaration's coverage is incomplete".to_owned())
 }
 
 #[cfg(test)]

@@ -96,6 +96,41 @@ impl WorkWire for BuzzClient {
     }
 }
 
+/// UUID v5 namespace for a session's derived work ids.
+///
+/// A fixed constant, never generated: the whole point is that two runs of the
+/// same command on two machines derive the same id.
+const WORK_ID_NAMESPACE: uuid::Uuid =
+    uuid::Uuid::from_u128(0x7f2c_9d41_5a83_4e16_9b02_c7d5e1a80f34);
+
+/// The `workId` an initial adoption uses, derived from stable inputs alone.
+///
+/// **Retry safety is the whole reason** (ledger 213, finding 8). A random
+/// id meant that a publish whose response was lost minted a *second* work
+/// identity on the operator's next attempt, leaving two sets of obligations
+/// for one plan. The id is a pure function of five caller-supplied facts —
+/// the project, the session, the plan's repository coordinate, its path and
+/// the plan id in its frontmatter.
+///
+/// **The commit is deliberately not an input.** The same plan at a new commit
+/// is an *amendment of the same work*, which is exactly what `--supersedes`
+/// is for; hashing the commit would make every revision new work.
+///
+/// No clock and no randomness take part: a "deterministic" id that hashed a
+/// now-relative value broke this same promise once before, and the fix is
+/// that only stable caller-supplied inputs are hashed.
+#[must_use]
+pub(super) fn derive_work_id(
+    project_ref: &str,
+    session_ref: &str,
+    plan_repository: &str,
+    plan_path: &str,
+    plan_id: &str,
+) -> String {
+    let name = format!("{project_ref}\n{session_ref}\n{plan_repository}\n{plan_path}\n{plan_id}");
+    uuid::Uuid::new_v5(&WORK_ID_NAMESPACE, name.as_bytes()).to_string()
+}
+
 /// `bee sessions work <verb>`: the work-record surface of NIP-PW.
 #[derive(Subcommand)]
 pub enum SessionWorkCmd {
@@ -867,13 +902,6 @@ async fn adopt_with(
         ));
     };
     validate_plan_path(plan_path).map_err(|refusal| CliError::Usage(refusal.to_string()))?;
-    if args.work_id.is_some() && args.supersedes.is_empty() {
-        return Err(CliError::Usage(
-            "amendment-needs-supersedes: --work-id names existing work, so the new declaration \
-             must name what it supersedes with --supersedes <declaration id>"
-                .into(),
-        ));
-    }
     for id in &args.supersedes {
         validate_lower_hex64("--supersedes", id)?;
     }
@@ -882,14 +910,14 @@ async fn adopt_with(
     }
 
     // ── resolve everything, before anything is signed ──────────────────────
-    let repository = agents_repository(wire, &session.project_ref).await?;
+    let repository_coordinate = agents_repository(wire, &session.project_ref).await?;
     let full_commit = resolve_commit(dir, commit)?;
     if full_commit.len() != 40 && full_commit.len() != 64 {
         return Err(CliError::Usage(format!(
             "--commit must resolve to a full object id; {commit} resolved to {full_commit:?}"
         )));
     }
-    let relay_tips = repository_tips(wire, repository_id(&repository)).await;
+    let relay_tips = repository_tips(wire, repository_id(&repository_coordinate)).await;
     let (published, how) = commit_is_published(dir, &full_commit, &relay_tips);
     if !published {
         return Err(CliError::Usage(format!("commit-not-published: {how}")));
@@ -916,15 +944,22 @@ async fn adopt_with(
     validate_lower_hex64("--responsible", &responsible)?;
 
     let body = ProjectWorkDeclared {
-        work_id: args
-            .work_id
-            .clone()
-            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+        // Derived, never minted: a lost response must not create a second
+        // work identity. `--work-id` stays an explicit override.
+        work_id: args.work_id.clone().unwrap_or_else(|| {
+            derive_work_id(
+                &session.project_ref,
+                &session.session_ref,
+                &repository_coordinate,
+                plan_path,
+                &resolved.plan.id,
+            )
+        }),
         goal_ref,
         decision_ref: args.decision.clone(),
         responsible_actor: responsible,
         plan_ref: ProjectWorkPlanRef {
-            repository,
+            repository: repository_coordinate.clone(),
             commit: full_commit.clone(),
             path: plan_path.to_owned(),
         },
@@ -934,6 +969,20 @@ async fn adopt_with(
     // Idempotence: the same arguments find the declaration they already
     // published and republish nothing.
     let (existing, _) = fetch_work_records(wire, &session.channel, &session.session_ref).await?;
+    // The same plan already declared under this work, at another commit or
+    // with another body, is an **amendment** — and an amendment names what it
+    // supersedes. Checked after the read, because only the wire knows whether
+    // this work already exists (ledger 213, finding 8).
+    if body.supersedes.is_empty() {
+        if let Some(prior) = prior_declaration(&existing, &body) {
+            return Err(CliError::Usage(format!(
+                "amendment-needs-supersedes: work {} was already declared at {prior} for \
+                 {}. Re-adopting the same plan is an amendment of that work, not new work: \
+                 re-run with --supersedes {prior} (and every other head, if it forked).",
+                body.work_id, body.plan_ref.path
+            )));
+        }
+    }
     if let Some(event_id) = existing_declaration(&existing, &body) {
         println!(
             "{}",
@@ -991,17 +1040,41 @@ async fn repository_tips(wire: &impl WorkWire, repository: &str) -> Vec<String> 
         .collect()
 }
 
-/// The declaration this exact body was already published as, if any.
+/// Every declared body in a record set, with the event id that carried it.
+fn declared_bodies(events: &[ProjectWorkEvent]) -> Vec<(String, ProjectWorkDeclared)> {
+    events
+        .iter()
+        .filter_map(|event| {
+            let payload: Value = serde_json::from_str(&event.content).ok()?;
+            let body: ProjectWorkDeclared =
+                serde_json::from_value(payload.get("body")?.clone()).ok()?;
+            Some((event.id.clone(), body))
+        })
+        .collect()
+}
+
+/// The declaration this **exact body** was already published as, if any.
+///
+/// Exact means exact: goal, decision, responsible actor, plan reference and
+/// supersedes list, not the three fields the first version compared while
+/// calling itself a body match (ledger 213, finding 8).
 fn existing_declaration(events: &[ProjectWorkEvent], body: &ProjectWorkDeclared) -> Option<String> {
-    events.iter().find_map(|event| {
-        let payload: Value = serde_json::from_str(&event.content).ok()?;
-        let existing: ProjectWorkDeclared =
-            serde_json::from_value(payload.get("body")?.clone()).ok()?;
-        (existing.work_id == body.work_id
-            && existing.plan_ref == body.plan_ref
-            && existing.supersedes == body.supersedes)
-            .then(|| event.id.clone())
-    })
+    declared_bodies(events)
+        .into_iter()
+        .find(|(_, existing)| existing == body)
+        .map(|(event_id, _)| event_id)
+}
+
+/// An earlier declaration of this same work that this one would amend.
+///
+/// Newest first by the order the records arrived, so the refusal names the
+/// declaration an operator would actually supersede.
+fn prior_declaration(events: &[ProjectWorkEvent], body: &ProjectWorkDeclared) -> Option<String> {
+    declared_bodies(events)
+        .into_iter()
+        .filter(|(_, existing)| existing.work_id == body.work_id && existing != body)
+        .map(|(event_id, _)| event_id)
+        .next_back()
 }
 
 /// The session's current kind:44227 goal, which a declaration is pinned to.

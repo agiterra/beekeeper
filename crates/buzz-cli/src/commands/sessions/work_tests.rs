@@ -77,7 +77,10 @@ const FIXTURE_SESSION: &str = "11111111-2222-4333-8444-555555555555";
 
 /// A wire that answers reads from a fixture and **counts every publish**.
 struct StubWire {
-    rows: Vec<Value>,
+    /// Everything the relay serves, including whatever this stub accepted:
+    /// an accepted publish is readable afterwards, which is the only way to
+    /// test a retry the way a lost response produces one.
+    rows: RefCell<Vec<Value>>,
     published: RefCell<Vec<String>>,
     fail_reads: bool,
 }
@@ -85,7 +88,7 @@ struct StubWire {
 impl StubWire {
     fn new(rows: Vec<Value>) -> Self {
         Self {
-            rows,
+            rows: RefCell::new(rows),
             published: RefCell::new(Vec::new()),
             fail_reads: false,
         }
@@ -117,6 +120,7 @@ impl WorkWire for StubWire {
             .unwrap_or_default();
         Ok(self
             .rows
+            .borrow()
             .iter()
             .filter(|row| {
                 let kind = row["kind"].as_u64().unwrap_or_default();
@@ -134,6 +138,15 @@ impl WorkWire for StubWire {
             .map_err(|error| CliError::Other(error.to_string()))?;
         let id = event.id.to_hex();
         self.published.borrow_mut().push(id.clone());
+        // The relay stores what it accepted, so the next read sees it.
+        self.rows.borrow_mut().push(json!({
+            "id": id,
+            "pubkey": event.pubkey.to_hex(),
+            "created_at": event.created_at.as_secs(),
+            "kind": u64::from(event.kind.as_u16()),
+            "tags": event.tags.iter().map(|tag| tag.clone().to_vec()).collect::<Vec<_>>(),
+            "content": event.content,
+        }));
         Ok(id)
     }
 
@@ -562,13 +575,21 @@ async fn an_amendment_without_supersedes_is_refused() {
     let commit = repo.commit("first");
     let fixture: Value = serde_json::from_str(SEQUENCES[0].inputs).expect("inputs");
     let session = fixture_session(&fixture);
-    let wire = StubWire::new(Vec::new());
+    let wire = StubWire::new(adoption_rows(&session.project_ref, &commit));
+    // The work already exists on the wire under this explicit id: a second
+    // declaration of it is an amendment. (An explicit `--work-id` with no
+    // such work is an ordinary initial adoption and is accepted.)
+    let work_id = "9d0f0f0f-1111-4222-8333-444444444444";
     let mut args = adopt_args(&repo, &commit);
-    args.work_id = Some("9d0f0f0f-1111-4222-8333-444444444444".to_owned());
-    let error = adopt_with(&wire, &session, &args)
+    args.work_id = Some(work_id.to_owned());
+    adopt_with(&wire, &session, &args).await.expect("published");
+    let mut amended = adopt_args(&repo, &commit);
+    amended.work_id = Some(work_id.to_owned());
+    amended.responsible = Some("b0".repeat(32));
+    let error = adopt_with(&wire, &session, &amended)
         .await
         .expect_err("refused");
-    assert_eq!(wire.publishes(), 0);
+    assert_eq!(wire.publishes(), 1, "the refused amendment published");
     assert!(
         error.to_string().contains("amendment-needs-supersedes"),
         "{error}"
@@ -909,4 +930,128 @@ async fn bind_evidence_publishes_once_and_its_retry_publishes_nothing() {
         .await
         .expect("idempotent");
     assert_eq!(wire.publishes(), 0);
+}
+
+// ── Finding 8 (ledger 213): initial adoption is retry-safe ─────────────────
+
+/// **Reproduces finding 8.** The publish is accepted and the response is
+/// lost; the operator runs the identical command again. With a random initial
+/// `workId` that minted a second work identity and a second set of
+/// obligations. The id is derived from stable inputs, so the retry finds its
+/// own declaration and publishes nothing.
+#[tokio::test]
+async fn an_initial_adoption_whose_response_was_lost_republishes_nothing() {
+    let repo = Repo::new("lost-response");
+    repo.write("plans/kettle.md", PLAN_REVIEW_ONLY);
+    let commit = repo.commit("first");
+    let fixture: Value = serde_json::from_str(SEQUENCES[0].inputs).expect("inputs");
+    let session = fixture_session(&fixture);
+    let wire = StubWire::new(adoption_rows(&session.project_ref, &commit));
+    let args = adopt_args(&repo, &commit);
+
+    adopt_with(&wire, &session, &args).await.expect("published");
+    assert_eq!(wire.publishes(), 1, "the first adoption publishes once");
+    let first = wire.published.borrow()[0].clone();
+
+    // The response never reached the caller. The same command, again.
+    adopt_with(&wire, &session, &args).await.expect("retry");
+    assert_eq!(
+        wire.publishes(),
+        1,
+        "the retry minted a second work identity"
+    );
+    let (records, _) = fetch_work_records(&wire, &session.channel, &session.session_ref)
+        .await
+        .expect("records");
+    let ids: Vec<&str> = records.iter().map(|event| event.id.as_str()).collect();
+    assert_eq!(ids, vec![first.as_str()], "exactly one declaration exists");
+}
+
+/// The derived id is a pure function of its five stable inputs — no clock and
+/// no randomness anywhere, which is the promise a "deterministic" id that
+/// hashed a now-relative expiry broke once before (repo memory, 2026-09-08).
+#[test]
+fn the_derived_work_id_is_stable_and_input_sensitive() {
+    let id = |plan_path: &str| {
+        derive_work_id(
+            "30621:1e:kettle",
+            FIXTURE_SESSION,
+            "30617:1e:kettle-beekeeper-agents",
+            plan_path,
+            "kettle-cli",
+        )
+    };
+    assert_eq!(id("plans/kettle.md"), id("plans/kettle.md"));
+    assert_ne!(id("plans/kettle.md"), id("plans/other.md"));
+    assert!(uuid::Uuid::parse_str(&id("plans/kettle.md")).is_ok());
+    // The commit is deliberately **not** an input: a new commit of the same
+    // plan is an amendment of the same work, not new work.
+    assert_eq!(
+        id("plans/kettle.md"),
+        derive_work_id(
+            "30621:1e:kettle",
+            FIXTURE_SESSION,
+            "30617:1e:kettle-beekeeper-agents",
+            "plans/kettle.md",
+            "kettle-cli",
+        )
+    );
+}
+
+/// **Reproduces finding 8's other half.** Re-adopting the same plan at a new
+/// commit is an *amendment* of the same work and must name what it
+/// supersedes — and the refusal has to say so, naming the declaration.
+#[tokio::test]
+async fn re_adopting_the_same_plan_at_a_new_commit_demands_supersedes() {
+    let repo = Repo::new("readopt");
+    repo.write("plans/kettle.md", PLAN_REVIEW_ONLY);
+    let first_commit = repo.commit("first");
+    let fixture: Value = serde_json::from_str(SEQUENCES[0].inputs).expect("inputs");
+    let session = fixture_session(&fixture);
+    let wire = StubWire::new(adoption_rows(&session.project_ref, &first_commit));
+    adopt_with(&wire, &session, &adopt_args(&repo, &first_commit))
+        .await
+        .expect("published");
+    assert_eq!(wire.publishes(), 1);
+
+    repo.write(
+        "plans/kettle.md",
+        &PLAN_REVIEW_ONLY.replace("Body.", "Amended."),
+    );
+    let second_commit = repo.commit("second");
+    wire.rows.borrow_mut().push(json!({
+        "id": "f".repeat(64), "pubkey": "4e".repeat(32), "created_at": 20u64,
+        "kind": 30618, "tags": [["d", "kettle-beekeeper-agents"],
+        ["refs/heads/main", second_commit]], "content": ""
+    }));
+    let error = adopt_with(&wire, &session, &adopt_args(&repo, &second_commit))
+        .await
+        .expect_err("an amendment must name what it supersedes");
+    assert_eq!(wire.publishes(), 1, "the refused amendment published");
+    let message = error.to_string();
+    assert!(message.contains("amendment-needs-supersedes"), "{message}");
+    assert!(message.contains(&wire.published.borrow()[0]), "{message}");
+}
+
+/// The dedupe compares the whole body it claims to: a declaration that
+/// differs in its responsible actor is a different declaration, not a retry.
+#[tokio::test]
+async fn a_body_that_differs_in_its_responsible_actor_is_not_a_retry() {
+    let repo = Repo::new("responsible");
+    repo.write("plans/kettle.md", PLAN_REVIEW_ONLY);
+    let commit = repo.commit("first");
+    let fixture: Value = serde_json::from_str(SEQUENCES[0].inputs).expect("inputs");
+    let session = fixture_session(&fixture);
+    let wire = StubWire::new(adoption_rows(&session.project_ref, &commit));
+    adopt_with(&wire, &session, &adopt_args(&repo, &commit))
+        .await
+        .expect("published");
+
+    let mut amended = adopt_args(&repo, &commit);
+    amended.responsible = Some("b0".repeat(32));
+    amended.supersedes = vec![wire.published.borrow()[0].clone()];
+    adopt_with(&wire, &session, &amended)
+        .await
+        .expect("a different body is a new declaration");
+    assert_eq!(wire.publishes(), 2);
 }

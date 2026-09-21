@@ -241,6 +241,18 @@ fn projection(
     criteria: Vec<WorkCriterionProjection>,
     complete: bool,
 ) -> WorkProjection {
+    projection_with(state, criteria, complete, true, None)
+}
+
+/// A projection with the two declaration-level facts the gate must read on
+/// their own: whether the plan resolved, and which clause of coverage failed.
+fn projection_with(
+    state: WorkDeclarationState,
+    criteria: Vec<WorkCriterionProjection>,
+    complete: bool,
+    plan_resolved: bool,
+    coverage_reason_code: Option<WorkCoverageReasonCode>,
+) -> WorkProjection {
     WorkProjection {
         schema: "buzz-project-work-coverage/v1".to_owned(),
         session_ref: SESSION.to_owned(),
@@ -258,12 +270,13 @@ fn projection(
             superseded_by: Vec::new(),
             state_reason_code: None,
             state_reason: None,
-            plan_resolved: true,
+            plan_resolved,
             candidate_artifact: None,
             artifact_commits: Vec::new(),
             criteria,
             coverage_complete: complete,
-            coverage_reason_code: (!complete).then_some(WorkCoverageReasonCode::CriteriaNotCovered),
+            coverage_reason_code: coverage_reason_code
+                .or((!complete).then_some(WorkCoverageReasonCode::CriteriaNotCovered)),
             coverage_reason: (!complete).then(|| "1 of 2 criteria are not covered".to_owned()),
         }],
         excluded: Vec::new(),
@@ -330,5 +343,80 @@ fn an_incomplete_head_names_every_criterion_and_its_reason() {
 #[test]
 fn a_superseded_declaration_never_blocks_a_completion() {
     let superseded = projection(WorkDeclarationState::Superseded, Vec::new(), false);
+    assert!(incomplete_head(&superseded).is_none());
+}
+
+// ── Finding 5 (ledger 213): the gate fails CLOSED ──────────────────────────
+
+/// **Reproduces finding 5.** Adopt, then complete with no `--agents-repo` and
+/// no bindings: the plan was never read, so the projection renders **no
+/// criterion rows at all**. Gating on rendered rows let that complete
+/// silently; the gate reads the declaration's own state instead.
+#[test]
+fn a_head_whose_plan_could_not_be_read_is_refused() {
+    let unreadable = projection_with(
+        WorkDeclarationState::Head,
+        Vec::new(),
+        false,
+        false,
+        Some(WorkCoverageReasonCode::PlanUnreadable),
+    );
+    let open = incomplete_head(&unreadable).expect("an unreadable plan blocks a completion");
+    assert!(open.criteria.is_empty(), "there are no rows to list");
+    assert!(
+        open.message.contains("plan"),
+        "the refusal must say the plan could not be read: {}",
+        open.message
+    );
+}
+
+/// **Reproduces finding 5.** Two heads of one `workId` carry no criteria by
+/// contract (`README` § (c): a conflicted declaration is not a current
+/// contract). That must refuse a terminal, not permit one.
+#[test]
+fn conflicted_heads_are_refused() {
+    let mut conflicted = projection_with(
+        WorkDeclarationState::Conflict,
+        Vec::new(),
+        false,
+        true,
+        Some(WorkCoverageReasonCode::Conflict),
+    );
+    conflicted.conflicts = vec![buzz_core::project_work_fold::WorkConflict {
+        work_id: "9d0f0f0f-1111-4222-8333-444444444444".to_owned(),
+        heads: vec!["1a".repeat(32), "2b".repeat(32)],
+        message: "two heads compete".to_owned(),
+    }];
+    let open = incomplete_head(&conflicted).expect("a fork blocks a completion");
+    assert!(
+        open.message.contains("conflict"),
+        "the refusal must name the fork: {}",
+        open.message
+    );
+}
+
+/// A `stale` declaration is still a current contract — the goal moved, the
+/// contract stayed pinned — so its incomplete coverage still refuses.
+#[test]
+fn a_stale_head_still_gates() {
+    let stale = projection(
+        WorkDeclarationState::Stale,
+        vec![criterion("cli-behaviour", WorkCriterionStatus::Open)],
+        false,
+    );
+    assert!(incomplete_head(&stale).is_some());
+}
+
+/// A superseded declaration is not a current contract and never blocks by
+/// itself, whatever its coverage says.
+#[test]
+fn a_superseded_declaration_with_criteria_still_blocks_nothing() {
+    let superseded = projection_with(
+        WorkDeclarationState::Superseded,
+        vec![criterion("cli-behaviour", WorkCriterionStatus::Open)],
+        false,
+        true,
+        Some(WorkCoverageReasonCode::Superseded),
+    );
     assert!(incomplete_head(&superseded).is_none());
 }
