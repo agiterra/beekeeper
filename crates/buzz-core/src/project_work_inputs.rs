@@ -253,9 +253,14 @@ pub fn assemble_fold_inputs(raw: RawWorkInputs) -> Result<WorkFoldInputs, Assemb
         evidence.insert(fact.event_id().to_owned(), fact);
     }
 
-    // An owner-signed claim about its own branch is not an observation. The
-    // fold checks this too; dropping the rows here as well means a reader
-    // that prints `refStates` never shows a row it would not have believed.
+    // An owner-signed claim about its own branch is not an observation, so a
+    // row the relay did not sign is dropped here as well as in the fold: a
+    // reader that prints `refStates` never shows one it would not believe.
+    //
+    // **With no relay key the rows stay.** Dropping them would report "no
+    // relay-signed ref state was supplied" when the truth is "we do not know
+    // the relay's key", and those are different facts with different
+    // remedies (A7.4: empty is unproved, never a substitute answer).
     let mut ref_states: Vec<ProjectWorkEvent> = raw
         .ref_states
         .into_iter()
@@ -263,7 +268,7 @@ pub fn assemble_fold_inputs(raw: RawWorkInputs) -> Result<WorkFoldInputs, Assemb
             state.kind == KIND_GIT_REPO_STATE
                 && relay_self_key
                     .as_deref()
-                    .is_some_and(|key| state.pubkey == key)
+                    .is_none_or(|key| state.pubkey == key)
         })
         .collect();
     ref_states.sort_by(|a, b| a.order_key().cmp(&b.order_key()));

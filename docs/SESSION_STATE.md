@@ -18851,6 +18851,51 @@ removed from here.
        changed files clean. No Rust, Tauri, desktop or mobile gate was run:
        this lane touched no code, and the Rust fold tests are red by design.
 
+222. **The fold now earns its coverage: positive canonical inclusion, one
+     sentence per branch (built 2026-09-21, `work/lane-222-positive-coverage`,
+     stacked on the oracle `816936645`).** Implements A7.4 against lane 221's
+     oracle; the implementer authored neither the sequences nor the reason
+     table.
+     - **Empty is unproved.** The three waivers the re-check found
+       (`project_work_fold_project.rs:525`, `:594`, `:602`) are gone. Each is
+       now a *positive* check with its own sentence, in the precedence the
+       fixtures pin: the projection must carry the report's assignment
+       (`no-assignment-row`), must include some record at all
+       (`projection-empty`), the signer must be that assignment's assignee
+       (`signer-not-assignee`, tail removed), the report must be included
+       (`not-included`), the criterion must have a binding at all
+       (`criterion-unassigned`) and that binding must name the report's
+       assignment (`assignment-not-bound`). A disposition outside the
+       projection is no longer waived when the projection is empty.
+     - **One branch, one wording.** `wrong_run_or_hash` split four ways
+       (echo-signer, definition-hash, step, none-bound), `dirty_revision` two
+       (before, after); every one names the declaration's plan commit, and
+       none claims a hash mismatch it did not observe.
+     - **The table test is the oracle's, not the code's.** It parses three
+       columns, asserts 31 rows, builds an **exact** matcher from each
+       template's documented placeholder shapes (so two branches of one code
+       cannot both claim a sentence), and asserts **every row is exercised by
+       a sequence**. The "four unexercised codes" allowance is deleted. The
+       30 sequences fold to their expected output under permutation.
+     - **Two reader defects this lane's own earlier work left.** (a) The
+       assembler dropped every kind:30618 row when the relay's self key was
+       unknown, which reported "no relay-signed ref state was supplied" for
+       what is actually "we do not know the relay's key" — the
+       `relay-self-key-absent` sequence is exactly that distinction, and rows
+       now survive an unknown key. (b) `ProjectWorkEvent.content` is
+       `#[serde(default)]`: the conformance checker reads a ref state's
+       content as `content ?? ""` (`check-fixtures.mjs:190`), so a row that
+       omits its empty content is a readable event, not a malformed one.
+     - **The strict TypeScript reader assumed a non-null `proof`.**
+       `tauriProjectWork.ts:178` typed it `ProjectWorkProof` and
+       `ProjectWorkCoverage.tsx:45` dereferenced `.kind`, so an unreadable
+       plan's projected rows — contract since A7.4 — would have thrown in the
+       one view built to show them. The type is now nullable and the row says
+       "proof unknown: the plan could not be read at its commit", with a test
+       over the `plan-unreadable-after-bindings` fixture. The Rust readers
+       (CLI, provider brief, Tauri command) read the *plan's* criteria, where
+       `proof` is not optional, and pin no reason string.
+
 ## 3a. Environment facts that cost real time (do not rediscover)
 
 - **pnpm 11's answer to a stale workspace state is to DELETE `node_modules`,

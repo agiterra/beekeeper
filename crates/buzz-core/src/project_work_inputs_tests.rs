@@ -55,7 +55,7 @@ struct Sequence {
 const KETTLE_PLAN: &str =
     include_str!("../../../conformance/project-work/fixtures/plans/valid/kettle.md");
 
-const SEQUENCES: [Sequence; 18] = [
+const SEQUENCES: [Sequence; 30] = [
     sequence!("happy-path"),
     sequence!("amendment"),
     sequence!("fork"),
@@ -74,6 +74,18 @@ const SEQUENCES: [Sequence; 18] = [
     sequence!("same-action-two-commits"),
     sequence!("same-action-two-commits-reversed"),
     sequence!("plan-unavailable-before-bindings"),
+    sequence!("action-dirty-after"),
+    sequence!("action-no-host-result"),
+    sequence!("action-not-compiled"),
+    sequence!("action-wrong-echo-signer"),
+    sequence!("action-wrong-step"),
+    sequence!("canonical-exclusions"),
+    sequence!("criterion-unassigned-report"),
+    sequence!("plan-unreadable-after-bindings"),
+    sequence!("projection-empty"),
+    sequence!("relay-self-key-absent"),
+    sequence!("report-absent-assignment"),
+    sequence!("review-unresolved-and-unanswered"),
 ];
 
 const CHANNEL: &str = "22222222-3333-4444-8555-666666666666";
@@ -265,9 +277,13 @@ fn assembling_a_raw_event_set_reproduces_every_sequence_input() {
             "{}: authority",
             sequence.name
         );
+        // Compared as events, not as bytes: a ref-state row may omit its
+        // empty `content`, which the checker reads as `""`
+        // (`check-fixtures.mjs:190`), and re-serializing writes it back.
+        let expected_states: Vec<ProjectWorkEvent> =
+            serde_json::from_value(fixture["refStates"].clone()).expect("ref states");
         assert_eq!(
-            serde_json::to_value(&assembled.ref_states).expect("ref states"),
-            fixture["refStates"],
+            assembled.ref_states, expected_states,
             "{}: refStates",
             sequence.name
         );

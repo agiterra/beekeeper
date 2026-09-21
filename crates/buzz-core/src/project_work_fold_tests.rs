@@ -48,7 +48,7 @@ struct Sequence {
 const KETTLE_PLAN: &str =
     include_str!("../../../conformance/project-work/fixtures/plans/valid/kettle.md");
 
-const SEQUENCES: [Sequence; 18] = [
+const SEQUENCES: [Sequence; 30] = [
     sequence!("happy-path"),
     sequence!("amendment"),
     sequence!("fork"),
@@ -67,6 +67,18 @@ const SEQUENCES: [Sequence; 18] = [
     sequence!("same-action-two-commits"),
     sequence!("same-action-two-commits-reversed"),
     sequence!("plan-unavailable-before-bindings"),
+    sequence!("action-dirty-after"),
+    sequence!("action-no-host-result"),
+    sequence!("action-not-compiled"),
+    sequence!("action-wrong-echo-signer"),
+    sequence!("action-wrong-step"),
+    sequence!("canonical-exclusions"),
+    sequence!("criterion-unassigned-report"),
+    sequence!("plan-unreadable-after-bindings"),
+    sequence!("projection-empty"),
+    sequence!("relay-self-key-absent"),
+    sequence!("report-absent-assignment"),
+    sequence!("review-unresolved-and-unanswered"),
 ];
 
 impl Sequence {
@@ -563,10 +575,12 @@ fn a_fork_is_defined_over_maximal_declarations_including_two_roots() {
 #[test]
 fn every_reason_string_matches_the_contracts_table() {
     const README: &str = include_str!("../../../conformance/project-work/README.md");
-    let mut table: BTreeMap<String, String> = BTreeMap::new();
+    // One *branch*, one wording: three columns, and a code with four ways to
+    // fail has four rows (A7.4).
+    let mut table: Vec<(String, String, String)> = Vec::new();
     let mut in_table = false;
     for line in README.lines() {
-        if line.starts_with("| `reasonCode` | `reason` |") {
+        if line.starts_with("| `reasonCode` | branch | `reason` |") {
             in_table = true;
             continue;
         }
@@ -578,38 +592,79 @@ fn every_reason_string_matches_the_contracts_table() {
                 break;
             }
             let cells: Vec<&str> = line.trim_matches('|').split(" | ").collect();
-            if cells.len() == 2 {
-                table.insert(
-                    cells[0].trim().trim_matches('`').to_owned(),
-                    cells[1].trim().trim_matches('`').to_owned(),
-                );
-            }
+            assert_eq!(cells.len(), 3, "a template row has three columns: {line}");
+            table.push((
+                cells[0].trim().trim_matches('`').to_owned(),
+                cells[1].trim().to_owned(),
+                cells[2].trim().trim_matches('`').to_owned(),
+            ));
         }
     }
     assert_eq!(
         table.len(),
-        12,
-        "the contract's reason table should hold twelve codes, found {:?}",
-        table.keys().collect::<Vec<_>>()
+        31,
+        "the contract's reason table should hold 31 branch rows, found {}",
+        table.len()
     );
 
-    // Every template, reduced to the literal fragments around its `<…>`
-    // placeholders: a produced reason must contain each fragment, in order.
+    // A template becomes an exact matcher: every placeholder carries the
+    // shape the contract documents for it, so two branches of one code can
+    // never both claim the same sentence.
     let matches_template = |template: &str, produced: &str| -> bool {
         let mut rest = produced;
-        for fragment in template.split(['<', '>']).step_by(2) {
-            if fragment.is_empty() {
-                continue;
+        let mut parts = template.split(['<', '>']);
+        let mut literal = true;
+        loop {
+            let Some(part) = parts.next() else {
+                break rest.is_empty();
+            };
+            if literal {
+                if !rest.starts_with(part) {
+                    break false;
+                }
+                rest = &rest[part.len()..];
+            } else {
+                // Placeholders: `<id>` is 8 hex and an ellipsis, `<sha>` 12,
+                // `<code>` a signed integer, the rest a slug or a name.
+                let taken = match part {
+                    "id" => rest
+                        .starts_with(|c: char| c.is_ascii_hexdigit())
+                        .then(|| rest.char_indices().nth(8).map(|(at, _)| at))
+                        .flatten()
+                        .filter(|at| rest[*at..].starts_with('\u{2026}'))
+                        .map(|at| at + '\u{2026}'.len_utf8()),
+                    "sha" => rest
+                        .starts_with(|c: char| c.is_ascii_hexdigit())
+                        .then(|| rest.char_indices().nth(12).map(|(at, _)| at))
+                        .flatten()
+                        .filter(|at| rest[*at..].starts_with('\u{2026}'))
+                        .map(|at| at + '\u{2026}'.len_utf8()),
+                    "code" => Some(
+                        rest.find(|c: char| !c.is_ascii_digit() && c != '-')
+                            .unwrap_or(rest.len()),
+                    )
+                    .filter(|at| *at > 0),
+                    // A slug or a repository name: everything up to the next
+                    // literal the template names.
+                    _ => {
+                        let next = parts.clone().next().unwrap_or("");
+                        if next.is_empty() {
+                            Some(rest.len())
+                        } else {
+                            rest.find(next).filter(|at| *at > 0)
+                        }
+                    }
+                };
+                match taken {
+                    Some(at) => rest = &rest[at..],
+                    None => break false,
+                }
             }
-            match rest.find(fragment) {
-                Some(at) => rest = &rest[at + fragment.len()..],
-                None => return false,
-            }
+            literal = !literal;
         }
-        true
     };
 
-    let mut seen: BTreeSet<String> = BTreeSet::new();
+    let mut exercised: BTreeSet<usize> = BTreeSet::new();
     for sequence in &SEQUENCES {
         let projection = fold_work(&sequence.inputs());
         for declaration in &projection.declarations {
@@ -619,34 +674,37 @@ fn every_reason_string_matches_the_contracts_table() {
                 else {
                     continue;
                 };
-                let template = table
-                    .get(code.as_str())
-                    .unwrap_or_else(|| panic!("{} is not in the contract's table", code.as_str()));
-                assert!(
-                    matches_template(template, reason),
-                    "{}: {} printed {reason:?}, which does not follow the contract's {template:?}",
-                    sequence.name,
-                    code.as_str()
-                );
-                seen.insert(code.as_str().to_owned());
+                let row = table.iter().position(|(row_code, _, template)| {
+                    row_code == code.as_str() && matches_template(template, reason)
+                });
+                let Some(row) = row else {
+                    panic!(
+                        "{}: {} printed {reason:?}, which follows no {} row of the contract's \
+                         table",
+                        sequence.name,
+                        code.as_str(),
+                        code.as_str()
+                    )
+                };
+                exercised.insert(row);
             }
         }
     }
-    // The sequences exercise eight of the twelve; the four they do not are
-    // named here so a reader knows the gap is known rather than missed.
-    let unexercised: Vec<&String> = table.keys().filter(|code| !seen.contains(*code)).collect();
-    assert_eq!(
-        unexercised,
-        vec![
-            "action_failed",
-            "dirty_revision",
-            "evidence_unavailable",
-            "plan_unreadable"
-        ]
-        .into_iter()
-        .filter(|code| !seen.contains(*code))
-        .map(|code| table.get_key_value(code).expect("in table").0)
-        .collect::<Vec<_>>(),
-        "the set of codes no sequence exercises changed"
+
+    // Every documented sentence is produced by something. A row nothing
+    // exercises is a promise, not a contract — there is no allowance here.
+    let unexercised: Vec<&str> = table
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| !exercised.contains(index))
+        .map(|(_, (code, branch, _))| format!("{code}/{branch}"))
+        .collect::<Vec<_>>()
+        .iter()
+        .map(String::as_str)
+        .map(|owned| Box::leak(owned.to_owned().into_boxed_str()) as &str)
+        .collect();
+    assert!(
+        unexercised.is_empty(),
+        "no sequence produces these documented sentences: {unexercised:?}"
     );
 }

@@ -334,6 +334,12 @@ pub struct ProjectWorkEvent {
     /// Ordered tags.
     pub tags: Vec<Vec<String>>,
     /// Content JSON, as a string, exactly as on the wire.
+    ///
+    /// Defaulted, because a kind:30618 ref state carries an empty content and
+    /// the conformance checker reads it as `content ?? ""`
+    /// (`check-fixtures.mjs:190`): a row that omits it means the empty
+    /// string, not an unreadable event.
+    #[serde(default)]
     pub content: String,
 }
 

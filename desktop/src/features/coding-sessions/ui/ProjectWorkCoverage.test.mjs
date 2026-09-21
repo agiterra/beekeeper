@@ -142,6 +142,23 @@ test("an unread plan says its criteria are unknown, not open", async () => {
   view.cleanup();
 });
 
+test("a criterion with no readable plan says its proof is unknown", async () => {
+  // A7.4: an unreadable plan still projects the criteria bindings named, with
+  // `proof: null`. The row must say so rather than dereference it.
+  const view = await renderCoverage({
+    response: response("plan-unreadable-after-bindings"),
+  });
+  const rows = view.container.querySelectorAll(
+    "[data-testid='project-work-criterion']",
+  );
+  assert.ok(rows.length > 0, "the unreadable plan still projects its rows");
+  for (const row of rows) {
+    assert.match(row.textContent, /proof unknown: the plan could not be read/);
+    assert.equal(row.getAttribute("data-status"), "unknown");
+  }
+  view.cleanup();
+});
+
 test("at most one next step is offered, and it names what releases it", async () => {
   for (const name of ["fork", "mixed-artifacts", "amendment"]) {
     const view = await renderCoverage({ response: response(name) });

@@ -521,10 +521,9 @@ fn evaluate_review(
             ));
             continue;
         }
-        // (4) A ruling a later one replaced is history, not a current fact.
-        if !inputs.team_projection.included_event_ids.is_empty()
-            && !inputs.team_projection.includes(event_id)
-        {
+        // (4) A ruling a later one replaced is history, not a current fact —
+        // and an empty projection proves no ruling current (A7.4).
+        if !inputs.team_projection.includes(event_id) {
             last = Some(Outcome::open(
                 WorkReasonCode::DispositionNotCanonical,
                 disposition_not_canonical_reason(event_id, report_ref, inputs),
@@ -567,9 +566,18 @@ fn evaluate_review(
 
 /// Why this report is not one the team contract admits, if it is not.
 ///
-/// An empty projection means the caller established none, and this fold does
-/// not invent one: the signer relationship is then unjudged rather than
-/// guessed at, exactly as an empty `goalEvents` leaves staleness unjudged.
+/// **Empty means unproved** (A7.4, re-check R5). Every check here is
+/// *positive*: the projection must carry the assignment, must include the
+/// report, and the criterion must be bound to the assignment the report
+/// answers. An absent projection or an unassigned criterion used to waive the
+/// predicate, which let a report and an approval that named an assignment
+/// nobody holds — both excluded by the team fold — reach `covered`.
+///
+/// Six branches, one sentence each: a wrong signer is one fact, exclusion is
+/// another, and a projection with no records at all is a third. The
+/// precedence is the one the fixtures pin: the assignment row first (without
+/// it nothing names an assignee), then an empty projection, then the signer,
+/// then inclusion, then the criterion's own bindings.
 fn report_not_canonical(
     report_id: &str,
     report_signer: &str,
@@ -578,20 +586,30 @@ fn report_not_canonical(
     inputs: &WorkFoldInputs,
 ) -> Option<String> {
     let projection = &inputs.team_projection;
-    let assignee = projection.assignee(report_assignment);
-    if let Some(assignee) = assignee {
-        if assignee != report_signer {
-            return Some(format!(
-                "report {} is signed by {}, not by assignment {}'s assignee {}, and the team \
-                 projection excludes it",
-                short(report_id),
-                short(report_signer),
-                short(report_assignment),
-                short(assignee)
-            ));
-        }
+    let Some(assignee) = projection.assignee(report_assignment) else {
+        return Some(format!(
+            "report {} answers assignment {}, which the team projection does not carry, so \
+             nothing names its assignee",
+            short(report_id),
+            short(report_assignment)
+        ));
+    };
+    if projection.included_event_ids.is_empty() {
+        return Some(format!(
+            "report {} cannot be shown canonical: the team projection includes no records at all",
+            short(report_id)
+        ));
     }
-    if !projection.included_event_ids.is_empty() && !projection.includes(report_id) {
+    if assignee != report_signer {
+        return Some(format!(
+            "report {} is signed by {}, not by assignment {}'s assignee {}",
+            short(report_id),
+            short(report_signer),
+            short(report_assignment),
+            short(assignee)
+        ));
+    }
+    if !projection.includes(report_id) {
         return Some(format!(
             "report {} is not in the team projection, so nothing here says it answers \
              assignment {}",
@@ -599,7 +617,15 @@ fn report_not_canonical(
             short(report_assignment)
         ));
     }
-    if !assignment_refs.is_empty() && !assignment_refs.iter().any(|id| id == report_assignment) {
+    if assignment_refs.is_empty() {
+        return Some(format!(
+            "report {} answers assignment {}, and no assignment is bound to this criterion \
+             under this declaration",
+            short(report_id),
+            short(report_assignment)
+        ));
+    }
+    if !assignment_refs.iter().any(|id| id == report_assignment) {
         return Some(format!(
             "report {} answers assignment {}, which this criterion is not bound to",
             short(report_id),
@@ -699,9 +725,11 @@ fn evaluate_action(
             last = Some(Outcome::open(
                 WorkReasonCode::WrongRunOrHash,
                 format!(
-                    "host result {} was echoed by {}, not the relay's self key",
+                    "host result {} was echoed by {}, not the relay's self key; the {name} \
+                     definition compiled at this declaration's plan commit {} is unproved",
                     short(event_id),
-                    short(echo_signer)
+                    short(echo_signer),
+                    short_commit(&plan_ref.commit)
                 ),
             ));
             continue;
@@ -709,9 +737,10 @@ fn evaluate_action(
         if definition_hash != &definition.definition_hash || action_name != name {
             last = Some(Outcome::open(
                 WorkReasonCode::WrongRunOrHash,
-                // One code path, one wording: the expected definition is
-                // only meaningful with the plan commit it was compiled at,
-                // which is the whole of finding 7 (A6 ruling).
+                // Each branch says what actually failed and then names the
+                // commit whose definition stays unproved (A6, narrowed by
+                // A7.4): naming the plan commit never licenses claiming a
+                // hash mismatch nobody observed.
                 format!(
                     "host result {} ran definition hash {}, not the {name} definition compiled \
                      at this declaration's plan commit {} ({})",
@@ -727,8 +756,10 @@ fn evaluate_action(
             last = Some(Outcome::open(
                 WorkReasonCode::WrongRunOrHash,
                 format!(
-                    "host result {} ran step {step_id}, not {step}",
-                    short(event_id)
+                    "host result {} ran step {step_id}, not {step} of the {name} definition \
+                     compiled at this declaration's plan commit {}",
+                    short(event_id),
+                    short_commit(&plan_ref.commit)
                 ),
             ));
             continue;
@@ -777,7 +808,11 @@ fn evaluate_action(
     last.unwrap_or_else(|| {
         Outcome::open(
             WorkReasonCode::WrongRunOrHash,
-            format!("no host result for {name}/{step} is bound"),
+            format!(
+                "no host result for {name}/{step} of the definition compiled at this \
+                 declaration's plan commit {} is bound",
+                short_commit(&plan_ref.commit)
+            ),
         )
     })
 }

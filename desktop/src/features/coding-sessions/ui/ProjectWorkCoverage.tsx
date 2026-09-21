@@ -22,6 +22,21 @@ const STATUS_CLASS: Record<string, string> = {
   unknown: "text-muted-foreground",
 };
 
+/**
+ * What proves this criterion — or that we cannot say.
+ *
+ * `proof` is `null` exactly when the plan blob was unreadable at its pinned
+ * commit, and the criterion is then `unknown` with its own reason. Printing
+ * "proved by undefined" (or throwing) would turn an honest gap into a lie
+ * about the contract.
+ */
+function proofLabel(proof: ProjectWorkCriterion["proof"]): string {
+  if (!proof) return "proof unknown: the plan could not be read at its commit";
+  return proof.kind === "action"
+    ? `proved by action ${proof.name} · step ${proof.step}`
+    : `proved by ${proof.kind}`;
+}
+
 function Criterion({
   criterion,
   resolveActorName,
@@ -42,9 +57,7 @@ function Criterion({
           {criterionStatusLabel(criterion.status)}
         </span>
         <span className="text-2xs text-muted-foreground">
-          {criterion.proof.kind === "action"
-            ? `proved by action ${criterion.proof.name} · step ${criterion.proof.step}`
-            : `proved by ${criterion.proof.kind}`}
+          {proofLabel(criterion.proof)}
         </span>
       </div>
       {criterion.reason ? (

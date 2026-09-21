@@ -175,7 +175,12 @@ export type ProjectWorkEvidenceRef = {
 
 export type ProjectWorkCriterion = {
   criterionId: string;
-  proof: ProjectWorkProof;
+  /**
+   * The proof form the plan requires — `null` when the plan blob could not be
+   * read at its pinned commit, which the contract makes a projected row
+   * rather than an omission (A7.4). A reader must not dereference it.
+   */
+  proof: ProjectWorkProof | null;
   status: ProjectWorkCriterionStatus;
   assignmentRefs: readonly string[];
   evidence: readonly ProjectWorkEvidenceRef[];
