@@ -14,32 +14,108 @@ import type { ProjectContainer } from "../hooks";
 export type ProjectAgentRow = {
   key: string;
   label: string;
+  /** The agent's role, when this computer knows it. */
+  role: string | null;
+  /**
+   * `"published"` — a curated ref carried on the project head, readable by
+   * anyone. `"local"` — a managed agent on THIS computer associated with
+   * this project, which a private project never publishes.
+   */
+  source: "published" | "local";
+};
+
+/** The local evidence of project membership: one managed agent record. */
+export type ProjectLocalAgent = {
+  pubkey: string;
+  name: string;
+  homeRole?: string | null;
+  projectRef?: string | null;
 };
 
 /**
- * Resolves a project's curated agent refs against the locally-known personas
- * and managed agents; unresolved refs fall back to their dtag so a project
- * curated on another device still shows every member.
+ * Every agent this screen can honestly say belongs to the project: the
+ * curated refs on the project head, plus this computer's own managed agents
+ * associated with it.
+ *
+ * # The finding this exists for
+ *
+ * Ledger 207(3). On 2026-09-20 the Overview of "Kettle Smoke" printed
+ * "Agents 0 — No agents in this project" directly under a Members panel
+ * listing that project's eight agents as collaborators. This function read
+ * `project.agentAddrs` alone — the *published* curation — and a private
+ * project publishes none ("a private project publishes none", the founder
+ * form's own words), so the count was structurally zero while the local
+ * store held eight. Two panels on one screen contradicting each other is a
+ * bug of the same severity as a crash.
+ *
+ * Local rows are matched on `projectRef`, the only local evidence of
+ * membership (`shared/lib/projectAgentAssociation.ts`): a matching role, an
+ * installed pack or a past seat is not membership and is not counted here.
  */
 export function projectAgentRows(
   project: ProjectContainer,
   personasById: ReadonlyMap<string, string>,
   managedAgentsByPubkey: ReadonlyMap<string, string>,
+  localAgents: readonly ProjectLocalAgent[] = [],
 ): ProjectAgentRow[] {
   const rows: ProjectAgentRow[] = [];
+  const seen = new Set<string>();
   for (const addr of project.agentAddrs) {
     const ref = parseMemberRef(addr);
     if (!ref) continue;
     let label: string | undefined;
     if (ref.kind === KIND_MANAGED_AGENT) {
       label = managedAgentsByPubkey.get(ref.dtag.toLowerCase());
+      seen.add(ref.dtag.toLowerCase());
     } else if (ref.kind === KIND_PERSONA) {
       label = personasById.get(ref.dtag);
     }
-    rows.push({ key: addr, label: label ?? ref.dtag });
+    rows.push({
+      key: addr,
+      label: label ?? ref.dtag,
+      role: null,
+      source: "published",
+    });
+  }
+  const address = project.address?.toLowerCase() ?? null;
+  if (address) {
+    for (const agent of localAgents) {
+      if (agent.projectRef?.toLowerCase() !== address) continue;
+      const pubkey = agent.pubkey.toLowerCase();
+      if (seen.has(pubkey)) continue;
+      seen.add(pubkey);
+      rows.push({
+        key: `local:${pubkey}`,
+        label: agent.name,
+        role: agent.homeRole?.trim() || null,
+        source: "local",
+      });
+    }
   }
   return rows;
 }
+
+/**
+ * What the Agents card's number is a number OF. A card whose rows are all
+ * local says so rather than claiming to count the project (ledger 207(3)).
+ */
+export function projectAgentCountLabel(
+  rows: readonly ProjectAgentRow[],
+): string {
+  if (rows.length === 0) return "0";
+  const local = rows.filter((row) => row.source === "local").length;
+  if (local === rows.length) return `${rows.length} on this computer`;
+  if (local === 0) return `${rows.length}`;
+  return `${rows.length} · ${local} on this computer`;
+}
+
+/**
+ * What the card says when it has no rows at all — never "No agents in this
+ * project", which asserts a fact about the project that a screen reading
+ * only published curation and this computer's own store cannot establish.
+ */
+export const PROJECT_AGENTS_EMPTY_HINT =
+  "No agents for this project on this computer, and none published on the project.";
 
 /**
  * One row in a project's sidebar child list; the type picks the icon. The

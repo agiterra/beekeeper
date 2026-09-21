@@ -53,7 +53,11 @@ import {
   makeLocalGeneral,
 } from "../lib/projectContainerModel";
 import { attachableProjectRepos } from "../lib/attachableRepos";
-import { projectAgentRows } from "../lib/projectChildren";
+import {
+  PROJECT_AGENTS_EMPTY_HINT,
+  projectAgentCountLabel,
+  projectAgentRows,
+} from "../lib/projectChildren";
 import { useProjectRosterQuery } from "../lib/projectMembers";
 import { useProjectCapabilities } from "../lib/projectPermissions";
 import { compareProjectCodingSessionEntries } from "../lib/projectCodingSessionShelf";
@@ -70,6 +74,7 @@ import { ProjectSettingsDialog } from "./ProjectSettingsDialog";
 import { LinkProjectRepoDialog } from "./LinkProjectRepoDialog";
 import { MoveToProjectMenu } from "./MoveToProjectMenu";
 import { ProjectMembersCard } from "./ProjectMembersCard";
+import { ProjectSetupCard } from "./ProjectSetupCard";
 import { ProjectPageTabs, type ProjectPageTab } from "./ProjectPageTabs";
 import { SectionCard, EmptyHint } from "./SectionCard";
 import { ProjectSectionRepoAddMenu } from "./ProjectSectionRepoAddMenu";
@@ -265,7 +270,12 @@ export function ProjectContainerScreen({
         ...(isGeneral ? workflowBuckets.unclaimed : []),
       ]
     : [];
-  const agents = projectAgentRows(project, personasById, managedAgentsByPubkey);
+  const agents = projectAgentRows(
+    project,
+    personasById,
+    managedAgentsByPubkey,
+    managedAgents.data ?? [],
+  );
   const actionIconButton = (
     label: string,
     testid: string,
@@ -411,6 +421,11 @@ export function ProjectContainerScreen({
           </div>
         ) : (
           <div className="flex flex-col gap-4">
+            {/* What creating this project actually did, first on the screen
+              it lands on and kept until dismissed — the toast it used to be
+              vanished before it could be read (ledger 207(5)). */}
+            {!isFallback ? <ProjectSetupCard project={project} /> : null}
+
             {/* The local General placeholder has no coordinate to manage a
               roster against — the card appears once the real head exists. */}
             {!isFallback ? <ProjectMembersCard project={project} /> : null}
@@ -492,13 +507,20 @@ export function ProjectContainerScreen({
               </FeatureGate>
             ) : null}
 
+            {/* Counts this computer's agents associated with the project as
+              well as the published curation, and says which — a private
+              project publishes no agent records, so the published set alone
+              was structurally zero under a Members panel listing eight
+              (ledger 207(3)). */}
             <SectionCard
               count={agents.length}
+              countLabel={projectAgentCountLabel(agents)}
               icon={<Bot className="size-4" />}
+              testId="project-agents-card"
               title="Agents"
             >
               {agents.length === 0 ? (
-                <EmptyHint>No agents in this project.</EmptyHint>
+                <EmptyHint>{PROJECT_AGENTS_EMPTY_HINT}</EmptyHint>
               ) : (
                 <ul className="flex flex-col gap-1">
                   {agents.map((agent) => (
@@ -510,6 +532,11 @@ export function ProjectContainerScreen({
                       >
                         <Bot className="size-4 shrink-0 text-muted-foreground" />
                         <span className="truncate">{agent.label}</span>
+                        {agent.role ? (
+                          <span className="shrink-0 text-2xs text-muted-foreground">
+                            {agent.role}
+                          </span>
+                        ) : null}
                       </Button>
                     </li>
                   ))}
