@@ -135,10 +135,30 @@ pub(super) fn project_declaration(
 
     let artifact_commits = covering_artifacts(&criteria);
     let candidate_artifact = candidate_artifact(plan.as_ref(), &criteria, &artifact_commits);
+    // One wording for the criterion's own reason (A6), and still two facts
+    // for the declaration's sentence: a run of **another commit's**
+    // definition of the same action is not the same event as a run of an
+    // unrelated hash, and `same-action-two-commits` vs `action-hash-mismatch`
+    // pin both. The discriminator lives here, where the inputs are, instead
+    // of being read back out of a message.
+    let ran_other_definition = criteria.iter().any(|criterion| {
+        criterion.reason_code == Some(WorkReasonCode::WrongRunOrHash)
+            && criterion.evidence.iter().any(|reference| {
+                matches!(
+                    inputs.evidence.get(&reference.event_id),
+                    Some(WorkEvidenceFact::ActionResult {
+                        action_name,
+                        definition_hash,
+                        ..
+                    }) if ran_another_commits_definition(action_name, definition_hash, inputs)
+                )
+            })
+    });
     let (coverage_complete, coverage_reason_code, coverage_reason) = coverage(
         state,
         &body.plan_ref,
         plan_resolved,
+        ran_other_definition,
         &criteria,
         heads.len(),
         &artifact_commits,
@@ -200,23 +220,18 @@ fn candidate_artifact(
             .iter()
             .any(|criterion| criterion.proof == PlanProof::GitRef)
     });
+    // When the plan has a `git-ref` criterion, only that criterion's evidence
+    // says which commit was delivered: the candidate is its commit, and
+    // `null` until it is covered (A6 ruling — the README wins; nothing else
+    // may nominate a delivered revision nobody observed).
     if has_git_ref {
-        // A **covered** git-ref criterion is the delivered revision, and it
-        // wins. While it is still open, the candidate falls through to the
-        // single commit the covering evidence shares — a fact about what has
-        // been proven so far, which is what the fixtures state
-        // (`same-action-two-commits`), and `coverageComplete` stays false
-        // until delivery itself is observed.
-        if let Some(delivered) = criteria
+        return criteria
             .iter()
             .find(|criterion| {
                 criterion.proof.as_ref() == Some(&PlanProof::GitRef)
                     && criterion.status == WorkCriterionStatus::Covered
             })
-            .and_then(|criterion| criterion.artifact_commit.clone())
-        {
-            return Some(delivered);
-        }
+            .and_then(|criterion| criterion.artifact_commit.clone());
     }
     match artifact_commits {
         [only] => Some(only.clone()),
@@ -694,28 +709,17 @@ fn evaluate_action(
         if definition_hash != &definition.definition_hash || action_name != name {
             last = Some(Outcome::open(
                 WorkReasonCode::WrongRunOrHash,
-                // Naming the commit earns its words exactly when the run
-                // *did* execute a definition of this action — at another
-                // plan commit. Then the whole point is which commit's
-                // definition was expected; otherwise it is noise.
-                if ran_another_commits_definition(name, definition_hash, inputs) {
-                    format!(
-                        "host result {} ran definition hash {}, not the {name} definition \
-                         compiled at this declaration's plan commit {} ({})",
-                        short(event_id),
-                        short(definition_hash),
-                        short_commit(&plan_ref.commit),
-                        short(&definition.definition_hash)
-                    )
-                } else {
-                    format!(
-                        "host result {} ran definition hash {}, not the {name} definition \
-                         compiled at the plan commit ({})",
-                        short(event_id),
-                        short(definition_hash),
-                        short(&definition.definition_hash)
-                    )
-                },
+                // One code path, one wording: the expected definition is
+                // only meaningful with the plan commit it was compiled at,
+                // which is the whole of finding 7 (A6 ruling).
+                format!(
+                    "host result {} ran definition hash {}, not the {name} definition compiled \
+                     at this declaration's plan commit {} ({})",
+                    short(event_id),
+                    short(definition_hash),
+                    short_commit(&plan_ref.commit),
+                    short(&definition.definition_hash)
+                ),
             ));
             continue;
         }
@@ -781,9 +785,9 @@ fn evaluate_action(
 /// Whether the hash a run executed is this action's definition at **another**
 /// plan commit.
 ///
-/// The disclosure differs because the fact differs: a run of the same action
-/// at a superseded commit is a provenance mismatch and the reader needs the
-/// commit; an unrelated hash is simply the wrong definition.
+/// The criterion's reason says one thing either way (A6); the declaration's
+/// sentence still distinguishes a provenance mismatch from an unrelated
+/// definition, because they are different facts about what happened.
 fn ran_another_commits_definition(name: &str, hash: &str, inputs: &WorkFoldInputs) -> bool {
     let suffix = format!("#{name}");
     inputs

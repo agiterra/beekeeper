@@ -15,6 +15,9 @@ pub(super) fn coverage(
     state: WorkDeclarationState,
     plan_ref: &ProjectWorkPlanRef,
     plan_resolved: bool,
+    // Whether a failing run executed **another commit's** definition of the
+    // same action, which is a different fact from an unrelated hash.
+    ran_other_definition: bool,
     criteria: &[WorkCriterionProjection],
     competing_heads: usize,
     artifact_commits: &[String],
@@ -102,7 +105,7 @@ pub(super) fn coverage(
             Some(format!(
                 "{covered} of {total} criteria {} covered under this declaration: {}",
                 if covered == 1 { "is" } else { "are" },
-                not_covered_sentence(criteria)
+                not_covered_sentence(criteria, ran_other_definition)
             )),
         );
     }
@@ -112,7 +115,7 @@ pub(super) fn coverage(
         Some(format!(
             "{} of {total} criteria are not covered under this declaration: {}",
             not_covered.len(),
-            not_covered_sentence(criteria)
+            not_covered_sentence(criteria, ran_other_definition)
         )),
     )
 }
@@ -145,7 +148,10 @@ fn mixed_artifacts_reason(artifact_commits: &[String], candidate: Option<&str>) 
 /// predicate or could not be resolved, criteria that are `stale`, and
 /// criteria nothing has been bound to. Each group names its criteria when
 /// there are at most three of them, and counts them otherwise.
-fn not_covered_sentence(criteria: &[WorkCriterionProjection]) -> String {
+fn not_covered_sentence(
+    criteria: &[WorkCriterionProjection],
+    ran_other_definition: bool,
+) -> String {
     let failed_criteria: Vec<&WorkCriterionProjection> = criteria
         .iter()
         .filter(|criterion| {
@@ -155,7 +161,7 @@ fn not_covered_sentence(criteria: &[WorkCriterionProjection]) -> String {
             ) && criterion.reason.is_some()
         })
         .collect();
-    let failed_kind = failed_kind(&failed_criteria);
+    let failed_kind = failed_kind(&failed_criteria, ran_other_definition);
     let failed: Vec<String> = failed_criteria
         .iter()
         .map(|criterion| criterion.criterion_id.clone())
@@ -218,30 +224,20 @@ fn not_covered_sentence(criteria: &[WorkCriterionProjection]) -> String {
 /// predicate: evidence the team projection excludes, an approval that was
 /// replaced, a run of another definition. Saying "failed its predicate"
 /// about any of them would hide which of those three it is.
-fn failed_kind(failed: &[&WorkCriterionProjection]) -> Option<WorkReasonCode> {
+fn failed_kind(
+    failed: &[&WorkCriterionProjection],
+    ran_other_definition: bool,
+) -> Option<WorkReasonCode> {
     let first = failed.first()?.reason_code?;
     let shared = failed
         .iter()
         .all(|criterion| criterion.reason_code == Some(first));
-    // `wrong_run_or_hash` covers two different facts, and the fixtures
-    // phrase them differently: a run of **another commit's** definition of
-    // this action ("a run of another definition", `same-action-two-commits`)
-    // and a run of an unrelated hash ("evidence that failed its predicate",
-    // `action-hash-mismatch`). The per-criterion reason already distinguishes
-    // them, and this reads that distinction rather than inventing a second
-    // reason code the contract does not have.
-    let another_definition = failed.iter().all(|criterion| {
-        criterion
-            .reason
-            .as_deref()
-            .is_some_and(|reason| reason.contains("this declaration's plan commit"))
-    });
     matches!(
         first,
         WorkReasonCode::ReportNotCanonical | WorkReasonCode::DispositionNotCanonical
     )
     .then_some(first)
-    .or((first == WorkReasonCode::WrongRunOrHash && another_definition).then_some(first))
+    .or((first == WorkReasonCode::WrongRunOrHash && ran_other_definition).then_some(first))
     .filter(|_| shared)
 }
 

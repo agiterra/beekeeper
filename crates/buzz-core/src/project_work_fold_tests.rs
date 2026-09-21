@@ -552,3 +552,101 @@ fn a_fork_is_defined_over_maximal_declarations_including_two_roots() {
         .iter()
         .all(|declaration| declaration.state == WorkDeclarationState::Conflict));
 }
+
+/// Every reason string the fold prints comes from the README's table.
+///
+/// A6 § "The exact reason strings" fixes one wording per code so two
+/// implementations say the same thing about the same fact. This loads that
+/// table out of the contract itself and checks each code's template against
+/// the strings the sequences actually produced: the table and the fold cannot
+/// drift apart without this failing.
+#[test]
+fn every_reason_string_matches_the_contracts_table() {
+    const README: &str = include_str!("../../../conformance/project-work/README.md");
+    let mut table: BTreeMap<String, String> = BTreeMap::new();
+    let mut in_table = false;
+    for line in README.lines() {
+        if line.starts_with("| `reasonCode` | `reason` |") {
+            in_table = true;
+            continue;
+        }
+        if in_table {
+            if !line.starts_with("| `") {
+                if line.starts_with('|') {
+                    continue; // the header rule
+                }
+                break;
+            }
+            let cells: Vec<&str> = line.trim_matches('|').split(" | ").collect();
+            if cells.len() == 2 {
+                table.insert(
+                    cells[0].trim().trim_matches('`').to_owned(),
+                    cells[1].trim().trim_matches('`').to_owned(),
+                );
+            }
+        }
+    }
+    assert_eq!(
+        table.len(),
+        12,
+        "the contract's reason table should hold twelve codes, found {:?}",
+        table.keys().collect::<Vec<_>>()
+    );
+
+    // Every template, reduced to the literal fragments around its `<…>`
+    // placeholders: a produced reason must contain each fragment, in order.
+    let matches_template = |template: &str, produced: &str| -> bool {
+        let mut rest = produced;
+        for fragment in template.split(|c| c == '<' || c == '>').step_by(2) {
+            if fragment.is_empty() {
+                continue;
+            }
+            match rest.find(fragment) {
+                Some(at) => rest = &rest[at + fragment.len()..],
+                None => return false,
+            }
+        }
+        true
+    };
+
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    for sequence in &SEQUENCES {
+        let projection = fold_work(&sequence.inputs());
+        for declaration in &projection.declarations {
+            for criterion in &declaration.criteria {
+                let (Some(code), Some(reason)) =
+                    (criterion.reason_code, criterion.reason.as_deref())
+                else {
+                    continue;
+                };
+                let template = table
+                    .get(code.as_str())
+                    .unwrap_or_else(|| panic!("{} is not in the contract's table", code.as_str()));
+                assert!(
+                    matches_template(template, reason),
+                    "{}: {} printed {reason:?}, which does not follow the contract's {template:?}",
+                    sequence.name,
+                    code.as_str()
+                );
+                seen.insert(code.as_str().to_owned());
+            }
+        }
+    }
+    // The sequences exercise eight of the twelve; the four they do not are
+    // named here so a reader knows the gap is known rather than missed.
+    let unexercised: Vec<&String> = table.keys().filter(|code| !seen.contains(*code)).collect();
+    assert_eq!(
+        unexercised,
+        vec![
+            "action_failed",
+            "dirty_revision",
+            "evidence_unavailable",
+            "plan_unreadable"
+        ]
+        .into_iter()
+        .filter(|code| !seen.contains(*code))
+        .map(|code| table.get_key_value(code).expect("in table").0)
+        .collect::<Vec<_>>(),
+        "the set of codes no sequence exercises changed"
+    );
+}

@@ -17656,18 +17656,19 @@ removed from here.
        `--example` body carries `assignmentRef`. The refusal is **behind the
        key gate**: a keyless run answers `auth` first, which is why the test
        supplies one.
-     - **Two contract disagreements, reported not resolved.** (1)
-       `action-hash-mismatch` keeps the old wording "compiled at the plan
-       commit" while `same-action-two-commits` states "compiled at this
-       declaration's plan commit <commit>"; both are the same code path, so
-       the implementation prints the commit-naming form only when the run
-       executed *another commit's* definition of that action, which is the
-       only rule that satisfies both. (2) `same-action-two-commits` expects
-       `candidateArtifact` at the single covering commit while its `git-ref`
-       criterion is still open, which contradicts the README sentence "it is
-       `null` … when the plan has a `git-ref` criterion that is not yet
-       covered"; the fixtures won, `coverageComplete` is unaffected, and the
-       README sentence needs an amendment.
+     - **Both contract disagreements were ruled in A6** (`39f659c79`), and
+       this lane follows the ruling. (1) `wrong_run_or_hash` **always** names
+       the declaration's plan commit; the conditional wording is gone, and
+       the README's new table of the exact reason string for all twelve codes
+       is now loaded by `every_reason_string_matches_the_contracts_table`,
+       which checks each produced reason against its template and names the
+       four codes no sequence exercises. (2) **The README wins** on
+       `candidateArtifact`: `null` whenever the plan has a `git-ref`
+       criterion that is not yet covered, and the two `same-action-*`
+       expected folds were corrected to match. The declaration-level sentence
+       still distinguishes a run of *another commit's* definition from a run
+       of an unrelated hash, but that discriminator now travels as a computed
+       fact from where the inputs are, not read back out of a message.
      - **One test could not survive A5 in its old form.**
        `project_work_inputs::tests::folding_an_assembled_input_matches_every_expected_fold`
        rebuilt each sequence's `inputs.json` from a raw event set. Canonical
