@@ -17279,6 +17279,170 @@ removed from here.
          hire ids, and require the seven RPG hire references to be distinct
          so one hire cannot be matched twice.
 
+207. **Five honesty defects on the founder's path, seen live on the installed
+     `a5be5c1a5` bundle creating "Kettle Smoke" and founding its first team
+     session (2026-09-20, lane 207, `work/lane-207-founder-honesty`; built,
+     gated, not landed and not re-exercised live).** Each is a surface saying
+     something false or hiding something true — crash-severity under
+     `AGENTS.md` § Working agreements.
+     - **(1) Readiness said the project had no model registry while it had
+       one.** Live: the founder's readiness panel printed `REGISTRY_UNREADABLE
+       · This project pins no provider or model targets (file-missing:
+       /Users/brian/Projects/Kettle Smoke/kettle-smoke/team/model-registry.yaml
+       …) Remedy: Add team/model-registry.yaml to the checkout`, while lane
+       180's seed had written `model-registry.yaml` at the root of
+       `kettle-smoke-beekeeper-agents` and a routed hire resolved from it
+       minutes later. **Cause:** readiness read exactly one place —
+       `collect_runtimes_and_registry` called
+       `read_allowlisted_project_file(checkout, MODEL_REGISTRY_RELATIVE_PATH)`
+       (`desktop/src-tauri/src/commands/team_readiness.rs:412-417` at
+       `a5be5c1a5`) and never adopted lane 180's resolver
+       (`crates/buzz-core/src/model_registry_source.rs:213`,
+       `desktop/src-tauri/src/commands/model_registry.rs:110,145,178`), whose
+       order is agents repository → checkout. The remedy sentence was a
+       constant naming the checkout, so the advice was wrong for every project
+       created under spec § 4.11. **Fix:**
+       `desktop/src-tauri/src/commands/team_readiness_registry.rs` calls
+       `host_model_registry_candidates` + `resolve_host_model_registry` — the
+       same functions the hire host calls — and records which copy answered;
+       `TeamReadinessRegistryCoverage` gained `origin`, `originLabel`, `path`
+       and `lookedIn`, the coverage fact carries "(read from the project's
+       agents repository: <path>)", and the absence names both files with a
+       remedy chosen from what this computer records: the agents repository
+       when one is recorded, `team/model-registry.yaml` when only a checkout
+       is, "Finish repository setup" when neither. `gather` now reads the
+       workdir store once and passes it to both the checkout rung and the
+       registry rungs, so the two cannot disagree. **Tests:**
+       `team_readiness_registry_tests.rs` — the agents-repository copy is
+       read and named; the checkout is still the second rung and the skipped
+       first rung stays in `lookedIn`; an absent registry names both places
+       and does **not** give checkout advice to a project with an agents
+       repository; the checkout-only and no-records remedies. The two
+       ledger-137 state cases moved here beside them.
+     - **(2) "Use roles" defaulted to off on a project that has a role
+       source.** Live: the founding form for the brand-new "Kettle Smoke"
+       opened with Use roles unticked although its agents repository had just
+       been seeded with eight roles; off, the session runs with no role
+       instructions, the readiness panel is not rendered at all
+       (`NewCodingSessionRolesField.tsx` gates the whole card on `useRoles`),
+       and the founder signs no project-action delegation (ledger 186). On an
+       older project the same day it opened ticked — which was operator memory
+       of a previous tick, not a different rule. **Cause:** a constant —
+       `const [useRoles, setUseRoles] = React.useState(false)`
+       (`desktop/src/features/coding-sessions/ui/founded/useCodingSessionFoundedSetup.ts:415`
+       at `a5be5c1a5`); nothing about the project was consulted. **Fix:** the
+       readiness response now carries the project's own fact,
+       `team.packSourcePresent` (`team_readiness.rs`, from
+       `ProjectPackSourceProbe`: a source this computer cannot stage from is
+       still a source the project names), and
+       `codingSessionFoundedUseRoles.ts` resolves the box as *the person's
+       choice when they have made one, else the project's fact*. Unticking on
+       a project that has roles prints one sentence saying what it costs
+       (no role instructions, no readiness, no action delegation);
+       lane 186's bench default in that hook is untouched. **Tests:**
+       `codingSessionFoundedUseRoles.test.mjs` — on with a source, off
+       without, off (never a guess) when unread, the person's choice winning
+       both ways, and the warning only where roles-off is not simply the
+       truth.
+     - **(3) The Overview said "Agents 0 — No agents in this project" under a
+       Members panel listing eight.** Live: both panels on one screen, at the
+       same moment, for "Kettle Smoke". **Cause:** `projectAgentRows` read
+       `project.agentAddrs` alone
+       (`desktop/src/features/projects-container/lib/projectChildren.ts:24-40`
+       at `a5be5c1a5`) — the *published* curation on the project head — and a
+       private project publishes no agent records ("a private project
+       publishes none", the founder form's own words), so the count was
+       structurally zero while the local store held eight. **Fix:**
+       `projectAgentRows` takes this computer's managed agents and includes
+       those whose `projectRef` equals the project coordinate (the only local
+       evidence of membership; a matching role or a past seat is not),
+       deduplicated against the published refs by pubkey; `SectionCard` gained
+       `countLabel` and the card says the scope — "8 on this computer", or
+       "N · M on this computer" when mixed; the empty state is
+       `PROJECT_AGENTS_EMPTY_HINT`, which never asserts the project has no
+       agents. Rows show the role. **Tests:**
+       `projectAgentRows.test.mjs` — five cases including the count label and
+       a guard that the old sentence is gone.
+     - **(4) Members showed the project's agents as bare hex keys.** Live:
+       `5f6c1173…4913 · Collaborator`, eight times, on a host that knows every
+       one of them as a managed agent with a name and a primary role
+       ("Verifier 2 · verifier"). **Cause:** the row's name came from
+       published profiles only — `profiles?.[pubkey]?.displayName?.trim() ||
+       truncatePubkey(pubkey)`
+       (`desktop/src/features/projects-container/ui/ProjectMembersManager.tsx:129-132`
+       at `a5be5c1a5`) — and a private project's agents publish none; the
+       `Agent` badge hung off `profile?.isAgent`, so it never appeared either.
+       **Fix:** `projectMemberIdentity.ts` resolves one roster row from the
+       profile *and* this computer's managed-agent record: name, role as
+       secondary text, hex kept beside it, `Agent` badge from the local record
+       as well as the profile. A key nothing knows is `kind: "unknown"` and
+       renders as a key — **never called a human** (the standing rule from the
+       people-setup slice). **Tests:** `projectMemberIdentity.test.mjs` — the
+       managed agent's name and role; a published name winning the line while
+       the local record still supplies the role; agent-by-profile; the
+       unknown key; an ordinary profile staying a profile; a blank local name
+       falling back to the key rather than to a guess.
+     - **(5) The project-creation result flashed past.** Live: creation
+       announces two repositories, seeds both, sets the role source, installs
+       the agents, clones and records the checkout and adds the roster — seven
+       things reported in one `sonner` toast that vanished before the operator
+       could read or screenshot it. A result you cannot read is a result you
+       cannot trust. **Cause:** `toastCreateProjectOutcome`
+       (`desktop/src/features/projects-container/lib/toastCreateProjectOutcome.ts`
+       at `a5be5c1a5`) passed no options, so every call took sonner's default
+       duration, and the outcome was not written down anywhere. **Fix:** the
+       toast is `duration: Number.POSITIVE_INFINITY` (dismissed by a person,
+       never a timer) and the same outcome is stored by project coordinate
+       (`projectSetupOutcome.ts`, localStorage, decoded back through
+       `decodeProjectAgentsInitResult` so an older shape is dropped rather
+       than half-rendered). `ProjectSetupCard` is the first card on the new
+       project's Overview until dismissed: eight step rows, **failures first**,
+       each row's detail the host's own field or sentence (reusing
+       `describeCheckoutOutcome` / `describeCodeSeedOutcome` /
+       `describeRosterOutcome`), and **Finish repository setup** — the
+       existing `ProjectAgentsInitAction`, not a second path — whenever
+       anything is missing. A step the host said nothing about reads "not
+       set"/"not announced", never as done. It renders nothing for a project
+       whose creation this computer never recorded. **Tests:**
+       `projectSetupOutcome.test.mjs` — the complete eight-row case, failures
+       sorting first with the host's words intact, a thrown command as one
+       failed row, and an unreported step reading as not done.
+     - **Observed, not fixed (a): the agents were named "Lead 2", "Builder
+       2"…** because another project on this computer already held "Lead" and
+       "Builder". `mint_agent_name`
+       (`desktop/src-tauri/src/managed_agents/crew_roles_project.rs:23-43`)
+       tests the desired display name against **every** managed agent record
+       on the host regardless of team or project, and appends ` 2`, ` 3`, … on
+       a collision; `install_default_agents` passes the agents-repository
+       manifest's names straight into it
+       (`default_agents.rs:91-102,150-160`). The names are honest and unique;
+       whether a project's team should be allowed to reuse "Lead" — the
+       namespace being per project rather than per host — is a product call
+       nobody has made.
+     - **Observed, not fixed (b): the default checkout folder contained a
+       space** — `/Users/brian/Projects/Kettle Smoke/kettle-smoke`. The row
+       prefills `<parent>/<slug>` where the parent is the community's
+       `reposDir` or the host default
+       (`useDefaultRepositoryFolder.ts:47-56`) and the leaf is the slug
+       (`ProjectCheckoutFolderField.tsx:48`, `projectCheckoutFolder.ts:27-38`);
+       nothing along that path rejects, escapes or normalizes a space, and
+       `canonicalize_repos_root`
+       (`desktop/src-tauri/src/commands/project_repo_paths.rs:213-222`) asks
+       only that it be absolute and an accessible directory. It caused no
+       failure that night — the clone, the checkout record and the hire all
+       worked — so this is recorded as a standing exposure (every git,
+       worktree and seat command composed over that path), not a defect.
+     - **Gates**, bare, after committing, on this lane's worktree: `cargo fmt
+       --check`, `cargo clippy --all-targets -D warnings`, `cargo test`
+       (3499 + 7 + 3 passed, 0 failed), `just desktop-check`, `pnpm test`
+       (9756 passed, 0 failed, 21 of them new here), `tsc --noEmit`, `just file-size-check`, `just
+       current-state-check`. `team_readiness_tests.rs` was over the ratchet
+       once the fixture landed; the two registry cases moved to the new
+       module rather than the limit moving.
+     - **Owed.** Nothing here was re-exercised on an installed bundle: the
+       five fixes are pinned by unit and mock-level tests only. The live
+       re-run is creating a second project and founding its first session on
+       a build carrying this lane.
 
 ## 3a. Environment facts that cost real time (do not rediscover)
 
