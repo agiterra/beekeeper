@@ -17457,6 +17457,46 @@ removed from here.
        re-run is creating a second project and founding its first session on
        a build carrying this lane.
 
+208. **A flaky mobile test failed the pre-push floor twice (2026-09-20
+     ~19:25Z and 2026-09-21 ~00:35Z), and the failing test's name was
+     unreadable in the floor's own capture.**
+     `mobile/test/features/terminals/state/shell_observer_provider_test.dart:241`
+     ("no frame within the handshake reads 'Not streaming'; the keepalive
+     keeps watching") awaited a real `Future.delayed(150ms)` and then
+     asserted `beats.length >= 2` against a `Timer.periodic` keepalive the
+     test harness configures at 40ms
+     (`shell_observer_provider_test.dart:97`), started in
+     `shell_observer_provider.dart:334-336` after an async
+     `subscribe`/`_publishWatch` hop — real timers racing the wall clock
+     under load. Alone it passed 15/15; inside the full 2,101-test suite it
+     produced 1 beat instead of 2 in 1 of 6 full runs. Fixed by converting
+     this test and its sibling ("a dropped keepalive beat is not retried as
+     a publish", same file) to virtual time with `package:fake_async`
+     (`fakeAsync((async) { … async.elapse(const Duration(milliseconds:
+     150)); })`) — no provider code change or injection needed, since the
+     code on this path only touches `Timer`/`Future` (zone-interceptable),
+     never a raw `DateTime.now()` call. Edits at
+     `shell_observer_provider_test.dart:241-304`, dev dependency
+     `fake_async: ^1.3.3` added at `mobile/pubspec.yaml:56`. Proved: the
+     file 30/30 real runs, the full suite 3/3 (2,101/2,101 each run).
+     - Separately, the failing test's name was unreadable at all:
+       `flutter test`'s default reporter renders "compact" with `\r`
+       redraws whenever a pseudo-terminal is attached, so line-oriented
+       agent/CI capture showed nothing past the last redraw. Fixed:
+       `justfile`'s `mobile-test` recipe now runs `flutter test --reporter
+       expanded`; `scripts/pre-push-floor.sh`'s mobile step
+       (`run_mobile_test`) captures that output once — no second test run —
+       and on failure hands it to the new
+       `scripts/mobile-test-failure-summary.mjs` (unit-tested by
+       `scripts/mobile-test-failure-summary.test.mjs`) to print `FAILED:
+       <name> (<file>:<line>)` in the floor's disclosure instead of just
+       "mobile tests FAILED". `bash scripts/test-pre-push-floor.sh` (82/82),
+       `node --test scripts/pre-push-floor-scope.test.mjs` (23/23) and
+       `pre-push-floor-stamp.test.mjs` (13/13) stay green.
+     - Observation, no lane: a desktop unit-test flake seen once on
+       2026-09-20 did not reproduce across 5 full desktop-suite runs during
+       this investigation and remains open and unexplained.
+
 ## 3a. Environment facts that cost real time (do not rediscover)
 
 - **pnpm 11's answer to a stale workspace state is to DELETE `node_modules`,

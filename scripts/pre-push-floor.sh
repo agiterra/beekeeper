@@ -332,6 +332,28 @@ run_desktop_tests_scoped() {
   (cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test "${relative[@]}")
 }
 
+# `just mobile-test` runs `flutter test --reporter expanded`, which is
+# line-oriented and never redraws over itself — but a failing run's summary
+# is still buried inside however many hundred lines the full suite printed.
+# Capture that output once (no second `flutter test` invocation — this floor
+# is budget-conscious) and, only on failure, hand it to
+# scripts/mobile-test-failure-summary.mjs so the disclosure names the test
+# and its file:line instead of just "mobile tests FAILED" (item 208).
+run_mobile_test() {
+  local log status=0
+  log=$(mktemp)
+  just mobile-test 2>&1 | tee "$log" || status=1
+  if [ "$status" != "0" ]; then
+    local names
+    names=$(node "$repo_root/scripts/mobile-test-failure-summary.mjs" "$log" 2>/dev/null | tr '\n' ';' | sed 's/;$//; s/;/; /g')
+    if [ -n "$names" ]; then
+      append notes "; " "$names"
+    fi
+  fi
+  rm -f "$log"
+  return "$status"
+}
+
 # The file-size ratchet stays unfiltered: its own merge-base diff is the path
 # filter, and duplicating its governed roots here is the coverage drift
 # lefthook.yml's header warns about. It is seconds, so it runs first, where a
@@ -382,7 +404,7 @@ if [ "$FLOOR_WEB" = "1" ]; then
 fi
 
 if [ "$FLOOR_MOBILE" = "1" ]; then
-  step "mobile tests" just mobile-test
+  step "mobile tests" run_mobile_test
 fi
 
 # Fold the measured test count into the step name now that it is known.

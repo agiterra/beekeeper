@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:buzz/features/terminals/state/shell_announce_head_provider.dart';
 import 'package:buzz/features/terminals/state/shell_observer_provider.dart';
 import 'package:buzz/shared/relay/relay.dart';
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter/widgets.dart' show AppLifecycleState;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -238,53 +239,63 @@ void main() {
   });
 
   test('no frame within the handshake reads "Not streaming"; the keepalive '
-      'keeps watching', () async {
-    final h = _harness();
-    final listener = h.container.listen(
-      shellObserverProvider(target),
-      (_, _) {},
-    );
-    addTearDown(listener.close);
-    await Future<void>.delayed(const Duration(milliseconds: 150));
-    expect(
-      h.container.read(shellObserverProvider(target)).status,
-      ShellObserverStatus.stalled,
-    );
-    // The opening watch is published and waited on; every later beat is a
-    // droppable ephemeral carrying the identical kind:24310 payload.
-    final opening = h.relay.published.where((event) => event.kind == 24310);
-    expect(opening, hasLength(1));
-    final beats = h.relay.ephemeralEvents
-        .where((event) => event.kind == 24310)
-        .toList();
-    expect(beats.length, greaterThanOrEqualTo(2));
-    for (final beat in beats) {
-      expect(beat.content, opening.single.content);
-      expect(beat.tags, opening.single.tags);
-      expect(beat.pubkey, opening.single.pubkey);
-    }
-    expect(_watchContent(beats.first)['action'], 'watch');
+      'keeps watching', () {
+    // Virtual time (fake_async): the keepalive/handshake timers below race
+    // the wall clock under load in the real suite (item 208) — a real
+    // `Future.delayed(150ms)` against a 40ms `Timer.periodic` sometimes
+    // only fires once before the delay resolves. `async.elapse` advances
+    // the zone's timers deterministically instead of waiting on the clock.
+    fakeAsync((async) {
+      final h = _harness();
+      final listener = h.container.listen(
+        shellObserverProvider(target),
+        (_, _) {},
+      );
+      addTearDown(listener.close);
+      async.elapse(const Duration(milliseconds: 150));
+      expect(
+        h.container.read(shellObserverProvider(target)).status,
+        ShellObserverStatus.stalled,
+      );
+      // The opening watch is published and waited on; every later beat is a
+      // droppable ephemeral carrying the identical kind:24310 payload.
+      final opening = h.relay.published.where((event) => event.kind == 24310);
+      expect(opening, hasLength(1));
+      final beats = h.relay.ephemeralEvents
+          .where((event) => event.kind == 24310)
+          .toList();
+      expect(beats.length, greaterThanOrEqualTo(2));
+      for (final beat in beats) {
+        expect(beat.content, opening.single.content);
+        expect(beat.tags, opening.single.tags);
+        expect(beat.pubkey, opening.single.pubkey);
+      }
+      expect(_watchContent(beats.first)['action'], 'watch');
+    });
   });
 
-  test('a dropped keepalive beat is not retried as a publish', () async {
-    final h = _harness();
-    h.relay.acceptEphemeral = false;
-    final listener = h.container.listen(
-      shellObserverProvider(target),
-      (_, _) {},
-    );
-    addTearDown(listener.close);
-    await Future<void>.delayed(const Duration(milliseconds: 150));
-    expect(
-      h.relay.ephemeralEvents.where((event) => event.kind == 24310).length,
-      greaterThanOrEqualTo(2),
-      reason: 'beats keep being offered; the transport decides',
-    );
-    expect(
-      h.relay.published.where((event) => event.kind == 24310),
-      hasLength(1),
-      reason: 'only the opening watch is a publish',
-    );
+  test('a dropped keepalive beat is not retried as a publish', () {
+    // Virtual time (fake_async) — see the handshake test above for why.
+    fakeAsync((async) {
+      final h = _harness();
+      h.relay.acceptEphemeral = false;
+      final listener = h.container.listen(
+        shellObserverProvider(target),
+        (_, _) {},
+      );
+      addTearDown(listener.close);
+      async.elapse(const Duration(milliseconds: 150));
+      expect(
+        h.relay.ephemeralEvents.where((event) => event.kind == 24310).length,
+        greaterThanOrEqualTo(2),
+        reason: 'beats keep being offered; the transport decides',
+      );
+      expect(
+        h.relay.published.where((event) => event.kind == 24310),
+        hasLength(1),
+        reason: 'only the opening watch is a publish',
+      );
+    });
   });
 
   test('a watch the relay refuses is disclosed verbatim', () async {

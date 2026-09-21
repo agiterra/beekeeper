@@ -1033,8 +1033,13 @@ mobile-check:
     unset GIT_DIR GIT_WORK_TREE; cd {{mobile_dir}} && dart format --output=none --set-exit-if-changed . && flutter analyze
 
 # Run mobile tests
+#
+# `--reporter expanded`: Flutter's default reporter becomes "compact" with
+# carriage-return redraws whenever a pseudo-terminal is attached, so a
+# failing test's name scrolls away in agent/CI capture (item 208). Expanded
+# is line-oriented and deterministic regardless of tty.
 mobile-test:
-    unset GIT_DIR GIT_WORK_TREE; cd {{mobile_dir}} && flutter test
+    unset GIT_DIR GIT_WORK_TREE; cd {{mobile_dir}} && flutter test --reporter expanded
 
 # Regenerate the emoji dataset asset from desktop's emoji-mart install.
 # Output is committed — rerun after bumping @emoji-mart/data.
