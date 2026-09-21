@@ -18758,6 +18758,113 @@ removed from here.
        the file 20/20 under 12 CPU burners, three full suites
        2101/2101 each.
 
+219. **Custody belonged to the assignment, not to the turn, and a turn
+     refused at the dequeue was never answered (2026-09-21, lane 219,
+     `work/lane-219-220-custody-admission`, base `4eadf55db`).** Astra's Wave
+     2 re-check, R2 and R3; plan § 8 A7.2. Reproduced through the **real**
+     actor path first — a live session on `STALLING_AGENT`, so the turn is
+     genuinely open — because the old proof took the custody token by hand
+     (`assignment_custody_tests.rs:139`) and so proved nothing about the code
+     that must take it. New file
+     `crates/buzz-session-provider/src/tests/custody_boundary_tests.rs`.
+     - (a) **R2 — every turn holds its seat's custody.** `verify_for_turn`
+       returned `NotRequired` *before* taking the lock, so an ordinary
+       follow-up prompt to a verifier examining commit A ran unguarded and
+       preparation for B moved the tree underneath it. **Measured red** with
+       the landed shape, through the live actor: `is_busy` false for the whole
+       running turn, and `establish_for_turn` proceeded. Now the lock is taken
+       first and the requirement is read second, so the variants say what was
+       *verified* rather than whether anything was *held*
+       (`TurnCustody::Unmanaged` | `Held` | `Refused`); after the fix the same
+       test sees `SeatBusy` on three consecutive passes and `HEAD` unmoved.
+       The unmanaged preparation paths are covered by construction: whatever
+       preparation decided, the dequeue is guarded.
+     - (b) **R2's second hole — a refused dequeue is discharged.** The actor
+       logged and `continue`d, so a prepared turn whose tree had moved stayed
+       accepted-but-never-started. `SessionEvent::TurnDropped` now carries a
+       `TurnDropReason`, and the provider maps it to the answer: `QueueFull`
+       keeps "the execution's queue is full", and `InputMoved` publishes
+       `VERIFICATION_INPUT_MOVED_AT_START` naming both commits, drops the
+       command from `in_flight`, records the refusal and forgets the
+       requirement. Stating the queue-full sentence for every drop was a false
+       answer about the one thing a lead can act on. **Ordering matters and
+       cost a red run:** `stage_terminal_disposition` skips a command that
+       already has a refusal, so recording the refusal first suppressed the
+       receipt entirely — the staged disposition is the durable fence and goes
+       first.
+     - (c) **R3 — a stale observation cannot destroy a newer attempt.**
+       `verify_for_turn` dropped its guard, reloaded the row and wrote
+       `tree_moved` unconditionally, clearing `attemptOwner`; a requeue in
+       that window left the new attempt's own terminal write failing its
+       ownership comparison. The observation is now written **under custody**,
+       only if the row is byte-identical to the one this boundary read before
+       probing, and never over a row an attempt owns — the boundary observed a
+       tree, it did not try to move one. Both directions are pinned: the
+       owned-row case leaves `attempts`, `attemptOwner` and the outcome alone;
+       the untouched-row case still records the reason, so the conditional
+       write is not a silent no-op.
+     - (d) **One live actor per seat, and custody follows it.** The
+       registry is process-wide, so an actor wedged in a prompt nobody will
+       answer — or one whose provider was dropped mid-turn — held a seat
+       against its own successor. Found by `cargo test`, not by review:
+       `the_same_pointer_to_a_later_generation_is_a_different_operation`
+       timed out, because that test restarts a provider in one process.
+       `supersede_seat`, called once where the actor loop starts, hands the
+       seat to the execution that now exists; what it replaces is a lock held
+       by an execution that is over.
+     - (e) **Gates** bare on the pair: `cargo fmt --all -- --check`;
+       `cargo clippy --workspace --all-targets -D warnings`;
+       `cargo test -p buzz-session-provider` 972 passed; sidecar stubs; Tauri
+       clippy and `cargo test` 3,481 passed; `just file-size-check`; Python
+       NUL scan.
+     - (f) **Owed, live.** Nothing against a live seat. The control run is the
+       proof: a verifier mid-turn while two more assignments arrive, and an
+       operator requeue racing a dequeue refusal.
+
+220. **A deferred wake was re-started rather than re-admitted, and could hold
+     its channel's floor forever (2026-09-21, lane 220, same branch).**
+     Astra's Wave 2 re-check, R4; plan § 8 A7.3. New file
+     `crates/buzz-session-provider/src/tests/deferred_admission_tests.rs`.
+     - (a) **Re-admitted, never re-started.** `release_deferred_turns` built a
+       `TurnDecision::Start` from the durable record and handed it to
+       `apply_turn_decision`, bypassing every check in the ordinary path —
+       consumed/in-flight, the freshness horizon, the target generation, the
+       signer's authority (`commands.rs:911`–`:1007`) — for exactly the
+       commands that had waited longest. The deferral now keeps the **signed
+       command** (`DeferredTurn::content`, additive and serde-default) and the
+       release hands those bytes back to `on_turn`, under the command's own
+       identity. **Measured red** against the landed shape: a generation-1
+       wake was delivered to a generation-2 execution, and a signer holding no
+       authority was delivered; both are refused now, by the checks a fresh
+       command meets. The write moved from `apply_turn_decision`'s deferred
+       arm up into `on_turn`, which is the only place that holds the raw
+       command; a provider-minted continuation, which has no signed bytes, is
+       therefore never deferred — it has its own durable registration.
+     - (b) **Nothing is held forever.** Each tick returned `Undecided`, the
+       record stayed, its age was never compared with anything, and because
+       only one wake per seat is attempted it stood in front of that seat's
+       later work indefinitely while clamping the file-backed floor. A wake
+       past the command horizon — or one whose bytes were never kept, which
+       can never be re-admitted — is now **expired**: a terminal receipt
+       naming its age and the horizon
+       (`VERIFICATION_INPUT_EXPIRED`), the refusal recorded, the record
+       removed. An expiry does not consume the seat's one attempt per pass, so
+       a queue of stale wakes drains in a single tick. Red before: both wakes
+       held, floor pinned at the stale one; after: the stale one answered and
+       gone, the live one still owed, the floor moved off it.
+     - (c) **The store is honest about failure.** `defer` returned `()` and
+       logged a failed save while updating the in-memory mirror — durable
+       custody in name only. It returns `Result` now, never mirrors a write
+       that did not reach the disk, and **refuses** a new deferral at capacity
+       instead of evicting an older owed wake, which would have left that wake
+       owed by nobody. A wake this provider cannot hold is answered
+       `VERIFICATION_INPUT_UNHELD` rather than lost. The failing-write test
+       uses a path whose parent is a regular file (`ENOTDIR`), not a chmod, so
+       it says the same thing when CI runs as root (ledger 212(h)).
+     - (d) **Owed, live.** The disruption run is where this is really tested:
+       a wake deferred across a real provider restart, and a seat whose input
+       never arrives.
+
 221. **The coverage oracle waived its own proof wherever a canonical fact was
      empty, and one reason code spoke for four different failures. The oracle
      moves first: two R5 negative sequences, a branch-per-row reason table and
