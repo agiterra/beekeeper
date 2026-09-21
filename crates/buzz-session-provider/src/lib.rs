@@ -36,6 +36,7 @@ pub mod action_steps;
 pub mod actor_seats;
 mod agent_fence;
 pub mod agents_checkout;
+pub mod agents_plan_blob;
 // The durable host-owned queue that puts a seat on its exact input (lane 185,
 // moved here by lane 202 so the party holding the turn gate owns the order).
 mod artifact_upload;
@@ -77,6 +78,8 @@ pub mod state;
 mod team_wake;
 pub mod transcript;
 pub mod verification_input;
+pub mod work_brief;
+mod work_brief_collect;
 
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::Path;
@@ -4887,13 +4890,28 @@ impl Provider {
                 operation_key: fence_key,
             } => {
                 decided_operation_key = fence_key;
-                let framing = self.turn_framing(
-                    &target.session_id,
-                    operator_pubkey,
-                    deliver,
-                    channel_id,
-                    &text,
-                );
+                // The work brief (ledger 209), assembled here and nowhere
+                // else: this is the one place a seated execution's first-turn
+                // text is built for an assignment-bearing hire or wake. It
+                // rides on the frame, so the signed transcript keeps the
+                // sender's words unframed, and it is `None` for every turn
+                // that carries no assignment pointer — which is every
+                // ordinary turn.
+                let work_brief = self
+                    .assignment_work_brief(&target, &command_id, &text)
+                    .await;
+                let framing = self
+                    .turn_framing(
+                        &target.session_id,
+                        operator_pubkey,
+                        deliver,
+                        channel_id,
+                        &text,
+                    )
+                    .map(|mut framing| {
+                        framing.work_brief = work_brief;
+                        framing
+                    });
                 // The capability gate. A runtime that never advertised image
                 // prompts does not merely ignore an image block — `buzz-agent`
                 // fails the whole turn on one — so the attachments are dropped
@@ -7747,6 +7765,110 @@ impl Provider {
         });
     }
 
+    /// Where this execution's model came from, in the words the brief prints.
+    ///
+    /// Three sources, in the order ledger 180 fixed: an explicit human override,
+    /// the project's model registry through the router, or the identity's own pin
+    /// when no routing answered. An unrouted session says so rather than implying
+    /// a registry chose it — "routed" over an identity pin is exactly the
+    /// "default label hiding the real model" defect.
+    fn model_source_words(record: &state::SessionRecord) -> String {
+        let Some(routing) = record.routing.as_ref() else {
+            return "not routed on this host: the model is the agent identity's own pin".to_owned();
+        };
+        if routing.r#override.is_some() {
+            return "a human override of the router, recorded on the hire".to_owned();
+        }
+        match (&routing.chosen, routing.registry_version) {
+        (Some(_), Some(version)) => format!(
+            "routed by the project's model registry (version {version}) for class {} at tier {}",
+            routing.class, routing.tier
+        ),
+        (Some(_), None) => format!(
+            "routed for class {} at tier {}; the registry reported no version",
+            routing.class, routing.tier
+        ),
+        (None, _) => format!(
+            "the router answered nothing for class {} at tier {}, so this is the identity's own pin",
+            routing.class, routing.tier
+        ),
+    }
+    }
+
+    /// The host-assembled work brief for an assignment turn, or `None`.
+    ///
+    /// Thin on purpose: every fact-gathering decision lives in
+    /// [`crate::work_brief_collect`] and every rendering decision in
+    /// [`crate::work_brief`], so this method is only the provider handing over
+    /// what it already holds — the session record, the relay seam, the host's
+    /// `projects.json` and its state directory.
+    ///
+    /// Never refuses, never defers, never delays a turn past lane 202's
+    /// existing bounds. A pointer that is not an assignment, a session record
+    /// this provider does not own, a relay that did not answer: each returns
+    /// `None`, and the turn is delivered exactly as it would have been.
+    async fn assignment_work_brief(
+        &mut self,
+        target: &CodingSessionTarget,
+        command_id: &str,
+        text: &str,
+    ) -> Option<String> {
+        let operation_id = verification_input::assignment_pointer(text)?;
+        let record = self.state.session(&target.session_id)?;
+        if self.target_for(record) != *target {
+            return None;
+        }
+        let role = record.role.clone()?;
+        let actor = record.actor.clone()?;
+        let session_ref = record.session_ref.clone()?;
+        let genesis_ref = record.genesis_ref.clone()?;
+        let runtime = work_brief::RuntimeFacts {
+            runtime: record.runtime.clone(),
+            model: record.model.clone(),
+            model_source: Self::model_source_words(record),
+            compose_app_version: record
+                .compose_ref
+                .as_ref()
+                .map(|compose| compose.app_version.clone()),
+            compose_digest: record
+                .compose_ref
+                .as_ref()
+                .map(|compose| compose.digest.clone()),
+        };
+        let scope = team_wake::WakeScope {
+            channel_ref: record.channel_id,
+            session_ref,
+            genesis_ref,
+        };
+        let project_ref = record.project_ref.clone();
+        let recorded_cwd = record.cwd.clone();
+        let rest = self.rest_client.clone()?;
+        let relay_self = self.relay_self.clone()?;
+        let cwd = gate_cwd::resolve(
+            self.config.projects_file.as_deref(),
+            &target.session_id,
+            &recorded_cwd,
+        )
+        .present()
+        .map(Path::to_path_buf);
+        work_brief_collect::collect_work_brief(work_brief_collect::WorkBriefRequest {
+            rest: &rest,
+            relay_self: &relay_self,
+            scope: &scope,
+            operation_id: &operation_id,
+            command_id,
+            actor: &actor,
+            role: &role,
+            project_ref: project_ref.as_deref(),
+            projects_file: self.config.projects_file.as_deref(),
+            state_dir: &self.config.state_dir,
+            session_id: &target.session_id,
+            cwd,
+            runtime,
+        })
+        .await
+    }
+
     /// Decide whether a turn may open against the input its assignment names.
     ///
     /// [`verification_input::TurnInput::Open`] means "open the turn": the text
@@ -9323,6 +9445,9 @@ impl Provider {
             sender_role,
             reply_target,
             delivery,
+            // Attached by the one caller that has one: an assignment turn.
+            // Every other frame has no brief and is byte-for-byte what it was.
+            work_brief: None,
         })
     }
 

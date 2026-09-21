@@ -468,6 +468,17 @@ pub struct TurnFraming {
     /// classes exist to prevent. The sender learns of the downgrade from its
     /// own `turn_degraded` receipt.
     pub delivery: CodingSessionDelivery,
+    /// The host-assembled work brief for this turn's assignment, when the
+    /// turn carries an assignment pointer and the host could speak about it
+    /// from verified facts ([`crate::work_brief`], ledger 209).
+    ///
+    /// It rides on the frame rather than on the prompt text for the same
+    /// reason the `[Context]` block does: the signed transcript keeps the
+    /// sender's words unframed, and a brief written by this computer is not
+    /// something the sender wrote. `None` for every turn that is not an
+    /// assignment turn, which is what keeps ordinary turns byte-for-byte what
+    /// they were.
+    pub work_brief: Option<String>,
 }
 
 impl TurnFraming {
@@ -495,11 +506,15 @@ impl TurnFraming {
                     .to_owned()
             }
         };
-        format!(
+        let framed = format!(
             "[Context]\nScope: coding-session\nFrom: {} ({who})\nDelivery: {}\n{reply}\n\n{text}",
             self.sender_pubkey,
             self.delivery.as_str(),
-        )
+        );
+        match &self.work_brief {
+            Some(brief) => format!("{brief}\n\n---\n\n{framed}"),
+            None => framed,
+        }
     }
 }
 
@@ -6012,6 +6027,7 @@ done
         let channel_id = Uuid::new_v4();
         let sender = "a".repeat(64);
         let framing = TurnFraming {
+            work_brief: None,
             channel_id,
             sender_pubkey: sender.clone(),
             sender_role: Some("lead".into()),
@@ -6066,6 +6082,7 @@ done
     #[test]
     fn a_seatless_sender_is_framed_as_an_operator_with_no_reply_address() {
         let rendered = TurnFraming {
+            work_brief: None,
             channel_id: Uuid::nil(),
             sender_pubkey: "b".repeat(64),
             sender_role: None,

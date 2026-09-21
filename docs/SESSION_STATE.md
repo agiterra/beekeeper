@@ -17779,6 +17779,115 @@ removed from here.
        restart, and a seat whose tree a person moves by hand between the
        decision and the prompt.
 
+209. **The host now hands a seat its work: a compact, exact brief assembled
+     from verified facts and prepended to the first turn of any seat opened
+     for a canonical assignment (2026-09-20, lane W3b, branch
+     `work/lane-209-work-brief`, base `220a29195`).** Plan amendment A4.3.
+     - **The measured problem.** On the 2026-09-20 kettle runs a lead
+       hand-typed the channel, session, genesis, assignment and base ids into
+       every hire brief and reproduced the plan text, because a worker's role
+       holds no agents-repository grant (178, 205). The seats still spent
+       **24–38% of their tool calls on orientation** — reading role and skill
+       files, running `--help`, rediscovering ids and report shapes. A seat's
+       input per turn is its context times the number of tool calls in the
+       turn (A4.1), so every orientation call is paid at full context. The
+       host already held every one of those facts as a verified fact.
+     - **What the brief carries**, in priority order, all of it in
+       `crates/buzz-session-provider/src/work_brief.rs`: (a) the assignment's
+       objective, the lead's brief verbatim, acceptance steps, file ownership,
+       branch, worktree and exact `baseSha` with lane 202's outcome in words —
+       established at that commit / not required for this role / failed with
+       git's own sentence / unrecorded (`:427-500`); (b) the `sessions report`
+       and, for a verifier, `sessions verdict` invocations with `--channel`,
+       `--session-ref` and `--genesis` filled in and `--body -`, each preceded
+       by its `--example` line, every one spelling the literal `$BEE` and
+       never a bare `bee` (`:502-549`); (c) each bound criterion's `accept`
+       text **excerpted from the plan blob read at the declaration's
+       `planRef.commit`**, with provenance
+       `<repository>@<commit-12>:<path>#<criterion id>` and its proof kind in
+       words (`:551-622`); (d) the goal's id and first line and the answered
+       decisions whose request named this assignment in `blocks`
+       (`:624-644`); (e) the agents-repository grant, push authority, and that
+       publication or approval of an action is not the seat's (`:646-678`);
+       (f) runtime, model and the **source** of that choice — registry-routed
+       with its version, a human override, or the identity's own pin
+       (`lib.rs:7712-7745`, `work_brief.rs:680-698`, ledger 180). **No role prose**: the seat bundle
+       already delivers it (132).
+     - **Budget and drop order.** 8,192 bytes, README § (e). Whole sections
+       are given up in `DROP_ORDER` — (f), then (d), then (c), then (e) — and
+       the brief **says which**, with the disclosure counted against the
+       budget so it can never be the thing that is hidden
+       (`work_brief.rs:101-117`, `:340-412`). Excerpts are cut on a character
+       boundary with a marker naming the coordinate the whole text is at
+       (`:414-425`); (a) and (b) are never dropped, and a brief that is over
+       budget with only those two left says so rather than cutting an
+       identifier.
+     - **The plan blob is read at a commit, never at a tip.**
+       `crates/buzz-session-provider/src/agents_plan_blob.rs` is a new reader
+       beside `agents_checkout.rs` and deliberately not part of it: that module
+       answers "what does the published definition say now" from the fetched
+       tip, which is right for `actions.yml`; a contract pins `planRef.commit`
+       and quoting any other commit would be quoting text the session never
+       adopted. It never fetches, refuses a path that could escape or be read
+       as a revision (`is_safe_blob_path`, `agents_plan_blob.rs:83-94`), and names seven reasons
+       the brief prints as `plan text unavailable (<reason>)` with the
+       criterion ids still listed.
+     - **One call site.** `Provider::assignment_work_brief`
+       (`crates/buzz-session-provider/src/lib.rs:7747-7820`), called from the
+       `TurnDecision::Start` arm of `apply_turn_decision` (`:4844-4856`) — the
+       one place a seated execution's turn text is built. It rides on
+       `session::TurnFraming::work_brief` and is prepended by
+       `TurnFraming::render` (`session.rs:471-520`), so the signed transcript
+       keeps the sender's words unframed exactly as the `[Context]` block
+       already does. It **never refuses, defers or delays**: an unresolvable
+       pointer, a session this provider does not own, or a relay that did not
+       answer each returns `None` and the turn is delivered as before. Inputs
+       reach the fold only through
+       `buzz_core::project_work_inputs::assemble_fold_inputs` (A3.1); a failed
+       read yields a brief without section (c) and a one-line reason. The same
+       bytes are written to `agents/seats/<session id>/work-brief.md` and that
+       absolute path is the brief's last line.
+     - **(e) is witnessed, not remembered.** The seat's one-shot
+       `actor-seats.json` entry — which carried the grant — is deleted when
+       the adapter spawns, so at turn time it is gone. The brief checks two
+       surviving facts instead: whether the sibling clone
+       (`seat_agents_clone_path`) is on disk, and what `team.yml` **in that
+       clone** says this role's `workspace.agents_repo` is
+       (`work_brief_collect.rs:194-236`). No clone means no grant, which is
+       the honest reading.
+     - **Tests.** Nine golden renders in `work_brief_tests.rs`: a builder
+       under a declaration with two criteria; a verifier with its resolved
+       `reportRef` and a lane-202 `established` base; a verifier whose report
+       could **not** be resolved, told so rather than given a guess; a legacy
+       session with no declaration; an unreadable plan blob naming ids only;
+       two budget-overflow cases pinning that (f) goes before (d) and that
+       (a), (b) and (c) survive; the drop order itself; and a multi-byte
+       excerpt cut on a character boundary. Two git tests in
+       `agents_plan_blob.rs` prove the blob comes from the pinned commit and
+       not the tip, the working copy or a scribble. Seven in
+       `crates/buzz-cli/tests/work_brief_flags.rs` cross-check the flag table
+       against the real `clap` definitions through the binary.
+     - **Two flag facts the cross-check found.** `--assignment` does not
+       exist on `report` or `verdict`: the assignment id travels in the body,
+       so the brief prints the body key and says the flag does not exist.
+       `--verifies` **does** parse on `report` and `verdict` — the six write
+       verbs share one `TeamTransactionWriteArgs` struct
+       (`crates/buzz-cli/src/lib.rs:3758-3804`) — while meaning something only
+       on `assign`. A flag that parses and changes nothing is worse for a seat
+       than one that is refused; the brief prints it nowhere and the test pins
+       both facts so neither can be papered over.
+     - **What role prose 1.2.0 should now delete** (lane 196 owns the text):
+       the paragraphs that tell a seat to run `bee sessions report --example`
+       to learn the body shape, to find its channel/session/genesis ids, to
+       read the plan for its acceptance criteria, to check which commit it is
+       on, and to ask what model it is running — the brief carries all five as
+       facts. The role text should keep only what is about *craft*.
+     - **Owed, live.** The control run's orientation share per seat, measured
+       by `bee sessions measure`, against Kettle Smoke's 24–38%. Nothing here
+       has run against a live relay: the collection path
+       (`work_brief_collect.rs`) is exercised by no test, only by its types,
+       and the 8,192-byte budget has never been met by a real plan.
+
 ## 3a. Environment facts that cost real time (do not rediscover)
 
 - **pnpm 11's answer to a stale workspace state is to DELETE `node_modules`,
