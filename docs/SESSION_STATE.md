@@ -18757,115 +18757,62 @@ removed from here.
        too — the same class of wall-clock race, now gone as well. Proved:
        the file 20/20 under 12 CPU burners, three full suites
        2101/2101 each.
-223. **Reader agreement was still partial after 216, and the two gaps were
-     structural rather than careless: a whole class of malformed payload the
-     shared vectors could not express, and a fourth strict reader no fixture
-     answered for. Both are closed, and both were measured before and after
-     rather than reasoned about.** Astra's re-check is
-     [`docs/history/2026-09-21-astra-wave2-recheck.md`](history/2026-09-21-astra-wave2-recheck.md)
-     § "Lanes 215/216"; the ruling is `docs/UNIFIED_WORK_PLAN.md` § 8 A7.5.
-     Nothing in `buzz-core` changed: every raw vector this lane wrote was
-     already answered correctly by the Rust decoder, which is the evidence
-     that it is the definition and not merely the first implementation.
-     - **(a) `vectors[]` store a parsed object, so every loader re-serialized
-       it, so no vector could ever carry a duplicate key.**
-       `serde_json::Value`, `JSON.parse` and `jsonDecode` all keep one of two
-       same-named keys and lose the fact that there were two, so a fixture held
-       as an object cannot round-trip to
-       `{"status":"failed","status":"running"}`. The suite was green over a
-       class of bytes it could not represent. **Added `rawVectors[]` to all
-       five records** — `raw` is the exact string and **no loader
-       re-serializes it**: `crates/buzz-core/tests/coding_session_record_conformance.rs`
-       (`run_raw`), `desktop/src/shared/coordination/codingSessionRecordConformance.test.mjs`
-       (`runRaw`, and every reader adapter there is now a function of the
-       source string rather than of a parsed object — taking an object is how
-       the class stayed invisible), `desktop/src/features/coding-sessions/lib/codingSessionGenesisConformance.test.mjs`,
-       `mobile/test/features/coding_sessions/domain/coding_session_record_conformance_test.dart`
-       (`_runRaw`), and the new web loader below. Fourteen raw vectors:
-       duplicate `status` on a 44223 and on a 44224, duplicate nested
-       `session.generation`, duplicate `schema` with two different values,
-       duplicate `commandId` on a create and on a receipt, duplicate
-       `action.providerAuthorityPubkey` with two different valid keys,
-       duplicate `v` on a genesis, duplicate `action` on a closure — plus **a
-       canonical positive control per record**, and every loader asserts that
-       control is accepted, because a raw suite whose valid case is refused is
-       measuring the loader and not the decoder.
-     - **(b) Three readers accepted duplicate keys that `buzz-core` and the
-       desktop's coordination gate refuse.** `buzz-core` decodes the content a
-       second time into its typed payload precisely so serde's duplicate-field
-       detection applies (`coding_session_payload.rs:775`, `:1813`); the
-       coordination gate has scanned for them since it was written. The
-       desktop ingress decoder, the mobile decoders and the web decoder all
-       parsed first and validated the parsed object
-       (`codingSessionWireDecode.ts:14`, `coding_session_wire.dart:13`,
-       `web/.../wireDecode.ts:20`), so over the same signed event the gate said
-       no and the decoder beside it said yes. Fixed in each
-       `parseBoundedJson`. **Measured, not assumed:** with the scan disabled
-       again, three desktop test suites fail naming the bytes — the 44223
-       ingress suite, the 44224 ingress suite and the genesis raw suite — and
-       the web decoder accepted four of its own raw vectors. The desktop
-       **imports** the gate's `hasDuplicateJsonKeys` rather than growing a
-       second copy, so its two readers cannot drift. Mobile and web share no
-       code with the desktop by design, so each carries its own scan;
-       `coding_session_wire.dart` has six unit tests beside the raw suite
-       (nested duplicates, sibling objects, values that look like keys, an
-       escaped quote inside a key, unterminated bytes) and the raw vectors are
-       what keep the three answers equal. All three report unreadable bytes as
-       *ambiguous* rather than clean: the caller refuses either way, and
-       answering "no duplicates" about bytes the scan could not read is a
-       claim it has not earned.
-     - **(c) The web client is a fourth strict reader, and it had drifted to
-       fifteen disagreements.** 215's README said the web client "decodes none
-       of these kinds; it is a repo browser"; 216 found that claim false and
-       recorded it without fixing it. It is
-       `web/src/features/coding-sessions/domain/ingressPayloads.ts`, a
-       hand-copy of the desktop ingress decoder whose own header says so, and
-       `web/.../trust.ts:235` drops every 44223 it refuses. Reproduced Astra's
-       count exactly by running the old file against the fixtures — **ten on
-       44223**: `bee-stamp`, `bee-stamp-unparsed`, `pack-ref`,
-       `pack-ref-shipped`, `handover`, `compose-ref`,
-       `every-amendment-at-once` (its optional list named none of the four
-       additive amendments, `:453`), `capabilities-carrying-prompt-image` (a
-       six-key exact match, `:603` — finding 34's own defect),
-       `invalid-routing-null` (accepted, `:523`) and `context-summary`
-       (accepted); **five on 44224**: `turn-injected`,
-       `turn-delivery-unknown`, `continuation-registered` (three statuses
-       missing from its set, `:142`), `oversized-turn-error-code` and
-       `oversized-error-message` (`:39`, `:398`) — **plus four raw vectors** no
-       parsed suite could have shown. All nineteen fixed, and
-       `web/src/features/coding-sessions/domain/recordConformance.test.mjs`
-       now loads both records' vectors and raw vectors. The `web` column is
-       stated for every vector of 44223 and 44224, and the loader asserts the
-       fixture *names* its reader, so it cannot be forgotten a third time. The
-       four amendment validators are a third copy of the desktop gate's
-       checkers, which this lane does not pretend otherwise about: web shares
-       no code with either client, and the shared vectors are the only thing
-       that can keep hand-copies honest. They are validated but not surfaced —
-       this client renders no seat bee, pack, fence or composition in v1, and
-       refusing a key `buzz-core` accepts drops the whole session.
-     - **Two web tests were passing for a reason their own names denied.**
-       `web/.../decoders.test.mjs` had "an oversized summary is refused by the
-       summary bound" and a 32 KiB test built from three 16 KiB summary keys.
-       With the summary keys gone both still passed — as unknown keys, by a
-       bound that no longer exists. Rewritten to say what they now prove, and
-       the 32 KiB case explicitly gives up its isolation claim rather than
-       keeping a sentence that outlived its code: no combination of
-       within-bound fields can reach 32 KiB any more, because those three keys
-       were the only fields wide enough.
-     - **What this does not establish.** These are decoder-level tests;
-       nothing was exercised against hive or an installed bundle. Astra's own
-       note stands: the relay deliberately applies scope, membership and
-       content caps rather than strict envelope validation to these provider
-       records (`crates/buzz-relay/src/handlers/ingest.rs:815`, `:873`), so a
-       duplicate-key record is **not** relay-inaccessible — which is why every
-       client reader refusing it matters rather than being belt-and-braces.
-       The four pinned non-divergences from 216 are unchanged and still
-       reasoned in `conformance/coding-session-records/README.md`. A fifth
-       hand-copy of any of these decoders, anywhere, must be loaded by these
-       fixtures in the same commit that creates it; `conformance/README.md`
-       now says to count the readers by grepping for the decode rather than by
-       trusting its own table, because that table is what was wrong twice.
-
+218. **Lane 211's hash comparison authenticated a different HTTP response: the
+     approval surfaces now take the definition and its hash from one native
+     read, hashed by the relay's own function over the bytes returned
+     (2026-09-21, lane 218; source: Astra's Wave 2 re-check §R1, ruling
+     `UNIFIED_WORK_PLAN.md` § 8 A7.1).** Built, gated, not landed, not
+     exercised live.
+     - **The defect.** `resolveBoundDefinition.ts` fetched the workflow body
+       (`getWorkflow`) and the relay's `/autorun` hash independently and
+       joined them with a comparison; the Actions tab did the same through
+       `useProjectActions.ts:136`/`:160` and `ProjectActionRunRow.tsx:84`.
+       Interleaving: run A waits, B is current, the body read returns B, A is
+       republished, the hash read returns A — the comparison passes, command B
+       is displayed, Approve is enabled, and the relay grants A and the host
+       executes A. Lane 211 closed the *missing* and *mismatched* cases and
+       left this one open, because a comparison between two reads
+       authenticates neither. **Reproduced red** against lane 211's own API:
+       `displayed command: "echo\nB"`, `grantAvailable: true`, with the
+       assertion `Approve must not be enabled for a command from another
+       read` failing `actual: true, expected: false`.
+     - **The correction is structural, not a stricter comparison.** New Tauri
+       command `get_workflow_definition` performs **one** kind:30620 read and
+       answers with `definition` — the canonical JSON value — and
+       `definition_hash`, computed from that same parse by
+       `buzz_workflow::hash::definition_hash_hex`, which is the function the
+       relay stores `workflows.definition_hash` with. Nothing is hashed in
+       TypeScript: a second implementation of the hash would be a second
+       answer to a question that must have one. `matchBoundDefinition` now
+       takes a single `BoundDefinitionRead`; it has no parameter for a loose
+       body or a loose hash, so the interleaving cannot be written down — the
+       old red probe now fails with a `TypeError` on the shape rather than a
+       wrong verdict. `ProjectAction` carries `boundDefinition` from that one
+       read, and the list read's `workflow.definition` is used only for the
+       name, trigger and host-step summary, never to authorize a grant.
+     - **Two disclosed non-answers, both of which withhold grants.** A
+       definition this host cannot parse, and a **webhook**-triggered one
+       whose stored hash includes a secret the public event does not carry,
+       both answer `definition_hash: null` with the reason; the body is still
+       readable and no grant is offered. Reporting a hash computed without
+       the secret would be a hash that matches nothing.
+     - **Tests.** Rust, in `commands/workflows_tests.rs`:
+       `the_definition_hash_is_the_relays_own_hash_of_the_same_bytes` asserts
+       both of the relay's own routes (canonical-JSON-string → Value → hash,
+       and `definition_hash_hex` over the parsed definition) agree, that the
+       wire reports exactly that hash, and that **re-hashing the value the
+       wire displays reproduces it** — the association R1 says was assumed;
+       plus a changed command changing the hash, an unparsable definition, and
+       the webhook disclosure. 26 passed in that module. TypeScript: the test
+       at `approvalTruth.test.mjs` that injected a hash and a body
+       independently is replaced — its fixture is now a read, bytes and the
+       hash of those bytes; and `oneReadHash.test.mjs` covers the
+       interleaving, the match, a failed read and a hash-less read (4 red → 4
+       green). The mock bridge gained `get_workflow_definition` with the same
+       one-object shape, and `tests/e2e/project-work.spec.ts` asserts body and
+       hash arrive together (4 passed).
+     - **Owed live.** Nothing ran against hive. The control run's app-side
+       approval is what proves it end to end.
 
 219. **Custody belonged to the assignment, not to the turn, and a turn
      refused at the dequeue was never answered (2026-09-21, lane 219,
@@ -19112,62 +19059,114 @@ removed from here.
        (CLI, provider brief, Tauri command) read the *plan's* criteria, where
        `proof` is not optional, and pin no reason string.
 
-218. **Lane 211's hash comparison authenticated a different HTTP response: the
-     approval surfaces now take the definition and its hash from one native
-     read, hashed by the relay's own function over the bytes returned
-     (2026-09-21, lane 218; source: Astra's Wave 2 re-check §R1, ruling
-     `UNIFIED_WORK_PLAN.md` § 8 A7.1).** Built, gated, not landed, not
-     exercised live.
-     - **The defect.** `resolveBoundDefinition.ts` fetched the workflow body
-       (`getWorkflow`) and the relay's `/autorun` hash independently and
-       joined them with a comparison; the Actions tab did the same through
-       `useProjectActions.ts:136`/`:160` and `ProjectActionRunRow.tsx:84`.
-       Interleaving: run A waits, B is current, the body read returns B, A is
-       republished, the hash read returns A — the comparison passes, command B
-       is displayed, Approve is enabled, and the relay grants A and the host
-       executes A. Lane 211 closed the *missing* and *mismatched* cases and
-       left this one open, because a comparison between two reads
-       authenticates neither. **Reproduced red** against lane 211's own API:
-       `displayed command: "echo\nB"`, `grantAvailable: true`, with the
-       assertion `Approve must not be enabled for a command from another
-       read` failing `actual: true, expected: false`.
-     - **The correction is structural, not a stricter comparison.** New Tauri
-       command `get_workflow_definition` performs **one** kind:30620 read and
-       answers with `definition` — the canonical JSON value — and
-       `definition_hash`, computed from that same parse by
-       `buzz_workflow::hash::definition_hash_hex`, which is the function the
-       relay stores `workflows.definition_hash` with. Nothing is hashed in
-       TypeScript: a second implementation of the hash would be a second
-       answer to a question that must have one. `matchBoundDefinition` now
-       takes a single `BoundDefinitionRead`; it has no parameter for a loose
-       body or a loose hash, so the interleaving cannot be written down — the
-       old red probe now fails with a `TypeError` on the shape rather than a
-       wrong verdict. `ProjectAction` carries `boundDefinition` from that one
-       read, and the list read's `workflow.definition` is used only for the
-       name, trigger and host-step summary, never to authorize a grant.
-     - **Two disclosed non-answers, both of which withhold grants.** A
-       definition this host cannot parse, and a **webhook**-triggered one
-       whose stored hash includes a secret the public event does not carry,
-       both answer `definition_hash: null` with the reason; the body is still
-       readable and no grant is offered. Reporting a hash computed without
-       the secret would be a hash that matches nothing.
-     - **Tests.** Rust, in `commands/workflows_tests.rs`:
-       `the_definition_hash_is_the_relays_own_hash_of_the_same_bytes` asserts
-       both of the relay's own routes (canonical-JSON-string → Value → hash,
-       and `definition_hash_hex` over the parsed definition) agree, that the
-       wire reports exactly that hash, and that **re-hashing the value the
-       wire displays reproduces it** — the association R1 says was assumed;
-       plus a changed command changing the hash, an unparsable definition, and
-       the webhook disclosure. 26 passed in that module. TypeScript: the test
-       at `approvalTruth.test.mjs` that injected a hash and a body
-       independently is replaced — its fixture is now a read, bytes and the
-       hash of those bytes; and `oneReadHash.test.mjs` covers the
-       interleaving, the match, a failed read and a hash-less read (4 red → 4
-       green). The mock bridge gained `get_workflow_definition` with the same
-       one-object shape, and `tests/e2e/project-work.spec.ts` asserts body and
-       hash arrive together (4 passed).
-     - **Owed live.** Nothing ran against hive. The control run's app-side
-       approval is what proves it end to end.
+223. **Reader agreement was still partial after 216, and the two gaps were
+     structural rather than careless: a whole class of malformed payload the
+     shared vectors could not express, and a fourth strict reader no fixture
+     answered for. Both are closed, and both were measured before and after
+     rather than reasoned about.** Astra's re-check is
+     [`docs/history/2026-09-21-astra-wave2-recheck.md`](history/2026-09-21-astra-wave2-recheck.md)
+     § "Lanes 215/216"; the ruling is `docs/UNIFIED_WORK_PLAN.md` § 8 A7.5.
+     Nothing in `buzz-core` changed: every raw vector this lane wrote was
+     already answered correctly by the Rust decoder, which is the evidence
+     that it is the definition and not merely the first implementation.
+     - **(a) `vectors[]` store a parsed object, so every loader re-serialized
+       it, so no vector could ever carry a duplicate key.**
+       `serde_json::Value`, `JSON.parse` and `jsonDecode` all keep one of two
+       same-named keys and lose the fact that there were two, so a fixture held
+       as an object cannot round-trip to
+       `{"status":"failed","status":"running"}`. The suite was green over a
+       class of bytes it could not represent. **Added `rawVectors[]` to all
+       five records** — `raw` is the exact string and **no loader
+       re-serializes it**: `crates/buzz-core/tests/coding_session_record_conformance.rs`
+       (`run_raw`), `desktop/src/shared/coordination/codingSessionRecordConformance.test.mjs`
+       (`runRaw`, and every reader adapter there is now a function of the
+       source string rather than of a parsed object — taking an object is how
+       the class stayed invisible), `desktop/src/features/coding-sessions/lib/codingSessionGenesisConformance.test.mjs`,
+       `mobile/test/features/coding_sessions/domain/coding_session_record_conformance_test.dart`
+       (`_runRaw`), and the new web loader below. Fourteen raw vectors:
+       duplicate `status` on a 44223 and on a 44224, duplicate nested
+       `session.generation`, duplicate `schema` with two different values,
+       duplicate `commandId` on a create and on a receipt, duplicate
+       `action.providerAuthorityPubkey` with two different valid keys,
+       duplicate `v` on a genesis, duplicate `action` on a closure — plus **a
+       canonical positive control per record**, and every loader asserts that
+       control is accepted, because a raw suite whose valid case is refused is
+       measuring the loader and not the decoder.
+     - **(b) Three readers accepted duplicate keys that `buzz-core` and the
+       desktop's coordination gate refuse.** `buzz-core` decodes the content a
+       second time into its typed payload precisely so serde's duplicate-field
+       detection applies (`coding_session_payload.rs:775`, `:1813`); the
+       coordination gate has scanned for them since it was written. The
+       desktop ingress decoder, the mobile decoders and the web decoder all
+       parsed first and validated the parsed object
+       (`codingSessionWireDecode.ts:14`, `coding_session_wire.dart:13`,
+       `web/.../wireDecode.ts:20`), so over the same signed event the gate said
+       no and the decoder beside it said yes. Fixed in each
+       `parseBoundedJson`. **Measured, not assumed:** with the scan disabled
+       again, three desktop test suites fail naming the bytes — the 44223
+       ingress suite, the 44224 ingress suite and the genesis raw suite — and
+       the web decoder accepted four of its own raw vectors. The desktop
+       **imports** the gate's `hasDuplicateJsonKeys` rather than growing a
+       second copy, so its two readers cannot drift. Mobile and web share no
+       code with the desktop by design, so each carries its own scan;
+       `coding_session_wire.dart` has six unit tests beside the raw suite
+       (nested duplicates, sibling objects, values that look like keys, an
+       escaped quote inside a key, unterminated bytes) and the raw vectors are
+       what keep the three answers equal. All three report unreadable bytes as
+       *ambiguous* rather than clean: the caller refuses either way, and
+       answering "no duplicates" about bytes the scan could not read is a
+       claim it has not earned.
+     - **(c) The web client is a fourth strict reader, and it had drifted to
+       fifteen disagreements.** 215's README said the web client "decodes none
+       of these kinds; it is a repo browser"; 216 found that claim false and
+       recorded it without fixing it. It is
+       `web/src/features/coding-sessions/domain/ingressPayloads.ts`, a
+       hand-copy of the desktop ingress decoder whose own header says so, and
+       `web/.../trust.ts:235` drops every 44223 it refuses. Reproduced Astra's
+       count exactly by running the old file against the fixtures — **ten on
+       44223**: `bee-stamp`, `bee-stamp-unparsed`, `pack-ref`,
+       `pack-ref-shipped`, `handover`, `compose-ref`,
+       `every-amendment-at-once` (its optional list named none of the four
+       additive amendments, `:453`), `capabilities-carrying-prompt-image` (a
+       six-key exact match, `:603` — finding 34's own defect),
+       `invalid-routing-null` (accepted, `:523`) and `context-summary`
+       (accepted); **five on 44224**: `turn-injected`,
+       `turn-delivery-unknown`, `continuation-registered` (three statuses
+       missing from its set, `:142`), `oversized-turn-error-code` and
+       `oversized-error-message` (`:39`, `:398`) — **plus four raw vectors** no
+       parsed suite could have shown. All nineteen fixed, and
+       `web/src/features/coding-sessions/domain/recordConformance.test.mjs`
+       now loads both records' vectors and raw vectors. The `web` column is
+       stated for every vector of 44223 and 44224, and the loader asserts the
+       fixture *names* its reader, so it cannot be forgotten a third time. The
+       four amendment validators are a third copy of the desktop gate's
+       checkers, which this lane does not pretend otherwise about: web shares
+       no code with either client, and the shared vectors are the only thing
+       that can keep hand-copies honest. They are validated but not surfaced —
+       this client renders no seat bee, pack, fence or composition in v1, and
+       refusing a key `buzz-core` accepts drops the whole session.
+     - **Two web tests were passing for a reason their own names denied.**
+       `web/.../decoders.test.mjs` had "an oversized summary is refused by the
+       summary bound" and a 32 KiB test built from three 16 KiB summary keys.
+       With the summary keys gone both still passed — as unknown keys, by a
+       bound that no longer exists. Rewritten to say what they now prove, and
+       the 32 KiB case explicitly gives up its isolation claim rather than
+       keeping a sentence that outlived its code: no combination of
+       within-bound fields can reach 32 KiB any more, because those three keys
+       were the only fields wide enough.
+     - **What this does not establish.** These are decoder-level tests;
+       nothing was exercised against hive or an installed bundle. Astra's own
+       note stands: the relay deliberately applies scope, membership and
+       content caps rather than strict envelope validation to these provider
+       records (`crates/buzz-relay/src/handlers/ingest.rs:815`, `:873`), so a
+       duplicate-key record is **not** relay-inaccessible — which is why every
+       client reader refusing it matters rather than being belt-and-braces.
+       The four pinned non-divergences from 216 are unchanged and still
+       reasoned in `conformance/coding-session-records/README.md`. A fifth
+       hand-copy of any of these decoders, anywhere, must be loaded by these
+       fixtures in the same commit that creates it; `conformance/README.md`
+       now says to count the readers by grepping for the decode rather than by
+       trusting its own table, because that table is what was wrong twice.
 
 ## 3a. Environment facts that cost real time (do not rediscover)
 
