@@ -908,7 +908,6 @@ async fn a_busy_seat_defers_its_next_assignment_instead_of_moving_its_tree() {
 
     let mut provider = provider(&state, None);
     let session_key = format!("seat-{}", Uuid::new_v4());
-    let session_key = format!("seat-{}", Uuid::new_v4());
     // The seat's own turn holds custody, exactly as the actor's dequeue does.
     let running = crate::assignment_custody::hold(&session_key).await;
 
@@ -1008,7 +1007,6 @@ async fn a_held_wake_is_decided_by_the_next_pass_and_released_once() {
     let state = dir.path().join("state");
     crate::deferred_turns::forget_mirror();
     let mut provider = provider(&state, None);
-    let session_key = format!("seat-{}", Uuid::new_v4());
     let channel = Uuid::new_v4();
     // A target this provider runs no execution for: its decision is an
     // ordinary answer rather than a deferral, which is all this case needs —
@@ -1063,7 +1061,6 @@ async fn the_release_pass_leaves_a_busy_seats_wake_held() {
     let state = dir.path().join("state");
     crate::deferred_turns::forget_mirror();
     let mut provider = provider(&state, None);
-    let session_key = format!("seat-{}", Uuid::new_v4());
     let session_key = format!("seat-{}", Uuid::new_v4());
     crate::deferred_turns::defer(
         &state,

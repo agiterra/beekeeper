@@ -81,7 +81,7 @@ pub struct TurnRequirement {
 #[derive(Debug, Clone)]
 pub enum Establishment {
     /// The record reached a terminal outcome; read it.
-    Settled(AssignmentInputRecord),
+    Settled(Box<AssignmentInputRecord>),
     /// The seat has a turn in flight, so nothing may move its tree. An
     /// attempt is queued behind that turn.
     SeatBusy,
@@ -275,7 +275,7 @@ pub async fn establish_for_turn(
         drop(guard);
 
         let answer = match outcome {
-            Ok(Ok(record)) => Establishment::Settled(record),
+            Ok(Ok(record)) => Establishment::Settled(Box::new(record)),
             Ok(Err(EstablishmentError::Unrecorded { record, error })) => {
                 tracing::error!(
                     target: "csp::assignment_custody",
@@ -366,7 +366,7 @@ async fn retry_unrecorded(
                 Err(poisoned) => poisoned.into_inner(),
             };
             registry.unrecorded.remove(assignment_ref);
-            Some(Establishment::Settled(record))
+            Some(Establishment::Settled(Box::new(record)))
         }
         Ok(Err(error)) => Some(Establishment::Unstarted(format!(
             "an established tree's record is still unsaved: {error}"

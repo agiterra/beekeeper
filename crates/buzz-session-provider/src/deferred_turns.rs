@@ -94,14 +94,17 @@ struct DeferredTurnsFile {
     turns: Vec<DeferredTurn>,
 }
 
+/// The state directory a mirror belongs to, and the wakes it holds.
+type Mirror = Option<(PathBuf, Vec<DeferredTurn>)>;
+
 /// The in-memory mirror, so the watermark ceiling — asked on every command —
 /// costs no disk read.
 ///
 /// Loaded from the file the first time a state directory is seen, and written
 /// through on every change, so the two never disagree within a process and the
 /// file is the whole truth across restarts.
-fn mirror() -> &'static Mutex<Option<(PathBuf, Vec<DeferredTurn>)>> {
-    static MIRROR: OnceLock<Mutex<Option<(PathBuf, Vec<DeferredTurn>)>>> = OnceLock::new();
+fn mirror() -> &'static Mutex<Mirror> {
+    static MIRROR: OnceLock<Mutex<Mirror>> = OnceLock::new();
     MIRROR.get_or_init(|| Mutex::new(None))
 }
 

@@ -1487,9 +1487,7 @@ pub fn establish_recorded_assignment(
 
     let step = store
         .with_records(|records, persist| {
-            let Some(record) = assignment_input(records, assignment_id).cloned() else {
-                return None;
-            };
+            let record = assignment_input(records, assignment_id).cloned()?;
             if !record.is_pending() {
                 return Some(Step::Settled(record));
             }

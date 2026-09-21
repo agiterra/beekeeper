@@ -17681,6 +17681,104 @@ removed from here.
        stub-relay status test skips the six sequences carrying 44244 records
        for the same reason, and names them.
 
+212. **Lane 202's preparation was not fenced where it runs: four ways a
+     seat's tree could move under the turn using it (2026-09-21, lane W3a
+     follow-up, branch `work/lane-212-preparation-fences`, base `220a29195`).**
+     Astra's Wave 2 review, findings 2, 3, 4 and 12; all four blocked the Wave
+     3 control run. Each was reproduced as a test before it was fixed.
+     - (a) **Finding 2 — preparing the next assignment could change a running
+       seat's tree.** *Before, measured:* with lane 202's path a turn holding
+       the seat was irrelevant — an establishment run while a turn was in
+       flight moved `HEAD` from `874186d2` to `c7836149` mid-turn, and a later
+       assignment could move it again, so an assignment that had passed its
+       check started on another one's tree. *After:* custody. A per-seat token
+       (`crates/buzz-session-provider/src/assignment_custody.rs`) is taken by
+       an establishment before git runs and by a **turn** from the actor's
+       dequeue until the turn ends
+       (`crates/buzz-session-provider/src/session.rs`, +36 lines at the
+       dequeue/turn-start boundary and nowhere else). A busy seat answers
+       `seat_busy` and **nothing is spawned behind the turn** — an attempt
+       queued there would take the tree the instant the turn released it,
+       which is the second half of the finding. The dequeue then re-reads
+       `HEAD` under custody before the prompt is sent and refuses rather than
+       prompting a verifier about a commit it is not on, recording
+       `tree_moved` with both ids.
+       `two_assignments_behind_a_running_verifier_each_run_on_their_own_commit`
+       is the review's own scenario: 2 assignments queued behind a running
+       verifier, 0 checkouts during its turn, then B on B and C on C.
+     - (b) **Finding 3 — a live slow checkout was read as an interrupted
+       attempt.** *Before:* an `establishing` record with `attempts: 1` and a
+       task still running started a second attempt (1 → 2) and either task's
+       terminal write landed unconditionally. *After:* an attempt carries an
+       owner (`attemptOwner`, additive and serde-default) written with its
+       started-attempt record; a second attempt while the first is live is
+       refused `AlreadyRunning` with the count still 1; terminal writes go
+       through `commit_terminal_record`, which compares the owner, so a
+       detached task's outcome is dropped in favour of the newer one; and a
+       process that restarts knows no owner at all, which is exactly what
+       makes every `establishing` record it finds the interrupted case the
+       one-replay rule is for (1 → 2, then abandoned). The 120 s bound now
+       means "stop waiting, keep the wake deferred", never "start another".
+       Barrier-controlled by holding custody rather than by sleeping:
+       `a_timed_out_waiter_starts_no_second_attempt_and_one_git_task_runs`
+       (attempts 1 after timeout + redelivery),
+       `overlapping_assignments_for_one_seat_are_serialised` (≤1 attempt each,
+       no record left `establishing`).
+     - (c) **Finding 4 — a deferred wake had no durable owner.** *Before,
+       measured:* with a wake held at `created_at 1700000100` and no in-flight
+       turn, `watermark_ceiling` answered `None`, so a newer channel event
+       moved the floor past the one command the provider still owed; the
+       replay path advanced the floor on `Ok(Undecided)` as readily as on a
+       delivery; and nothing re-delivered the wake, so a fetch finishing at
+       130 s released nothing. *After:*
+       `crates/buzz-session-provider/src/deferred_turns.rs` persists the exact
+       command — target, text, attachments, delivery class, operation key,
+       channel, signer, `created_at` — under `<state-dir>/deferred-turns.json`;
+       `watermark_ceiling` now answers `Some(1700000100)` and still does after
+       the in-process mirror is dropped, because the file is the truth;
+       `deliver_held_commands` `continue`s on `Ok(Undecided)` instead of
+       marking; and `Provider::release_deferred_turns`, on the ordinary tick,
+       decides held wakes oldest-first, one seat per pass, skipping seats that
+       are mid-turn — held 1 → 0 with no reconnect and no second command, and
+       a second pass is a no-op.
+     - (d) **Finding 12 — persistence failures still permitted the checkout.**
+       *Before, measured:* with every write to the store's directory failing,
+       `establish_recorded_assignment` logged the error, ran `git checkout -B`
+       anyway (`HEAD` `bba4d92d` → `fd1fb91b`) and reported `established` with
+       no record on disk at all. *After:* `with_records` hands `act` a
+       `persist` that **returns** its error, and a started-attempt record that
+       cannot be saved returns `EstablishmentError::Unstarted` **before** git
+       runs, with the tree untouched. A terminal record that cannot be saved
+       *after* a completed checkout is a different fact and is reported as
+       `EstablishmentError::Unrecorded { record, error }`: the effect is real,
+       the record is owed, and the next pass writes it through
+       `commit_terminal_record` with the attempt count still 1 — proof that
+       the git work was not repeated. An injected `StoreWriter` is what makes
+       both testable.
+     - (e) **Ownership kept.** New modules `assignment_custody.rs` (+ tests)
+       and `deferred_turns.rs` (+ tests); `assignment_inputs.rs` and its tests;
+       `verification_input.rs`'s `TurnInput::Deferred` unchanged in meaning;
+       in `lib.rs` only `apply_turn_decision` (the Deferred arm persists and
+       the Open/Refused arms release), `prepare_assignment_input`,
+       `watermark_ceiling`, `deliver_held_commands`, the runtime tick, the new
+       `release_deferred_turns`, and `mod` lines. `session.rs` is +36/−0 at
+       the dequeue boundary; the first-turn text function lane 209 owns was
+       not touched, and neither was `pending_completion.rs` (lane 210).
+     - (f) **Tests and gates.** 8 custody cases, 4 deferred-wake cases, 4 new
+       record cases (persistence both ways, superseded terminal write, live
+       versus interrupted owner) and 4 new provider cases (busy seat defers,
+       the clamp, the release, a busy seat's wake stays held). Gates bare:
+       workspace fmt and `clippy --workspace --all-targets -D warnings`;
+       `cargo test -p buzz-session-provider` 942 passed; sidecar stubs; Tauri
+       fmt, clippy and `cargo test`; `just desktop-check`; `pnpm test`;
+       `just file-size-check`; `just current-state-check`; Python NUL scan.
+     - (g) **Owed, live.** Still nothing against a live seat. The control run
+       is the proof: a verifier mid-turn while two more assignments arrive,
+       and a wake that times out while its fetch finishes afterwards. Also
+       unproven live: the deferred-wake file surviving a real provider
+       restart, and a seat whose tree a person moves by hand between the
+       decision and the prompt.
+
 ## 3a. Environment facts that cost real time (do not rediscover)
 
 - **pnpm 11's answer to a stale workspace state is to DELETE `node_modules`,
