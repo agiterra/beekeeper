@@ -250,3 +250,18 @@ writes new fixtures first (the implementer never writes its own oracle).
    not silently fixed.
 6. The control run waits on 209–215 landed and Astra's re-check of 211–213.
 
+### A6 — two contract rulings made during lane 213 (2026-09-21; recorded late)
+
+Ruled while 213 was building and until now recorded only in ledger 214 and `conformance/project-work/README.md`: `wrong_run_or_hash` always names the declaration's plan commit, and the README carries the table of exact reason strings; `candidateArtifact` is null while a git-ref criterion is uncovered.
+
+### A7 — rulings on Astra's Wave 2 re-check (2026-09-21)
+
+Review: `docs/history/2026-09-21-astra-wave2-recheck.md` at `ce6df5633`. Seven findings closed, five partial. Every counterexample is accepted; none is disputed. Lane 210 (settlement) stands.
+
+1. **R1, lane 218 — what is shown is what is hashed.** The approval surfaces take the definition and its hash from one native read, and the hash is computed from the returned bytes by the relay's own canonical function. Two reads joined by a comparison is refused as a design, whatever the test says.
+2. **R2 + R3, lane 219 — custody belongs to the turn, not to the assignment.** Every turn that runs on a seat holds that seat's custody from dequeue, requirement or not. A prepared turn refused at dequeue gets a provider-visible terminal answer that discharges the in-flight delivery. The `tree_moved` observation is written under custody and only against the attempt revision it observed.
+3. **R4, lane 220 — a deferred wake is re-admitted, never re-started.** Release replays the original command through the same admission function. Expired, stale-generation and refused wakes are discharged with an observable disposition; an undecidable wake past the command horizon is expired, not held. Deferred-store writes are fallible and nothing owed is evicted silently.
+4. **R5, lane 221 then 222 — empty means unproved.** Coverage requires positive canonical inclusion and a positive criterion→assignment→assignee relationship. The oracle lands first (221: both negative sequences, branch-specific reason templates, a fixture for every branch and every reason code); the fold follows it (222). The implementer does not author either.
+5. **Readers, lane 223 — not a control blocker, built now.** Raw-content vectors including duplicate keys; `web/` loads the shared vectors; desktop ingress and mobile reject duplicates as core does. Until it lands nobody claims the strict readers agree.
+6. **The control run waits on 218–222 landed, deployed and installed.** Astra is asked for a narrow third look at R1–R5 only. R3 is included now rather than deferred, because Wave 4's disruption run needs it and the code is already open.
+
