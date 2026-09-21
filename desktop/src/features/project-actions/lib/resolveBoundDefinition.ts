@@ -1,23 +1,23 @@
 /**
- * Resolve the definition a run is **bound to**, or say why it cannot be.
+ * Resolve the definition a run is **bound to**, from one read.
  *
- * Finding 1: the cards fetched the run and the current workflow separately
- * and put the run's bound hash beside the current definition's command. Those
- * are different objects the moment anyone republishes, and the interleaving
- * that makes it dangerous is ordinary: A waits for approval, B is published,
- * the card shows A's hash and B's command, and A is republished before the
- * click — so the relay and host correctly execute A while the owner approved
- * what they read as B.
+ * Astra's Wave 2 re-check, R1: the previous version fetched the workflow body
+ * and the relay's `/autorun` hash independently and joined them with a
+ * comparison. Run A waits, B is current, the body read returns B, A is
+ * republished, the hash read returns A — the comparison passes, command B is
+ * displayed, and the owner approves what the relay will execute as A. **Two
+ * reads joined by a comparison authenticate nothing**, whatever the
+ * comparison says, so this module now takes both from
+ * `get_workflow_definition`: the hash is computed natively, by the relay's own
+ * canonical function, over the very value the `definition` field carries.
  *
- * A kind:30620 is replaceable, so a superseded revision is not fetchable by
- * `d` tag. The relay's own `GET /workflows/{id}/autorun` reports the
- * **current** definition's hash, computed by the relay with the same
- * function the run was bound with — so comparing it to the run's binding is
- * a check, not a second implementation. When they differ, no command is
- * shown and the card says so.
+ * Nothing here hashes anything. A TypeScript reimplementation of the relay's
+ * hash would be a second answer to a question that must have one.
  */
-import { getWorkflow, getWorkflowAutorun } from "@/shared/api/tauriWorkflows";
-import type { Workflow } from "@/shared/api/types";
+import {
+  getWorkflowDefinition,
+  type WorkflowDefinitionRead,
+} from "@/shared/api/tauriWorkflows";
 
 import { hostStepCommand } from "./actionDefinition";
 import type { DefinitionResolution } from "./hostStepApproval";
@@ -26,67 +26,76 @@ function sentence(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/**
- * Compare a run's binding with the current published definition.
- *
- * Pure, so the interleaving is testable without a relay: `currentHash` is
- * what the relay says the workflow hashes to now, `definition` is that same
- * workflow's body, and `runHash` is the run's binding.
- */
-export function matchBoundDefinition(input: {
-  runHash: string | null;
-  currentHash: string | null;
-  definition: Record<string, unknown> | null;
-  stepId: string;
-  /** The read that failed, when one did. */
-  readError?: string | null;
-}): DefinitionResolution {
-  if (input.readError) return { kind: "unread", reason: input.readError };
-  if (!input.runHash) return { kind: "hash-unknown" };
-  if (input.currentHash === null || input.definition === null) {
-    return {
-      kind: "unread",
-      reason:
-        "the published definition and its hash could not both be read, so nothing can be matched against this run's binding",
-    };
-  }
-  if (
-    input.currentHash.trim().toLowerCase() !==
-    input.runHash.trim().toLowerCase()
-  ) {
-    return { kind: "not-current", currentHash: input.currentHash };
-  }
-  return {
-    kind: "resolved",
-    hash: input.runHash,
-    command: hostStepCommand(input.definition, input.stepId),
-  };
-}
-
-/** One workflow read plus its current hash, for {@link matchBoundDefinition}. */
+/** One `get_workflow_definition` answer, or the reason there is none. */
 export type BoundDefinitionRead = {
-  workflow: Workflow | null;
-  currentHash: string | null;
+  /** The single read's answer, or `null` when it failed. */
+  read: WorkflowDefinitionRead | null;
+  /** The failure, in the failing call's own words. */
   error: string | null;
 };
 
-/** Read a workflow and the relay's own hash of its current definition. */
+/**
+ * Compare a run's binding with the definition that arrived **with** its hash.
+ *
+ * Pure. The fixture for this function is a read — bytes and the hash of those
+ * bytes — and cannot express a body from one source beside a hash from
+ * another, which is the interleaving R1 named.
+ */
+export function matchBoundDefinition(input: {
+  runHash: string | null;
+  read: BoundDefinitionRead;
+  stepId: string;
+}): DefinitionResolution {
+  if (input.read.error !== null) {
+    return { kind: "unread", reason: input.read.error };
+  }
+  if (!input.runHash) return { kind: "hash-unknown" };
+  const read = input.read.read;
+  if (read === null) {
+    return {
+      kind: "unread",
+      reason:
+        "the published definition was not read, so nothing can be matched against this run's binding",
+    };
+  }
+  if (read.definitionHash === null) {
+    return {
+      kind: "unread",
+      reason:
+        read.definitionHashUnavailable ??
+        "this host could not reproduce the published definition's hash, so it cannot be matched against this run's binding",
+    };
+  }
+  if (
+    read.definitionHash.trim().toLowerCase() !==
+    input.runHash.trim().toLowerCase()
+  ) {
+    return { kind: "not-current", currentHash: read.definitionHash };
+  }
+  return {
+    kind: "resolved",
+    hash: read.definitionHash,
+    // From the same value the hash was taken over.
+    command: hostStepCommand(read.definition, input.stepId),
+  };
+}
+
+/**
+ * Read the bound definition and its hash together.
+ *
+ * `readDefinition` is injectable so a test drives the one read; there is
+ * deliberately no second parameter, because a second source is the defect.
+ */
 export async function readBoundDefinition(
   workflowId: string,
+  deps: {
+    readDefinition?: (id: string) => Promise<WorkflowDefinitionRead>;
+  } = {},
 ): Promise<BoundDefinitionRead> {
-  const [workflow, autorun] = await Promise.all([
-    getWorkflow(workflowId).then(
-      (value) => ({ value, error: null as string | null }),
-      (error: unknown) => ({ value: null, error: sentence(error) }),
-    ),
-    getWorkflowAutorun(workflowId).then(
-      (value) => ({ value, error: null as string | null }),
-      (error: unknown) => ({ value: null, error: sentence(error) }),
-    ),
-  ]);
-  return {
-    workflow: workflow.value,
-    currentHash: autorun.value?.definitionHash ?? null,
-    error: workflow.error ?? autorun.error,
-  };
+  const read = deps.readDefinition ?? getWorkflowDefinition;
+  try {
+    return { read: await read(workflowId), error: null };
+  } catch (error) {
+    return { read: null, error: sentence(error) };
+  }
 }

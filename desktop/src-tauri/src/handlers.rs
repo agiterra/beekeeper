@@ -324,6 +324,7 @@ pub(crate) fn invoke_handler(
         delete_workflow,
         project_work_coverage,
         project_agents_repo_status,
+        get_workflow_definition,
         get_workflow_runs,
         get_workflow_run,
         get_run_approvals,

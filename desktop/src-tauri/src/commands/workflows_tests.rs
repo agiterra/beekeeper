@@ -419,3 +419,102 @@ fn approval_grant_content_carries_note_and_scope() {
     );
     assert!(buzz_core_pkg::workflow_autorun::decode_autorun_revoke(&revoke).is_ok());
 }
+
+// ── R1: one read, and the hash is of the bytes it returns ──────────────────
+
+/// The YAML a project action is published as, with a `run_on_host` step.
+fn action_yaml(command: &str) -> String {
+    format!(
+        "name: verify\nproject: '30621:{}:kettle'\ntrigger:\n  on: manual\nsteps:\n  \
+         - id: verify\n    action: run_on_host\n    command: {command}\n",
+        "11".repeat(32)
+    )
+}
+
+fn definition_event(yaml: &str) -> nostr::Event {
+    nostr::EventBuilder::new(nostr::Kind::Custom(30620), yaml.to_string())
+        .tags([
+            nostr::Tag::parse(["d", "9a7c4f1e-0000-4000-8000-000000000001"]).expect("d"),
+            nostr::Tag::parse(["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"]).expect("h"),
+        ])
+        .sign_with_keys(&nostr::Keys::generate())
+        .expect("sign")
+}
+
+#[test]
+fn the_definition_hash_is_the_relays_own_hash_of_the_same_bytes() {
+    // Astra's R1: the desktop must not compute, borrow or guess this hash by
+    // any route but the relay's own function over the bytes it displays.
+    let yaml = action_yaml("[\"just\", \"ci\"]");
+    let wire = workflow_definition_wire(&definition_event(&yaml));
+    let (def, canonical) = buzz_workflow_pkg::schema::parse_yaml(&yaml).expect("parse");
+
+    // 1. The relay's stored-hash chain: canonical JSON string → Value → hash.
+    let stored: serde_json::Value = serde_json::from_str(&canonical).expect("value");
+    let relay_hash =
+        hex::encode(buzz_workflow_pkg::hash::hash_definition_value(&stored).expect("relay hash"));
+    // 2. The same function over the definition, as `handle_workflow_def` does.
+    let def_hash = buzz_workflow_pkg::hash::definition_hash_hex(&def).expect("def hash");
+
+    assert_eq!(relay_hash, def_hash, "the two relay routes agree");
+    assert_eq!(
+        wire.definition_hash.as_deref(),
+        Some(relay_hash.as_str()),
+        "the wire's hash is the relay's hash"
+    );
+    assert_eq!(wire.definition_hash_unavailable, None);
+    // And the hash is of *these* bytes: the value on the wire is the value
+    // that was hashed, so a surface cannot display one and authorize another.
+    assert_eq!(wire.definition, stored);
+    assert_eq!(
+        hex::encode(
+            buzz_workflow_pkg::hash::hash_definition_value(&wire.definition).expect("rehash")
+        ),
+        relay_hash,
+        "re-hashing the displayed value reproduces the wire's hash"
+    );
+}
+
+#[test]
+fn a_changed_command_changes_the_hash_the_wire_reports() {
+    let a = workflow_definition_wire(&definition_event(&action_yaml("[\"just\", \"ci\"]")));
+    let b = workflow_definition_wire(&definition_event(&action_yaml("[\"echo\", \"B\"]")));
+    assert_ne!(a.definition_hash, b.definition_hash);
+    assert!(a.definition_hash.is_some() && b.definition_hash.is_some());
+}
+
+#[test]
+fn an_unparsable_definition_offers_no_hash_and_says_why() {
+    let wire = workflow_definition_wire(&definition_event("name: [unclosed"));
+    assert_eq!(wire.definition_hash, None);
+    assert!(
+        wire.definition_hash_unavailable
+            .as_deref()
+            .is_some_and(|reason| reason.contains("does not parse")),
+        "{:?}",
+        wire.definition_hash_unavailable
+    );
+}
+
+#[test]
+fn a_webhook_definitions_hash_is_disclosed_as_unreproducible() {
+    // The relay injects a secret into the value before hashing a webhook
+    // definition, and the secret never leaves it. Reporting a hash computed
+    // without it would be a hash that matches nothing.
+    let yaml = format!(
+        "name: hook\nproject: '30621:{}:kettle'\ntrigger:\n  on: webhook\nsteps:\n  \
+         - id: say\n    action: send_message\n    text: hi\n",
+        "11".repeat(32)
+    );
+    let wire = workflow_definition_wire(&definition_event(&yaml));
+    assert_eq!(wire.definition_hash, None);
+    assert!(
+        wire.definition_hash_unavailable
+            .as_deref()
+            .is_some_and(|reason| reason.contains("secret")),
+        "{:?}",
+        wire.definition_hash_unavailable
+    );
+    // The body is still readable; it simply cannot authorize a run.
+    assert_eq!(wire.name, "hook");
+}

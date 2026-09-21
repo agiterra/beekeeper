@@ -187,3 +187,44 @@ test("a request missing what the native fold requires is refused, not answered",
   expect(outcome.message).toContain("channelRef");
   expect(outcome.message).toContain("genesisRef");
 });
+
+test("R1: one read answers with a body and the hash of those bytes", async ({
+  page,
+}) => {
+  // Astra's Wave 2 re-check, R1: the approval surfaces must not be able to
+  // join a body from one read to a hash from another. Across the bridge the
+  // shape itself forbids it — `get_workflow_definition` answers with both, so
+  // there is no second response to disagree with.
+  const read = {
+    id: "9a7c4f1e-0000-4000-8000-000000000001",
+    revision: "1e".repeat(32),
+    name: "verify",
+    owner_pubkey: "2e".repeat(32),
+    channel_id: "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2",
+    definition: {
+      name: "verify",
+      steps: [{ id: "verify", action: "run_on_host", command: ["just", "ci"] }],
+    },
+    definition_hash: "aa".repeat(32),
+    definition_hash_unavailable: null,
+    created_at: 10,
+  };
+  await installMockBridge(page, { workflowDefinitionRead: read });
+  await page.goto("/");
+  await waitForBridge(page);
+
+  const answer = await page.evaluate(async () => {
+    const bridge = window as BridgeWindow;
+    const invoke =
+      bridge.__BUZZ_E2E_INVOKE_MOCK_COMMAND__ ??
+      bridge.__TAURI_INTERNALS__?.invoke;
+    if (!invoke) throw new Error("the mock Tauri bridge is not installed");
+    return invoke("get_workflow_definition", {
+      workflowId: "9a7c4f1e-0000-4000-8000-000000000001",
+    });
+  });
+
+  expect(answer).toEqual(read);
+  // The body and the hash arrive together, from one call.
+  expect((answer as typeof read).definition_hash).toBe("aa".repeat(32));
+});

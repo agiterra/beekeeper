@@ -76,15 +76,14 @@ export function HostStepApprovalInboxCard({
   const read = detail.data?.definition ?? null;
   const view = buildHostStepApprovalView({
     request,
-    workflowName: read?.workflow?.name ?? null,
+    workflowName: read?.read?.name ?? null,
     runDefinitionHash: run?.run.definitionHash ?? null,
     runRead: run !== null,
+    // R1: body and hash from the one read, never joined across two.
     definition: matchBoundDefinition({
       runHash: run?.run.definitionHash ?? null,
-      currentHash: read?.currentHash ?? null,
-      definition: read?.workflow?.definition ?? null,
+      read: read ?? { read: null, error: null },
       stepId: request.stepId,
-      readError: read?.error ?? null,
     }),
     // From the run, not from a host result: the result cannot exist yet.
     checkout: run?.run.checkout ?? { state: "not-reported" },

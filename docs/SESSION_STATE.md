@@ -19112,6 +19112,63 @@ removed from here.
        (CLI, provider brief, Tauri command) read the *plan's* criteria, where
        `proof` is not optional, and pin no reason string.
 
+218. **Lane 211's hash comparison authenticated a different HTTP response: the
+     approval surfaces now take the definition and its hash from one native
+     read, hashed by the relay's own function over the bytes returned
+     (2026-09-21, lane 218; source: Astra's Wave 2 re-check §R1, ruling
+     `UNIFIED_WORK_PLAN.md` § 8 A7.1).** Built, gated, not landed, not
+     exercised live.
+     - **The defect.** `resolveBoundDefinition.ts` fetched the workflow body
+       (`getWorkflow`) and the relay's `/autorun` hash independently and
+       joined them with a comparison; the Actions tab did the same through
+       `useProjectActions.ts:136`/`:160` and `ProjectActionRunRow.tsx:84`.
+       Interleaving: run A waits, B is current, the body read returns B, A is
+       republished, the hash read returns A — the comparison passes, command B
+       is displayed, Approve is enabled, and the relay grants A and the host
+       executes A. Lane 211 closed the *missing* and *mismatched* cases and
+       left this one open, because a comparison between two reads
+       authenticates neither. **Reproduced red** against lane 211's own API:
+       `displayed command: "echo\nB"`, `grantAvailable: true`, with the
+       assertion `Approve must not be enabled for a command from another
+       read` failing `actual: true, expected: false`.
+     - **The correction is structural, not a stricter comparison.** New Tauri
+       command `get_workflow_definition` performs **one** kind:30620 read and
+       answers with `definition` — the canonical JSON value — and
+       `definition_hash`, computed from that same parse by
+       `buzz_workflow::hash::definition_hash_hex`, which is the function the
+       relay stores `workflows.definition_hash` with. Nothing is hashed in
+       TypeScript: a second implementation of the hash would be a second
+       answer to a question that must have one. `matchBoundDefinition` now
+       takes a single `BoundDefinitionRead`; it has no parameter for a loose
+       body or a loose hash, so the interleaving cannot be written down — the
+       old red probe now fails with a `TypeError` on the shape rather than a
+       wrong verdict. `ProjectAction` carries `boundDefinition` from that one
+       read, and the list read's `workflow.definition` is used only for the
+       name, trigger and host-step summary, never to authorize a grant.
+     - **Two disclosed non-answers, both of which withhold grants.** A
+       definition this host cannot parse, and a **webhook**-triggered one
+       whose stored hash includes a secret the public event does not carry,
+       both answer `definition_hash: null` with the reason; the body is still
+       readable and no grant is offered. Reporting a hash computed without
+       the secret would be a hash that matches nothing.
+     - **Tests.** Rust, in `commands/workflows_tests.rs`:
+       `the_definition_hash_is_the_relays_own_hash_of_the_same_bytes` asserts
+       both of the relay's own routes (canonical-JSON-string → Value → hash,
+       and `definition_hash_hex` over the parsed definition) agree, that the
+       wire reports exactly that hash, and that **re-hashing the value the
+       wire displays reproduces it** — the association R1 says was assumed;
+       plus a changed command changing the hash, an unparsable definition, and
+       the webhook disclosure. 26 passed in that module. TypeScript: the test
+       at `approvalTruth.test.mjs` that injected a hash and a body
+       independently is replaced — its fixture is now a read, bytes and the
+       hash of those bytes; and `oneReadHash.test.mjs` covers the
+       interleaving, the match, a failed read and a hash-less read (4 red → 4
+       green). The mock bridge gained `get_workflow_definition` with the same
+       one-object shape, and `tests/e2e/project-work.spec.ts` asserts body and
+       hash arrive together (4 passed).
+     - **Owed live.** Nothing ran against hive. The control run's app-side
+       approval is what proves it end to end.
+
 ## 3a. Environment facts that cost real time (do not rediscover)
 
 - **pnpm 11's answer to a stale workspace state is to DELETE `node_modules`,

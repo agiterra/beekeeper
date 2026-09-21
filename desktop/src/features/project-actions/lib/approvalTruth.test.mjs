@@ -285,15 +285,31 @@ test("a spec this reader does not recognise offers no Approve", () => {
 
 // ── Finding 1, at the matcher ─────────────────────────────────────────────
 
-test("the matcher compares the run's binding with the relay's current hash", () => {
-  const definition = {
-    steps: [{ id: "verify", action: "run_on_host", command: ["just", "ci"] }],
-  };
+test("the matcher takes body and hash from one read, never a pair", () => {
+  // R1: the old fixture here injected a hash and a body independently, which
+  // assumed the very association it was meant to check. A read is bytes and
+  // the hash of those bytes; the interleaving cannot be written down.
+  const read = (command, definitionHash) => ({
+    read: {
+      id: "wf-1",
+      revision: "1e".repeat(32),
+      name: "verify",
+      ownerPubkey: "2e".repeat(32),
+      channelId: null,
+      definition: {
+        steps: [{ id: "verify", action: "run_on_host", command }],
+      },
+      definitionHash,
+      definitionHashUnavailable: null,
+      createdAt: 1,
+    },
+    error: null,
+  });
+
   assert.deepEqual(
     matchBoundDefinition({
       runHash: HASH_A,
-      currentHash: HASH_A,
-      definition,
+      read: read(["just", "ci"], HASH_A),
       stepId: "verify",
     }),
     {
@@ -305,8 +321,7 @@ test("the matcher compares the run's binding with the relay's current hash", () 
   assert.deepEqual(
     matchBoundDefinition({
       runHash: HASH_A,
-      currentHash: HASH_B,
-      definition,
+      read: read(["echo", "B"], HASH_B),
       stepId: "verify",
     }),
     { kind: "not-current", currentHash: HASH_B },
@@ -314,8 +329,7 @@ test("the matcher compares the run's binding with the relay's current hash", () 
   assert.deepEqual(
     matchBoundDefinition({
       runHash: null,
-      currentHash: HASH_A,
-      definition,
+      read: read(["just", "ci"], HASH_A),
       stepId: "verify",
     }),
     { kind: "hash-unknown" },
@@ -323,23 +337,21 @@ test("the matcher compares the run's binding with the relay's current hash", () 
   assert.equal(
     matchBoundDefinition({
       runHash: HASH_A,
-      currentHash: null,
-      definition: null,
-      stepId: "verify",
-      readError: "relay said 403",
-    }).kind,
-    "unread",
-  );
-  // A hash read that failed is never silently treated as a match.
-  assert.equal(
-    matchBoundDefinition({
-      runHash: HASH_A,
-      currentHash: null,
-      definition,
+      read: { read: null, error: "relay said 403" },
       stepId: "verify",
     }).kind,
     "unread",
   );
+  // A read that could not reproduce the stored hash is unread, never a match.
+  const unhashed = read(["just", "ci"], null);
+  unhashed.read.definitionHashUnavailable = "a webhook secret is not carried";
+  const answer = matchBoundDefinition({
+    runHash: HASH_A,
+    read: unhashed,
+    stepId: "verify",
+  });
+  assert.equal(answer.kind, "unread");
+  assert.match(answer.reason, /webhook secret/);
 });
 
 // ── Finding 11 ────────────────────────────────────────────────────────────

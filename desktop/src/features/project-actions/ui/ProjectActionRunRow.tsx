@@ -61,10 +61,10 @@ export function ProjectActionRunRow({
   // The one resolver, the same one the inbox card uses: authority is the
   // project's, read from the request's own `approverSpec` (finding 9).
   const authority = useApprovalAuthority(pending?.approverSpec ?? null);
-  // Finding 1: the definition put in front of the approver must be the one
-  // the run is bound to. `autorun.definitionHash` is the relay's own hash of
-  // the currently published definition, so comparing it to the run's binding
-  // is a check rather than a second implementation of the hash.
+  // Finding 1, and R1 after it: the definition put in front of the approver
+  // must be the one the run is bound to, and its hash must be of the bytes
+  // shown — so both come from `get_workflow_definition`, which hashes what it
+  // returns with the relay's own canonical function.
   const approvalView = React.useMemo(() => {
     if (!pending) return null;
     return buildHostStepApprovalView({
@@ -81,20 +81,19 @@ export function ProjectActionRunRow({
       workflowName: action.workflow.name,
       runDefinitionHash: entry.run.definitionHash,
       runRead: true,
+      // R1: from the one read that carries both, never from the list read's
+      // body beside the autorun read's hash.
       definition: matchBoundDefinition({
         runHash: entry.run.definitionHash,
-        currentHash: action.autorun?.definitionHash ?? null,
-        definition: action.workflow.definition,
+        read: action.boundDefinition,
         stepId: pending.stepId,
-        readError: action.autorunError,
       }),
       // Finding 10: off the run, not off a host result that cannot exist
       // until this very approval is granted.
       checkout: entry.run.checkout,
     });
   }, [
-    action.autorun,
-    action.autorunError,
+    action.boundDefinition,
     action.workflow,
     entry.run.checkout,
     entry.run.definitionHash,

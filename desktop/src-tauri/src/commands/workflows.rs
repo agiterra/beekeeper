@@ -219,6 +219,119 @@ pub async fn get_workflow_runs(
     .await
 }
 
+/// One kind:30620 read, with the hash of **the bytes it returns**.
+///
+/// Astra's Wave 2 re-check, R1: the approval surfaces used to fetch the
+/// workflow body and the relay's `/autorun` hash independently and join them
+/// with a comparison. Run A waits, B is current, the body read returns B, A is
+/// republished, the hash read returns A — the comparison passes, command B is
+/// displayed, and the owner approves a run the relay will execute as A. Two
+/// reads joined by a comparison authenticate nothing, whatever the comparison
+/// says.
+///
+/// So the definition and its hash leave this command **together**, and the
+/// hash is computed here from the same parse the `definition` field carries,
+/// with the relay's own canonical function (`buzz_workflow::hash`) rather
+/// than a reimplementation. `definition` is the canonical JSON value that was
+/// hashed, so what a surface displays is what was hashed, by construction.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct WorkflowDefinitionWire {
+    pub id: String,
+    /// Event id of the kind:30620 revision these bytes came from.
+    pub revision: String,
+    pub name: String,
+    pub owner_pubkey: String,
+    pub channel_id: Option<String>,
+    /// The canonical JSON value that was hashed.
+    pub definition: Value,
+    /// Lowercase hex SHA-256 of that value, or `None` with a reason.
+    pub definition_hash: Option<String>,
+    /// Why no hash is offered. `None` exactly when `definition_hash` is set.
+    pub definition_hash_unavailable: Option<String>,
+    pub created_at: i64,
+}
+
+/// Read one project action's published definition and hash it, in one read.
+///
+/// A definition this host cannot parse, or one whose stored hash it cannot
+/// reproduce, answers `definition_hash: None` with the reason — never a hash
+/// it guessed. A surface with no hash offers no grant.
+#[tauri::command]
+pub async fn get_workflow_definition(
+    workflow_id: String,
+    state: State<'_, AppState>,
+) -> Result<WorkflowDefinitionWire, String> {
+    let events = query_relay(
+        &state,
+        &[serde_json::json!({
+            "kinds": [30620],
+            "#d": [workflow_id],
+            "limit": 1
+        })],
+    )
+    .await?;
+    let event = events
+        .first()
+        .ok_or_else(|| "workflow not found".to_string())?;
+    Ok(workflow_definition_wire(event))
+}
+
+/// The definition and hash of one kind:30620 event. Pure; unit-tested.
+fn workflow_definition_wire(ev: &nostr::Event) -> WorkflowDefinitionWire {
+    let id = tag_value(ev, "d").unwrap_or_default();
+    let ts = ev.created_at.as_secs() as i64;
+    let (definition, hash, unavailable) = match hashed_definition(&ev.content) {
+        Ok((value, hash)) => (value, Some(hash), None),
+        // The body is still shown as parsed YAML so a reader can see what was
+        // published; it simply cannot be authorized against a run.
+        Err(reason) => (parse_definition(&ev.content), None, Some(reason)),
+    };
+    let name = definition
+        .get("name")
+        .and_then(Value::as_str)
+        .filter(|s| !s.trim().is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| id.clone());
+    WorkflowDefinitionWire {
+        id,
+        revision: ev.id.to_hex(),
+        name,
+        owner_pubkey: ev.pubkey.to_hex(),
+        channel_id: tag_value(ev, "h"),
+        definition,
+        definition_hash: hash,
+        definition_hash_unavailable: unavailable,
+        created_at: ts,
+    }
+}
+
+/// Parse a definition's YAML and hash the canonical value it produces.
+///
+/// One parse, one value, one hash: the returned `Value` **is** the thing that
+/// was hashed. `buzz_workflow::hash::definition_hash_hex` is the function the
+/// relay stores `workflows.definition_hash` with, so a match here is a match
+/// there.
+fn hashed_definition(yaml: &str) -> Result<(Value, String), String> {
+    let (def, _canonical) = buzz_workflow_pkg::schema::parse_yaml(yaml)
+        .map_err(|error| format!("this definition does not parse: {error}"))?;
+    // The relay injects a webhook secret into the value before hashing a
+    // webhook-triggered definition, and that secret never leaves it. Such a
+    // definition's stored hash is therefore not reproducible from the public
+    // event, and saying so is the only honest answer — a host step never
+    // combines with a webhook trigger, so no approval depends on it.
+    if matches!(def.trigger, buzz_workflow_pkg::schema::TriggerDef::Webhook) {
+        return Err(
+            "a webhook-triggered definition's stored hash includes a secret this event does not              carry, so it cannot be reproduced here"
+                .to_string(),
+        );
+    }
+    let value = buzz_workflow_pkg::hash::definition_value(&def)
+        .map_err(|error| format!("this definition does not canonicalize: {error}"))?;
+    let hash = buzz_workflow_pkg::hash::definition_hash_hex(&def)
+        .map_err(|error| format!("this definition could not be hashed: {error}"))?;
+    Ok((value, hash))
+}
+
 // ── Writes ───────────────────────────────────────────────────────────────────
 
 #[tauri::command]

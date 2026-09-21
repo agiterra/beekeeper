@@ -379,6 +379,65 @@ export async function getChannelsWorkflows(
   return raw.map(fromRawWorkflow);
 }
 
+/**
+ * One kind:30620 read, with the hash of the bytes it returns.
+ *
+ * Astra's Wave 2 re-check, R1: an approval must never join a body from one
+ * read to a hash from another. `definition` is the canonical JSON value the
+ * native side hashed, and `definitionHash` is `buzz_workflow::hash`'s answer
+ * over exactly that value — the function the relay stores
+ * `workflows.definition_hash` with. `definitionHash` is `null` with a reason
+ * when this host cannot reproduce the stored hash, and a surface with no hash
+ * offers no grant.
+ */
+export type WorkflowDefinitionRead = {
+  id: string;
+  /** Event id of the kind:30620 revision these bytes came from. */
+  revision: string;
+  name: string;
+  ownerPubkey: string;
+  channelId: string | null;
+  /** The canonical JSON value that was hashed. */
+  definition: Record<string, unknown>;
+  definitionHash: string | null;
+  /** Why no hash is offered; `null` exactly when `definitionHash` is set. */
+  definitionHashUnavailable: string | null;
+  createdAt: number;
+};
+
+type RawWorkflowDefinitionRead = {
+  id: string;
+  revision: string;
+  name: string;
+  owner_pubkey: string;
+  channel_id: string | null;
+  definition: Record<string, unknown>;
+  definition_hash: string | null;
+  definition_hash_unavailable: string | null;
+  created_at: number;
+};
+
+/** Read one action's published definition and its hash, in a single read. */
+export async function getWorkflowDefinition(
+  workflowId: string,
+): Promise<WorkflowDefinitionRead> {
+  const raw = await invokeTauri<RawWorkflowDefinitionRead>(
+    "get_workflow_definition",
+    { workflowId },
+  );
+  return {
+    id: raw.id,
+    revision: raw.revision,
+    name: raw.name,
+    ownerPubkey: raw.owner_pubkey,
+    channelId: raw.channel_id ?? null,
+    definition: raw.definition,
+    definitionHash: raw.definition_hash ?? null,
+    definitionHashUnavailable: raw.definition_hash_unavailable ?? null,
+    createdAt: raw.created_at,
+  };
+}
+
 export async function getWorkflow(workflowId: string): Promise<Workflow> {
   const raw = await invokeTauri<RawWorkflow>("get_workflow", { workflowId });
   return fromRawWorkflow(raw);

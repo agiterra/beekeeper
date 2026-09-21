@@ -19,6 +19,10 @@ import {
 import type { Workflow, WorkflowApproval } from "@/shared/api/types";
 
 import { isProjectAction } from "./actionDefinition";
+import {
+  readBoundDefinition,
+  type BoundDefinitionRead,
+} from "./resolveBoundDefinition";
 
 /** How many of an action's latest runs the tab shows. */
 export const PROJECT_ACTION_RUN_LIMIT = 5;
@@ -38,6 +42,15 @@ export type ProjectActionRun = {
 
 export type ProjectAction = {
   workflow: Workflow;
+  /**
+   * The published definition and **its own** hash, from one read (R1).
+   *
+   * The card's command and the hash it is authorized against must come from
+   * the same read; `workflow.definition` above is the list read and is used
+   * for the name, trigger and host-step summary only — never to authorize a
+   * grant.
+   */
+  boundDefinition: BoundDefinitionRead;
   runs: ProjectActionRun[];
   /** The run listing failed; the card says so instead of "No runs yet." */
   runsError: string | null;
@@ -151,6 +164,10 @@ export async function loadProjectActions(
         runs.map((run) => loadRun(workflow.id, run)),
       );
       detailed.sort((a, b) => b.run.createdAt - a.run.createdAt);
+      // R1: the definition an approval is judged against, with the hash of
+      // those same bytes, in one read. Failure is kept as a sentence; a row
+      // with no resolved definition offers no grant.
+      const boundDefinition = await readBoundDefinition(workflow.id);
       // Spec § 5.4: whether an unrevoked autorun grant binds this exact
       // definition. A read failure is kept as a sentence, not hidden as
       // "no grant".
@@ -161,7 +178,14 @@ export async function loadProjectActions(
       } catch (error) {
         autorunError = errorSentence(error);
       }
-      return { workflow, runs: detailed, runsError, autorun, autorunError };
+      return {
+        workflow,
+        boundDefinition,
+        runs: detailed,
+        runsError,
+        autorun,
+        autorunError,
+      };
     }),
   );
 }

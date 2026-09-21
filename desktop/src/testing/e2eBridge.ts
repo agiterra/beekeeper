@@ -677,6 +677,12 @@ type E2eConfig = {
      * "nothing remains".
      */
     projectWorkCoverageResponse?: Record<string, unknown>;
+    /**
+     * The `get_workflow_definition` answer (R1): a definition body and the
+     * hash of those same bytes, as one object. Absent throws, which is what
+     * a surface with no read must face.
+     */
+    workflowDefinitionRead?: Record<string, unknown>;
     /** Canonical buzz-core adapter response for the session-policy fold. */
     codingSessionPolicyFoldResponse?: Record<string, unknown>;
     /** Canonical buzz-core adapter response for the kind-44246 fold (L5). */
@@ -1871,6 +1877,7 @@ let mockIdentityLostCleared = false;
 let mockIdentityLockedCleared = false;
 let mockCodingSessionTeamFoldResponse: Record<string, unknown> | null = null;
 let mockProjectWorkCoverageResponse: Record<string, unknown> | null = null;
+let mockWorkflowDefinitionRead: Record<string, unknown> | null = null;
 let mockCodingSessionPolicyFoldResponse: Record<string, unknown> | null = null;
 let mockCodingSessionObservationFoldResponse: Record<string, unknown> | null =
   null;
@@ -11252,6 +11259,9 @@ export function maybeInstallE2eTauriMocks() {
   mockProjectWorkCoverageResponse = config.mock?.projectWorkCoverageResponse
     ? structuredClone(config.mock.projectWorkCoverageResponse)
     : null;
+  mockWorkflowDefinitionRead = config.mock?.workflowDefinitionRead
+    ? structuredClone(config.mock.workflowDefinitionRead)
+    : null;
   mockCodingSessionPolicyFoldResponse = config.mock
     ?.codingSessionPolicyFoldResponse
     ? structuredClone(config.mock.codingSessionPolicyFoldResponse)
@@ -14764,6 +14774,17 @@ export function maybeInstallE2eTauriMocks() {
         return handleGetWorkflow(
           payload as Parameters<typeof handleGetWorkflow>[0],
         );
+      case "get_workflow_definition": {
+        // R1: one read answering with a body and the hash of *that* body.
+        // The mock is configured with the pair the native command would
+        // return, so a spec cannot hand a surface a body from one place and
+        // a hash from another — that shape does not exist here either.
+        const read = mockWorkflowDefinitionRead;
+        if (!read) {
+          throw new Error("mock workflow definition read is not configured");
+        }
+        return structuredClone(read);
+      }
       case "create_workflow":
         return handleCreateWorkflow(
           payload as Parameters<typeof handleCreateWorkflow>[0],
