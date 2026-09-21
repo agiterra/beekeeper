@@ -19237,10 +19237,79 @@ removed from here.
        commit landed (`ls-remote` moved, record accepted by the relay's
        main-tip check) → drafts empty → `plans show` from main → withdraw.
        Runbook `crates/buzz-cli/TESTING.md` § 6.13b.
-     - **Not done / disclosed.** Desktop Files tab and Mobile are the next
+     - **Not done / disclosed.** ~~Desktop Files tab and Mobile are the next
        two phases of the plan; the conformance binder `implementation.test.mjs`
-       lands with the TypeScript fold. `prev` is client-side only. Nothing
-       exercised against hive.
+       lands with the TypeScript fold.~~ Both built the same day, items 179
+       and 180. `prev` is client-side only. Nothing exercised against hive.
+
+225. **The desktop Files tab: the agents repository read from `main`, edited
+     as shared drafts, committed from the app (2026-09-21, Andy with Opus).**
+     Spec § 4.12; with the code that proves it:
+     - **Host.** `desktop/src-tauri/src/managed_agents/agents_repo_read.rs`
+       (`agents_repo_ls`, `agents_repo_read`: the packs cache's fetched tip
+       `refs/remotes/origin/<branch>`, never its working copy — the cache's
+       local `main` never moves, item 172 — with `syncedAt`; a pack-layout
+       or sha-pinned source refused by name) and `agents_repo_commit.rs`
+       (`agents_repo_commit_drafts`: a throwaway object database fed from
+       the cache over the local transport — `protocol.file.allow` is `never`
+       under the relay auth, so two auths — `main-moved` and `stale-base`
+       refusals per path naming the author, the tree built with plumbing,
+       materialized and validated by `validate_root` with `actions.yml`
+       parsed through `buzz-workflow` (now a desktop dependency), one commit
+       as the viewer with `Co-authored-by`/`Signed-off-by`/`Beekeeper-Drafts`
+       trailers, `--force-with-lease`, `ls-remote` verify → `pushed:
+       yes|no|unknown`). Four tests against a bare remote
+       (`agents_repo_commit_tests.rs`). Registered in `handlers.rs`.
+     - **Renderer.** `desktop/src/features/agents-repo/`: the TypeScript
+       fold bound to the corpus (`conformance/agents-repo-draft-fold/implementation.test.mjs`
+       lands here), op codec, queries (cold paged read + live `#a`, a
+       kind:30618 `#d` subscription invalidating the `main` reads),
+       mutations (`headConflict` refuses before signing, naming who saved;
+       kind 5 withdrawal), access (= the to-do rule, advisory), paths,
+       git blob sha in the renderer for "identical to main", jsdiff for the
+       diff tab. Tab **Files** (`/projects/$projectId/files`, `?path=`),
+       three panes: tree with draft badges, editor with Preview / Diff vs
+       main / Edit and a disclosure strip, drafts panel with Commit…; the
+       commit dialog prints the host result verbatim and publishes the
+       `commit.record` closing the whole chain of each landed path, with a
+       Retry-marking banner when only the record failed. Roles tab: **Edit
+       definition** on a project-origin or archived role. Nine node tests;
+       three Playwright smoke tests (`tests/e2e/project-agents-repo.spec.ts`,
+       mock host in `src/testing/e2eBridgeAgentsRepo.ts`, a runtime
+       project-event seam). `routeTree.gen.ts` regenerated.
+     - **Found by the e2e.** The screen passed the *current* head as the
+       editor's `openedOn`, so the conflict could never fire; the editor now
+       hands the head it opened on to save/archive/delete (`3d8f8d8d4`).
+       Also: a stale preview server on :4173 served the previous bundle for
+       one run — the documented gotcha, not a product bug.
+     - **Not done / disclosed.** The tab has not been driven in the
+       installed app against a relay; host and renderer are proved
+       separately. No live in-app commit yet. `pnpm build:e2e` must be
+       preceded by killing :4173 or it tests the previous bundle.
+
+226. **The mobile Files page: the agents repository read from `main` and
+     drafted through the relay; no commit on the phone (2026-09-21, Andy
+     with Opus).** Spec § 4.12; with the code that proves it:
+     - `mobile/lib/features/agents_repo/`: Dart op codec and fold bound to
+       the corpus (`test/features/agents_repo/domain/agents_repo_draft_fold_test.dart`);
+       `data/agents_repo_http_client.dart` reads the relay's `tree`/`raw`
+       routes with a NIP-98 token on the **repository root** (the git
+       extractor's `u`), **proved live** against :3010 by the gated
+       `agents_repo_http_client_live_test.dart` (`main 7c079ad1… · 21
+       entries · plans/rpg.md blob 29aadf90…`); providers for the source
+       (30624), the listing (re-read on kind:30618 and pull-to-refresh) and
+       one file; the drafts notifier in the to-do notifier's shape; actions
+       `saveDraft`/`moveDraft`/`withdraw` with the head check before
+       signing. Page: groups with plans first, draft chips, a file page with
+       a Main/Draft toggle and the draft's facts, Edit-as-draft, Archive,
+       Withdraw-my-draft. **No Commit control exists**; every screen carries
+       "Drafts become real when someone commits them from a desktop." The
+       project tree gains a Files row (`projectAgentsRepoOpenerProvider`,
+       wired in `app.dart`). `normalizeProjectCoordinate` moved to
+       `shared/relay/project_coordinate.dart`. Kinds 30618/30624/44249 in
+       `nostr_models.dart`. 22 tests; the suite (2,123) green.
+     - **Not done / disclosed.** Not run on a simulator; reader and widgets
+       are proved separately.
 
 ## 3a. Environment facts that cost real time (do not rediscover)
 
