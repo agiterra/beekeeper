@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
+import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools";
+
 import {
   fetchProjectPulseDigest,
   projectPulseChannelSetUnresolved,
@@ -846,4 +848,83 @@ test("an empty declared-work state hands back frozen empties, by identity", asyn
   // And the loaded pages are React Query's own array, by reference.
   assert.equal(ready.pages, ready.pages);
   assert.equal(ready.pageErrors, first.pageErrors);
+});
+
+/**
+ * The Pulse gate must admit every 44223 `buzz-core` accepts — ledger 216(b).
+ *
+ * `composeRef` is the ninth additive key on this payload, and the provider
+ * emits it for **every** seat staged from a composed pack
+ * (`seat_compose_ref`, `crates/buzz-session-provider/src/lib.rs`). The gate's
+ * amendment list did not carry it, so each such 44223 was excluded here as
+ * "carried undecodable coding-session metadata": the session was missing from
+ * `digest.sessions`, and the project Overview card — which has no
+ * errors-aware branch — read "No sessions are currently verified live" over a
+ * running seat.
+ *
+ * Signed for real: `admissibleEvents` checks the signature before the gate,
+ * so a placeholder `sig` would prove nothing about the gate at all.
+ */
+test("a 44223 carrying composeRef and handover reaches the digest, not the exclusion list", async () => {
+  const secret = generateSecretKey();
+  const author = getPublicKey(secret);
+  const content = JSON.stringify({
+    schema: "buzz-coding-session-metadata/v1",
+    session: {
+      driver: "claude-agent-acp",
+      instanceId: "0123456789abcdef",
+      sessionId: "11111111-2222-3333-4444-555555555555",
+      generation: 1,
+    },
+    projectRef: PROJECT,
+    repoRef: null,
+    title: "Advance coding sessions",
+    agentRef: null,
+    provider: "claude-primary",
+    runtime: "claude",
+    model: "claude-opus-5",
+    status: "running",
+    branch: null,
+    capabilities: {
+      threadTurnStart: true,
+      threadTurnInterrupt: true,
+      threadSteer: false,
+      context: false,
+      diff: false,
+      plan: true,
+    },
+    packRef: {
+      repo: `30617:${OWNER}:agiterra-packs`,
+      sha: "d".repeat(40),
+      role: "builder",
+      path: "personas/roles/builder",
+    },
+    composeRef: { appVersion: "0.4.2", digest: `sha256:${"e".repeat(64)}` },
+    handover: {
+      state: "active",
+      claimant: "c".repeat(64),
+      bodyPubkey: "d".repeat(64),
+      acceptedEventId: "e".repeat(64),
+    },
+  });
+  const event = finalizeEvent(
+    {
+      kind: 44223,
+      created_at: 1_785_512_437,
+      tags: [["h", "channel-1"]],
+      content,
+    },
+    secret,
+  );
+  assert.equal(event.pubkey, author);
+
+  const digest = await fetchProjectPulseDigest(PROJECT, ["channel-1"], {
+    fetchEventsBatch: async (filters) =>
+      filters.some((filter) => filter.kinds?.includes(44223)) ? [event] : [],
+  });
+  assert.deepEqual(
+    digest.errors.filter((error) => error.scope === "invalid-event"),
+    [],
+    "a 44223 buzz-core accepts must not be excluded by this client's gate",
+  );
 });

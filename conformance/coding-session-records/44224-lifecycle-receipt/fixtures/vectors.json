@@ -603,7 +603,7 @@
     },
     {
       "name": "oversized-turn-error-code",
-      "why": "A 100-byte turn-stage error code: Rust bounds a turn code at 64 bytes (`is_receipt_error_code`), the desktop ingress reader at 256.",
+      "why": "A 65-byte `error.code` on a turn-stage receipt. `is_receipt_error_code` (coding_session_payload.rs:798) bounds a **turn** failure code at MAX_RECEIPT_ERROR_CODE_BYTES = 64, while the generic receipt check bounds every other status's code at MAX_IDENTIFIER_BYTES = 256 — the asymmetry is deliberate and both halves are now mirrored by the desktop ingress decoder and the mobile decoder, which bounded every code at 256 until lane 216.",
       "content": {
         "schema": "buzz-coding-session-lifecycle-receipt/v1",
         "commandId": "cmd-1",
@@ -622,14 +622,14 @@
       "accepts": {
         "rust": false,
         "desktopCoordination": false,
-        "desktopIngress": true,
-        "dart": true
+        "desktopIngress": false,
+        "dart": false
       },
       "reason": "wrong-type"
     },
     {
       "name": "oversized-error-message",
-      "why": "A 1500-byte message: Rust bounds it at 1024 + '\u2026' (1027 bytes); the desktop ingress reader at 2048.",
+      "why": "A 1500-byte message: Rust bounds it at 1024 + '…' (1027 bytes); the desktop ingress reader at 2048.",
       "content": {
         "schema": "buzz-coding-session-lifecycle-receipt/v1",
         "commandId": "cmd-1",
@@ -643,8 +643,8 @@
       "accepts": {
         "rust": false,
         "desktopCoordination": false,
-        "desktopIngress": true,
-        "dart": true
+        "desktopIngress": false,
+        "dart": false
       },
       "reason": "wrong-type"
     }

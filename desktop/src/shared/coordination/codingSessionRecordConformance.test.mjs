@@ -106,13 +106,11 @@ const lifecycleReceipt = (content) => {
 test("44221 lifecycle command — the coordination reader runs the shared vectors", () => {
   const parsed = fixture("44221-lifecycle-command", 44221);
   const divergent = runReader(parsed, "desktopCoordination", lifecycleCommand);
-  // Three whole action types buzz-core accepts and this reader refuses.
-  assert.deepEqual(divergent.sort(), [
-    "hire-seven-key",
-    "hire-with-requested-by",
-    "hire-with-routing-request",
-    "restart",
-  ]);
+  // None left. `session.restart` — which this app writes itself — is now
+  // read; `session.hire` names no `providerAuthorityPubkey` at all and is
+  // read by the sibling `readLifecycleHire`, so its vectors state `null`
+  // rather than a refusal (conformance/README.md).
+  assert.deepEqual(divergent, []);
 });
 
 test("44223 metadata — the Pulse gate runs the shared vectors", () => {
@@ -120,13 +118,9 @@ test("44223 metadata — the Pulse gate runs the shared vectors", () => {
   const divergent = runReader(parsed, "desktopGate", (content) =>
     isStrictMetadataContent(JSON.stringify(content)),
   );
-  // `composeRef` is the key this gate was never taught, and an explicit
-  // `"routing": null` is the one shape it is looser on than buzz-core.
-  assert.deepEqual(divergent.sort(), [
-    "compose-ref",
-    "every-amendment-at-once",
-    "invalid-routing-null",
-  ]);
+  // Both closed in lane 216: `composeRef` is taught, and an explicit
+  // `"routing": null` is refused rather than short-circuited past.
+  assert.deepEqual(divergent, []);
 });
 
 test("44223 metadata — the session ingress decoder runs the shared vectors", () => {
@@ -137,13 +131,9 @@ test("44223 metadata — the session ingress decoder runs the shared vectors", (
     (content) =>
       parseBuzzCodingSessionMetadata(JSON.stringify(content)) !== null,
   );
-  // `handover` is the key this decoder was never taught; the three summary
-  // keys are the one place it is looser than buzz-core.
-  assert.deepEqual(divergent.sort(), [
-    "context-summary",
-    "every-amendment-at-once",
-    "handover",
-  ]);
+  // Both closed in lane 216: `handover` is taught, and the three summary keys
+  // no writer has ever emitted are gone from its optional list.
+  assert.deepEqual(divergent, []);
 });
 
 test("44224 lifecycle receipt — the coordination reader runs the shared vectors", () => {
@@ -163,11 +153,9 @@ test("44224 lifecycle receipt — the session ingress decoder runs the shared ve
     (content) =>
       parseCodingSessionLifecycleReceipt(JSON.stringify(content)) !== null,
   );
-  // Both are bounds this decoder sets wider than buzz-core does.
-  assert.deepEqual(divergent.sort(), [
-    "oversized-error-message",
-    "oversized-turn-error-code",
-  ]);
+  // Both bounds now match buzz-core's exactly (64-byte code, 1027-byte
+  // message), on the turn half and the lifecycle half alike.
+  assert.deepEqual(divergent, []);
 });
 
 test("44230 closure — the coordination reader runs the shared vectors", () => {

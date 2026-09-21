@@ -111,6 +111,21 @@ CodingSessionDecoded<CodingSessionCreate> decodeCodingSessionCreate(
       CodingSessionDecodeReason.malformedPayload,
     );
   }
+  // The 2026-09-01 attribution amendment: `hireRef` names the kind:44221
+  // `session.hire` a seated create answers. Trailing and independent of the
+  // seat pair and of routing, exactly as buzz-core enumerates it. It was
+  // missing from `createKeys` until lane 216 — an exact-key list, so **every
+  // hired seat's create** decoded as corruption here and bound no provider
+  // authority, leaving the execution on D5's unverified metadata-signer
+  // fallback ("authority unverified" in the session header). Absent is not
+  // null: a key-set check sees an explicit null as *present*, so
+  // `"hireRef": null` is the shape buzz-core refuses, not "no hire".
+  final hasHireRef = action.containsKey('hireRef');
+  if (hasHireRef && !isHex64(action['hireRef'])) {
+    return const CodingSessionDecoded.failed(
+      CodingSessionDecodeReason.malformedPayload,
+    );
+  }
   final createKeys = [
     'type',
     'projectRef',
@@ -124,6 +139,7 @@ CodingSessionDecoded<CodingSessionCreate> decodeCodingSessionCreate(
     'initialTurn',
     if (hasActor) 'actor',
     if (hasActor) 'role',
+    if (hasHireRef) 'hireRef',
     if (hasRouting) 'routing',
   ];
   if (!hasExactKeys(action, createKeys) || (hasGenesisRef && !hasSessionRef)) {
@@ -154,8 +170,14 @@ CodingSessionDecoded<CodingSessionCreate> decodeCodingSessionCreate(
       CodingSessionDecodeReason.malformedPayload,
     );
   }
-  final authority = normalizePubkey(action['providerAuthorityPubkey']);
-  if (authority.isEmpty ||
+  // Refused, never repaired. `validate_provider_authority_pubkey` requires
+  // lowercase 64-hex, and this id is compared byte-for-byte against signed
+  // facts: a decoder that lowercases an uppercase key admits a create every
+  // other reader calls malformed, and can be made to agree with a forgery
+  // (ledger 216). `normalizePubkey` stays for values this app *reads off an
+  // event*, not for values it validates.
+  final authority = action['providerAuthorityPubkey'];
+  if (!isHex64(authority) ||
       !boundedNonempty(action['providerInstanceRef'], _maxReferenceBytes) ||
       !boundedNullable(action['projectRef'], _maxReferenceBytes) ||
       !boundedNullable(action['repoRef'], _maxReferenceBytes) ||
@@ -170,7 +192,7 @@ CodingSessionDecoded<CodingSessionCreate> decodeCodingSessionCreate(
     CodingSessionCreate(
       ref: ref,
       commandId: payload['commandId'] as String,
-      providerAuthorityPubkey: authority,
+      providerAuthorityPubkey: authority as String,
       providerInstanceRef: action['providerInstanceRef'] as String,
       sessionRef: claimed as String?,
       genesisRef: genesisRef as String?,
@@ -241,8 +263,9 @@ CodingSessionDecoded<CodingSessionResume> decodeCodingSessionResume(
     );
   }
   final session = CodingSessionTarget.decode(action['session']);
-  final authority = normalizePubkey(action['providerAuthorityPubkey']);
-  if (session == null || authority.isEmpty) {
+  // Refused, never repaired — same rule as the create above.
+  final authority = action['providerAuthorityPubkey'];
+  if (session == null || !isHex64(authority)) {
     return const CodingSessionDecoded.failed(
       CodingSessionDecodeReason.malformedPayload,
     );
@@ -251,7 +274,7 @@ CodingSessionDecoded<CodingSessionResume> decodeCodingSessionResume(
     CodingSessionResume(
       ref: ref,
       commandId: payload['commandId'] as String,
-      providerAuthorityPubkey: authority,
+      providerAuthorityPubkey: authority as String,
       session: session,
     ),
   );
@@ -404,9 +427,15 @@ CodingSessionDecoded<CodingSessionClosure> decodeCodingSessionClosure(
     );
   }
   final payload = value! as Map<String, dynamic>;
+  // Three actions, not two: `CodingSessionClosureAction` is a three-variant
+  // Rust enum and `archived` is the third — finished *and* filed away, which
+  // `is_closed()` answers exactly as a `closed` does. It was missing here
+  // until lane 216, so every archived umbrella decoded as corruption. This
+  // app does not yet distinguish archived from closed in its model; it reads
+  // the settled fact rather than dropping the event.
   final action = payload['action'];
   if (!hasExactKeys(payload, ['action', 'genesisRef', 'sessionRef', 'v']) ||
-      (action != 'closed' && action != 'open') ||
+      (action != 'closed' && action != 'open' && action != 'archived') ||
       payload['genesisRef'] != tags[3] ||
       payload['sessionRef'] != tags[1] ||
       payload['v'] != codingSessionClosureSchemaVersion) {
@@ -419,7 +448,7 @@ CodingSessionDecoded<CodingSessionClosure> decodeCodingSessionClosure(
       ref: ref,
       sessionRef: tags[1],
       genesisRef: tags[3],
-      closed: action == 'closed',
+      closed: action != 'open',
     ),
   );
 }

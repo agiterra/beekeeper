@@ -24,7 +24,10 @@ reading the actual Rust types and the actual TypeScript and Dart decoders.
 covers every Rust consumer. That is not true of the other two languages, which
 is where every divergence below lives.
 
-The web client (`web/`) decodes none of these kinds; it is a repo browser.
+The web client carries a fourth strict reader for 44223 and 44224 — a hand-copy
+of the desktop's ingress decoder at
+`web/src/features/coding-sessions/domain/ingressPayloads.ts` — which no fixture
+here loads yet. See the last section.
 
 ## Who runs them
 
@@ -35,22 +38,31 @@ The web client (`web/`) decodes none of these kinds; it is a repo browser.
 | `desktop/src/features/coding-sessions/lib/codingSessionGenesisConformance.test.mjs` | 44226 |
 | `mobile/test/features/coding_sessions/domain/coding_session_record_conformance_test.dart` | all five |
 
-## The divergences these vectors found
+## The divergences, and what is left
 
-Recorded, not fixed — no reader was changed by the lane that wrote them
-(ledger 215). Each is pinned by the vector named.
+Lane 215 wrote these vectors and found eleven live reader disagreements
+without changing a reader. Lane 216 changed the readers: every one of the
+eleven is closed, each in the same commit as the vector it flipped from a
+pinned divergence to a required agreement. Ledger 216 lists them with
+`file:line`, which side was wrong, and the evidence.
 
-| Vector | What happens |
-| --- | --- |
-| `create-seated-with-hire-ref`, `create-all-amendments` | Mobile refuses **every hired seat's create**: its `createKeys` list never grew the 2026-09-01 `hireRef` key. |
-| `handover`, `every-amendment-at-once` (44223) | The desktop **ingress** decoder refuses a 44223 carrying `handover`. |
-| `compose-ref`, `every-amendment-at-once` (44223) | The desktop **Pulse gate** refuses a 44223 carrying `composeRef` — the gate is stricter than the decoder, which is the one direction its own parity test forbids. |
-| `bee-stamp`, `bee-stamp-unparsed`, `pack-ref`, `pack-ref-shipped`, `compose-ref`, `handover` | Mobile refuses all four of those additive keys. |
-| `archived` (44230) | Mobile refuses `action: "archived"`, the third variant of the closure enum. |
-| `hire-*`, `restart` (44221) | The desktop coordination reader refuses `session.hire` and `session.restart` outright. |
-| `invalid-routing-null` (44223) | The Pulse gate and mobile both accept `"routing": null`, which buzz-core refuses naming the key. |
-| `invalid-turn-budget-extra-key` | Mobile accepts an unknown key inside `turnBudget`. |
-| `invalid-create-uppercase-authority-pubkey` | Mobile lowercases a signed pubkey through `normalizePubkey` and admits the create; the other readers refuse rather than coerce. |
-| `oversized-turn-error-code`, `oversized-error-message` (44224) | The desktop ingress decoder and mobile bound a turn error code at 256 bytes and a message at 2048; buzz-core bounds them at 64 and 1027. |
-| `context-summary` (44223) | The ingress decoder and mobile accept `contextSummary`/`diffSummary`/`planSummary`; buzz-core's key set does not name them at all. |
-| `v-as-json-float` (44226, 44230) | `"v": 1.0` — serde refuses a float for `u64`; JavaScript and Dart cannot tell it from `1`. Nothing signs it; pinned because it is the one shape the languages cannot agree on by construction. |
+What remains recorded here is **not** a disagreement:
+
+| Vector | Verdict | Why it is not a defect |
+| --- | --- | --- |
+| `v-as-json-float` (44226, 44230) | pinned | `"v": 1.0` is a float serde refuses for a `u64` and neither JavaScript nor Dart can tell it from `1`. A property of the languages, not of anyone's code. Nothing signs it. |
+| `hire-*`, `invalid-hire-routing-is-a-record` (44221) | `null` for `desktopCoordination` | A `session.hire` names no `providerAuthorityPubkey` at all — it asks a host to *choose* one — so it belongs to the sibling reader `readLifecycleHire` (`desktop/src/shared/coordination/sessionCoordinationCommissioning.ts`), which says so in its own words. `null` is the fixture's word for "a sibling decoder reads this variant", not for a refusal. |
+| every turn-stage 44224 | `false` for `desktopCoordination` | Deliberate scope: that reader is the lifecycle vocabulary the coordination fold acts on, and the caller discriminates by the tag pair a turn receipt never carries. Turn stages decode through `codingSessionIngressPayloads.ts`. |
+| `resume`, `stop`, `restart` (44221) | `null` for `dart` | `decodeCodingSessionCreate` answers `wrongKind`; `decodeCodingSessionResume` is its sibling. |
+
+**A reader these vectors do not yet load.** `web/src/features/coding-sessions/domain/ingressPayloads.ts`
+is a copied-by-hand fourth strict reader for 44223 and 44224 — its own header
+says "Copied from `desktop/.../codingSessionIngressPayloads.ts`". Nothing in
+`conformance/` loads it, and it carries the 2026-09 shape of the defects lane
+216 just fixed elsewhere: its optional list names neither `beeStamp`,
+`packRef`, `handover` nor `composeRef` (`:453-459`), it still accepts
+`contextSummary`/`diffSummary`/`planSummary`, and it bounds a turn error code
+at 256 (`:39`). It is recorded, not fixed: `web/` was outside lane 216's file
+ownership. A lane that takes it should add a `web` column to all five fixtures
+so the reader is answered for every vector, exactly as the four existing
+columns are.

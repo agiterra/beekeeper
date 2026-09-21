@@ -300,7 +300,7 @@
         "rust": true,
         "desktopGate": true,
         "desktopIngress": true,
-        "dart": false
+        "dart": true
       }
     },
     {
@@ -343,7 +343,7 @@
         "rust": true,
         "desktopGate": true,
         "desktopIngress": true,
-        "dart": false
+        "dart": true
       }
     },
     {
@@ -385,7 +385,7 @@
         "rust": true,
         "desktopGate": true,
         "desktopIngress": true,
-        "dart": false
+        "dart": true
       }
     },
     {
@@ -427,7 +427,7 @@
         "rust": true,
         "desktopGate": true,
         "desktopIngress": true,
-        "dart": false
+        "dart": true
       }
     },
     {
@@ -468,13 +468,13 @@
       "accepts": {
         "rust": true,
         "desktopGate": true,
-        "desktopIngress": false,
-        "dart": false
+        "desktopIngress": true,
+        "dart": true
       }
     },
     {
       "name": "compose-ref",
-      "why": "Spec \u00a74.6 compose provenance. Refused without packRef, so it travels with it.",
+      "why": "Spec §4.6 compose provenance. Refused without packRef, so it travels with it.",
       "content": {
         "schema": "buzz-coding-session-metadata/v1",
         "session": {
@@ -513,9 +513,9 @@
       },
       "accepts": {
         "rust": true,
-        "desktopGate": false,
+        "desktopGate": true,
         "desktopIngress": true,
-        "dart": false
+        "dart": true
       }
     },
     {
@@ -605,9 +605,9 @@
       },
       "accepts": {
         "rust": true,
-        "desktopGate": false,
-        "desktopIngress": false,
-        "dart": false
+        "desktopGate": true,
+        "desktopIngress": true,
+        "dart": true
       }
     },
     {
@@ -792,9 +792,9 @@
       },
       "accepts": {
         "rust": false,
-        "desktopGate": true,
+        "desktopGate": false,
         "desktopIngress": false,
-        "dart": true
+        "dart": false
       },
       "reason": "wrong-type"
     },
@@ -1073,7 +1073,7 @@
         "rust": false,
         "desktopGate": false,
         "desktopIngress": false,
-        "dart": true
+        "dart": false
       },
       "reason": "unknown-key"
     },
@@ -1160,7 +1160,7 @@
     },
     {
       "name": "context-summary",
-      "why": "`contextSummary` is accepted by the desktop ingress decoder and by the mobile decoder; buzz-core's key set does not name it at all.",
+      "why": "`contextSummary` is not a key of `SessionMetadata`, so no signed 44223 has ever carried one: the sole writer is serde over that struct (crates/buzz-session-provider/src/lib.rs:8351). The desktop ingress decoder and the mobile decoder both accepted it until lane 216; every reader now refuses it, as buzz-core's key set always did.",
       "content": {
         "schema": "buzz-coding-session-metadata/v1",
         "session": {
@@ -1191,8 +1191,8 @@
       "accepts": {
         "rust": false,
         "desktopGate": false,
-        "desktopIngress": true,
-        "dart": true
+        "desktopIngress": false,
+        "dart": false
       },
       "reason": "unknown-key"
     }

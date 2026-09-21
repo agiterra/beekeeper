@@ -1,5 +1,6 @@
 /**
- * Parity between the Pulse's strict gate and the session decoder.
+ * Parity between the Pulse's strict gate and the session decoder — over the
+ * **shared** vectors, not over a fixture list of this file's own.
  *
  * `isStrictMetadataContent` (this directory) and `parseBuzzCodingSessionMetadata`
  * (`features/coding-sessions/lib/codingSessionIngressPayloads.ts`) both read
@@ -10,190 +11,84 @@
  * gate that is stricter than the decoder is exactly finding 34: real signed
  * events the rest of the app can read, quietly excluded from the Pulse.
  *
- * This is a black-box check across the same fixtures, not an import of one
- * decoder's internals into the other — the two are intentionally separate
- * implementations (this module stays dependency-free for the conformance
- * binder; the session decoder does not), so the only trustworthy comparison
- * is "same bytes in, does each accept them".
+ * Until lane 216 this test compared the two readers over twelve fixtures it
+ * maintained itself, and it therefore did not notice that the gate refused
+ * `composeRef` while the decoder accepted it — the forbidden direction, on a
+ * key the provider emits for every seat staged from a composed pack. That is
+ * the whole failure mode `conformance/README.md` exists to prevent: a reader's
+ * tests using the reader's own fixtures. So the fixtures are gone and the
+ * shared vectors are loaded instead. Adding a vector there now exercises this
+ * parity rule for free.
+ *
+ * This is still a black-box check — same bytes in, does each accept them —
+ * not an import of one decoder's internals into the other.
  */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import test from "node:test";
 
 import { parseBuzzCodingSessionMetadata } from "../../features/coding-sessions/lib/codingSessionIngressPayloads.ts";
 import { isStrictMetadataContent } from "./sessionCoordinationStrictJson.ts";
 
-const SESSION_REF = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
-const ACTOR = "c".repeat(64);
-
-const BASE = {
-  schema: "buzz-coding-session-metadata/v1",
-  session: {
-    driver: "claude-agent-acp",
-    instanceId: "0123456789abcdef",
-    sessionId: "11111111-2222-3333-4444-555555555555",
-    generation: 1,
-  },
-  projectRef: "30621:owner:agiterra",
-  repoRef: null,
-  title: "Advance coding sessions",
-  agentRef: null,
-  provider: "claude-primary",
-  runtime: "claude",
-  model: "claude-opus-5",
-  status: "running",
-  branch: null,
-};
-
-const FACTS = {
-  observedCommit: "a".repeat(40),
-  dirty: false,
-  relayReachable: true,
-  verifiedAt: 1_800_000_000,
-};
-
-const ROUTING = {
-  class: "builder",
-  tier: "standard",
-  risk: { impact: 3, uncertainty: 3, irreversibility: 2, score: 18 },
-  chosen: { provider: "claude-primary", model: "sonnet", effort: "medium" },
-  runnerUp: null,
-  reason: "cleared the builder gates and was the cheapest of them.",
-  reviewRequired: false,
-  reviewReasons: [],
-  challengerSample: false,
-  override: null,
-  registryVersion: 1,
-  catalogRevision: null,
-};
-
-const BEE_STAMP = {
-  path: "/Applications/Beekeeper.app/Contents/Resources/bee",
-  source: "bundled",
-  version: "0.9.3",
-  sha: "a1b2c3d",
-  dirty: false,
-};
-
-const PACK_REF = {
-  repo: `30617:${ACTOR}:agiterra-packs`,
-  sha: "d".repeat(40),
-  role: "builder",
-  path: "personas/roles/builder",
-};
-
-const CAPABILITIES_SIX_KEY = {
-  threadTurnStart: true,
-  threadTurnInterrupt: true,
-  threadSteer: false,
-  context: false,
-  diff: false,
-  plan: true,
-};
-
-/** One real fixture per row: a name and its metadata content string. */
-function fixtures() {
-  const rows = [
-    ["the six-key base shape", {}],
-    ["sessionRef only", { sessionRef: SESSION_REF }],
-    ["a seated create", { agentRef: ACTOR, role: "builder" }],
-    [
-      "a turnBudget beside its sessionRef",
-      { sessionRef: SESSION_REF, turnBudget: { used: 3, limit: 20 } },
-    ],
-    ["the four B1 facts together", FACTS],
-    ["a routing record", { routing: ROUTING }],
-    // Finding 34's own case: a newer host's promptImage capability.
-    [
-      "capabilities carrying promptImage",
-      { capabilities: { ...CAPABILITIES_SIX_KEY, promptImage: false } },
-    ],
-    // The sixth amendment this lane also found missing.
-    ["a real beeStamp", { beeStamp: BEE_STAMP }],
-    [
-      "an unparsed beeStamp",
-      {
-        beeStamp: { ...BEE_STAMP, version: null, sha: null, dirty: null },
-      },
-    ],
-    // The seventh amendment (LANE-L23): guarded against beeStamp's own
-    // outage by growing this fixture list in the same lane that adds the key.
-    ["a real packRef", { packRef: PACK_REF }],
-    [
-      "a shipped-defaults packRef",
-      {
-        packRef: {
-          repo: "app:shipped",
-          sha: "0.1.0",
-          role: "builder",
-          path: "personas/roles/builder",
-        },
-      },
-    ],
-    [
-      "every amendment at once",
-      {
-        sessionRef: SESSION_REF,
-        agentRef: ACTOR,
-        role: "builder",
-        turnBudget: { used: 3, limit: 20 },
-        ...FACTS,
-        routing: ROUTING,
-        beeStamp: BEE_STAMP,
-        packRef: PACK_REF,
-        capabilities: { ...CAPABILITIES_SIX_KEY, promptImage: true },
-      },
-    ],
-  ];
-  return rows.map(([name, overrides]) => [
-    name,
-    JSON.stringify({
-      ...BASE,
-      capabilities: CAPABILITIES_SIX_KEY,
-      ...overrides,
-    }),
+/** Every 44223 vector, as `[name, content string]`. */
+function sharedVectors() {
+  const parsed = JSON.parse(
+    readFileSync(
+      resolve(
+        process.cwd(),
+        "../conformance/coding-session-records/44223-metadata/fixtures/vectors.json",
+      ),
+      "utf8",
+    ),
+  );
+  assert.equal(parsed.kind, 44223);
+  return parsed.vectors.map((vector) => [
+    vector.name,
+    JSON.stringify(vector.content),
   ]);
 }
 
 test("the strict gate never rejects a shape the session decoder accepts", () => {
-  for (const [name, source] of fixtures()) {
-    const decoded = parseBuzzCodingSessionMetadata(source);
-    if (decoded === null) {
-      // Not every fixture here is decoder-accepted (e.g. `futureThing` below
-      // covers the direction that is *allowed* to diverge) — this loop only
-      // asserts the direction that must never diverge.
-      continue;
-    }
+  for (const [name, source] of sharedVectors()) {
+    if (parseBuzzCodingSessionMetadata(source) === null) continue;
     assert.equal(
       isStrictMetadataContent(source),
       true,
-      `decoder accepted "${name}" but the strict gate refused it: ${source}`,
+      `the session decoder accepted vector "${name}" but the strict gate ` +
+        `refused it. The gate may be more open than the decoder, never ` +
+        `stricter: a Pulse that silently drops a session the rest of the app ` +
+        `renders is finding 34. ${source}`,
     );
   }
 });
 
-test("every real fixture is in fact decoder-accepted (the test proves something)", () => {
-  // Guards the test above against a silent no-op: if every fixture failed to
-  // decode, the loop above would pass trivially without checking anything.
-  let decoded = 0;
-  for (const [, source] of fixtures()) {
-    if (parseBuzzCodingSessionMetadata(source) !== null) decoded += 1;
-  }
+test("the shared vectors actually reach the decoder (the test proves something)", () => {
+  // Guards the test above against a silent no-op: if every vector failed to
+  // decode, that loop would pass trivially without checking anything.
+  const vectors = sharedVectors();
+  const decoded = vectors.filter(
+    ([, source]) => parseBuzzCodingSessionMetadata(source) !== null,
+  ).length;
   assert.ok(
-    decoded >= fixtures().length - 1,
-    `only ${decoded} fixtures decoded`,
+    decoded >= 10,
+    `only ${decoded} of ${vectors.length} shared vectors decoded`,
   );
 });
 
-test("the gate may be more open than the decoder, never stricter — the one allowed divergence", () => {
-  // `futureThing` is accepted by the fixed strict gate (open capabilities
-  // map) but the session decoder's `decodeCapabilities` only knows
-  // `promptImage` as an additional optional key, so it refuses this one.
-  // That is the *allowed* direction: the gate being more forgiving than the
-  // decoder never drops a real session, it only means the gate does not
-  // itself reject something the decoder happens to be pickier about.
+test("the gate may be more open than the decoder — the one allowed divergence", () => {
+  // Not a shared vector, because it is not a disagreement with buzz-core: an
+  // unknown boolean capability is accepted by the gate (open map, finding 34)
+  // and refused by the decoder's `decodeCapabilities`, which knows only
+  // `promptImage` as an extra key. That is the allowed direction — being more
+  // forgiving never drops a real session — and it is asserted here so the
+  // allowance stays a decision rather than drifting into the other direction.
+  const base = JSON.parse(
+    sharedVectors().find(([name]) => name === "base-twelve-key")[1],
+  );
   const source = JSON.stringify({
-    ...BASE,
-    capabilities: { ...CAPABILITIES_SIX_KEY, futureThing: true },
+    ...base,
+    capabilities: { ...base.capabilities, futureThing: true },
   });
   assert.equal(parseBuzzCodingSessionMetadata(source), null);
   assert.equal(isStrictMetadataContent(source), true);

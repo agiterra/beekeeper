@@ -101,13 +101,10 @@ void main() {
       ], content);
       return decodeCodingSessionCreate(event).value != null;
     });
-    // `hireRef` is the create key this decoder was never taught: the 2026-09-01
-    // attribution amendment every hired seat's create carries.
-    expect(divergent, [
-      'create-all-amendments',
-      'create-seated-with-hire-ref',
-      'invalid-create-uppercase-authority-pubkey',
-    ]);
+    // None left. `hireRef` — the 2026-09-01 attribution amendment every hired
+    // seat's create carries — is now in `createKeys`, and an uppercase signed
+    // authority pubkey is refused rather than lowercased.
+    expect(divergent, isEmpty);
   });
 
   test('44223 metadata decoder runs the shared vectors', () {
@@ -121,20 +118,11 @@ void main() {
       ], content);
       return decodeCodingSessionMetadata(event).value != null;
     });
-    // Four additive keys buzz-core accepts that this decoder's optional list
-    // never grew: `beeStamp`, `packRef`, `handover`, `composeRef`.
-    expect(divergent, [
-      'bee-stamp',
-      'bee-stamp-unparsed',
-      'compose-ref',
-      'context-summary',
-      'every-amendment-at-once',
-      'handover',
-      'invalid-routing-null',
-      'invalid-turn-budget-extra-key',
-      'pack-ref',
-      'pack-ref-shipped',
-    ]);
+    // None left. The four additive keys this decoder's optional list never
+    // grew — `beeStamp`, `packRef`, `handover`, `composeRef` — are read and
+    // validated; `"routing": null`, an unknown key inside `turnBudget` and the
+    // three summary keys no writer emits are refused.
+    expect(divergent, isEmpty);
   });
 
   test('44224 receipt decoder runs the shared vectors', () {
@@ -157,8 +145,9 @@ void main() {
       expect(target, anyOf(isNull, isNotNull));
       return decodeCodingSessionReceipt(event).value != null;
     });
-    // Two bounds buzz-core sets and this decoder does not.
-    expect(divergent, ['oversized-error-message', 'oversized-turn-error-code']);
+    // None left: a receipt error code is bounded at 64 bytes and its message
+    // at 1027, exactly as `validate_lifecycle_receipt` bounds them.
+    expect(divergent, isEmpty);
   });
 
   test('44226 genesis decoder runs the shared vectors', () {
@@ -187,8 +176,9 @@ void main() {
       ], content);
       return decodeCodingSessionClosure(event).value != null;
     });
-    // `archived` is the third closure action this decoder was never taught,
-    // and `"v": 1.0` is the float Dart cannot tell from 1.
-    expect(divergent, ['archived', 'v-as-json-float']);
+    // `archived`, the third closure action, is now read. `"v": 1.0` stays
+    // pinned: serde refuses a float for a `u64` and Dart reads 1.0 == 1, which
+    // is a property of the languages, not of anyone's code. Nothing signs it.
+    expect(divergent, ['v-as-json-float']);
   });
 }

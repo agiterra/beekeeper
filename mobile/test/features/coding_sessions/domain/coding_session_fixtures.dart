@@ -18,6 +18,12 @@ const founderPubkey =
     'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc';
 const otherFounderPubkey =
     'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd';
+
+/// The seat actor a hired create names, and the kind:44221 hire it answers.
+const seatActorPubkey =
+    'f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1';
+const hireEventId =
+    'a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9';
 const sessionRefA = '11111111-1111-4111-8111-111111111111';
 const sessionRefB = '22222222-2222-4222-8222-222222222222';
 const genesisEventIdA =
@@ -207,6 +213,7 @@ NostrEvent createEvent({
   String? id,
   String? actor,
   String? role,
+  String? hireRef,
   Map<String, Object?>? routing,
 }) {
   final action = <String, Object?>{
@@ -222,6 +229,7 @@ NostrEvent createEvent({
     'initialTurn': null,
     'actor': ?actor,
     'role': ?role,
+    'hireRef': ?hireRef,
     'routing': ?routing,
   };
   return event(

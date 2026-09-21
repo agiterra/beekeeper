@@ -7,13 +7,27 @@
  * the conformance binder loads this file under plain `node --test`.
  */
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
+import {
+  boundedNullable,
+  boundedString,
+  encoder,
+  MAX_REFERENCE_BYTES,
+  hasExactFields,
+  hasStrictRoutingRecord,
+  isPlainObject,
+} from "./sessionCoordinationJsonShapes";
 
-const encoder = new TextEncoder();
+// Re-exported so every existing importer of this module keeps working: the
+// lane-216 split moved where these live, not what they mean.
+export {
+  hasExactFields,
+  hasStrictRoutingRecord,
+} from "./sessionCoordinationJsonShapes";
+
 const MAX_IDENTIFIER_BYTES = 256;
-const MAX_REFERENCE_BYTES = 2 * 1024;
+/** `1024 + '…'.len_utf8()` — the exact bound `validate_lifecycle_receipt`
+ * sets on a receipt error message (`coding_session_payload.rs:829`). */
+const MAX_RECEIPT_ERROR_MESSAGE_BYTES = 1024 + 3;
 // Closed and kept closed: this is `SessionStatus`, a `#[serde(rename_all =
 // "snake_case")]` Rust enum (crates/buzz-core/src/coding_session_payload.rs),
 // not a config-driven string — the ten variants here are exactly its ten, and
@@ -33,18 +47,6 @@ const SESSION_STATUSES = new Set([
   "disconnected",
   "unknown",
 ]);
-
-function boundedString(value: unknown, maxBytes: number): value is string {
-  return (
-    typeof value === "string" &&
-    value.trim().length > 0 &&
-    encoder.encode(value).length <= maxBytes
-  );
-}
-
-function boundedNullable(value: unknown, maxBytes: number): boolean {
-  return value === null || boundedString(value, maxBytes);
-}
 
 function isCanonicalSessionRef(value: unknown): value is string {
   return (
@@ -71,20 +73,6 @@ export function hasStrictSessionTargetValues(
     ) &&
     Number.isSafeInteger(value.generation) &&
     (value.generation as number) > 0
-  );
-}
-
-/** Whether a decoded JSON object has exactly one of the accepted field sets. */
-export function hasExactFields(
-  value: unknown,
-  forms: readonly (readonly string[])[],
-): value is Record<string, unknown> {
-  if (!isPlainObject(value)) return false;
-  const keys = Object.keys(value);
-  return forms.some(
-    (form) =>
-      keys.length === form.length &&
-      form.every((key) => Object.hasOwn(value, key)),
   );
 }
 
@@ -155,8 +143,21 @@ export function hasStrictLifecycleCommandJson(
       ...hireForms.map((form) => [...form, "routing"]),
     ]);
   }
+  // `session.restart` carries the identical three-key target form
+  // (`decode_coding_session_lifecycle_command` matches
+  // `"session.resume" | "session.restart" | "session.stop"` in one arm), and
+  // this app **writes** one — `buildCodingSessionRestartEvent`,
+  // `features/coding-sessions/lib/codingSessionLifecycleCommand.ts:411`. Until
+  // lane 216 its only strict reader refused to read its own signed command.
+  //
+  // `session.hire` is deliberately absent and is not a divergence: a hire
+  // names no `providerAuthorityPubkey` at all — it asks a host to choose one —
+  // so it is read by the sibling decoder `readLifecycleHire`
+  // (`sessionCoordinationCommissioning.ts`), which says so in its own words.
   return (
-    (action.type === "session.resume" || action.type === "session.stop") &&
+    (action.type === "session.resume" ||
+      action.type === "session.restart" ||
+      action.type === "session.stop") &&
     hasExactFields(action, [["type", "session", "providerAuthorityPubkey"]])
   );
 }
@@ -260,7 +261,7 @@ export function hasStrictLifecycleReceiptValues(
       content.session === null &&
       isPlainObject(content.error) &&
       boundedString(content.error.code, MAX_IDENTIFIER_BYTES) &&
-      boundedString(content.error.message, 1024 + 3)
+      boundedString(content.error.message, MAX_RECEIPT_ERROR_MESSAGE_BYTES)
     );
   }
   if (!hasStrictSessionTargetValues(content.session)) return false;
@@ -284,7 +285,7 @@ export function hasStrictLifecycleReceiptValues(
         : "CONTEXT_NOT_RECOVERED";
     return (
       content.error.code === expectedCode &&
-      boundedString(content.error.message, 1024 + 3)
+      boundedString(content.error.message, MAX_RECEIPT_ERROR_MESSAGE_BYTES)
     );
   }
   // Every turn-stage status (`turn_queued`, `turn_started`,
@@ -348,6 +349,13 @@ export function hasStrictLeaseValues(
  * eighth is `handover` (§3.1): a fenced provider advertises its execution as
  * `disconnected` **and** says who fenced it, so the desktop reads the fence
  * from the coordination fold rather than from a second query — 256 shapes.
+ * The ninth is `composeRef` (spec § 4.6), independent on the wire — 512
+ * shapes — though `validate_session_metadata` refuses it without `packRef`, so
+ * this reader refuses it alone too. It was missing here until lane 216, and
+ * the provider emits it for every seat staged from a composed pack
+ * (`seat_compose_ref`, `crates/buzz-session-provider/src/lib.rs`), so this
+ * gate refused live sessions the session decoder beside it accepted — the
+ * one direction the parity rule forbids (ledger 216).
  * Enumerating fewer silently drops every event carrying an amendment this
  * list forgot, which is a whole-surface outage rather than a strictness
  * nuance: the reader sees no sessions at all.
@@ -376,6 +384,7 @@ function metadataFieldForms(): string[][] {
     ["beeStamp"],
     ["packRef"],
     ["handover"],
+    ["composeRef"],
   ];
   const forms: string[][] = [];
   for (let mask = 0; mask < 1 << amendments.length; mask += 1) {
@@ -510,6 +519,35 @@ function isMetadataHandover(value: unknown): boolean {
 
 const HEX64_PUBKEY = /^[0-9a-f]{64}$/;
 
+/** `composeRef.appVersion`: 1..=64 bytes, non-blank. Mirrors Rust exactly. */
+const MAX_COMPOSE_REF_APP_VERSION_BYTES = 64;
+/** `composeRef.digest`: `sha256:` and exactly 64 lowercase hex characters. */
+const COMPOSE_REF_DIGEST = /^sha256:[0-9a-f]{64}$/;
+
+/**
+ * A `composeRef` object: exactly the two keys `ComposeRef`
+ * (`crates/buzz-core/src/coding_session_payload.rs`, `deny_unknown_fields`)
+ * carries. `packRef` names the source bytes; this names the app version whose
+ * template catalog resolved the includes and the digest of what actually ran,
+ * so "which prompt ran" stays answerable after the app updates its templates.
+ *
+ * Same omit-when-absent contract as every amendment since `routing`: Rust
+ * refuses an explicit `null` by name, and refuses the key without a `packRef`
+ * at all, because a composition of nothing is not a fact.
+ */
+function isComposeRef(value: unknown): boolean {
+  return (
+    isPlainObject(value) &&
+    hasExactFields(value, [["appVersion", "digest"]]) &&
+    typeof value.appVersion === "string" &&
+    value.appVersion.trim().length > 0 &&
+    encoder.encode(value.appVersion).length <=
+      MAX_COMPOSE_REF_APP_VERSION_BYTES &&
+    typeof value.digest === "string" &&
+    COMPOSE_REF_DIGEST.test(value.digest)
+  );
+}
+
 function isPackRef(value: unknown): boolean {
   if (
     !isPlainObject(value) ||
@@ -577,9 +615,14 @@ export function hasStrictMetadataJson(
   ) {
     return false;
   }
+  // An explicit `null` is refused, not short-circuited past: `routing` was
+  // introduced with an omit-when-absent writer contract and
+  // `decode_coding_session_metadata` rejects `"routing": null` **naming the
+  // key**, so accepting it here would let this gate admit bytes the relay and
+  // every Rust consumer call malformed (ledger 216). Unlike `role` and
+  // `turnBudget`, whose serde `Option`s do read a null as absent.
   if (
     Object.hasOwn(content, "routing") &&
-    content.routing !== null &&
     !hasStrictRoutingRecord(content.routing)
   ) {
     return false;
@@ -610,6 +653,15 @@ export function hasStrictMetadataJson(
   if (
     Object.hasOwn(content, "handover") &&
     !isMetadataHandover(content.handover)
+  ) {
+    return false;
+  }
+  // Spec § 4.6's composition provenance. Refused alone, as null, or
+  // malformed — exactly `validate_session_metadata`'s rule, which names
+  // `composeRef requires a packRef: it describes how that pack was composed`.
+  if (
+    Object.hasOwn(content, "composeRef") &&
+    (!Object.hasOwn(content, "packRef") || !isComposeRef(content.composeRef))
   ) {
     return false;
   }
@@ -662,190 +714,6 @@ export function isStrictMetadataContent(source: string): boolean {
   } catch {
     return false;
   }
-}
-
-// Only the router's own purchase — `chosen`/`runnerUp` — is a closed effort
-// set: `validate_routing_target` (coding_session_routing.rs:1252-1262) is the
-// protocol boundary the relay itself enforces, the autonomous ceiling `xhigh`/
-// `max`/`ultra` are deliberately excluded from. `RoutingOverride.effort` is
-// the opposite case: `validate_override` (:1276-1283) only `bounded_token`s
-// it, because a human override is exactly where those three values belong
-// (:118-121) — closing it here would refuse every legitimate xhigh/max/ultra
-// override the wire ever carries.
-const ROUTING_EFFORTS = new Set(["low", "medium", "high"]);
-/**
- * A review reason is a bounded token, not a member of a closed set.
- *
- * The canonical router renders the two numeric §6 triggers with the value that
- * fired them — `risk 80 >= 40`, `irreversibility 4 >= 4` — so a reader is told
- * the fact rather than the rule (`crates/buzz-core/src/coding_session_routing.rs:1555`).
- * A closed vocabulary here would make this observer reject the router's own
- * record as malformed, which is exactly the kind of lie that shows up as
- * "the seat says nothing about why it is that model".
- */
-const MAX_ROUTING_REVIEW_REASONS = 16;
-const MAX_ROUTING_TOKEN_BYTES = 256;
-/** One sentence, bounded. Mirrors `MAX_ROUTING_DISAGREEMENT_BYTES`. */
-const MAX_ROUTING_DISAGREEMENT_BYTES = 512;
-const ROUTING_RECORD_FIELDS = [
-  "class",
-  "tier",
-  "risk",
-  "chosen",
-  "runnerUp",
-  "reason",
-  "reviewRequired",
-  "reviewReasons",
-  "challengerSample",
-  "override",
-  "registryVersion",
-  "catalogRevision",
-];
-
-/**
- * The `routing` record, closed and checked.
- *
- * Mirrors `isStrictCodingSessionRoutingRecord` in
- * `features/coding-sessions/lib/codingSessionRouting.ts`, and is written out
- * again here rather than imported because this module is loaded by the
- * conformance binder under plain `node --test` and stays dependency-free.
- *
- * Two checks are worth naming, because both are the honesty of the record
- * rather than its shape:
- *
- * - `risk.score` must equal `impact × uncertainty × irreversibility`. A record
- *   whose score disagrees with its own factors is not a rounding difference,
- *   it is a claim nobody can reproduce.
- * - `chosen.effort` must be one the router is allowed to buy. `xhigh`, `max`
- *   and `ultra` are human-override only (spec §2); a record asserting one as
- *   a routed effort is refused rather than displayed.
- *
- * `class` and `tier` are bounded tokens, not closed sets: `bounded_token`
- * checks both (`RoutingRecord::validate`, coding_session_routing.rs:1314-1316)
- * against the registry's own config-driven names
- * (`Registry::tiers: BTreeMap<String, TierPolicy>`, `::classes`), not a Rust
- * enum — a registry that adds a tier or a class does not recompile this
- * reader, so pinning either here would silently drop it.
- */
-export function hasStrictRoutingRecord(value: unknown): boolean {
-  if (!isPlainObject(value)) return false;
-  const allowed = new Set([
-    ...ROUTING_RECORD_FIELDS,
-    "profile",
-    "proposedDisagreement",
-  ]);
-  if (Object.keys(value).some((key) => !allowed.has(key))) return false;
-  if (ROUTING_RECORD_FIELDS.some((key) => !Object.hasOwn(value, key))) {
-    return false;
-  }
-  if (!boundedString(value.class, MAX_ROUTING_TOKEN_BYTES)) return false;
-  if (!boundedString(value.tier, MAX_ROUTING_TOKEN_BYTES)) return false;
-  if (!isRoutingRisk(value.risk)) return false;
-  if (!isRoutingTarget(value.chosen)) return false;
-  if (value.runnerUp !== null && !isRoutingTarget(value.runnerUp)) return false;
-  if (!boundedString(value.reason, MAX_REFERENCE_BYTES)) return false;
-  if (typeof value.reviewRequired !== "boolean") return false;
-  if (
-    !Array.isArray(value.reviewReasons) ||
-    value.reviewReasons.length > MAX_ROUTING_REVIEW_REASONS ||
-    value.reviewReasons.some(
-      (entry) => !boundedString(entry, MAX_ROUTING_TOKEN_BYTES),
-    )
-  ) {
-    return false;
-  }
-  if (value.reviewRequired !== value.reviewReasons.length > 0) return false;
-  if (typeof value.challengerSample !== "boolean") return false;
-  if (value.override !== null && !isRoutingOverride(value.override)) {
-    return false;
-  }
-  if (!Number.isSafeInteger(value.registryVersion)) return false;
-  if (
-    value.catalogRevision !== null &&
-    !(
-      Number.isSafeInteger(value.catalogRevision) &&
-      (value.catalogRevision as number) > 0
-    )
-  ) {
-    return false;
-  }
-  if (
-    Object.hasOwn(value, "proposedDisagreement") &&
-    !boundedString(value.proposedDisagreement, MAX_ROUTING_DISAGREEMENT_BYTES)
-  ) {
-    return false;
-  }
-  // `profile: null` is the answered-with-nothing shape the canonical producer
-  // writes (`Routing::profile` has no `skip_serializing_if`), so an observer
-  // that accepted only an object refused every record the CLI ever wrote.
-  if (!Object.hasOwn(value, "profile") || value.profile === null) return true;
-  // A trait name is `bounded_token`-checked (`validate_profile`,
-  // coding_session_routing.rs:1233-1250), not a member of a closed
-  // vocabulary — a lead may ask for a minimum on any trait it names, and a
-  // registry can score a trait this build has never heard of.
-  return (
-    isPlainObject(value.profile) &&
-    Object.entries(value.profile).every(
-      ([trait, minimum]) =>
-        boundedString(trait, MAX_ROUTING_TOKEN_BYTES) &&
-        typeof minimum === "number" &&
-        Number.isFinite(minimum) &&
-        minimum >= 1 &&
-        minimum <= 5,
-    )
-  );
-}
-
-function isRoutingRisk(value: unknown): boolean {
-  if (!isPlainObject(value)) return false;
-  const keys = ["impact", "uncertainty", "irreversibility", "score"];
-  if (Object.keys(value).length !== keys.length) return false;
-  if (keys.some((key) => !Number.isSafeInteger(value[key]))) return false;
-  for (const key of ["impact", "uncertainty", "irreversibility"]) {
-    const factor = value[key] as number;
-    if (factor < 1 || factor > 5) return false;
-  }
-  return (
-    value.score ===
-    (value.impact as number) *
-      (value.uncertainty as number) *
-      (value.irreversibility as number)
-  );
-}
-
-function isRoutingTarget(value: unknown): boolean {
-  return (
-    isPlainObject(value) &&
-    Object.keys(value).length === 3 &&
-    boundedString(value.provider, MAX_REFERENCE_BYTES) &&
-    boundedString(value.model, MAX_REFERENCE_BYTES) &&
-    ROUTING_EFFORTS.has(value.effort as string)
-  );
-}
-
-function isRoutingOverride(value: unknown): boolean {
-  if (!isPlainObject(value)) return false;
-  if (
-    Object.keys(value).some(
-      (key) => !["model", "effort", "because"].includes(key),
-    )
-  ) {
-    return false;
-  }
-  if (!boundedString(value.model, MAX_REFERENCE_BYTES)) return false;
-  if (!boundedString(value.because, MAX_REFERENCE_BYTES)) return false;
-  // `null` is the canonical "take the tier's effort": buzz-core writes
-  // `RoutingOverride.effort` unconditionally
-  // (crates/buzz-core/src/coding_session_routing.rs:1005), so an override on
-  // the wire always carries the key, explicitly null when unstated. A
-  // non-null value is a `bounded_token`, not the router's closed
-  // `low`/`medium`/`high` set (`validate_override`, :1276-1283) — `xhigh`,
-  // `max` and `ultra` are exactly what a human override is for.
-  return (
-    !Object.hasOwn(value, "effort") ||
-    value.effort === null ||
-    boundedString(value.effort, MAX_ROUTING_TOKEN_BYTES)
-  );
 }
 
 // `action` closed and kept closed: `CodingSessionClosureAction`

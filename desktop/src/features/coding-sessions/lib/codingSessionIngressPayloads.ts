@@ -44,10 +44,31 @@ const MAX_METADATA_CONTENT_BYTES = 32 * 1024;
 const MAX_RECEIPT_COMMAND_ID_BYTES = 256;
 /** A provider's own turn id, bounded exactly like the command id it answers. */
 const MAX_RECEIPT_TURN_ID_BYTES = 256;
+/**
+ * A lifecycle receipt's error code, bounded as `validate_lifecycle_receipt`'s
+ * generic check bounds it (`crates/buzz-core/src/coding_session_payload.rs:826`,
+ * `MAX_IDENTIFIER_BYTES`).
+ */
 const MAX_ERROR_CODE_BYTES = 256;
+/**
+ * A **turn** failure code, bounded at `MAX_RECEIPT_ERROR_CODE_BYTES`
+ * (`coding_session_payload.rs:278`) — 64, the narrower of the two. The
+ * asymmetry is the writer's: `is_receipt_error_code` is applied only to
+ * `turn_dropped`/`turn_refused`/`turn_degraded`/`turn_delivery_unknown`, whose
+ * code vocabulary is deliberately open and therefore kept tight. This reader
+ * used 256 for both until lane 216, so it accepted turn codes the writer's own
+ * validator — and therefore the relay — call malformed.
+ */
+const MAX_TURN_ERROR_CODE_BYTES = 64;
+/**
+ * `1024 + '…'.len_utf8()` — `validate_lifecycle_receipt`
+ * (`coding_session_payload.rs:829`) bounds a receipt error message at exactly
+ * this, the width of a message a host truncated with an ellipsis. This reader
+ * used the generic 2 KiB reference bound.
+ */
+const MAX_ERROR_MESSAGE_BYTES = 1024 + 3;
 const MAX_REFERENCE_BYTES = 2 * 1024;
 const MAX_LABEL_BYTES = 2 * 1024;
-const MAX_SUMMARY_BYTES = 16 * 1024;
 
 /**
  * `created_with_failed_initial_turn` is its own status because it is its own
@@ -296,9 +317,6 @@ export type BuzzCodingSessionMetadataV1 = {
   status: CodingSessionStatus;
   branch: string | null;
   capabilities: CodingSessionCapabilities;
-  contextSummary?: string;
-  diffSummary?: string;
-  planSummary?: string;
   sessionRef?: string;
   observedCommit?: string | null;
   dirty?: boolean | null;
@@ -328,6 +346,17 @@ export type BuzzCodingSessionMetadataV1 = {
    * decoder refuses the orphan, and so does this one.
    */
   composeRef?: Readonly<ComposeRef>;
+  /**
+   * Who holds this session and on which execution body, present exactly when
+   * a handover claim stands (spec § 3.1, the eighth additive key). Refused
+   * as an explicit `null` or as a partial object: reading a half-written
+   * fence as "not fenced" tells a person nobody took this session over.
+   *
+   * Missing from this decoder until lane 216, while the Pulse gate beside it
+   * already accepted it — so a 44223 carrying both `handover` and
+   * `composeRef` was readable by no desktop reader at all.
+   */
+  handover?: Readonly<CodingSessionMetadataHandover>;
 };
 
 /** How much of one crew session's turn allowance has been spent (D9). */
@@ -431,7 +460,7 @@ export function parseCodingSessionLifecycleReceipt(
       !isPlainRecord(value.error) ||
       !hasExactKeys(value.error, ["code", "message"]) ||
       value.error.code !== "INITIAL_TURN_FAILED" ||
-      !boundedNonempty(value.error.message, MAX_REFERENCE_BYTES)
+      !boundedNonempty(value.error.message, MAX_ERROR_MESSAGE_BYTES)
     ) {
       return null;
     }
@@ -464,7 +493,7 @@ export function parseCodingSessionLifecycleReceipt(
       !isPlainRecord(value.error) ||
       !hasExactKeys(value.error, ["code", "message"]) ||
       value.error.code !== "CONTEXT_NOT_RECOVERED" ||
-      !boundedNonempty(value.error.message, MAX_REFERENCE_BYTES)
+      !boundedNonempty(value.error.message, MAX_ERROR_MESSAGE_BYTES)
     ) {
       return null;
     }
@@ -485,7 +514,7 @@ export function parseCodingSessionLifecycleReceipt(
     !isPlainRecord(value.error) ||
     !hasExactKeys(value.error, ["code", "message"]) ||
     !boundedNonempty(value.error.code, MAX_ERROR_CODE_BYTES) ||
-    !boundedNonempty(value.error.message, MAX_REFERENCE_BYTES)
+    !boundedNonempty(value.error.message, MAX_ERROR_MESSAGE_BYTES)
   ) {
     return null;
   }
@@ -555,8 +584,8 @@ function parseTurnReceipt(
   if (
     !isPlainRecord(value.error) ||
     !hasExactKeys(value.error, ["code", "message"]) ||
-    !boundedNonempty(value.error.code, MAX_ERROR_CODE_BYTES) ||
-    !boundedNonempty(value.error.message, MAX_REFERENCE_BYTES)
+    !boundedNonempty(value.error.code, MAX_TURN_ERROR_CODE_BYTES) ||
+    !boundedNonempty(value.error.message, MAX_ERROR_MESSAGE_BYTES)
   ) {
     return null;
   }
@@ -581,6 +610,56 @@ function parseTurnReceipt(
  * where the Rust half refuses one, so the desktop would resolve a seat no key
  * can hold while the pulse fold silently dropped the same signed event.
  */
+/** The fence disclosure a 44223 carries: `SessionMetadataHandover` exactly. */
+export type CodingSessionMetadataHandover = {
+  /** `active` while the claim stands; `voided` once the claimant lost it. */
+  state: "active" | "voided";
+  claimant: string;
+  bodyPubkey: string;
+  acceptedEventId: string;
+};
+
+const HEX64 = /^[0-9a-f]{64}$/;
+
+/**
+ * Read a `handover`, or null for anything that is not exactly one.
+ *
+ * Four keys, all required, each a lowercase 64-hex id, and a two-token
+ * `state` — `SessionMetadataHandover` in
+ * `crates/buzz-core/src/coding_session_payload.rs` is `deny_unknown_fields`
+ * and every field is required. There is no `none` token: absence of the whole
+ * key is how a provider says no claim stands, so a partial object is refused
+ * rather than read loosely.
+ */
+function readMetadataHandover(
+  value: unknown,
+): Readonly<CodingSessionMetadataHandover> | null {
+  if (
+    !isPlainRecord(value) ||
+    !hasExactKeys(value, [
+      "state",
+      "claimant",
+      "bodyPubkey",
+      "acceptedEventId",
+    ]) ||
+    (value.state !== "active" && value.state !== "voided") ||
+    typeof value.claimant !== "string" ||
+    !HEX64.test(value.claimant) ||
+    typeof value.bodyPubkey !== "string" ||
+    !HEX64.test(value.bodyPubkey) ||
+    typeof value.acceptedEventId !== "string" ||
+    !HEX64.test(value.acceptedEventId)
+  ) {
+    return null;
+  }
+  return Object.freeze({
+    state: value.state,
+    claimant: value.claimant,
+    bodyPubkey: value.bodyPubkey,
+    acceptedEventId: value.acceptedEventId,
+  });
+}
+
 function isSeatActorPubkeyOrNull(value: unknown): value is string | null {
   return (
     value === null ||
@@ -606,19 +685,20 @@ export function parseBuzzCodingSessionMetadata(
     "branch",
     "capabilities",
   ] as const;
-  const optionalSummaries = [
-    "contextSummary",
-    "diffSummary",
-    "planSummary",
-  ] as const;
   const factFields = [
     "observedCommit",
     "dirty",
     "relayReachable",
     "verifiedAt",
   ] as const;
+  // `contextSummary`, `diffSummary` and `planSummary` were here until lane
+  // 216 and are gone: `METADATA_BASE_FIELDS` never named them, the only
+  // writer of a 44223 is `serde_json::to_string(&SessionMetadata)` in the
+  // provider (`crates/buzz-session-provider/src/lib.rs:8351`), and
+  // `SessionMetadata` has no such fields — so no signed event has ever
+  // carried one, and a relay would refuse it if one did. Nothing in this app
+  // read them either. A key only one reader knows is exactly ledger 204.
   const optional = [
-    ...optionalSummaries,
     "sessionRef",
     "role",
     "turnBudget",
@@ -626,6 +706,7 @@ export function parseBuzzCodingSessionMetadata(
     "beeStamp",
     "packRef",
     "composeRef",
+    "handover",
     ...factFields,
   ] as const;
   if (
@@ -650,14 +731,6 @@ export function parseBuzzCodingSessionMetadata(
     !boundedNullable(value.branch, MAX_LABEL_BYTES)
   ) {
     return null;
-  }
-  for (const key of optionalSummaries) {
-    if (
-      Object.hasOwn(value, key) &&
-      !boundedNonempty(value[key], MAX_SUMMARY_BYTES)
-    ) {
-      return null;
-    }
   }
   // A seat's role travels with its actor. A `role` without an `agentRef` is
   // malformed, not a partial dialect: it would label an execution with a seat
@@ -734,6 +807,15 @@ export function parseBuzzCodingSessionMetadata(
   ) {
     return null;
   }
+  // § 3.1's fence disclosure. A present-but-malformed object — including an
+  // explicit `null`, which the Rust decoder refuses by name — is refused
+  // rather than ignored, exactly as the Pulse gate refuses it.
+  if (
+    Object.hasOwn(value, "handover") &&
+    readMetadataHandover(value.handover) === null
+  ) {
+    return null;
+  }
   // The B1 code-coordinate facts travel all-four-or-none (the Rust producer's
   // METADATA_FACT_FIELDS discipline); a partial subset is corruption.
   if (!hasAllOrNoneKeys(value, factFields)) return null;
@@ -764,15 +846,6 @@ export function parseBuzzCodingSessionMetadata(
     status: value.status,
     branch: value.branch,
     capabilities,
-    ...(typeof value.contextSummary === "string"
-      ? { contextSummary: value.contextSummary }
-      : {}),
-    ...(typeof value.diffSummary === "string"
-      ? { diffSummary: value.diffSummary }
-      : {}),
-    ...(typeof value.planSummary === "string"
-      ? { planSummary: value.planSummary }
-      : {}),
     ...(typeof value.sessionRef === "string"
       ? { sessionRef: value.sessionRef }
       : {}),
@@ -791,6 +864,13 @@ export function parseBuzzCodingSessionMetadata(
       : {}),
     ...(Object.hasOwn(value, "composeRef")
       ? { composeRef: readComposeRef(value.composeRef) as ComposeRef }
+      : {}),
+    ...(Object.hasOwn(value, "handover")
+      ? {
+          handover: readMetadataHandover(
+            value.handover,
+          ) as CodingSessionMetadataHandover,
+        }
       : {}),
     ...(hasFacts
       ? {

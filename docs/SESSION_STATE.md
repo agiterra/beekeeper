@@ -18259,6 +18259,218 @@ removed from here.
        are not key sets and no fixture here pins them. Nothing was exercised
        against hive or an installed bundle; these are decoder-level tests.
 
+216. **The eleven live reader disagreements lane 215 pinned across five closed
+     coding-session records are fixed: every TypeScript and Dart reader now
+     accepts exactly what `buzz-core` accepts, and each vector that recorded a
+     divergence is flipped to a required agreement in the same commit as the
+     reader.** `buzz-core` is the definition — the writer's validator and the
+     relay's — so the fix was in the other language in ten of the eleven cases
+     and in the *fixture's own framing* in the eleventh. The rule and the
+     procedure are `conformance/README.md` and
+     `docs/UNIFIED_WORK_PLAN.md` § 8 A3.3; the reconnaissance is 215.
+     - **(a) Mobile refused every hired seat's create.** `createKeys` at
+       `mobile/lib/features/coding_sessions/domain/coding_session_session_decoders.dart:112-126`
+       is an exact-key list and never grew the 2026-09-01 `hireRef` key.
+       **Mobile was wrong**: `hireRef` is one of `buzz-core`'s twenty-four
+       accepted create shapes (`coding_session_lifecycle_command.rs:600-643`)
+       and the desktop already read it. Fixed: `hasHireRef` joins the key list
+       and the value is checked as lowercase 64-hex, absent-is-not-null
+       exactly as the Rust decoder's `reject_explicit_null` requires
+       (`coding_session_session_decoders.dart:109-131`). Vectors
+       `create-seated-with-hire-ref` and `create-all-amendments` flipped to
+       `dart: true`.
+     - **(b) The desktop Pulse gate refused `composeRef` on a 44223.** Its
+       amendment list had eight entries
+       (`desktop/src/shared/coordination/sessionCoordinationStrictJson.ts`,
+       `metadataFieldForms`). **The gate was wrong**, and this is the one
+       direction its own parity test forbids: the ingress decoder beside it
+       accepted the key. Fixed: `composeRef` is the ninth amendment (512
+       shapes), with an `isComposeRef` validator mirroring `ComposeRef`'s two
+       keys, the `sha256:`+64-hex digest rule, the 64-byte `appVersion` bound,
+       the explicit-null refusal, and `validate_session_metadata`'s
+       "composeRef requires a packRef". Vectors `compose-ref` and
+       `every-amendment-at-once` flipped to `desktopGate: true`.
+     - **(c) The desktop ingress decoder refused `handover`.** **The decoder
+       was wrong.** Fixed: `handover` joins its optional list with a
+       `readMetadataHandover` reader — four required keys, two-token `state`,
+       three lowercase 64-hex ids, explicit null refused — and the value is
+       projected onto `BuzzCodingSessionMetadataV1`
+       (`codingSessionIngressPayloads.ts`). With (b) this closes
+       `every-amendment-at-once`, which **no** desktop reader accepted.
+     - **(d) Mobile refused `beeStamp`, `packRef`, `handover` and
+       `composeRef`.** Its optional list
+       (`coding_session_decoders.dart:108-114`) carried none of the four, and
+       its own comment already recorded that `role`/`turnBudget`/`routing`
+       had been missing once before. **Mobile was wrong.** Fixed: all four are
+       named and each is validated by a Dart twin of the desktop's checker
+       (`_isBeeStamp`, `_isPackRef`, `_isMetadataHandover`, `_isComposeRef`),
+       including the `app:shipped` packRef form and the composeRef-needs-a-
+       packRef rule. Six vectors flipped to `dart: true`.
+     - **(e) Mobile refused `action: "archived"` (44230).**
+       `coding_session_session_decoders.dart:409` tested only `closed`/`open`.
+       **Mobile was wrong**: `CodingSessionClosureAction` has three variants
+       and `is_closed()` answers `archived` exactly as it answers `closed`.
+       Fixed: the third token is accepted and `closed: action != 'open'`
+       mirrors `is_closed()`. Vector `archived` flipped. Recorded limitation:
+       the mobile model has one `closed` bool, so archived is read as settled
+       but not yet distinguished from closed; `coding_session_models.dart` was
+       outside this lane's file ownership.
+     - **(f) The desktop coordination reader refused `session.hire` and
+       `session.restart`.** Two different answers, and only one of them was a
+       defect.
+       **`session.restart` — the reader was wrong.** `buzz-core` matches
+       `"session.resume" | "session.restart" | "session.stop"` in one arm
+       (`coding_session_lifecycle_command.rs:702`), the three-key target form
+       is identical, and **this app writes restarts itself**
+       (`buildCodingSessionRestartEvent`,
+       `desktop/src/features/coding-sessions/lib/codingSessionLifecycleCommand.ts:411`):
+       its only strict reader refused to read its own signed command. Fixed in
+       `hasStrictLifecycleCommandJson`; vector `restart` flipped.
+       **`session.hire` — the *fixture* was wrong, not the reader.** A hire
+       names no `providerAuthorityPubkey` at all — it asks a host to choose
+       one — and the desktop reads hires through a **sibling** decoder,
+       `readLifecycleHire`
+       (`desktop/src/shared/coordination/sessionCoordinationCommissioning.ts:95`),
+       whose own doc says "the fold's `readLifecycleCommand` refuses it and
+       always will". Per `conformance/README.md` that is a `null` verdict, not
+       a refusal, so the four hire vectors now state `null` for
+       `desktopCoordination` with the sibling named in the fixture's
+       `readers` map. Nothing user-visible hangs on it: no consumer reports a
+       44221 strict refusal as corruption (`sessionCoordinationFold.ts:288` is
+       the only caller and returns null for hire/stop/restart anyway).
+       **Owed**: `readLifecycleHire` is an attribution reader, not a closed
+       key-set reader, so the desktop still has **no** strict key-set reader
+       for `session.hire`. Recorded in
+       `conformance/coding-session-records/README.md`, not closed.
+     - **(g) The Pulse gate and mobile accepted `"routing": null`, which
+       `buzz-core` refuses naming the key.** Checked for the brief's one
+       exception — a real writer that emits it — and **there is none**: the
+       sole writer of a 44223 is `serde_json::to_string(&SessionMetadata)`
+       (`crates/buzz-session-provider/src/lib.rs:8351`), and `routing` carries
+       `skip_serializing_if = "Option::is_none"`
+       (`coding_session_payload.rs:1206`), so an explicit null is unwritable.
+       **Both readers were wrong**; both now test `containsKey`/`hasOwn`
+       rather than short-circuiting on `!== null`. `role` and `turnBudget`
+       keep accepting a null, because their serde `Option`s genuinely read one
+       as absent. Vector `invalid-routing-null` flipped on both.
+     - **(h) Mobile accepted an unknown key inside `turnBudget`** — it
+       validated the nested object not at all. Fixed with `_isTurnBudget`:
+       exactly `{used, limit}`, `used >= 0`, `limit > 0`, and only beside a
+       `sessionRef`, which are `validate_session_metadata`'s own rejections.
+     - **(i) Mobile lowercased a signed provider-authority pubkey** through
+       `normalizePubkey` and admitted the create. **Mobile was wrong, and this
+       is the worst class of the eleven**: these ids are compared byte-for-byte
+       against signed facts, so a decoder that repairs signed data can be made
+       to agree with a forgery. Fixed in both the create and the resume
+       decoder — `isHex64` refuses, never normalises. Vector
+       `invalid-create-uppercase-authority-pubkey` flipped to `dart: false`.
+     - **(j) The desktop ingress decoder and mobile bounded 44224 error
+       strings wider than `buzz-core`.** **Both were wrong, but not uniformly,
+       and 215's summary of the Rust side was slightly off**: `buzz-core`
+       bounds `error.message` at `1024 + '…'.len_utf8()` = 1027 for **every**
+       status (`coding_session_payload.rs:829`), but applies the 64-byte
+       `is_receipt_error_code` only to the four turn-failure statuses
+       (`:892`); every other status's code is bounded at 256 by the generic
+       check (`:826`). A vector asserting 64 on a `failed` receipt was written,
+       failed against Rust, and was withdrawn — that asymmetry is now written
+       into the `oversized-turn-error-code` vector's `why`. Both readers now
+       carry two constants (`MAX_ERROR_CODE_BYTES` 256,
+       `MAX_TURN_ERROR_CODE_BYTES` 64) and the 1027-byte message bound; the
+       Dart decoder picks the bound from the status. Both vectors flipped.
+     - **(k) The ingress decoder and mobile accepted
+       `contextSummary`/`diffSummary`/`planSummary`.** The brief's second
+       exception candidate, and it fails the same test as (g): these are not
+       fields of `SessionMetadata` at all, so no signed 44223 has ever carried
+       one and the relay would refuse it if one did. Nothing in either client
+       read the values (`git grep` found only the decoders themselves).
+       **`buzz-core` was right and both readers were wrong.** Removed from
+       both optional lists, from `BuzzCodingSessionMetadataV1`, and from both
+       projections. Vector `context-summary` flipped to `false` on both.
+     - **Consequence (a): the 2026-09-20 "No sessions are currently verified
+       live" over three running project-sourced seats is CONFIRMED as
+       consistent with (b), in code.** The Pulse gate's refusal is consumed by
+       `admissibleEvents` in
+       `desktop/src/features/project-pulse/lib/pulseQueries.ts:288-297`, which
+       drops the event from the digest with an `invalid-event` error row. The
+       provider emits `composeRef` for **every** seat whose staged pack has a
+       `compose.json` (`seat_compose_ref`,
+       `crates/buzz-session-provider/src/lib.rs:9822`, reached through
+       `seat_skills` for any seat with pack coordinates), which is exactly what
+       a project-sourced seat has — so each such 44223 was excluded, the
+       session never reached `digest.sessions`, and the count the Overview card
+       renders was zero. The full Pulse screen *does* disclose the loss
+       (`ProjectPulseView.tsx:786`, "but this read lost events, so that is not
+       a confirmed answer"), but **the project Overview card does not**:
+       `projectPulseCardReachabilityAbsence`
+       (`desktop/src/features/project-pulse/ui/ProjectPulseCard.tsx:24-30`) has
+       only a refreshing/settled branch and returns the bare "No sessions are
+       currently verified live." over a non-empty `errors[]` — on the surface
+       its own doc comment calls "the surface most people actually look at".
+       That missing caveat is a **second, separate honesty defect** and is not
+       fixed here: `ProjectPulseCard.tsx` was outside this lane's file
+       ownership. Regression added at the reachable consumer: a real
+       `finalizeEvent`-signed 44223 carrying `packRef` + `composeRef` +
+       `handover` must produce no `invalid-event` row
+       (`pulseQueries.test.mjs`, "a 44223 carrying composeRef and handover
+       reaches the digest, not the exclusion list").
+     - **Consequence (b): what a mobile user saw for a hired seat since
+       2026-09-01, established from the fold.** The create decoded as
+       `malformedPayload`, so `applyCodingSessionTrustGate`
+       (`mobile/lib/features/coding_sessions/domain/coding_session_trust.dart:260-269`)
+       never added it to `creates`, no create↔receipt join bound the provider,
+       and the execution fell through to D5's first-seen-metadata-signer
+       fallback with `verified: false` (`:321-331`). That renders as
+       **"· authority unverified"** in the session header
+       (`mobile/lib/features/coding_sessions/ui/coding_session_page/header.dart:142`),
+       and `hasUnverifiedAuthority` (`coding_session_fold.dart:279`) was true
+       for the whole session. The seat's facts were still shown — the fallback
+       admitted them — so this was a **standing false unverified label on every
+       hired seat**, plus a malformed-event count for kind 44221 on every read.
+       Regression added at that consumer: "a hired seat's create binds
+       authority like any other" (`coding_session_trust_test.dart`), asserting
+       `verified: true` and `counts.malformed == 0`.
+     - **A twelfth finding, outside the eleven: there is a fourth strict
+       reader nobody knew about.**
+       `web/src/features/coding-sessions/domain/ingressPayloads.ts` is a
+       hand-copy of the desktop ingress decoder — its own header says "Copied
+       from `desktop/.../codingSessionIngressPayloads.ts`" — and it decodes
+       44223 and 44224 for `web/`'s session surfaces
+       (`web/src/features/coding-sessions/domain/trust.ts`). 215's README
+       asserted "the web client decodes none of these kinds; it is a repo
+       browser", which is **wrong**, and no fixture loads it. It carries the
+       pre-216 shape of four of the defects above: its optional list names
+       neither `beeStamp`, `packRef`, `handover` nor `composeRef` (`:453-459`),
+       it still accepts the three summary keys, and it bounds a turn error code
+       at 256 (`:39`). Not fixed — `web/` was outside this lane's file
+       ownership — and recorded in
+       `conformance/coding-session-records/README.md` with the instruction to
+       add a `web` column to all five fixtures. **This is 204's shape, live,
+       in a reader no conformance test can see.**
+     - **What else changed.** `sessionCoordinationStrictJsonParity.test.mjs`
+       no longer maintains its own twelve fixtures: it loads the shared 44223
+       vectors, which is why it never noticed (b) — a reader's test over the
+       reader's own fixtures is the exact failure `conformance/` exists to
+       prevent. `sessionCoordinationStrictJson.ts` was 909 lines and would
+       have passed the 1,000-line ratchet with (b), (f) and (j) added, so the
+       routing-record validators and the four dependency-free JSON primitives
+       moved to a new sibling, `sessionCoordinationJsonShapes.ts`, re-exported
+       from their old home so no importer changed. Split, not bumped.
+     - **What is left pinned, each with its reason**, in
+       `conformance/coding-session-records/README.md`: `v-as-json-float`
+       (`"v": 1.0` is a float serde refuses for a `u64` and neither JavaScript
+       nor Dart can tell it from `1`; a property of the languages, nothing
+       signs it); the four `session.hire` vectors as `null` for the
+       coordination reader (sibling decoder, above); every turn-stage 44224 as
+       `false` for that same reader (documented scope — it is the lifecycle
+       vocabulary the fold acts on, and the caller discriminates by a tag pair
+       a turn receipt never carries); `resume`/`stop`/`restart` as `null` for
+       Dart (`decodeCodingSessionCreate` answers `wrongKind`).
+     - **Not done.** Nothing was exercised against hive or an installed
+       bundle; these are decoder-level tests plus two consumer regressions.
+       The Overview card's missing caveat, the `web/` reader, the mobile
+       archived-versus-closed distinction and the desktop's missing strict
+       hire reader are all recorded above and owned by no lane yet.
+
 
 ## 3a. Environment facts that cost real time (do not rediscover)
 

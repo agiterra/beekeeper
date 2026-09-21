@@ -22,6 +22,35 @@ void main() {
       expect(facts.counts.rejectedAuthor, 0);
     });
 
+    // Ledger 216(a). `hireRef` is the 2026-09-01 attribution amendment every
+    // hired seat's create carries, and `createKeys` here is an exact-key list
+    // that never grew it — so from that day until lane 216 **every** hired
+    // seat's create decoded as `malformedPayload` on this device. The
+    // execution then fell through to D5's first-seen-metadata-signer
+    // fallback, which renders as "authority unverified" in the session
+    // header, and the read's malformed counter ticked for kind 44221.
+    test('a hired seat\'s create binds authority like any other', () {
+      final facts = _gate([
+        createEvent(
+          commandId: 'cmd-1',
+          actor: seatActorPubkey,
+          role: 'builder',
+          hireRef: hireEventId,
+        ),
+        receiptEvent(commandId: 'cmd-1', status: 'created'),
+        metadataEvent(status: 'running'),
+      ]);
+      final authority = facts.authorityByTarget[target().key]!;
+      expect(authority.pubkey, providerPubkey);
+      expect(
+        authority.verified,
+        isTrue,
+        reason: 'a create carrying hireRef must still pin the provider',
+      );
+      expect(facts.creates, hasLength(1));
+      expect(facts.counts.malformed, 0);
+    });
+
     test('facts from a signer the create did not name are rejected', () {
       final facts = _gate([
         createEvent(commandId: 'cmd-1'),

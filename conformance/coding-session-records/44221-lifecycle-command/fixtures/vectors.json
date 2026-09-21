@@ -4,7 +4,7 @@
   "record": "coding-session lifecycle command",
   "readers": {
     "rust": "crates/buzz-core/src/coding_session_lifecycle_command.rs :: decode_coding_session_lifecycle_command",
-    "desktopCoordination": "desktop/src/shared/coordination/sessionCoordinationStrictJson.ts :: hasStrictLifecycleCommandJson + hasStrictLifecycleCommandValues",
+    "desktopCoordination": "desktop/src/shared/coordination/sessionCoordinationStrictJson.ts :: hasStrictLifecycleCommandJson + hasStrictLifecycleCommandValues (create/resume/restart/stop; a session.hire names no providerAuthorityPubkey and belongs to the sibling reader readLifecycleHire in sessionCoordinationCommissioning.ts)",
     "dart": "mobile/lib/features/coding_sessions/domain/coding_session_session_decoders.dart :: decodeCodingSessionCreate"
   },
   "acceptsNullMeaning": "this reader does not read this variant at all (it answers `wrongKind`/`not mine`), so it is neither an accept nor a refusal",
@@ -133,7 +133,7 @@
       "accepts": {
         "rust": true,
         "desktopCoordination": true,
-        "dart": false
+        "dart": true
       }
     },
     {
@@ -234,7 +234,7 @@
       "accepts": {
         "rust": true,
         "desktopCoordination": true,
-        "dart": false
+        "dart": true
       }
     },
     {
@@ -255,13 +255,13 @@
       },
       "accepts": {
         "rust": true,
-        "desktopCoordination": false,
+        "desktopCoordination": null,
         "dart": null
       }
     },
     {
       "name": "hire-with-requested-by",
-      "why": "COMMS-MAP \u00a73: the seat that ran `bee sessions hire`.",
+      "why": "COMMS-MAP §3: the seat that ran `bee sessions hire`.",
       "content": {
         "schema": "buzz-coding-session-lifecycle-command/v1",
         "commandId": "cmd-1",
@@ -278,7 +278,7 @@
       },
       "accepts": {
         "rust": true,
-        "desktopCoordination": false,
+        "desktopCoordination": null,
         "dart": null
       }
     },
@@ -308,7 +308,7 @@
       },
       "accepts": {
         "rust": true,
-        "desktopCoordination": false,
+        "desktopCoordination": null,
         "dart": null
       }
     },
@@ -360,7 +360,7 @@
     },
     {
       "name": "restart",
-      "why": "Spec \u00a74.9 restart-with-current-definition; same shape as resume.",
+      "why": "Spec §4.9 restart-with-current-definition; same shape as resume.",
       "content": {
         "schema": "buzz-coding-session-lifecycle-command/v1",
         "commandId": "cmd-1",
@@ -377,7 +377,7 @@
       },
       "accepts": {
         "rust": true,
-        "desktopCoordination": false,
+        "desktopCoordination": true,
         "dart": null
       }
     },
@@ -554,7 +554,7 @@
       "accepts": {
         "rust": false,
         "desktopCoordination": false,
-        "dart": true
+        "dart": false
       },
       "reason": "wrong-type"
     },
@@ -633,7 +633,7 @@
       },
       "accepts": {
         "rust": false,
-        "desktopCoordination": false,
+        "desktopCoordination": null,
         "dart": null
       },
       "reason": "wrong-type"
