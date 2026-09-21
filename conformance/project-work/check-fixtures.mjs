@@ -160,10 +160,17 @@ function checkInvalidPlan(path) {
 const REASON_CODES = [
   "evidence_unavailable", "wrong_signer", "wrong_run_or_hash", "action_failed",
   "dirty_revision", "revision_mismatch", "not_approving",
+  "report_not_canonical", "disposition_not_canonical",
   "bound_to_superseded_declaration", "ref_observation_superseded", "plan_unreadable",
 ];
 const STATE_REASON_CODES = ["superseded", "conflict", "goal_changed"];
-const COVERAGE_REASON_CODES = ["criteria_not_covered", "mixed_artifacts", "conflict", "superseded"];
+const COVERAGE_REASON_CODES = [
+  "criteria_not_covered", "mixed_artifacts", "conflict", "superseded", "plan_unavailable",
+];
+// `<30617 coordinate>@<commit>#<action name>`: a definition never loses the
+// repository and plan commit it was compiled at.
+const ACTION_DEF_KEY =
+  /^30617:[0-9a-f]{64}:[a-z0-9-]+@(?:[0-9a-f]{40}|[0-9a-f]{64})#[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
 const EXCLUSION_CODES = ["signer_not_may_lead", "goal_ref_not_a_goal"];
 
 const KEYS = {
@@ -304,6 +311,7 @@ const short = (id) => `${id.slice(0, 8)}…`;
 /// example is checked without one, so the two cannot drift apart in key names
 /// or spellings.
 function checkFold(fold, where, planCriteria, ctx) {
+  const projection = ctx?.inputs?.teamProjection ?? { includedEventIds: [], assignments: {} };
     check(fold.schema === "buzz-project-work-coverage/v1", where, "expected-fold schema is wrong");
     check(Array.isArray(fold.declarations), where, "declarations is not an array");
     check(fold.declarations.length > 0 || fold.excluded.length > 0, where, "an expected fold with no declarations must say what it excluded");
@@ -351,8 +359,14 @@ function checkFold(fold, where, planCriteria, ctx) {
       check(d.stateReasonCode === null || STATE_REASON_CODES.includes(d.stateReasonCode), where, `unknown stateReasonCode "${d.stateReasonCode}"`);
       check((d.stateReasonCode === null) === (d.stateReason === null), where, "stateReasonCode and stateReason must agree about being absent");
       check(!("missionTerminal" in d) && !("mission" in fold), where, "coverage output must not carry a mission terminal field: two questions, never merged");
-      if (d.state === "head" || d.state === "stale") {
+      if ((d.state === "head" || d.state === "stale") && d.planResolved) {
         check(d.criteria.length > 0, where, "a head declaration must project its criteria");
+      } else if (d.state === "head" || d.state === "stale") {
+        // Finding 5: no criterion rows must never read as nothing to do.
+        check(d.criteria.length === 0, where, "an unresolved plan cannot yield criterion rows");
+        check(d.coverageReasonCode === "plan_unavailable", where,
+          "a head whose plan blob is unavailable must say plan_unavailable at the declaration level");
+        check(d.coverageComplete === false, where, "an un-evaluable declaration is never complete");
       } else {
         check(d.criteria.length === 0, where, `a ${d.state} declaration projects no criteria`);
       }
@@ -385,14 +399,28 @@ function checkFold(fold, where, planCriteria, ctx) {
             const f = ctx.inputs.evidence[e.eventId];
             check(["approve", "approve-with-notes"].includes(f.decision), where, `criterion "${c.criterionId}" is covered by a ${f.decision} disposition`);
             check(ctx.mayLead(f.signer), where, `criterion "${c.criterionId}" is covered by a verdict from an actor who does not satisfy may_lead`);
+            // Finding 6: only the canonical team projection's records count.
+            check(projection.includedEventIds.includes(f.eventId), where,
+              `criterion "${c.criterionId}" is covered by disposition ${short(f.eventId)}, which the team projection excludes`);
           }
           if (ctx && known && c.status === "covered" && e.kind === "report") {
-            check(ctx.inputs.evidence[e.eventId].headSha === c.artifactCommit, where, `criterion "${c.criterionId}" is covered by a report about another revision`);
+            const f = ctx.inputs.evidence[e.eventId];
+            check(f.headSha === c.artifactCommit, where, `criterion "${c.criterionId}" is covered by a report about another revision`);
+            check(projection.includedEventIds.includes(f.eventId), where,
+              `criterion "${c.criterionId}" is covered by report ${short(f.eventId)}, which the team projection excludes`);
+            const asg = (projection.assignments ?? {})[f.assignmentRef];
+            check(Boolean(asg) && asg.assigneeActor === f.signer, where,
+              `criterion "${c.criterionId}" is covered by a report signed by ${short(f.signer)}, who is not assignment ${short(f.assignmentRef)}'s assignee`);
+            check(c.assignmentRefs.includes(f.assignmentRef), where,
+              `criterion "${c.criterionId}" is covered by a report on assignment ${short(f.assignmentRef)}, which is not bound to it under this declaration`);
           }
           if (ctx && known && c.status === "covered" && e.kind === "action_result") {
             const f = ctx.inputs.evidence[e.eventId];
-            const def = (ctx.inputs.actionDefinitions ?? {})[f.actionName];
-            check(Boolean(def) && def.definitionHash === f.definitionHash, where, `criterion "${c.criterionId}" is covered by a run of another definition`);
+            // Finding 7: only the definitions compiled at THIS declaration's
+            // repository and plan commit may satisfy its action criteria.
+            const key = `${d.planRef.repository}@${d.planRef.commit}#${f.actionName}`;
+            const def = (ctx.inputs.actionDefinitions ?? {})[key];
+            check(Boolean(def) && def.definitionHash === f.definitionHash, where, `criterion "${c.criterionId}" is covered by a run of another definition than the one compiled at ${d.planRef.commit.slice(0, 12)}…`);
             check(Boolean(def) && def.steps.includes(f.stepId), where, `criterion "${c.criterionId}" is covered by a step the definition does not define`);
             check(f.exitCode === 0 && f.dirty === false && f.checkout.dirtyBefore === false, where, `criterion "${c.criterionId}" is covered by a failed or dirty run`);
             check(f.checkout.sha === c.artifactCommit, where, `criterion "${c.criterionId}" is covered by a run on another commit`);
@@ -450,10 +478,24 @@ function checkSequences(planCriteria) {
       pubkey === auth.founderPubkey ||
       (auth.activeSeats ?? []).some((x) => x.actorPubkey === pubkey && x.role === "lead") ||
       (auth.activeGrants ?? []).some((x) => x.actorPubkey === pubkey && x.maySteer);
-    for (const [name, def] of Object.entries(inputs.actionDefinitions ?? {})) {
-      check(SLUG.test(name), where, `action name "${name}" is not slug grammar`);
-      check(HEX64.test(def.definitionHash ?? ""), where, `actionDefinitions.${name}.definitionHash is not 64 hex`);
-      check(Array.isArray(def.steps) && def.steps.length > 0 && def.steps.every((x) => SLUG.test(x)), where, `actionDefinitions.${name}.steps is not a list of step slugs`);
+    for (const [key, def] of Object.entries(inputs.actionDefinitions ?? {})) {
+      check(ACTION_DEF_KEY.test(key), where, `action definition key "${key}" is not <30617 coordinate>@<commit>#<action>`);
+      check(HEX64.test(def.definitionHash ?? ""), where, `actionDefinitions["${key}"].definitionHash is not 64 hex`);
+      check(Array.isArray(def.steps) && def.steps.length > 0 && def.steps.every((x) => SLUG.test(x)), where, `actionDefinitions["${key}"].steps is not a list of step slugs`);
+    }
+    const tp = inputs.teamProjection ?? {};
+    check(Array.isArray(tp.includedEventIds) && tp.includedEventIds.every((x) => HEX64.test(x)), where, "teamProjection.includedEventIds is not a list of event ids");
+    check(tp.assignments && typeof tp.assignments === "object", where, "teamProjection.assignments is missing");
+    for (const [asg, row] of Object.entries(tp.assignments ?? {})) {
+      check(HEX64.test(asg), where, "a teamProjection assignment key is not an event id");
+      check(HEX64.test(row.assigneeActor ?? ""), where, `assignment ${asg} names no assignee`);
+      check(typeof row.assigneeRole === "string" && row.assigneeRole.length > 0, where, `assignment ${asg} names no role`);
+    }
+    for (const fact of Object.values(inputs.evidence ?? {})) {
+      if (fact.kind === "report") {
+        check(Boolean((tp.assignments ?? {})[fact.assignmentRef]), where,
+          `report ${fact.eventId} names assignment ${fact.assignmentRef}, which teamProjection.assignments does not carry`);
+      }
     }
     for (const [key, fact] of Object.entries(inputs.evidence ?? {})) {
       check(key === fact.eventId, where, `evidence is keyed ${key} but the fact names ${fact.eventId}`);

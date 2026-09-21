@@ -381,8 +381,15 @@ infers a passing test from an event id.
   "currentGoalRef": "<64-hex>",
   "goalEvents": ["<64-hex>"],
   "planBlobs": {"<30617 coordinate>@<commit>:plans/x.md": "<blob bytes>"},
-  "actionDefinitions": {"verify": {"definitionHash": "<64-hex>",
-                                   "steps": ["verify"]}},
+  "actionDefinitions": {
+    "<30617 coordinate>@<commit>#verify": {"definitionHash": "<64-hex>",
+                                           "steps": ["verify"]}
+  },
+  "teamProjection": {
+    "includedEventIds": ["<64-hex>"],
+    "assignments": {"<assignment event id>": {"assigneeActor": "<64-hex>",
+                                              "assigneeRole": "builder"}}
+  },
   "evidence": {"<event id>": { "…one fact per kind…" }},
   "refStates": [ "<relay-signed kind:30618 events>" ]
 }
@@ -395,7 +402,22 @@ infers a passing test from an event id.
 - **`actionDefinitions`** is compiled **by the caller** from `actions.yml` at
   the declaration's plan commit, with the publication compiler. The fold
   compares hashes; it does not compile. An action the caller could not compile
-  is absent, and every criterion needing it reads `unknown`.
+  is absent, and every criterion needing it reads `unknown`. It is keyed
+  `<30617 coordinate>@<commit>#<action name>` — **never by name alone**. A
+  declaration's `action` criteria are evaluated *only* against the definitions
+  compiled at **that declaration's own `planRef.commit`**. Collapsing the key
+  to the name makes one of two same-named definitions win by sort order, so the
+  amended head's correct evidence fails while the superseded plan's old
+  evidence passes; the two `same-action-two-commits*` sequences pin both sort
+  orders.
+- **`teamProjection`** is the existing canonical 44244 projection —
+  `fold_coding_session_team_transactions` over this session's team
+  transactions. `includedEventIds` is every record that projection **includes**
+  (not excluded, not superseded, not corrected away); `assignments` is its
+  projected assignment records, each with the `assigneeActor` and
+  `assigneeRole` it recorded. Provenance matters: the assembler must read this
+  from the team fold, not from raw events, because ingest validates structure
+  and never the authorship relationship the team contract requires.
 - **`evidence`** is keyed by event id and holds report, verdict and
   action-result facts. **`refStates`** holds every known relay-signed 30618 for
   the code repository, because freshness needs the *newest* one, not only the
@@ -427,12 +449,31 @@ its bound evidence satisfies the predicate for its `proof` form:
 - **`review`** — a 44244 **verdict** whose `subtype` is `disposition` and
   whose `decision` is `approve` or `approve-with-notes`
   (`CodingSessionTeamDispositionDecision::is_approval`), signed by an actor
-  `authority` admits (the `may_lead` predicate above), on a **report** for an
-  assignment bound to that criterion, whose report `headSha` equals the
-  binding's `artifactCommit`.
+  `authority` admits (the `may_lead` predicate above), **included in
+  `teamProjection.includedEventIds`**, on a **report** that is itself included
+  there, is signed by `teamProjection.assignments[<its assignmentRef>]
+  .assigneeActor`, names an assignment bound to that criterion under the
+  declaration being projected, and whose `headSha` equals the binding's
+  `artifactCommit`.
+
+  **Work coverage never admits what the team contract excludes.** A
+  well-formed report published by a channel peer about somebody else's
+  assignment is excluded by the team fold (report signer must be the assignee),
+  and a lead approving and binding it does not make it evidence. Neither does a
+  historical approval that a later ruling replaced: the projection carries the
+  replacement, and history stays history.
+
+  Precedence, so two implementations name the same reason for the same fact:
+  (1) evidence missing → `evidence_unavailable`; (2) report not canonical (not
+  included, wrong signer, or an assignment not bound to this criterion) →
+  `report_not_canonical`; (3) disposition signer not `may_lead` →
+  `wrong_signer`; (4) disposition not included → `disposition_not_canonical`;
+  (5) disposition not an approval → `not_approving`; (6) report `headSha` ≠
+  `artifactCommit` → `revision_mismatch`.
 - **`action`** — a **host result** (kind:46023, signed by the host, carried by
   the relay's kind:46014 echo whose `echoSigner` is `relaySelfKey`) for a run
-  whose `definitionHash` equals `actionDefinitions[<name>].definitionHash`,
+  whose `definitionHash` equals
+  `actionDefinitions["<the declaration's repository>@<its planRef.commit>#<name>"].definitionHash`,
   whose `stepId` is the criterion's `step`, with `exitCode` 0,
   `checkout.sha` equal to `artifactCommit`, `checkout.dirtyBefore` false and
   `dirty` false.
@@ -447,7 +488,9 @@ its bound evidence satisfies the predicate for its `proof` form:
 | `evidence_unavailable` | `unknown` | a bound evidence id is in neither `evidence` nor `refStates` |
 | `plan_unreadable` | `unknown` | the plan blob at `planRef.commit` was not supplied |
 | `wrong_signer` | `open` | the verdict's signer does not satisfy `may_lead` |
-| `not_approving` | `open` | the disposition is not an approval |
+| `not_approving` | `open` | the disposition is present in the team projection and is not an approval |
+| `report_not_canonical` | `open` | the team projection excludes the report, or it was signed by somebody who is not the assignment's assignee, or it answers an assignment not bound to this criterion |
+| `disposition_not_canonical` | `open` | the team projection excludes the disposition — most often because a later ruling replaced it |
 | `revision_mismatch` | `open` | the report is about another revision |
 | `wrong_run_or_hash` | `open` | the run executed another definition, or another step |
 | `action_failed` | `open` | the run exited non-zero |
@@ -597,6 +640,17 @@ projected; nothing is deleted, and resolving the fork projects them.
 `unknown` is a result, not an error. A fold given no plan blob returns every
 criterion `unknown` with `planResolved: false` — never `open`, which would
 read as "nothing has been done" when the truth is "we cannot see the list".
+When no binding exists yet either, there are **no criterion rows at all**, and
+that is the dangerous case: see the gating rule below.
+
+**A consumer gating completion MUST gate on the declaration's `state`,
+`planResolved` and `coverageComplete` — never on the presence of criterion
+rows.** Two declarations carry none: a head whose plan blob is unavailable
+(`coverageReasonCode: "plan_unavailable"`) and any declaration in `conflict`
+(`coverageReasonCode: "conflict"`). Both are `coverageComplete: false` with a
+declaration-level reason, precisely so that "nothing to show" can never be read
+as "nothing outstanding". A gate keyed on a non-empty criteria list lets an
+unreadable plan and two competing heads through; that was finding 5.
 
 An amendment does not carry evidence forward. Evidence bound to P stays bound
 to P; under P2 those criteria are `stale` until re-bound at P2. This is the
@@ -867,6 +921,10 @@ The three sequences:
 | `mixed-artifacts` | every criterion covered, at three commits: `coverageComplete: false`, `mixed_artifacts` |
 | `fork-descendant` | P→A,B then A2 supersedes only A: heads A2 and B still conflict |
 | `fork-two-roots` | two declarations of one `workId`, both with empty `supersedes`: two heads, conflict |
+| `wrong-assignee-report` | a channel peer reports somebody else's assignment and the lead approves and binds it: `report_not_canonical` |
+| `superseded-disposition` | an approving disposition later replaced by changes-requested: `disposition_not_canonical` |
+| `same-action-two-commits`, `same-action-two-commits-reversed` | one action name, two plan commits, both lexicographic orders: the head is covered only by the run of *its* definition, and the old definition's run re-bound under a head reads `wrong_run_or_hash` |
+| `plan-unavailable-before-bindings` | a head with no plan blob and no bindings: no criterion rows, and `coverageComplete: false` with `plan_unavailable` |
 
 `node conformance/project-work/check-fixtures.mjs` asserts every fixture
 parses and that ids, hex lengths, uuids and byte limits are well-formed, so a
@@ -962,6 +1020,22 @@ Where Astra's prose left a choice, the smaller option was taken.
     descendant case and the two-roots case each have a fixture, because the
     direct-sibling reading cleared a live conflict.
 
+23. **Evidence facts come from the canonical team projection, never from raw
+    events** (A5 ruling, finding 6). The team fold already requires a report's
+    signer to be its assignment's assignee, and drops a ruling a later one
+    replaced; relay ingest checks structure and cannot. Two answers to one
+    question is the defect — so coverage reads the projection the team contract
+    produces, and a lead's binding of an excluded record changes nothing.
+24. **Action definitions keep their `(repository, commit, name)` provenance
+    through evaluation** (A5 ruling, finding 7). Collapsed to the name, one of
+    two same-named definitions wins by sort order: the amended head's correct
+    evidence fails and the superseded plan's evidence passes. Both sort orders
+    have a fixture because the bug is invisible in one of them.
+25. **A declaration with no criterion rows still says why it is not complete**
+    (A5 ruling, finding 5): `plan_unavailable` for an unreadable plan,
+    `conflict` for competing heads. Consumers gate on state and
+    `coverageComplete`; an empty list is not an answer.
+
 ## Owed by other lanes
 
 The five open questions this lane raised, and the five adversarial-review
@@ -977,5 +1051,8 @@ are now decisions 13–22 above. What they leave for other lanes:
 - **W1** also owns establishing the fold input of § (c) — verifying the
   evidence events and compiling `actionDefinitions` — outside the fold, and
   the reader test that an old build ignores 44249 entirely.
+- **W1/W2** owe the assembler boundary of decision 23: the single place that
+  builds `evidence` and `teamProjection` reads the canonical team fold, and
+  `docs/nips/NIP-PW.md` (W1's file, not this lane's) needs the same amendment.
 - **Every lane that reads authority** uses
   `CodingSessionTeamFoldContext::may_lead`, never a local enumeration (20).

@@ -17497,6 +17497,80 @@ removed from here.
        2026-09-20 did not reproduce across 5 full desktop-suite runs during
        this investigation and remains open and unexplained.
 
+214. **Contract amendment A5: coverage now reads the canonical team
+     projection, action definitions keep their plan commit, and a declaration
+     with no criterion rows can no longer look finished (built 2026-09-20,
+     lane W0 on `work/lane-214-contract-a5`; fixtures and documentation only,
+     `conformance/project-work/**`).** Closes findings 5, 6 and 7 of the Wave 2
+     adversarial review (`/tmp/astra-wave2-review.md`), each of which let a
+     wrong answer through the frozen contract itself rather than through an
+     implementation slip.
+     - **(A) Evidence facts come from the canonical 44244 projection, not raw
+       events (finding 6).** The input gains `teamProjection`:
+       `includedEventIds` (every record `fold_coding_session_team_transactions`
+       includes — not excluded, not superseded, not corrected away) and
+       `assignments` (its projected assignment records with `assigneeActor` and
+       `assigneeRole`). A `review` criterion is covered only when its report
+       and its disposition are both in that projection, the report's signer is
+       its assignment's **assignee**, and the assignment is bound to that
+       criterion under the declaration being projected. Two new reason codes,
+       `report_not_canonical` and `disposition_not_canonical`, with an explicit
+       six-step precedence so two implementations name the same reason for the
+       same fact. The defect was real: relay ingest validates structure and
+       never the authorship relationship, so a channel peer's well-formed
+       report about somebody else's assignment — approved and bound by a lead —
+       was coverage the team fold itself rejects.
+     - **(B) Action definitions keep their provenance (finding 7).**
+       `actionDefinitions` is keyed
+       `<30617 coordinate>@<commit>#<action name>`, and a declaration's
+       `action` criteria are evaluated **only** against definitions compiled at
+       that declaration's own `planRef.commit`. Keyed by name alone, one of two
+       same-named definitions wins by sort order: the amended head's correct
+       evidence fails and the superseded plan's old evidence passes. Both sort
+       orders have a fixture, because the bug is invisible in one of them.
+     - **(C) An un-evaluable declaration says so at the declaration level
+       (finding 5).** A head whose plan blob is unavailable carries
+       `planResolved: false`, no criterion rows, `coverageComplete: false` and
+       `coverageReasonCode: "plan_unavailable"`; a `conflict` declaration
+       already carried `conflict` and was verified to. The README now states
+       the gating rule in as many words: **a consumer gating completion reads
+       the declaration's `state`, `planResolved` and `coverageComplete`, never
+       the presence of criterion rows.** A gate keyed on a non-empty criteria
+       list let an unreadable plan and two competing heads through.
+     - **Fixtures added**: `sequences/wrong-assignee-report`,
+       `sequences/superseded-disposition`, `sequences/same-action-two-commits`,
+       `sequences/same-action-two-commits-reversed`,
+       `sequences/plan-unavailable-before-bindings`. **Changed**: all 13
+       existing `sequences/*/inputs.json` (action definitions re-keyed with
+       repository and commit; `teamProjection` added, with an unauthorized
+       disposition honestly absent from `includedEventIds`), plus `README.md`
+       and `check-fixtures.mjs`. Every event id, pubkey and timestamp is
+       unchanged; no expected fold of an existing sequence changed.
+     - **(D) The checker's own evaluation covers A–C and bites**, proven by
+       perturbation: marking the wrong-assignee report `covered` failed twice
+       (excluded by the projection, and signer ≠ assignee); marking the
+       superseded disposition `covered` failed; covering the head's action
+       criterion with the old plan commit's run failed naming that commit;
+       collapsing an `actionDefinitions` key back to `verify` failed the key
+       grammar and then the lookup; and marking the plan-unavailable head
+       complete failed twice.
+     - **Expected Rust disagreement.** `cargo test -p buzz-core` is **5 failed
+       / 1227 passed** on this branch: `project_work_fold::tests::{a_record_
+       signed_by_a_non_lead_is_excluded_by_name_and_breaks_nothing,
+       coverage_is_about_one_revision_not_a_per_criterion_scoreboard,
+       every_sequence_folds_to_exactly_its_expected_output,
+       evidence_that_resolved_and_failed_is_open_with_its_reason_named}` and
+       `project_work_inputs::tests::folding_an_assembled_input_matches_every_
+       expected_fold`. Every one reads these fixtures, and the oracle moved
+       first on purpose: this lane owns `conformance/project-work/**` alone and
+       touched no Rust. W1/W2 close them by implementing A–C; the assembler
+       boundary of (A) and `docs/nips/NIP-PW.md` are theirs, not this lane's.
+     - Gates on `work/lane-214-contract-a5`, bare after committing:
+       `cargo fmt --all --check`, `cargo clippy -p buzz-core --all-targets --
+       -D warnings`, `node conformance/project-work/check-fixtures.mjs`,
+       `just file-size-check`, `just current-state-check` — all green;
+       `cargo test -p buzz-core` red exactly as listed above.
+
 ## 3a. Environment facts that cost real time (do not rediscover)
 
 - **pnpm 11's answer to a stale workspace state is to DELETE `node_modules`,

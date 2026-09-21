@@ -1,0 +1,216 @@
+{
+  "schema": "buzz-project-work-coverage/v1",
+  "sessionRef": "11111111-2222-4333-8444-555555555555",
+  "projectRef": "30621:1ead000000000000000000000000000000000000000000000000000000000000:kettle",
+  "declarations": [
+    {
+      "workId": "9d0f0f0f-1111-4222-8333-444444444444",
+      "declarationRef": "dec2000000000000000000000000000000000000000000000000000000000000",
+      "planRef": {
+        "repository": "30617:1ead000000000000000000000000000000000000000000000000000000000000:pivot-test-beekeeper-agents",
+        "commit": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "path": "plans/kettle.md"
+      },
+      "state": "head",
+      "supersedes": [
+        "dec1000000000000000000000000000000000000000000000000000000000000"
+      ],
+      "supersededBy": [],
+      "stateReasonCode": null,
+      "stateReason": null,
+      "planResolved": true,
+      "candidateArtifact": "e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7",
+      "artifactCommits": [
+        "e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7"
+      ],
+      "criteria": [
+        {
+          "criterionId": "cli-behaviour",
+          "proof": {
+            "kind": "review"
+          },
+          "status": "open",
+          "assignmentRefs": [],
+          "evidence": [],
+          "artifactCommit": null,
+          "reasonCode": null,
+          "reason": null
+        },
+        {
+          "criterionId": "shared-storage-and-parser",
+          "proof": {
+            "kind": "review"
+          },
+          "status": "open",
+          "assignmentRefs": [],
+          "evidence": [],
+          "artifactCommit": null,
+          "reasonCode": null,
+          "reason": null
+        },
+        {
+          "criterionId": "verified-landed-revision",
+          "proof": {
+            "kind": "action",
+            "name": "verify",
+            "step": "verify"
+          },
+          "status": "covered",
+          "assignmentRefs": [
+            "a553000000000000000000000000000000000000000000000000000000000000"
+          ],
+          "evidence": [
+            {
+              "kind": "action_result",
+              "eventId": "ac7b000000000000000000000000000000000000000000000000000000000000"
+            }
+          ],
+          "artifactCommit": "e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7",
+          "reasonCode": null,
+          "reason": null
+        },
+        {
+          "criterionId": "usage-documentation",
+          "proof": {
+            "kind": "review"
+          },
+          "status": "open",
+          "assignmentRefs": [],
+          "evidence": [],
+          "artifactCommit": null,
+          "reasonCode": null,
+          "reason": null
+        },
+        {
+          "criterionId": "delivered-main",
+          "proof": {
+            "kind": "git-ref"
+          },
+          "status": "open",
+          "assignmentRefs": [],
+          "evidence": [],
+          "artifactCommit": null,
+          "reasonCode": null,
+          "reason": null
+        }
+      ],
+      "coverageComplete": false,
+      "coverageReasonCode": "criteria_not_covered",
+      "coverageReason": "1 of 5 criteria is covered under this declaration: the other four are open"
+    },
+    {
+      "workId": "9d0f0f0f-1111-4222-8333-444444444444",
+      "declarationRef": "dec1000000000000000000000000000000000000000000000000000000000000",
+      "planRef": {
+        "repository": "30617:1ead000000000000000000000000000000000000000000000000000000000000:pivot-test-beekeeper-agents",
+        "commit": "1111111111111111111111111111111111111111",
+        "path": "plans/kettle.md"
+      },
+      "state": "superseded",
+      "supersedes": [],
+      "supersededBy": [
+        "dec2000000000000000000000000000000000000000000000000000000000000"
+      ],
+      "stateReasonCode": "superseded",
+      "stateReason": "superseded by dec20000…",
+      "planResolved": true,
+      "candidateArtifact": null,
+      "artifactCommits": [],
+      "criteria": [],
+      "coverageComplete": false,
+      "coverageReasonCode": "superseded",
+      "coverageReason": "superseded: coverage is computed for the head declaration only"
+    },
+    {
+      "workId": "9d0f0f0f-1111-4222-8333-444444444455",
+      "declarationRef": "dec7000000000000000000000000000000000000000000000000000000000000",
+      "planRef": {
+        "repository": "30617:1ead000000000000000000000000000000000000000000000000000000000000:pivot-test-beekeeper-agents",
+        "commit": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "path": "plans/kettle.md"
+      },
+      "state": "head",
+      "supersedes": [],
+      "supersededBy": [],
+      "stateReasonCode": null,
+      "stateReason": null,
+      "planResolved": true,
+      "candidateArtifact": null,
+      "artifactCommits": [],
+      "criteria": [
+        {
+          "criterionId": "cli-behaviour",
+          "proof": {
+            "kind": "review"
+          },
+          "status": "open",
+          "assignmentRefs": [],
+          "evidence": [],
+          "artifactCommit": null,
+          "reasonCode": null,
+          "reason": null
+        },
+        {
+          "criterionId": "shared-storage-and-parser",
+          "proof": {
+            "kind": "review"
+          },
+          "status": "open",
+          "assignmentRefs": [],
+          "evidence": [],
+          "artifactCommit": null,
+          "reasonCode": null,
+          "reason": null
+        },
+        {
+          "criterionId": "verified-landed-revision",
+          "proof": {
+            "kind": "action",
+            "name": "verify",
+            "step": "verify"
+          },
+          "status": "open",
+          "assignmentRefs": [],
+          "evidence": [
+            {
+              "kind": "action_result",
+              "eventId": "ac7a000000000000000000000000000000000000000000000000000000000000"
+            }
+          ],
+          "artifactCommit": "e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7",
+          "reasonCode": "wrong_run_or_hash",
+          "reason": "host result ac7a0000… ran definition hash d1f00000…, not the verify definition compiled at this declaration's plan commit eeeeeeeeeeee… (d2f00000…)"
+        },
+        {
+          "criterionId": "usage-documentation",
+          "proof": {
+            "kind": "review"
+          },
+          "status": "open",
+          "assignmentRefs": [],
+          "evidence": [],
+          "artifactCommit": null,
+          "reasonCode": null,
+          "reason": null
+        },
+        {
+          "criterionId": "delivered-main",
+          "proof": {
+            "kind": "git-ref"
+          },
+          "status": "open",
+          "assignmentRefs": [],
+          "evidence": [],
+          "artifactCommit": null,
+          "reasonCode": null,
+          "reason": null
+        }
+      ],
+      "coverageComplete": false,
+      "coverageReasonCode": "criteria_not_covered",
+      "coverageReason": "5 of 5 criteria are not covered under this declaration: verified-landed-revision carries a run of another definition, and the other four are open"
+    }
+  ],
+  "excluded": [],
+  "conflicts": []
+}

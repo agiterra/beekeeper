@@ -1,0 +1,104 @@
+{
+  "schema": "buzz-project-work-coverage/v1",
+  "sessionRef": "11111111-2222-4333-8444-555555555555",
+  "projectRef": "30621:1ead000000000000000000000000000000000000000000000000000000000000:kettle",
+  "declarations": [
+    {
+      "workId": "9d0f0f0f-1111-4222-8333-444444444444",
+      "declarationRef": "dec1000000000000000000000000000000000000000000000000000000000000",
+      "planRef": {
+        "repository": "30617:1ead000000000000000000000000000000000000000000000000000000000000:pivot-test-beekeeper-agents",
+        "commit": "abababababababababababababababababababab",
+        "path": "plans/kettle.md"
+      },
+      "state": "head",
+      "supersedes": [],
+      "supersededBy": [],
+      "stateReasonCode": null,
+      "stateReason": null,
+      "planResolved": true,
+      "candidateArtifact": null,
+      "artifactCommits": [],
+      "criteria": [
+        {
+          "criterionId": "cli-behaviour",
+          "proof": {
+            "kind": "review"
+          },
+          "status": "open",
+          "assignmentRefs": [
+            "a551000000000000000000000000000000000000000000000000000000000000"
+          ],
+          "evidence": [
+            {
+              "kind": "report",
+              "eventId": "1eac000000000000000000000000000000000000000000000000000000000000"
+            },
+            {
+              "kind": "verdict",
+              "eventId": "bed1000000000000000000000000000000000000000000000000000000000000"
+            }
+          ],
+          "artifactCommit": null,
+          "reasonCode": "report_not_canonical",
+          "reason": "report 1eac0000… is signed by c0ee0000…, not by assignment a5510000…'s assignee b0110000…, and the team projection excludes it"
+        },
+        {
+          "criterionId": "shared-storage-and-parser",
+          "proof": {
+            "kind": "review"
+          },
+          "status": "open",
+          "assignmentRefs": [],
+          "evidence": [],
+          "artifactCommit": null,
+          "reasonCode": null,
+          "reason": null
+        },
+        {
+          "criterionId": "verified-landed-revision",
+          "proof": {
+            "kind": "action",
+            "name": "verify",
+            "step": "verify"
+          },
+          "status": "open",
+          "assignmentRefs": [],
+          "evidence": [],
+          "artifactCommit": null,
+          "reasonCode": null,
+          "reason": null
+        },
+        {
+          "criterionId": "usage-documentation",
+          "proof": {
+            "kind": "review"
+          },
+          "status": "open",
+          "assignmentRefs": [],
+          "evidence": [],
+          "artifactCommit": null,
+          "reasonCode": null,
+          "reason": null
+        },
+        {
+          "criterionId": "delivered-main",
+          "proof": {
+            "kind": "git-ref"
+          },
+          "status": "open",
+          "assignmentRefs": [],
+          "evidence": [],
+          "artifactCommit": null,
+          "reasonCode": null,
+          "reason": null
+        }
+      ],
+      "coverageComplete": false,
+      "coverageReasonCode": "criteria_not_covered",
+      "coverageReason": "5 of 5 criteria are not covered under this declaration: cli-behaviour carries evidence the team projection excludes, and the other four are open"
+    }
+  ],
+  "excluded": [],
+  "conflicts": []
+}
