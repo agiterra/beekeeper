@@ -12,6 +12,8 @@ pub(crate) use agent_env::{
     baked_build_env, build_buzz_agent_provider_defaults, discovery_env_with_baked_floor,
 };
 pub(crate) mod agents_repo;
+pub(crate) mod agents_repo_commit;
+pub(crate) mod agents_repo_read;
 mod backend;
 pub(crate) mod config_bridge;
 pub(crate) mod crew_roles;

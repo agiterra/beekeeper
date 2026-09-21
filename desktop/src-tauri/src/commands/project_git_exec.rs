@@ -66,6 +66,7 @@ fn git_needs_credentials(args: &[&str]) -> bool {
     )
 }
 
+#[derive(Clone)]
 pub(crate) struct GitAuthConfig {
     git_path: std::path::PathBuf,
     /// The git a credentialed invocation runs, or the sentence it is refused

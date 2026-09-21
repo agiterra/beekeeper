@@ -14,6 +14,7 @@ mod agent_providers;
 mod agent_settings;
 mod agent_update_rollback;
 mod agents;
+pub(crate) mod agents_repo;
 mod app_build;
 mod canvas;
 mod channel_templates;
