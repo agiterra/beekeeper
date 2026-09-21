@@ -62,6 +62,18 @@ typedef ProjectTodoOpener =
 /// one, and tests leave it `null` or install a recorder.
 final projectTodoOpenerProvider = Provider<ProjectTodoOpener?>((ref) => null);
 
+/// Opens a project's agents repository (its plans, roles and manifests, read
+/// from `main` and drafted through the relay) from a project tree.
+typedef ProjectAgentsRepoOpener =
+    void Function(BuildContext context, String address);
+
+/// The opener the tree's "Files" row uses. `null` — the default here, so
+/// this feature never imports `agents_repo` — hides the row; `app.dart`
+/// provides the real one.
+final projectAgentsRepoOpenerProvider = Provider<ProjectAgentsRepoOpener?>(
+  (ref) => null,
+);
+
 /// One to-do list pinned to a project's tree: what the row needs and no
 /// more, so this feature never imports the to-do fold.
 @immutable
@@ -126,6 +138,7 @@ class ProjectTree extends HookConsumerWidget {
     final profiles = ref.watch(userCacheProvider);
     final opener = ref.watch(projectTerminalOpenerProvider);
     final todoOpener = ref.watch(projectTodoOpenerProvider);
+    final filesOpener = ref.watch(projectAgentsRepoOpenerProvider);
     final pinnedTodoReader = ref.watch(projectPinnedTodoListsProvider);
     final binding = ref.watch(codingSessionObserverBindingProvider);
     final filter = ref
@@ -247,6 +260,17 @@ class ProjectTree extends HookConsumerWidget {
     final pinnedTodoLists = todoOpener == null || pinnedTodoReader == null
         ? const <PinnedTodoListRow>[]
         : pinnedTodoReader(ref, project.address);
+    // The Files row is the door to the project's agents repository: plans,
+    // roles and manifests read from main, drafted through the relay.
+    final filesRow = filesOpener == null
+        ? null
+        : _ProjectChildTile(
+            key: ValueKey('project-row-files:${project.address}'),
+            icon: LucideIcons.folderOpen,
+            label: 'Files',
+            detail: null,
+            onTap: () => filesOpener(context, project.address),
+          );
 
     String ownerLabel(String pubkey) =>
         profiles[pubkey.toLowerCase()]?.label ?? shortPubkey(pubkey);
@@ -282,6 +306,7 @@ class ProjectTree extends HookConsumerWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         ?todoRow,
+        ?filesRow,
         for (final list in pinnedTodoLists)
           _ProjectChildTile(
             key: ValueKey(

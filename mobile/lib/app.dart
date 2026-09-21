@@ -17,6 +17,7 @@ import 'features/channels/deep_link_dispatcher.dart';
 import 'features/profile/user_status_cache_provider.dart';
 import 'features/profile/settings_profile_header.dart';
 import 'features/project_todos/state/project_todos_provider.dart';
+import 'features/agents_repo/ui/agents_repo_page.dart';
 import 'features/project_todos/ui/project_todos_page.dart';
 import 'features/projects/ui/project_tree.dart';
 import 'features/settings/settings_page.dart';
@@ -57,7 +58,15 @@ final _unreadInboxItemCountProvider = Provider<int>((ref) {
 List<Override> appFeatureOverrides() => [
   projectTodoOpenerProvider.overrideWithValue(openProjectTodos),
   projectPinnedTodoListsProvider.overrideWithValue(readPinnedProjectTodoLists),
+  projectAgentsRepoOpenerProvider.overrideWithValue(openProjectAgentsRepo),
 ];
+
+/// Push a project's Files page: its agents repository, read from main and
+/// drafted through the relay (NIP-AD).
+void openProjectAgentsRepo(BuildContext context, String address) =>
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => AgentsRepoPage(address: address)),
+    );
 
 /// Push a project's to-do page, on [listId] when one was asked for.
 void openProjectTodos(BuildContext context, String address, {String? listId}) =>

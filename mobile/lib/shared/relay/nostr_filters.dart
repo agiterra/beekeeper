@@ -410,6 +410,53 @@ abstract final class NostrFilters {
     limit: 100,
   );
 
+  // --- Agents-repository drafts (NIP-AD) ------------------------------------
+
+  /// The project's newest kind:30624 source, by `#d` = the project coordinate.
+  static NostrFilter projectPackSource(String projectAddress) => NostrFilter(
+    kinds: const [EventKind.projectPackSource],
+    tags: {
+      '#d': [projectAddress],
+    },
+    limit: 4,
+  );
+
+  /// The repository's relay-signed ref state, by `#d` = the repository id.
+  static NostrFilter repoState(String repoId) => NostrFilter(
+    kinds: const [EventKind.repoState],
+    tags: {
+      '#d': [repoId],
+    },
+    limit: 1,
+  );
+
+  /// One page of a project's draft ops (kind:44249), newest first.
+  static NostrFilter agentsRepoDraftOps(
+    String projectAddress, {
+    int limit = 500,
+    int? until,
+  }) => NostrFilter(
+    kinds: const [EventKind.agentsRepoDraftOp],
+    tags: {
+      '#a': [projectAddress],
+    },
+    limit: limit,
+    until: until,
+  );
+
+  /// Live twin of [agentsRepoDraftOps]: ops from [sinceSeconds] on.
+  static NostrFilter agentsRepoDraftOpsLive(
+    String projectAddress,
+    int sinceSeconds,
+  ) => NostrFilter(
+    kinds: const [EventKind.agentsRepoDraftOp],
+    tags: {
+      '#a': [projectAddress],
+    },
+    since: sinceSeconds,
+    limit: 100,
+  );
+
   // --- Shared terminals (NIP-ST) ---------------------------------------------
 
   /// Every shared-terminal announce (kind:30623) the relay will show me.

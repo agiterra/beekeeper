@@ -67,6 +67,24 @@ abstract final class EventKind {
   /// `a` coordinate (`30621:<owner>:<dtag>`); never carries an `h` tag.
   static const projectTodoOp = 44248;
 
+  // --- Agents-repository drafts (NIP-AD) ------------------------------------
+  // Keep in sync with `crates/buzz-core/src/kind.rs` and
+  // `desktop/src/shared/constants/kinds.ts`. See `docs/nips/NIP-AD.md`.
+
+  /// Kind:44249 agents-repository draft op: one proposed change to one file
+  /// of the project's agents repository, or the committer's record that
+  /// named drafts landed on `main`. Same project-scoped gate as 44248.
+  static const agentsRepoDraftOp = 44249;
+
+  /// Kind:30624 project pack source (NIP-PK): the repository the project's
+  /// roles, plans and manifests are staged from; `d` = the project
+  /// coordinate.
+  static const projectPackSource = 30624;
+
+  /// Kind:30618 repository ref state, relay-signed on every push; `d` = the
+  /// repository id. What tells a reader `main` moved.
+  static const repoState = 30618;
+
   // --- Shared terminals (NIP-ST) ---------------------------------------------
   // Keep in sync with `crates/buzz-core/src/kind.rs` and
   // `desktop/src/shared/constants/kinds.ts`. See `docs/nips/NIP-ST.md`.

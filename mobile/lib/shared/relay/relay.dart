@@ -7,6 +7,7 @@ export 'nostr_filter_match.dart';
 export 'nostr_filters.dart';
 export 'nostr_models.dart';
 export 'poll_schedule.dart';
+export 'project_coordinate.dart';
 export 'relay_closed_policy.dart';
 export 'relay_closed_retry.dart';
 export 'relay_client.dart';
