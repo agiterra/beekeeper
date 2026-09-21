@@ -55,7 +55,8 @@
             "acknowledgementEventId": null,
             "dispositionEventId": null,
             "governedReportEventId": null,
-            "settled": false
+            "settled": false,
+            "settledBy": null
           },
           "sourceEventId": "e7de872a4de106a34dcba1714bde6b9c448950c5e5cb69612d5bbcfcce6d9f27",
           "status": "reported",
@@ -122,7 +123,8 @@
             "acknowledgementEventId": "1acb9a6abd6c7f47b91c3ee8ee3df2b399cfcf7012f27fced520152b8e739de6",
             "dispositionEventId": "753b46bd22d2466407b3c2a7f9590445cedd69fa235c68a13b8e182ebc0e127b",
             "governedReportEventId": "b1ba8e02089b486b83da74c62a4b8042dfdb1d396a26ad6a779336ac445a8e4e",
-            "settled": true
+            "settled": true,
+            "settledBy": "acknowledgement"
           },
           "sourceEventId": "84acea24b731391adaa7b7c6f72ceb34d3e281cf1783d6df317aa2a02d41bb96",
           "status": "settled",

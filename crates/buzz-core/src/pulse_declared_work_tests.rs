@@ -139,6 +139,24 @@ pub(super) fn disposition_body(
     })
 }
 
+/// An approving disposition that **asks** the assignee for something, so an
+/// acknowledgement is still owed (lane 210).
+pub(super) fn disposition_body_asking(
+    assignment_ref: &str,
+    report_ref: &str,
+    decision: CodingSessionTeamDispositionDecision,
+) -> CodingSessionTeamTransactionBody {
+    CodingSessionTeamTransactionBody::Verdict(CodingSessionTeamVerdict::Disposition {
+        assignment_ref: assignment_ref.to_owned(),
+        report_ref: report_ref.to_owned(),
+        refutation_ref: None,
+        decision,
+        summary: "Governed.".into(),
+        findings: Vec::new(),
+        required_action: Some("Confirm you have read the residuals.".into()),
+    })
+}
+
 pub(super) fn acknowledgement_body(reference: &str) -> CodingSessionTeamTransactionBody {
     CodingSessionTeamTransactionBody::Acknowledgement(CodingSessionTeamAcknowledgement {
         acknowledged_event_ref: reference.to_owned(),
@@ -343,7 +361,7 @@ fn a_seated_reporter_is_not_disclosed_as_unseated() {
 // ── Settlement is the fold's rule, and only the fold's ───────────────────────
 
 #[test]
-fn an_approving_disposition_without_an_acknowledgement_stays_reported() {
+fn an_approving_disposition_that_asks_for_something_stays_reported() {
     let founder = Keys::generate();
     let actor = Keys::generate();
     let context = context(&founder, vec![(&actor, "builder")]);
@@ -356,7 +374,7 @@ fn an_approving_disposition_without_an_acknowledgement_stays_reported() {
     let report = sign(&local(report_body(&assignment_id)), &actor, 20);
     let report_id = report.id.to_hex();
     let disposition = sign(
-        &local(disposition_body(
+        &local(disposition_body_asking(
             &assignment_id,
             &report_id,
             CodingSessionTeamDispositionDecision::Approve,
@@ -376,10 +394,11 @@ fn an_approving_disposition_without_an_acknowledgement_stays_reported() {
     assert_eq!(
         declared.status,
         PulseDeclaredAssignmentStatus::Reported,
-        "approval alone is not settlement — the assignee's acknowledgement is \
-         the fold's existing second half, and this view adds no new gate"
+        "an approval that asks the assignee for something is not settlement — \
+         its answer is the fold's second half, and this view adds no new gate"
     );
     assert!(!declared.settlement.settled);
+    assert_eq!(declared.settlement.settled_by, None);
     assert_eq!(declared.dispositions.len(), 1);
     assert_eq!(declared.dispositions[0].event_id, disposition.id.to_hex());
     assert_eq!(
@@ -787,3 +806,49 @@ fn every_assignment_in_a_crowded_mission_gets_exactly_its_own_evidence() {
 
 #[path = "pulse_declared_work_fixture_tests.rs"]
 mod fixture_tests;
+
+/// Lane 210, on this surface: an approving disposition that asks for nothing
+/// is settled with no acknowledgement, and the projection says which rule did
+/// it rather than leaving a reader to infer settlement from a null receipt id.
+#[test]
+fn an_approval_that_asks_nothing_is_settled_and_names_the_rule() {
+    let founder = Keys::generate();
+    let actor = Keys::generate();
+    let context = context(&founder, vec![(&actor, "builder")]);
+    let assignment = sign(
+        &local(assignment_body(&actor, "Build the wire")),
+        &founder,
+        10,
+    );
+    let assignment_id = assignment.id.to_hex();
+    let report = sign(&local(report_body(&assignment_id)), &actor, 20);
+    let report_id = report.id.to_hex();
+    let disposition = sign(
+        &local(disposition_body(
+            &assignment_id,
+            &report_id,
+            CodingSessionTeamDispositionDecision::Approve,
+        )),
+        &founder,
+        30,
+    );
+
+    let session = project_declared_work(&sources(
+        &context,
+        &[assignment, report, disposition.clone()],
+        PulseDeclaredWorkLifecycle::Open,
+    ));
+
+    let declared = &session.assignments[0];
+    assert_eq!(declared.status, PulseDeclaredAssignmentStatus::Settled);
+    assert!(declared.settlement.settled);
+    assert_eq!(
+        declared.settlement.settled_by.as_deref(),
+        Some("approving_disposition_without_ask")
+    );
+    assert_eq!(declared.settlement.acknowledgement_event_id, None);
+    assert_eq!(
+        declared.settlement.disposition_event_id.as_deref(),
+        Some(disposition.id.to_hex().as_str())
+    );
+}

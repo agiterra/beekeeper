@@ -22,6 +22,32 @@
 //! no further turn from anybody. What was missing was a name for that state
 //! and a surface that shows it, so nobody has to wake six seats to watch it
 //! happen: [`CodingSessionTeamPendingCompletion`].
+//!
+//! # The settlement rule changed here (lane 210, ledger 210)
+//!
+//! An approving disposition that asks the assignee for nothing settles the
+//! assignment **without** an acknowledgement. Measured cost of the old rule:
+//! Andy's eight-seat run spent 14 of 32 turns on disposition/acknowledgement
+//! handling and $9.33 on six "housekeeping, no new work" wakes (ledger
+//! 179(a)); a kettle-sized session spent 11 turns and 8.2M cache-inclusive
+//! input closing the protocol against 5 turns and 8.5M doing the work, one of
+//! them an acknowledgement and nothing else. Every wake re-reads the seat's
+//! whole context, so a receipt that says "received" costs what a turn that
+//! writes code costs, and carries no information the disposition did not
+//! already carry. The provider cannot sign the receipt for the seat: the
+//! seat's key is a one-shot host-local file deleted at spawn (ledger 183(f)).
+//! `VISION_COLLABORATION.md` § "Gates must earn their delay" — this gate
+//! could name no failure it prevented.
+//!
+//! **Scope.** This changes the fold's settlement rule and the projection. It
+//! adds no key to the closed 44244 envelope or to any body, and it does not
+//! touch `docs/design/portable-team-loop/PLAN.md:123`'s separation of
+//! provider delivery from semantic acknowledgement: no kind-44220 receipt
+//! became an acknowledgement, and an assignee's explicit acknowledgement is
+//! still the only thing that can *be* one. What changed is that the fold no
+//! longer **requires** one to settle an approval that asks nothing.
+//! [`CodingSessionTeamSettledBy`] discloses which rule settled each
+//! assignment, so no reader has to guess.
 
 use std::collections::HashSet;
 
@@ -30,6 +56,70 @@ use super::{
     CodingSessionTeamTransactionBody, CodingSessionTeamTransactionType, CodingSessionTeamVerdict,
     Record,
 };
+use crate::coding_session_team_transaction::CodingSessionTeamDispositionDecision;
+
+/// Whether an approving disposition asks the assignee for nothing.
+///
+/// **The exact definition, over the disposition body's own fields**
+/// (`crates/buzz-core/src/coding_session_team_transaction.rs:341-357`, the
+/// `Disposition` variant of [`CodingSessionTeamVerdict`]):
+///
+/// | field | read as |
+/// | --- | --- |
+/// | `decision` | an ask unless it is `approve` or `approve-with-notes` — [`CodingSessionTeamDispositionDecision::is_approval`]. `changes-requested`, `reject` and `blocked` all require the assignee to do something next, by definition. |
+/// | `requiredAction` | *"Required next action, or null when none remains."* Present and non-blank **is** the ask, whatever the prose says. A ruling whose `requiredAction` reads "nothing is required of the builder" still owes an answer: this fold reads fields, never prose (finding 26). |
+/// | `refutationRef` | a pointer to a prior verdict, not a request. |
+/// | `assignmentRef`, `reportRef` | what the ruling is about. |
+/// | `summary`, `findings` | the ruling's own reasoning and evidence, addressed to every reader of the mission, not a request of the assignee. Nothing in the vocabulary distinguishes a finding from a note, and on the one measured eight-seat run **every** approving disposition carried four supporting findings with `requiredAction: null` — reading findings as an ask would settle nothing at all and leave the measurement unchanged. Where a lead does want something, the field for it exists and is `requiredAction`. |
+///
+/// Whitespace-only `requiredAction` is no ask: it is the absent value spelled
+/// badly, and a surface would render it as nothing.
+///
+/// Conservative in the direction that matters: presence of the ask field, not
+/// its meaning, decides. A lead who wants an explicit answer writes one word
+/// in `requiredAction` and gets the old behaviour exactly.
+#[must_use]
+pub fn approving_disposition_asks_nothing(
+    decision: CodingSessionTeamDispositionDecision,
+    required_action: Option<&str>,
+) -> bool {
+    decision.is_approval()
+        && required_action
+            .map(|action| action.trim().is_empty())
+            .unwrap_or(true)
+}
+
+/// Which rule settled an assignment.
+///
+/// `None` on [`CodingSessionTeamAssignmentSettlement::settled_by`] exactly
+/// when the assignment is not settled — the same invariant `awaiting` holds
+/// in reverse — so a reader never has to tell "not settled" from "settled for
+/// a reason this build does not disclose".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CodingSessionTeamSettledBy {
+    /// The assignee's explicit acknowledgement of the approving disposition.
+    ///
+    /// Still accepted, still recorded, and still what settles an approval
+    /// that carries an ask. When an acknowledgement is on the wire it wins
+    /// this label even if the disposition asked nothing: the receipt is a
+    /// signed fact about a named party, and reporting the weaker rule when
+    /// the stronger one is satisfied would hide it.
+    Acknowledgement,
+    /// An approving disposition that asks the assignee for nothing
+    /// ([`approving_disposition_asks_nothing`]), with no acknowledgement on
+    /// the wire. Lane 210.
+    ApprovingDispositionWithoutAsk,
+}
+
+impl CodingSessionTeamSettledBy {
+    /// The stable lowercase wire word for this rule.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Acknowledgement => "acknowledgement",
+            Self::ApprovingDispositionWithoutAsk => "approving_disposition_without_ask",
+        }
+    }
+}
 
 /// Which link of an assignment's approval chain is not on the wire.
 ///
@@ -49,8 +139,14 @@ pub enum CodingSessionTeamSettlementLink {
     /// one has not supplied it. The distinction is visible in the records
     /// themselves; this field says only what settlement is still waiting for.
     Disposition,
-    /// An approving disposition governs a canonical report and the assigned
-    /// actor has not acknowledged it.
+    /// An approving disposition governs a canonical report, that disposition
+    /// **asks the assignee for something** (`requiredAction`), and the
+    /// assigned actor has not answered it.
+    ///
+    /// Lane 210: this link is never reported for an approving disposition
+    /// that asks nothing — such an assignment is settled, and saying it awaits
+    /// a receipt would be the false statement that cost six wakes in ledger
+    /// 179(a).
     Acknowledgement,
 }
 
@@ -90,13 +186,25 @@ pub struct CodingSessionTeamAssignmentSettlement {
     pub assignment_event_id: String,
     /// Explicitly governed report, when an approval chain is complete.
     pub governed_report_event_id: Option<String>,
-    /// Approving disposition acknowledged by the assigned actor.
+    /// The approving disposition that settles this assignment, when one does.
     pub disposition_event_id: Option<String>,
-    /// Assigned actor's acknowledgement of that disposition.
+    /// Assigned actor's acknowledgement of that disposition, when one is on
+    /// the wire. `None` on a settled assignment means it settled under
+    /// [`CodingSessionTeamSettledBy::ApprovingDispositionWithoutAsk`].
     pub acknowledgement_event_id: Option<String>,
-    /// True only for disposition `approve` or `approve-with-notes` plus the
-    /// assigned actor's explicit acknowledgement.
+    /// True for disposition `approve` or `approve-with-notes` over a
+    /// canonical report, plus **either** the assigned actor's explicit
+    /// acknowledgement **or** a disposition that asks the assignee for
+    /// nothing (lane 210). [`Self::settled_by`] says which.
     pub settled: bool,
+    /// Which rule settled it, and `None` exactly when [`Self::settled`] is
+    /// false.
+    ///
+    /// Lane 210. A reader that shows an assignment as settled must be able to
+    /// say why without inferring it from a null acknowledgement id — the
+    /// inference a lead drew from three nulls in ledger 178(e) is the whole
+    /// reason this file exists.
+    pub settled_by: Option<CodingSessionTeamSettledBy>,
     /// The one missing link while [`Self::settled`] is false, and `None`
     /// exactly when it is true.
     ///
@@ -180,6 +288,7 @@ pub(super) fn settle_assignments(
                 assignment_ref,
                 report_ref,
                 decision,
+                required_action,
                 ..
             }) = &records[disposition_index].payload.body
             else {
@@ -218,13 +327,50 @@ pub(super) fn settle_assignments(
                             .collect(),
                     });
                 }
-                chains.push((disposition_index, report_index, *acknowledgement));
+                chains.push((
+                    disposition_index,
+                    report_index,
+                    Some(*acknowledgement),
+                    CodingSessionTeamSettledBy::Acknowledgement,
+                ));
+            } else if approving_disposition_asks_nothing(*decision, required_action.as_deref()) {
+                // Lane 210. No receipt is owed, so the chain is complete
+                // here. A receipt that arrives later still folds — it is an
+                // acknowledgement of this same disposition, so the branch
+                // above claims this chain on the next read and `settledBy`
+                // becomes `acknowledgement`. Order independence is preserved
+                // because neither branch depends on arrival order: both read
+                // the same supplied set.
+                chains.push((
+                    disposition_index,
+                    report_index,
+                    None,
+                    CodingSessionTeamSettledBy::ApprovingDispositionWithoutAsk,
+                ));
             }
         }
         chains.sort_by(|left, right| super::compare_records(left.0, right.0, records));
-        let winner = chains.last().copied();
+        // **Selection order, pinned (lane 210).** An acknowledged chain wins
+        // over every unacknowledged one, whatever their order on the wire;
+        // among chains of the same kind, the newest disposition wins as it
+        // always has.
+        //
+        // Without this, a *newer* approving disposition that asks nothing —
+        // published over a corrected report, say — would outrank an older
+        // chain the assignee actually acknowledged, and an assignment that
+        // was already settled would silently change which report governs it.
+        // "Nothing already settled changes" is a statement about the evidence
+        // chain, not only about the boolean: an assignment settled by an
+        // acknowledged chain keeps that chain, and lane 210's rule only
+        // settles assignments that have no acknowledged chain at all.
+        let winner = chains
+            .iter()
+            .rev()
+            .find(|chain| chain.2.is_some())
+            .or_else(|| chains.last())
+            .copied();
         if chains.len() > 1 {
-            if let Some((winner_index, _, _)) = winner {
+            if let Some((winner_index, _, _, _)) = winner {
                 conflicts.push(CodingSessionTeamFoldConflict {
                     subject: format!("governance:{assignment_id}"),
                     winner_event_id: records[winner_index].id.clone(),
@@ -239,8 +385,11 @@ pub(super) fn settle_assignments(
             assignment_event_id: assignment_id.clone(),
             governed_report_event_id: winner.map(|chain| records[chain.1].id.clone()),
             disposition_event_id: winner.map(|chain| records[chain.0].id.clone()),
-            acknowledgement_event_id: winner.map(|chain| records[chain.2].id.clone()),
+            acknowledgement_event_id: winner
+                .and_then(|chain| chain.2)
+                .map(|index| records[index].id.clone()),
             settled: winner.is_some(),
+            settled_by: winner.map(|chain| chain.3),
             awaiting: match winner {
                 Some(_) => None,
                 None => awaiting_link(records, active, assignment_index),

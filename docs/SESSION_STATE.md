@@ -17922,6 +17922,196 @@ removed from here.
        `team_wake::fetch_verified_snapshot` are still unexercised on this
        path, and the 8,192-byte budget has never been met by a real plan.
 
+210. **An approving disposition that asks the assignee for nothing now settles
+     its assignment without an acknowledgement (2026-09-21, lane 210, built on
+     `220a29195`; implements `docs/UNIFIED_WORK_PLAN.md` § 8 A4.2, closes the
+     open half of 183(f)).** Nothing is added to the closed 44244 envelope or
+     to any body: this is a change to the fold's settlement rule and to the
+     projection that reports it.
+     - **The measurement.** The 2026-09-20/21 kettle-sized session did its work
+       in 5 turns and 8.5M cache-inclusive input, then spent 11 more turns and
+       8.2M more closing the protocol; 4 of those were rulings or
+       acknowledgements and 1 was an acknowledgement and nothing else. On
+       Andy's eight-seat run 14 of 32 turns were disposition/acknowledgement
+       handling and six "housekeeping, no new work" turns cost $9.33 reported
+       and 3.08M input (179(a)). Every wake re-reads the seat's whole context,
+       so a receipt that says "received" costs what a turn that writes code
+       costs. The provider cannot sign it for the seat: the seat's `nsec` is a
+       one-shot host-local file deleted at spawn (183(f)), so a provider-signed
+       ACK would be a forgery or a self-approval. `VISION_COLLABORATION.md`
+       § "Gates must earn their delay" — this gate could name no failure it
+       prevented.
+     - **The ruling (orchestrator, 2026-09-21), verbatim.** *"An approving
+       disposition that asks the assignee for nothing settles the assignment
+       without an acknowledgement. A disposition that is not approving, or that
+       carries any ask of the assignee, still requires the assignee's explicit
+       acknowledgement/answer exactly as today."*
+     - **"Asks for nothing", mechanically, over the disposition body's own
+       fields** (`crates/buzz-core/src/coding_session_team_transaction.rs:340-355`,
+       the `Disposition` variant): `decision` is `approve` or
+       `approve-with-notes` (`:298-317`, `is_approval` at `:313`) **and**
+       `required_action` (`:354`, *"Required next action, or null when none
+       remains"*) is absent or blank after trimming. Nothing else is read.
+       `refutation_ref` (`:346`) is a pointer, `assignment_ref`/`report_ref`
+       (`:342`/`:344`) are what the ruling is about, and `summary`/`findings`
+       (`:350`/`:352`) are the ruling's own reasoning, addressed to every
+       reader of the mission. **Prose is never read**: a `requiredAction`
+       reading "Nothing from the builder" is still an ask because the field is
+       present, and "approved; please push" in `summary` with `requiredAction`
+       null has asked for nothing under the contract. Reading `findings` as an
+       ask was considered and rejected on evidence: on Andy's run **every**
+       approving disposition carried four supporting findings with
+       `requiredAction: null`, so that reading would have settled nothing at
+       all and left the measurement unchanged. The predicate is
+       `approving_disposition_asks_nothing`
+       (`coding_session_team_transaction_fold_settlement.rs:82`), and the fold,
+       the provider and the CLI's examples all read that one function.
+     - **Selection order, pinned (Astra's Wave 2 review, A4 third bullet).** An
+       acknowledged chain outranks every unacknowledged one whatever their
+       order on the wire; among chains of the same kind the newest disposition
+       wins as it always has (`…fold_settlement.rs:366`). Without this a
+       *newer* no-ask approval over a corrected report would have outranked an
+       older acknowledged chain and silently moved the governing report of an
+       assignment a reader had already recorded as settled. "Nothing already
+       settled changes" is therefore a statement about the evidence chain, not
+       only about the boolean, and it is tested both ways:
+       `an_acknowledged_chain_outranks_a_newer_unacknowledged_no_ask_approval`
+       and `with_no_acknowledged_chain_the_newest_no_ask_approval_governs`.
+     - **Settled is not acknowledged.** `settledBy:
+       approving_disposition_without_ask` says a ruling asked for nothing. It
+       does not say the assignee received it, agreed with it, stopped working,
+       or that its worktree may be removed, and no surface renders it as
+       acknowledged, delivered or idle (asserted in the desktop conformance
+       test). The audit: the only resource/lifecycle gate,
+       `crates/buzz-core/src/worktree_lifecycle.rs:63`
+       (`SeatWorktreeFacts.session_settled`), is fed exclusively from a
+       **kind:44230 session closure** — `crates/buzz-cli/src/commands/sessions/worktree.rs:569`
+       from `SessionSettlement.settled` (`:324`) and
+       `desktop/src-tauri/src/coding_sessions/worktree_close.rs:319` from the
+       close path itself — never from an assignment's settlement, so nothing
+       there newly fires. `crates/buzz-core/src/pulse_mission.rs:676` reads
+       `settled` only to list what a seat still owes; fewer owed rows is the
+       intended effect. No seat signature is ever synthesized.
+     - **Every reader, and where each stands now.** The projection gained
+       `settled_by: Option<CodingSessionTeamSettledBy>`
+       (`…fold_settlement.rs:99,207`; wire words `acknowledgement` and
+       `approving_disposition_without_ask`), `None` exactly when `settled` is
+       false, and `awaiting` never reports `acknowledgement` for an assignment
+       the rule settles. Completion verification needed no change: it already
+       keys off `settlement.settled`
+       (`crates/buzz-core/src/coding_session_completion_verification.rs:56`), so
+       a pending completion turns terminal on the last approving no-ask
+       disposition. Readers: `crates/buzz-cli/src/commands/sessions/operations_fold_json.rs:47`
+       (`bee sessions operation list|get`); `crates/buzz-cli/src/commands/sessions/operations_completion.rs`
+       (`sessions complete` — its `pending` list is computed from the fold, so
+       it stops naming receipts nobody owes; lane 183's three pending classes
+       and lane 201's coverage gate are untouched);
+       `crates/buzz-cli/src/commands/sessions/body_schema.rs:615-640` and
+       `crates/buzz-cli/src/lib.rs` (the `verdict` and `acknowledge`
+       `after_help`, a `Settlement:` block — **not** a `Rule:` block, which is
+       reserved for frozen specification sentences and whose test caught the
+       mistake); `crates/buzz-session-provider/src/pending_completion.rs:77`
+       (`SettlementFact::ApprovingDispositionWithoutAsk` — a disposition used
+       to be classified as never-settling, and a held completion would have sat
+       terminal-in-fact and pending-in-view until an unrelated event woke the
+       pass); `crates/buzz-core/src/pulse_declared_work.rs:198,575`
+       (`PulseDeclaredSettlement.settled_by`, and `pulseDeclaredWork.ts:282`,
+       whose "Settled" evidence line asserted *"An approving disposition and
+       the assignee's acknowledgement are both on the wire"* — false for the
+       new rule, so it now names which rule settled it);
+       `desktop/src-tauri/src/commands/coding_session_team_fold.rs:286,554`;
+       `desktop/src/features/coding-sessions/lib/invokeCodingSessionTeamFold.ts:74,303`
+       (the strict decoder, whose six-field assignment key set is exactly the
+       ledger-204 trap — it now requires `settledBy`);
+       `desktop/src/features/project-pulse/lib/pulseDeclaredWorkWire.ts:148,429`;
+       `codingSessionMissionTransactionProjection.ts:662`,
+       `codingSessionMissionInspectorModel.ts:235` and
+       `ui/CodingSessionMissionSettlement.tsx:16`, which renders the rule in
+       words. `docs/nips/NIP-CSTX.md` rule 8 states the settlement rule and is
+       updated, including its `assignment -> … -> acknowledgement?` graph. No
+       mobile or web reader decodes this projection (`git grep`).
+     - **One fixture, four readers: `conformance/team-settlement/`.** 15 vectors
+       (`fixtures/settlement-vectors.json`) covering approving/no-ask,
+       `approve-with-notes` with findings, non-null `requiredAction`, all three
+       non-approving decisions, an unauthorized disposition, a no-ask approval
+       corrected by one that asks, a report correction, a duplicate and a
+       replayed acknowledgement, an acknowledged chain against a newer no-ask
+       approval, a completion published before its report, two assignments
+       where one owes an answer and one does not, and a pending completion
+       turning terminal on the last no-ask disposition. Loaded by `buzz-core`
+       (`coding_session_team_transaction_fold_settlement_conformance_tests.rs`),
+       `buzz-cli` (`operations_completion_tests.rs`), the provider
+       (`pending_completion_tests.rs`) and the desktop
+       (`codingSessionTeamSettlementConformance.test.mjs`, which also asserts
+       that an unknown assignment key and a *missing* `settledBy` are both
+       refused rather than read as acknowledged).
+     - **What changes for old sessions.** The rule is applied uniformly when
+       folding any session; there is no profile switch. Nothing that was
+       settled becomes unsettled, and no governing report moves. Measured over
+       the two frozen real sessions in `crates/buzz-cli/tests/fixtures/measure/`
+       by pairing their 44244 sets exactly as `settle_assignments` does: the
+       kettle run (`kettle.json`, 14 records, 13 canonical) — 2 assignments,
+       2 settled before and after, 0 change, and its 2 acknowledgements were of
+       dispositions that *did* ask, so both were owed. Andy's eight-seat run
+       (`rpg-part1.json` ∪ `rpg-part2.json`, 32 records) — 8 assignments, 8
+       settled before and after, 0 change, and **all 8 acknowledgements were of
+       approving dispositions with `requiredAction: null`**: not one of them was
+       required under the new rule. That is the six wakes and the $9.33.
+     - **The closing-turn estimate, from the wire.** Read-only against hive on
+       the installed `942eb00d` bundle, session
+       `f9e0c67f-e326-410a-87ce-ebf613bdd437` (channel
+       `971fb28d-990f-438b-adb1-e5100a71a718`), which was closed 01:15–01:25Z
+       on 2026-09-21 after ledger 205 was written: both its dispositions
+       (`13161e6f` at 01:23:47Z, `275abb44` at 01:24:11Z) are `approve` with
+       `requiredAction` null, and each was followed by an acknowledgement
+       (`e26859c2` at 01:24:03Z by the builder, `d3522bcc` at 01:25:29Z by the
+       verifier). Under this rule **both acknowledgement turns are
+       unnecessary** — two seat wakes, one of them a turn whose only output was
+       a receipt — and the already-published `mission.completed` `71c11d2d`
+       becomes terminal at 01:24:11Z instead of 01:25:29Z. Nothing was written
+       to hive.
+     - **Role text is stale in one place, and is another lane's to change**
+       (versions are owned elsewhere): `personas/templates/lead/1.1.0/skills/triage-report/SKILL.md:27`
+       — *"Do not wake seats to collect acknowledgements, do not re-publish, and
+       do not spend a turn re-checking"* — is right in direction and now
+       understates the rule; the next version should say that an approving
+       disposition with no `requiredAction` settles the assignment where it
+       stands, and that anything wanted from the assignee goes in
+       `requiredAction` or into a new assignment. No worker template
+       (`builder`, `verifier`, `runner`, `architect`, `designer`) mentions
+       acknowledgement at all, so none tells a worker to publish one; the gap
+       is the positive instruction, not a wrong sentence.
+     - **Gates**, bare, after committing, on `work/lane-210-ack-contract`:
+       `cargo fmt --all --check`; `cargo clippy --workspace --all-targets --
+       -D warnings`; `cargo test -p buzz-core -p buzz-cli -p
+       buzz-session-provider`; `just _ensure-sidecar-stubs`; `cargo fmt
+       --manifest-path desktop/src-tauri/Cargo.toml --all --check`; `cargo
+       clippy --manifest-path desktop/src-tauri/Cargo.toml --all-targets --
+       -D warnings`; `cargo test --manifest-path
+       desktop/src-tauri/Cargo.toml`; `just desktop-check`; `pnpm test`;
+       `just file-size-check`; `just current-state-check`. The one golden
+       re-captured on purpose is
+       `crates/buzz-core/testdata/completion_verification_no_policy_fold.txt`,
+       which gained three lines (`settled_by: Some(Acknowledgement)`) and
+       changed no pre-existing line; the reason is written beside the
+       assertion. `desktop/src/features/project-pulse/lib/pulseDeclaredWork.fixture.json`
+       and `…/coding-sessions/lib/codingSessionTeamFoldAdapterResponse.fixture.json`
+       are generated from Rust and gained only the new key. Four existing
+       tests changed on purpose, each because its fixture's approval asked
+       nothing and therefore now settles: the 179(a) pending-completion test
+       and the 178(e) missing-link test (both given an asking approval, so they
+       still test what they were written for, plus a new step 5 for the new
+       rule), `the_flag_never_admits_a_completion_todays_rules_refuse` (drops
+       the disposition, not the acknowledgement, to reach an unsettled
+       assignment), and `live_replay_a_dangling_assignment_ref_excludes_only_that_report`
+       (asserts settled, and which rule settled it).
+     - **Owed live.** Nothing here has been exercised by a real seat: the rule
+       is pinned by unit, conformance and mock-level tests plus one read-only
+       fold of a live session. The proof is the control run (`kettle-control`)
+       closing with **zero acknowledgement-only turns**, with `bee sessions
+       measure` reporting `acknowledgement_only_turns: 0` and a canonical
+       terminal.
+
 ## 3a. Environment facts that cost real time (do not rediscover)
 
 - **pnpm 11's answer to a stale workspace state is to DELETE `node_modules`,

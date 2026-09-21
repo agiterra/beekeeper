@@ -225,6 +225,14 @@ export type CodingSessionMissionDisclosureInput = {
 export type CodingSessionMissionSettlementInput = {
   assignmentEventId: string;
   settled: boolean;
+  /**
+   * Which rule settled it, `null` exactly when `settled` is false (lane 210).
+   *
+   * Optional only for callers written before the rule existed — a test double
+   * or an older fixture — and read as "this fold did not say", never as
+   * "acknowledged".
+   */
+  settledBy?: "acknowledgement" | "approving_disposition_without_ask" | null;
   awaiting: {
     link: "report" | "disposition" | "acknowledgement";
     owedByRole: string;

@@ -8,7 +8,20 @@ export function awaitingSentence(
   settlement: CodingSessionMissionSettlementInput,
   resolveActorName?: (pubkey: string) => string,
 ): string {
-  if (settlement.settled) return "settled";
+  // Lane 210: a settled assignment says which rule settled it, in words. An
+  // approval that asks the assignee for nothing settles with no receipt, and
+  // a bare "settled" beside a null acknowledgement id would leave a reader to
+  // infer which of the two happened — the inference this panel exists to end.
+  if (settlement.settled) {
+    switch (settlement.settledBy) {
+      case "approving_disposition_without_ask":
+        return "settled by an approving disposition that asked for nothing — no acknowledgement was owed";
+      case "acknowledgement":
+        return "settled by the assignee's acknowledgement";
+      default:
+        return "settled";
+    }
+  }
   const awaiting = settlement.awaiting;
   if (!awaiting) {
     // The fold's own invariant is `awaiting` set exactly while `settled` is

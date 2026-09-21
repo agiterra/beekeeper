@@ -656,8 +656,9 @@ mod settlement;
 
 use settlement::settle_assignments;
 pub use settlement::{
-    completion_exclusion_is_pending, CodingSessionTeamAssignmentSettlement,
-    CodingSessionTeamPendingCompletion, CodingSessionTeamSettlementAwaiting,
+    approving_disposition_asks_nothing, completion_exclusion_is_pending,
+    CodingSessionTeamAssignmentSettlement, CodingSessionTeamPendingCompletion,
+    CodingSessionTeamSettledBy, CodingSessionTeamSettlementAwaiting,
     CodingSessionTeamSettlementLink, PENDING_COMPLETION_CODES,
 };
 
@@ -924,3 +925,9 @@ mod tests;
 #[cfg(test)]
 #[path = "coding_session_team_transaction_fold_settlement_tests.rs"]
 mod settlement_tests;
+
+// The shared settlement conformance vectors, loaded by this crate, the CLI,
+// the provider and the desktop decoder (ledger 204's rule).
+#[cfg(test)]
+#[path = "coding_session_team_transaction_fold_settlement_conformance_tests.rs"]
+mod settlement_conformance_tests;

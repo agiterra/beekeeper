@@ -402,6 +402,16 @@ fn without_the_policy_flag_the_fold_is_byte_identical_to_today() {
     // None` on the fold. Both are the new *absence* — this session settled and
     // finished, so there is no missing link and nothing is waiting — and no
     // pre-existing line of the capture changed.
+    //
+    // Edited on purpose a second time, by lane 210 (ledger 210): the golden
+    // gained `settled_by: Some(Acknowledgement)` on that same assignment —
+    // three lines, the pretty-printed `Option`. It reads `Acknowledgement`
+    // and not `ApprovingDispositionWithoutAsk` even though this fixture's
+    // disposition asks nothing, because the assignee's acknowledgement **is**
+    // on the wire and a recorded receipt takes the label over the weaker
+    // rule. Every pre-existing line of the capture is byte-identical, which
+    // is the claim that matters: this session settled before lane 210 and
+    // settles the same way after it.
     let golden = include_str!("../testdata/completion_verification_no_policy_fold.txt");
     assert_eq!(
         format!("{fold:#?}\n"),
@@ -434,7 +444,15 @@ fn the_flag_never_admits_a_completion_todays_rules_refuse() {
         vec![(&reporter, "builder"), (&verifier, "verifier")],
         true,
     );
-    // Drop the acknowledgement: the assignment is no longer settled.
+    // Drop the disposition **and** the acknowledgement of it: the assignment
+    // is no longer settled.
+    //
+    // Lane 210 changed which record has to go. Dropping the acknowledgement
+    // alone used to unsettle this assignment; it no longer does, because this
+    // fixture's disposition is an `approve` with `requiredAction: None` — the
+    // exact shape that now settles on its own. Removing the approval is the
+    // honest way to reach an unsettled assignment, and the acknowledgement
+    // goes with it because it points at an event no longer in the set.
     let events: Vec<nostr::Event> = mission
         .events
         .iter()
@@ -444,6 +462,9 @@ fn the_flag_never_admits_a_completion_todays_rules_refuse() {
                     .expect("a fixture decodes")
                     .body,
                 CodingSessionTeamTransactionBody::Acknowledgement(_)
+                    | CodingSessionTeamTransactionBody::Verdict(
+                        CodingSessionTeamVerdict::Disposition { .. }
+                    )
             )
         })
         .cloned()

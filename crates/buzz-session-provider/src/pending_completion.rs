@@ -36,18 +36,24 @@
 //! disagree. Ledger item 183 records the choice.
 
 use buzz_core::coding_session_team_transaction::{
-    validate_coding_session_team_transaction_envelope, CodingSessionTeamTransactionBody,
-    CodingSessionTeamVerdict,
+    approving_disposition_asks_nothing, validate_coding_session_team_transaction_envelope,
+    CodingSessionTeamTransactionBody, CodingSessionTeamVerdict,
 };
 use nostr::Event;
 
 /// A signed record whose arrival can turn a held-back completion terminal.
 ///
-/// Exactly the three classes the fold's three pending exclusion codes wait on
+/// Exactly the classes the fold's three pending exclusion codes wait on
 /// ([`buzz_core::coding_session_team_transaction::PENDING_COMPLETION_CODES`]),
-/// and no others. An assignment, a report or a lead's disposition can only
-/// ever *add* a prerequisite or leave one unmet; a note changes no state; a
-/// terminal is the thing being waited for, not a thing it waits on.
+/// and no others. An assignment or a report can only ever *add* a
+/// prerequisite or leave one unmet; a note changes no state; a terminal is the
+/// thing being waited for, not a thing it waits on.
+///
+/// A lead's **disposition** used to be in that "adds a prerequisite" group and
+/// no longer is. Lane 210 settles an approving disposition that asks the
+/// assignee for nothing without an acknowledgement, so such a disposition can
+/// itself be the last fact a held completion was waiting for
+/// ([`Self::ApprovingDispositionWithoutAsk`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettlementFact {
     /// An assignee's acknowledgement — the last link of an approval chain, and
@@ -60,6 +66,15 @@ pub enum SettlementFact {
     /// `gates.verifierRequired` counts as a ruling
     /// (`CompletionNotVerified`).
     VerifierRefutation,
+    /// An approving disposition that asks the assignee for nothing, which
+    /// settles its assignment on arrival with no acknowledgement (lane 210).
+    ///
+    /// Classified from the signed body's own fields by the same predicate the
+    /// fold uses — [`buzz_core::coding_session_team_transaction::approving_disposition_asks_nothing`]
+    /// — so the provider and the fold cannot disagree about what asks
+    /// nothing. A disposition that *does* ask is not a settlement fact: it
+    /// leaves the acknowledgement owed, exactly as before.
+    ApprovingDispositionWithoutAsk,
 }
 
 impl SettlementFact {
@@ -69,6 +84,7 @@ impl SettlementFact {
             Self::Acknowledgement => "acknowledgement",
             Self::DecisionAnswer => "decision_answer",
             Self::VerifierRefutation => "verifier_refutation",
+            Self::ApprovingDispositionWithoutAsk => "approving_disposition_without_ask",
         }
     }
 }
@@ -92,6 +108,13 @@ pub fn settlement_fact(event: &Event) -> Option<SettlementFact> {
         CodingSessionTeamTransactionBody::Verdict(CodingSessionTeamVerdict::Refutation {
             ..
         }) => Some(SettlementFact::VerifierRefutation),
+        CodingSessionTeamTransactionBody::Verdict(CodingSessionTeamVerdict::Disposition {
+            decision,
+            ref required_action,
+            ..
+        }) if approving_disposition_asks_nothing(decision, required_action.as_deref()) => {
+            Some(SettlementFact::ApprovingDispositionWithoutAsk)
+        }
         _ => None,
     }
 }

@@ -1,0 +1,854 @@
+{
+  "schema": "buzz-team-settlement-conformance/v1",
+  "vectors": [
+    {
+      "name": "approving-disposition-without-an-ask-settles-with-no-acknowledgement",
+      "why": "Lane 210's rule. `approve` with `requiredAction: null` asks the assignee for nothing, so the chain is complete without a receipt.",
+      "records": [
+        {
+          "id": "assignment",
+          "type": "assignment",
+          "author": "founder"
+        },
+        {
+          "id": "report",
+          "type": "report",
+          "author": "assignee",
+          "assignmentRef": "assignment"
+        },
+        {
+          "id": "disposition",
+          "type": "disposition",
+          "author": "founder",
+          "assignmentRef": "assignment",
+          "reportRef": "report",
+          "decision": "approve",
+          "findings": [],
+          "requiredAction": null,
+          "settlementFact": "approving_disposition_without_ask"
+        }
+      ],
+      "expected": {
+        "assignments": [
+          {
+            "assignment": "assignment",
+            "settled": true,
+            "settledBy": "approving_disposition_without_ask",
+            "governedReport": "report",
+            "disposition": "disposition",
+            "acknowledgement": null,
+            "awaiting": null
+          }
+        ],
+        "terminal": null,
+        "pendingCompletion": null
+      }
+    },
+    {
+      "name": "approve-with-notes-and-findings-still-asks-nothing",
+      "why": "Findings are the ruling's own reasoning, addressed to every reader of the mission, and `approve-with-notes` is an approving decision. On the measured eight-seat run every approving disposition carried four findings with `requiredAction: null`; reading findings as an ask would settle nothing at all.",
+      "records": [
+        {
+          "id": "assignment",
+          "type": "assignment",
+          "author": "founder"
+        },
+        {
+          "id": "report",
+          "type": "report",
+          "author": "assignee",
+          "assignmentRef": "assignment"
+        },
+        {
+          "id": "disposition",
+          "type": "disposition",
+          "author": "founder",
+          "assignmentRef": "assignment",
+          "reportRef": "report",
+          "decision": "approve-with-notes",
+          "findings": [
+            "The gates ran on the exact commit.",
+            "Two residuals are recorded and neither blocks."
+          ],
+          "requiredAction": null,
+          "settlementFact": "approving_disposition_without_ask"
+        }
+      ],
+      "expected": {
+        "assignments": [
+          {
+            "assignment": "assignment",
+            "settled": true,
+            "settledBy": "approving_disposition_without_ask",
+            "governedReport": "report",
+            "disposition": "disposition",
+            "acknowledgement": null,
+            "awaiting": null
+          }
+        ],
+        "terminal": null,
+        "pendingCompletion": null
+      }
+    },
+    {
+      "name": "approving-disposition-with-an-ask-awaits-the-acknowledgement",
+      "why": "`requiredAction` is the one field in the disposition body that asks the assignee for anything. Present and non-blank, the assignee still owes an explicit answer exactly as before lane 210.",
+      "records": [
+        {
+          "id": "assignment",
+          "type": "assignment",
+          "author": "founder"
+        },
+        {
+          "id": "report",
+          "type": "report",
+          "author": "assignee",
+          "assignmentRef": "assignment"
+        },
+        {
+          "id": "disposition",
+          "type": "disposition",
+          "author": "founder",
+          "assignmentRef": "assignment",
+          "reportRef": "report",
+          "decision": "approve",
+          "findings": [],
+          "requiredAction": "Record the fold reading for this assignment after your acknowledgement lands.",
+          "settlementFact": null
+        }
+      ],
+      "expected": {
+        "assignments": [
+          {
+            "assignment": "assignment",
+            "settled": false,
+            "settledBy": null,
+            "governedReport": null,
+            "disposition": null,
+            "acknowledgement": null,
+            "awaiting": {
+              "link": "acknowledgement",
+              "owedByRole": "builder",
+              "owedByActor": "assignee"
+            }
+          }
+        ],
+        "terminal": null,
+        "pendingCompletion": null
+      }
+    },
+    {
+      "name": "changes-requested-awaits-a-disposition",
+      "why": "A decision other than the two approving ones is an ask by definition, and the chain still needs an approval. Unchanged by lane 210.",
+      "records": [
+        {
+          "id": "assignment",
+          "type": "assignment",
+          "author": "founder"
+        },
+        {
+          "id": "report",
+          "type": "report",
+          "author": "assignee",
+          "assignmentRef": "assignment"
+        },
+        {
+          "id": "disposition",
+          "type": "disposition",
+          "author": "founder",
+          "assignmentRef": "assignment",
+          "reportRef": "report",
+          "decision": "changes-requested",
+          "findings": [
+            "The gate output is not on the exact commit."
+          ],
+          "requiredAction": null,
+          "settlementFact": null
+        }
+      ],
+      "expected": {
+        "assignments": [
+          {
+            "assignment": "assignment",
+            "settled": false,
+            "settledBy": null,
+            "governedReport": null,
+            "disposition": null,
+            "acknowledgement": null,
+            "awaiting": {
+              "link": "disposition",
+              "owedByRole": "lead",
+              "owedByActor": null
+            }
+          }
+        ],
+        "terminal": null,
+        "pendingCompletion": null
+      }
+    },
+    {
+      "name": "an-acknowledgement-of-a-no-ask-approval-is-still-recorded",
+      "why": "An explicit receipt that arrives anyway is accepted, folded and takes the label: it is a signed fact about a named party, and reporting the weaker rule would hide it. Nothing becomes unsettled and duplicates stay harmless.",
+      "records": [
+        {
+          "id": "assignment",
+          "type": "assignment",
+          "author": "founder"
+        },
+        {
+          "id": "report",
+          "type": "report",
+          "author": "assignee",
+          "assignmentRef": "assignment"
+        },
+        {
+          "id": "disposition",
+          "type": "disposition",
+          "author": "founder",
+          "assignmentRef": "assignment",
+          "reportRef": "report",
+          "decision": "approve",
+          "findings": [],
+          "requiredAction": null,
+          "settlementFact": "approving_disposition_without_ask"
+        },
+        {
+          "id": "acknowledgement",
+          "type": "acknowledgement",
+          "author": "assignee",
+          "acknowledgedEventRef": "disposition",
+          "settlementFact": "acknowledgement"
+        }
+      ],
+      "expected": {
+        "assignments": [
+          {
+            "assignment": "assignment",
+            "settled": true,
+            "settledBy": "acknowledgement",
+            "governedReport": "report",
+            "disposition": "disposition",
+            "acknowledgement": "acknowledgement",
+            "awaiting": null
+          }
+        ],
+        "terminal": null,
+        "pendingCompletion": null
+      }
+    },
+    {
+      "name": "a-completion-published-before-the-report-is-held-on-the-report",
+      "why": "A late report is still a wait, not a refusal: the completion is durable and becomes terminal on the next read once the chain completes.",
+      "records": [
+        {
+          "id": "assignment",
+          "type": "assignment",
+          "author": "founder"
+        },
+        {
+          "id": "completion",
+          "type": "completion",
+          "author": "founder",
+          "assignmentRefs": [
+            "assignment"
+          ],
+          "settlementFact": null
+        }
+      ],
+      "expected": {
+        "assignments": [
+          {
+            "assignment": "assignment",
+            "settled": false,
+            "settledBy": null,
+            "governedReport": null,
+            "disposition": null,
+            "acknowledgement": null,
+            "awaiting": {
+              "link": "report",
+              "owedByRole": "builder",
+              "owedByActor": "assignee"
+            }
+          }
+        ],
+        "terminal": null,
+        "pendingCompletion": {
+          "eventId": "completion",
+          "code": "completion_not_approved",
+          "unsettled": [
+            "assignment"
+          ]
+        },
+        "excluded": [
+          "completion"
+        ]
+      }
+    },
+    {
+      "name": "one-assignment-owes-an-acknowledgement-while-its-sibling-does-not",
+      "why": "The rule is per disposition, not per mission. The completion naming both is held on exactly the one that still owes an answer.",
+      "records": [
+        {
+          "id": "first",
+          "type": "assignment",
+          "author": "founder"
+        },
+        {
+          "id": "second",
+          "type": "assignment",
+          "author": "founder"
+        },
+        {
+          "id": "first-report",
+          "type": "report",
+          "author": "assignee",
+          "assignmentRef": "first"
+        },
+        {
+          "id": "second-report",
+          "type": "report",
+          "author": "assignee",
+          "assignmentRef": "second"
+        },
+        {
+          "id": "quiet",
+          "type": "disposition",
+          "author": "founder",
+          "assignmentRef": "first",
+          "reportRef": "first-report",
+          "decision": "approve-with-notes",
+          "findings": [],
+          "requiredAction": null,
+          "settlementFact": "approving_disposition_without_ask"
+        },
+        {
+          "id": "asking",
+          "type": "disposition",
+          "author": "founder",
+          "assignmentRef": "second",
+          "reportRef": "second-report",
+          "decision": "approve",
+          "findings": [],
+          "requiredAction": "Confirm you have read the two residuals.",
+          "settlementFact": null
+        },
+        {
+          "id": "completion",
+          "type": "completion",
+          "author": "founder",
+          "assignmentRefs": [
+            "first",
+            "second"
+          ],
+          "settlementFact": null
+        }
+      ],
+      "expected": {
+        "assignments": [
+          {
+            "assignment": "first",
+            "settled": true,
+            "settledBy": "approving_disposition_without_ask",
+            "governedReport": "first-report",
+            "disposition": "quiet",
+            "acknowledgement": null,
+            "awaiting": null
+          },
+          {
+            "assignment": "second",
+            "settled": false,
+            "settledBy": null,
+            "governedReport": null,
+            "disposition": null,
+            "acknowledgement": null,
+            "awaiting": {
+              "link": "acknowledgement",
+              "owedByRole": "builder",
+              "owedByActor": "assignee"
+            }
+          }
+        ],
+        "terminal": null,
+        "pendingCompletion": {
+          "eventId": "completion",
+          "code": "completion_not_approved",
+          "unsettled": [
+            "second"
+          ]
+        },
+        "excluded": [
+          "completion"
+        ]
+      }
+    },
+    {
+      "name": "a-pending-completion-is-terminal-on-the-last-no-ask-disposition",
+      "why": "The turn ledger 179(a)'s lead spent six wakes collecting is not opened at all: the last approving disposition that asks nothing completes the mission on the next read, with nothing republished.",
+      "records": [
+        {
+          "id": "first",
+          "type": "assignment",
+          "author": "founder"
+        },
+        {
+          "id": "second",
+          "type": "assignment",
+          "author": "founder"
+        },
+        {
+          "id": "first-report",
+          "type": "report",
+          "author": "assignee",
+          "assignmentRef": "first"
+        },
+        {
+          "id": "second-report",
+          "type": "report",
+          "author": "assignee",
+          "assignmentRef": "second"
+        },
+        {
+          "id": "first-disposition",
+          "type": "disposition",
+          "author": "founder",
+          "assignmentRef": "first",
+          "reportRef": "first-report",
+          "decision": "approve",
+          "findings": [],
+          "requiredAction": null,
+          "settlementFact": "approving_disposition_without_ask"
+        },
+        {
+          "id": "completion",
+          "type": "completion",
+          "author": "founder",
+          "assignmentRefs": [
+            "first",
+            "second"
+          ],
+          "settlementFact": null
+        },
+        {
+          "id": "second-disposition",
+          "type": "disposition",
+          "author": "founder",
+          "assignmentRef": "second",
+          "reportRef": "second-report",
+          "decision": "approve-with-notes",
+          "findings": [
+            "Landed as reported."
+          ],
+          "requiredAction": null,
+          "settlementFact": "approving_disposition_without_ask"
+        }
+      ],
+      "expected": {
+        "assignments": [
+          {
+            "assignment": "first",
+            "settled": true,
+            "settledBy": "approving_disposition_without_ask",
+            "governedReport": "first-report",
+            "disposition": "first-disposition",
+            "acknowledgement": null,
+            "awaiting": null
+          },
+          {
+            "assignment": "second",
+            "settled": true,
+            "settledBy": "approving_disposition_without_ask",
+            "governedReport": "second-report",
+            "disposition": "second-disposition",
+            "acknowledgement": null,
+            "awaiting": null
+          }
+        ],
+        "terminal": "completion",
+        "pendingCompletion": null
+      }
+    },
+    {
+      "name": "reject-awaits-a-disposition",
+      "why": "A decision other than the two approving ones is an ask by definition: the chain still needs an approval, and the assignee still owes whatever the ruling asked for.",
+      "records": [
+        {
+          "id": "assignment",
+          "type": "assignment",
+          "author": "founder"
+        },
+        {
+          "id": "report",
+          "type": "report",
+          "author": "assignee",
+          "assignmentRef": "assignment"
+        },
+        {
+          "id": "disposition",
+          "type": "disposition",
+          "author": "founder",
+          "assignmentRef": "assignment",
+          "reportRef": "report",
+          "decision": "reject",
+          "findings": [],
+          "requiredAction": null,
+          "settlementFact": null
+        }
+      ],
+      "expected": {
+        "assignments": [
+          {
+            "assignment": "assignment",
+            "settled": false,
+            "settledBy": null,
+            "governedReport": null,
+            "disposition": null,
+            "acknowledgement": null,
+            "awaiting": {
+              "link": "disposition",
+              "owedByRole": "lead",
+              "owedByActor": null
+            }
+          }
+        ],
+        "terminal": null,
+        "pendingCompletion": null
+      }
+    },
+    {
+      "name": "blocked-awaits-a-disposition",
+      "why": "A decision other than the two approving ones is an ask by definition: the chain still needs an approval, and the assignee still owes whatever the ruling asked for.",
+      "records": [
+        {
+          "id": "assignment",
+          "type": "assignment",
+          "author": "founder"
+        },
+        {
+          "id": "report",
+          "type": "report",
+          "author": "assignee",
+          "assignmentRef": "assignment"
+        },
+        {
+          "id": "disposition",
+          "type": "disposition",
+          "author": "founder",
+          "assignmentRef": "assignment",
+          "reportRef": "report",
+          "decision": "blocked",
+          "findings": [],
+          "requiredAction": null,
+          "settlementFact": null
+        }
+      ],
+      "expected": {
+        "assignments": [
+          {
+            "assignment": "assignment",
+            "settled": false,
+            "settledBy": null,
+            "governedReport": null,
+            "disposition": null,
+            "acknowledgement": null,
+            "awaiting": {
+              "link": "disposition",
+              "owedByRole": "lead",
+              "owedByActor": null
+            }
+          }
+        ],
+        "terminal": null,
+        "pendingCompletion": null
+      }
+    },
+    {
+      "name": "an-unauthorized-approving-disposition-settles-nothing",
+      "why": "Authority is judged before settlement. A disposition signed by somebody with no standing to rule is excluded, and lane 210 widens what a *canonical* disposition can do, never who may publish one.",
+      "records": [
+        {
+          "id": "assignment",
+          "type": "assignment",
+          "author": "founder"
+        },
+        {
+          "id": "report",
+          "type": "report",
+          "author": "assignee",
+          "assignmentRef": "assignment"
+        },
+        {
+          "id": "disposition",
+          "type": "disposition",
+          "author": "stranger",
+          "assignmentRef": "assignment",
+          "reportRef": "report",
+          "decision": "approve",
+          "findings": [],
+          "requiredAction": null,
+          "settlementFact": "approving_disposition_without_ask"
+        }
+      ],
+      "expected": {
+        "assignments": [
+          {
+            "assignment": "assignment",
+            "settled": false,
+            "settledBy": null,
+            "governedReport": null,
+            "disposition": null,
+            "acknowledgement": null,
+            "awaiting": {
+              "link": "disposition",
+              "owedByRole": "lead",
+              "owedByActor": null
+            }
+          }
+        ],
+        "terminal": null,
+        "pendingCompletion": null,
+        "excluded": [
+          "disposition"
+        ]
+      }
+    },
+    {
+      "name": "a-no-ask-approval-corrected-by-one-that-asks-restores-the-wait",
+      "why": "A correction replaces its target. The superseded no-ask approval leaves the canonical set, so the assignment is settled by nothing and awaits the answer the new ruling asks for.",
+      "records": [
+        {
+          "id": "assignment",
+          "type": "assignment",
+          "author": "founder"
+        },
+        {
+          "id": "report",
+          "type": "report",
+          "author": "assignee",
+          "assignmentRef": "assignment"
+        },
+        {
+          "id": "first",
+          "type": "disposition",
+          "author": "founder",
+          "assignmentRef": "assignment",
+          "reportRef": "report",
+          "decision": "approve",
+          "findings": [],
+          "requiredAction": null,
+          "settlementFact": "approving_disposition_without_ask"
+        },
+        {
+          "id": "correction",
+          "type": "disposition",
+          "author": "founder",
+          "assignmentRef": "assignment",
+          "reportRef": "report",
+          "decision": "approve",
+          "findings": [],
+          "requiredAction": "Answer the one question in the findings before this settles.",
+          "supersedes": "first",
+          "settlementFact": null
+        }
+      ],
+      "expected": {
+        "assignments": [
+          {
+            "assignment": "assignment",
+            "settled": false,
+            "settledBy": null,
+            "governedReport": null,
+            "disposition": null,
+            "acknowledgement": null,
+            "awaiting": {
+              "link": "acknowledgement",
+              "owedByRole": "builder",
+              "owedByActor": "assignee"
+            }
+          }
+        ],
+        "terminal": null,
+        "pendingCompletion": null,
+        "excluded": [
+          "first"
+        ]
+      }
+    },
+    {
+      "name": "a-report-correction-moves-the-governing-report",
+      "why": "The governing report is the one the canonical approval names. A corrected report leaves the set with its chain, and the approval over the correction is what settles.",
+      "records": [
+        {
+          "id": "assignment",
+          "type": "assignment",
+          "author": "founder"
+        },
+        {
+          "id": "first-report",
+          "type": "report",
+          "author": "assignee",
+          "assignmentRef": "assignment"
+        },
+        {
+          "id": "corrected-report",
+          "type": "report",
+          "author": "assignee",
+          "assignmentRef": "assignment",
+          "supersedes": "first-report"
+        },
+        {
+          "id": "disposition",
+          "type": "disposition",
+          "author": "founder",
+          "assignmentRef": "assignment",
+          "reportRef": "corrected-report",
+          "decision": "approve",
+          "findings": [],
+          "requiredAction": null,
+          "settlementFact": "approving_disposition_without_ask"
+        }
+      ],
+      "expected": {
+        "assignments": [
+          {
+            "assignment": "assignment",
+            "settled": true,
+            "settledBy": "approving_disposition_without_ask",
+            "governedReport": "corrected-report",
+            "disposition": "disposition",
+            "acknowledgement": null,
+            "awaiting": null
+          }
+        ],
+        "terminal": null,
+        "pendingCompletion": null,
+        "excluded": [
+          "first-report"
+        ]
+      }
+    },
+    {
+      "name": "a-duplicate-acknowledgement-after-a-no-ask-settlement-is-harmless",
+      "why": "An old receipt replayed after lane 210 settled the assignment changes the disclosed rule to `acknowledgement` and nothing else; a second copy is a disclosed conflict, never a second settlement.",
+      "records": [
+        {
+          "id": "assignment",
+          "type": "assignment",
+          "author": "founder"
+        },
+        {
+          "id": "report",
+          "type": "report",
+          "author": "assignee",
+          "assignmentRef": "assignment"
+        },
+        {
+          "id": "disposition",
+          "type": "disposition",
+          "author": "founder",
+          "assignmentRef": "assignment",
+          "reportRef": "report",
+          "decision": "approve",
+          "findings": [],
+          "requiredAction": null,
+          "settlementFact": "approving_disposition_without_ask"
+        },
+        {
+          "id": "first-ack",
+          "type": "acknowledgement",
+          "author": "assignee",
+          "acknowledgedEventRef": "disposition",
+          "settlementFact": "acknowledgement"
+        },
+        {
+          "id": "second-ack",
+          "type": "acknowledgement",
+          "author": "assignee",
+          "acknowledgedEventRef": "disposition",
+          "settlementFact": "acknowledgement"
+        }
+      ],
+      "expected": {
+        "assignments": [
+          {
+            "assignment": "assignment",
+            "settled": true,
+            "settledBy": "acknowledgement",
+            "governedReport": "report",
+            "disposition": "disposition",
+            "acknowledgement": "second-ack",
+            "awaiting": null
+          }
+        ],
+        "terminal": null,
+        "pendingCompletion": null
+      }
+    },
+    {
+      "name": "an-acknowledged-chain-outranks-a-newer-no-ask-approval",
+      "why": "Selection order, pinned: an assignment already settled by an acknowledged chain keeps that chain as its governing evidence. Without this an approval published later over a corrected report would silently move the governing report of an assignment a reader had already recorded as settled.",
+      "records": [
+        {
+          "id": "assignment",
+          "type": "assignment",
+          "author": "founder"
+        },
+        {
+          "id": "first-report",
+          "type": "report",
+          "author": "assignee",
+          "assignmentRef": "assignment"
+        },
+        {
+          "id": "asking",
+          "type": "disposition",
+          "author": "founder",
+          "assignmentRef": "assignment",
+          "reportRef": "first-report",
+          "decision": "approve",
+          "findings": [],
+          "requiredAction": "Confirm you have read the residuals.",
+          "settlementFact": null
+        },
+        {
+          "id": "ack",
+          "type": "acknowledgement",
+          "author": "assignee",
+          "acknowledgedEventRef": "asking",
+          "settlementFact": "acknowledgement"
+        },
+        {
+          "id": "second-report",
+          "type": "report",
+          "author": "assignee",
+          "assignmentRef": "assignment"
+        },
+        {
+          "id": "later",
+          "type": "disposition",
+          "author": "founder",
+          "assignmentRef": "assignment",
+          "reportRef": "second-report",
+          "decision": "approve",
+          "findings": [],
+          "requiredAction": null,
+          "settlementFact": "approving_disposition_without_ask"
+        }
+      ],
+      "expected": {
+        "assignments": [
+          {
+            "assignment": "assignment",
+            "settled": true,
+            "settledBy": "acknowledgement",
+            "governedReport": "first-report",
+            "disposition": "asking",
+            "acknowledgement": "ack",
+            "awaiting": null
+          }
+        ],
+        "terminal": null,
+        "pendingCompletion": null
+      }
+    }
+  ]
+}

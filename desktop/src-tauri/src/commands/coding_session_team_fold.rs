@@ -268,12 +268,22 @@ pub struct CodingSessionTeamFoldAdapterSettlement {
     pub assignment_event_id: String,
     /// Explicitly governed report, when the approval chain is complete.
     pub governed_report_event_id: Option<String>,
-    /// Approving disposition acknowledged by the assigned actor.
+    /// The approving disposition that settles this assignment, when one does.
     pub disposition_event_id: Option<String>,
-    /// Assigned actor acknowledgement of that disposition.
+    /// Assigned actor acknowledgement of that disposition, when one exists.
     pub acknowledgement_event_id: Option<String>,
-    /// Whether the full approval and acknowledgement chain is complete.
+    /// Whether the approval chain is complete.
     pub settled: bool,
+    /// Which rule settled it — `acknowledgement`, or
+    /// `approving_disposition_without_ask` for an approving disposition that
+    /// asks the assignee for nothing (lane 210) — and `None` exactly when
+    /// [`Self::settled`] is false.
+    ///
+    /// The fold's own word, carried verbatim. Without it a surface reading a
+    /// settled row with a null `acknowledgement_event_id` would have to guess
+    /// why, and the guess a lead drew from three nulls in ledger 178(e) is
+    /// what this whole family of fields exists to prevent.
+    pub settled_by: Option<String>,
     /// The missing link while [`Self::settled`] is false; `None` exactly when
     /// it is true.
     pub awaiting: Option<CodingSessionTeamFoldAdapterAwaiting>,
@@ -541,6 +551,7 @@ fn fold_adapter(
                 disposition_event_id: value.disposition_event_id,
                 acknowledgement_event_id: value.acknowledgement_event_id,
                 settled: value.settled,
+                settled_by: value.settled_by.map(|rule| rule.as_str().to_owned()),
                 awaiting: value
                     .awaiting
                     .map(|awaiting| CodingSessionTeamFoldAdapterAwaiting {
@@ -623,3 +634,8 @@ mod tests;
 #[cfg(test)]
 #[path = "coding_session_team_fold_settlement_tests.rs"]
 mod settlement_tests;
+
+// Lane 210's rule, in its own file for the same 1,000-line reason.
+#[cfg(test)]
+#[path = "coding_session_team_fold_settled_by_tests.rs"]
+mod settled_by_tests;

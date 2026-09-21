@@ -69,7 +69,18 @@ fn live_replay_a_dangling_assignment_ref_excludes_only_that_report() {
     assert!(fold.canonical_terminal.is_none());
     assert_eq!(fold.assignments.len(), 1);
     assert_eq!(fold.assignments[0].assignment_event_id, assignment_id);
-    assert!(!fold.assignments[0].settled);
+    // Lane 210: this set's approving disposition asks for nothing, so the
+    // assignment settles here with no acknowledgement on the wire. It read
+    // `!settled` before; the assertion is inverted deliberately and the rule
+    // that settled it is asserted rather than inferred. What this test is
+    // about — one dangling report excluded, everything else included, the
+    // same answer in either direction — is untouched.
+    assert!(fold.assignments[0].settled);
+    assert_eq!(
+        fold.assignments[0].settled_by,
+        Some(CodingSessionTeamSettledBy::ApprovingDispositionWithoutAsk)
+    );
+    assert_eq!(fold.assignments[0].acknowledgement_event_id, None);
 
     let reversed: Vec<Event> = events.iter().cloned().rev().collect();
     let backward = fold_coding_session_team_transactions(&reversed, &context).unwrap();

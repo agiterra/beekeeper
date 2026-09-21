@@ -220,6 +220,9 @@ fn full_approval_chain_returns_closed_provenance_bound_projection() {
             disposition_event_id: Some(disposition),
             acknowledgement_event_id: Some(acknowledgement),
             settled: true,
+            // Lane 210: the receipt is on the wire, so it takes the label
+            // even though this disposition asks nothing.
+            settled_by: Some("acknowledgement".into()),
             awaiting: None,
         }
     );

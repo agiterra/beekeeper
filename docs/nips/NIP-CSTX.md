@@ -276,9 +276,10 @@ provider queue/start receipts. `note` may be null.
 `assignmentRefs` is non-empty and duplicate-free. `landedShas` may be empty for
 non-code missions. A relay/fold validates that each referenced assignment has a
 report explicitly governed by disposition `approve` or `approve-with-notes`,
-followed by the assigned actor's acknowledgement of that exact disposition. No
-other verdict decision means approval. This single-event decoder cannot prove
-graph existence or authority.
+settled under rule 8 — by the assigned actor's acknowledgement of that exact
+disposition, or, when that disposition asks the assignee for nothing, by the
+disposition alone. No other verdict decision means approval. This single-event
+decoder cannot prove graph existence or authority.
 
 ### `mission.blocked`
 
@@ -375,13 +376,25 @@ fold, with a supplied verified authority/session context, additionally applies:
    reports that do not use `supersedes` remain parallel facts; report recency
    alone never erases another report.
 8. An assignment settles only when one active report is explicitly governed by
-   an active approving disposition and the assigned actor acknowledges that
-   exact disposition. If several complete governance chains exist, the
+   an active approving disposition, and **either** the assigned actor
+   acknowledges that exact disposition **or** that disposition asks the
+   assignee for nothing. A disposition asks for nothing when its `decision` is
+   `approve` or `approve-with-notes` **and** its `requiredAction` is absent or
+   blank; `summary` and `findings` are the ruling's own reasoning and are never
+   read as an ask. The projection discloses which rule settled it —
+   `acknowledgement` or `approving_disposition_without_ask` — and discloses
+   nothing there when the assignment is unsettled. An acknowledged chain
+   outranks every unacknowledged one; among chains of the same kind the
    disposition with greatest `(created_at, event id)` governs, and the conflict
-   is disclosed. When the assigned actor signs several acknowledgements of the
-   same disposition, the greatest tuple supplies the projected acknowledgement
-   id and that conflict is also disclosed. Other reports and acknowledgements
-   remain facts.
+   is disclosed. So an assignment settled by an acknowledged chain keeps that
+   chain's governing report however many later approvals arrive. When the
+   assigned actor signs several acknowledgements of the same disposition, the
+   greatest tuple supplies the projected acknowledgement id and that conflict
+   is also disclosed. Other reports and acknowledgements remain facts.
+
+   Settlement under `approving_disposition_without_ask` says a ruling asked for
+   nothing. It does not say the assignee received it, agreed with it, or
+   stopped working, and no resource or lifecycle decision may be taken from it.
 9. `mission.completed` is ineligible unless every named active assignment is
    settled under rule 8. `mission.blocked` needs no inferred predecessor.
 10. The canonical terminal is the eligible authorized `mission.completed` or
@@ -392,10 +405,12 @@ fold, with a supplied verified authority/session context, additionally applies:
 The semantic graph normally progresses:
 
 ```text
-assignment -> report -> refutation? -> disposition -> acknowledgement -> mission.completed
+assignment -> report -> refutation? -> disposition -> acknowledgement? -> mission.completed
 ```
 
-`mission.blocked` may settle a mission from any stage. A refutation is evidence,
+The acknowledgement is owed only where the disposition asked (rule 8); an
+approving disposition that asks for nothing settles the assignment where it
+stands. `mission.blocked` may settle a mission from any stage. A refutation is evidence,
 not approval; only the disposition governs. Corrections replace a record only
 in the semantic projection; all signed events remain append-only history.
 

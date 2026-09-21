@@ -90,6 +90,20 @@ fn approval(assignment_ref: &str, report_ref: &str) -> CodingSessionTeamTransact
     })
 }
 
+/// An approving disposition that **asks** the assignee for something, so an
+/// explicit answer is still owed after lane 210.
+fn approval_asking(assignment_ref: &str, report_ref: &str) -> CodingSessionTeamTransactionBody {
+    CodingSessionTeamTransactionBody::Verdict(CodingSessionTeamVerdict::Disposition {
+        assignment_ref: assignment_ref.into(),
+        report_ref: report_ref.into(),
+        refutation_ref: None,
+        decision: CodingSessionTeamDispositionDecision::Approve,
+        summary: "Governed".into(),
+        findings: Vec::new(),
+        required_action: Some("Confirm you have read the residuals.".into()),
+    })
+}
+
 fn completion(assignment_ref: &str) -> CodingSessionTeamTransactionBody {
     CodingSessionTeamTransactionBody::MissionCompleted(CodingSessionTeamMissionCompleted {
         assignment_refs: vec![assignment_ref.into()],
@@ -109,6 +123,13 @@ fn prechecked(events: Vec<Event>, context: CodingSessionTeamFoldContext) -> Prec
 /// The exact refusal of ledger 179(a), now an answer: the completion is
 /// classified `pending`, and the missing acknowledgement is named with the
 /// role and actor that owe it.
+///
+/// The approval **asks** for something (lane 210): that is now what makes an
+/// acknowledgement owed at all. An approval that asked nothing settles on
+/// arrival and this completion would be terminal —
+/// `a_completion_over_an_approval_that_asks_nothing_is_terminal_with_no_receipt`
+/// is that case, and it is the one this lane exists to stop charging a turn
+/// for.
 #[test]
 fn a_completion_missing_an_acknowledgement_is_pending_and_names_the_owed_receipt() {
     let founder = Keys::generate();
@@ -117,7 +138,7 @@ fn a_completion_missing_an_acknowledgement_is_pending_and_names_the_owed_receipt
     let assignment = signed(assignment(&actor), &founder);
     let report = signed(report(&assignment.id.to_hex()), &actor);
     let approval = signed(
-        approval(&assignment.id.to_hex(), &report.id.to_hex()),
+        approval_asking(&assignment.id.to_hex(), &report.id.to_hex()),
         &founder,
     );
     let candidate = signed(completion(&assignment.id.to_hex()), &founder);
@@ -419,4 +440,228 @@ fn a_superseded_declaration_with_criteria_still_blocks_nothing() {
         Some(WorkCoverageReasonCode::Superseded),
     );
     assert!(incomplete_head(&superseded).is_none());
+}
+
+/// Lane 210 at the CLI's own surface: `bee sessions complete` must stop
+/// telling a lead that an acknowledgement is owed when none is.
+///
+/// Same three records as the pending case above, with the one difference the
+/// rule reads — the approval asks for nothing — and the completion is
+/// `terminal` on publication instead of `pending` on a receipt nobody owes.
+#[test]
+fn a_completion_over_an_approval_that_asks_nothing_is_terminal_with_no_receipt() {
+    let founder = Keys::generate();
+    let actor = Keys::generate();
+    let context = context(&founder, &actor);
+    let assignment = signed(assignment(&actor), &founder);
+    let report = signed(report(&assignment.id.to_hex()), &actor);
+    let approval = signed(
+        approval(&assignment.id.to_hex(), &report.id.to_hex()),
+        &founder,
+    );
+    let candidate = signed(completion(&assignment.id.to_hex()), &founder);
+    let prechecked = prechecked(vec![assignment, report, approval], context);
+
+    let outcome = classify_completion_before_submit(&prechecked, &candidate)
+        .expect("a completion over a settled assignment is published");
+    assert_eq!(outcome, CompletionOutcome::Terminal);
+
+    let mut output = json!({"eventId": candidate.id.to_hex(), "accepted": true});
+    disclose_completion_outcome(&mut output, &outcome);
+    assert_eq!(output["outcome"], json!("terminal"));
+    assert_eq!(output["pending"], Value::Null);
+}
+
+// ── Shared settlement conformance vectors (ledger 204's rule) ───────────────
+
+/// The same file `buzz-core`, the provider and the desktop decoder load.
+const SETTLEMENT_VECTORS: &str =
+    include_str!("../../../../../conformance/team-settlement/fixtures/settlement-vectors.json");
+
+/// Deterministic keys, matching the other readers' founder/assignee/stranger.
+fn vector_keys(byte: u8) -> Keys {
+    Keys::parse(&format!("{byte:02x}").repeat(32)).expect("a fixed 32-byte secret key")
+}
+
+fn signed_with_supersedes(
+    body: CodingSessionTeamTransactionBody,
+    supersedes: Option<String>,
+    keys: &Keys,
+) -> Event {
+    let payload = coding_session_team_transaction_payload(
+        SESSION.to_owned(),
+        GENESIS.to_owned(),
+        supersedes,
+        None,
+        body,
+    );
+    build_coding_session_team_transaction(CHANNEL, payload)
+        .expect("the record builds")
+        .sign_with_keys(keys)
+        .expect("the record signs")
+}
+
+/// The CLI's own reader of the vectors: the `fold` object
+/// `bee sessions operation list|get` prints must carry the fold's settlement
+/// rule verbatim, and must never say an acknowledgement is awaited for an
+/// assignment the rule settled.
+#[test]
+fn the_cli_fold_object_renders_every_settlement_vector() {
+    use std::collections::HashMap;
+    let fixture: serde_json::Value =
+        serde_json::from_str(SETTLEMENT_VECTORS).expect("the fixture is JSON");
+    let founder = vector_keys(0x11);
+    let assignee = vector_keys(0x22);
+    let stranger = vector_keys(0x33);
+    for vector in fixture["vectors"].as_array().expect("vectors") {
+        let name = vector["name"].as_str().expect("a name");
+        let mut ids: HashMap<String, String> = HashMap::new();
+        let mut events: Vec<Event> = Vec::new();
+        for record in vector["records"].as_array().expect("records") {
+            let id = record["id"].as_str().expect("an id").to_owned();
+            let author = match record["author"].as_str().expect("an author") {
+                "founder" => &founder,
+                "assignee" => &assignee,
+                _ => &stranger,
+            };
+            let reference =
+                |key: &str| ids[record[key].as_str().expect("a symbolic reference")].clone();
+            let body = match record["type"].as_str().expect("a type") {
+                "assignment" => {
+                    CodingSessionTeamTransactionBody::Assignment(CodingSessionTeamAssignment {
+                        assignee_actor: assignee.public_key().to_hex(),
+                        assignee_role: "builder".into(),
+                        // The symbolic id, so two structurally identical
+                        // assignments in one vector are two distinct events.
+                        objective: format!("Build the slice ({id})"),
+                        brief: "Implement the bounded assigned slice.".into(),
+                        branch: None,
+                        base_sha: None,
+                        file_ownership: vec!["crates/buzz-core/src".into()],
+                        acceptance_steps: vec!["cargo test -p buzz-core".into()],
+                    })
+                }
+                "report" => CodingSessionTeamTransactionBody::Report(CodingSessionTeamReport {
+                    assignment_ref: reference("assignmentRef"),
+                    summary: format!("Done ({id})"),
+                    branch: None,
+                    base_sha: None,
+                    head_sha: None,
+                    files: Vec::new(),
+                    tests: Vec::new(),
+                    red_before_green: None,
+                    deviations: Vec::new(),
+                    residuals: Vec::new(),
+                    anomalies: Vec::new(),
+                }),
+                "disposition" => CodingSessionTeamTransactionBody::Verdict(
+                    CodingSessionTeamVerdict::Disposition {
+                        assignment_ref: reference("assignmentRef"),
+                        report_ref: reference("reportRef"),
+                        refutation_ref: None,
+                        decision: match record["decision"].as_str().expect("a decision") {
+                            "approve" => CodingSessionTeamDispositionDecision::Approve,
+                            "approve-with-notes" => {
+                                CodingSessionTeamDispositionDecision::ApproveWithNotes
+                            }
+                            "changes-requested" => {
+                                CodingSessionTeamDispositionDecision::ChangesRequested
+                            }
+                            "reject" => CodingSessionTeamDispositionDecision::Reject,
+                            _ => CodingSessionTeamDispositionDecision::Blocked,
+                        },
+                        summary: format!("Governed ({id})"),
+                        findings: record["findings"]
+                            .as_array()
+                            .expect("findings")
+                            .iter()
+                            .map(|item| item.as_str().expect("a finding").to_owned())
+                            .collect(),
+                        required_action: record["requiredAction"]
+                            .as_str()
+                            .map(std::borrow::ToOwned::to_owned),
+                    },
+                ),
+                "acknowledgement" => CodingSessionTeamTransactionBody::Acknowledgement(
+                    CodingSessionTeamAcknowledgement {
+                        acknowledged_event_ref: reference("acknowledgedEventRef"),
+                        status: CodingSessionTeamAcknowledgementStatus::Received,
+                        // The symbolic id, so a vector carrying two receipts
+                        // of one disposition signs two distinct events.
+                        note: Some(id.clone()),
+                    },
+                ),
+                _ => CodingSessionTeamTransactionBody::MissionCompleted(
+                    CodingSessionTeamMissionCompleted {
+                        assignment_refs: record["assignmentRefs"]
+                            .as_array()
+                            .expect("assignmentRefs")
+                            .iter()
+                            .map(|item| ids[item.as_str().expect("a symbolic id")].clone())
+                            .collect(),
+                        landed_shas: Vec::new(),
+                        summary: "Mission finished".into(),
+                        follow_ups: Vec::new(),
+                    },
+                ),
+            };
+            let supersedes = record["supersedes"]
+                .as_str()
+                .map(|symbol| ids[symbol].clone());
+            let event = signed_with_supersedes(body, supersedes, author);
+            ids.insert(id, event.id.to_hex());
+            events.push(event);
+        }
+        let context = context(&founder, &assignee);
+        let fold =
+            buzz_core::coding_session_team_transaction::fold_coding_session_team_transactions(
+                &events, &context,
+            )
+            .unwrap_or_else(|error| panic!("{name}: the vector folds: {error}"));
+        let rendered = crate::commands::sessions::operations::fold_json(&fold);
+        for row in vector["expected"]["assignments"]
+            .as_array()
+            .expect("assignments")
+        {
+            let assignment_id = &ids[row["assignment"].as_str().expect("an assignment")];
+            let printed = rendered["assignments"]
+                .as_array()
+                .expect("a list")
+                .iter()
+                .find(|item| item["assignmentEventId"] == json!(assignment_id))
+                .unwrap_or_else(|| panic!("{name}: the fold object omits an assignment"));
+            assert_eq!(
+                printed["settled"],
+                json!(row["settled"].as_bool().expect("settled")),
+                "{name}: settled"
+            );
+            // Present and null, never absent: "not settled" and "this build
+            // does not disclose the rule" must stay different answers.
+            assert!(
+                printed.get("settledBy").is_some(),
+                "{name}: the fold object must always carry settledBy"
+            );
+            assert_eq!(
+                printed["settledBy"],
+                row["settledBy"].clone(),
+                "{name}: settledBy"
+            );
+            let awaiting_link = printed["awaiting"]
+                .as_object()
+                .map(|awaiting| awaiting["link"].clone());
+            assert_eq!(
+                awaiting_link,
+                row["awaiting"]
+                    .as_object()
+                    .map(|awaiting| awaiting["link"].clone()),
+                "{name}: awaiting.link"
+            );
+            if row["settled"].as_bool() == Some(true) {
+                assert!(
+                    printed["awaiting"].is_null(),
+                    "{name}: a settled assignment awaits nothing"
+                );
+            }
+        }
+    }
 }

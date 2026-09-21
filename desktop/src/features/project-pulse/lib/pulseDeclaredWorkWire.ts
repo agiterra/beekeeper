@@ -135,6 +135,20 @@ export type PulseDeclaredSettlement = {
   readonly governedReportEventId: string | null;
   readonly dispositionEventId: string | null;
   readonly acknowledgementEventId: string | null;
+  /**
+   * Which rule settled it, `null` exactly when `settled` is false (lane 210).
+   *
+   * `acknowledgement` is the assignee's explicit receipt.
+   * `approving_disposition_without_ask` is an approving disposition that asks
+   * the assignee for nothing, which settles with no receipt at all — so a
+   * null `acknowledgementEventId` on a settled row is an answer, not a gap.
+   * Required rather than optional: a build that has not shipped the rule must
+   * fail this decoder rather than read as "acknowledged".
+   */
+  readonly settledBy:
+    | "acknowledgement"
+    | "approving_disposition_without_ask"
+    | null;
 };
 
 /** One canonically included assignment with its verified source fields. */
@@ -412,6 +426,7 @@ function decodeSettlement(
       "governedReportEventId",
       "dispositionEventId",
       "acknowledgementEventId",
+      "settledBy",
     ],
     where,
   );
@@ -432,7 +447,23 @@ function decodeSettlement(
       `${where}.acknowledgementEventId`,
       HEX64,
     ),
+    settledBy: decodeSettledBy(fields.settledBy, `${where}.settledBy`),
   };
+}
+
+/** The closed settlement-rule vocabulary, or `null`. */
+function decodeSettledBy(
+  value: unknown,
+  where: string,
+): PulseDeclaredSettlement["settledBy"] {
+  if (value === null) return null;
+  if (
+    value === "acknowledgement" ||
+    value === "approving_disposition_without_ask"
+  ) {
+    return value;
+  }
+  fail(`${where} is not a settlement rule this build knows`);
 }
 
 function decodeAssignment(

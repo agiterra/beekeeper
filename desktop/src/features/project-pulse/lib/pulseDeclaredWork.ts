@@ -274,8 +274,14 @@ function assignmentEvidence(
   if (assignment.settlement.settled) {
     evidence.push({
       label: "Settled",
+      // Lane 210: which rule settled it is the fold's answer, carried
+      // verbatim. Saying "the acknowledgement is on the wire" over an
+      // approval that asked for nothing — and got no receipt, correctly —
+      // would be the surface asserting a record that does not exist.
       detail:
-        "An approving disposition and the assignee's acknowledgement are both on the wire.",
+        assignment.settlement.settledBy === "approving_disposition_without_ask"
+          ? "An approving disposition that asks the assignee for nothing. No acknowledgement is owed, and none was published."
+          : "An approving disposition and the assignee's acknowledgement are both on the wire.",
       eventId:
         assignment.settlement.dispositionEventId ??
         assignment.settlement.acknowledgementEventId,

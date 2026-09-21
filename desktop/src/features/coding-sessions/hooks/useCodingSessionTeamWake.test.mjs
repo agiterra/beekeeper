@@ -309,6 +309,7 @@ function foldResponse(request) {
         dispositionEventId: null,
         acknowledgementEventId: null,
         settled: false,
+        settledBy: null,
         awaiting: {
           link: "disposition",
           owedByRole: "lead",

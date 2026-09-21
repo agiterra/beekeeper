@@ -38,7 +38,9 @@ fn context(founder: &Keys) -> CodingSessionTeamFoldAdapterContext {
     }
 }
 
-fn payload(body: CodingSessionTeamTransactionBody) -> CodingSessionTeamTransactionPayload {
+pub(super) fn payload(
+    body: CodingSessionTeamTransactionBody,
+) -> CodingSessionTeamTransactionPayload {
     CodingSessionTeamTransactionPayload {
         schema: CODING_SESSION_TEAM_TRANSACTION_SCHEMA.into(),
         session_ref: SESSION.into(),
@@ -50,7 +52,11 @@ fn payload(body: CodingSessionTeamTransactionBody) -> CodingSessionTeamTransacti
     }
 }
 
-fn signed(payload: &CodingSessionTeamTransactionPayload, keys: &Keys, created_at: u64) -> Event {
+pub(super) fn signed(
+    payload: &CodingSessionTeamTransactionPayload,
+    keys: &Keys,
+    created_at: u64,
+) -> Event {
     EventBuilder::new(
         Kind::Custom(KIND_CODING_SESSION_TEAM_TRANSACTION as u16),
         serde_json::to_string(payload).expect("serialize payload"),
@@ -67,7 +73,7 @@ fn signed(payload: &CodingSessionTeamTransactionPayload, keys: &Keys, created_at
     .expect("sign event")
 }
 
-fn fold(founder: &Keys, events: &[Event]) -> CodingSessionTeamFoldAdapterResponse {
+pub(super) fn fold(founder: &Keys, events: &[Event]) -> CodingSessionTeamFoldAdapterResponse {
     let mut input_event_ids = events
         .iter()
         .map(|event| event.id.to_hex())
@@ -85,7 +91,7 @@ fn fold(founder: &Keys, events: &[Event]) -> CodingSessionTeamFoldAdapterRespons
     .expect("fold")
 }
 
-fn assignment_payload(actor: &Keys) -> CodingSessionTeamTransactionPayload {
+pub(super) fn assignment_payload(actor: &Keys) -> CodingSessionTeamTransactionPayload {
     payload(CodingSessionTeamTransactionBody::Assignment(
         CodingSessionTeamAssignment {
             assignee_actor: actor.public_key().to_hex(),
@@ -100,7 +106,7 @@ fn assignment_payload(actor: &Keys) -> CodingSessionTeamTransactionPayload {
     ))
 }
 
-fn report_payload(assignment_ref: &str) -> CodingSessionTeamTransactionPayload {
+pub(super) fn report_payload(assignment_ref: &str) -> CodingSessionTeamTransactionPayload {
     payload(CodingSessionTeamTransactionBody::Report(
         CodingSessionTeamReport {
             assignment_ref: assignment_ref.into(),

@@ -125,6 +125,30 @@ fn disposition(
     ))
 }
 
+/// An approving disposition that **asks** the assignee for something, and so
+/// still owes an explicit answer under lane 210's rule.
+///
+/// `requiredAction` is the only field in the disposition body that asks
+/// anything of the assignee (see `approving_disposition_asks_nothing`), so it
+/// is the one field these tests vary to choose which settlement rule applies.
+fn disposition_asking(
+    assignment_ref: &str,
+    report_ref: &str,
+    decision: CodingSessionTeamDispositionDecision,
+) -> CodingSessionTeamTransactionPayload {
+    payload(CodingSessionTeamTransactionBody::Verdict(
+        CodingSessionTeamVerdict::Disposition {
+            assignment_ref: assignment_ref.into(),
+            report_ref: report_ref.into(),
+            refutation_ref: None,
+            decision,
+            summary: "Governed".into(),
+            findings: Vec::new(),
+            required_action: Some("Confirm you have read the two residuals.".into()),
+        },
+    ))
+}
+
 fn acknowledgement(disposition_ref: &str) -> CodingSessionTeamTransactionPayload {
     payload(CodingSessionTeamTransactionBody::Acknowledgement(
         CodingSessionTeamAcknowledgement {
@@ -156,8 +180,13 @@ fn a_pending_completion_becomes_terminal_when_its_acknowledgement_arrives() {
     let context = context(&founder, vec![(&actor, "builder")]);
     let assignment = signed(&assignment(&actor), &founder, 1);
     let report = signed(&report(&assignment.id.to_hex()), &actor, 2);
+    // The approval **asks** for something, so an acknowledgement is genuinely
+    // owed and this stays the 179(a) shape after lane 210. An approval that
+    // asked nothing would settle on arrival — which is the point of lane 210
+    // and is proved in
+    // `an_approving_disposition_that_asks_nothing_settles_without_an_acknowledgement`.
     let disposition = signed(
-        &disposition(
+        &disposition_asking(
             &assignment.id.to_hex(),
             &report.id.to_hex(),
             CodingSessionTeamDispositionDecision::Approve,
@@ -211,6 +240,10 @@ fn a_pending_completion_becomes_terminal_when_its_acknowledgement_arrives() {
     );
     assert!(settled.pending_completion.is_none());
     assert!(settled.assignments[0].settled);
+    assert_eq!(
+        settled.assignments[0].settled_by,
+        Some(CodingSessionTeamSettledBy::Acknowledgement)
+    );
     assert!(settled.assignments[0].awaiting.is_none());
     assert!(settled.excluded.is_empty());
 }
@@ -271,7 +304,7 @@ fn every_missing_link_names_itself_and_the_party_who_owes_it() {
     // 4. The approval is in and the assignee has not acknowledged it — the
     //    state ledger 178(e) rendered as three nulls and no sentence.
     let approve = signed(
-        &disposition(
+        &disposition_asking(
             &assignment_id,
             &report.id.to_hex(),
             CodingSessionTeamDispositionDecision::Approve,
@@ -279,10 +312,14 @@ fn every_missing_link_names_itself_and_the_party_who_owes_it() {
         &founder,
         4,
     );
-    let fold =
-        fold_coding_session_team_transactions(&[assignment, report, approve], &context).unwrap();
+    let fold = fold_coding_session_team_transactions(
+        &[assignment.clone(), report.clone(), approve],
+        &context,
+    )
+    .unwrap();
     let settlement = &fold.assignments[0];
     assert!(!settlement.settled);
+    assert_eq!(settlement.settled_by, None);
     assert_eq!(settlement.disposition_event_id, None);
     let awaiting = settlement.awaiting.as_ref().expect("awaiting");
     assert_eq!(
@@ -295,6 +332,35 @@ fn every_missing_link_names_itself_and_the_party_who_owes_it() {
         awaiting.owed_by_actor.as_deref(),
         Some(actor.public_key().to_hex().as_str())
     );
+
+    // 5. The same approval asking for nothing settles the assignment on
+    //    arrival, and `awaiting` never says `acknowledgement` for it.
+    let approve_no_ask = signed(
+        &disposition(
+            &assignment_id,
+            &report.id.to_hex(),
+            CodingSessionTeamDispositionDecision::Approve,
+        ),
+        &founder,
+        4,
+    );
+    let fold = fold_coding_session_team_transactions(
+        &[assignment, report, approve_no_ask.clone()],
+        &context,
+    )
+    .unwrap();
+    let settlement = &fold.assignments[0];
+    assert!(settlement.settled);
+    assert_eq!(settlement.awaiting, None);
+    assert_eq!(
+        settlement.settled_by,
+        Some(CodingSessionTeamSettledBy::ApprovingDispositionWithoutAsk)
+    );
+    assert_eq!(
+        settlement.disposition_event_id.as_deref(),
+        Some(approve_no_ask.id.to_hex().as_str())
+    );
+    assert_eq!(settlement.acknowledgement_event_id, None);
 }
 
 /// A completion held on an unanswered question is also a wait, and says which
@@ -390,4 +456,465 @@ fn an_unauthorized_completion_is_never_disclosed_as_pending() {
     assert!(!completion_exclusion_is_pending(
         CodingSessionTeamFoldExclusionCode::TerminalConflict
     ));
+}
+
+/// Lane 210's rule, in one assignment: an approving disposition that asks the
+/// assignee for nothing settles it with no acknowledgement on the wire, and a
+/// signed completion over it is terminal on the same read — the turn ledger
+/// 179(a)'s lead spent six wakes collecting is not opened at all.
+#[test]
+fn an_approving_disposition_that_asks_nothing_settles_without_an_acknowledgement() {
+    let founder = Keys::generate();
+    let actor = Keys::generate();
+    let context = context(&founder, vec![(&actor, "builder")]);
+    let assignment = signed(&assignment(&actor), &founder, 1);
+    let report = signed(&report(&assignment.id.to_hex()), &actor, 2);
+    let approve = signed(
+        &disposition(
+            &assignment.id.to_hex(),
+            &report.id.to_hex(),
+            CodingSessionTeamDispositionDecision::Approve,
+        ),
+        &founder,
+        3,
+    );
+    let completion = signed(&completed(&assignment.id.to_hex()), &founder, 4);
+    let fold = fold_coding_session_team_transactions(
+        &[
+            assignment.clone(),
+            report.clone(),
+            approve.clone(),
+            completion.clone(),
+        ],
+        &context,
+    )
+    .unwrap();
+
+    let settlement = &fold.assignments[0];
+    assert!(settlement.settled);
+    assert_eq!(
+        settlement.settled_by,
+        Some(CodingSessionTeamSettledBy::ApprovingDispositionWithoutAsk)
+    );
+    assert_eq!(
+        settlement.settled_by.map(|rule| rule.as_str()),
+        Some("approving_disposition_without_ask")
+    );
+    assert_eq!(settlement.awaiting, None);
+    assert_eq!(settlement.acknowledgement_event_id, None);
+    assert_eq!(
+        settlement.governed_report_event_id.as_deref(),
+        Some(report.id.to_hex().as_str())
+    );
+    assert!(fold.pending_completion.is_none());
+    assert_eq!(
+        fold.canonical_terminal
+            .as_ref()
+            .map(|terminal| terminal.event_id.as_str()),
+        Some(completion.id.to_hex().as_str())
+    );
+
+    // An acknowledgement that arrives anyway is still accepted, still folded,
+    // and takes the label: the receipt is a signed fact about a named party,
+    // and reporting the weaker rule would hide it. Nothing becomes unsettled.
+    let late = signed(&acknowledgement(&approve.id.to_hex()), &actor, 5);
+    let with_ack = fold_coding_session_team_transactions(
+        &[
+            assignment,
+            report,
+            approve,
+            completion.clone(),
+            late.clone(),
+        ],
+        &context,
+    )
+    .unwrap();
+    let settlement = &with_ack.assignments[0];
+    assert!(settlement.settled);
+    assert_eq!(
+        settlement.settled_by,
+        Some(CodingSessionTeamSettledBy::Acknowledgement)
+    );
+    assert_eq!(
+        settlement.acknowledgement_event_id.as_deref(),
+        Some(late.id.to_hex().as_str())
+    );
+    assert!(with_ack.excluded.is_empty());
+    assert_eq!(
+        with_ack
+            .canonical_terminal
+            .as_ref()
+            .map(|terminal| terminal.event_id.as_str()),
+        Some(completion.id.to_hex().as_str())
+    );
+}
+
+/// Only `requiredAction` and the decision decide. Findings and a summary are
+/// the ruling's own reasoning, addressed to every reader of the mission; on
+/// the one measured eight-seat run every approving disposition carried four
+/// of them with `requiredAction: null`, and reading those as an ask would
+/// settle nothing at all.
+#[test]
+fn only_the_decision_and_required_action_decide_whether_a_disposition_asks() {
+    use CodingSessionTeamDispositionDecision::*;
+    for decision in [Approve, ApproveWithNotes] {
+        assert!(approving_disposition_asks_nothing(decision, None));
+        assert!(approving_disposition_asks_nothing(decision, Some("")));
+        assert!(approving_disposition_asks_nothing(decision, Some("   \n")));
+        assert!(!approving_disposition_asks_nothing(
+            decision,
+            Some("Answer on the record.")
+        ));
+        // Prose is never read: a `requiredAction` that says nothing is
+        // required is still an ask, because the field is present.
+        assert!(!approving_disposition_asks_nothing(
+            decision,
+            Some("Nothing from the builder.")
+        ));
+    }
+    for decision in [ChangesRequested, Reject, Blocked] {
+        assert!(!approving_disposition_asks_nothing(decision, None));
+    }
+}
+
+/// Order independence, the property the whole fold rests on: every arrival
+/// order of the same five records folds to the same settlement.
+///
+/// The set deliberately contains both an approval that asks nothing and the
+/// acknowledgement of it, so the permutation exercises the exact pair whose
+/// precedence lane 210 introduced.
+#[test]
+fn settlement_is_the_same_in_every_arrival_order() {
+    let founder = Keys::generate();
+    let actor = Keys::generate();
+    let context = context(&founder, vec![(&actor, "builder")]);
+    let assignment = signed(&assignment(&actor), &founder, 1);
+    let report = signed(&report(&assignment.id.to_hex()), &actor, 2);
+    let approve = signed(
+        &disposition(
+            &assignment.id.to_hex(),
+            &report.id.to_hex(),
+            CodingSessionTeamDispositionDecision::Approve,
+        ),
+        &founder,
+        3,
+    );
+    let ack = signed(&acknowledgement(&approve.id.to_hex()), &actor, 4);
+    let completion = signed(&completed(&assignment.id.to_hex()), &founder, 5);
+    let events = [assignment, report, approve, ack.clone(), completion.clone()];
+
+    let mut order: Vec<usize> = (0..events.len()).collect();
+    let mut seen = 0usize;
+    permute(&mut order, 0, &mut |order| {
+        seen += 1;
+        let permuted: Vec<_> = order.iter().map(|index| events[*index].clone()).collect();
+        let fold = fold_coding_session_team_transactions(&permuted, &context).unwrap();
+        let settlement = &fold.assignments[0];
+        assert!(settlement.settled);
+        assert_eq!(
+            settlement.settled_by,
+            Some(CodingSessionTeamSettledBy::Acknowledgement)
+        );
+        assert_eq!(
+            settlement.acknowledgement_event_id.as_deref(),
+            Some(ack.id.to_hex().as_str())
+        );
+        assert_eq!(settlement.awaiting, None);
+        assert_eq!(
+            fold.canonical_terminal
+                .as_ref()
+                .map(|terminal| terminal.event_id.as_str()),
+            Some(completion.id.to_hex().as_str())
+        );
+        assert!(fold.excluded.is_empty());
+    });
+    assert_eq!(seen, 120);
+}
+
+/// Every permutation of `order`, by index swap.
+fn permute(order: &mut Vec<usize>, start: usize, visit: &mut impl FnMut(&[usize])) {
+    if start == order.len() {
+        visit(order);
+        return;
+    }
+    for index in start..order.len() {
+        order.swap(start, index);
+        permute(order, start + 1, visit);
+        order.swap(start, index);
+    }
+}
+
+/// Two assignments in one mission: one approval asks, one does not. The one
+/// that asks still owes an acknowledgement and says so; the one that does not
+/// is settled. A completion naming both is held on exactly one of them.
+#[test]
+fn one_assignment_can_owe_an_acknowledgement_while_its_sibling_does_not() {
+    let founder = Keys::generate();
+    let actor = Keys::generate();
+    let context = context(&founder, vec![(&actor, "builder")]);
+    let first = signed(&assignment(&actor), &founder, 1);
+    let second = signed(&assignment(&actor), &founder, 2);
+    let first_report = signed(&report(&first.id.to_hex()), &actor, 3);
+    let second_report = signed(&report(&second.id.to_hex()), &actor, 4);
+    let quiet = signed(
+        &disposition(
+            &first.id.to_hex(),
+            &first_report.id.to_hex(),
+            CodingSessionTeamDispositionDecision::ApproveWithNotes,
+        ),
+        &founder,
+        5,
+    );
+    let asking = signed(
+        &disposition_asking(
+            &second.id.to_hex(),
+            &second_report.id.to_hex(),
+            CodingSessionTeamDispositionDecision::Approve,
+        ),
+        &founder,
+        6,
+    );
+    let completion = signed(
+        &payload(CodingSessionTeamTransactionBody::MissionCompleted(
+            CodingSessionTeamMissionCompleted {
+                assignment_refs: vec![first.id.to_hex(), second.id.to_hex()],
+                landed_shas: Vec::new(),
+                summary: "Both assignments are done".into(),
+                follow_ups: Vec::new(),
+            },
+        )),
+        &founder,
+        7,
+    );
+    let fold = fold_coding_session_team_transactions(
+        &[
+            first.clone(),
+            second.clone(),
+            first_report,
+            second_report,
+            quiet,
+            asking.clone(),
+            completion.clone(),
+        ],
+        &context,
+    )
+    .unwrap();
+
+    let settled = fold
+        .assignments
+        .iter()
+        .find(|state| state.assignment_event_id == first.id.to_hex())
+        .expect("the first assignment");
+    assert!(settled.settled);
+    assert_eq!(
+        settled.settled_by,
+        Some(CodingSessionTeamSettledBy::ApprovingDispositionWithoutAsk)
+    );
+    let owing = fold
+        .assignments
+        .iter()
+        .find(|state| state.assignment_event_id == second.id.to_hex())
+        .expect("the second assignment");
+    assert!(!owing.settled);
+    assert_eq!(owing.settled_by, None);
+    assert_eq!(
+        owing.awaiting.as_ref().map(|item| item.link),
+        Some(CodingSessionTeamSettlementLink::Acknowledgement)
+    );
+    let pending = fold.pending_completion.as_ref().expect("held completion");
+    assert_eq!(pending.event_id, completion.id.to_hex());
+    assert_eq!(
+        pending.unsettled_assignment_event_ids,
+        vec![second.id.to_hex()]
+    );
+}
+
+/// **Selection order (a): an already-settled assignment keeps its evidence.**
+///
+/// An acknowledged chain over the first report, then a corrected report and a
+/// newer approving disposition over it that asks nothing. Before lane 210 the
+/// second chain did not qualify at all; under a naive "newest disposition
+/// wins" it would, and the assignment's governing report would change under a
+/// reader who had already recorded the first one. The acknowledged chain wins.
+#[test]
+fn an_acknowledged_chain_outranks_a_newer_unacknowledged_no_ask_approval() {
+    let founder = Keys::generate();
+    let actor = Keys::generate();
+    let context = context(&founder, vec![(&actor, "builder")]);
+    let assignment = signed(&assignment(&actor), &founder, 1);
+    let first_report = signed(&report(&assignment.id.to_hex()), &actor, 2);
+    let first_disposition = signed(
+        &disposition_asking(
+            &assignment.id.to_hex(),
+            &first_report.id.to_hex(),
+            CodingSessionTeamDispositionDecision::Approve,
+        ),
+        &founder,
+        3,
+    );
+    let ack = signed(&acknowledgement(&first_disposition.id.to_hex()), &actor, 4);
+    // A later report and a later approval of it, asking nothing.
+    let second_report = signed(&report(&assignment.id.to_hex()), &actor, 5);
+    let second_disposition = signed(
+        &disposition(
+            &assignment.id.to_hex(),
+            &second_report.id.to_hex(),
+            CodingSessionTeamDispositionDecision::Approve,
+        ),
+        &founder,
+        6,
+    );
+    let fold = fold_coding_session_team_transactions(
+        &[
+            assignment,
+            first_report.clone(),
+            first_disposition.clone(),
+            ack.clone(),
+            second_report,
+            second_disposition,
+        ],
+        &context,
+    )
+    .unwrap();
+
+    let settlement = &fold.assignments[0];
+    assert!(settlement.settled);
+    assert_eq!(
+        settlement.settled_by,
+        Some(CodingSessionTeamSettledBy::Acknowledgement)
+    );
+    assert_eq!(
+        settlement.governed_report_event_id.as_deref(),
+        Some(first_report.id.to_hex().as_str()),
+        "the governing report of an already-settled assignment must not move"
+    );
+    assert_eq!(
+        settlement.disposition_event_id.as_deref(),
+        Some(first_disposition.id.to_hex().as_str())
+    );
+    assert_eq!(
+        settlement.acknowledgement_event_id.as_deref(),
+        Some(ack.id.to_hex().as_str())
+    );
+}
+
+/// **Selection order (b): with no acknowledged chain, the newest qualifying
+/// approving no-ask disposition governs** — the ordinary "newest ruling wins"
+/// rule the fold has always applied, now over the wider qualifying set.
+#[test]
+fn with_no_acknowledged_chain_the_newest_no_ask_approval_governs() {
+    let founder = Keys::generate();
+    let actor = Keys::generate();
+    let context = context(&founder, vec![(&actor, "builder")]);
+    let assignment = signed(&assignment(&actor), &founder, 1);
+    let first_report = signed(&report(&assignment.id.to_hex()), &actor, 2);
+    let first_disposition = signed(
+        &disposition(
+            &assignment.id.to_hex(),
+            &first_report.id.to_hex(),
+            CodingSessionTeamDispositionDecision::Approve,
+        ),
+        &founder,
+        3,
+    );
+    let second_report = signed(&report(&assignment.id.to_hex()), &actor, 4);
+    let second_disposition = signed(
+        &disposition(
+            &assignment.id.to_hex(),
+            &second_report.id.to_hex(),
+            CodingSessionTeamDispositionDecision::ApproveWithNotes,
+        ),
+        &founder,
+        5,
+    );
+    let fold = fold_coding_session_team_transactions(
+        &[
+            assignment,
+            first_report,
+            first_disposition.clone(),
+            second_report.clone(),
+            second_disposition.clone(),
+        ],
+        &context,
+    )
+    .unwrap();
+
+    let settlement = &fold.assignments[0];
+    assert!(settlement.settled);
+    assert_eq!(
+        settlement.settled_by,
+        Some(CodingSessionTeamSettledBy::ApprovingDispositionWithoutAsk)
+    );
+    assert_eq!(
+        settlement.disposition_event_id.as_deref(),
+        Some(second_disposition.id.to_hex().as_str())
+    );
+    assert_eq!(
+        settlement.governed_report_event_id.as_deref(),
+        Some(second_report.id.to_hex().as_str())
+    );
+    // Both chains qualify, so the fold discloses the contest rather than
+    // quietly picking one.
+    let conflict = fold
+        .conflicts
+        .iter()
+        .find(|item| item.subject.starts_with("governance:"))
+        .expect("the governance conflict is disclosed");
+    assert_eq!(conflict.winner_event_id, second_disposition.id.to_hex());
+    assert!(conflict
+        .contender_event_ids
+        .contains(&first_disposition.id.to_hex()));
+}
+
+/// An acknowledgement replayed **after** a no-ask settlement moves the label
+/// to `acknowledgement` and changes nothing else — and a duplicate of it is
+/// still harmless, disclosed as a conflict and never as two settlements.
+#[test]
+fn an_old_acknowledgement_replayed_after_a_no_ask_settlement_is_harmless() {
+    let founder = Keys::generate();
+    let actor = Keys::generate();
+    let context = context(&founder, vec![(&actor, "builder")]);
+    let assignment = signed(&assignment(&actor), &founder, 1);
+    let report = signed(&report(&assignment.id.to_hex()), &actor, 2);
+    let approve = signed(
+        &disposition(
+            &assignment.id.to_hex(),
+            &report.id.to_hex(),
+            CodingSessionTeamDispositionDecision::Approve,
+        ),
+        &founder,
+        3,
+    );
+    let first_ack = signed(&acknowledgement(&approve.id.to_hex()), &actor, 4);
+    let second_ack = signed(&acknowledgement(&approve.id.to_hex()), &actor, 5);
+    let fold = fold_coding_session_team_transactions(
+        &[
+            assignment,
+            report.clone(),
+            approve.clone(),
+            first_ack.clone(),
+            second_ack.clone(),
+        ],
+        &context,
+    )
+    .unwrap();
+
+    let settlement = &fold.assignments[0];
+    assert!(settlement.settled);
+    assert_eq!(
+        settlement.settled_by,
+        Some(CodingSessionTeamSettledBy::Acknowledgement)
+    );
+    assert_eq!(
+        settlement.acknowledgement_event_id.as_deref(),
+        Some(second_ack.id.to_hex().as_str())
+    );
+    assert_eq!(
+        settlement.governed_report_event_id.as_deref(),
+        Some(report.id.to_hex().as_str())
+    );
+    assert!(fold
+        .conflicts
+        .iter()
+        .any(|item| item.subject == format!("acknowledgement:{}", approve.id.to_hex())));
 }

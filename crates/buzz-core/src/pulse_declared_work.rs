@@ -26,8 +26,11 @@
 //!   umbrella stays `unresolved` and stays visible.
 //! - **A report is evidence of a report.** `status` reads `reported` from one,
 //!   never `settled`: settlement is the fold's existing rule (an approving
-//!   disposition plus the assignee's acknowledgement) and nothing here adds an
-//!   approval requirement.
+//!   disposition, plus the assignee's acknowledgement when the disposition
+//!   asks for one — lane 210) and nothing here adds an approval requirement.
+//!   [`PulseDeclaredSettlement::settled_by`] carries the fold's own word for
+//!   which rule settled it, so this surface never has to infer it from a null
+//!   acknowledgement id.
 //!
 //! Nothing in this module compares a declared path to any other path, infers a
 //! repository, or renders `verifier_required` — see §2 of the contract.
@@ -93,8 +96,8 @@ pub enum PulseDeclaredAssignmentStatus {
     Unresolved,
     /// At least one included report names it. Evidence of a report, no more.
     Reported,
-    /// The fold's own settlement: an approving disposition the assignee
-    /// acknowledged.
+    /// The fold's own settlement: an approving disposition, acknowledged by
+    /// the assignee where the disposition asked for anything (lane 210).
     Settled,
 }
 
@@ -183,7 +186,16 @@ pub struct PulseDeclaredSettlement {
     /// The approving disposition, when there is one.
     pub disposition_event_id: Option<String>,
     /// The assignee's acknowledgement of that disposition, when there is one.
+    ///
+    /// `None` on a settled assignment is not a gap: lane 210 settles an
+    /// approving disposition that asks the assignee for nothing without a
+    /// receipt, and [`Self::settled_by`] says so in words.
     pub acknowledgement_event_id: Option<String>,
+    /// Which rule settled it — the fold's own
+    /// `CodingSessionTeamSettledBy::as_str` word, `acknowledgement` or
+    /// `approving_disposition_without_ask` — and `None` exactly when
+    /// [`Self::settled`] is false.
+    pub settled_by: Option<String>,
 }
 
 /// One canonically included assignment with its verified source fields.
@@ -560,6 +572,7 @@ fn assignments(
                 governed_report_event_id: settlement.governed_report_event_id.clone(),
                 disposition_event_id: settlement.disposition_event_id.clone(),
                 acknowledgement_event_id: settlement.acknowledgement_event_id.clone(),
+                settled_by: settlement.settled_by.map(|rule| rule.as_str().to_owned()),
             },
             status,
         });

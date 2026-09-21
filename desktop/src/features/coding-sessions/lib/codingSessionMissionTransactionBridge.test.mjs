@@ -486,6 +486,7 @@ test("native Rust-fold wrapper binds exact inputs before Mission projection", as
         dispositionEventId: null,
         acknowledgementEventId: null,
         settled: false,
+        settledBy: null,
         awaiting: {
           link: "disposition",
           owedByRole: "lead",
@@ -761,6 +762,7 @@ test("accepted assignment chains preserve signed chronology and acknowledgement 
     dispositionEventId: null,
     acknowledgementEventId: null,
     settled: false,
+    settledBy: null,
     awaiting: { link: "disposition", owedByRole: "lead", owedByActor: null },
   };
 
@@ -810,6 +812,7 @@ test("accepted assignment chains preserve signed chronology and acknowledgement 
           dispositionEventId: disposition.id,
           acknowledgementEventId: acknowledgement.id,
           settled: true,
+          settledBy: "acknowledgement",
           awaiting: null,
         },
       ],
@@ -875,6 +878,7 @@ test("multi-assignment accepted steps retain their own source and author regardl
     dispositionEventId: null,
     acknowledgementEventId: null,
     settled: false,
+    settledBy: null,
     awaiting: { link: "disposition", owedByRole: "lead", owedByActor: null },
   }));
   const forward = await projectAcceptedNonterminal(
@@ -1047,6 +1051,7 @@ test("D-T9: transactions project chronologically with counterparty and parent", 
           dispositionEventId: verdictEvent.id,
           acknowledgementEventId: null,
           settled: false,
+          settledBy: null,
           awaiting: {
             link: "disposition",
             owedByRole: "lead",

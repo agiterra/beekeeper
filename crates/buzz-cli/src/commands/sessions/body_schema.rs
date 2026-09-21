@@ -121,13 +121,26 @@ pub fn team_body_examples(
             ),
             (
                 "disposition",
-                "a founder's or active lead's ruling that governs one report",
+                "a founder's or active lead's ruling that governs one report. An APPROVING \
+                 disposition with `requiredAction: null` SETTLES the assignment on its own — \
+                 no acknowledgement is owed and none will be asked for. Anything the assignee \
+                 must still do goes in `requiredAction`, or into a new assignment; prose in \
+                 `summary` or `findings` is never read as an ask",
                 to_value(disposition_example())?,
+            ),
+            (
+                "disposition-requiring-an-action",
+                "the same ruling when the assignee still owes something: `requiredAction` is \
+                 the only field that asks, and its presence is what keeps the assignment \
+                 awaiting the assignee's acknowledgement",
+                to_value(disposition_requiring_an_action_example())?,
             ),
         ],
         CodingSessionTeamTransactionType::Acknowledgement => vec![(
             "default",
-            "receipt of one governing record; an assignment does not settle without it",
+            "receipt of one governing record. Owed only where the disposition ASKED — an \
+             approving disposition with `requiredAction: null` settles its assignment \
+             without one, and publishing a receipt for it costs a turn and adds no fact",
             to_value(acknowledgement_example())?,
         )],
         CodingSessionTeamTransactionType::MissionCompleted => vec![(
@@ -605,6 +618,29 @@ fn disposition_example() -> CodingSessionTeamVerdict {
         summary: "one sentence saying what is being ruled and why".to_owned(),
         findings: vec!["one finding, with the file:line or the run that proves it".to_owned()],
         required_action: None,
+    }
+}
+
+/// The same ruling with the one field that asks the assignee for something.
+///
+/// `requiredAction` is read **mechanically**: present and non-blank is an ask,
+/// absent is not, and no prose anywhere else in the body changes that
+/// (`buzz_core::coding_session_team_transaction::approving_disposition_asks_nothing`).
+/// A lead who writes "approved; please push" in `summary` and leaves this
+/// field null has asked for nothing under the contract, and the assignment
+/// settles — which is why the example exists beside the plain one.
+fn disposition_requiring_an_action_example() -> CodingSessionTeamVerdict {
+    CodingSessionTeamVerdict::Disposition {
+        assignment_ref: PLACEHOLDER_EVENT_ID.to_owned(),
+        report_ref: PLACEHOLDER_EVENT_ID_2.to_owned(),
+        refutation_ref: None,
+        decision: CodingSessionTeamDispositionDecision::ApproveWithNotes,
+        summary: "one sentence saying what is being ruled and why".to_owned(),
+        findings: vec!["one finding, with the file:line or the run that proves it".to_owned()],
+        required_action: Some(
+            "the one bounded thing the assignee must still do, or answer, before this              assignment settles"
+                .to_owned(),
+        ),
     }
 }
 

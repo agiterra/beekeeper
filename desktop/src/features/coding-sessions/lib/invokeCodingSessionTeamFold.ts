@@ -58,6 +58,24 @@ export type CodingSessionNativeTeamFoldResponse = {
     readonly acknowledgementEventId: string | null;
     readonly settled: boolean;
     /**
+     * Which rule settled it, `null` exactly when `settled` is false (lane
+     * 210, ledger 210).
+     *
+     * `acknowledgement` is the assignee's explicit receipt of the approving
+     * disposition. `approving_disposition_without_ask` is an approving
+     * disposition that asks the assignee for nothing, which settles with no
+     * receipt at all — so a null `acknowledgementEventId` beside
+     * `settled: true` is an answer here, not a missing record.
+     *
+     * Required rather than optional, for the same reason `awaiting` is: a
+     * build that has not shipped the rule must fail this decoder rather than
+     * read as "acknowledged".
+     */
+    readonly settledBy:
+      | "acknowledgement"
+      | "approving_disposition_without_ask"
+      | null;
+    /**
      * The one missing link while `settled` is false, `null` exactly when it
      * is true (ledger 183(c)).
      *
@@ -282,6 +300,7 @@ function isSettlement(
         "dispositionEventId",
         "acknowledgementEventId",
         "settled",
+        "settledBy",
         "awaiting",
       ],
     ]) &&
@@ -290,7 +309,18 @@ function isSettlement(
     isNullableEventId(value.dispositionEventId) &&
     isNullableEventId(value.acknowledgementEventId) &&
     typeof value.settled === "boolean" &&
+    isSettledBy(value.settledBy) &&
     (value.awaiting === null || isAwaiting(value.awaiting))
+  );
+}
+
+function isSettledBy(
+  value: unknown,
+): value is CodingSessionNativeTeamFoldResponse["assignments"][number]["settledBy"] {
+  return (
+    value === null ||
+    value === "acknowledgement" ||
+    value === "approving_disposition_without_ask"
   );
 }
 

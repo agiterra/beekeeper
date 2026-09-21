@@ -21,6 +21,9 @@ CodingSessionTeamFold {
                 "f165ece08e26b1c035101e1f2bdac034195275045268594532902f350978bed6",
             ),
             settled: true,
+            settled_by: Some(
+                Acknowledgement,
+            ),
             awaiting: None,
         },
     ],

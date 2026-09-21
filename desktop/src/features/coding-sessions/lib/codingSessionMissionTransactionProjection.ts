@@ -659,6 +659,7 @@ export function projectNativeTeamFoldToMissionInspector(input: {
     settlements: fold.assignments.map((assignment) => ({
       assignmentEventId: assignment.assignmentEventId,
       settled: assignment.settled,
+      settledBy: assignment.settledBy,
       awaiting: assignment.awaiting ? { ...assignment.awaiting } : null,
     })),
     pendingCompletion: fold.pendingCompletion

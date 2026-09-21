@@ -3075,12 +3075,17 @@ pub enum SessionsCmd {
     Report(TeamTransactionWriteArgs),
     /// Publish a signed refutation or disposition (kind 44244).
     #[command(
-        after_help = "Examples:\n  bee sessions verdict --example refutation > refutation.json\n  bee sessions verdict --example disposition > disposition.json\n\nRecipe:\n  bee sessions verdict --channel <uuid> --session-ref <uuid> --genesis <hex64> --body @disposition.json --wake-to builder"
+        after_help = "Examples:\n  bee sessions verdict --example refutation > refutation.json\n  bee sessions verdict --example disposition > disposition.json\n  bee sessions verdict --example disposition-requiring-an-action > disposition.json\n\nSettlement:\n  an APPROVING disposition (approve, approve-with-notes) with requiredAction\n  null SETTLES its assignment on its own: no acknowledgement is owed, and\n  nobody will be woken to publish one. Anything the assignee must still do\n  goes in requiredAction, or into a new assignment. The rule reads that one\n  field and the decision, never prose: \"approved; please push\" in summary\n  with requiredAction null has asked for nothing.\n\nRecipe:\n  bee sessions verdict --channel <uuid> --session-ref <uuid> --genesis <hex64> --body @disposition.json --wake-to builder"
     )]
     Verdict(TeamTransactionWriteArgs),
     /// Acknowledge receipt of a governing disposition (kind 44244).
+    ///
+    /// Owed only where the disposition asked. An approving disposition whose
+    /// `requiredAction` is null settles its assignment without one, so
+    /// publishing a receipt for it spends a turn and adds no fact to the
+    /// fold (ledger 210).
     #[command(
-        after_help = "Examples:\n  bee sessions acknowledge --example > acknowledgement.json\n\nRecipe:\n  bee sessions acknowledge --channel <uuid> --session-ref <uuid> --genesis <hex64> --body @acknowledgement.json"
+        after_help = "Examples:\n  bee sessions acknowledge --example > acknowledgement.json\n\nSettlement:\n  an acknowledgement is owed only for a disposition that asked: one that is\n  not approving, or that carries a requiredAction. An approving disposition\n  with requiredAction null already settled its assignment.\n\nRecipe:\n  bee sessions acknowledge --channel <uuid> --session-ref <uuid> --genesis <hex64> --body @acknowledgement.json"
     )]
     Acknowledge(TeamTransactionWriteArgs),
     /// Publish mission completion after locally verifying every approval chain.

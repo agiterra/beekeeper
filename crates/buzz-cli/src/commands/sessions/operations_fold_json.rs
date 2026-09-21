@@ -38,6 +38,13 @@ pub(super) fn fold_json(fold: &CodingSessionTeamFold) -> Value {
             "dispositionEventId": item.disposition_event_id,
             "acknowledgementEventId": item.acknowledgement_event_id,
             "settled": item.settled,
+            // Lane 210 (ledger 210): which rule settled it, and null exactly
+            // when it did not. `acknowledgement` is the assignee's explicit
+            // receipt; `approving_disposition_without_ask` is an approving
+            // disposition that asks the assignee for nothing, which settles
+            // with no receipt — so a null `acknowledgementEventId` beside
+            // `settled: true` is an answer here, not a missing field.
+            "settledBy": item.settled_by.map(|rule| rule.as_str()),
             // Ledger 178(e): the four values above say *that* a chain is
             // incomplete and never *where*, and a lead read those nulls as a
             // missing refutation and recalled a verifier that owed nothing.
