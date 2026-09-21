@@ -18071,6 +18071,40 @@ removed from here.
        unproven live: the deferred-wake file surviving a real provider
        restart, and a seat whose tree a person moves by hand between the
        decision and the prompt.
+     - (h) **Addendum, 2026-09-21: one of these tests lied, and CI caught it.**
+       `a_started_attempt_that_cannot_be_saved_stops_before_git` (finding 12's
+       first half) made the write fail by taking the write bit off the store's
+       directory. That is not a failure, it is a *permission*: CI pipeline 202
+       runs as **root** in a container, root holds `CAP_DAC_OVERRIDE`, so the
+       rename succeeded, the checkout ran, and the record came back
+       `established` with `attempts: 1` — green on a developer's machine, red
+       in the only place it mattered, and for the opposite reason to the one
+       the failure message suggested. Measured: the chmod mechanism produces
+       `EACCES` (errno 13), which is exactly the DAC check that capability
+       bypasses.
+       The test now fails **by construction**, in two complementary ways, and
+       neither consults a uid: an injected [`StoreWriter`] that returns `Err`
+       without touching the filesystem at all (and counts the attempts, so a
+       write that never happened cannot pass for one that failed), and a
+       companion case,
+       `a_store_path_that_cannot_exist_stops_before_git_for_any_user`, whose
+       store path has a **regular file** as its parent — `ENOTDIR` (errno 20),
+       a path-resolution error no privilege overrides, exercising the real
+       writer rather than a stand-in. The chmod is gone, and so is the
+       `#[cfg(unix)]` the test needed to justify it.
+       **Audited, same shape, not this lane's to fix:** five desktop tests
+       still make a failure out of a permission and would pass under root the
+       same way — `desktop/src-tauri/src/migration_team_dir_tests.rs:293`
+       (`0o555` directory), `desktop/src-tauri/src/app_state_tests.rs:713`
+       (`set_readonly` directory),
+       `desktop/src-tauri/src/managed_agents/teams_tests.rs:434` (`0o000`
+       file), and `desktop/src-tauri/src/commands/team_snapshot/tests.rs:487`
+       (`0o000` file), `:582` and `:704` (`0o555` directories). The other
+       `set_permissions` uses in both crates are `0o755` on a fixture script
+       or a mode *assertion* (`actor_seats.rs:799`), which root does not
+       change. Gates on this addendum's commit: `cargo fmt --all -- --check`,
+       `cargo clippy --workspace --all-targets -- -D warnings`,
+       `cargo test -p buzz-session-provider` 962 passed.
 
 213. **The four Wave 2 review defects in `bee sessions work` and its fold,
      each reproduced as a failing test before it was fixed (built 2026-09-21,

@@ -836,10 +836,18 @@ fn an_unsafe_branch_name_is_refused_before_git_sees_it() {
 /// disk bounds nothing, so the checkout it was supposed to bound must not
 /// happen. Before the fix this test failed with the tree already moved and
 /// the outcome reported as `established`.
-#[cfg(unix)]
+///
+/// # Why the failure is injected and not chmod-ed
+///
+/// The first version of this test made the write fail by taking the write bit
+/// off the store's directory. That is not a failure — it is a *permission*,
+/// and root has `CAP_DAC_OVERRIDE`, so in CI pipeline 202 (which runs as root
+/// in a container) the rename succeeded, the checkout ran, and the record
+/// came back `established` with `attempts: 1`. The test passed on a
+/// developer's machine and lied in the only place it mattered. A failing
+/// [`StoreWriter`] fails by construction, for every uid there is.
 #[test]
 fn a_started_attempt_that_cannot_be_saved_stops_before_git() {
-    use std::os::unix::fs::PermissionsExt;
     let root = tempfile::tempdir().expect("temp");
     let origin = root.path().join("origin");
     let first = repo_with_one_commit(&origin);
@@ -851,13 +859,13 @@ fn a_started_attempt_that_cannot_be_saved_stops_before_git() {
         &["checkout", "--quiet", "-B", "seat/verifier", &first],
     );
 
-    let dir = root.path().join("store");
-    std::fs::create_dir_all(&dir).expect("dir");
-    let path = dir.join("coding-session-workdirs.json");
+    let path = root.path().join("coding-session-workdirs.json");
     desktop_shaped_store(&path);
-    let store = AssignmentInputStore::new(&path);
     let id = assignment_id("f1");
-    store
+    // Seeded through a working writer: what is under test is the *second*
+    // write, the started-attempt record that has to reach the disk before git
+    // runs.
+    AssignmentInputStore::new(&path)
         .with_records(|records, _| {
             record_assignment_input(
                 records,
@@ -865,10 +873,21 @@ fn a_started_attempt_that_cannot_be_saved_stops_before_git() {
             );
         })
         .expect("seed");
-    // Every write to this directory now fails: rename cannot replace the file.
-    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).expect("chmod");
+
+    let attempted = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let writes = std::sync::Arc::clone(&attempted);
+    let store = AssignmentInputStore::new(&path).with_writer(std::sync::Arc::new(
+        move |_path: &Path, _payload: &[u8]| {
+            writes.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Err("the disk is full".to_owned())
+        },
+    ));
     let outcome = establish_recorded_assignment(&store, &id, &checkout, "test-owner", &|_| false);
-    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).expect("restore");
+
+    assert!(
+        attempted.load(std::sync::atomic::Ordering::SeqCst) >= 1,
+        "the started-attempt record was never even offered to the disk"
+    );
     assert_eq!(
         head_of(&seat),
         first,
@@ -878,6 +897,54 @@ fn a_started_attempt_that_cannot_be_saved_stops_before_git() {
     assert!(
         matches!(outcome, Err(EstablishmentError::Unstarted(_))),
         "the caller is told nothing ran: {outcome:?}"
+    );
+    assert_eq!(
+        records_of(&path)[&id]["outcome"],
+        ASSIGNMENT_INPUT_INTENDED,
+        "and the record on disk still says the work is owed, not started"
+    );
+}
+
+/// The same guarantee through the **real** writer, failing for a reason no
+/// privilege overrides: the store's parent is a regular file, so every
+/// `open`/`rename` under it is `ENOTDIR`.
+///
+/// This is the companion to the injected-writer case above. One proves the
+/// caller handles a write failure; this one proves the write path really can
+/// fail and really is handled — and `ENOTDIR` is a shape error, not an access
+/// check, so root gets it too.
+#[test]
+fn a_store_path_that_cannot_exist_stops_before_git_for_any_user() {
+    let root = tempfile::tempdir().expect("temp");
+    let origin = root.path().join("origin");
+    let first = repo_with_one_commit(&origin);
+    let second = add_commit(&origin, "second.txt");
+    let seat = root.path().join("seat");
+    let checkout = seat_clone(&origin, &seat, "seat/verifier");
+    run_git(
+        &seat,
+        &["checkout", "--quiet", "-B", "seat/verifier", &first],
+    );
+
+    let not_a_directory = root.path().join("not-a-directory");
+    std::fs::write(&not_a_directory, "a regular file\n").expect("write");
+    let store = AssignmentInputStore::new(not_a_directory.join("coding-session-workdirs.json"));
+    let outcome = establish_recorded_assignment(
+        &store,
+        &assignment_id("f5"),
+        &checkout,
+        "test-owner",
+        &|_| false,
+    );
+    assert!(
+        matches!(outcome, Err(EstablishmentError::Unstarted(_))),
+        "a store this provider cannot even open establishes nothing: {outcome:?}"
+    );
+    assert_eq!(head_of(&seat), first, "nothing moved");
+    assert_ne!(
+        head_of(&seat),
+        second,
+        "and certainly not to the commit nothing was recorded about"
     );
 }
 
