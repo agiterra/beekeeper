@@ -7,6 +7,13 @@
 
 /// NIP-AM: Agent Turn Metric — payload type and encrypt/decrypt helpers.
 pub mod agent_turn_metric;
+/// Project Pulse entries (44240): the explicit coordination claim contract.
+/// Agents-repository draft ops (44249): the wire contract of one proposed
+/// file change to a project's agents repository.
+pub mod agents_repo_draft;
+/// Pure agents-repository draft fold shared by every adapter, pinned by
+/// `conformance/agents-repo-draft-fold/`.
+pub mod agents_repo_draft_fold;
 /// This build's own commit, its ordinal and its time — the client-side
 /// counterpart of the relay's NIP-11 `software_commit`, with the same
 /// disclosed `unknown`/`null` non-answers.
@@ -111,7 +118,6 @@ pub mod pairing;
 pub mod presence;
 /// NIP-PMA owner-encrypted private managed-agent wire codec.
 pub mod private_managed_agent;
-/// Project Pulse entries (44240): the explicit coordination claim contract.
 pub mod project_agent_association;
 pub mod project_pack_source;
 /// NIP-PW: the `beekeeper-plan/v1` plan file — the committed statement of

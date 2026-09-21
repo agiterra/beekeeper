@@ -406,8 +406,23 @@ fn git_expected_url(
         prefix
     } else if let Some(prefix) = path_and_query.strip_suffix("/git-upload-pack") {
         prefix
+    } else if let Some(prefix) = path_and_query.strip_suffix("/git-receive-pack") {
+        prefix
     } else {
-        path_and_query.strip_suffix("/git-receive-pack")?
+        // NIP-AD read routes: `/git/{owner}/{repo}/tree/{ref}[/{path}]` and
+        // `/git/{owner}/{repo}/raw/{ref}/{path}` bind to the same repo-root
+        // `u` the credential helper signs, so one token serves every read.
+        // Segment-aware, because a repository may itself be named `tree`.
+        let path = path_and_query.split('?').next().unwrap_or(path_and_query);
+        let segments: Vec<&str> = path.split('/').collect();
+        match segments.as_slice() {
+            ["", "git", owner, repo, verb, rest @ ..]
+                if (*verb == "tree" || *verb == "raw") && !rest.is_empty() =>
+            {
+                return Some(format!("{scheme}://{}/git/{owner}/{repo}", tenant.host()));
+            }
+            _ => return None,
+        }
     };
     Some(format!("{scheme}://{}{repo_path}", tenant.host()))
 }
@@ -423,7 +438,7 @@ fn git_expected_url(
 /// repo root — but the *name* validation stays because owner/repo are
 /// still used as object-store key components via `manifest::pointer_key`.
 #[allow(clippy::result_large_err)] // Response is the natural error type for axum handlers
-fn validate_repo_id<'a>(owner: &str, repo: &'a str) -> Result<&'a str, Response> {
+pub(super) fn validate_repo_id<'a>(owner: &str, repo: &'a str) -> Result<&'a str, Response> {
     // Owner must be exactly 64 lowercase hex chars.
     if owner.len() != 64
         || !owner
@@ -475,7 +490,7 @@ pub(crate) fn harden_git_env(cmd: &mut Command) {
 /// must move it into the response body so it covers the subprocess lifetime,
 /// not just response construction.
 #[allow(clippy::result_large_err)]
-fn acquire_git_permit(
+pub(super) fn acquire_git_permit(
     state: &Arc<AppState>,
     operation: &'static str,
 ) -> Result<tokio::sync::OwnedSemaphorePermit, Response> {
@@ -498,7 +513,7 @@ fn acquire_git_permit(
 /// Convert a [`HydrateError`] to the HTTP response shape the read+write
 /// paths share. Below-pointer failure ⇒ 5xx; pointer-absent is signalled
 /// via `Ok(None)` from [`hydrate_for_read`] and never reaches this fn.
-fn hydrate_error_to_response(owner: &str, repo: &str, err: HydrateError) -> Response {
+pub(super) fn hydrate_error_to_response(owner: &str, repo: &str, err: HydrateError) -> Response {
     error!(error = %err, owner = %owner, repo = %repo, "hydrate failed");
     if matches!(err, HydrateError::ResourceLimit(_)) {
         return (
@@ -555,7 +570,7 @@ fn hydrate_error_to_response(owner: &str, repo: &str, err: HydrateError) -> Resp
 /// *does* name a project is legitimately unbound and gets the generic denial
 /// instead, because binding a channel is not its fix. A *broken* binding
 /// stays generic even for the author: ambiguity fails closed.
-async fn authorize_git_read(
+pub(super) async fn authorize_git_read(
     db: &buzz_db::Db,
     community: buzz_core::CommunityId,
     caller: &nostr::PublicKey,
@@ -709,8 +724,10 @@ pub struct InfoRefsQuery {
 #[derive(Deserialize)]
 /// Path parameters for git repo routes: `{owner}/{repo}`.
 pub struct GitRepoParams {
-    owner: String,
-    repo: String,
+    /// The owner pubkey (64 lowercase hex).
+    pub(super) owner: String,
+    /// The repository id, optionally `.git`-suffixed.
+    pub(super) repo: String,
 }
 
 /// Longest refname the fast path will emit. `is_safe_refname` enforces an
@@ -2312,6 +2329,14 @@ pub fn git_router(state: Arc<AppState>) -> Router {
         .route("/git/{owner}/{repo}/info/refs", get(info_refs))
         .route("/git/{owner}/{repo}/git-upload-pack", post(upload_pack))
         .route("/git/{owner}/{repo}/git-receive-pack", post(receive_pack))
+        .route(
+            "/git/{owner}/{repo}/tree/{*rest}",
+            get(super::read_routes::tree),
+        )
+        .route(
+            "/git/{owner}/{repo}/raw/{*rest}",
+            get(super::read_routes::raw),
+        )
         .layer(RequestBodyLimitLayer::new(body_limit))
         .with_state(state)
 }
@@ -3147,6 +3172,33 @@ mod track_c_tests {
         assert!(!receive_pack_report_rejected(b""));
         assert!(!receive_pack_report_rejected(b"zzzz"));
         assert!(!receive_pack_report_rejected(b"0048")); // length, no payload
+    }
+
+    #[test]
+    fn git_expected_url_binds_read_routes_to_the_repo_root() {
+        let t = tenant("host-a.example", 1);
+        assert_eq!(
+            git_expected_url("wss://x", &t, "/git/owner/repo/tree/refs/heads/main").as_deref(),
+            Some("https://host-a.example/git/owner/repo")
+        );
+        assert_eq!(
+            git_expected_url(
+                "wss://x",
+                &t,
+                "/git/owner/tree/raw/refs/heads/main/plans/a.md"
+            )
+            .as_deref(),
+            Some("https://host-a.example/git/owner/tree"),
+            "a repository named `tree` still binds to its own root"
+        );
+        assert_eq!(
+            git_expected_url("wss://x", &t, "/git/owner/repo/tree"),
+            None
+        );
+        assert_eq!(
+            git_expected_url("wss://x", &t, "/git/owner/repo/blob/x"),
+            None
+        );
     }
 
     #[test]

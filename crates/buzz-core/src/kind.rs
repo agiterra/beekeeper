@@ -932,6 +932,42 @@ pub const KIND_PROJECT_TODO_OP: u32 = 44248;
 /// implementing this kind writes from it.
 pub const KIND_PROJECT_WORK_RECORD: u32 = 44249;
 
+/// Agents-repository draft op — one proposed change to one file of a
+/// project's agents repository (`<slug>-beekeeper-agents`, spec § 4.11),
+/// published so every member can read, preview and build on it before
+/// anyone commits it to `main`. Regular, stored, append-only, scoped to a
+/// NIP-MP project by its canonical `a` coordinate and gated by project
+/// membership alone ([`is_project_a_scoped_kind`]).
+///
+/// Content is JSON (`buzz-agents-repo-draft/v1`) naming the op: `file.put`
+/// (whole new text), `file.move` (archive/unarchive), `file.delete`, or
+/// `commit.record` (the committer's statement that named drafts landed in a
+/// commit on `main`). Tags are position-independent with a closed key set:
+/// `a`, `ad-v`, `ad-op`, `ad-repo` (the repository the project's kind:30624
+/// pins) and `ad-path` (one on a file op, one per path on a record).
+///
+/// Deliberately **not** parameterized-replaceable, for the reason 44248
+/// gives: NIP-33 replacement keys are one head per *author*, and a draft
+/// chain is shared. The fold ([`crate::agents_repo_draft_fold`], pinned by
+/// `conformance/agents-repo-draft-fold/`) takes the latest `(created_at,
+/// id)` op per path as its head, keeps every superseded op visible, and
+/// closes drafts a `commit.record` names. A draft never reaches a seat:
+/// `main` of the agents repository stays the only thing seats stage from.
+///
+/// **Allocation.** 44250 is the lowest unused and unreserved kind in this fork
+/// and in vanilla: 44231–44239 are reserved by the continuity research, 44240
+/// is the shipped Pulse entry with 44241–44243 reserved by the Pulse plan,
+/// 44244–44247 are the team transaction, policy, observation and handover,
+/// 44248 is the to-do op and 44249 the project work record. This op was
+/// drafted as 44249 on its topic branch and renumbered on landing
+/// (2026-09-21) when `main` allocated 44249 to NIP-PW first; the two greps
+/// were re-run that day: `git grep 44250` over this tree matched only a hash
+/// inside a `uv.lock`, and `git grep 44250 vanilla/main` (`12201c49b`) the
+/// same.
+///
+/// The wire contract is `docs/nips/NIP-AD.md`.
+pub const KIND_AGENTS_REPO_DRAFT_OP: u32 = 44250;
+
 // Forum / social (45000–45999)
 // V1 used addressable range (30001–30003) — wrong.
 /// A forum post (thread root).
@@ -1309,19 +1345,27 @@ pub fn shell_observe_project_ref(event: &nostr::Event) -> Option<String> {
 
 /// Kinds scoped to a NIP-MP project by a required, canonical, singleton `a`
 /// tag and gated by project membership alone — no channel, no per-event
-/// roster. Today: the Pulse entry (44240) and the to-do op (44248). Every
+/// roster. Today: the Pulse entry (44240), the to-do op (44248) and the
+/// agents-repository draft op (44249). Every
 /// relay chokepoint that gates on a project's hidden set keys on this
 /// predicate, so a new member of the set inherits ingest admission, the
 /// stored-read gate, live fan-out filtering, the SQL pushdown and the HTTP
 /// request-shape rule without a per-kind arm.
 pub const fn is_project_a_scoped_kind(kind: u32) -> bool {
-    matches!(kind, KIND_PULSE_ENTRY | KIND_PROJECT_TODO_OP)
+    matches!(
+        kind,
+        KIND_PULSE_ENTRY | KIND_PROJECT_TODO_OP | KIND_AGENTS_REPO_DRAFT_OP
+    )
 }
 
 /// The members of [`is_project_a_scoped_kind`], for callers that must bind a
 /// list (the SQL pushdown in `buzz_db::event`). Keep the two in step; the
 /// test `project_a_scoped_kinds_agree` pins it.
-pub const PROJECT_A_SCOPED_KINDS: &[u32] = &[KIND_PULSE_ENTRY, KIND_PROJECT_TODO_OP];
+pub const PROJECT_A_SCOPED_KINDS: &[u32] = &[
+    KIND_PULSE_ENTRY,
+    KIND_PROJECT_TODO_OP,
+    KIND_AGENTS_REPO_DRAFT_OP,
+];
 
 /// The project coordinate a project-`a`-scoped event is scoped to,
 /// normalized to `30621:<lowercase-hex>:<dtag>`.
@@ -1382,7 +1426,8 @@ pub fn shell_session_hidden_from(
 }
 
 /// Returns `true` if a stored project-`a`-scoped event (kind:44240 Pulse
-/// entry or kind:44248 to-do op, [`is_project_a_scoped_kind`]) must be
+/// entry, kind:44248 to-do op or kind:44249 agents-repository draft op,
+/// [`is_project_a_scoped_kind`]) must be
 /// withheld from this reader: its project coordinate is in the reader's
 /// hidden-private-project set (resolved per reader by
 /// `buzz_db::git_repo::hidden_repos_for_reader`) and the reader is not its
@@ -1744,6 +1789,7 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_AGENT_TURN_METRIC,
     KIND_PULSE_ENTRY,
     KIND_PROJECT_TODO_OP,
+    KIND_AGENTS_REPO_DRAFT_OP,
     KIND_CODING_SESSION_COMMAND,
     KIND_CODING_SESSION_LIFECYCLE_COMMAND,
     KIND_CODING_SESSION_PROVIDER_CATALOG,
@@ -1976,6 +2022,11 @@ const _: () = assert!(!is_replaceable(KIND_PROJECT_TODO_OP));
 const _: () = assert!(!is_parameterized_replaceable(KIND_PROJECT_TODO_OP));
 const _: () = assert!(KIND_PROJECT_TODO_OP <= u16::MAX as u32);
 const _: () = assert!(is_project_a_scoped_kind(KIND_PROJECT_TODO_OP));
+const _: () = assert!(!is_ephemeral(KIND_AGENTS_REPO_DRAFT_OP));
+const _: () = assert!(!is_replaceable(KIND_AGENTS_REPO_DRAFT_OP));
+const _: () = assert!(!is_parameterized_replaceable(KIND_AGENTS_REPO_DRAFT_OP));
+const _: () = assert!(KIND_AGENTS_REPO_DRAFT_OP <= u16::MAX as u32);
+const _: () = assert!(is_project_a_scoped_kind(KIND_AGENTS_REPO_DRAFT_OP));
 const _: () = assert!(is_project_a_scoped_kind(KIND_PULSE_ENTRY));
 // A session lease is deliberately ephemeral: it is bounded evidence of recent
 // provider reachability, not durable session history or a replaceable head.

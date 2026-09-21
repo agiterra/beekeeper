@@ -499,6 +499,10 @@ fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static s
         // selects a project but does not gate, so there is no project-write
         // admission here.
         buzz_core::kind::KIND_PROJECT_WORK_RECORD => Ok(Scope::MessagesWrite),
+        // NIP-AD: an agents-repository draft op is authored member content
+        // proposing a change to the project's agents repository. Same scope
+        // and per-project write admission as Pulse and to-dos.
+        buzz_core::kind::KIND_AGENTS_REPO_DRAFT_OP => Ok(Scope::MessagesWrite),
         KIND_GIT_PATCH
         | KIND_GIT_PULL_REQUEST
         | KIND_GIT_PR_UPDATE
@@ -766,6 +770,9 @@ pub(crate) fn is_global_only_kind(kind: u32) -> bool {
             // nothing downstream can ever treat it as channel-scoped either.
             // (Pulse 44240 is deliberately absent — its `h` is optional.)
             | buzz_core::kind::KIND_PROJECT_TODO_OP
+            // NIP-AD: a draft op belongs to a project, never to a room; its
+            // validator rejects an `h` tag too.
+            | buzz_core::kind::KIND_AGENTS_REPO_DRAFT_OP
             // NIP-PL leases are author-owned, addressable global state.
             | super::push_lease::KIND_PUSH_LEASE
     )
@@ -4404,6 +4411,26 @@ async fn ingest_event_inner(
         admit_project_scoped_write(state, tenant, &event, "todo op").await?;
     }
 
+    // NIP-AD: an agents-repository draft op rides the same admission as a
+    // to-do op, then two checks only the relay can make: the draft names the
+    // repository the project's kind:30624 pins *today*, and a `commit.record`
+    // names a commit that is (or within a few pushes was) that repository's
+    // `refs/heads/main` — so a record is a relay-checked fact every reader
+    // may close drafts on, not a client's claim.
+    if kind_u32 == buzz_core::kind::KIND_AGENTS_REPO_DRAFT_OP {
+        let got = event.content.len();
+        if got > buzz_core::agents_repo_draft::MAX_AGENTS_REPO_DRAFT_CONTENT_BYTES {
+            return Err(IngestError::Rejected(format!(
+                "invalid: draft op content exceeds {} bytes (got {got})",
+                buzz_core::agents_repo_draft::MAX_AGENTS_REPO_DRAFT_CONTENT_BYTES
+            )));
+        }
+        let op = buzz_core::agents_repo_draft::validate_agents_repo_draft_envelope(&event)
+            .map_err(|e| IngestError::Rejected(format!("invalid: {e}")))?;
+        admit_project_scoped_write(state, tenant, &event, "draft op").await?;
+        super::agents_repo_draft::admit_draft_repository(state, tenant, &event, &op).await?;
+    }
+
     if kind_u32 == KIND_GIT_REPO_ANNOUNCEMENT {
         // NIP-MP access extension phase 2: the `project` back-reference is
         // what hides a repo's events behind a private project, so its shape
@@ -7667,6 +7694,105 @@ mod tests {
         assert!(!requires_h_channel_scope(
             buzz_core::kind::KIND_PROJECT_TODO_OP
         ));
+    }
+
+    // ── NIP-AD agents-repository draft ops (44249) ─────────────────────
+
+    #[test]
+    fn agents_repo_draft_op_requires_messages_write_scope() {
+        let dummy = make_dummy_event();
+        assert_eq!(
+            required_scope_for_kind(buzz_core::kind::KIND_AGENTS_REPO_DRAFT_OP, &dummy).unwrap(),
+            Scope::MessagesWrite,
+        );
+    }
+
+    /// A draft op never carries `h` (its validator refuses one), so it is
+    /// forced global: a stray `h` can never channel-scope it.
+    #[test]
+    fn agents_repo_draft_op_is_global_only_and_never_h_required() {
+        assert!(is_global_only_kind(
+            buzz_core::kind::KIND_AGENTS_REPO_DRAFT_OP
+        ));
+        assert!(!requires_h_channel_scope(
+            buzz_core::kind::KIND_AGENTS_REPO_DRAFT_OP
+        ));
+        assert!(buzz_core::kind::is_project_a_scoped_kind(
+            buzz_core::kind::KIND_AGENTS_REPO_DRAFT_OP
+        ));
+    }
+
+    #[test]
+    fn agents_repo_draft_validator_refuses_h_unknown_keys_and_tag_mismatch() {
+        let keys = nostr::Keys::generate();
+        let coordinate = canonical_pulse_coordinate(&keys);
+        let repo = format!(
+            "30617:{}:tank-loop-beekeeper-agents",
+            keys.public_key().to_hex()
+        );
+        let content = |extra: &str| {
+            format!(
+                r##"{{"schema":"{}","op":"file.put","path":"plans/rpg.md","text":"# RPG\n","base":null,"baseCommit":null,"prev":null,"message":null{extra}}}"##,
+                buzz_core::agents_repo_draft::AGENTS_REPO_DRAFT_SCHEMA
+            )
+        };
+        let build = |content: String, tags: &[&[&str]]| {
+            let nostr_tags: Vec<nostr::Tag> = tags
+                .iter()
+                .map(|t| nostr::Tag::parse(t.iter().copied()).expect("tag"))
+                .collect();
+            nostr::EventBuilder::new(
+                nostr::Kind::Custom(buzz_core::kind::KIND_AGENTS_REPO_DRAFT_OP as u16),
+                content,
+            )
+            .tags(nostr_tags)
+            .sign_with_keys(&keys)
+            .expect("sign draft op")
+        };
+        let a_tag: [&str; 2] = ["a", &coordinate];
+        let v_tag: [&str; 2] = ["ad-v", "ad1-1"];
+        let op_tag: [&str; 2] = ["ad-op", "file.put"];
+        let repo_tag: [&str; 2] = ["ad-repo", &repo];
+        let path_tag: [&str; 2] = ["ad-path", "plans/rpg.md"];
+        let base: Vec<&[&str]> = vec![&a_tag, &v_tag, &op_tag, &repo_tag, &path_tag];
+        let ok = build(content(""), &base);
+        assert!(buzz_core::agents_repo_draft::validate_agents_repo_draft_envelope(&ok).is_ok());
+
+        let channel = uuid::Uuid::new_v4().to_string();
+        let mut with_h = base.clone();
+        let h_tag: &[&str] = &["h", &channel];
+        with_h.push(h_tag);
+        let err = buzz_core::agents_repo_draft::validate_agents_repo_draft_envelope(&build(
+            content(""),
+            &with_h,
+        ))
+        .unwrap_err();
+        assert!(err.contains("must not carry an h tag"), "{err}");
+
+        let err = buzz_core::agents_repo_draft::validate_agents_repo_draft_envelope(&build(
+            content(r#","mode":"100755""#),
+            &base,
+        ))
+        .unwrap_err();
+        assert!(err.contains("unsupported field"), "{err}");
+
+        let wrong_op: [&str; 2] = ["ad-op", "file.delete"];
+        let mut mismatched = base.clone();
+        mismatched[2] = &wrong_op;
+        let err = buzz_core::agents_repo_draft::validate_agents_repo_draft_envelope(&build(
+            content(""),
+            &mismatched,
+        ))
+        .unwrap_err();
+        assert!(err.contains("does not match content op"), "{err}");
+
+        let no_path: Vec<&[&str]> = vec![&a_tag, &v_tag, &op_tag, &repo_tag];
+        let err = buzz_core::agents_repo_draft::validate_agents_repo_draft_envelope(&build(
+            content(""),
+            &no_path,
+        ))
+        .unwrap_err();
+        assert!(err.contains("ad-path"), "{err}");
     }
 
     #[test]

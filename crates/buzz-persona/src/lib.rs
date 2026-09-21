@@ -1,3 +1,4 @@
+pub mod agents_repo;
 pub mod compose;
 pub mod manifest;
 pub mod merge;

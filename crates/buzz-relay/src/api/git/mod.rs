@@ -33,6 +33,7 @@ pub mod manifest_event;
 pub mod pack_cache;
 pub mod policy;
 pub mod protection_layers;
+pub mod read_routes;
 pub mod store;
 pub mod transport;
 pub mod verdict_admission;

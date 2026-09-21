@@ -1609,7 +1609,8 @@ pub(crate) fn filter_can_match_git_gated_kinds(filter: &Filter) -> bool {
 }
 
 /// Returns `true` if the filter CAN match a project-`a`-scoped event (a Pulse
-/// entry 44240 or a to-do op 44248, [`buzz_core::kind::is_project_a_scoped_kind`])
+/// entry 44240, a to-do op 44248 or a draft op 44249,
+/// [`buzz_core::kind::is_project_a_scoped_kind`])
 /// — no `kinds` constraint (wildcard) or one of them among the kinds.
 ///
 /// Used by the COUNT handlers to force the per-event fallback. The fast SQL

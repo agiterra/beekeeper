@@ -1,0 +1,1802 @@
+{
+  "schema": "buzz-agents-repo-draft-fold-vectors/v1",
+  "cases": [
+    {
+      "name": "empty",
+      "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+      "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+      "events": [],
+      "expected": {
+        "schema": "buzz-agents-repo-draft-digest/v1",
+        "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+        "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+        "ignored": 0,
+        "otherRepo": 0,
+        "paths": [],
+        "commits": []
+      }
+    },
+    {
+      "name": "one put is the head of its path",
+      "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+      "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+      "events": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000001",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 100,
+          "kind": 44249,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ad-v",
+              "ad1-1"
+            ],
+            [
+              "ad-op",
+              "file.put"
+            ],
+            [
+              "ad-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ad-path",
+              "roles/lead.md"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-agents-repo-draft/v1\",\"op\":\"file.put\",\"path\":\"roles/lead.md\",\"text\":\"# lead v1\\n\",\"base\":\"1111111111111111111111111111111111111111\",\"baseCommit\":\"cccccccccccccccccccccccccccccccccccccccc\",\"prev\":null,\"message\":\"tighten\"}"
+        }
+      ],
+      "expected": {
+        "schema": "buzz-agents-repo-draft-digest/v1",
+        "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+        "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+        "ignored": 0,
+        "otherRepo": 0,
+        "paths": [
+          {
+            "path": "roles/lead.md",
+            "head": {
+              "id": "0000000000000000000000000000000000000000000000000000000000000001",
+              "author": "1111111111111111111111111111111111111111111111111111111111111111",
+              "createdAt": 100,
+              "op": "file.put",
+              "path": "roles/lead.md",
+              "to": null,
+              "text": "# lead v1\n",
+              "base": "1111111111111111111111111111111111111111",
+              "baseCommit": "cccccccccccccccccccccccccccccccccccccccc",
+              "prev": null,
+              "message": "tighten"
+            },
+            "superseded": [],
+            "diverged": false,
+            "updatedAt": 100
+          }
+        ],
+        "commits": []
+      }
+    },
+    {
+      "name": "a chain of saves: newest is head, the rest superseded oldest first, not diverged",
+      "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+      "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+      "events": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000003",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 120,
+          "kind": 44249,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ad-v",
+              "ad1-1"
+            ],
+            [
+              "ad-op",
+              "file.put"
+            ],
+            [
+              "ad-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ad-path",
+              "roles/lead.md"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-agents-repo-draft/v1\",\"op\":\"file.put\",\"path\":\"roles/lead.md\",\"text\":\"v3\\n\",\"base\":\"1111111111111111111111111111111111111111\",\"baseCommit\":\"cccccccccccccccccccccccccccccccccccccccc\",\"prev\":\"0000000000000000000000000000000000000000000000000000000000000002\",\"message\":null}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000001",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 100,
+          "kind": 44249,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ad-v",
+              "ad1-1"
+            ],
+            [
+              "ad-op",
+              "file.put"
+            ],
+            [
+              "ad-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ad-path",
+              "roles/lead.md"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-agents-repo-draft/v1\",\"op\":\"file.put\",\"path\":\"roles/lead.md\",\"text\":\"v1\\n\",\"base\":\"1111111111111111111111111111111111111111\",\"baseCommit\":\"cccccccccccccccccccccccccccccccccccccccc\",\"prev\":null,\"message\":null}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000002",
+          "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
+          "created_at": 110,
+          "kind": 44249,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ad-v",
+              "ad1-1"
+            ],
+            [
+              "ad-op",
+              "file.put"
+            ],
+            [
+              "ad-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ad-path",
+              "roles/lead.md"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-agents-repo-draft/v1\",\"op\":\"file.put\",\"path\":\"roles/lead.md\",\"text\":\"v2\\n\",\"base\":\"1111111111111111111111111111111111111111\",\"baseCommit\":\"cccccccccccccccccccccccccccccccccccccccc\",\"prev\":\"0000000000000000000000000000000000000000000000000000000000000001\",\"message\":null}"
+        }
+      ],
+      "expected": {
+        "schema": "buzz-agents-repo-draft-digest/v1",
+        "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+        "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+        "ignored": 0,
+        "otherRepo": 0,
+        "paths": [
+          {
+            "path": "roles/lead.md",
+            "head": {
+              "id": "0000000000000000000000000000000000000000000000000000000000000003",
+              "author": "1111111111111111111111111111111111111111111111111111111111111111",
+              "createdAt": 120,
+              "op": "file.put",
+              "path": "roles/lead.md",
+              "to": null,
+              "text": "v3\n",
+              "base": "1111111111111111111111111111111111111111",
+              "baseCommit": "cccccccccccccccccccccccccccccccccccccccc",
+              "prev": "0000000000000000000000000000000000000000000000000000000000000002",
+              "message": null
+            },
+            "superseded": [
+              {
+                "id": "0000000000000000000000000000000000000000000000000000000000000001",
+                "author": "1111111111111111111111111111111111111111111111111111111111111111",
+                "createdAt": 100,
+                "op": "file.put",
+                "path": "roles/lead.md",
+                "to": null,
+                "text": "v1\n",
+                "base": "1111111111111111111111111111111111111111",
+                "baseCommit": "cccccccccccccccccccccccccccccccccccccccc",
+                "prev": null,
+                "message": null
+              },
+              {
+                "id": "0000000000000000000000000000000000000000000000000000000000000002",
+                "author": "2222222222222222222222222222222222222222222222222222222222222222",
+                "createdAt": 110,
+                "op": "file.put",
+                "path": "roles/lead.md",
+                "to": null,
+                "text": "v2\n",
+                "base": "1111111111111111111111111111111111111111",
+                "baseCommit": "cccccccccccccccccccccccccccccccccccccccc",
+                "prev": "0000000000000000000000000000000000000000000000000000000000000001",
+                "message": null
+              }
+            ],
+            "diverged": false,
+            "updatedAt": 120
+          }
+        ],
+        "commits": []
+      }
+    },
+    {
+      "name": "two saves from the same prev: newer is head, older superseded, diverged",
+      "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+      "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+      "events": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000001",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 100,
+          "kind": 44249,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ad-v",
+              "ad1-1"
+            ],
+            [
+              "ad-op",
+              "file.put"
+            ],
+            [
+              "ad-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ad-path",
+              "roles/lead.md"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-agents-repo-draft/v1\",\"op\":\"file.put\",\"path\":\"roles/lead.md\",\"text\":\"v1\\n\",\"base\":\"1111111111111111111111111111111111111111\",\"baseCommit\":null,\"prev\":null,\"message\":null}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000002",
+          "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
+          "created_at": 110,
+          "kind": 44249,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ad-v",
+              "ad1-1"
+            ],
+            [
+              "ad-op",
+              "file.put"
+            ],
+            [
+              "ad-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ad-path",
+              "roles/lead.md"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-agents-repo-draft/v1\",\"op\":\"file.put\",\"path\":\"roles/lead.md\",\"text\":\"bob\\n\",\"base\":\"1111111111111111111111111111111111111111\",\"baseCommit\":null,\"prev\":\"0000000000000000000000000000000000000000000000000000000000000001\",\"message\":null}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000003",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 111,
+          "kind": 44249,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ad-v",
+              "ad1-1"
+            ],
+            [
+              "ad-op",
+              "file.put"
+            ],
+            [
+              "ad-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ad-path",
+              "roles/lead.md"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-agents-repo-draft/v1\",\"op\":\"file.put\",\"path\":\"roles/lead.md\",\"text\":\"alice\\n\",\"base\":\"1111111111111111111111111111111111111111\",\"baseCommit\":null,\"prev\":\"0000000000000000000000000000000000000000000000000000000000000001\",\"message\":null}"
+        }
+      ],
+      "expected": {
+        "schema": "buzz-agents-repo-draft-digest/v1",
+        "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+        "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+        "ignored": 0,
+        "otherRepo": 0,
+        "paths": [
+          {
+            "path": "roles/lead.md",
+            "head": {
+              "id": "0000000000000000000000000000000000000000000000000000000000000003",
+              "author": "1111111111111111111111111111111111111111111111111111111111111111",
+              "createdAt": 111,
+              "op": "file.put",
+              "path": "roles/lead.md",
+              "to": null,
+              "text": "alice\n",
+              "base": "1111111111111111111111111111111111111111",
+              "baseCommit": null,
+              "prev": "0000000000000000000000000000000000000000000000000000000000000001",
+              "message": null
+            },
+            "superseded": [
+              {
+                "id": "0000000000000000000000000000000000000000000000000000000000000001",
+                "author": "1111111111111111111111111111111111111111111111111111111111111111",
+                "createdAt": 100,
+                "op": "file.put",
+                "path": "roles/lead.md",
+                "to": null,
+                "text": "v1\n",
+                "base": "1111111111111111111111111111111111111111",
+                "baseCommit": null,
+                "prev": null,
+                "message": null
+              },
+              {
+                "id": "0000000000000000000000000000000000000000000000000000000000000002",
+                "author": "2222222222222222222222222222222222222222222222222222222222222222",
+                "createdAt": 110,
+                "op": "file.put",
+                "path": "roles/lead.md",
+                "to": null,
+                "text": "bob\n",
+                "base": "1111111111111111111111111111111111111111",
+                "baseCommit": null,
+                "prev": "0000000000000000000000000000000000000000000000000000000000000001",
+                "message": null
+              }
+            ],
+            "diverged": true,
+            "updatedAt": 111
+          }
+        ],
+        "commits": []
+      }
+    },
+    {
+      "name": "a created_at tie breaks on event id; a head with prev null over an open op is diverged",
+      "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+      "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+      "events": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000002",
+          "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
+          "created_at": 100,
+          "kind": 44249,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ad-v",
+              "ad1-1"
+            ],
+            [
+              "ad-op",
+              "file.put"
+            ],
+            [
+              "ad-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ad-path",
+              "roles/lead.md"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-agents-repo-draft/v1\",\"op\":\"file.put\",\"path\":\"roles/lead.md\",\"text\":\"v1 too\\n\",\"base\":\"1111111111111111111111111111111111111111\",\"baseCommit\":null,\"prev\":null,\"message\":null}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000001",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 100,
+          "kind": 44249,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ad-v",
+              "ad1-1"
+            ],
+            [
+              "ad-op",
+              "file.put"
+            ],
+            [
+              "ad-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ad-path",
+              "roles/lead.md"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-agents-repo-draft/v1\",\"op\":\"file.put\",\"path\":\"roles/lead.md\",\"text\":\"v1\\n\",\"base\":\"1111111111111111111111111111111111111111\",\"baseCommit\":null,\"prev\":null,\"message\":null}"
+        }
+      ],
+      "expected": {
+        "schema": "buzz-agents-repo-draft-digest/v1",
+        "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+        "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+        "ignored": 0,
+        "otherRepo": 0,
+        "paths": [
+          {
+            "path": "roles/lead.md",
+            "head": {
+              "id": "0000000000000000000000000000000000000000000000000000000000000002",
+              "author": "2222222222222222222222222222222222222222222222222222222222222222",
+              "createdAt": 100,
+              "op": "file.put",
+              "path": "roles/lead.md",
+              "to": null,
+              "text": "v1 too\n",
+              "base": "1111111111111111111111111111111111111111",
+              "baseCommit": null,
+              "prev": null,
+              "message": null
+            },
+            "superseded": [
+              {
+                "id": "0000000000000000000000000000000000000000000000000000000000000001",
+                "author": "1111111111111111111111111111111111111111111111111111111111111111",
+                "createdAt": 100,
+                "op": "file.put",
+                "path": "roles/lead.md",
+                "to": null,
+                "text": "v1\n",
+                "base": "1111111111111111111111111111111111111111",
+                "baseCommit": null,
+                "prev": null,
+                "message": null
+              }
+            ],
+            "diverged": true,
+            "updatedAt": 100
+          }
+        ],
+        "commits": []
+      }
+    },
+    {
+      "name": "a delete after a put is the head",
+      "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+      "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+      "events": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000001",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 100,
+          "kind": 44249,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ad-v",
+              "ad1-1"
+            ],
+            [
+              "ad-op",
+              "file.put"
+            ],
+            [
+              "ad-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ad-path",
+              "plans/rpg.md"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-agents-repo-draft/v1\",\"op\":\"file.put\",\"path\":\"plans/rpg.md\",\"text\":\"plan\\n\",\"base\":null,\"baseCommit\":null,\"prev\":null,\"message\":null}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000002",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 105,
+          "kind": 44249,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ad-v",
+              "ad1-1"
+            ],
+            [
+              "ad-op",
+              "file.delete"
+            ],
+            [
+              "ad-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ad-path",
+              "plans/rpg.md"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-agents-repo-draft/v1\",\"op\":\"file.delete\",\"path\":\"plans/rpg.md\",\"base\":\"1111111111111111111111111111111111111111\",\"baseCommit\":null,\"prev\":\"0000000000000000000000000000000000000000000000000000000000000001\",\"message\":null}"
+        }
+      ],
+      "expected": {
+        "schema": "buzz-agents-repo-draft-digest/v1",
+        "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+        "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+        "ignored": 0,
+        "otherRepo": 0,
+        "paths": [
+          {
+            "path": "plans/rpg.md",
+            "head": {
+              "id": "0000000000000000000000000000000000000000000000000000000000000002",
+              "author": "1111111111111111111111111111111111111111111111111111111111111111",
+              "createdAt": 105,
+              "op": "file.delete",
+              "path": "plans/rpg.md",
+              "to": null,
+              "text": null,
+              "base": "1111111111111111111111111111111111111111",
+              "baseCommit": null,
+              "prev": "0000000000000000000000000000000000000000000000000000000000000001",
+              "message": null
+            },
+            "superseded": [
+              {
+                "id": "0000000000000000000000000000000000000000000000000000000000000001",
+                "author": "1111111111111111111111111111111111111111111111111111111111111111",
+                "createdAt": 100,
+                "op": "file.put",
+                "path": "plans/rpg.md",
+                "to": null,
+                "text": "plan\n",
+                "base": null,
+                "baseCommit": null,
+                "prev": null,
+                "message": null
+              }
+            ],
+            "diverged": false,
+            "updatedAt": 105
+          }
+        ],
+        "commits": []
+      }
+    },
+    {
+      "name": "a move is the head of both its path and its destination",
+      "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+      "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+      "events": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000001",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 100,
+          "kind": 44249,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ad-v",
+              "ad1-1"
+            ],
+            [
+              "ad-op",
+              "file.move"
+            ],
+            [
+              "ad-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ad-path",
+              "plans/rpg.md"
+            ],
+            [
+              "ad-path",
+              "plans/archive/rpg.md"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-agents-repo-draft/v1\",\"op\":\"file.move\",\"path\":\"plans/rpg.md\",\"to\":\"plans/archive/rpg.md\",\"base\":\"1111111111111111111111111111111111111111\",\"baseCommit\":\"cccccccccccccccccccccccccccccccccccccccc\",\"prev\":null,\"message\":null}"
+        }
+      ],
+      "expected": {
+        "schema": "buzz-agents-repo-draft-digest/v1",
+        "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+        "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+        "ignored": 0,
+        "otherRepo": 0,
+        "paths": [
+          {
+            "path": "plans/archive/rpg.md",
+            "head": {
+              "id": "0000000000000000000000000000000000000000000000000000000000000001",
+              "author": "1111111111111111111111111111111111111111111111111111111111111111",
+              "createdAt": 100,
+              "op": "file.move",
+              "path": "plans/rpg.md",
+              "to": "plans/archive/rpg.md",
+              "text": null,
+              "base": "1111111111111111111111111111111111111111",
+              "baseCommit": "cccccccccccccccccccccccccccccccccccccccc",
+              "prev": null,
+              "message": null
+            },
+            "superseded": [],
+            "diverged": false,
+            "updatedAt": 100
+          },
+          {
+            "path": "plans/rpg.md",
+            "head": {
+              "id": "0000000000000000000000000000000000000000000000000000000000000001",
+              "author": "1111111111111111111111111111111111111111111111111111111111111111",
+              "createdAt": 100,
+              "op": "file.move",
+              "path": "plans/rpg.md",
+              "to": "plans/archive/rpg.md",
+              "text": null,
+              "base": "1111111111111111111111111111111111111111",
+              "baseCommit": "cccccccccccccccccccccccccccccccccccccccc",
+              "prev": null,
+              "message": null
+            },
+            "superseded": [],
+            "diverged": false,
+            "updatedAt": 100
+          }
+        ],
+        "commits": []
+      }
+    },
+    {
+      "name": "a put at a move's destination builds on the move there and leaves the move as head at the source",
+      "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+      "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+      "events": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000001",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 100,
+          "kind": 44249,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ad-v",
+              "ad1-1"
+            ],
+            [
+              "ad-op",
+              "file.move"
+            ],
+            [
+              "ad-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ad-path",
+              "plans/rpg.md"
+            ],
+            [
+              "ad-path",
+              "plans/archive/rpg.md"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-agents-repo-draft/v1\",\"op\":\"file.move\",\"path\":\"plans/rpg.md\",\"to\":\"plans/archive/rpg.md\",\"base\":\"1111111111111111111111111111111111111111\",\"baseCommit\":null,\"prev\":null,\"message\":null}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000002",
+          "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
+          "created_at": 110,
+          "kind": 44249,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ad-v",
+              "ad1-1"
+            ],
+            [
+              "ad-op",
+              "file.put"
+            ],
+            [
+              "ad-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ad-path",
+              "plans/archive/rpg.md"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-agents-repo-draft/v1\",\"op\":\"file.put\",\"path\":\"plans/archive/rpg.md\",\"text\":\"archived, annotated\\n\",\"base\":\"1111111111111111111111111111111111111111\",\"baseCommit\":null,\"prev\":\"0000000000000000000000000000000000000000000000000000000000000001\",\"message\":null}"
+        }
+      ],
+      "expected": {
+        "schema": "buzz-agents-repo-draft-digest/v1",
+        "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+        "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+        "ignored": 0,
+        "otherRepo": 0,
+        "paths": [
+          {
+            "path": "plans/archive/rpg.md",
+            "head": {
+              "id": "0000000000000000000000000000000000000000000000000000000000000002",
+              "author": "2222222222222222222222222222222222222222222222222222222222222222",
+              "createdAt": 110,
+              "op": "file.put",
+              "path": "plans/archive/rpg.md",
+              "to": null,
+              "text": "archived, annotated\n",
+              "base": "1111111111111111111111111111111111111111",
+              "baseCommit": null,
+              "prev": "0000000000000000000000000000000000000000000000000000000000000001",
+              "message": null
+            },
+            "superseded": [
+              {
+                "id": "0000000000000000000000000000000000000000000000000000000000000001",
+                "author": "1111111111111111111111111111111111111111111111111111111111111111",
+                "createdAt": 100,
+                "op": "file.move",
+                "path": "plans/rpg.md",
+                "to": "plans/archive/rpg.md",
+                "text": null,
+                "base": "1111111111111111111111111111111111111111",
+                "baseCommit": null,
+                "prev": null,
+                "message": null
+              }
+            ],
+            "diverged": false,
+            "updatedAt": 110
+          },
+          {
+            "path": "plans/rpg.md",
+            "head": {
+              "id": "0000000000000000000000000000000000000000000000000000000000000001",
+              "author": "1111111111111111111111111111111111111111111111111111111111111111",
+              "createdAt": 100,
+              "op": "file.move",
+              "path": "plans/rpg.md",
+              "to": "plans/archive/rpg.md",
+              "text": null,
+              "base": "1111111111111111111111111111111111111111",
+              "baseCommit": null,
+              "prev": null,
+              "message": null
+            },
+            "superseded": [],
+            "diverged": false,
+            "updatedAt": 100
+          }
+        ],
+        "commits": []
+      }
+    },
+    {
+      "name": "a record closes the drafts it names, leaves the others open, and a later put on the same path is a fresh head",
+      "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+      "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+      "events": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000001",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 100,
+          "kind": 44249,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ad-v",
+              "ad1-1"
+            ],
+            [
+              "ad-op",
+              "file.put"
+            ],
+            [
+              "ad-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ad-path",
+              "roles/lead.md"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-agents-repo-draft/v1\",\"op\":\"file.put\",\"path\":\"roles/lead.md\",\"text\":\"v1\\n\",\"base\":\"1111111111111111111111111111111111111111\",\"baseCommit\":null,\"prev\":null,\"message\":null}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000002",
+          "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
+          "created_at": 110,
+          "kind": 44249,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ad-v",
+              "ad1-1"
+            ],
+            [
+              "ad-op",
+              "file.put"
+            ],
+            [
+              "ad-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ad-path",
+              "plans/rpg.md"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-agents-repo-draft/v1\",\"op\":\"file.put\",\"path\":\"plans/rpg.md\",\"text\":\"plan\\n\",\"base\":null,\"baseCommit\":null,\"prev\":null,\"message\":null}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000003",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 120,
+          "kind": 44249,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ad-v",
+              "ad1-1"
+            ],
+            [
+              "ad-op",
+              "commit.record"
+            ],
+            [
+              "ad-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ad-path",
+              "roles/lead.md"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-agents-repo-draft/v1\",\"op\":\"commit.record\",\"commit\":\"dddddddddddddddddddddddddddddddddddddddd\",\"paths\":[\"roles/lead.md\"],\"drafts\":[\"0000000000000000000000000000000000000000000000000000000000000001\"],\"message\":\"landed\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000004",
+          "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
+          "created_at": 130,
+          "kind": 44249,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ad-v",
+              "ad1-1"
+            ],
+            [
+              "ad-op",
+              "file.put"
+            ],
+            [
+              "ad-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ad-path",
+              "roles/lead.md"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-agents-repo-draft/v1\",\"op\":\"file.put\",\"path\":\"roles/lead.md\",\"text\":\"after commit\\n\",\"base\":\"2222222222222222222222222222222222222222\",\"baseCommit\":\"dddddddddddddddddddddddddddddddddddddddd\",\"prev\":null,\"message\":null}"
+        }
+      ],
+      "expected": {
+        "schema": "buzz-agents-repo-draft-digest/v1",
+        "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+        "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+        "ignored": 0,
+        "otherRepo": 0,
+        "paths": [
+          {
+            "path": "plans/rpg.md",
+            "head": {
+              "id": "0000000000000000000000000000000000000000000000000000000000000002",
+              "author": "2222222222222222222222222222222222222222222222222222222222222222",
+              "createdAt": 110,
+              "op": "file.put",
+              "path": "plans/rpg.md",
+              "to": null,
+              "text": "plan\n",
+              "base": null,
+              "baseCommit": null,
+              "prev": null,
+              "message": null
+            },
+            "superseded": [],
+            "diverged": false,
+            "updatedAt": 110
+          },
+          {
+            "path": "roles/lead.md",
+            "head": {
+              "id": "0000000000000000000000000000000000000000000000000000000000000004",
+              "author": "2222222222222222222222222222222222222222222222222222222222222222",
+              "createdAt": 130,
+              "op": "file.put",
+              "path": "roles/lead.md",
+              "to": null,
+              "text": "after commit\n",
+              "base": "2222222222222222222222222222222222222222",
+              "baseCommit": "dddddddddddddddddddddddddddddddddddddddd",
+              "prev": null,
+              "message": null
+            },
+            "superseded": [],
+            "diverged": false,
+            "updatedAt": 130
+          }
+        ],
+        "commits": [
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000003",
+            "commit": "dddddddddddddddddddddddddddddddddddddddd",
+            "by": "1111111111111111111111111111111111111111111111111111111111111111",
+            "createdAt": 120,
+            "paths": [
+              "roles/lead.md"
+            ],
+            "drafts": [
+              "0000000000000000000000000000000000000000000000000000000000000001"
+            ],
+            "message": "landed"
+          }
+        ]
+      }
+    },
+    {
+      "name": "closing a superseded op leaves the head that built on it open and not diverged",
+      "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+      "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+      "events": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000001",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 100,
+          "kind": 44249,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ad-v",
+              "ad1-1"
+            ],
+            [
+              "ad-op",
+              "file.put"
+            ],
+            [
+              "ad-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ad-path",
+              "roles/lead.md"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-agents-repo-draft/v1\",\"op\":\"file.put\",\"path\":\"roles/lead.md\",\"text\":\"v1\\n\",\"base\":null,\"baseCommit\":null,\"prev\":null,\"message\":null}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000002",
+          "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
+          "created_at": 110,
+          "kind": 44249,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ad-v",
+              "ad1-1"
+            ],
+            [
+              "ad-op",
+              "file.put"
+            ],
+            [
+              "ad-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ad-path",
+              "roles/lead.md"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-agents-repo-draft/v1\",\"op\":\"file.put\",\"path\":\"roles/lead.md\",\"text\":\"v2\\n\",\"base\":null,\"baseCommit\":null,\"prev\":\"0000000000000000000000000000000000000000000000000000000000000001\",\"message\":null}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000003",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 120,
+          "kind": 44249,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ad-v",
+              "ad1-1"
+            ],
+            [
+              "ad-op",
+              "commit.record"
+            ],
+            [
+              "ad-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ad-path",
+              "roles/lead.md"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-agents-repo-draft/v1\",\"op\":\"commit.record\",\"commit\":\"dddddddddddddddddddddddddddddddddddddddd\",\"paths\":[\"roles/lead.md\"],\"drafts\":[\"0000000000000000000000000000000000000000000000000000000000000001\"],\"message\":null}"
+        }
+      ],
+      "expected": {
+        "schema": "buzz-agents-repo-draft-digest/v1",
+        "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+        "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+        "ignored": 0,
+        "otherRepo": 0,
+        "paths": [
+          {
+            "path": "roles/lead.md",
+            "head": {
+              "id": "0000000000000000000000000000000000000000000000000000000000000002",
+              "author": "2222222222222222222222222222222222222222222222222222222222222222",
+              "createdAt": 110,
+              "op": "file.put",
+              "path": "roles/lead.md",
+              "to": null,
+              "text": "v2\n",
+              "base": null,
+              "baseCommit": null,
+              "prev": "0000000000000000000000000000000000000000000000000000000000000001",
+              "message": null
+            },
+            "superseded": [],
+            "diverged": false,
+            "updatedAt": 110
+          }
+        ],
+        "commits": [
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000003",
+            "commit": "dddddddddddddddddddddddddddddddddddddddd",
+            "by": "1111111111111111111111111111111111111111111111111111111111111111",
+            "createdAt": 120,
+            "paths": [
+              "roles/lead.md"
+            ],
+            "drafts": [
+              "0000000000000000000000000000000000000000000000000000000000000001"
+            ],
+            "message": null
+          }
+        ]
+      }
+    },
+    {
+      "name": "records list newest first and may name ids the fold never saw",
+      "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+      "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+      "events": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000001",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 100,
+          "kind": 44249,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ad-v",
+              "ad1-1"
+            ],
+            [
+              "ad-op",
+              "commit.record"
+            ],
+            [
+              "ad-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ad-path",
+              "roles/lead.md"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-agents-repo-draft/v1\",\"op\":\"commit.record\",\"commit\":\"cccccccccccccccccccccccccccccccccccccccc\",\"paths\":[\"roles/lead.md\"],\"drafts\":[\"0000000000000000000000000000000000000000000000000000000000000009\"],\"message\":null}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000002",
+          "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
+          "created_at": 200,
+          "kind": 44249,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ad-v",
+              "ad1-1"
+            ],
+            [
+              "ad-op",
+              "commit.record"
+            ],
+            [
+              "ad-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ad-path",
+              "plans/rpg.md"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-agents-repo-draft/v1\",\"op\":\"commit.record\",\"commit\":\"dddddddddddddddddddddddddddddddddddddddd\",\"paths\":[\"plans/rpg.md\"],\"drafts\":[\"0000000000000000000000000000000000000000000000000000000000000008\"],\"message\":\"second\"}"
+        }
+      ],
+      "expected": {
+        "schema": "buzz-agents-repo-draft-digest/v1",
+        "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+        "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+        "ignored": 0,
+        "otherRepo": 0,
+        "paths": [],
+        "commits": [
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000002",
+            "commit": "dddddddddddddddddddddddddddddddddddddddd",
+            "by": "2222222222222222222222222222222222222222222222222222222222222222",
+            "createdAt": 200,
+            "paths": [
+              "plans/rpg.md"
+            ],
+            "drafts": [
+              "0000000000000000000000000000000000000000000000000000000000000008"
+            ],
+            "message": "second"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000001",
+            "commit": "cccccccccccccccccccccccccccccccccccccccc",
+            "by": "1111111111111111111111111111111111111111111111111111111111111111",
+            "createdAt": 100,
+            "paths": [
+              "roles/lead.md"
+            ],
+            "drafts": [
+              "0000000000000000000000000000000000000000000000000000000000000009"
+            ],
+            "message": null
+          }
+        ]
+      }
+    },
+    {
+      "name": "another repository's op is counted, not folded; malformed, mis-kinded and mis-scoped ops are ignored",
+      "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+      "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+      "events": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000001",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 100,
+          "kind": 44249,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ad-v",
+              "ad1-1"
+            ],
+            [
+              "ad-op",
+              "file.put"
+            ],
+            [
+              "ad-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ad-path",
+              "roles/lead.md"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-agents-repo-draft/v1\",\"op\":\"file.put\",\"path\":\"roles/lead.md\",\"text\":\"v1\\n\",\"base\":null,\"baseCommit\":null,\"prev\":null,\"message\":null}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000002",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 110,
+          "kind": 44249,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ad-v",
+              "ad1-1"
+            ],
+            [
+              "ad-op",
+              "file.put"
+            ],
+            [
+              "ad-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-packs"
+            ],
+            [
+              "ad-path",
+              "roles/lead.md"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-agents-repo-draft/v1\",\"op\":\"file.put\",\"path\":\"roles/lead.md\",\"text\":\"for the packs repo\\n\",\"base\":null,\"baseCommit\":null,\"prev\":null,\"message\":null}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000003",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 120,
+          "kind": 44249,
+          "tags": [
+            [
+              "a",
+              "30621:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:other"
+            ],
+            [
+              "ad-v",
+              "ad1-1"
+            ],
+            [
+              "ad-op",
+              "file.put"
+            ],
+            [
+              "ad-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ad-path",
+              "roles/lead.md"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-agents-repo-draft/v1\",\"op\":\"file.put\",\"path\":\"roles/lead.md\",\"text\":\"wrong project\\n\",\"base\":null,\"baseCommit\":null,\"prev\":null,\"message\":null}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000004",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 130,
+          "kind": 44248,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ad-v",
+              "ad1-1"
+            ],
+            [
+              "ad-op",
+              "file.put"
+            ],
+            [
+              "ad-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ad-path",
+              "roles/lead.md"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-agents-repo-draft/v1\",\"op\":\"file.put\",\"path\":\"roles/lead.md\",\"text\":\"wrong kind\\n\",\"base\":null,\"baseCommit\":null,\"prev\":null,\"message\":null}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000005",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 140,
+          "kind": 44249,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ad-v",
+              "ad1-1"
+            ],
+            [
+              "ad-op",
+              "file.put"
+            ],
+            [
+              "ad-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ad-path",
+              "roles/lead.md"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-agents-repo-draft/v1\",\"op\":\"file.put\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000006",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 150,
+          "kind": 44249,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ad-v",
+              "ad1-1"
+            ],
+            [
+              "ad-op",
+              "file.put"
+            ],
+            [
+              "ad-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ad-path",
+              "roles/lead.md"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-agents-repo-draft/v1\",\"op\":\"file.put\",\"path\":\"roles/lead.md\",\"text\":\"two a tags\\n\",\"base\":null,\"baseCommit\":null,\"prev\":null,\"message\":null}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000007",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 160,
+          "kind": 44249,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ad-v",
+              "ad1-1"
+            ],
+            [
+              "ad-op",
+              "file.put"
+            ],
+            [
+              "ad-path",
+              "roles/lead.md"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-agents-repo-draft/v1\",\"op\":\"file.put\",\"path\":\"roles/lead.md\",\"text\":\"no repo tag\\n\",\"base\":null,\"baseCommit\":null,\"prev\":null,\"message\":null}"
+        }
+      ],
+      "expected": {
+        "schema": "buzz-agents-repo-draft-digest/v1",
+        "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+        "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+        "ignored": 5,
+        "otherRepo": 1,
+        "paths": [
+          {
+            "path": "roles/lead.md",
+            "head": {
+              "id": "0000000000000000000000000000000000000000000000000000000000000001",
+              "author": "1111111111111111111111111111111111111111111111111111111111111111",
+              "createdAt": 100,
+              "op": "file.put",
+              "path": "roles/lead.md",
+              "to": null,
+              "text": "v1\n",
+              "base": null,
+              "baseCommit": null,
+              "prev": null,
+              "message": null
+            },
+            "superseded": [],
+            "diverged": false,
+            "updatedAt": 100
+          }
+        ],
+        "commits": []
+      }
+    },
+    {
+      "name": "a case-variant a tag folds as its canonical coordinate (ingest never stores one; a reader must not drop it)",
+      "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+      "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+      "events": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000001",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 100,
+          "kind": 44249,
+          "tags": [
+            [
+              "a",
+              "30621:AAAAaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ad-v",
+              "ad1-1"
+            ],
+            [
+              "ad-op",
+              "file.put"
+            ],
+            [
+              "ad-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ad-path",
+              "roles/lead.md"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-agents-repo-draft/v1\",\"op\":\"file.put\",\"path\":\"roles/lead.md\",\"text\":\"case-variant a\\n\",\"base\":null,\"baseCommit\":null,\"prev\":null,\"message\":null}"
+        }
+      ],
+      "expected": {
+        "schema": "buzz-agents-repo-draft-digest/v1",
+        "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+        "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+        "ignored": 0,
+        "otherRepo": 0,
+        "paths": [
+          {
+            "path": "roles/lead.md",
+            "head": {
+              "id": "0000000000000000000000000000000000000000000000000000000000000001",
+              "author": "1111111111111111111111111111111111111111111111111111111111111111",
+              "createdAt": 100,
+              "op": "file.put",
+              "path": "roles/lead.md",
+              "to": null,
+              "text": "case-variant a\n",
+              "base": null,
+              "baseCommit": null,
+              "prev": null,
+              "message": null
+            },
+            "superseded": [],
+            "diverged": false,
+            "updatedAt": 100
+          }
+        ],
+        "commits": []
+      }
+    },
+    {
+      "name": "duplicate ids keep the first",
+      "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+      "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+      "events": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000001",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 100,
+          "kind": 44249,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ad-v",
+              "ad1-1"
+            ],
+            [
+              "ad-op",
+              "file.put"
+            ],
+            [
+              "ad-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ad-path",
+              "roles/lead.md"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-agents-repo-draft/v1\",\"op\":\"file.put\",\"path\":\"roles/lead.md\",\"text\":\"v1\\n\",\"base\":null,\"baseCommit\":null,\"prev\":null,\"message\":null}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000001",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 100,
+          "kind": 44249,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ad-v",
+              "ad1-1"
+            ],
+            [
+              "ad-op",
+              "file.put"
+            ],
+            [
+              "ad-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ad-path",
+              "roles/lead.md"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-agents-repo-draft/v1\",\"op\":\"file.put\",\"path\":\"roles/lead.md\",\"text\":\"dup with different text\\n\",\"base\":null,\"baseCommit\":null,\"prev\":null,\"message\":null}"
+        }
+      ],
+      "expected": {
+        "schema": "buzz-agents-repo-draft-digest/v1",
+        "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+        "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+        "ignored": 0,
+        "otherRepo": 0,
+        "paths": [
+          {
+            "path": "roles/lead.md",
+            "head": {
+              "id": "0000000000000000000000000000000000000000000000000000000000000001",
+              "author": "1111111111111111111111111111111111111111111111111111111111111111",
+              "createdAt": 100,
+              "op": "file.put",
+              "path": "roles/lead.md",
+              "to": null,
+              "text": "v1\n",
+              "base": null,
+              "baseCommit": null,
+              "prev": null,
+              "message": null
+            },
+            "superseded": [],
+            "diverged": false,
+            "updatedAt": 100
+          }
+        ],
+        "commits": []
+      }
+    },
+    {
+      "name": "paths sort bytewise regardless of op order",
+      "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+      "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+      "events": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000001",
+          "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
+          "created_at": 100,
+          "kind": 44249,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ad-v",
+              "ad1-1"
+            ],
+            [
+              "ad-op",
+              "file.put"
+            ],
+            [
+              "ad-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ad-path",
+              "team.yml"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-agents-repo-draft/v1\",\"op\":\"file.put\",\"path\":\"team.yml\",\"text\":\"schema: beekeeper-team/v1\\n\",\"base\":\"1111111111111111111111111111111111111111\",\"baseCommit\":null,\"prev\":null,\"message\":null}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000002",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 90,
+          "kind": 44249,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ad-v",
+              "ad1-1"
+            ],
+            [
+              "ad-op",
+              "file.put"
+            ],
+            [
+              "ad-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ad-path",
+              "actions.yml"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-agents-repo-draft/v1\",\"op\":\"file.put\",\"path\":\"actions.yml\",\"text\":\"schema: buzz-project-actions/v1\\n\",\"base\":\"2222222222222222222222222222222222222222\",\"baseCommit\":null,\"prev\":null,\"message\":null}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000003",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 95,
+          "kind": 44249,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ad-v",
+              "ad1-1"
+            ],
+            [
+              "ad-op",
+              "file.put"
+            ],
+            [
+              "ad-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ad-path",
+              "plans/a.md"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-agents-repo-draft/v1\",\"op\":\"file.put\",\"path\":\"plans/a.md\",\"text\":\"a\\n\",\"base\":null,\"baseCommit\":null,\"prev\":null,\"message\":null}"
+        }
+      ],
+      "expected": {
+        "schema": "buzz-agents-repo-draft-digest/v1",
+        "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+        "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+        "ignored": 0,
+        "otherRepo": 0,
+        "paths": [
+          {
+            "path": "actions.yml",
+            "head": {
+              "id": "0000000000000000000000000000000000000000000000000000000000000002",
+              "author": "1111111111111111111111111111111111111111111111111111111111111111",
+              "createdAt": 90,
+              "op": "file.put",
+              "path": "actions.yml",
+              "to": null,
+              "text": "schema: buzz-project-actions/v1\n",
+              "base": "2222222222222222222222222222222222222222",
+              "baseCommit": null,
+              "prev": null,
+              "message": null
+            },
+            "superseded": [],
+            "diverged": false,
+            "updatedAt": 90
+          },
+          {
+            "path": "plans/a.md",
+            "head": {
+              "id": "0000000000000000000000000000000000000000000000000000000000000003",
+              "author": "1111111111111111111111111111111111111111111111111111111111111111",
+              "createdAt": 95,
+              "op": "file.put",
+              "path": "plans/a.md",
+              "to": null,
+              "text": "a\n",
+              "base": null,
+              "baseCommit": null,
+              "prev": null,
+              "message": null
+            },
+            "superseded": [],
+            "diverged": false,
+            "updatedAt": 95
+          },
+          {
+            "path": "team.yml",
+            "head": {
+              "id": "0000000000000000000000000000000000000000000000000000000000000001",
+              "author": "2222222222222222222222222222222222222222222222222222222222222222",
+              "createdAt": 100,
+              "op": "file.put",
+              "path": "team.yml",
+              "to": null,
+              "text": "schema: beekeeper-team/v1\n",
+              "base": "1111111111111111111111111111111111111111",
+              "baseCommit": null,
+              "prev": null,
+              "message": null
+            },
+            "superseded": [],
+            "diverged": false,
+            "updatedAt": 100
+          }
+        ],
+        "commits": []
+      }
+    }
+  ]
+}

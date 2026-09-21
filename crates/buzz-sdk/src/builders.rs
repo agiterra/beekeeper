@@ -4,6 +4,7 @@
 //! The caller signs: `builder.sign_with_keys(&keys)?`.
 
 use buzz_core::{
+    agents_repo_draft::{validate_agents_repo_draft_envelope, AgentsRepoDraftOp},
     ci_result::CiResultIdentity,
     coding_session_authority_transition::{
         CodingSessionAuthorityTransitionPayload, CODING_SESSION_AUTHORITY_TRANSITION_TAG_VERSION,
@@ -39,8 +40,8 @@ use buzz_core::{
     },
     coding_session_payload::ReceiptStatus,
     kind::{
-        KIND_AGENT_OBSERVER_FRAME, KIND_APPROVAL_DENY, KIND_APPROVAL_GRANT,
-        KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_CLOSURE,
+        KIND_AGENTS_REPO_DRAFT_OP, KIND_AGENT_OBSERVER_FRAME, KIND_APPROVAL_DENY,
+        KIND_APPROVAL_GRANT, KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_CLOSURE,
         KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_GOAL,
         KIND_CODING_SESSION_LEASE, KIND_CODING_SESSION_LIFECYCLE_COMMAND,
         KIND_CODING_SESSION_LIFECYCLE_RECEIPT, KIND_CODING_SESSION_METADATA,
@@ -2623,6 +2624,65 @@ fn project_todo_probe(tags: &[Tag], content: &str) -> Result<nostr::Event, SdkEr
     ))
 }
 
+// ---- NIP-AD: agents-repository draft ops (kind 44249) ---------------------
+
+/// Build an unsigned kind:44249 agents-repository draft op.
+///
+/// Tags are emitted in the canonical order `a`, `ad-v`, `ad-op`, `ad-repo`,
+/// then one `ad-path` per path the op names, every one derived from the op
+/// itself, so a tag and the content it addresses can never disagree. Every
+/// rule is [`validate_agents_repo_draft_envelope`]'s: this builder owns no
+/// copy of the tag grammar, the path grammar or the content caps, and an
+/// invalid op is an [`SdkError::InvalidInput`] before anything is signed.
+/// What no builder can check — that `ad-repo` is the repository the
+/// project pins today, and that a `commit.record`'s commit is on `main` —
+/// the relay checks at ingest.
+pub fn build_agents_repo_draft_op(
+    coordinate: &str,
+    op: &AgentsRepoDraftOp,
+) -> Result<EventBuilder, SdkError> {
+    let content = op.to_content();
+    let tags = op
+        .tags(coordinate)
+        .iter()
+        .map(|parts| {
+            let parts: Vec<&str> = parts.iter().map(String::as_str).collect();
+            tag(&parts)
+        })
+        .collect::<Result<Vec<Tag>, SdkError>>()?;
+    validate_agents_repo_draft_envelope(&agents_repo_draft_probe(&tags, &content)?)
+        .map_err(SdkError::InvalidInput)?;
+    Ok(EventBuilder::new(Kind::Custom(KIND_AGENTS_REPO_DRAFT_OP as u16), content).tags(tags))
+}
+
+/// The unsigned probe for [`build_agents_repo_draft_op`] — same shape as
+/// [`project_todo_probe`]; no NIP-AD rule reads the id, author or signature.
+fn agents_repo_draft_probe(tags: &[Tag], content: &str) -> Result<nostr::Event, SdkError> {
+    let signature = nostr::secp256k1::schnorr::Signature::from_slice(&[0u8; 64])
+        .map_err(|error| SdkError::InvalidInput(format!("draft op probe: {error}")))?;
+    Ok(nostr::Event::new(
+        nostr::EventId::from_byte_array([0u8; 32]),
+        nostr::PublicKey::from_byte_array([0u8; 32]),
+        nostr::Timestamp::from_secs(0),
+        Kind::Custom(KIND_AGENTS_REPO_DRAFT_OP as u16),
+        tags.to_vec(),
+        content,
+        signature,
+    ))
+}
+
+/// Build an unsigned kind:5 deletion of one regular event by id — how an
+/// author withdraws their own draft op (NIP-AD) or to-do op (NIP-TD).
+pub fn build_delete_event(event_id: &str) -> Result<EventBuilder, SdkError> {
+    if event_id.len() != 64 || !event_id.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(SdkError::InvalidInput(
+            "event id must be 64 hex characters".into(),
+        ));
+    }
+    let tags = vec![tag(&["e", event_id])?];
+    Ok(EventBuilder::new(Kind::Custom(KIND_DELETION as u16), "").tags(tags))
+}
+
 // ---- Coding sessions (NIP-CSC / NIP-CSL / NIP-CSPC / NIP-CST) --------------
 //
 // Six builders covering both halves of the contract: the two operator-authored
@@ -3090,6 +3150,44 @@ fn check_identifier(value: &str, field: &str) -> Result<(), SdkError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agents_repo_draft_builder_derives_tags_and_refuses_an_invalid_op() {
+        use buzz_core::agents_repo_draft::{AgentsRepoDraftOpValue, DraftBase};
+        let coordinate = format!("30621:{}:tank-loop", "a".repeat(64));
+        let repo = format!("30617:{}:tank-loop-beekeeper-agents", "a".repeat(64));
+        let op = AgentsRepoDraftOp {
+            repo: repo.clone(),
+            message: None,
+            value: AgentsRepoDraftOpValue::FileMove {
+                path: "plans/rpg.md".into(),
+                to: "plans/archive/rpg.md".into(),
+                base: DraftBase::default(),
+            },
+        };
+        let keys = nostr::Keys::generate();
+        let event = build_agents_repo_draft_op(&coordinate, &op)
+            .expect("builds")
+            .sign_with_keys(&keys)
+            .expect("signs");
+        let tags: Vec<Vec<String>> = event.tags.iter().map(|t| t.as_slice().to_vec()).collect();
+        assert_eq!(tags[0], vec!["a".to_owned(), coordinate.clone()]);
+        assert_eq!(tags[3], vec!["ad-repo".to_owned(), repo]);
+        assert_eq!(tags.iter().filter(|t| t[0] == "ad-path").count(), 2);
+        assert!(validate_agents_repo_draft_envelope(&event).is_ok());
+
+        let bad = AgentsRepoDraftOp {
+            repo: coordinate.clone(),
+            message: None,
+            value: op.value.clone(),
+        };
+        assert!(matches!(
+            build_agents_repo_draft_op(&coordinate, &bad),
+            Err(SdkError::InvalidInput(_))
+        ));
+        assert!(build_delete_event(&"0".repeat(64)).is_ok());
+        assert!(build_delete_event("nope").is_err());
+    }
     use nostr::{EventId, Keys};
 
     fn keys() -> Keys {

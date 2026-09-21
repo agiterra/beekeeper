@@ -449,6 +449,11 @@ async fn enforce_idx_size(
 
 /// Run `git <args>` in `cwd`, fail on non-zero exit.
 async fn run_git(cwd: &Path, args: &[&str]) -> Result<(), HydrateError> {
+    run_git_stdout(cwd, args).await.map(|_| ())
+}
+
+/// [`run_git`], returning stdout. Same hardened environment.
+pub(crate) async fn run_git_stdout(cwd: &Path, args: &[&str]) -> Result<Vec<u8>, HydrateError> {
     let mut cmd = Command::new("git");
     cmd.current_dir(cwd).args(args).kill_on_drop(true);
     // Match transport.rs's harden_git_env semantics for subprocesses: clear
@@ -471,7 +476,7 @@ async fn run_git(cwd: &Path, args: &[&str]) -> Result<(), HydrateError> {
             output.status
         )));
     }
-    Ok(())
+    Ok(output.stdout)
 }
 
 // `is_safe_refname` and `is_hex_oid` live in `super::manifest` — symmetric
@@ -907,5 +912,189 @@ mod tests {
         );
         eprintln!("✓ empty-repo clone succeeded; stderr: {stderr}");
         let _ = &pkey;
+    }
+}
+
+/// How many published states back [`commit_was_main_tip`] walks. A commit
+/// that was `main`'s tip within this many pushes is treated as on `main`:
+/// `main` only advances by fast-forward or a leased force, so anything that
+/// was its tip recently is either still reachable or was deliberately
+/// rewritten away, and a `commit.record` racing one more push is honest.
+pub const MAIN_TIP_HISTORY: usize = 32;
+
+/// The answer to "is `sha` `refs/heads/main` of this repository?".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MainTipCheck {
+    /// `sha` is `main` now.
+    Current,
+    /// `sha` was `main` this many published states ago (1 = the previous
+    /// push).
+    Recent {
+        /// How many pushes back it was the tip.
+        pushes_ago: usize,
+    },
+    /// `sha` is not `main` now and was not within [`MAIN_TIP_HISTORY`]
+    /// pushes; `main_now` is the current tip, `None` if the repository has
+    /// no `main`.
+    NotFound {
+        /// The current tip of `main`, if the repository has one.
+        main_now: Option<String>,
+    },
+    /// No repository pointer exists.
+    NoRepository,
+}
+
+/// Whether `sha` is, or within [`MAIN_TIP_HISTORY`] pushes was,
+/// `refs/heads/main` of `owner/repo`. Reads manifests only; no pack is
+/// hydrated. A store or digest failure is an error, never a silent
+/// [`MainTipCheck::NotFound`].
+pub async fn commit_was_main_tip(
+    store: &GitStore,
+    ctx: &TenantContext,
+    owner: &str,
+    repo: &str,
+    sha: &str,
+) -> Result<MainTipCheck, HydrateError> {
+    let Some((_etag, _digest, head)) = load_pointer(store, ctx, owner, repo).await? else {
+        return Ok(MainTipCheck::NoRepository);
+    };
+    check_main_history(&head, sha, |digest| async move {
+        let key = format!("manifests/{digest}");
+        let bytes = get_verified_limited(store, &key, &digest, MAX_MANIFEST_BYTES).await?;
+        let manifest = Manifest::from_bytes(&bytes)?;
+        manifest.validate()?;
+        Ok(manifest)
+    })
+    .await
+}
+
+/// The walk behind [`commit_was_main_tip`], over any manifest fetcher, so
+/// the rule is testable without a store: `head` first, then each `parent`
+/// in turn, at most [`MAIN_TIP_HISTORY`] of them.
+pub async fn check_main_history<F, Fut>(
+    head: &Manifest,
+    sha: &str,
+    mut fetch: F,
+) -> Result<MainTipCheck, HydrateError>
+where
+    F: FnMut(String) -> Fut,
+    Fut: std::future::Future<Output = Result<Manifest, HydrateError>>,
+{
+    const MAIN: &str = "refs/heads/main";
+    let main_now = head.refs.get(MAIN).cloned();
+    if main_now.as_deref() == Some(sha) {
+        return Ok(MainTipCheck::Current);
+    }
+    let mut parent = head.parent.clone();
+    let mut pushes_ago = 0usize;
+    while let Some(digest) = parent {
+        pushes_ago += 1;
+        if pushes_ago > MAIN_TIP_HISTORY {
+            break;
+        }
+        let manifest = fetch(digest).await?;
+        if manifest.refs.get(MAIN).map(String::as_str) == Some(sha) {
+            return Ok(MainTipCheck::Recent { pushes_ago });
+        }
+        parent = manifest.parent;
+    }
+    Ok(MainTipCheck::NotFound { main_now })
+}
+
+#[cfg(test)]
+mod main_tip_tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    fn manifest(main: Option<&str>, parent: Option<&str>) -> Manifest {
+        let mut refs = BTreeMap::new();
+        if let Some(sha) = main {
+            refs.insert("refs/heads/main".to_owned(), sha.to_owned());
+        }
+        Manifest {
+            version: 1,
+            head: "refs/heads/main".into(),
+            refs,
+            packs: Vec::new(),
+            parent: parent.map(str::to_owned),
+        }
+    }
+
+    fn chain(n: usize) -> (Manifest, BTreeMap<String, Manifest>) {
+        // Push k (1-based) put main at sha "k"; manifest digest of push k is "m<k>".
+        let mut manifests = BTreeMap::new();
+        for k in 1..=n {
+            let parent = (k > 1).then(|| format!("m{}", k - 1));
+            manifests.insert(
+                format!("m{k}"),
+                manifest(Some(&format!("{k:0>40}")), parent.as_deref()),
+            );
+        }
+        let head = manifests.get(&format!("m{n}")).cloned().expect("head");
+        (head, manifests)
+    }
+
+    async fn check(n: usize, sha: &str) -> MainTipCheck {
+        let (head, manifests) = chain(n);
+        let manifests = &manifests;
+        check_main_history(&head, sha, |digest| async move {
+            manifests
+                .get(&digest)
+                .cloned()
+                .ok_or_else(|| HydrateError::Hydrate("missing manifest".into()))
+        })
+        .await
+        .expect("walk")
+    }
+
+    #[tokio::test]
+    async fn the_current_tip_is_current() {
+        assert_eq!(
+            check(3, &format!("{:0>40}", 3)).await,
+            MainTipCheck::Current
+        );
+    }
+
+    #[tokio::test]
+    async fn a_recent_tip_reports_how_many_pushes_ago() {
+        assert_eq!(
+            check(3, &format!("{:0>40}", 1)).await,
+            MainTipCheck::Recent { pushes_ago: 2 }
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unknown_sha_names_the_current_tip() {
+        assert_eq!(
+            check(3, &"f".repeat(40)).await,
+            MainTipCheck::NotFound {
+                main_now: Some(format!("{:0>40}", 3))
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn the_walk_is_bounded() {
+        let n = MAIN_TIP_HISTORY + 5;
+        assert_eq!(
+            check(n, &format!("{:0>40}", n - MAIN_TIP_HISTORY)).await,
+            MainTipCheck::Recent {
+                pushes_ago: MAIN_TIP_HISTORY
+            }
+        );
+        assert!(matches!(
+            check(n, &format!("{:0>40}", n - MAIN_TIP_HISTORY - 1)).await,
+            MainTipCheck::NotFound { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_missing_parent_manifest_is_an_error_not_a_not_found() {
+        let head = manifest(Some(&"1".repeat(40)), Some("gone"));
+        let result = check_main_history(&head, &"2".repeat(40), |_digest| async {
+            Err(HydrateError::Hydrate("missing manifest".into()))
+        })
+        .await;
+        assert!(result.is_err());
     }
 }
