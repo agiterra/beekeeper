@@ -186,3 +186,34 @@ accepted; the Wave 0 gate reopens until 198–200 land.
 4. **Findings from a run are triaged by the orchestrator the same day** into
    exactly three dispositions: a lane now, already in flight, or a recorded
    observation with no lane.
+
+**A4 — decisions from the Kettle Smoke run (ledger 205), 2026-09-21.**
+1. **What the measurement says costs tokens.** A seat's input per turn is its
+   actual context times the number of tool calls in the turn (every call
+   re-reads the context); the window size is free until it fills. Closing the
+   protocol on Kettle Smoke cost 11 turns and 8.2M cache-inclusive input
+   against 5 turns and 8.5M for the work. The levers, in order: fewer wakes,
+   fewer tool calls per turn (orientation), smaller contexts (a brief instead
+   of rediscovery), cheaper worker models (routing, proven live). A
+   "context size in the registry" lane is **not** built: it would move nothing.
+2. **An approving disposition that asks the assignee for nothing settles the
+   assignment without an acknowledgement** (lane 210). The provider cannot
+   sign a receipt for a seat (its key is not kept; ledger 183(f)), so the
+   honest fix is to stop requiring a receipt that carries no information. A
+   disposition that is not approving, or that carries an ask, still needs an
+   explicit answer. The settlement projection says which rule settled it.
+   Old sessions are read by the same rule and nothing already settled changes.
+   Conformance fixtures for the team-transaction settlement land with it, in
+   the 204 style, loaded by every reader.
+3. **W3b, the host-assembled work brief, carries every identifier a seat
+   needs** (lane 209): channel, session, genesis, assignment and report
+   references as ready-to-run commands, the criterion excerpts with their
+   provenance, the exact base, effective permissions and the model's source.
+   Tonight's lead typed those ids into its hire brief by hand; seats then
+   spent a quarter to a third of their tool calls on orientation.
+4. **Wave 3, revised:** 209 work brief · 210 acknowledgement contract · land
+   208 (mobile flake, named failures) · Astra's adversarial review of Wave 2
+   · the control run on a fresh project `kettle-control`. The human-action
+   count for a run is `person_actions` from `bee sessions measure` plus the
+   operator's written list of acts that sign nothing (ticks, relaunches).
+
