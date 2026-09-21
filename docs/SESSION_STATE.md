@@ -17113,6 +17113,19 @@ removed from here.
        owns “Lead” on this computer; the default checkout path contains a
        space (`…/Kettle Smoke/kettle-smoke`) and caused no failure.
 
+     **205 addendum (2026-09-20 22:14 EDT).** 204, 206 and 207 are landed on
+     both remotes and installed as `942eb00dc` (`bee 0.1.0 (942eb00d)`,
+     signature verified). hive redeployed 20 minutes after the 01:48:20Z
+     landing: NIP-11 `build_time` `2026-09-21T02:08:09Z`, `/health` `ok`.
+     Two read-only proofs on the installed binary against hive: `bee
+     workflows run-status --run 8f9552c9-4894-42b2-b10d-f818e7973198`
+     answers `checkout` `6ea2e0db10e44ed51076a55997ff33684fb3099b` with
+     `checkout_reported: true` (206 B, live through the redeployed relay's
+     `run_json`); and `bee actions example --kind manual-verify` exits 0
+     with no key in the environment, printing 47 lines of `actions.yml`
+     (206 A). Every 205(b)–(h) finding now has a landed fix; the two
+     recorded observations remain observations.
+
 206. **Three fixes from the 2026-09-20 Kettle Smoke run: the actions file now
      answers for its own shape, a run names the commit it will test before a
      host claims it, and `bee sessions measure` stops counting this computer's
