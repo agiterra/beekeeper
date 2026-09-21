@@ -42,6 +42,10 @@ import { useCodingSessionCrewLaunch } from "../useCodingSessionCrewLaunch";
 import { useNewCodingSessionCreate } from "../useNewCodingSessionCreate";
 import type { CodingSessionFoundedGoal } from "./CodingSessionFoundedWorkspace";
 import {
+  codingSessionUseRolesOffWarning,
+  resolveCodingSessionUseRoles,
+} from "./codingSessionFoundedUseRoles";
+import {
   codingSessionFoundedBusySentence,
   codingSessionFoundedReadiness,
 } from "./codingSessionFoundedReadiness";
@@ -411,8 +415,26 @@ export function useCodingSessionFoundedSetup(input: {
       }
     },
   });
-  // Roles are opt-in; off, the project-roles readiness neither gates nor shows.
-  const [useRoles, setUseRoles] = React.useState(false);
+  // Roles are opt-in, but the box opens from the project's own fact rather
+  // than from a constant: a project that HAS a role source opens ticked
+  // (ledger 207(2)). `null` until the person touches it.
+  const [useRolesChoice, setUseRolesChoice] = React.useState<boolean | null>(
+    null,
+  );
+  const packSourcePresent =
+    teamReadiness.readiness?.team.packSourcePresent ?? null;
+  const useRoles = resolveCodingSessionUseRoles({
+    choice: useRolesChoice,
+    packSourcePresent,
+  });
+  const setUseRoles = React.useCallback(
+    (next: boolean) => setUseRolesChoice(next),
+    [],
+  );
+  const useRolesOffWarning = codingSessionUseRolesOffWarning({
+    useRoles,
+    packSourcePresent,
+  });
   const readinessGate = teamReadinessLaunchGate({
     projectRef,
     loading: teamReadiness.isLoading,
@@ -627,6 +649,7 @@ export function useCodingSessionFoundedSetup(input: {
     setWorktreeSource,
     useRoles,
     setUseRoles,
+    useRolesOffWarning,
     launchRoles,
     teamReadiness,
     beginLoginWatch: create.beginLoginWatch,

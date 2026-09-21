@@ -358,6 +358,7 @@ export function CodingSessionFoundedSetupCard({
           runtimeTarget={setup.selectedTarget}
           teamReadiness={setup.teamReadiness}
           useRoles={setup.useRoles}
+          useRolesOffWarning={setup.useRolesOffWarning}
         />
       ) : null}
 

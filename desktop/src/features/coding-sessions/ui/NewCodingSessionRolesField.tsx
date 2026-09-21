@@ -15,6 +15,12 @@ import { TeamReadinessCard } from "./TeamReadinessCard";
 export function NewCodingSessionRolesField(props: {
   useRoles: boolean;
   onUseRolesChange: (next: boolean) => void;
+  /**
+   * What unticking costs, on a project that has a role source — `null` on a
+   * project that has none, where roles-off is simply the truth
+   * (ledger 207(2)).
+   */
+  useRolesOffWarning?: string | null;
   disabled: boolean;
   teamReadiness: ReturnType<typeof useProjectTeamReadiness>;
   launchRoles: readonly string[];
@@ -45,6 +51,14 @@ export function NewCodingSessionRolesField(props: {
           runs without them and no preparation is needed
         </span>
       </label>
+      {!props.useRoles && props.useRolesOffWarning ? (
+        <p
+          className="text-xs text-muted-foreground"
+          data-testid="coding-session-use-roles-off-warning"
+        >
+          {props.useRolesOffWarning}
+        </p>
+      ) : null}
       {props.useRoles ? (
         <TeamReadinessCard
           loading={teamReadiness.isLoading}
