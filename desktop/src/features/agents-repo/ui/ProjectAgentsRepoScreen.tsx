@@ -26,6 +26,7 @@ import type { DraftPath } from "../lib/agentsRepoDraftFold";
 import { useAgentsRepoMutations } from "../lib/agentsRepoMutations";
 import { newPlanPath } from "../lib/agentsRepoPaths";
 import {
+  agentsRepoDraftsQueryKey,
   agentsRepoFileQueryKey,
   agentsRepoListingQueryKey,
   useAgentsRepoDrafts,
@@ -361,6 +362,9 @@ export function ProjectAgentsRepoScreen({
             void queryClient.invalidateQueries({
               queryKey: agentsRepoListingQueryKey(coordinate),
             });
+            void queryClient.invalidateQueries({
+              queryKey: agentsRepoDraftsQueryKey(coordinate),
+            });
             if (selectedPath) {
               void queryClient.invalidateQueries({
                 queryKey: agentsRepoFileQueryKey(coordinate, selectedPath),
@@ -402,35 +406,35 @@ export function ProjectAgentsRepoScreen({
               identicalToMain={identical}
               isSelf={isSelf}
               key={subject.path}
-              onArchive={async (message) => {
+              onArchive={async (message, openedOn) => {
                 if (!subject.main?.blob)
                   throw new Error("Only a file on main can be archived.");
                 await mutations.moveDraft({
                   path: subject.path,
                   base: subject.main.blob,
                   baseCommit: subject.main.commit,
-                  openedOn: subject.draft?.head.id ?? null,
+                  openedOn,
                   message,
                 });
               }}
-              onDelete={async (message) => {
+              onDelete={async (message, openedOn) => {
                 if (!subject.main?.blob)
                   throw new Error("Only a file on main can be deleted.");
                 await mutations.deleteDraft({
                   path: subject.path,
                   base: subject.main.blob,
                   baseCommit: subject.main.commit,
-                  openedOn: subject.draft?.head.id ?? null,
+                  openedOn,
                   message,
                 });
               }}
-              onSave={async (text, message) => {
+              onSave={async (text, message, openedOn) => {
                 await mutations.saveDraft({
                   path: subject.path,
                   text,
                   base: subject.main?.blob ?? null,
                   baseCommit: subject.main?.commit ?? null,
-                  openedOn: subject.draft?.head.id ?? null,
+                  openedOn,
                   message,
                 });
               }}

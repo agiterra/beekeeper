@@ -133,6 +133,8 @@ export type ProjectPacksViewState = {
   project: ProjectContainer | null;
   packs: readonly RolePackSummary[];
   packsSource: PacksSourceSummary;
+  /** The source is an agents repository (root path, following a branch): a project-origin role has a file on `main` the Files tab can open. */
+  sourceIsAgentsRepo: boolean;
   /** True until the first packs read for this project resolves. */
   isLoading: boolean;
   /**
@@ -450,6 +452,9 @@ export function useProjectPacksView(projectId: string): ProjectPacksViewState {
     project,
     packs,
     packsSource,
+    sourceIsAgentsRepo:
+      sourceQuery.data?.path === "." &&
+      (sourceQuery.data?.ref ?? null) !== null,
     isLoading: packsPending,
     isRefreshing:
       sourceQuery.isFetching ||

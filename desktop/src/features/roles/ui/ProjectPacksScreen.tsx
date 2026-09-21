@@ -255,6 +255,21 @@ export function ProjectPacksScreen({ projectId }: { projectId: string }) {
               {view.roles.map((role) => (
                 <RoleCard
                   key={role.role}
+                  onEditDefinition={
+                    state.sourceIsAgentsRepo &&
+                    (role.origin === "project" || role.archived)
+                      ? () =>
+                          void navigate({
+                            to: "/projects/$projectId/files",
+                            params: { projectId },
+                            search: {
+                              path: role.archived
+                                ? `roles/archive/${role.role}.md`
+                                : `roles/${role.role}.md`,
+                            },
+                          })
+                      : undefined
+                  }
                   onOpenSeat={onOpenSeat}
                   reports={reportSummaries.get(role.role) ?? null}
                   role={role}

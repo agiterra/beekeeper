@@ -301,10 +301,17 @@ export function RoleCard({
   role,
   reports = null,
   onOpenSeat,
+  onEditDefinition,
 }: {
   role: RoleRow;
   reports?: RoleReportSummary | null;
   onOpenSeat?: (seat: SeatRow) => void;
+  /**
+   * Open the role's file in the Files tab. Passed only for a role served
+   * from the project's agents repository — a shipped or installed rung has
+   * no file on `main` to edit, and the button must not appear for it.
+   */
+  onEditDefinition?: () => void;
 }) {
   const slug = role.role;
   const version = roleVersionChip({
@@ -387,6 +394,17 @@ export function RoleCard({
           >
             agents repo: {role.agentsRepo}
           </span>
+        ) : null}
+        {onEditDefinition ? (
+          <button
+            className="shrink-0 rounded-md border border-border/70 px-1.5 py-0.5 text-2xs text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+            data-testid={`role-edit-definition-${slug}`}
+            onClick={onEditDefinition}
+            title={`Open ${role.archived ? "roles/archive/" : "roles/"}${slug}.md in the Files tab`}
+            type="button"
+          >
+            Edit definition
+          </button>
         ) : null}
       </header>
       {role.description ? (

@@ -123,9 +123,14 @@ export function AgentsRepoEditor({
   access: AgentsRepoAccess;
   personName: (pubkey: string) => string;
   identicalToMain: boolean;
-  onSave: (text: string, message: string | null) => Promise<void>;
-  onArchive: (message: string | null) => Promise<void>;
-  onDelete: (message: string | null) => Promise<void>;
+  /** `openedOn` is the head this editor opened on — the `prev` a save must carry; the mutation refuses when it is no longer the head. */
+  onSave: (
+    text: string,
+    message: string | null,
+    openedOn: string | null,
+  ) => Promise<void>;
+  onArchive: (message: string | null, openedOn: string | null) => Promise<void>;
+  onDelete: (message: string | null, openedOn: string | null) => Promise<void>;
   onWithdraw: (draftId: string) => Promise<void>;
   isSelf: (pubkey: string) => boolean;
   busy: boolean;
@@ -168,7 +173,7 @@ export function AgentsRepoEditor({
   const submit = async () => {
     setError(null);
     try {
-      await onSave(text, note.trim() ? note.trim() : null);
+      await onSave(text, note.trim() ? note.trim() : null, openedOn.current);
       setEditing(false);
       setNote("");
     } catch (caught) {
@@ -361,7 +366,7 @@ export function AgentsRepoEditor({
                   disabled={busy}
                   onClick={() => {
                     setError(null);
-                    void onArchive(null).catch((caught) =>
+                    void onArchive(null, openedOn.current).catch((caught) =>
                       setError(
                         caught instanceof Error
                           ? caught.message
@@ -384,7 +389,7 @@ export function AgentsRepoEditor({
                   disabled={busy}
                   onClick={() => {
                     setError(null);
-                    void onDelete(null).catch((caught) =>
+                    void onDelete(null, openedOn.current).catch((caught) =>
                       setError(
                         caught instanceof Error
                           ? caught.message

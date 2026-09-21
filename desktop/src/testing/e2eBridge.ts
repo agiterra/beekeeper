@@ -19,6 +19,7 @@ import {
   associateMockManagedAgent,
   MOCK_PROJECT_AGENT_KINDS,
 } from "./e2eBridgeProjectAgents.ts";
+import { handleMockAgentsRepoCommand } from "./e2eBridgeAgentsRepo.ts";
 import { relayClient } from "@/shared/api/relayClient";
 import {
   mockChannelHistoryPage,
@@ -56,6 +57,7 @@ import {
   KIND_EVENT_REMINDER,
   KIND_GIT_ISSUE,
   KIND_GIT_PATCH,
+  KIND_AGENTS_REPO_DRAFT_OP,
   KIND_GIT_PR_UPDATE,
   KIND_GIT_PULL_REQUEST,
   KIND_GIT_STATUS_CLOSED,
@@ -1552,6 +1554,13 @@ declare global {
       content: string;
       tags: string[][];
     }>;
+    /**
+     * Append one project-scoped event to the mock store at runtime — another
+     * author's kind:44249 draft arriving while the Files tab is open, say —
+     * the way `__BUZZ_E2E_EXTRA_PROJECT_EVENTS__` does before boot. Not
+     * fanned out live: the spec refreshes, as a reconnect would.
+     */
+    __BUZZ_E2E_SEED_MOCK_PROJECT_EVENT__?: (event: RelayEvent) => void;
     /** Structured merge error returned by the mock native merge command. */
     __BUZZ_E2E_PROJECT_MERGE_ERROR__?: {
       code: string;
@@ -5974,6 +5983,9 @@ const MOCK_PROJECT_KINDS = new Set<number>([
   // coordinate — the same shape the NIP-34 kinds below use, so they route
   // through this store rather than the channel path.
   KIND_PULSE_ENTRY,
+  // NIP-AD draft ops are project-scoped by the same `a` coordinate, so a
+  // live-published 44249 routes through this store and reads back by `#a`.
+  KIND_AGENTS_REPO_DRAFT_OP,
   KIND_REPO_ANNOUNCEMENT,
   KIND_REPO_STATE,
   KIND_GIT_PATCH,
@@ -11412,6 +11424,9 @@ export function maybeInstallE2eTauriMocks() {
     emitMockLiveEvent(channel.id, event);
     return event;
   };
+  window.__BUZZ_E2E_SEED_MOCK_PROJECT_EVENT__ = (event) => {
+    getMockProjectEventStore().push(event);
+  };
   window.__BUZZ_E2E_SET_MISSION_FOLD_RESPONSE__ = (response) => {
     mockCodingSessionTeamFoldResponse = structuredClone(response);
   };
@@ -13494,6 +13509,10 @@ export function maybeInstallE2eTauriMocks() {
         });
         return true;
       }
+      case "agents_repo_ls":
+      case "agents_repo_read":
+      case "agents_repo_commit_drafts":
+        return handleMockAgentsRepoCommand(command, payload);
       case "project_agents_init": {
         const input = (payload ?? {}) as {
           projectRef?: string;
