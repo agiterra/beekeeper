@@ -19167,7 +19167,7 @@ removed from here.
        fixtures in the same commit that creates it; `conformance/README.md`
        now says to count the readers by grepping for the decode rather than by
        trusting its own table, because that table is what was wrong twice.
-224. **Shared drafts for the agents repository: kind 44249, the relay's
+224. **Shared drafts for the agents repository: kind ~~44249~~ 44250 (renumbered on landing, see 225), the relay's
      checks, the tree validator, the `tree`/`raw` reads and `bee agents-repo`
      / `bee plans` (2026-09-21, Andy with Opus; wire half).** Andy's model,
      in his words: "Users can edit, save and preview (i.e. read the docs
@@ -19175,7 +19175,7 @@ removed from here.
      someone hits the commit button." Contract: `docs/nips/NIP-AD.md`, spec
      § 4.12, `conformance/agents-repo-draft-fold/CONTRACT.md` (15 vectors).
      With the code that proves it:
-     - **Kind.** `KIND_AGENTS_REPO_DRAFT_OP = 44249` joins
+     - **Kind.** `KIND_AGENTS_REPO_DRAFT_OP = 44250` joins
        `is_project_a_scoped_kind` and `PROJECT_A_SCOPED_KINDS`
        (`crates/buzz-core/src/kind.rs`), so admission, withholding, fan-out,
        the SQL pushdown and the HTTP shape rule are inherited. Allocation
@@ -19239,8 +19239,8 @@ removed from here.
        Runbook `crates/buzz-cli/TESTING.md` § 6.13b.
      - **Not done / disclosed.** ~~Desktop Files tab and Mobile are the next
        two phases of the plan; the conformance binder `implementation.test.mjs`
-       lands with the TypeScript fold.~~ Both built the same day, items 179
-       and 180. `prev` is client-side only. Nothing exercised against hive.
+       lands with the TypeScript fold.~~ Both built the same day, items 225
+       and 226. `prev` is client-side only. Nothing exercised against hive.
 
 225. **The desktop Files tab: the agents repository read from `main`, edited
      as shared drafts, committed from the app (2026-09-21, Andy with Opus).**
@@ -19282,10 +19282,31 @@ removed from here.
        hands the head it opened on to save/archive/delete (`3d8f8d8d4`).
        Also: a stale preview server on :4173 served the previous bundle for
        one run — the documented gotcha, not a product bug.
-     - **Not done / disclosed.** The tab has not been driven in the
+     - ~~**Not done / disclosed.** The tab has not been driven in the
        installed app against a relay; host and renderer are proved
-       separately. No live in-app commit yet. `pnpm build:e2e` must be
-       preceded by killing :4173 or it tests the previous bundle.
+       separately. No live in-app commit yet.~~ Driven by Andy the same
+       day in the dev app against a local relay: roles viewed and drafted,
+       a plan created, saved and committed. Two things it found: (1) the
+       first save was refused `invalid: channel-scoped events must include
+       an h tag` — the dev app was on **hive**, not the local relay (its
+       community list is per Vite-port origin; `lsof -p` showed one
+       connection, to hive:443), so the deployed relay refused a kind it
+       had never seen; the app was switched to `ws://localhost:3000` and
+       the save landed. (2) **New plan did nothing**: it called
+       `window.prompt`, which Tauri's WKWebView does not implement (it
+       returns `null` with no UI); the spec never pressed the button, and
+       Chromium does implement `prompt`. Fixed by a dialog
+       (`AgentsRepoNewPlanDialog.tsx`) that shows the `plans/<slug>.md` it
+       will use; a path neither on `main` nor drafted now opens straight
+       into editing instead of an empty Preview tab; the spec drives the
+       button. `pnpm build:e2e` must be preceded by killing :4173 or it
+       tests the previous bundle.
+     - **Renumbered on landing.** `main` allocated 44249 to the project
+       work record (NIP-PW) while this was on its branch, so the op landed
+       as **44250** — kind constant, TS/Dart pins, fold vectors
+       (regenerated), NIP-AD, the spec and 224 all say 44250; the commits
+       on the branch before the landing one still say 44249 in their
+       messages. Nothing had been published as 44249 outside a local relay.
 
 226. **The mobile Files page: the agents repository read from `main` and
      drafted through the relay; no commit on the phone (2026-09-21, Andy
@@ -19306,7 +19327,7 @@ removed from here.
        "Drafts become real when someone commits them from a desktop." The
        project tree gains a Files row (`projectAgentsRepoOpenerProvider`,
        wired in `app.dart`). `normalizeProjectCoordinate` moved to
-       `shared/relay/project_coordinate.dart`. Kinds 30618/30624/44249 in
+       `shared/relay/project_coordinate.dart`. Kinds 30618/30624/44250 in
        `nostr_models.dart`. 22 tests; the suite (2,123) green.
      - **Not done / disclosed.** Not run on a simulator; reader and widgets
        are proved separately.

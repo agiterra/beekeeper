@@ -10,7 +10,7 @@ Agents-Repository Drafts
 
 ## Abstract
 
-This NIP defines `kind:44249`, an **agents-repository draft op**: one signed proposal to change one file of a project's agents repository (`<slug>-beekeeper-agents`, spec § 4.11 — the only place a project's roles, plans, team manifest, actions and skills live), or one committer's record that named proposals landed in a commit on that repository's `main`. A draft is not a commit. Every member of the project can read, preview and build on the open drafts; nothing a draft says reaches a seat until someone commits it, and `main` of the agents repository stays the only thing a seat stages from.
+This NIP defines `kind:44250`, an **agents-repository draft op**: one signed proposal to change one file of a project's agents repository (`<slug>-beekeeper-agents`, spec § 4.11 — the only place a project's roles, plans, team manifest, actions and skills live), or one committer's record that named proposals landed in a commit on that repository's `main`. A draft is not a commit. Every member of the project can read, preview and build on the open drafts; nothing a draft says reaches a seat until someone commits it, and `main` of the agents repository stays the only thing a seat stages from.
 
 ## Motivation
 
@@ -20,7 +20,7 @@ Why whole-file drafts rather than a CRDT: a role or a plan is prose that people 
 
 ## Event
 
-`kind:44249` — regular, stored, append-only. Never replaceable.
+`kind:44250` — regular, stored, append-only. Never replaceable.
 
 Tags, position-independent, closed key set:
 
@@ -57,7 +57,7 @@ The single validator is `crates/buzz-core/src/agents_repo_draft.rs`; the relay, 
 
 ## Relay behaviour
 
-Admission, withholding, live fan-out, the SQL pushdown and the HTTP request-shape rule are the Pulse and to-do rules, inherited through `buzz_core::kind::is_project_a_scoped_kind` (44240, 44248, 44249): a private project's owner or collaborator may write, a viewer may not (`OK false "restricted: …"`, **403** over `POST /events`, CLI exit 3); a stored op is withheld from a reader whose hidden-private-project set contains its coordinate; `{"kinds":[44249],"#a":[c]}` is accepted, an unscoped or mixed filter is `400`.
+Admission, withholding, live fan-out, the SQL pushdown and the HTTP request-shape rule are the Pulse and to-do rules, inherited through `buzz_core::kind::is_project_a_scoped_kind` (44240, 44248, 44250): a private project's owner or collaborator may write, a viewer may not (`OK false "restricted: …"`, **403** over `POST /events`, CLI exit 3); a stored op is withheld from a reader whose hidden-private-project set contains its coordinate; `{"kinds":[44250],"#a":[c]}` is accepted, an unscoped or mixed filter is `400`.
 
 Two checks are this kind's own, made at ingest and answered as a rejection (**400**, CLI exit 2) because they are facts about the event against the world, not about the author's authority:
 

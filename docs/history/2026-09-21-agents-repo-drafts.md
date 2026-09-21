@@ -1,17 +1,17 @@
 # 2026-09-21 — Shared drafts for the agents repository: build and live runs
 
 Andy with Opus. Plan: `~/.claude/plans/i-d-like-to-plan-cozy-lamport.md`
-(Andy's machine). Ledger 178–180; spec § 4.12; `docs/nips/NIP-AD.md`.
+(Andy's machine). Ledger 224–226; spec § 4.12; `docs/nips/NIP-AD.md`.
 
 ## What was built, in order
 
-1. `buzz-core`: kind 44249, validator, fold; `conformance/agents-repo-draft-fold/`
+1. `buzz-core`: kind 44250, validator, fold; `conformance/agents-repo-draft-fold/`
    (15 vectors). `8c4584141`.
 2. `buzz-relay`: the `ad-repo` and `commit.record` checks at ingest; the
    `tree`/`raw` read routes. Same commit.
 3. `buzz-persona::agents_repo::validate_root`; `buzz-sdk` builders;
    `bee agents-repo` / `bee plans`; the seat briefing sentence; NIP-AD, spec
-   § 4.12, the runbook § 6.13b, ledger 178. `248d12318`.
+   § 4.12, the runbook § 6.13b, ledger 224. `248d12318`.
 4. Desktop host commands (`agents_repo_ls`, `agents_repo_read`,
    `agents_repo_commit_drafts`). `174fd22b8`.
 5. Desktop Files tab, TypeScript fold and binder. `d438a2b67`; e2e, Roles
@@ -74,9 +74,14 @@ credential helper binds it, and the relay's git extractor accepted it.
 
 ## Not proved, disclosed
 
-- The desktop Files tab has not been driven in the installed app against a
-  relay; its host commands and its renderer are proved separately. The
-  first in-app run is owed.
+- ~~The desktop Files tab has not been driven in the installed app against
+  a relay.~~ Andy drove it in the dev app on the local relay the same
+  afternoon: roles drafted, a plan created, saved and committed. It found
+  the dev app silently on hive (one `lsof` connection, to hive:443; the
+  deployed relay refused the unknown kind) and a dead **New plan** button
+  (`window.prompt` is a no-op in Tauri's webview) — fixed with a dialog and
+  a spec that presses it. On landing the kind was renumbered to **44250**:
+  `main` had taken 44249 for the project work record (NIP-PW).
 - The mobile page has not been run on a simulator; its reader and its
   widgets are proved separately. The first simulator run is owed.
 - Nothing has run against hive.

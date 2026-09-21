@@ -716,7 +716,7 @@ Files tab (edit and commit), `bee agents-repo` and `bee plans` (list, show,
 draft, commit), Mobile (read and draft; no commit — no git on the phone).
 Migration of pre-pivot material is out of scope.
 
-- **A draft is a relay event, kind 44249** ([`nips/NIP-AD.md`](nips/NIP-AD.md)),
+- **A draft is a relay event, kind 44250** ([`nips/NIP-AD.md`](nips/NIP-AD.md)),
   project-`a`-scoped like Pulse and to-dos, append-only, folded client-side
   under one contract (`conformance/agents-repo-draft-fold/`). A `file.put`
   carries the whole new text of one file with `base` (the blob it was made

@@ -1977,7 +1977,7 @@ async fn count_events_authed(
 
 /// Request-shape validation for a filter targeting project-`a`-scoped kinds
 /// — NIP-MP Pulse entries (kind:44240), NIP-TD to-do ops (kind:44248) and
-/// NIP-AD draft ops (kind:44249),
+/// NIP-AD draft ops (kind:44250),
 /// [`buzz_core::kind::is_project_a_scoped_kind`] — yielding the single
 /// canonical project coordinate it names.
 ///
@@ -1997,7 +1997,7 @@ async fn count_events_authed(
 ///   `{"kinds":[44240,44223],"#a":[…]}` satisfies the `#a` rule and still
 ///   returns only entries, with an empty session list and no error. Query
 ///   the session kinds in their own `#h`-scoped filter. Mixing 44240 with
-///   44248 or 44249 is fine: they share one gate and one coordinate.
+///   44248 or 44250 is fine: they share one gate and one coordinate.
 ///
 /// A filter with no `kinds` at all is not treated as a project query: the
 /// p-gate already refuses a kindless read unless it is pinned to `#p=[self]`,
@@ -2012,7 +2012,7 @@ fn pulse_query_coordinate(filter: &nostr::Filter) -> Result<Option<String>, Stri
     }
     if !kinds.iter().all(scoped) {
         return Err(
-            "project-scoped kinds (44240, 44248, 44249) must be queried in their own filter, not mixed with other kinds".to_string(),
+            "project-scoped kinds (44240, 44248, 44250) must be queried in their own filter, not mixed with other kinds".to_string(),
         );
     }
     let a_tag = nostr::SingleLetterTag::lowercase(nostr::Alphabet::A);

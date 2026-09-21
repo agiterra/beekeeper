@@ -7696,7 +7696,7 @@ mod tests {
         ));
     }
 
-    // ── NIP-AD agents-repository draft ops (44249) ─────────────────────
+    // ── NIP-AD agents-repository draft ops (44250) ─────────────────────
 
     #[test]
     fn agents_repo_draft_op_requires_messages_write_scope() {

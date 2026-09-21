@@ -3,7 +3,7 @@
  *
  * - **`main`**, through the host (`agents_repo_ls`, `agents_repo_read`):
  *   the packs cache's fetched tip, never its working copy;
- * - **the draft log** (kind 44249 by `#a`): one cold read of the whole log,
+ * - **the draft log** (kind 44250 by `#a`): one cold read of the whole log,
  *   kept fresh by a live subscription and a jittered poll, folded with the
  *   same fold `bee agents-repo` and Mobile bind to.
  *

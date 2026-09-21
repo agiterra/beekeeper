@@ -1,5 +1,5 @@
 /**
- * Writing draft ops: one signed kind 44249 event per save, stamped past
+ * Writing draft ops: one signed kind 44250 event per save, stamped past
  * the latest op on the same path, appended to the cached read at once and
  * reconciled by the invalidation that follows.
  *

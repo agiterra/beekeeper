@@ -47,7 +47,7 @@ const COORD = `30621:${"a".repeat(64)}:tank-loop`;
 
 test("the local kind pin matches the shared constant", () => {
   assert.equal(AGENTS_REPO_DRAFT_OP_KIND, KIND_AGENTS_REPO_DRAFT_OP);
-  assert.equal(AGENTS_REPO_DRAFT_OP_KIND, 44249);
+  assert.equal(AGENTS_REPO_DRAFT_OP_KIND, 44250);
 });
 
 test("every fold vector folds byte-identically", () => {

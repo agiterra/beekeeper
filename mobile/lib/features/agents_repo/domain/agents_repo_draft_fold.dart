@@ -6,7 +6,7 @@ import '../../../shared/relay/nostr_models.dart';
 import '../../../shared/relay/project_coordinate.dart';
 import 'agents_repo_draft_op.dart';
 
-/// The agents-repository draft fold: from a bag of kind 44249 ops to the
+/// The agents-repository draft fold: from a bag of kind 44250 ops to the
 /// open draft per path a reader sees.
 ///
 /// A port of `crates/buzz-core/src/agents_repo_draft_fold.rs`, bound to

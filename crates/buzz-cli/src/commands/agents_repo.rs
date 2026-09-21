@@ -1,5 +1,5 @@
 //! `bee agents-repo` — read a project's agents repository, propose changes
-//! to it as shared drafts (NIP-AD, kind 44249), and commit them to `main`.
+//! to it as shared drafts (NIP-AD, kind 44250), and commit them to `main`.
 //!
 //! Reads come from two places and say which: the repository's `main` tip,
 //! through the relay's `tree` and `raw` routes (no clone), and the draft

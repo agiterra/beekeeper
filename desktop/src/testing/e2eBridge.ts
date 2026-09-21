@@ -1556,7 +1556,7 @@ declare global {
     }>;
     /**
      * Append one project-scoped event to the mock store at runtime — another
-     * author's kind:44249 draft arriving while the Files tab is open, say —
+     * author's kind:44250 draft arriving while the Files tab is open, say —
      * the way `__BUZZ_E2E_EXTRA_PROJECT_EVENTS__` does before boot. Not
      * fanned out live: the spec refreshes, as a reconnect would.
      */
@@ -5984,7 +5984,7 @@ const MOCK_PROJECT_KINDS = new Set<number>([
   // through this store rather than the channel path.
   KIND_PULSE_ENTRY,
   // NIP-AD draft ops are project-scoped by the same `a` coordinate, so a
-  // live-published 44249 routes through this store and reads back by `#a`.
+  // live-published 44250 routes through this store and reads back by `#a`.
   KIND_AGENTS_REPO_DRAFT_OP,
   KIND_REPO_ANNOUNCEMENT,
   KIND_REPO_STATE,

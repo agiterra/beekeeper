@@ -1346,7 +1346,7 @@ pub fn shell_observe_project_ref(event: &nostr::Event) -> Option<String> {
 /// Kinds scoped to a NIP-MP project by a required, canonical, singleton `a`
 /// tag and gated by project membership alone — no channel, no per-event
 /// roster. Today: the Pulse entry (44240), the to-do op (44248) and the
-/// agents-repository draft op (44249). Every
+/// agents-repository draft op (44250). Every
 /// relay chokepoint that gates on a project's hidden set keys on this
 /// predicate, so a new member of the set inherits ingest admission, the
 /// stored-read gate, live fan-out filtering, the SQL pushdown and the HTTP
@@ -1426,7 +1426,7 @@ pub fn shell_session_hidden_from(
 }
 
 /// Returns `true` if a stored project-`a`-scoped event (kind:44240 Pulse
-/// entry, kind:44248 to-do op or kind:44249 agents-repository draft op,
+/// entry, kind:44248 to-do op or kind:44250 agents-repository draft op,
 /// [`is_project_a_scoped_kind`]) must be
 /// withheld from this reader: its project coordinate is in the reader's
 /// hidden-private-project set (resolved per reader by

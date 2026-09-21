@@ -14,7 +14,7 @@ const ProjectAgentsRepoScreen = React.lazy(async () => {
 /**
  * The project's Files tab: its agents repository — plans, roles, skills,
  * team and actions — read from `main`, edited as shared drafts (NIP-AD,
- * kind 44249) and committed from here.
+ * kind 44250) and committed from here.
  */
 export const Route = createFileRoute("/projects/$projectId/files")({
   component: ProjectFilesRouteComponent,

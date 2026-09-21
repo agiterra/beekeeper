@@ -18,17 +18,17 @@ contract.
 For one canonical kind-30621 project coordinate `30621:<owner-hex>:<dtag>`
 and one canonical kind-30617 repository coordinate `30617:<owner-hex>:<id>`
 — the agents repository the project's kind:30624 pins — the fold takes every
-kind 44249 op selected by `#a`, nothing else. Each input event is read as:
+kind 44250 op selected by `#a`, nothing else. Each input event is read as:
 
 ```json
-{ "id": "<64 hex>", "pubkey": "<64 hex>", "created_at": 0, "kind": 44249,
+{ "id": "<64 hex>", "pubkey": "<64 hex>", "created_at": 0, "kind": 44250,
   "tags": [["a", "<project>"], ["ad-repo", "<repository>"], ...],
   "content": "<op JSON>" }
 ```
 
 Signatures are not the fold's concern (the relay verified them at ingest).
 
-## The op vocabulary (kind 44249 content, `buzz-agents-repo-draft/v1`)
+## The op vocabulary (kind 44250 content, `buzz-agents-repo-draft/v1`)
 
 The key set is exact per op: every listed key must be present (nullables as
 `null`, never absent) and no other may be.
@@ -58,7 +58,7 @@ not folded.
 
 ## Rules, in order
 
-1. **Decode.** An event whose kind is not 44249, whose tags do not carry
+1. **Decode.** An event whose kind is not 44250, whose tags do not carry
    exactly one `a` naming this project (compared after normalizing hex
    case — ingest never stores a variant, and a reader that sees one anyway
    must not drop it), whose tags do not carry exactly one canonical

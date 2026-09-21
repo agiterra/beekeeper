@@ -1,4 +1,4 @@
-//! Agents-repository draft operations (kind 44249): one proposed change to
+//! Agents-repository draft operations (kind 44250): one proposed change to
 //! one file of a project's agents repository, published so the whole
 //! project can read it before anyone commits it.
 //!
@@ -37,7 +37,7 @@ use crate::kind::{
 };
 use crate::project_pack_source::normalize_repository_coordinate;
 
-/// Exact `schema` value carried by kind 44249 content.
+/// Exact `schema` value carried by kind 44250 content.
 pub const AGENTS_REPO_DRAFT_SCHEMA: &str = "buzz-agents-repo-draft/v1";
 
 /// Exact version carried by the `ad-v` tag.
@@ -680,7 +680,7 @@ pub fn validate_agents_repo_draft_envelope(
     event: &nostr::Event,
 ) -> Result<AgentsRepoDraftOp, String> {
     if event_kind_u32(event) != KIND_AGENTS_REPO_DRAFT_OP {
-        return Err("event is not an agents repo draft op (kind 44249)".to_owned());
+        return Err("event is not an agents repo draft op (kind 44250)".to_owned());
     }
 
     let mut coordinate: Option<&str> = None;
@@ -715,7 +715,7 @@ pub fn validate_agents_repo_draft_envelope(
     let coordinate = coordinate.ok_or_else(|| "draft op requires one a tag".to_owned())?;
     if normalize_project_coordinate(coordinate).as_deref() != Some(coordinate) {
         return Err(
-            "44249 `a` tag must be a canonical 30621:<lowercase-hex>:<dtag> coordinate".to_owned(),
+            "44250 `a` tag must be a canonical 30621:<lowercase-hex>:<dtag> coordinate".to_owned(),
         );
     }
     match version {

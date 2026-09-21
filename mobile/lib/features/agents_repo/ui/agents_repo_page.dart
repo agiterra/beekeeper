@@ -33,7 +33,7 @@ const agentsRepoMobileCommitNote =
 /// A project's agents repository (spec § 4.12): `main`'s files grouped
 /// with plans first, each with its open draft chip; a file read as `main`
 /// has it or as its draft has it; and an edit sheet that publishes a
-/// draft (NIP-AD, kind 44249). There is no Commit here — mobile has no git
+/// draft (NIP-AD, kind 44250). There is no Commit here — mobile has no git
 /// — and the page says so rather than showing a control that cannot act.
 class AgentsRepoPage extends HookConsumerWidget {
   /// The canonical `30621:<owner>:<dtag>` coordinate.

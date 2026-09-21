@@ -25,7 +25,7 @@ class AgentsRepoClockError implements Exception {
   String toString() => message;
 }
 
-/// Publishes kind 44249 ops for one project. There is no commit here:
+/// Publishes kind 44250 ops for one project. There is no commit here:
 /// mobile has no git, and a draft becomes real only when someone commits
 /// it from a desktop or with `bee`. Every method signs and sends one op
 /// and waits for the relay's OK; a refusal arrives as an [Exception]

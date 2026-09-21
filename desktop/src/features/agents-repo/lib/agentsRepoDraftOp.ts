@@ -1,5 +1,5 @@
 /**
- * The kind 44249 agents-repository draft op — TypeScript twin of
+ * The kind 44250 agents-repository draft op — TypeScript twin of
  * `crates/buzz-core/src/agents_repo_draft.rs` and `docs/nips/NIP-AD.md`.
  *
  * A draft is one proposed change to one file of the project's agents
@@ -14,8 +14,8 @@
  * `KIND_AGENTS_REPO_DRAFT_OP` in `agentsRepoDraftOp.test.mjs`.
  */
 
-/** Kind 44249. Pinned against `@/shared/constants/kinds` in tests. */
-export const AGENTS_REPO_DRAFT_OP_KIND = 44249;
+/** Kind 44250. Pinned against `@/shared/constants/kinds` in tests. */
+export const AGENTS_REPO_DRAFT_OP_KIND = 44250;
 export const AGENTS_REPO_DRAFT_SCHEMA = "buzz-agents-repo-draft/v1";
 export const AGENTS_REPO_DRAFT_TAG_VERSION = "ad1-1";
 /** The relay's advertised `max_content_len`. */

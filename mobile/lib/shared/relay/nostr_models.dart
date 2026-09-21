@@ -71,10 +71,10 @@ abstract final class EventKind {
   // Keep in sync with `crates/buzz-core/src/kind.rs` and
   // `desktop/src/shared/constants/kinds.ts`. See `docs/nips/NIP-AD.md`.
 
-  /// Kind:44249 agents-repository draft op: one proposed change to one file
+  /// Kind:44250 agents-repository draft op: one proposed change to one file
   /// of the project's agents repository, or the committer's record that
   /// named drafts landed on `main`. Same project-scoped gate as 44248.
-  static const agentsRepoDraftOp = 44249;
+  static const agentsRepoDraftOp = 44250;
 
   /// Kind:30624 project pack source (NIP-PK): the repository the project's
   /// roles, plans and manifests are staged from; `d` = the project

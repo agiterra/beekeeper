@@ -1,4 +1,4 @@
-//! NIP-AD: the two relay-side checks a kind:44249 draft op gets beyond the
+//! NIP-AD: the two relay-side checks a kind:44250 draft op gets beyond the
 //! project-scoped write admission it shares with Pulse and to-dos.
 //!
 //! 1. **The draft names the project's agents repository.** `ad-repo` must be

@@ -1,4 +1,4 @@
-/// NIP-AD: the kind:44249 draft op's repository and commit checks.
+/// NIP-AD: the kind:44250 draft op's repository and commit checks.
 pub mod agents_repo_draft;
 /// NIP-42 authentication handler.
 pub mod auth;

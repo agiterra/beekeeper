@@ -430,7 +430,7 @@ abstract final class NostrFilters {
     limit: 1,
   );
 
-  /// One page of a project's draft ops (kind:44249), newest first.
+  /// One page of a project's draft ops (kind:44250), newest first.
   static NostrFilter agentsRepoDraftOps(
     String projectAddress, {
     int limit = 500,

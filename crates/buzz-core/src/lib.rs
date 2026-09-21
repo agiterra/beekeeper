@@ -8,7 +8,7 @@
 /// NIP-AM: Agent Turn Metric — payload type and encrypt/decrypt helpers.
 pub mod agent_turn_metric;
 /// Project Pulse entries (44240): the explicit coordination claim contract.
-/// Agents-repository draft ops (44249): the wire contract of one proposed
+/// Agents-repository draft ops (44250): the wire contract of one proposed
 /// file change to a project's agents repository.
 pub mod agents_repo_draft;
 /// Pure agents-repository draft fold shared by every adapter, pinned by

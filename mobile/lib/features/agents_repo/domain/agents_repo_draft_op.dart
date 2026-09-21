@@ -4,7 +4,7 @@ import 'package:flutter/foundation.dart';
 
 import '../../../shared/relay/nostr_models.dart';
 
-/// The kind 44249 agents-repository draft op — Dart twin of
+/// The kind 44250 agents-repository draft op — Dart twin of
 /// `crates/buzz-core/src/agents_repo_draft.rs` and `docs/nips/NIP-AD.md`.
 ///
 /// A draft is one proposed change to one file of the project's agents

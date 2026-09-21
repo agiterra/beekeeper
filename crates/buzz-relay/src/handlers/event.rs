@@ -335,7 +335,7 @@ pub async fn filter_fanout_by_access(
     };
 
     // Project-`a`-scoped gate (fan-out): a Pulse entry (44240), a to-do op
-    // (44248) or a draft op (44249) is a global, channel-less event, so the channel filtering below
+    // (44248) or a draft op (44250) is a global, channel-less event, so the channel filtering below
     // never sees it and every matching subscriber would otherwise receive a
     // private project's coordination view live. Deliver past the author only
     // to connections the project's gate admits, matching REQ semantics
@@ -362,7 +362,7 @@ pub async fn filter_fanout_by_access(
         if buzz_core::kind::is_personal_todo_op(&stored_event.event) {
             return author_only(matches);
         }
-        // Ingest rejects a 44240/44248/44249 without exactly one canonical `a`, so
+        // Ingest rejects a 44240/44248/44250 without exactly one canonical `a`, so
         // a missing coordinate here is a stored event no gate can describe.
         match buzz_core::kind::project_a_scoped_coordinate(&stored_event.event) {
             None => author_only(matches),

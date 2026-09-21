@@ -1273,7 +1273,7 @@ Verified live 2026-09-17 against a local relay on :3010 with two keys
 all of it. The e2e file `crates/buzz-test-client/tests/e2e_project_todos.rs`
 covers the relay surfaces.
 
-### 6.13b The agents repository and its drafts (`bee agents-repo`, `bee plans`, kind 44249)
+### 6.13b The agents repository and its drafts (`bee agents-repo`, `bee plans`, kind 44250)
 
 A project's roles, plans, team manifest, actions and skills live in
 `<slug>-beekeeper-agents` (spec § 4.11). Edits travel through the relay as

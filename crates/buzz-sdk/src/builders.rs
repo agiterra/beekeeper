@@ -2624,9 +2624,9 @@ fn project_todo_probe(tags: &[Tag], content: &str) -> Result<nostr::Event, SdkEr
     ))
 }
 
-// ---- NIP-AD: agents-repository draft ops (kind 44249) ---------------------
+// ---- NIP-AD: agents-repository draft ops (kind 44250) ---------------------
 
-/// Build an unsigned kind:44249 agents-repository draft op.
+/// Build an unsigned kind:44250 agents-repository draft op.
 ///
 /// Tags are emitted in the canonical order `a`, `ad-v`, `ad-op`, `ad-repo`,
 /// then one `ad-path` per path the op names, every one derived from the op

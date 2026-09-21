@@ -1,4 +1,4 @@
-//! End-to-end tests for NIP-AD agents-repository draft ops (kind:44249).
+//! End-to-end tests for NIP-AD agents-repository draft ops (kind:44250).
 //!
 //! The buzz-core unit tests pin the envelope and the fold, and the ingest
 //! tests pin scope and shape. These prove what only a live relay can:
@@ -36,7 +36,7 @@ use serde_json::{json, Value};
 const PROJECT_KIND: u16 = 30621;
 const REPO_KIND: u16 = 30617;
 const PACK_SOURCE_KIND: u16 = 30624;
-const DRAFT_OP_KIND: u16 = 44249;
+const DRAFT_OP_KIND: u16 = 44250;
 
 fn relay_url() -> String {
     std::env::var("RELAY_URL").unwrap_or_else(|_| "ws://localhost:3000".to_string())

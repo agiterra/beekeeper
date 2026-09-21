@@ -11,7 +11,7 @@ import { installMockBridge } from "../helpers/bridge";
 
 /**
  * The Files tab (spec § 4.12): the agents repository read from `main`,
- * edited as shared drafts (NIP-AD, kind 44249), committed from the app.
+ * edited as shared drafts (NIP-AD, kind 44250), committed from the app.
  *
  * The host commands are answered by `e2eBridgeAgentsRepo.ts` from a seed;
  * the drafts are real signed events published through the mock relay's
@@ -186,7 +186,7 @@ test("a plan is read from main, drafted, previewed, badged, and refused when a n
   );
   await expect(page.getByTestId("agents-repo-disclosures")).toHaveCount(0);
 
-  // Edit and save: a kind 44249 with base = main's blob and prev = null.
+  // Edit and save: a kind 44250 with base = main's blob and prev = null.
   await page.getByTestId("agents-repo-editor-tab-edit").click();
   await page.getByTestId("agents-repo-edit").click();
   await page
@@ -285,7 +285,7 @@ test("a plan is read from main, drafted, previewed, badged, and refused when a n
     () =>
       (
         window as unknown as { __BUZZ_E2E_SIGNED_EVENTS__: { kind: number }[] }
-      ).__BUZZ_E2E_SIGNED_EVENTS__.filter((e) => e.kind === 44249).length,
+      ).__BUZZ_E2E_SIGNED_EVENTS__.filter((e) => e.kind === 44250).length,
   );
   expect(signedAfter).toBe(1);
 });
@@ -325,7 +325,7 @@ test("New plan asks for a name in a dialog and opens the editor on a path that i
         __BUZZ_E2E_SIGNED_EVENTS__: { kind: number; content: string }[];
       }
     ).__BUZZ_E2E_SIGNED_EVENTS__;
-    const found = events.find((e) => e.kind === 44249);
+    const found = events.find((e) => e.kind === 44250);
     return found ? JSON.parse(found.content) : null;
   });
   expect(draft).toMatchObject({
@@ -415,7 +415,7 @@ test("the commit dialog prints a stale-base refusal verbatim, then a landing, an
         __BUZZ_E2E_SIGNED_EVENTS__: { kind: number; content: string }[];
       }
     ).__BUZZ_E2E_SIGNED_EVENTS__
-      .filter((e) => e.kind === 44249)
+      .filter((e) => e.kind === 44250)
       .map((e) => JSON.parse(e.content) as Record<string, unknown>)
       .find((c) => c.op === "commit.record"),
   );

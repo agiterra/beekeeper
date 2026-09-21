@@ -1,4 +1,4 @@
-//! The agents-repository draft fold: from a bag of kind 44249 ops to the
+//! The agents-repository draft fold: from a bag of kind 44250 ops to the
 //! open draft per path a reader sees.
 //!
 //! The fold is pure and total: any set of events in, one digest out, the
@@ -10,7 +10,7 @@
 //!
 //! Rules, in the order the fold applies them:
 //!
-//! 1. **Decode.** An event that is not a 44249, whose single `a` tag is not
+//! 1. **Decode.** An event that is not a 44250, whose single `a` tag is not
 //!    this project, whose single `ad-repo` tag is not a canonical repository
 //!    coordinate, or whose content fails [`crate::agents_repo_draft`] is
 //!    counted in `ignored` and dropped. A well-formed op whose `ad-repo` is
@@ -60,7 +60,7 @@ pub struct DraftFoldEvent {
     pub pubkey: String,
     /// Seconds since the epoch.
     pub created_at: u64,
-    /// Event kind; anything but 44249 is ignored.
+    /// Event kind; anything but 44250 is ignored.
     pub kind: u32,
     /// Tags; the single `a` and single `ad-repo` tags are read.
     pub tags: Vec<Vec<String>>,

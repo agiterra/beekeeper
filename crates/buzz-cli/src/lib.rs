@@ -369,7 +369,7 @@ enum Cmd {
     #[command(subcommand)]
     Todos(TodosCmd),
     /// Read a project's agents repository, draft changes to it, and commit them
-    /// (NIP-AD, kind 44249)
+    /// (NIP-AD, kind 44250)
     #[command(subcommand, name = "agents-repo")]
     AgentsRepo(AgentsRepoCmd),
     /// A project's plans: `plans/<name>.md` in its agents repository
@@ -4787,7 +4787,7 @@ impl PulseKindArg {
 /// `bee agents-repo` — a project's agents repository (`<slug>-beekeeper-agents`,
 /// the only place its roles, plans, team manifest, actions and skills live).
 /// Reads name their source: `main`'s tip through the relay, or the open draft
-/// log (NIP-AD, kind 44249). A draft is not a commit: `draft put` publishes
+/// log (NIP-AD, kind 44250). A draft is not a commit: `draft put` publishes
 /// the whole new text of one file for everyone in the project to read and
 /// build on; `commit` lands the open heads on `main` and marks them
 /// committed. Every verb takes `--project` (`BUZZ_PULSE_PROJECT` supplies it
