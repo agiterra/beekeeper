@@ -11,6 +11,10 @@ export const agentsRepoCopy = {
   asFetchedAt: (when: string) => `main as fetched at ${when}`,
   notOnMain: "not on main",
   newPlan: "New plan",
+  newPlanHelp:
+    "Lower-case letters, digits and dashes; the file lands at plans/<name>.md once you save a draft.",
+  create: "Create",
+  cancel: "Cancel",
   edit: "Edit",
   save: "Save draft",
   discard: "Discard",

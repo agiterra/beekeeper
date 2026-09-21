@@ -135,8 +135,17 @@ export function AgentsRepoEditor({
   isSelf: (pubkey: string) => boolean;
   busy: boolean;
 }) {
-  const [tab, setTab] = React.useState<EditorTab>("preview");
-  const [editing, setEditing] = React.useState(false);
+  // A path that is neither on main nor drafted (a plan just named in the
+  // New plan dialog) has nothing to preview: it opens straight into editing.
+  const startsBlank =
+    subject.draft === null &&
+    (subject.main === null || subject.main.state === "not-on-main") &&
+    access.kind === "writable" &&
+    isDraftablePath(subject.path);
+  const [tab, setTab] = React.useState<EditorTab>(
+    startsBlank ? "edit" : "preview",
+  );
+  const [editing, setEditing] = React.useState(startsBlank);
   const [text, setText] = React.useState(() => editorInitialText(subject));
   const [note, setNote] = React.useState("");
   const [error, setError] = React.useState<string | null>(null);

@@ -24,7 +24,6 @@ import { gitBlobSha } from "../lib/agentsRepoBlobSha";
 import { agentsRepoCopy as copy } from "../lib/agentsRepoCopy";
 import type { DraftPath } from "../lib/agentsRepoDraftFold";
 import { useAgentsRepoMutations } from "../lib/agentsRepoMutations";
-import { newPlanPath } from "../lib/agentsRepoPaths";
 import {
   agentsRepoDraftsQueryKey,
   agentsRepoFileQueryKey,
@@ -36,6 +35,7 @@ import {
   useAgentsRepoSource,
 } from "../lib/agentsRepoQueries";
 import { AgentsRepoCommitDialog, changeOf } from "./AgentsRepoCommitDialog";
+import { AgentsRepoNewPlanDialog } from "./AgentsRepoNewPlanDialog";
 import { AgentsRepoDraftsPanel } from "./AgentsRepoDraftsPanel";
 import { AgentsRepoEditor, type EditorSubject } from "./AgentsRepoEditor";
 import { AgentsRepoFileTree, treeRows } from "./AgentsRepoFileTree";
@@ -269,16 +269,8 @@ export function ProjectAgentsRepoScreen({
     ],
   );
 
-  const onNewPlan = React.useCallback(() => {
-    const name = window.prompt("Plan name");
-    if (name === null) return;
-    const made = newPlanPath(name);
-    if (!made.ok) {
-      toast.error(made.error);
-      return;
-    }
-    select(made.path);
-  }, [select]);
+  const [newPlanOpen, setNewPlanOpen] = React.useState(false);
+  const onNewPlan = React.useCallback(() => setNewPlanOpen(true), []);
 
   if (!project) {
     return (
@@ -491,6 +483,11 @@ export function ProjectAgentsRepoScreen({
           tip={listing.data?.commit ?? null}
         />
       ) : null}
+      <AgentsRepoNewPlanDialog
+        onCreate={select}
+        onOpenChange={setNewPlanOpen}
+        open={newPlanOpen}
+      />
     </div>
   );
 }

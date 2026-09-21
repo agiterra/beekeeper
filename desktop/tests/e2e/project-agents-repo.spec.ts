@@ -290,6 +290,60 @@ test("a plan is read from main, drafted, previewed, badged, and refused when a n
   expect(signedAfter).toBe(1);
 });
 
+test("New plan asks for a name in a dialog and opens the editor on a path that is not on main", async ({
+  page,
+}) => {
+  await openFilesTab(page);
+  await page.getByTestId("agents-repo-new-plan").click();
+  const dialog = page.getByTestId("agents-repo-new-plan-dialog");
+  await expect(dialog).toBeVisible();
+
+  // The name is slugged and the destination path shown before anything is saved.
+  await page.getByTestId("agents-repo-new-plan-name").fill("Battle Screen");
+  await expect(page.getByTestId("agents-repo-new-plan-preview")).toHaveText(
+    "plans/battle-screen.md",
+  );
+  await page.getByTestId("agents-repo-new-plan-create").click();
+  await expect(dialog).toHaveCount(0);
+
+  // The editor opens on the new path straight into editing (nothing to
+  // preview yet), says it is not on main, and saves a draft whose base is null.
+  const editor = page.getByTestId("agents-repo-editor");
+  await expect(editor).toContainText("plans/battle-screen.md");
+  await expect(editor).toContainText("not on main");
+  await expect(page.getByTestId("agents-repo-textarea")).toBeEnabled();
+  await page
+    .getByTestId("agents-repo-textarea")
+    .fill("# Battle screen\n\nTurn order first.\n");
+  await page.getByTestId("agents-repo-save").click();
+  await expect(
+    page.getByTestId("agents-repo-draft-badge-plans/battle-screen.md"),
+  ).toBeVisible();
+  const draft = await page.evaluate(() => {
+    const events = (
+      window as unknown as {
+        __BUZZ_E2E_SIGNED_EVENTS__: { kind: number; content: string }[];
+      }
+    ).__BUZZ_E2E_SIGNED_EVENTS__;
+    const found = events.find((e) => e.kind === 44249);
+    return found ? JSON.parse(found.content) : null;
+  });
+  expect(draft).toMatchObject({
+    op: "file.put",
+    path: "plans/battle-screen.md",
+    base: null,
+    prev: null,
+  });
+
+  // A reserved name is refused inside the dialog, not silently.
+  await page.getByTestId("agents-repo-new-plan").click();
+  await page.getByTestId("agents-repo-new-plan-name").fill("archive");
+  await page.getByTestId("agents-repo-new-plan-create").click();
+  await expect(page.getByTestId("agents-repo-new-plan-preview")).toContainText(
+    "reserved",
+  );
+});
+
 test("the commit dialog prints a stale-base refusal verbatim, then a landing, and marks the drafts committed", async ({
   page,
 }) => {
