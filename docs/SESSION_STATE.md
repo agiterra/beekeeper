@@ -18648,9 +18648,10 @@ removed from here.
        The Overview card's missing caveat, the `web/` reader, the mobile
        archived-versus-closed distinction and the desktop's missing strict
        hire reader are all recorded above and owned by no lane yet.
-217. **Item 208's fix was incomplete, `PairingNotifier` leaks its session
-     timeout past disposal, and two of the four files named as flaky on
-     2026-09-21 were named by a reporter artefact, not by failing.**
+217. **Item 208's fix was incomplete, `PairingNotifier` leaked its session
+     timeout past disposal, the one test that actually reddened the suite
+     was in a fifth file nobody named, and one of the four files that were
+     named had been named by a reporter artefact rather than by failing.**
      Four mobile test files were reported as passing alone and failing
      intermittently in the full `flutter test` run. Three full baseline runs
      on `work/lane-208-mobile-flake` (c6143d130) gave 2101/2101, then
@@ -18732,15 +18733,30 @@ removed from here.
        2101/2101** (`/tmp/l217/after/full-{1,2,3}.log`, and the per-file
        loops beside them). No retries, no skips, no widened timeouts: the
        only durations touched were replaced by virtual ones.
-     - **Still open, not this lane's file:**
-       `project_todos_provider_test.dart:125` asserts
-       `live.since! >= before - 900 - 5`, a five-second wall-clock tolerance
-       between the test's own `DateTime.now()` (line 105) and the provider's;
-       it is the one test that actually reddened 2 of 3 baseline full runs.
-       It did not recur in this lane's three green full runs, so it is still
-       a live flake rather than a fixed one. Needs a lane, and an injected
-       clock rather than a wider tolerance — it is outside this lane's file
-       ownership and was deliberately not touched.
+     - **`project_todos_provider_test.dart` — the one test that actually
+       reddened 2 of 3 baseline full runs. Fixed on an ownership extension,
+       second commit.** `ProjectTodosNotifier._start` read
+       `DateTime.now()` straight
+       (`project_todos_provider.dart:155`) to compute the live filter's
+       `since` floor, so the test could only capture its own
+       `DateTime.now()` (line 105) and assert a *window*:
+       `live.since! <= before - 900 && live.since! >= before - 900 - 5`
+       (lines 125–126). Five seconds of skew between the test's read and
+       the provider's is nothing on an idle machine and reachable on a
+       starved isolate — `Expected: true / Actual: <false>`, identically in
+       baseline runs 2 and 3. Fixed with an injected clock, matching the
+       `identityExportClockProvider` precedent: new
+       `projectTodoClockProvider` (`Provider<DateTime Function()>`, defaults
+       to `DateTime.now`) is read by `_start` and wired into
+       `projectTodoActionsProvider` as the actions' existing `now` hook, and
+       the test pins it to `DateTime.utc(2026, 9, 21, 12, 34, 56)`. Every
+       tolerance in the file then collapses to a value: `expect(live.since,
+       _nowSeconds - 900)`, and the three `created_at` assertions that read
+       `>= before` / `<= before + 2` (the `item.add` stamp, the
+       different-target `list` stamp, and `list.create`) became equalities
+       too — the same class of wall-clock race, now gone as well. Proved:
+       the file 20/20 under 12 CPU burners, three full suites
+       2101/2101 each.
 
 ## 3a. Environment facts that cost real time (do not rediscover)
 

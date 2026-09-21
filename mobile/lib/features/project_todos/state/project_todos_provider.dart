@@ -12,6 +12,18 @@ import '../domain/project_todo_op.dart';
 /// subscription starts this far back and the reader dedupes by id.
 const projectTodoClockSkew = Duration(seconds: 900);
 
+/// The clock this feature stamps and filters against.
+///
+/// Injectable so a test can pin it. Read straight from `DateTime.now()`,
+/// the live filter's `since` floor and every `created_at` this feature
+/// stamps were only assertable within a tolerance, and a tolerance is a
+/// wall-clock race: `project_todos_provider_test.dart`'s five-second window
+/// on `since` is what a starved isolate in the full mobile suite broke
+/// (ledger item 217).
+final projectTodoClockProvider = Provider<DateTime Function()>(
+  (ref) => DateTime.now,
+);
+
 /// Ops per history page.
 const projectTodoHistoryPageLimit = 500;
 
@@ -152,7 +164,8 @@ class ProjectTodosNotifier extends Notifier<ProjectTodosRead> {
     final session = ref.read(relaySessionProvider.notifier);
     String? failure;
 
-    final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    final now =
+        ref.read(projectTodoClockProvider)().millisecondsSinceEpoch ~/ 1000;
     try {
       final unsubscribe = await session.subscribe(
         NostrFilters.projectTodoOpsLive(

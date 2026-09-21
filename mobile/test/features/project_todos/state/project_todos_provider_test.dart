@@ -50,6 +50,17 @@ Future<void> _settle([int rounds = 8]) async {
   }
 }
 
+/// The instant every test here runs at.
+///
+/// The provider used to read `DateTime.now()` directly, so the live
+/// filter's `since` floor and every stamped `created_at` could only be
+/// asserted within a tolerance — and the five-second window on `since` is
+/// what a starved isolate in the full mobile suite broke (item 217).
+/// `projectTodoClockProvider` is pinned here instead, so all of them are
+/// exact values.
+final _now = DateTime.utc(2026, 9, 21, 12, 34, 56);
+final _nowSeconds = _now.millisecondsSinceEpoch ~/ 1000;
+
 ({ProviderContainer container, RecordingRelaySessionNotifier relay}) _harness({
   List<Object> queryResults = const [],
   List<Object> publishResults = const [],
@@ -66,6 +77,7 @@ Future<void> _settle([int rounds = 8]) async {
       relayConfigProvider.overrideWith(
         () => _FakeConfig(nostr.Keys.generate().nsec),
       ),
+      projectTodoClockProvider.overrideWithValue(() => _now),
     ],
   );
   addTearDown(container.dispose);
@@ -102,7 +114,6 @@ void main() {
             [_op(add1, createdAt: 101), _op(create, createdAt: 100)],
           ],
         );
-        final before = DateTime.now().millisecondsSinceEpoch ~/ 1000;
         final sub = h.container.listen(
           projectTodosProvider(todoAddress),
           (_, _) {},
@@ -121,9 +132,7 @@ void main() {
         expect(live.tags, {
           '#a': [todoAddress],
         });
-        expect(live.since, isNotNull);
-        expect(live.since! <= before - 900, isTrue);
-        expect(live.since! >= before - 900 - 5, isTrue);
+        expect(live.since, _nowSeconds - 900);
         expect(live.until, isNull);
 
         final page = h.relay.coalescedQueryFilters.single;
@@ -389,7 +398,6 @@ void main() {
           .digest
           .lists
           .single;
-      final before = DateTime.now().millisecondsSinceEpoch ~/ 1000;
       final itemId = await actions.addItem(list, 'Write the NIP');
       expect(isTodoId(itemId), isTrue);
 
@@ -410,8 +418,7 @@ void main() {
         '{"schema":"buzz-project-todo/v1","op":"item.add","listId":"$listA",'
         '"itemId":"$itemId","text":"Write the NIP","rank":"a0"}',
       );
-      expect(event.createdAt >= before, isTrue);
-      expect(event.createdAt <= before + 2, isTrue);
+      expect(event.createdAt, _nowSeconds);
       // What we send is what the relay's validator accepts.
       expect(
         validateProjectTodoEnvelope(event).kind,
@@ -494,7 +501,7 @@ void main() {
         );
         addTearDown(sub.close);
         await _settle();
-        final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+        final now = _nowSeconds;
         // A peer stamped a done op 300 s ahead of this clock (legal: the relay
         // allows 900 s).
         h.relay.emit(
@@ -525,8 +532,7 @@ void main() {
 
         // A list op is a different target: it is stamped now.
         await actions.retitleList(listA, 'Renamed');
-        expect(h.relay.published.last.createdAt >= now, isTrue);
-        expect(h.relay.published.last.createdAt <= now + 2, isTrue);
+        expect(h.relay.published.last.createdAt, now);
 
         // Past the window, the bump is refused rather than silently dropped.
         h.relay.emit(
@@ -630,7 +636,6 @@ void main() {
       await _settle();
       final actions = h.container.read(projectTodoActionsProvider(todoAddress));
 
-      final before = DateTime.now().millisecondsSinceEpoch ~/ 1000;
       final listId = await actions.createList(
         'Mine',
         visibility: TodoVisibility.personal,
@@ -652,7 +657,7 @@ void main() {
         '{"schema":"buzz-project-todo/v1","op":"list.create",'
         '"listId":"$listId","title":"Mine","visibility":"personal"}',
       );
-      expect(create.createdAt >= before, isTrue);
+      expect(create.createdAt, _nowSeconds);
       expect(
         validateProjectTodoEnvelope(create).visibility,
         TodoVisibility.personal,

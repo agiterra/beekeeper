@@ -287,5 +287,6 @@ final projectTodoActionsProvider = Provider.family<ProjectTodoActions, String>((
     address: address,
     relay: SignedEventRelay(session: session, nsec: config.nsec),
     read: ref.read(projectTodosProvider(address).notifier),
+    now: ref.read(projectTodoClockProvider),
   );
 });
