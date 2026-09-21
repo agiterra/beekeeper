@@ -1022,12 +1022,22 @@ async fn a_held_wake_is_decided_by_the_next_pass_and_released_once() {
     let dir = tempfile::tempdir().expect("tempdir");
     let state = dir.path().join("state");
     crate::deferred_turns::forget_mirror();
-    let mut provider = provider(&state, None);
+    let dir_cwd = dir.path().join("checkout");
+    std::fs::create_dir_all(&dir_cwd).expect("mkdir");
     let channel = Uuid::new_v4();
-    // A target this provider runs no execution for: its decision is an
-    // ordinary answer rather than a deferral, which is all this case needs —
-    // what is under test is that the pass decides a held wake at all and then
-    // stops holding it.
+    let projects = write_projects(dir.path(), channel, &dir_cwd);
+    let mut provider = provider(&state, Some(&projects));
+    // One real execution, only so this wake can be addressed to *this*
+    // provider — same driver and instance — while naming a session it does
+    // not run. That is an `UNKNOWN_TARGET` refusal: a real answer, which is
+    // what this case needs. A command addressed to another provider gets
+    // silence from us and is held until the horizon expires it (lane 228).
+    provider
+        .handle_command_event(channel, &create_event(&provider, channel, "create-1"))
+        .await
+        .expect("handle");
+    pump_available(&mut provider).await;
+    let addressed = provider.target_for(provider.state().sessions().next().expect("session"));
     crate::deferred_turns::defer(
         &state,
         crate::deferred_turns::DeferredTurn {
@@ -1037,20 +1047,21 @@ async fn a_held_wake_is_decided_by_the_next_pass_and_released_once() {
             operator_pubkey: "ab".repeat(32),
             event_id: "cd".repeat(32),
             target: CodingSessionTarget {
-                driver: "claude".to_owned(),
-                instance_id: provider.config.instance_id.clone(),
                 session_id: "no-such-seat".to_owned(),
-                generation: 1,
+                ..addressed.clone()
             },
             text: assignment_pointer(&operation_id()),
+            // Addressed to *this* provider — same driver and instance — while
+            // naming a session it does not run, so admission answers
+            // `UNKNOWN_TARGET`. A command addressed to another provider gets
+            // silence from us and is held until the horizon expires it, which
+            // is the rule lane 228 added.
             content: serde_json::json!({
                 "schema": "buzz-coding-session-command/v1",
                 "commandId": "wake-1",
-                "target": {
-                    "driver": "claude",
-                    "instanceId": "instance",
-                    "sessionId": "seat-1",
-                    "generation": 1,
+                "target": CodingSessionTarget {
+                    session_id: "no-such-seat".to_owned(),
+                    ..addressed.clone()
                 },
                 "action": {
                     "type": "thread.turn.start",

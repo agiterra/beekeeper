@@ -4806,11 +4806,11 @@ impl Provider {
                         "turn refused before opening: {}",
                         refusal.message
                     );
-                    // Durable before the publish, exactly as the other refusal
-                    // arms are: an answer given twice under one command id
-                    // after a restart is a stutter, not a second fact.
-                    self.state.record_refusal(command_id, now_secs())?;
-                    self.enqueue_receipt(channel_id, command_id, &receipt)?;
+                    // Staged, then recorded: the signed answer is durable
+                    // before the refusal ledger closes the command, so a
+                    // crash or a failed outbox append between the two leaves
+                    // an answer to republish rather than silence (R4).
+                    self.refuse_with_staged_answer(channel_id, command_id, &receipt, None)?;
                     return Ok(TurnDisposition::Answered(refusal.code.to_owned()));
                 }
                 verification_input::TurnInput::Deferred(reason) => {
@@ -4872,12 +4872,30 @@ impl Provider {
                         "turn command refused: {}",
                         refusal.message
                     );
-                    // Durable *before* the publish: a refusal is an answer,
-                    // and an answer given twice under the same semantic key
-                    // after a restart is a stutter, not a second fact.
-                    self.state.record_refusal(&command_id, now_secs())?;
-                    self.enqueue_receipt(channel_id, &command_id, &receipt)?;
+                    // Staged before the door shuts (R4): stale generation and
+                    // unknown target both reach a held wake's re-admission,
+                    // and a lost answer there is a lead waiting forever.
+                    self.refuse_with_staged_answer(channel_id, &command_id, &receipt, None)?;
                     return Ok(TurnDisposition::Answered(code.to_owned()));
+                }
+                // A command this provider already refused may still owe its
+                // answer: the bytes were staged before the refusal ledger
+                // closed it, and the outbox append may have failed or a crash
+                // may have intervened. Republish rather than go silent (R4).
+                if let commands::Ignored::AlreadyRefused { command_id } = &reason {
+                    if self.state.has_staged_disposition(command_id) {
+                        let command_id = command_id.clone();
+                        tracing::info!(
+                            target: "csp",
+                            %command_id,
+                            code = "staged_answer_republished",
+                            "republishing the answer staged for a command already refused"
+                        );
+                        self.flush_terminal_dispositions()?;
+                        return Ok(TurnDisposition::Answered(
+                            "STAGED_ANSWER_REPUBLISHED".to_owned(),
+                        ));
+                    }
                 }
                 return Ok(TurnDisposition::Silent);
             }
@@ -4893,9 +4911,6 @@ impl Provider {
                 // cancellation of the original promise sharing its command id.
                 let ci_conflict = code == payload::COMMAND_ID_CONFLICT
                     && self.ci_continuations.record(&command_id).is_some();
-                if !ci_conflict {
-                    self.state.record_refusal(&command_id, now_secs())?;
-                }
                 let receipt = LifecycleReceipt::turn_refused(&command_id, &target, code, &message);
                 tracing::warn!(
                     target: "csp",
@@ -4909,12 +4924,33 @@ impl Provider {
                 } else {
                     command_id.clone()
                 };
-                self.enqueue_receipt_with_outbox_key(
-                    channel_id,
-                    &command_id,
-                    &receipt,
-                    ci_conflict.then_some(receipt_key.as_str()),
-                )?;
+                // Authority refusals arrive here, including on a held wake's
+                // re-admission, so the signed answer is staged before the
+                // refusal ledger closes the command (R4). A conflicting
+                // registration keeps its own outbox key and is *not* recorded
+                // as a refusal — the original promise under that command id
+                // stands — so it stages its answer and stops there.
+                if ci_conflict {
+                    // Staged under the **conflict key**, not the command id:
+                    // keying it by the command would close that command, and
+                    // the original promise under it still stands. A8 asks for
+                    // the special key to be preserved, and this is where it
+                    // lives — as the disposition's identity and its outbox
+                    // key both.
+                    self.stage_terminal_answer_under(
+                        channel_id,
+                        &command_id,
+                        &receipt_key,
+                        &receipt,
+                    )?;
+                } else {
+                    self.refuse_with_staged_answer(
+                        channel_id,
+                        &command_id,
+                        &receipt,
+                        Some(receipt_key),
+                    )?;
+                }
                 return Ok(TurnDisposition::Answered(code.to_owned()));
             }
             TurnDecision::RegisterCiContinuation {
@@ -7541,17 +7577,101 @@ impl Provider {
         command_id: &str,
         receipt: &LifecycleReceipt,
     ) -> anyhow::Result<()> {
-        let content = serde_json::to_string(receipt)?;
-        let event =
-            build_coding_session_turn_receipt(channel_id, command_id, receipt.status, &content)?
-                .sign_with_keys(&self.config.keys)?;
+        self.enqueue_terminal_receipt_with_outbox_key(channel_id, command_id, receipt, None)
+    }
+
+    /// The same, with a caller-chosen outbox key.
+    ///
+    /// The conflicting-command receipt keys by `{commandId}:conflict:{eventId}`
+    /// so two rejected registrations sharing a command id are two answers
+    /// rather than one fenced duplicate; it keeps that key here.
+    fn enqueue_terminal_receipt_with_outbox_key(
+        &mut self,
+        channel_id: Uuid,
+        command_id: &str,
+        receipt: &LifecycleReceipt,
+        outbox_key: Option<String>,
+    ) -> anyhow::Result<()> {
+        let event = self.sign_receipt(channel_id, command_id, receipt)?;
         self.state.stage_terminal_disposition(
             command_id,
             state::TerminalDisposition {
-                semantic_key: coding_session_turn_receipt_semantic_key(command_id, receipt.status),
+                semantic_key: outbox_key.unwrap_or_else(|| {
+                    coding_session_turn_receipt_semantic_key(command_id, receipt.status)
+                }),
                 event,
             },
         )?;
+        self.flush_terminal_dispositions()
+    }
+
+    /// One signed receipt event, ready to stage.
+    fn sign_receipt(
+        &self,
+        channel_id: Uuid,
+        command_id: &str,
+        receipt: &LifecycleReceipt,
+    ) -> anyhow::Result<Event> {
+        let content = serde_json::to_string(receipt)?;
+        Ok(
+            build_coding_session_turn_receipt(channel_id, command_id, receipt.status, &content)?
+                .sign_with_keys(&self.config.keys)?,
+        )
+    }
+
+    /// Stage a signed answer under a key of its own, closing no command.
+    ///
+    /// For an answer that must be recoverable without becoming that command's
+    /// terminal state — the conflicting registration is the only one: the
+    /// promise already registered under that command id is untouched by the
+    /// rejection of a second event claiming it.
+    fn stage_terminal_answer_under(
+        &mut self,
+        channel_id: Uuid,
+        command_id: &str,
+        disposition_key: &str,
+        receipt: &LifecycleReceipt,
+    ) -> anyhow::Result<()> {
+        let event = self.sign_receipt(channel_id, command_id, receipt)?;
+        self.state.stage_terminal_disposition(
+            disposition_key,
+            state::TerminalDisposition {
+                semantic_key: disposition_key.to_owned(),
+                event,
+            },
+        )?;
+        self.flush_terminal_dispositions()
+    }
+
+    /// Stage a refusal's signed answer, **then** record the refusal.
+    ///
+    /// This order is the whole of R4's second blocker. The refusal ledger is
+    /// what makes a redelivery answer `AlreadyRefused`, and
+    /// `stage_terminal_disposition` deliberately skips a command that ledger
+    /// already names — so recording the refusal first and publishing second
+    /// left a window where a crash, or a failed outbox append, lost the
+    /// answer for good: the retry was silent and the lead never heard
+    /// anything. Staged first, the signed bytes are durable before the door
+    /// shuts, and `flush_terminal_dispositions` republishes them until the
+    /// outbox takes them.
+    fn refuse_with_staged_answer(
+        &mut self,
+        channel_id: Uuid,
+        command_id: &str,
+        receipt: &LifecycleReceipt,
+        outbox_key: Option<String>,
+    ) -> anyhow::Result<()> {
+        let event = self.sign_receipt(channel_id, command_id, receipt)?;
+        self.state.stage_terminal_disposition(
+            command_id,
+            state::TerminalDisposition {
+                semantic_key: outbox_key.unwrap_or_else(|| {
+                    coding_session_turn_receipt_semantic_key(command_id, receipt.status)
+                }),
+                event,
+            },
+        )?;
+        self.state.record_refusal(command_id, now_secs())?;
         self.flush_terminal_dispositions()
     }
 
@@ -8305,6 +8425,18 @@ impl Provider {
                         command_id = %turn.command_id,
                         age,
                         "a held wake is still waiting for its seat's input"
+                    );
+                }
+                Ok(TurnDisposition::Silent) if !self.state.is_command_refused(&turn.command_id) => {
+                    // Silence with no answer on record is the one disposition
+                    // that must not release the hold (R4): deleting the record
+                    // here is how a wake stopped being owed by anybody without
+                    // ever being answered.
+                    tracing::warn!(
+                        target: "csp::deferred_turns",
+                        command_id = %turn.command_id,
+                        code = "deferred_turn_unanswered",
+                        "a held wake decided silently with no answer on record; it stays held"
                     );
                 }
                 Ok(other) => {

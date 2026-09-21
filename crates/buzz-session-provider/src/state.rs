@@ -869,6 +869,15 @@ impl StateStore {
             || self.snapshot.terminal_dispositions.contains_key(command_id)
     }
 
+    /// Whether an answer for this command is staged and not yet projected.
+    ///
+    /// The one question `AlreadyRefused` has to ask: a command refused on an
+    /// earlier pass whose signed answer never reached the outbox still owes
+    /// that answer, and the bytes are right here (Astra's third look, R4).
+    pub(crate) fn has_staged_disposition(&self, command_id: &str) -> bool {
+        self.snapshot.terminal_dispositions.contains_key(command_id)
+    }
+
     /// Fence a terminal decision and its exact answer in one atomic write.
     pub(crate) fn stage_terminal_disposition(
         &mut self,

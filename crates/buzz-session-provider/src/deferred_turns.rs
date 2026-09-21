@@ -127,25 +127,35 @@ fn path_of(state_dir: &Path) -> PathBuf {
     state_dir.join(DEFERRED_TURNS_FILE)
 }
 
-fn read_file(state_dir: &Path) -> Vec<DeferredTurn> {
+/// Read the held set, or say why it cannot be read.
+///
+/// A missing file is an empty set — nothing has ever been held. Anything else
+/// is a **failure**, not an empty set (Astra's third look, R4): a store whose
+/// contents cannot be read may be holding wakes this provider owes answers
+/// for, and treating it as empty silently discards every one of them. The
+/// file is left exactly as it is, deferral refuses while the condition lasts,
+/// and the condition is visible.
+fn read_file(state_dir: &Path) -> Result<Vec<DeferredTurn>, String> {
     let path = path_of(state_dir);
-    let Ok(raw) = std::fs::read(&path) else {
-        return Vec::new();
+    let raw = match std::fs::read(&path) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => {
+            return Err(format!(
+                "the deferred-wake file at {} could not be read: {error}",
+                path.display()
+            ))
+        }
     };
     match serde_json::from_slice::<DeferredTurnsFile>(&raw) {
-        Ok(file) if file.version == DEFERRED_TURNS_VERSION => file.turns,
-        Ok(file) => {
-            tracing::warn!(
-                target: "csp::deferred_turns",
-                version = file.version,
-                "ignoring deferred wakes written by a version this build does not read"
-            );
-            Vec::new()
-        }
-        Err(error) => {
-            tracing::warn!(target: "csp::deferred_turns", %error, "the deferred-wake file could not be read");
-            Vec::new()
-        }
+        Ok(file) if file.version == DEFERRED_TURNS_VERSION => Ok(file.turns),
+        Ok(file) => Err(format!(
+            "the deferred-wake file is version {}, which this build does not read",
+            file.version
+        )),
+        Err(error) => Err(format!(
+            "the deferred-wake file could not be decoded: {error}"
+        )),
     }
 }
 
@@ -181,7 +191,9 @@ fn with_turns<T>(
     };
     let loaded = match guard.as_ref() {
         Some((path, turns)) if path == state_dir => turns.clone(),
-        _ => read_file(state_dir),
+        // A store this provider cannot read is not an empty one, and it is
+        // not this call's to overwrite either.
+        _ => read_file(state_dir)?,
     };
     let mut turns = loaded.clone();
     let answer = act(&mut turns);
@@ -192,6 +204,24 @@ fn with_turns<T>(
     write_file(state_dir, &turns)?;
     *guard = Some((state_dir.to_path_buf(), turns));
     Ok(answer)
+}
+
+/// Whether this provider can read the wakes it may be holding.
+///
+/// `Ok(())` when the file is readable or absent. The error is the sentence a
+/// caller publishes when it refuses to hold anything more.
+pub fn readable(state_dir: &Path) -> Result<(), String> {
+    let readable = {
+        let guard = match mirror().lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        matches!(guard.as_ref(), Some((path, _)) if path == state_dir)
+    };
+    if readable {
+        return Ok(());
+    }
+    read_file(state_dir).map(|_| ())
 }
 
 /// Hold one wake until its seat's input settles.
@@ -245,7 +275,21 @@ pub fn release(state_dir: &Path, command_id: &str) -> Result<(), String> {
 /// Every wake this provider is holding, oldest first.
 #[must_use]
 pub fn held(state_dir: &Path) -> Vec<DeferredTurn> {
-    let mut turns = with_turns(state_dir, |turns| turns.clone()).unwrap_or_default();
+    let mut turns = match with_turns(state_dir, |turns| turns.clone()) {
+        Ok(turns) => turns,
+        Err(error) => {
+            // Said out loud on every pass: a store that cannot be read is a
+            // set of unanswered wakes nobody can see, and pretending it is
+            // empty is how they would be lost silently.
+            tracing::error!(
+                target: "csp::deferred_turns",
+                %error,
+                code = "deferred_store_unreadable",
+                "the held wakes cannot be read; no wake is being released and none will be held"
+            );
+            Vec::new()
+        }
+    };
     turns.sort_by(|left, right| {
         left.created_at
             .cmp(&right.created_at)

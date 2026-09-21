@@ -69,7 +69,11 @@ pub enum Ignored {
     /// This `commandId` was already answered with a refusal, durably. Silent
     /// for the same reason as `AlreadyConsumed`: a second byte-identical
     /// refusal is a stutter, not information.
-    AlreadyRefused,
+    AlreadyRefused {
+        /// The 44220 that was already answered, so a retry can republish the
+        /// signed answer staged for it if the outbox never took it.
+        command_id: String,
+    },
     /// This `commandId` is already in this process's mailbox: a turn accepted
     /// and not yet started, or a cancel already handed to an actor and not yet
     /// answered durably. Silent: a relay redelivery must not queue the turn
@@ -128,7 +132,7 @@ impl Ignored {
         match self {
             Self::NotAddressed
             | Self::AlreadyConsumed
-            | Self::AlreadyRefused
+            | Self::AlreadyRefused { .. }
             | Self::AlreadyAccepted
             | Self::PastHorizon
             | Self::Malformed(_) => None,
@@ -912,7 +916,9 @@ pub fn decide_turn_command(
         return TurnDecision::Ignore(Ignored::AlreadyConsumed);
     }
     if context.state.is_command_refused(&command.command_id) {
-        return TurnDecision::Ignore(Ignored::AlreadyRefused);
+        return TurnDecision::Ignore(Ignored::AlreadyRefused {
+            command_id: command.command_id.clone(),
+        });
     }
     // The durable CI promise owns this id across action shapes too. An
     // ordinary start must never substitute its text for a waiting promise.
@@ -3353,7 +3359,12 @@ mod tests {
 
         for (command_id, expected) in [
             ("turn-ran", Ignored::AlreadyConsumed),
-            ("turn-refused", Ignored::AlreadyRefused),
+            (
+                "turn-refused",
+                Ignored::AlreadyRefused {
+                    command_id: "turn-refused".to_owned(),
+                },
+            ),
             ("turn-waiting", Ignored::AlreadyAccepted),
             ("cancel-delivered", Ignored::AlreadyAccepted),
         ] {

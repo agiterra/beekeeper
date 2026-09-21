@@ -505,7 +505,7 @@ static WAIT_BOUND: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Hold the compressed wait for the length of one case.
 fn compressed_wait(bound: Duration) -> impl Drop {
-    struct Restore(std::sync::MutexGuard<'static, ()>);
+    struct Restore(#[allow(dead_code)] std::sync::MutexGuard<'static, ()>);
     impl Drop for Restore {
         fn drop(&mut self) {
             crate::assignment_custody::set_wait_bound_for_tests(None);

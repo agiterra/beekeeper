@@ -294,16 +294,22 @@ async fn an_undecidable_wake_expires_and_stops_blocking_the_seats_later_work() {
 /// A wake this provider cannot hold durably is **answered**, not forgotten:
 /// the one outcome a lead could not see is "owed by nobody".
 ///
-/// The write fails because the state directory's own parent is a regular
-/// file — `ENOTDIR`, which no privilege overrides, so this says the same
-/// thing when CI runs as root.
+/// This drives the **provider**, not a standalone store: the earlier version
+/// of this test proved a failing store fails and then handed the provider a
+/// writable one, which said nothing about the branch it is named for
+/// (Astra's third look, R4). The store fails by construction — its file path
+/// is a **directory**, so the rename onto it cannot succeed for any user,
+/// root included.
 #[tokio::test]
-async fn a_wake_that_cannot_be_held_is_refused_rather_than_lost() {
+async fn a_wake_that_cannot_be_held_is_refused_by_the_provider_rather_than_lost() {
     let dir = tempfile::tempdir().expect("tempdir");
     let state = dir.path().join("state");
     let cwd = dir.path().join("checkout");
     std::fs::create_dir_all(&cwd).expect("mkdir");
     forget_mirror();
+    // Where the held-wake file would go, there is a directory instead.
+    std::fs::create_dir_all(state.join(crate::deferred_turns::DEFERRED_TURNS_FILE))
+        .expect("the store's path is not a file");
     let channel_id = Uuid::new_v4();
     let projects = write_projects(dir.path(), channel_id, &cwd);
     let mut provider = provider(&state, Some(&projects));
@@ -312,48 +318,103 @@ async fn a_wake_that_cannot_be_held_is_refused_rather_than_lost() {
         .await
         .expect("handle");
     pump_available(&mut provider).await;
-    let record = provider.state().sessions().next().expect("session").clone();
+    let mut record = provider.state().sessions().next().expect("session").clone();
+    // A commit-bound seat with both umbrella refs, so an assignment pointer
+    // reaches the fence and comes back undecided — the state that asks to be
+    // held.
+    record.role = Some("verifier".to_owned());
+    record.actor = Some("ef".repeat(32));
+    record.session_ref = Some(Uuid::new_v4().to_string());
+    record.genesis_ref = Some("ab".repeat(32));
+    provider
+        .state
+        .insert_session(record.clone())
+        .expect("seat record");
     let target = provider.target_for(&record);
 
-    let not_a_directory = dir.path().join("not-a-directory");
-    std::fs::write(&not_a_directory, "a regular file\n").expect("write");
-    let unwritable = not_a_directory.join("state");
-    let wake = turn_event(channel_id, "wake-1", &target);
-    let error = defer(
-        &unwritable,
+    let wake = command_event(
+        channel_id,
+        "wake-1",
+        &target,
+        serde_json::json!({
+            "type": "thread.turn.start",
+            "text": serde_json::json!({"operationId": "ef".repeat(32), "type": "assignment"})
+                .to_string(),
+        }),
+    );
+    provider
+        .handle_command_event(channel_id, &wake)
+        .await
+        .expect("the store failure is answered, not propagated");
+
+    let sink = CollectingSink::new();
+    provider.flush(&sink).await.expect("flush");
+    let answer = receipts_for(&sink, "wake-1")
+        .into_iter()
+        .find(|receipt| {
+            receipt["error"]["code"] == crate::verification_input::VERIFICATION_INPUT_UNHELD
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "the provider's own failure branch must answer; got {:?}",
+                receipts_for(&sink, "wake-1")
+            )
+        });
+    assert!(
+        answer["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("re-issue the assignment")),
+        "{answer}"
+    );
+    assert!(
+        provider.state.is_command_refused("wake-1"),
+        "and the answer is durable, so a redelivery is not answered twice"
+    );
+}
+
+/// An unreadable held-wake file is **not** an empty one: nothing is released
+/// from it, nothing new is held, the file is left alone, and the condition is
+/// visible.
+#[test]
+fn an_unreadable_held_wake_file_refuses_deferrals_and_keeps_its_bytes() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let state = dir.path().join("state");
+    std::fs::create_dir_all(&state).expect("state dir");
+    forget_mirror();
+    // Bytes this build cannot decode — a truncated write, or a file from a
+    // version that is not this one.
+    let path = state.join(crate::deferred_turns::DEFERRED_TURNS_FILE);
+    std::fs::write(&path, b"{\"version\": 1, \"turns\": [ truncated").expect("write");
+
+    let error = crate::deferred_turns::readable(&state).expect_err("it cannot be read");
+    assert!(error.contains("could not be decoded"), "{error}");
+    assert!(
+        held(&state).is_empty(),
+        "nothing is released from a file nobody can read"
+    );
+    let target = CodingSessionTarget {
+        driver: "claude".to_owned(),
+        instance_id: "instance".to_owned(),
+        session_id: "seat-1".to_owned(),
+        generation: 1,
+    };
+    let refused = defer(
+        &state,
         deferred(
-            channel_id,
+            Uuid::new_v4(),
             "wake-1",
             &target,
-            wake.created_at.as_secs(),
-            &wake.content,
-            &provider.pubkey_hex.clone(),
+            1_700_000_000,
+            "{}",
+            &"ab".repeat(32),
         ),
     )
-    .expect_err("a store that cannot be written holds nothing");
-    assert!(
-        !held(&unwritable)
-            .iter()
-            .any(|turn| turn.command_id == "wake-1"),
-        "and the mirror must not claim it did: {error}"
-    );
-
-    // The provider's own answer for that failure: a refusal, published.
-    provider
-        .hold_undecided_turn(deferred(
-            channel_id,
-            "wake-2",
-            &target,
-            wake.created_at.as_secs(),
-            &wake.content,
-            &provider.pubkey_hex.clone(),
-        ))
-        .await
-        .expect("the failure is handled, not propagated");
-    // With a writable store this one is simply held.
-    assert!(
-        held(&state).iter().any(|turn| turn.command_id == "wake-2"),
-        "a writable store holds it"
+    .expect_err("and nothing new is held");
+    assert!(refused.contains("could not be decoded"), "{refused}");
+    assert_eq!(
+        std::fs::read(&path).expect("read"),
+        b"{\"version\": 1, \"turns\": [ truncated",
+        "the file is left exactly as it was"
     );
 }
 
@@ -409,5 +470,98 @@ fn a_full_store_refuses_the_new_deferral_rather_than_dropping_an_old_one() {
             .iter()
             .any(|turn| turn.command_id == "wake-one-too-many"),
         "and the refused one was not admitted"
+    );
+}
+
+/// R4's remaining sequence: a held wake is refused on re-admission, and the
+/// outbox append fails between the durable refusal and the projection. The
+/// retry must publish **the original answer**, exactly once — before this
+/// lane the retry answered `AlreadyRefused`, went silent, and release deleted
+/// the record, so the lead never heard anything at all.
+#[tokio::test]
+async fn an_answer_lost_between_the_refusal_and_the_outbox_is_republished_once() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let state = dir.path().join("state");
+    let cwd = dir.path().join("checkout");
+    std::fs::create_dir_all(&cwd).expect("mkdir");
+    forget_mirror();
+    let channel_id = Uuid::new_v4();
+    let projects = write_projects(dir.path(), channel_id, &cwd);
+    let mut provider = provider(&state, Some(&projects));
+    provider
+        .handle_command_event(channel_id, &create_event(&provider, channel_id, "create-1"))
+        .await
+        .expect("handle");
+    pump_available(&mut provider).await;
+    let record = provider.state().sessions().next().expect("session").clone();
+    let target = provider.target_for(&record);
+
+    // A wake whose signer holds no authority: admission refuses it, which is
+    // one of the branches that reaches a held wake's re-admission.
+    let stranger = Keys::generate().public_key().to_hex();
+    let wake = turn_event(channel_id, "wake-1", &target);
+    defer(
+        &state,
+        deferred(
+            channel_id,
+            "wake-1",
+            &target,
+            wake.created_at.as_secs(),
+            &wake.content,
+            &stranger,
+        ),
+    )
+    .expect("held");
+
+    // The failure: the outbox refuses the append that would have published
+    // the answer this refusal just staged.
+    provider.outbox.fail_next_enqueue();
+    provider.release_deferred_turns().await;
+    // Deliberately no `flush` here: `Provider::flush` retries staged answers
+    // itself, and what this step has to observe is the state *between* the
+    // durable refusal and a successful projection.
+    assert!(
+        provider.state.is_command_refused("wake-1"),
+        "and the command is closed, which is what used to make the retry silent"
+    );
+    assert!(
+        provider.state.has_staged_disposition("wake-1"),
+        "but its signed answer is staged, which is what makes the retry possible"
+    );
+    assert_eq!(
+        held(&state).len(),
+        1,
+        "and the wake is still held, because nothing has answered it yet"
+    );
+
+    // The retry: `AlreadyRefused` republishes the staged bytes.
+    provider.release_deferred_turns().await;
+    let sink = CollectingSink::new();
+    provider.flush(&sink).await.expect("flush");
+    let answers = receipts_for(&sink, "wake-1");
+    assert_eq!(
+        answers.len(),
+        1,
+        "exactly one answer, and it is the original: {answers:?}"
+    );
+    assert_eq!(answers[0]["status"], "turn_refused");
+    assert_eq!(
+        answers[0]["error"]["code"], "UNAUTHORIZED_OPERATOR",
+        "the original refusal, not a substitute: {answers:?}"
+    );
+    assert!(
+        !provider.state.has_staged_disposition("wake-1"),
+        "the staged answer is retired once it reached the outbox"
+    );
+    assert!(held(&state).is_empty(), "and only now does the hold end");
+
+    // A third pass says nothing further: one answer, once.
+    provider.release_deferred_turns().await;
+    let sink = CollectingSink::new();
+    provider.flush(&sink).await.expect("flush");
+    assert!(
+        receipts_for(&sink, "wake-1").is_empty(),
+        "nothing is answered twice: {:?}",
+        receipts_for(&sink, "wake-1")
     );
 }
