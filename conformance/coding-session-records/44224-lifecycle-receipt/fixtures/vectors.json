@@ -1,0 +1,652 @@
+{
+  "schema": "buzz-coding-session-record-conformance/v1",
+  "kind": 44224,
+  "record": "coding-session lifecycle/turn receipt",
+  "readers": {
+    "rust": "crates/buzz-core/src/coding_session_payload.rs :: decode_coding_session_lifecycle_receipt",
+    "desktopCoordination": "desktop/src/shared/coordination/sessionCoordinationStrictJson.ts :: hasStrictLifecycleReceiptJson + hasStrictLifecycleReceiptValues (lifecycle vocabulary only, by design)",
+    "desktopIngress": "desktop/src/features/coding-sessions/lib/codingSessionIngressPayloads.ts :: parseCodingSessionLifecycleReceipt",
+    "dart": "mobile/lib/features/coding_sessions/domain/coding_session_decoders.dart :: decodeCodingSessionReceipt"
+  },
+  "vectors": [
+    {
+      "name": "created",
+      "why": "A create that reached a session and delivered its first turn.",
+      "content": {
+        "schema": "buzz-coding-session-lifecycle-receipt/v1",
+        "commandId": "cmd-1",
+        "status": "created",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "error": null
+      },
+      "accepts": {
+        "rust": true,
+        "desktopCoordination": true,
+        "desktopIngress": true,
+        "dart": true
+      }
+    },
+    {
+      "name": "created-with-failed-initial-turn",
+      "why": "Session exists, first turn did not. The code is pinned.",
+      "content": {
+        "schema": "buzz-coding-session-lifecycle-receipt/v1",
+        "commandId": "cmd-1",
+        "status": "created_with_failed_initial_turn",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "error": {
+          "code": "INITIAL_TURN_FAILED",
+          "message": "something went wrong"
+        }
+      },
+      "accepts": {
+        "rust": true,
+        "desktopCoordination": true,
+        "desktopIngress": true,
+        "dart": true
+      }
+    },
+    {
+      "name": "failed",
+      "why": "The one lifecycle status whose session is null.",
+      "content": {
+        "schema": "buzz-coding-session-lifecycle-receipt/v1",
+        "commandId": "cmd-1",
+        "status": "failed",
+        "session": null,
+        "error": {
+          "code": "PROVIDER_UNAVAILABLE",
+          "message": "something went wrong"
+        }
+      },
+      "accepts": {
+        "rust": true,
+        "desktopCoordination": true,
+        "desktopIngress": true,
+        "dart": true
+      }
+    },
+    {
+      "name": "resumed",
+      "why": "A disconnected execution reattached with its prior context.",
+      "content": {
+        "schema": "buzz-coding-session-lifecycle-receipt/v1",
+        "commandId": "cmd-1",
+        "status": "resumed",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "error": null
+      },
+      "accepts": {
+        "rust": true,
+        "desktopCoordination": true,
+        "desktopIngress": true,
+        "dart": true
+      }
+    },
+    {
+      "name": "resumed-without-context",
+      "why": "A new generation with fresh context; the code is pinned.",
+      "content": {
+        "schema": "buzz-coding-session-lifecycle-receipt/v1",
+        "commandId": "cmd-1",
+        "status": "resumed_without_context",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "error": {
+          "code": "CONTEXT_NOT_RECOVERED",
+          "message": "something went wrong"
+        }
+      },
+      "accepts": {
+        "rust": true,
+        "desktopCoordination": true,
+        "desktopIngress": true,
+        "dart": true
+      }
+    },
+    {
+      "name": "stopped",
+      "why": "A plain terminal receipt: a session, no error.",
+      "content": {
+        "schema": "buzz-coding-session-lifecycle-receipt/v1",
+        "commandId": "cmd-1",
+        "status": "stopped",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "error": null
+      },
+      "accepts": {
+        "rust": true,
+        "desktopCoordination": true,
+        "desktopIngress": true,
+        "dart": true
+      }
+    },
+    {
+      "name": "turn-queued",
+      "why": "A turn stage: accepted into the mailbox.",
+      "content": {
+        "schema": "buzz-coding-session-lifecycle-receipt/v1",
+        "commandId": "cmd-1",
+        "status": "turn_queued",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "error": null
+      },
+      "accepts": {
+        "rust": true,
+        "desktopCoordination": false,
+        "desktopIngress": true,
+        "dart": true
+      }
+    },
+    {
+      "name": "turn-started",
+      "why": "The six-key form: the only statuses that carry turnId are turn_started and turn_injected.",
+      "content": {
+        "schema": "buzz-coding-session-lifecycle-receipt/v1",
+        "commandId": "cmd-1",
+        "status": "turn_started",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "error": null,
+        "turnId": "turn-7"
+      },
+      "accepts": {
+        "rust": true,
+        "desktopCoordination": false,
+        "desktopIngress": true,
+        "dart": true
+      }
+    },
+    {
+      "name": "turn-injected",
+      "why": "The second six-key status: a steer joined the running turn.",
+      "content": {
+        "schema": "buzz-coding-session-lifecycle-receipt/v1",
+        "commandId": "cmd-1",
+        "status": "turn_injected",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "error": null,
+        "turnId": "turn-7"
+      },
+      "accepts": {
+        "rust": true,
+        "desktopCoordination": false,
+        "desktopIngress": true,
+        "dart": true
+      }
+    },
+    {
+      "name": "turn-dropped",
+      "why": "Open code, bounded at 64 bytes by the Rust turn-stage rule.",
+      "content": {
+        "schema": "buzz-coding-session-lifecycle-receipt/v1",
+        "commandId": "cmd-1",
+        "status": "turn_dropped",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "error": {
+          "code": "QUEUE_FULL",
+          "message": "something went wrong"
+        }
+      },
+      "accepts": {
+        "rust": true,
+        "desktopCoordination": false,
+        "desktopIngress": true,
+        "dart": true
+      }
+    },
+    {
+      "name": "turn-refused",
+      "why": "Open code; the target is a fact even when nothing answers to it.",
+      "content": {
+        "schema": "buzz-coding-session-lifecycle-receipt/v1",
+        "commandId": "cmd-1",
+        "status": "turn_refused",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "error": {
+          "code": "STALE_GENERATION",
+          "message": "something went wrong"
+        }
+      },
+      "accepts": {
+        "rust": true,
+        "desktopCoordination": false,
+        "desktopIngress": true,
+        "dart": true
+      }
+    },
+    {
+      "name": "turn-degraded",
+      "why": "Accepted, but not in the class the sender asked for.",
+      "content": {
+        "schema": "buzz-coding-session-lifecycle-receipt/v1",
+        "commandId": "cmd-1",
+        "status": "turn_degraded",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "error": {
+          "code": "STEER_UNSUPPORTED",
+          "message": "something went wrong"
+        }
+      },
+      "accepts": {
+        "rust": true,
+        "desktopCoordination": false,
+        "desktopIngress": true,
+        "dart": true
+      }
+    },
+    {
+      "name": "turn-delivery-unknown",
+      "why": "Written to the runtime, delivery not established. Terminal.",
+      "content": {
+        "schema": "buzz-coding-session-lifecycle-receipt/v1",
+        "commandId": "cmd-1",
+        "status": "turn_delivery_unknown",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "error": {
+          "code": "STEER_DELIVERY_UNKNOWN",
+          "message": "something went wrong"
+        }
+      },
+      "accepts": {
+        "rust": true,
+        "desktopCoordination": false,
+        "desktopIngress": true,
+        "dart": true
+      }
+    },
+    {
+      "name": "interrupt-delivered",
+      "why": "The cancel was issued; the turn's own result says how it ended.",
+      "content": {
+        "schema": "buzz-coding-session-lifecycle-receipt/v1",
+        "commandId": "cmd-1",
+        "status": "interrupt_delivered",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "error": null
+      },
+      "accepts": {
+        "rust": true,
+        "desktopCoordination": false,
+        "desktopIngress": true,
+        "dart": true
+      }
+    },
+    {
+      "name": "continuation-registered",
+      "why": "A CI continuation was stored. Not a mailbox stage and not terminal.",
+      "content": {
+        "schema": "buzz-coding-session-lifecycle-receipt/v1",
+        "commandId": "cmd-1",
+        "status": "continuation_registered",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "error": null
+      },
+      "accepts": {
+        "rust": true,
+        "desktopCoordination": false,
+        "desktopIngress": true,
+        "dart": true
+      }
+    },
+    {
+      "name": "invalid-unknown-key",
+      "why": "An unknown key is a refusal in both directions.",
+      "content": {
+        "schema": "buzz-coding-session-lifecycle-receipt/v1",
+        "commandId": "cmd-1",
+        "status": "created",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "error": null,
+        "unknownKey": 1
+      },
+      "accepts": {
+        "rust": false,
+        "desktopCoordination": false,
+        "desktopIngress": false,
+        "dart": false
+      },
+      "reason": "unknown-key"
+    },
+    {
+      "name": "invalid-missing-error-key",
+      "why": "The five keys are structurally required; a null is written, never omitted.",
+      "content": {
+        "schema": "buzz-coding-session-lifecycle-receipt/v1",
+        "commandId": "cmd-1",
+        "status": "created",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        }
+      },
+      "accepts": {
+        "rust": false,
+        "desktopCoordination": false,
+        "desktopIngress": false,
+        "dart": false
+      },
+      "reason": "missing-required"
+    },
+    {
+      "name": "invalid-turn-id-on-turn-queued",
+      "why": "turnId is present exactly when the turn started or was injected.",
+      "content": {
+        "schema": "buzz-coding-session-lifecycle-receipt/v1",
+        "commandId": "cmd-1",
+        "status": "turn_queued",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "error": null,
+        "turnId": "turn-7"
+      },
+      "accepts": {
+        "rust": false,
+        "desktopCoordination": false,
+        "desktopIngress": false,
+        "dart": false
+      },
+      "reason": "unknown-key"
+    },
+    {
+      "name": "invalid-turn-started-without-turn-id",
+      "why": "A started receipt with no turnId names no turn.",
+      "content": {
+        "schema": "buzz-coding-session-lifecycle-receipt/v1",
+        "commandId": "cmd-1",
+        "status": "turn_started",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "error": null
+      },
+      "accepts": {
+        "rust": false,
+        "desktopCoordination": false,
+        "desktopIngress": false,
+        "dart": false
+      },
+      "reason": "missing-required"
+    },
+    {
+      "name": "invalid-turn-id-explicit-null",
+      "why": "An explicit null turnId is a six-key object claiming 'no turn observed'.",
+      "content": {
+        "schema": "buzz-coding-session-lifecycle-receipt/v1",
+        "commandId": "cmd-1",
+        "status": "turn_started",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "error": null,
+        "turnId": null
+      },
+      "accepts": {
+        "rust": false,
+        "desktopCoordination": false,
+        "desktopIngress": false,
+        "dart": false
+      },
+      "reason": "wrong-type"
+    },
+    {
+      "name": "invalid-created-with-error",
+      "why": "A clean lifecycle outcome carries no error.",
+      "content": {
+        "schema": "buzz-coding-session-lifecycle-receipt/v1",
+        "commandId": "cmd-1",
+        "status": "created",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "error": {
+          "code": "SOMETHING",
+          "message": "something went wrong"
+        }
+      },
+      "accepts": {
+        "rust": false,
+        "desktopCoordination": false,
+        "desktopIngress": false,
+        "dart": false
+      },
+      "reason": "wrong-type"
+    },
+    {
+      "name": "invalid-failed-with-session",
+      "why": "`failed` means no session was ever minted.",
+      "content": {
+        "schema": "buzz-coding-session-lifecycle-receipt/v1",
+        "commandId": "cmd-1",
+        "status": "failed",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "error": {
+          "code": "PROVIDER_UNAVAILABLE",
+          "message": "something went wrong"
+        }
+      },
+      "accepts": {
+        "rust": false,
+        "desktopCoordination": false,
+        "desktopIngress": false,
+        "dart": false
+      },
+      "reason": "wrong-type"
+    },
+    {
+      "name": "invalid-created-with-failed-initial-turn-wrong-code",
+      "why": "That status pins its code.",
+      "content": {
+        "schema": "buzz-coding-session-lifecycle-receipt/v1",
+        "commandId": "cmd-1",
+        "status": "created_with_failed_initial_turn",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "error": {
+          "code": "NOPE",
+          "message": "something went wrong"
+        }
+      },
+      "accepts": {
+        "rust": false,
+        "desktopCoordination": false,
+        "desktopIngress": false,
+        "dart": false
+      },
+      "reason": "wrong-type"
+    },
+    {
+      "name": "invalid-unknown-status",
+      "why": "An unrecognized status is a refusal, never a default.",
+      "content": {
+        "schema": "buzz-coding-session-lifecycle-receipt/v1",
+        "commandId": "cmd-1",
+        "status": "turn_vaporized",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "error": {
+          "code": "X",
+          "message": "something went wrong"
+        }
+      },
+      "accepts": {
+        "rust": false,
+        "desktopCoordination": false,
+        "desktopIngress": false,
+        "dart": false
+      },
+      "reason": "wrong-type"
+    },
+    {
+      "name": "invalid-schema",
+      "why": "The schema string is exact.",
+      "content": {
+        "schema": "buzz-coding-session-lifecycle-receipt/v2",
+        "commandId": "cmd-1",
+        "status": "created",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "error": null
+      },
+      "accepts": {
+        "rust": false,
+        "desktopCoordination": false,
+        "desktopIngress": false,
+        "dart": false
+      },
+      "reason": "wrong-type"
+    },
+    {
+      "name": "oversized-turn-error-code",
+      "why": "A 100-byte turn-stage error code: Rust bounds a turn code at 64 bytes (`is_receipt_error_code`), the desktop ingress reader at 256.",
+      "content": {
+        "schema": "buzz-coding-session-lifecycle-receipt/v1",
+        "commandId": "cmd-1",
+        "status": "turn_refused",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "error": {
+          "code": "EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE",
+          "message": "something went wrong"
+        }
+      },
+      "accepts": {
+        "rust": false,
+        "desktopCoordination": false,
+        "desktopIngress": true,
+        "dart": true
+      },
+      "reason": "wrong-type"
+    },
+    {
+      "name": "oversized-error-message",
+      "why": "A 1500-byte message: Rust bounds it at 1024 + '\u2026' (1027 bytes); the desktop ingress reader at 2048.",
+      "content": {
+        "schema": "buzz-coding-session-lifecycle-receipt/v1",
+        "commandId": "cmd-1",
+        "status": "failed",
+        "session": null,
+        "error": {
+          "code": "PROVIDER_UNAVAILABLE",
+          "message": "mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm"
+        }
+      },
+      "accepts": {
+        "rust": false,
+        "desktopCoordination": false,
+        "desktopIngress": true,
+        "dart": true
+      },
+      "reason": "wrong-type"
+    }
+  ]
+}

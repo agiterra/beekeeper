@@ -1,0 +1,1200 @@
+{
+  "schema": "buzz-coding-session-record-conformance/v1",
+  "kind": 44223,
+  "record": "coding-session per-generation metadata",
+  "readers": {
+    "rust": "crates/buzz-core/src/coding_session_payload.rs :: decode_coding_session_metadata",
+    "desktopGate": "desktop/src/shared/coordination/sessionCoordinationStrictJson.ts :: hasStrictMetadataJson (the Pulse gate)",
+    "desktopIngress": "desktop/src/features/coding-sessions/lib/codingSessionIngressPayloads.ts :: parseBuzzCodingSessionMetadata",
+    "dart": "mobile/lib/features/coding_sessions/domain/coding_session_decoders.dart :: decodeCodingSessionMetadata"
+  },
+  "seeAlso": "conformance/project-pack-source/fixtures/pack-source-vectors.json covers the packRef half of this record in depth; it stays where it is and this file does not duplicate it.",
+  "vectors": [
+    {
+      "name": "base-twelve-key",
+      "why": "The pre-amendment base every reader must keep valid forever.",
+      "content": {
+        "schema": "buzz-coding-session-metadata/v1",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "projectRef": "30621:owner:agiterra",
+        "repoRef": null,
+        "title": "Advance coding sessions",
+        "agentRef": null,
+        "provider": "claude-primary",
+        "runtime": "claude",
+        "model": "claude-opus-5",
+        "status": "running",
+        "branch": null,
+        "capabilities": {
+          "threadTurnStart": true,
+          "threadTurnInterrupt": true,
+          "threadSteer": false,
+          "context": false,
+          "diff": false,
+          "plan": true
+        }
+      },
+      "accepts": {
+        "rust": true,
+        "desktopGate": true,
+        "desktopIngress": true,
+        "dart": true
+      }
+    },
+    {
+      "name": "session-ref",
+      "why": "The umbrella echo.",
+      "content": {
+        "schema": "buzz-coding-session-metadata/v1",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "projectRef": "30621:owner:agiterra",
+        "repoRef": null,
+        "title": "Advance coding sessions",
+        "agentRef": null,
+        "provider": "claude-primary",
+        "runtime": "claude",
+        "model": "claude-opus-5",
+        "status": "running",
+        "branch": null,
+        "capabilities": {
+          "threadTurnStart": true,
+          "threadTurnInterrupt": true,
+          "threadSteer": false,
+          "context": false,
+          "diff": false,
+          "plan": true
+        },
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+      },
+      "accepts": {
+        "rust": true,
+        "desktopGate": true,
+        "desktopIngress": true,
+        "dart": true
+      }
+    },
+    {
+      "name": "seat-role",
+      "why": "The agent-seat amendment: a role labels the actor that holds it.",
+      "content": {
+        "schema": "buzz-coding-session-metadata/v1",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "projectRef": "30621:owner:agiterra",
+        "repoRef": null,
+        "title": "Advance coding sessions",
+        "agentRef": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "provider": "claude-primary",
+        "runtime": "claude",
+        "model": "claude-opus-5",
+        "status": "running",
+        "branch": null,
+        "capabilities": {
+          "threadTurnStart": true,
+          "threadTurnInterrupt": true,
+          "threadSteer": false,
+          "context": false,
+          "diff": false,
+          "plan": true
+        },
+        "role": "builder"
+      },
+      "accepts": {
+        "rust": true,
+        "desktopGate": true,
+        "desktopIngress": true,
+        "dart": true
+      }
+    },
+    {
+      "name": "turn-budget",
+      "why": "D9's budget, beside the umbrella it bounds.",
+      "content": {
+        "schema": "buzz-coding-session-metadata/v1",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "projectRef": "30621:owner:agiterra",
+        "repoRef": null,
+        "title": "Advance coding sessions",
+        "agentRef": null,
+        "provider": "claude-primary",
+        "runtime": "claude",
+        "model": "claude-opus-5",
+        "status": "running",
+        "branch": null,
+        "capabilities": {
+          "threadTurnStart": true,
+          "threadTurnInterrupt": true,
+          "threadSteer": false,
+          "context": false,
+          "diff": false,
+          "plan": true
+        },
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+        "turnBudget": {
+          "used": 3,
+          "limit": 20
+        }
+      },
+      "accepts": {
+        "rust": true,
+        "desktopGate": true,
+        "desktopIngress": true,
+        "dart": true
+      }
+    },
+    {
+      "name": "b1-facts",
+      "why": "The four coordinate facts: all four or none.",
+      "content": {
+        "schema": "buzz-coding-session-metadata/v1",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "projectRef": "30621:owner:agiterra",
+        "repoRef": null,
+        "title": "Advance coding sessions",
+        "agentRef": null,
+        "provider": "claude-primary",
+        "runtime": "claude",
+        "model": "claude-opus-5",
+        "status": "running",
+        "branch": null,
+        "capabilities": {
+          "threadTurnStart": true,
+          "threadTurnInterrupt": true,
+          "threadSteer": false,
+          "context": false,
+          "diff": false,
+          "plan": true
+        },
+        "observedCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "dirty": false,
+        "relayReachable": true,
+        "verifiedAt": 1800000000
+      },
+      "accepts": {
+        "rust": true,
+        "desktopGate": true,
+        "desktopIngress": true,
+        "dart": true
+      }
+    },
+    {
+      "name": "routing",
+      "why": "The 2026-08-30 routing echo.",
+      "content": {
+        "schema": "buzz-coding-session-metadata/v1",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "projectRef": "30621:owner:agiterra",
+        "repoRef": null,
+        "title": "Advance coding sessions",
+        "agentRef": null,
+        "provider": "claude-primary",
+        "runtime": "claude",
+        "model": "claude-opus-5",
+        "status": "running",
+        "branch": null,
+        "capabilities": {
+          "threadTurnStart": true,
+          "threadTurnInterrupt": true,
+          "threadSteer": false,
+          "context": false,
+          "diff": false,
+          "plan": true
+        },
+        "routing": {
+          "class": "builder",
+          "tier": "standard",
+          "risk": {
+            "impact": 3,
+            "uncertainty": 3,
+            "irreversibility": 2,
+            "score": 18
+          },
+          "chosen": {
+            "provider": "claude-primary",
+            "model": "sonnet",
+            "effort": "medium"
+          },
+          "runnerUp": null,
+          "reason": "cleared the builder gates and was the cheapest of them.",
+          "reviewRequired": false,
+          "reviewReasons": [],
+          "challengerSample": false,
+          "override": null,
+          "registryVersion": 1,
+          "catalogRevision": null
+        }
+      },
+      "accepts": {
+        "rust": true,
+        "desktopGate": true,
+        "desktopIngress": true,
+        "dart": true
+      }
+    },
+    {
+      "name": "bee-stamp",
+      "why": "The bee-stamp observation: which binary the host chose.",
+      "content": {
+        "schema": "buzz-coding-session-metadata/v1",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "projectRef": "30621:owner:agiterra",
+        "repoRef": null,
+        "title": "Advance coding sessions",
+        "agentRef": null,
+        "provider": "claude-primary",
+        "runtime": "claude",
+        "model": "claude-opus-5",
+        "status": "running",
+        "branch": null,
+        "capabilities": {
+          "threadTurnStart": true,
+          "threadTurnInterrupt": true,
+          "threadSteer": false,
+          "context": false,
+          "diff": false,
+          "plan": true
+        },
+        "beeStamp": {
+          "path": "/Applications/Beekeeper.app/Contents/Resources/bee",
+          "source": "bundled",
+          "version": "0.9.3",
+          "sha": "a1b2c3d",
+          "dirty": false
+        }
+      },
+      "accepts": {
+        "rust": true,
+        "desktopGate": true,
+        "desktopIngress": true,
+        "dart": false
+      }
+    },
+    {
+      "name": "bee-stamp-unparsed",
+      "why": "A stamp whose version, sha and dirty flag could not be read.",
+      "content": {
+        "schema": "buzz-coding-session-metadata/v1",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "projectRef": "30621:owner:agiterra",
+        "repoRef": null,
+        "title": "Advance coding sessions",
+        "agentRef": null,
+        "provider": "claude-primary",
+        "runtime": "claude",
+        "model": "claude-opus-5",
+        "status": "running",
+        "branch": null,
+        "capabilities": {
+          "threadTurnStart": true,
+          "threadTurnInterrupt": true,
+          "threadSteer": false,
+          "context": false,
+          "diff": false,
+          "plan": true
+        },
+        "beeStamp": {
+          "path": "/Applications/Beekeeper.app/Contents/Resources/bee",
+          "source": "bundled",
+          "version": null,
+          "sha": null,
+          "dirty": null
+        }
+      },
+      "accepts": {
+        "rust": true,
+        "desktopGate": true,
+        "desktopIngress": true,
+        "dart": false
+      }
+    },
+    {
+      "name": "pack-ref",
+      "why": "L23's pack source: the role pack the seat is running.",
+      "content": {
+        "schema": "buzz-coding-session-metadata/v1",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "projectRef": "30621:owner:agiterra",
+        "repoRef": null,
+        "title": "Advance coding sessions",
+        "agentRef": null,
+        "provider": "claude-primary",
+        "runtime": "claude",
+        "model": "claude-opus-5",
+        "status": "running",
+        "branch": null,
+        "capabilities": {
+          "threadTurnStart": true,
+          "threadTurnInterrupt": true,
+          "threadSteer": false,
+          "context": false,
+          "diff": false,
+          "plan": true
+        },
+        "packRef": {
+          "repo": "30617:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc:agiterra-packs",
+          "sha": "dddddddddddddddddddddddddddddddddddddddd",
+          "role": "builder",
+          "path": "personas/roles/builder"
+        }
+      },
+      "accepts": {
+        "rust": true,
+        "desktopGate": true,
+        "desktopIngress": true,
+        "dart": false
+      }
+    },
+    {
+      "name": "pack-ref-shipped",
+      "why": "The shipped-defaults sentinel takes an app version, not a commit.",
+      "content": {
+        "schema": "buzz-coding-session-metadata/v1",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "projectRef": "30621:owner:agiterra",
+        "repoRef": null,
+        "title": "Advance coding sessions",
+        "agentRef": null,
+        "provider": "claude-primary",
+        "runtime": "claude",
+        "model": "claude-opus-5",
+        "status": "running",
+        "branch": null,
+        "capabilities": {
+          "threadTurnStart": true,
+          "threadTurnInterrupt": true,
+          "threadSteer": false,
+          "context": false,
+          "diff": false,
+          "plan": true
+        },
+        "packRef": {
+          "repo": "app:shipped",
+          "sha": "0.1.0",
+          "role": "builder",
+          "path": "personas/roles/builder"
+        }
+      },
+      "accepts": {
+        "rust": true,
+        "desktopGate": true,
+        "desktopIngress": true,
+        "dart": false
+      }
+    },
+    {
+      "name": "handover",
+      "why": "The handover claim: who holds this session now.",
+      "content": {
+        "schema": "buzz-coding-session-metadata/v1",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "projectRef": "30621:owner:agiterra",
+        "repoRef": null,
+        "title": "Advance coding sessions",
+        "agentRef": null,
+        "provider": "claude-primary",
+        "runtime": "claude",
+        "model": "claude-opus-5",
+        "status": "running",
+        "branch": null,
+        "capabilities": {
+          "threadTurnStart": true,
+          "threadTurnInterrupt": true,
+          "threadSteer": false,
+          "context": false,
+          "diff": false,
+          "plan": true
+        },
+        "handover": {
+          "state": "active",
+          "claimant": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "bodyPubkey": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "acceptedEventId": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        }
+      },
+      "accepts": {
+        "rust": true,
+        "desktopGate": true,
+        "desktopIngress": false,
+        "dart": false
+      }
+    },
+    {
+      "name": "compose-ref",
+      "why": "Spec \u00a74.6 compose provenance. Refused without packRef, so it travels with it.",
+      "content": {
+        "schema": "buzz-coding-session-metadata/v1",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "projectRef": "30621:owner:agiterra",
+        "repoRef": null,
+        "title": "Advance coding sessions",
+        "agentRef": null,
+        "provider": "claude-primary",
+        "runtime": "claude",
+        "model": "claude-opus-5",
+        "status": "running",
+        "branch": null,
+        "capabilities": {
+          "threadTurnStart": true,
+          "threadTurnInterrupt": true,
+          "threadSteer": false,
+          "context": false,
+          "diff": false,
+          "plan": true
+        },
+        "packRef": {
+          "repo": "30617:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc:agiterra-packs",
+          "sha": "dddddddddddddddddddddddddddddddddddddddd",
+          "role": "builder",
+          "path": "personas/roles/builder"
+        },
+        "composeRef": {
+          "appVersion": "0.9.3",
+          "digest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        }
+      },
+      "accepts": {
+        "rust": true,
+        "desktopGate": false,
+        "desktopIngress": true,
+        "dart": false
+      }
+    },
+    {
+      "name": "every-amendment-at-once",
+      "why": "Everything the wire defines, together.",
+      "content": {
+        "schema": "buzz-coding-session-metadata/v1",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "projectRef": "30621:owner:agiterra",
+        "repoRef": null,
+        "title": "Advance coding sessions",
+        "agentRef": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "provider": "claude-primary",
+        "runtime": "claude",
+        "model": "claude-opus-5",
+        "status": "running",
+        "branch": null,
+        "capabilities": {
+          "threadTurnStart": true,
+          "threadTurnInterrupt": true,
+          "threadSteer": false,
+          "context": false,
+          "diff": false,
+          "plan": true
+        },
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+        "role": "builder",
+        "turnBudget": {
+          "used": 3,
+          "limit": 20
+        },
+        "observedCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "dirty": false,
+        "relayReachable": true,
+        "verifiedAt": 1800000000,
+        "routing": {
+          "class": "builder",
+          "tier": "standard",
+          "risk": {
+            "impact": 3,
+            "uncertainty": 3,
+            "irreversibility": 2,
+            "score": 18
+          },
+          "chosen": {
+            "provider": "claude-primary",
+            "model": "sonnet",
+            "effort": "medium"
+          },
+          "runnerUp": null,
+          "reason": "cleared the builder gates and was the cheapest of them.",
+          "reviewRequired": false,
+          "reviewReasons": [],
+          "challengerSample": false,
+          "override": null,
+          "registryVersion": 1,
+          "catalogRevision": null
+        },
+        "beeStamp": {
+          "path": "/Applications/Beekeeper.app/Contents/Resources/bee",
+          "source": "bundled",
+          "version": "0.9.3",
+          "sha": "a1b2c3d",
+          "dirty": false
+        },
+        "packRef": {
+          "repo": "30617:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc:agiterra-packs",
+          "sha": "dddddddddddddddddddddddddddddddddddddddd",
+          "role": "builder",
+          "path": "personas/roles/builder"
+        },
+        "handover": {
+          "state": "active",
+          "claimant": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "bodyPubkey": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "acceptedEventId": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        },
+        "composeRef": {
+          "appVersion": "0.9.3",
+          "digest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        }
+      },
+      "accepts": {
+        "rust": true,
+        "desktopGate": false,
+        "desktopIngress": false,
+        "dart": false
+      }
+    },
+    {
+      "name": "capabilities-carrying-prompt-image",
+      "why": "Finding 34: capabilities is an open set, not a closed one.",
+      "content": {
+        "schema": "buzz-coding-session-metadata/v1",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "projectRef": "30621:owner:agiterra",
+        "repoRef": null,
+        "title": "Advance coding sessions",
+        "agentRef": null,
+        "provider": "claude-primary",
+        "runtime": "claude",
+        "model": "claude-opus-5",
+        "status": "running",
+        "branch": null,
+        "capabilities": {
+          "threadTurnStart": true,
+          "threadTurnInterrupt": true,
+          "threadSteer": false,
+          "context": false,
+          "diff": false,
+          "plan": true,
+          "promptImage": false
+        }
+      },
+      "accepts": {
+        "rust": true,
+        "desktopGate": true,
+        "desktopIngress": true,
+        "dart": true
+      }
+    },
+    {
+      "name": "invalid-unknown-key",
+      "why": "An unknown top-level key is a refusal.",
+      "content": {
+        "schema": "buzz-coding-session-metadata/v1",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "projectRef": "30621:owner:agiterra",
+        "repoRef": null,
+        "title": "Advance coding sessions",
+        "agentRef": null,
+        "provider": "claude-primary",
+        "runtime": "claude",
+        "model": "claude-opus-5",
+        "status": "running",
+        "branch": null,
+        "capabilities": {
+          "threadTurnStart": true,
+          "threadTurnInterrupt": true,
+          "threadSteer": false,
+          "context": false,
+          "diff": false,
+          "plan": true
+        },
+        "mood": "cheerful"
+      },
+      "accepts": {
+        "rust": false,
+        "desktopGate": false,
+        "desktopIngress": false,
+        "dart": false
+      },
+      "reason": "unknown-key"
+    },
+    {
+      "name": "invalid-partial-facts",
+      "why": "Some but not all of the four B1 facts.",
+      "content": {
+        "schema": "buzz-coding-session-metadata/v1",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "projectRef": "30621:owner:agiterra",
+        "repoRef": null,
+        "title": "Advance coding sessions",
+        "agentRef": null,
+        "provider": "claude-primary",
+        "runtime": "claude",
+        "model": "claude-opus-5",
+        "status": "running",
+        "branch": null,
+        "capabilities": {
+          "threadTurnStart": true,
+          "threadTurnInterrupt": true,
+          "threadSteer": false,
+          "context": false,
+          "diff": false,
+          "plan": true
+        },
+        "observedCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "dirty": false
+      },
+      "accepts": {
+        "rust": false,
+        "desktopGate": false,
+        "desktopIngress": false,
+        "dart": false
+      },
+      "reason": "missing-required"
+    },
+    {
+      "name": "invalid-missing-branch",
+      "why": "A nullable base key is structurally required.",
+      "content": {
+        "schema": "buzz-coding-session-metadata/v1",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "projectRef": "30621:owner:agiterra",
+        "repoRef": null,
+        "title": "Advance coding sessions",
+        "agentRef": null,
+        "provider": "claude-primary",
+        "runtime": "claude",
+        "model": "claude-opus-5",
+        "status": "running",
+        "capabilities": {
+          "threadTurnStart": true,
+          "threadTurnInterrupt": true,
+          "threadSteer": false,
+          "context": false,
+          "diff": false,
+          "plan": true
+        }
+      },
+      "accepts": {
+        "rust": false,
+        "desktopGate": false,
+        "desktopIngress": false,
+        "dart": false
+      },
+      "reason": "missing-required"
+    },
+    {
+      "name": "invalid-routing-null",
+      "why": "`routing` explicit null is refused naming the key by buzz-core. Both the Pulse gate and the mobile decoder short-circuit on a null check and accept it.",
+      "content": {
+        "schema": "buzz-coding-session-metadata/v1",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "projectRef": "30621:owner:agiterra",
+        "repoRef": null,
+        "title": "Advance coding sessions",
+        "agentRef": null,
+        "provider": "claude-primary",
+        "runtime": "claude",
+        "model": "claude-opus-5",
+        "status": "running",
+        "branch": null,
+        "capabilities": {
+          "threadTurnStart": true,
+          "threadTurnInterrupt": true,
+          "threadSteer": false,
+          "context": false,
+          "diff": false,
+          "plan": true
+        },
+        "routing": null
+      },
+      "accepts": {
+        "rust": false,
+        "desktopGate": true,
+        "desktopIngress": false,
+        "dart": true
+      },
+      "reason": "wrong-type"
+    },
+    {
+      "name": "invalid-bee-stamp-null",
+      "why": "`beeStamp` explicit null is a shape no host emits.",
+      "content": {
+        "schema": "buzz-coding-session-metadata/v1",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "projectRef": "30621:owner:agiterra",
+        "repoRef": null,
+        "title": "Advance coding sessions",
+        "agentRef": null,
+        "provider": "claude-primary",
+        "runtime": "claude",
+        "model": "claude-opus-5",
+        "status": "running",
+        "branch": null,
+        "capabilities": {
+          "threadTurnStart": true,
+          "threadTurnInterrupt": true,
+          "threadSteer": false,
+          "context": false,
+          "diff": false,
+          "plan": true
+        },
+        "beeStamp": null
+      },
+      "accepts": {
+        "rust": false,
+        "desktopGate": false,
+        "desktopIngress": false,
+        "dart": false
+      },
+      "reason": "wrong-type"
+    },
+    {
+      "name": "invalid-pack-ref-null",
+      "why": "`packRef` explicit null is refused naming the key.",
+      "content": {
+        "schema": "buzz-coding-session-metadata/v1",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "projectRef": "30621:owner:agiterra",
+        "repoRef": null,
+        "title": "Advance coding sessions",
+        "agentRef": null,
+        "provider": "claude-primary",
+        "runtime": "claude",
+        "model": "claude-opus-5",
+        "status": "running",
+        "branch": null,
+        "capabilities": {
+          "threadTurnStart": true,
+          "threadTurnInterrupt": true,
+          "threadSteer": false,
+          "context": false,
+          "diff": false,
+          "plan": true
+        },
+        "packRef": null
+      },
+      "accepts": {
+        "rust": false,
+        "desktopGate": false,
+        "desktopIngress": false,
+        "dart": false
+      },
+      "reason": "wrong-type"
+    },
+    {
+      "name": "invalid-handover-null",
+      "why": "`handover` explicit null is a producer inventing a shape.",
+      "content": {
+        "schema": "buzz-coding-session-metadata/v1",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "projectRef": "30621:owner:agiterra",
+        "repoRef": null,
+        "title": "Advance coding sessions",
+        "agentRef": null,
+        "provider": "claude-primary",
+        "runtime": "claude",
+        "model": "claude-opus-5",
+        "status": "running",
+        "branch": null,
+        "capabilities": {
+          "threadTurnStart": true,
+          "threadTurnInterrupt": true,
+          "threadSteer": false,
+          "context": false,
+          "diff": false,
+          "plan": true
+        },
+        "handover": null
+      },
+      "accepts": {
+        "rust": false,
+        "desktopGate": false,
+        "desktopIngress": false,
+        "dart": false
+      },
+      "reason": "wrong-type"
+    },
+    {
+      "name": "invalid-compose-ref-null",
+      "why": "`composeRef` explicit null is refused naming the key.",
+      "content": {
+        "schema": "buzz-coding-session-metadata/v1",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "projectRef": "30621:owner:agiterra",
+        "repoRef": null,
+        "title": "Advance coding sessions",
+        "agentRef": null,
+        "provider": "claude-primary",
+        "runtime": "claude",
+        "model": "claude-opus-5",
+        "status": "running",
+        "branch": null,
+        "capabilities": {
+          "threadTurnStart": true,
+          "threadTurnInterrupt": true,
+          "threadSteer": false,
+          "context": false,
+          "diff": false,
+          "plan": true
+        },
+        "packRef": {
+          "repo": "30617:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc:agiterra-packs",
+          "sha": "dddddddddddddddddddddddddddddddddddddddd",
+          "role": "builder",
+          "path": "personas/roles/builder"
+        },
+        "composeRef": null
+      },
+      "accepts": {
+        "rust": false,
+        "desktopGate": false,
+        "desktopIngress": false,
+        "dart": false
+      },
+      "reason": "wrong-type"
+    },
+    {
+      "name": "invalid-compose-ref-without-pack-ref",
+      "why": "A composition of nothing is not a fact.",
+      "content": {
+        "schema": "buzz-coding-session-metadata/v1",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "projectRef": "30621:owner:agiterra",
+        "repoRef": null,
+        "title": "Advance coding sessions",
+        "agentRef": null,
+        "provider": "claude-primary",
+        "runtime": "claude",
+        "model": "claude-opus-5",
+        "status": "running",
+        "branch": null,
+        "capabilities": {
+          "threadTurnStart": true,
+          "threadTurnInterrupt": true,
+          "threadSteer": false,
+          "context": false,
+          "diff": false,
+          "plan": true
+        },
+        "composeRef": {
+          "appVersion": "0.9.3",
+          "digest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        }
+      },
+      "accepts": {
+        "rust": false,
+        "desktopGate": false,
+        "desktopIngress": false,
+        "dart": false
+      },
+      "reason": "missing-required"
+    },
+    {
+      "name": "invalid-unknown-status",
+      "why": "The ten statuses are a closed enum; an eleventh is not a default.",
+      "content": {
+        "schema": "buzz-coding-session-metadata/v1",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "projectRef": "30621:owner:agiterra",
+        "repoRef": null,
+        "title": "Advance coding sessions",
+        "agentRef": null,
+        "provider": "claude-primary",
+        "runtime": "claude",
+        "model": "claude-opus-5",
+        "status": "pondering",
+        "branch": null,
+        "capabilities": {
+          "threadTurnStart": true,
+          "threadTurnInterrupt": true,
+          "threadSteer": false,
+          "context": false,
+          "diff": false,
+          "plan": true
+        }
+      },
+      "accepts": {
+        "rust": false,
+        "desktopGate": false,
+        "desktopIngress": false,
+        "dart": false
+      },
+      "reason": "wrong-type"
+    },
+    {
+      "name": "invalid-turn-budget-extra-key",
+      "why": "The nested budget rejects an unknown key rather than ignoring it. buzz-core's own comment on `TurnBudget` names the desktop as the reader that must agree; the mobile decoder validates `turnBudget` loosely and accepts the fifth key.",
+      "content": {
+        "schema": "buzz-coding-session-metadata/v1",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "projectRef": "30621:owner:agiterra",
+        "repoRef": null,
+        "title": "Advance coding sessions",
+        "agentRef": null,
+        "provider": "claude-primary",
+        "runtime": "claude",
+        "model": "claude-opus-5",
+        "status": "running",
+        "branch": null,
+        "capabilities": {
+          "threadTurnStart": true,
+          "threadTurnInterrupt": true,
+          "threadSteer": false,
+          "context": false,
+          "diff": false,
+          "plan": true
+        },
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+        "turnBudget": {
+          "used": 3,
+          "limit": 20,
+          "softLimit": 10
+        }
+      },
+      "accepts": {
+        "rust": false,
+        "desktopGate": false,
+        "desktopIngress": false,
+        "dart": true
+      },
+      "reason": "unknown-key"
+    },
+    {
+      "name": "invalid-handover-extra-key",
+      "why": "The handover object rejects unknown keys rather than ignoring them.",
+      "content": {
+        "schema": "buzz-coding-session-metadata/v1",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "projectRef": "30621:owner:agiterra",
+        "repoRef": null,
+        "title": "Advance coding sessions",
+        "agentRef": null,
+        "provider": "claude-primary",
+        "runtime": "claude",
+        "model": "claude-opus-5",
+        "status": "running",
+        "branch": null,
+        "capabilities": {
+          "threadTurnStart": true,
+          "threadTurnInterrupt": true,
+          "threadSteer": false,
+          "context": false,
+          "diff": false,
+          "plan": true
+        },
+        "handover": {
+          "state": "active",
+          "claimant": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "bodyPubkey": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "acceptedEventId": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "note": "x"
+        }
+      },
+      "accepts": {
+        "rust": false,
+        "desktopGate": false,
+        "desktopIngress": false,
+        "dart": false
+      },
+      "reason": "unknown-key"
+    },
+    {
+      "name": "invalid-schema",
+      "why": "The schema string is exact.",
+      "content": {
+        "schema": "buzz-coding-session-metadata/v2",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "projectRef": "30621:owner:agiterra",
+        "repoRef": null,
+        "title": "Advance coding sessions",
+        "agentRef": null,
+        "provider": "claude-primary",
+        "runtime": "claude",
+        "model": "claude-opus-5",
+        "status": "running",
+        "branch": null,
+        "capabilities": {
+          "threadTurnStart": true,
+          "threadTurnInterrupt": true,
+          "threadSteer": false,
+          "context": false,
+          "diff": false,
+          "plan": true
+        }
+      },
+      "accepts": {
+        "rust": false,
+        "desktopGate": false,
+        "desktopIngress": false,
+        "dart": false
+      },
+      "reason": "wrong-type"
+    },
+    {
+      "name": "context-summary",
+      "why": "`contextSummary` is accepted by the desktop ingress decoder and by the mobile decoder; buzz-core's key set does not name it at all.",
+      "content": {
+        "schema": "buzz-coding-session-metadata/v1",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "0123456789abcdef",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "projectRef": "30621:owner:agiterra",
+        "repoRef": null,
+        "title": "Advance coding sessions",
+        "agentRef": null,
+        "provider": "claude-primary",
+        "runtime": "claude",
+        "model": "claude-opus-5",
+        "status": "running",
+        "branch": null,
+        "capabilities": {
+          "threadTurnStart": true,
+          "threadTurnInterrupt": true,
+          "threadSteer": false,
+          "context": false,
+          "diff": false,
+          "plan": true
+        },
+        "contextSummary": "A short summary."
+      },
+      "accepts": {
+        "rust": false,
+        "desktopGate": false,
+        "desktopIngress": true,
+        "dart": true
+      },
+      "reason": "unknown-key"
+    }
+  ]
+}

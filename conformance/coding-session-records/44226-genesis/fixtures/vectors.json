@@ -1,0 +1,181 @@
+{
+  "schema": "buzz-coding-session-record-conformance/v1",
+  "kind": 44226,
+  "record": "coding-session genesis",
+  "readers": {
+    "rust": "crates/buzz-core/src/coding_session_genesis.rs :: decode_coding_session_genesis",
+    "desktop": "desktop/src/features/coding-sessions/lib/codingSessionCreateObservations.ts :: classifyCodingSessionGenesisEvent",
+    "dart": "mobile/lib/features/coding_sessions/domain/coding_session_session_decoders.dart :: decodeCodingSessionGenesis"
+  },
+  "vectors": [
+    {
+      "name": "fresh-founding",
+      "why": "Two keys. The signer founds a sessionRef nothing has used.",
+      "content": {
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+        "v": 1
+      },
+      "accepts": {
+        "rust": true,
+        "desktop": true,
+        "dart": true
+      }
+    },
+    {
+      "name": "legacy-adoption",
+      "why": "Three keys; `adopts` carries exactly createEventId and receiptEventId.",
+      "content": {
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+        "v": 1,
+        "adopts": {
+          "createEventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "receiptEventId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      },
+      "accepts": {
+        "rust": true,
+        "desktop": true,
+        "dart": true
+      }
+    },
+    {
+      "name": "invalid-third-top-level-key",
+      "why": "No third top-level key exists.",
+      "content": {
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+        "v": 1,
+        "project": "x"
+      },
+      "accepts": {
+        "rust": false,
+        "desktop": false,
+        "dart": false
+      },
+      "reason": "unknown-key"
+    },
+    {
+      "name": "invalid-adopts-null",
+      "why": "`adopts` present but null is neither accepted form.",
+      "content": {
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+        "v": 1,
+        "adopts": null
+      },
+      "accepts": {
+        "rust": false,
+        "desktop": false,
+        "dart": false
+      },
+      "reason": "wrong-type"
+    },
+    {
+      "name": "invalid-adopts-extra-key",
+      "why": "The adoption object is closed at two keys.",
+      "content": {
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+        "v": 1,
+        "adopts": {
+          "createEventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "receiptEventId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "channelId": "x"
+        }
+      },
+      "accepts": {
+        "rust": false,
+        "desktop": false,
+        "dart": false
+      },
+      "reason": "unknown-key"
+    },
+    {
+      "name": "invalid-adopts-missing-key",
+      "why": "Both references are required.",
+      "content": {
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+        "v": 1,
+        "adopts": {
+          "createEventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "accepts": {
+        "rust": false,
+        "desktop": false,
+        "dart": false
+      },
+      "reason": "missing-required"
+    },
+    {
+      "name": "invalid-adopts-uppercase-event-id",
+      "why": "Event ids are lowercase 64-hex, compared byte-for-byte.",
+      "content": {
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+        "v": 1,
+        "adopts": {
+          "createEventId": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          "receiptEventId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      },
+      "accepts": {
+        "rust": false,
+        "desktop": false,
+        "dart": false
+      },
+      "reason": "wrong-type"
+    },
+    {
+      "name": "invalid-missing-v",
+      "why": "The schema version is structurally required.",
+      "content": {
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+      },
+      "accepts": {
+        "rust": false,
+        "desktop": false,
+        "dart": false
+      },
+      "reason": "missing-required"
+    },
+    {
+      "name": "invalid-session-ref-uppercase",
+      "why": "sessionRef is a canonical lowercase hyphenated UUID.",
+      "content": {
+        "sessionRef": "5B7E1C2A-90D4-4B0E-A1F3-7C2D8E6F4A10",
+        "v": 1
+      },
+      "accepts": {
+        "rust": false,
+        "desktop": false,
+        "dart": false
+      },
+      "reason": "wrong-type"
+    },
+    {
+      "name": "invalid-v-two",
+      "why": "Only version 1 exists.",
+      "content": {
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+        "v": 2
+      },
+      "accepts": {
+        "rust": false,
+        "desktop": false,
+        "dart": false
+      },
+      "reason": "wrong-type"
+    },
+    {
+      "name": "v-as-json-float",
+      "why": "`\"v\": 1.0` \u2014 serde refuses a float for u64; JavaScript and Dart both read 1.0 == 1.",
+      "content": {
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+        "v": 1.0
+      },
+      "accepts": {
+        "rust": false,
+        "desktop": true,
+        "dart": true
+      },
+      "reason": "wrong-type"
+    }
+  ]
+}

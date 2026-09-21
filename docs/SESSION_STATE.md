@@ -18112,6 +18112,154 @@ removed from here.
        measure` reporting `acknowledgement_only_turns: 0` and a canonical
        terminal.
 
+215. **Five more closed coding-session records had independent strict readers
+     in three languages and no shared vectors; the vectors written for them
+     found eleven live reader disagreements, one of which refuses every hired
+     seat's create on mobile.** This is preventive work in the 204 class, not
+     a report of a new outage: 204 was `projectRef` echoed onto the kind:40099
+     receipt and never taught to the CLI's `deny_unknown_fields` reader, which
+     made every owner-founded team session's authority chain unreadable. Astra's
+     Wave 2 review named four more records exposed the same way
+     ([`docs/history/2026-09-21-astra-wave2-review.md`](history/2026-09-21-astra-wave2-review.md)
+     § "Lane 204: remaining cross-reader exposure", filed on `main` at
+     `97bf2f1f4` after this lane branched); a fifth, 44223, had Rust-side
+     vectors its TypeScript parity
+     tests did not load. The rule is `docs/UNIFIED_WORK_PLAN.md` § 8 A3.3.
+     **No reader was changed.** Every disagreement below is recorded in the
+     vector that shows it and asserted as an expected divergence, so the suite
+     is green and the divergence is named rather than waiting to be found live.
+     - **Every reader found, per record.** The most useful finding of the
+       reconnaissance is negative: **there is exactly one strict Rust reader
+       per record.** `buzz-cli`, `buzz-db`, `buzz-relay`, `buzz-sdk` and
+       `buzz-session-provider` all call `buzz-core`'s `decode_*` and none
+       re-spells a key set (checked by grepping every call site of the four
+       decoders), so one `buzz-core` test covers every Rust consumer. The
+       exposure is entirely in TypeScript and Dart, and two records have
+       *two* independent desktop readers.
+       44221: `crates/buzz-core/src/coding_session_lifecycle_command.rs:574`
+       (`decode_coding_session_lifecycle_command`) ·
+       `desktop/src/shared/coordination/sessionCoordinationStrictJson.ts:105`
+       (`hasStrictLifecycleCommandJson`) ·
+       `mobile/lib/features/coding_sessions/domain/coding_session_session_decoders.dart:51`
+       (`decodeCodingSessionCreate`).
+       44223: `crates/buzz-core/src/coding_session_payload.rs:1714` ·
+       `sessionCoordinationStrictJson.ts:534` (`hasStrictMetadataJson`, the
+       Pulse gate) · `desktop/src/features/coding-sessions/lib/codingSessionIngressPayloads.ts:591`
+       (`parseBuzzCodingSessionMetadata`) ·
+       `mobile/lib/features/coding_sessions/domain/coding_session_decoders.dart:54`.
+       44224: `coding_session_payload.rs:752` ·
+       `sessionCoordinationStrictJson.ts:222` ·
+       `codingSessionIngressPayloads.ts:397` ·
+       `coding_session_decoders.dart:217`.
+       44226: `crates/buzz-core/src/coding_session_genesis.rs:228` ·
+       `desktop/src/features/coding-sessions/lib/codingSessionCreateObservations.ts:331`
+       (`classifyCodingSessionGenesisEvent`) ·
+       `coding_session_session_decoders.dart:264`.
+       44230: `crates/buzz-core/src/coding_session_closure.rs:108` ·
+       `sessionCoordinationStrictJson.ts:855` (`hasStrictClosureJson`) ·
+       `coding_session_session_decoders.dart:376`.
+       The web client decodes none of these kinds.
+     - **The disagreements, worst first.** Each is named by the vector that
+       shows it; every one of them was *predicted from the source and then
+       proved by running the reader*, and four of my predictions were wrong
+       and corrected by the run.
+       (a) **Mobile refuses every hired seat's create.** `createKeys` in
+       `coding_session_session_decoders.dart:112-126` never grew the
+       2026-09-01 `hireRef` key, and the list is an exact-key check, so a
+       seated create that names the hire it answers decodes as
+       `malformedPayload`. Vectors `create-seated-with-hire-ref` and
+       `create-all-amendments`. This is 204's shape exactly, live on the wire
+       today, on the surface least likely to be looked at.
+       (b) **The desktop Pulse gate refuses `composeRef`** (44223): its
+       amendment list (`sessionCoordinationStrictJson.ts:366-379`) has eight
+       entries and `composeRef` is not one. The gate being *stricter* than the
+       session decoder is the one direction
+       `sessionCoordinationStrictJsonParity.test.mjs:1-18` says must never
+       happen — and that test does not catch it, because it compares the two
+       local readers over its own fixture list rather than over shared
+       vectors. Vector `compose-ref`.
+       (c) **The desktop ingress decoder refuses `handover`** (44223):
+       `codingSessionIngressPayloads.ts:621-631`'s optional list has
+       `beeStamp`, `packRef` and `composeRef` and not `handover`. Vector
+       `handover`. (b) and (c) together mean **no** desktop reader accepts a
+       44223 carrying both — vector `every-amendment-at-once`.
+       (d) **Mobile refuses four additive 44223 keys**: `beeStamp`, `packRef`,
+       `handover` and `composeRef` are all absent from its optional list
+       (`coding_session_decoders.dart:108-114`), whose own comment records
+       that `role`, `turnBudget` and `routing` were missing once before and
+       that "a forgotten amendment is a blank session list". Vectors
+       `bee-stamp`, `bee-stamp-unparsed`, `pack-ref`, `pack-ref-shipped`,
+       `handover`, `compose-ref`.
+       (e) **Mobile refuses `action: "archived"`** (44230):
+       `coding_session_session_decoders.dart:409` tests
+       `action != 'closed' && action != 'open'`, so the third variant of
+       `CodingSessionClosureAction` decodes as corruption. Vector `archived`.
+       (f) **The desktop coordination reader refuses `session.hire` and
+       `session.restart` outright** (44221:157-161 accepts only `create`,
+       `resume`, `stop`), and `sessionCoordinationFold.ts:288` runs every
+       kind:44221 through it. Vectors `hire-seven-key`,
+       `hire-with-requested-by`, `hire-with-routing-request`, `restart`.
+       Whether that is scope or defect is not this lane's call; it is pinned.
+       (g) **The Pulse gate and mobile both accept `"routing": null`** on a
+       44223, which `buzz-core` refuses naming the key: both short-circuit on
+       a `!== null` guard before validating. Vector `invalid-routing-null`.
+       Predicted as agreement; the run said otherwise.
+       (h) **Mobile accepts an unknown key inside `turnBudget`.** `buzz-core`'s
+       own comment on `TurnBudget` (`coding_session_payload.rs:1625-1631`)
+       names the desktop as the reader that must agree and does not mention
+       mobile, which validates the nested object loosely. Vector
+       `invalid-turn-budget-extra-key`.
+       (i) **Mobile lowercases a signed provider-authority pubkey** through
+       `normalizePubkey` and admits the create; `buzz-core` and the desktop
+       refuse uppercase rather than coerce it, because these ids are compared
+       byte-for-byte against signed facts. Vector
+       `invalid-create-uppercase-authority-pubkey`.
+       (j) **The desktop ingress decoder and mobile bound 44224 error strings
+       wider than `buzz-core`**: a turn-stage `error.code` at 256 bytes
+       against `is_receipt_error_code`'s 64, and `error.message` at 2048
+       against `1024 + '…'` = 1027. Vectors `oversized-turn-error-code`,
+       `oversized-error-message`.
+       (k) **The desktop ingress decoder and mobile accept
+       `contextSummary`/`diffSummary`/`planSummary` on a 44223**, which
+       `METADATA_BASE_FIELDS` does not name at all. Vector `context-summary`.
+       Plus one that is a property of the languages rather than of anyone's
+       code: `"v": 1.0` on a 44226 or 44230 is a float serde refuses for a
+       `u64` and neither JavaScript nor Dart can tell from `1`. Nothing signs
+       it. Vector `v-as-json-float`, pinned so nobody is surprised by it.
+     - **What is now guarded.** `conformance/coding-session-records/<kind>/`
+       for each of 44221, 44223, 44224, 44226 and 44230: a README stating the
+       closed key set per variant and a `fixtures/vectors.json` of canonical
+       valid examples (every action type, status, and optional-null form) and
+       invalid ones, each naming its refusal class (`unknown-key`,
+       `missing-required`, `wrong-type`) and each stating what **every** reader
+       does with it. 101 vectors across the five. Loaded by
+       `crates/buzz-core/tests/coding_session_record_conformance.rs` (all
+       five), `desktop/src/shared/coordination/codingSessionRecordConformance.test.mjs`
+       (four records, both desktop readers where there are two),
+       `desktop/src/features/coding-sessions/lib/codingSessionGenesisConformance.test.mjs`
+       (44226, over signed events), and
+       `mobile/test/features/coding_sessions/domain/coding_session_record_conformance_test.dart`
+       (all five). A structural test asserts that every vector states a verdict
+       for every reader the fixture names, so a new reader cannot be added
+       without every vector being answered for it.
+       `conformance/README.md` states the rule, lists the guarded records with
+       their readers, and gives the procedure: add the vector first, watch
+       every reader's test fail, update every reader in the same landing, name
+       every reader in the report. A test that trips on a pinned divergence
+       says `PINNED DIVERGENCE moved`, so the next lane is not tempted to
+       "fix" the fixture instead of the reader.
+     - **What is not guarded.** No reader was fixed, so (a)–(k) are all still
+       live; each needs a lane that changes the reader and the vector in one
+       commit. 44244 already had cross-reader fixtures and was left alone.
+       `conformance/project-pack-source/`'s TypeScript side still compares two
+       local readers instead of loading its own Rust-side vectors — recorded,
+       not closed. Behaviour is out of scope throughout: the hire refusal
+       codes, the relay's verification of a genesis adoption claim, the
+       receipt↔command join, and the `requestedBy`-versus-signer comparison
+       are not key sets and no fixture here pins them. Nothing was exercised
+       against hive or an installed bundle; these are decoder-level tests.
+
+
 ## 3a. Environment facts that cost real time (do not rediscover)
 
 - **pnpm 11's answer to a stale workspace state is to DELETE `node_modules`,

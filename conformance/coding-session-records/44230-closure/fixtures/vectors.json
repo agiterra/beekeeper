@@ -1,0 +1,185 @@
+{
+  "schema": "buzz-coding-session-record-conformance/v1",
+  "kind": 44230,
+  "record": "coding-session closure revision",
+  "readers": {
+    "rust": "crates/buzz-core/src/coding_session_closure.rs :: decode_coding_session_closure",
+    "desktopCoordination": "desktop/src/shared/coordination/sessionCoordinationStrictJson.ts :: hasStrictClosureJson",
+    "dart": "mobile/lib/features/coding_sessions/domain/coding_session_session_decoders.dart :: decodeCodingSessionClosure"
+  },
+  "vectors": [
+    {
+      "name": "closed",
+      "why": "The umbrella moves to its settled shelf.",
+      "content": {
+        "action": "closed",
+        "genesisRef": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+        "v": 1
+      },
+      "accepts": {
+        "rust": true,
+        "desktopCoordination": true,
+        "dart": true
+      }
+    },
+    {
+      "name": "open",
+      "why": "The umbrella is available for continuation again.",
+      "content": {
+        "action": "open",
+        "genesisRef": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+        "v": 1
+      },
+      "accepts": {
+        "rust": true,
+        "desktopCoordination": true,
+        "dart": true
+      }
+    },
+    {
+      "name": "archived",
+      "why": "Archived implies closed and files the umbrella away. The third variant of `CodingSessionClosureAction`.",
+      "content": {
+        "action": "archived",
+        "genesisRef": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+        "v": 1
+      },
+      "accepts": {
+        "rust": true,
+        "desktopCoordination": true,
+        "dart": false
+      }
+    },
+    {
+      "name": "invalid-unknown-action",
+      "why": "The action set is closed; an unknown value decides nothing.",
+      "content": {
+        "action": "shelved",
+        "genesisRef": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+        "v": 1
+      },
+      "accepts": {
+        "rust": false,
+        "desktopCoordination": false,
+        "dart": false
+      },
+      "reason": "wrong-type"
+    },
+    {
+      "name": "invalid-unknown-key",
+      "why": "Four keys, no fifth.",
+      "content": {
+        "action": "closed",
+        "genesisRef": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+        "v": 1,
+        "reason": "done"
+      },
+      "accepts": {
+        "rust": false,
+        "desktopCoordination": false,
+        "dart": false
+      },
+      "reason": "unknown-key"
+    },
+    {
+      "name": "invalid-missing-genesis-ref",
+      "why": "Every revision names its genesis by event id.",
+      "content": {
+        "action": "closed",
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+        "v": 1
+      },
+      "accepts": {
+        "rust": false,
+        "desktopCoordination": false,
+        "dart": false
+      },
+      "reason": "missing-required"
+    },
+    {
+      "name": "invalid-genesis-ref-uppercase",
+      "why": "Lowercase 64-hex, never coerced.",
+      "content": {
+        "action": "closed",
+        "genesisRef": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+        "v": 1
+      },
+      "accepts": {
+        "rust": false,
+        "desktopCoordination": false,
+        "dart": false
+      },
+      "reason": "wrong-type"
+    },
+    {
+      "name": "invalid-session-ref-not-uuid",
+      "why": "sessionRef is a canonical lowercase hyphenated UUID.",
+      "content": {
+        "action": "closed",
+        "genesisRef": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "sessionRef": "not-a-uuid",
+        "v": 1
+      },
+      "accepts": {
+        "rust": false,
+        "desktopCoordination": false,
+        "dart": false
+      },
+      "reason": "wrong-type"
+    },
+    {
+      "name": "invalid-v-two",
+      "why": "Only schema version 1 exists.",
+      "content": {
+        "action": "closed",
+        "genesisRef": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+        "v": 2
+      },
+      "accepts": {
+        "rust": false,
+        "desktopCoordination": false,
+        "dart": false
+      },
+      "reason": "wrong-type"
+    },
+    {
+      "name": "invalid-action-null",
+      "why": "An absent action is not a state.",
+      "content": {
+        "action": null,
+        "genesisRef": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+        "v": 1
+      },
+      "accepts": {
+        "rust": false,
+        "desktopCoordination": false,
+        "dart": false
+      },
+      "reason": "wrong-type"
+    },
+    {
+      "name": "v-as-json-float",
+      "why": "`\"v\": 1.0` \u2014 serde refuses a float for u64; JavaScript and Dart both read 1.0 == 1.",
+      "content": {
+        "action": "closed",
+        "genesisRef": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+        "v": 1.0
+      },
+      "accepts": {
+        "rust": false,
+        "desktopCoordination": true,
+        "dart": true
+      },
+      "reason": "wrong-type"
+    }
+  ]
+}
