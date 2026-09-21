@@ -16,8 +16,8 @@ unknown and both links kept. "Ledger §" means a heading in
 
 | Surface | Observed | How |
 | --- | --- | --- |
-| `main` on the relay | `e8c552cf6`, checked 2026-09-21 08:25 EDT; 208–216 pushed 12:16Z. 180–216 landed gated bare, 189+ via the floor wrapper. Read the remote, not a local ref | `GIT_TERMINAL_PROMPT=0 git ls-remote origin refs/heads/main` (`upstream` mirrors to GitHub) |
-| Relay at hive.agiterra.org | **still `build_time` `2026-09-21T02:08:09Z`, i.e. `942eb00dc`** — `e8c552cf6` is NOT deployed. Woodpecker pipeline 202 (repo 2, branch main) went **Failure** at 12:23:14Z, and hive self-deploys only green builds, so nothing shipped. `software_commit` remains the `unknown` non-answer, so `build_time` is the only deploy signal | `curl -sH 'Accept: application/nostr+json' https://hive.agiterra.org/ \| jq .`; `curl -s https://ci.agiterra.org/api/badges/2/cc.xml` |
+| `main` on the relay | `710965dfe`, checked 2026-09-21; 208–217 landed, gated bare via the floor wrapper. Read the remote, not a local ref | `GIT_TERMINAL_PROMPT=0 git ls-remote origin refs/heads/main` (`upstream` mirrors to GitHub) |
+| Relay at hive.agiterra.org | **still `build_time` `2026-09-21T02:08:09Z`, i.e. `942eb00dc`** — nothing after it is deployed yet. Pipeline 202 failed on `e8c552cf6` because one provider test made its failure out of a *permission*: CI runs as root, root bypasses the DAC check, so the write succeeded and the test lied (ledger 212(h)). Fixed by construction on `710965dfe`; hive self-deploys green builds, so a changed `build_time` is the deploy signal — `software_commit` stays the `unknown` non-answer | `curl -sH 'Accept: application/nostr+json' https://hive.agiterra.org/ \| jq .`; `curl -s https://hive.agiterra.org/health` |
 | Installed Mac dev bundle | `~/Applications/Beekeeper Dev.app`, running `942eb00dc`; `bee 0.1.0 (942eb00d)`, installed 2026-09-20 22:14 EDT, signature verified. Live: run `8f9552c9` reports `checkout` `6ea2e0db…` with `checkout_reported: true` (206) | `scripts/app-from.sh <sha>`; `bee --version` |
 | Windows | unavailable: Brian no longer has the Windows machine (2026-09-09). Native Windows agent setup and cross-account acceptance are deferred, not done | ledger § "September 9 checkpoint published; Windows testing deferred" |
 | Mobile | not independently checked for this map. Last claim recorded: the phone drops a deleted session only on its next channel refresh (Andy, 2026-09-11) | ledger § "Fixed 2026-09-11 — Discard deletes a never-started session" |
@@ -47,7 +47,7 @@ unknown and both links kept. "Ledger §" means a heading in
 | The Dashboard shows the relay's machine (CPU, memory, disk) from `GET /health/system`, stewards only | Andy | landed 2026-09-14; on hive since 2026-09-18 (image `71efd0da1`), live check owed | ledger § "Built 2026-09-14 — the Dashboard shows the relay's machine" |
 | Project teams, composable roles and project actions | Andy | 2026-09-18: A1–A4, C1–C6 built (ledger 142–148, 150–156), on hive; live runs owed. **Pivot**: roles and plans move to `<slug>-beekeeper-agents` (spec § 4.11), built (158–163); dev-stack retest fixed missing default agents (164) and the `buzz-agent` harness hire refusal (165); live proofs ran 2026-09-19 (171); the first RPG Test session found five host defects, all fixed and proved live that day (173–177): seats run bash, project agents join the roster, the code repo is seeded, cloned and recorded; setup-flow redesign open (§ 6 item 10) | [`PROJECT_TEAMS_AND_ACTIONS_SPEC.md`](PROJECT_TEAMS_AND_ACTIONS_SPEC.md), ledger 141, 158, D18–D19 |
 | System proof: the acceptance story as a measured run | Brian with Fable; Astra audits | 2026-09-20 kettle run: landed in 10 min; goal→terminal 20,042 s; six repairs is an operator count — the wire shows 7 founder-signed non-host-answer commands (178, 178(r)); Andy's audited (179); 180–191 landed, mission closed (178(o)); 189–191 fix 178(j)/(k)/(n), see 178(p); 190's run-status endpoint is on hive (19:40Z). Run two (205) proved 180, 186, 189, 190 and 171(c) live; 203 closed 171(a)/(b). Owed: 191's proof, the CI listener's probe cadence (189) | ledger 178–179, [runbook](history/2026-09-20-system-proof-runbook.md), [audits](history/2026-09-20-astra-kettle-audit.md), [durable plan](history/2026-09-20-astra-durable-work-plan.md) |
-| Durable work: governing plan | Fable finalizes; lanes build | 2026-09-21: Waves 0–2 closed (192–207; Wave 2 `228da8f9c`, 206–207 `942eb00dc`). **Wave 3** landed as `e8c552cf6`, 208–216 (pipeline 202 red, not deployed — row above): 208 the mobile flake and named test failures; 209 the host-assembled work brief; 210 a no-ask approving disposition settles without an ACK; 211 approval truth; 212 four preparation fences; 214 then 213 contract A5/A6 and the coverage fixes; 215 shared vectors for five closed records; 216 every strict reader agrees with `buzz-core`. Gates bare on the tip, log in the landing report. In flight: lane 217, the four remaining mobile flakes. Pending: Astra's re-check of 210–213, then the control run on a fresh `kettle-control` | [`UNIFIED_WORK_PLAN.md`](UNIFIED_WORK_PLAN.md) § 8 A5, ledger 192–216 |
+| Durable work: governing plan | Fable finalizes; lanes build | 2026-09-21: Waves 0–2 closed (192–207; Wave 2 `228da8f9c`, 206–207 `942eb00dc`). **Wave 3** landed as `e8c552cf6`, then 212(h)+217 as `710965dfe` (deploy owed — row above): 208 the mobile flake and named test failures; 209 the host-assembled work brief; 210 a no-ask approving disposition settles without an ACK; 211 approval truth; 212 four preparation fences; 214 then 213 contract A5/A6 and the coverage fixes; 215 shared vectors for five closed records; 216 every strict reader agrees with `buzz-core`. Gates bare on the tip, log in the landing report. Lane 217 landed: the flakes were four named files plus a fifth nobody named, all now virtual-time or clock-injected, and one name was a reporter artefact. Next: Astra's re-check of 210–213, then the control run on a fresh `kettle-control` | [`UNIFIED_WORK_PLAN.md`](UNIFIED_WORK_PLAN.md) § 8 A5, ledger 192–216 |
 | Project To-Do lists: kind 44248, personal/project visibility, pins, `bee todos`, Desktop tab + sidebar rows, Mobile page | Andy with Opus | 2026-09-17: on `main` (`0cbfcf296`); relay, CLI, Desktop, Mobile (iOS 26.5 sim) verified live | [`nips/NIP-TD.md`](nips/NIP-TD.md), ledger 149 |
 | Delegated agent-directory visibility follow-up | unassigned | "can resume separately on main" (Astra, 2026-09-09) | ledger § "September 9 main published" |
 | This map, the ledger split and its size gate | Fable | landed 2026-09-11 (`f80781969`); lead pack on `agiterra-packs` (`5f4ae76fa`) | `AGENTS.md` top block; `scripts/check-current-state-size.mjs` |
@@ -98,17 +98,13 @@ Rules, each with where it is written down.
   browser evidence are linked above. The queued-steer prevention race found
   during integration is corrected and has a failing-before/passing-after
   process test. codex-acp 1.6.2 has no idle guard and stays in boundary mode.
-- **Pipeline 202 is red on `e8c552cf6` and nobody here can read why.**
-  Woodpecker logs are login-only (`/api/repos/...` answers 401) and the
-  sqlite query in `deploy/autodeploy/README.md` needs ssh to `agincus`, which
-  this machine cannot resolve. Every gate step runnable without the CI
-  services is green on that exact sha (`/tmp/gate-final-216.log`, plus
-  `cargo metadata --locked`, `pnpm typecheck`, `just conformance-check`
-  61/61, `just export-viewer-manifest-test` 6/6 and the three
-  `deploy-scripts` bash tests). That leaves the `rust` step's
-  Postgres/Redis/MinIO-backed legs as the only unexercised surface — no lane
-  touched `migrations/`, `buzz-db`, `buzz-relay` or `buzz-auth`. **Next
-  action needs Brian's Woodpecker login**, or a ledger item saying the step.
+- **A test that makes its failure out of a permission lies under root
+  (2026-09-21, ledger 212(h)).** That is why pipeline 202 was red on
+  `e8c552cf6`: a `chmod`-based provider test passed on a developer's machine
+  and, as root in the CI container, the write it expected to fail succeeded.
+  Fixed there by construction (injected failing writer + an `ENOTDIR` path).
+  **Five desktop tests still have that shape** and would pass under root the
+  same way; 212(h) lists each `file:line`. No lane owns them.
 - **A fourth strict reader is unguarded (2026-09-21, ledger 216).**
   `web/src/features/coding-sessions/domain/ingressPayloads.ts` is a hand-copy
   of the desktop ingress decoder, decodes 44223/44224 for `web/`'s session
@@ -134,9 +130,8 @@ The steering/startup/setup-authoring stack is published on main. The activation
 slice is published as `1820d238d`; it preserves ordinary Solo sessions and
 separates publication, installation and provider-confirmed lead startup.
 
-1. Tank Loop publication, six-role installation and the Loom run at the
-   adopted revision are done; the walkthrough corrections are installed at
-   `566e31075`, version and signature verified (row above).
+1. Done: Tank Loop publication, six-role installation, the Loom run at the
+   adopted revision, walkthrough corrections installed at `566e31075`.
 2. After installation, reopen Project State Planning as Brian and confirm
    control without joining its transport channel. Check Tank Loop's installed
    agents, Loom's default selection and setup progress. Existing-source pack
@@ -166,6 +161,8 @@ separates publication, installation and provider-confirmed lead startup.
 7. When Brian resumes automatic context, run the hook-marker experiment in the
    ledger's September 10 section. Collaborative workspace plan steps 5 and 6
    remain separate.
+8. Durable work after `710965dfe` deploys: Astra re-checks 210–213, then the
+   control run on a fresh `kettle-control`.
 
 ## Environment facts most likely to bite first
 
@@ -199,8 +196,7 @@ The full list is ledger §3a (~60 entries). These bite in the first hour.
 | Session reports 2026-09-06 to 2026-09-11 | the top of `SESSION_STATE.md`, above §1; written before this map and left in place | yes |
 | Session reports from 2026-09-11 on | [`history/`](history/README.md), `YYYY-MM-DD-<slug>.md` | yes |
 | Plans and specs | `COLLABORATIVE_WORKSPACE_PLAN.md`, `*_SPEC.md`, `*_IMPL.md` in `docs/` | yes |
-| Lane logs, build logs, acceptance transcripts | `../review-*/` beside the repo | no, this machine only |
-| Astra-to-Fable mailbox and briefs | `~/Desktop/BEEKEEPER-*.md` | no, this machine only |
+| Lane logs, gate logs, acceptance transcripts | `/tmp/gate-*.log`, `../review-*/` (the older ones were deleted 2026-09-16); mailbox `~/Desktop/BEEKEEPER-*.md` | no, this machine only |
 
 Untracked evidence may be cited, but a claim that rests on it alone says so.
 
