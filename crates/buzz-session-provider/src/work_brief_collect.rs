@@ -110,39 +110,194 @@ pub(crate) async fn collect_work_brief(request: WorkBriefRequest<'_>) -> Option<
         request.actor,
         request.role,
     )?;
+    let reads = RelayAndClone {
+        rest: request.rest,
+        channel_ref: request.scope.channel_ref,
+        session_ref: request.scope.session_ref.clone(),
+        agents: request
+            .project_ref
+            .and_then(|project| agents_record(request.projects_file, project)),
+    };
+    let context = BriefContext {
+        operation_id: request.operation_id,
+        role: request.role,
+        channel: request.scope.channel_ref.to_string(),
+        session_ref: request.scope.session_ref.clone(),
+        genesis_ref: request.scope.genesis_ref.clone(),
+        project_ref: request.project_ref.map(str::to_owned),
+        founder_pubkey: snapshot.founder_pubkey.clone(),
+        cwd: request.cwd.clone(),
+        state_dir: request.state_dir.to_path_buf(),
+        session_id: request.session_id.to_owned(),
+        runtime: request.runtime.clone(),
+    };
+    Some(
+        assemble_brief_text(
+            &context,
+            &assignment,
+            &snapshot.team_events,
+            &included_report_ids(&snapshot),
+            &reads,
+        )
+        .await,
+    )
+}
 
+/// Everything the brief needs that is **not** a read.
+///
+/// Separated from [`WorkBriefRequest`] so the whole of the brief downstream of
+/// the verified snapshot can be driven by a test with a stubbed
+/// [`WorkBriefReads`] — the relay, the agents clone and the host store are the
+/// only I/O left, and each has a seam.
+pub(crate) struct BriefContext<'a> {
+    /// The assignment event id this turn's pointer names.
+    pub operation_id: &'a str,
+    /// The seat's role slug.
+    pub role: &'a str,
+    /// Channel UUID, as text.
+    pub channel: String,
+    /// Umbrella session UUID.
+    pub session_ref: String,
+    /// Session genesis event id.
+    pub genesis_ref: String,
+    /// The project, when the record names one.
+    pub project_ref: Option<String>,
+    /// The founder, from the verified genesis signer.
+    pub founder_pubkey: String,
+    /// The seat's worktree, as the host recorded it.
+    pub cwd: Option<PathBuf>,
+    /// The provider's state directory.
+    pub state_dir: PathBuf,
+    /// The execution's session id, which names its bundle.
+    pub session_id: String,
+    /// (f), resolved by the caller from its own session record.
+    pub runtime: RuntimeFacts,
+}
+
+/// The two reads the brief makes after the verified snapshot.
+///
+/// A trait for one reason: the collector is the part of this lane that does
+/// I/O, and the control run must not be its first execution. The production
+/// implementation is [`RelayAndClone`] — a relay partition query and a
+/// `git show` in this host's agents clone; a test supplies both from a temp
+/// directory and an in-memory vector.
+pub(crate) trait WorkBriefReads {
+    /// Every record of `kind` in this session, as the fold's event type.
+    ///
+    /// `Err` is a **read failure**, never an empty result: the brief prints
+    /// its sentence and drops section (c) rather than saying nothing is
+    /// adopted.
+    async fn records(&self, kind: u32) -> Result<Vec<ProjectWorkEvent>, String>;
+
+    /// The plan blob at a declaration's own pinned commit.
+    async fn plan_blob(&self, plan_ref: &ProjectWorkPlanRef) -> Result<String, String>;
+}
+
+/// The production reads: the relay for records, this host's clone for blobs.
+struct RelayAndClone<'a> {
+    rest: &'a buzz_acp::relay::RestClient,
+    channel_ref: uuid::Uuid,
+    session_ref: String,
+    agents: Option<crate::agents_checkout::AgentsRepoRecord>,
+}
+
+impl WorkBriefReads for RelayAndClone<'_> {
+    async fn records(&self, kind: u32) -> Result<Vec<ProjectWorkEvent>, String> {
+        let events = crate::context_projector::query_complete_kind_partition(
+            self.rest,
+            self.channel_ref,
+            kind,
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+        Ok(events
+            .into_iter()
+            .filter_map(|event| {
+                let converted = ProjectWorkEvent {
+                    id: event.id.to_hex(),
+                    pubkey: event.pubkey.to_hex(),
+                    created_at: event.created_at.as_secs(),
+                    kind,
+                    tags: event.tags.iter().map(|tag| tag.clone().to_vec()).collect(),
+                    content: event.content.clone(),
+                };
+                (converted.tag_value("d") == Some(self.session_ref.as_str())).then_some(converted)
+            })
+            .collect())
+    }
+
+    async fn plan_blob(&self, plan_ref: &ProjectWorkPlanRef) -> Result<String, String> {
+        let Some(record) = self.agents.as_ref() else {
+            return Err(
+                "this host has no clone of the project's agents repository recorded".to_owned(),
+            );
+        };
+        read_blob_at_commit(record, &plan_ref.commit, &plan_ref.path)
+            .await
+            .map_err(|error| error.to_string())
+    }
+}
+
+/// Every report the verified snapshot included, by event id.
+fn included_report_ids(
+    snapshot: &crate::team_wake::VerifiedWakeSnapshot,
+) -> std::collections::BTreeSet<String> {
+    snapshot
+        .included_reports
+        .iter()
+        .map(|report| report.event_id.clone())
+        .collect()
+}
+
+/// Render the brief and leave a copy in the seat's own bundle.
+///
+/// Everything downstream of the verified snapshot, over the [`WorkBriefReads`]
+/// seam. Returns the exact bytes the turn carries, which are the exact bytes
+/// written to `agents/seats/<session id>/work-brief.md`.
+pub(crate) async fn assemble_brief_text(
+    context: &BriefContext<'_>,
+    assignment: &CodingSessionTeamAssignment,
+    team_events: &[Event],
+    included_reports: &std::collections::BTreeSet<String>,
+    reads: &impl WorkBriefReads,
+) -> String {
     let establishment = establishment_for(
-        request.state_dir,
-        request.operation_id,
+        &context.state_dir,
+        context.operation_id,
         assignment.base_sha.as_deref(),
-        request.role,
+        context.role,
     );
-    let (contract, goal_ref, goal_first_line) = contract_for(&request, &snapshot).await;
-    let decisions = answered_decisions(&snapshot.team_events, request.operation_id);
-    let permissions = agents_grant(request.cwd.as_deref(), request.role);
-    let report_ref = report_under_review(&snapshot, assignment.base_sha.as_deref(), request.role);
+    let (contract, goal_ref, goal_first_line) = contract_for(context, reads).await;
+    let decisions = answered_decisions(team_events, context.operation_id);
+    let permissions = agents_grant(context.cwd.as_deref(), context.role);
+    let report_ref = report_under_review(
+        team_events,
+        included_reports,
+        assignment.base_sha.as_deref(),
+        context.role,
+    );
 
-    let brief_path = crate::session::seat_bundle_dir(request.state_dir, request.session_id)
+    let brief_path = crate::session::seat_bundle_dir(&context.state_dir, &context.session_id)
         .join(WORK_BRIEF_FILE_NAME);
     let inputs = WorkBriefInputs {
         assignment: AssignmentFacts {
-            assignment_ref: request.operation_id.to_owned(),
-            role: request.role.to_owned(),
+            assignment_ref: context.operation_id.to_owned(),
+            role: context.role.to_owned(),
             objective: assignment.objective.clone(),
             brief: assignment.brief.clone(),
             branch: assignment.branch.clone(),
             base_sha: assignment.base_sha.clone(),
             file_ownership: assignment.file_ownership.clone(),
             acceptance_steps: assignment.acceptance_steps.clone(),
-            worktree: request.cwd.as_ref().map(|path| path.display().to_string()),
+            worktree: context.cwd.as_ref().map(|path| path.display().to_string()),
             establishment,
         },
         commands: CommandFacts {
-            channel: request.scope.channel_ref.to_string(),
-            session_ref: request.scope.session_ref.clone(),
-            genesis_ref: request.scope.genesis_ref.clone(),
-            assignment_ref: request.operation_id.to_owned(),
-            role: request.role.to_owned(),
+            channel: context.channel.clone(),
+            session_ref: context.session_ref.clone(),
+            genesis_ref: context.genesis_ref.clone(),
+            assignment_ref: context.operation_id.to_owned(),
+            role: context.role.to_owned(),
             report_ref,
         },
         contract,
@@ -152,12 +307,12 @@ pub(crate) async fn collect_work_brief(request: WorkBriefRequest<'_>) -> Option<
             decisions,
         },
         permissions,
-        runtime: request.runtime,
+        runtime: context.runtime.clone(),
         brief_path: Some(brief_path.display().to_string()),
     };
     let text = assemble_work_brief(&inputs).render();
     write_brief_copy(&brief_path, &text);
-    Some(text)
+    text
 }
 
 /// The assignment behind the pointer, proven canonical and bound to this seat.
@@ -270,14 +425,15 @@ fn establishment_for(
 
 /// (c), plus the goal (d) needs, both derived from one assembled input set.
 async fn contract_for(
-    request: &WorkBriefRequest<'_>,
-    snapshot: &crate::team_wake::VerifiedWakeSnapshot,
+    context: &BriefContext<'_>,
+    reads: &impl WorkBriefReads,
 ) -> (ContractFacts, Option<String>, Option<String>) {
-    let work_events = match partition(request, KIND_PROJECT_WORK_RECORD).await {
+    let work_events = match reads.records(KIND_PROJECT_WORK_RECORD).await {
         Ok(events) => events,
         Err(reason) => return (ContractFacts::Unread { reason }, None, None),
     };
-    let goal_events = partition(request, KIND_CODING_SESSION_GOAL)
+    let goal_events = reads
+        .records(KIND_CODING_SESSION_GOAL)
         .await
         .unwrap_or_default();
     let goal_text: BTreeMap<String, String> = goal_events
@@ -290,9 +446,6 @@ async fn contract_for(
     // the fold reports its criteria `unknown` rather than `open`.
     let mut plan_blobs: BTreeMap<(String, String, String), String> = BTreeMap::new();
     let mut blob_reason: Option<String> = None;
-    let agents = request
-        .project_ref
-        .and_then(|project| agents_record(request.projects_file, project));
     for plan_ref in plan_refs(&work_events) {
         let key = (
             plan_ref.repository.clone(),
@@ -302,32 +455,33 @@ async fn contract_for(
         if plan_blobs.contains_key(&key) {
             continue;
         }
-        let Some(record) = agents.as_ref() else {
-            blob_reason.get_or_insert_with(|| {
-                "this host has no clone of the project's agents repository recorded".to_owned()
-            });
-            continue;
-        };
-        match read_blob_at_commit(record, &plan_ref.commit, &plan_ref.path).await {
+        match reads.plan_blob(&plan_ref).await {
             Ok(text) => {
                 plan_blobs.insert(key, text);
             }
-            Err(error) => {
-                blob_reason.get_or_insert_with(|| error.to_string());
+            Err(reason) => {
+                blob_reason.get_or_insert(reason);
             }
         }
     }
+
+    // The bindings this assignment appears in, read before the events move
+    // into the assembler. They are what names the criterion ids when the plan
+    // blob could not be read: the fold derives its criteria *from the plan*,
+    // so an unresolved plan projects none at all, and a brief that stopped
+    // there would say "no adopted plan" about a session that has one.
+    let bindings = assignment_bindings(&work_events, context.operation_id);
 
     let raw = RawWorkInputs {
         work_events,
         goal_events,
         authority: RawAuthorityContext {
-            founder_pubkey: Some(snapshot.founder_pubkey.clone()),
+            founder_pubkey: Some(context.founder_pubkey.clone()),
             ..RawAuthorityContext::default()
         },
         plan_blobs: plan_blobs.clone(),
-        session_ref: Some(request.scope.session_ref.clone()),
-        project_ref: request.project_ref.map(str::to_owned),
+        session_ref: Some(context.session_ref.clone()),
+        project_ref: context.project_ref.clone(),
         ..RawWorkInputs::default()
     };
     let inputs = match assemble_fold_inputs(raw) {
@@ -355,23 +509,62 @@ async fn contract_for(
                 criterion
                     .assignment_refs
                     .iter()
-                    .any(|id| id.eq_ignore_ascii_case(request.operation_id))
+                    .any(|id| id.eq_ignore_ascii_case(context.operation_id))
             })
     });
-    let Some(declaration) = bound else {
-        return (ContractFacts::None, goal_ref, goal_first_line);
+    let Some(declaration) = bound.or_else(|| {
+        // The plan is unreadable: fall back to the declaration the binding
+        // itself names, whatever the fold could make of its criteria.
+        bindings.iter().find_map(|(declaration_ref, _)| {
+            projection
+                .declarations
+                .iter()
+                .find(|declaration| &declaration.declaration_ref == declaration_ref)
+        })
+    }) else {
+        // A binding with no projected declaration: the record exists and the
+        // fold left it out. Saying "no adopted plan" would be false about a
+        // session that has one, so the exclusion's own sentence is printed.
+        let Some((declaration_ref, criterion_ids)) = bindings.into_iter().next() else {
+            return (ContractFacts::None, goal_ref, goal_first_line);
+        };
+        let reason = projection
+            .excluded
+            .iter()
+            .find(|exclusion| exclusion.event_id == declaration_ref)
+            .map(|exclusion| exclusion.message.clone())
+            .or(blob_reason)
+            .unwrap_or_else(|| {
+                "the declaration this binding names is not in the session's records".to_owned()
+            });
+        return (
+            ContractFacts::PlanUnreadable {
+                declaration_ref,
+                reason,
+                criterion_ids,
+            },
+            goal_ref,
+            goal_first_line,
+        );
     };
-    let ids: Vec<String> = declaration
+    let mut ids: Vec<String> = declaration
         .criteria
         .iter()
         .filter(|criterion| {
             criterion
                 .assignment_refs
                 .iter()
-                .any(|id| id.eq_ignore_ascii_case(request.operation_id))
+                .any(|id| id.eq_ignore_ascii_case(context.operation_id))
         })
         .map(|criterion| criterion.criterion_id.clone())
         .collect();
+    if ids.is_empty() {
+        ids = bindings
+            .iter()
+            .filter(|(declaration_ref, _)| declaration_ref == &declaration.declaration_ref)
+            .flat_map(|(_, criterion_ids)| criterion_ids.clone())
+            .collect();
+    }
     let key = (
         declaration.plan_ref.repository.clone(),
         declaration.plan_ref.commit.clone(),
@@ -426,6 +619,31 @@ fn plan_provenance(plan_ref: &ProjectWorkPlanRef) -> String {
     )
 }
 
+/// `(declarationRef, criterionIds)` for every `work.assignment_bound` naming
+/// this assignment.
+///
+/// Read straight off the records rather than out of the projection, because
+/// the projection's criteria come from the plan blob and this is exactly the
+/// path taken when that blob could not be read.
+fn assignment_bindings(
+    events: &[ProjectWorkEvent],
+    assignment_ref: &str,
+) -> Vec<(String, Vec<String>)> {
+    events
+        .iter()
+        .filter_map(|event| {
+            let payload = decode_project_work_content(&event.content).ok()?;
+            let ProjectWorkBody::AssignmentBound(bound) = payload.body else {
+                return None;
+            };
+            bound
+                .assignment_ref
+                .eq_ignore_ascii_case(assignment_ref)
+                .then_some((bound.declaration_ref, bound.criterion_ids))
+        })
+        .collect()
+}
+
 /// Every distinct plan the session's declarations pin.
 fn plan_refs(events: &[ProjectWorkEvent]) -> Vec<ProjectWorkPlanRef> {
     events
@@ -438,36 +656,6 @@ fn plan_refs(events: &[ProjectWorkEvent]) -> Vec<ProjectWorkPlanRef> {
             }
         })
         .collect()
-}
-
-/// One complete kind partition of the session's channel, as the fold's event
-/// type, narrowed to this session by its `d` tag.
-async fn partition(
-    request: &WorkBriefRequest<'_>,
-    kind: u32,
-) -> Result<Vec<ProjectWorkEvent>, String> {
-    let events = crate::context_projector::query_complete_kind_partition(
-        request.rest,
-        request.scope.channel_ref,
-        kind,
-    )
-    .await
-    .map_err(|error| error.to_string())?;
-    Ok(events
-        .into_iter()
-        .filter_map(|event| {
-            let converted = ProjectWorkEvent {
-                id: event.id.to_hex(),
-                pubkey: event.pubkey.to_hex(),
-                created_at: event.created_at.as_secs(),
-                kind,
-                tags: event.tags.iter().map(|tag| tag.clone().to_vec()).collect(),
-                content: event.content.clone(),
-            };
-            (converted.tag_value("d") == Some(request.scope.session_ref.as_str()))
-                .then_some(converted)
-        })
-        .collect())
 }
 
 /// Answered decisions whose request named this assignment in `blocks`.
@@ -525,7 +713,8 @@ fn answered_decisions(events: &[Event], assignment_ref: &str) -> Vec<DecisionSum
 /// else — so this is the only honest reconstruction, and it is right exactly
 /// when one included report claims that head.
 fn report_under_review(
-    snapshot: &crate::team_wake::VerifiedWakeSnapshot,
+    team_events: &[Event],
+    included: &std::collections::BTreeSet<String>,
     base_sha: Option<&str>,
     role: &str,
 ) -> Option<String> {
@@ -533,12 +722,7 @@ fn report_under_review(
         return None;
     }
     let base = base_sha?.to_ascii_lowercase();
-    let included: std::collections::BTreeSet<String> = snapshot
-        .included_reports
-        .iter()
-        .map(|report| report.event_id.clone())
-        .collect();
-    let mut matches = snapshot.team_events.iter().filter_map(|event| {
+    let mut matches = team_events.iter().filter_map(|event| {
         let id = event.id.to_hex();
         if !included.contains(&id) {
             return None;
@@ -603,3 +787,7 @@ fn write_brief_copy(path: &Path, text: &str) {
         tracing::debug!(target: "csp::work_brief", %error, "the work brief could not be written into the seat bundle");
     }
 }
+
+#[cfg(test)]
+#[path = "work_brief_collect_tests.rs"]
+mod tests;

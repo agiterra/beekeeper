@@ -17855,6 +17855,38 @@ removed from here.
        clone** says this role's `workspace.agents_repo` is
        (`work_brief_collect.rs:194-236`). No clone means no grant, which is
        the honest reading.
+     - **The bundle copy.** The same bytes are written to
+       `<app data>/agents/seats/<session id>/work-brief.md` — the
+       execution-owned tree ledger 132 introduced, resolved by
+       `session::seat_bundle_dir` — and that absolute path is the brief's last
+       line, so a seat re-reads it by tool instead of scrolling a transcript
+       (`work_brief_collect.rs:779-793`). Best effort: a directory that cannot
+       be created or a write that fails is logged once and the turn still
+       carries its brief, which
+       `a_bundle_copy_that_cannot_be_written_never_costs_the_turn_its_brief`
+       proves by putting a *file* where the state directory should be.
+     - **The collector has a seam, and tests.** Its two reads after the
+       verified snapshot — the session's records and the plan blob — are the
+       `WorkBriefReads` trait (`work_brief_collect.rs:184-231`), implemented
+       in production by `RelayAndClone` (a relay partition query and a
+       `git show`) and in tests by an in-memory record vector plus the **real**
+       `read_blob_at_commit` against a throwaway repository under a temp dir,
+       never a worktree of this one. `assemble_brief_text` (`:257`) is the
+       whole brief downstream of the snapshot and is what the six tests in
+       `work_brief_collect_tests.rs` drive: the criterion excerpted from the
+       pinned commit while the tip and the working copy hold other bytes; a
+       commit this host does not have; a path that escapes the repository; a
+       failed record read; a session with no declaration; and the bundle copy.
+     - **An unreadable plan no longer reads as no plan.** The fold derives its
+       criteria *from the plan blob*, so an unresolved or refused declaration
+       projects none at all — and the first cut of section (c) then printed
+       "no adopted plan for this session" about a session that had one. The
+       criterion ids are now read off the `work.assignment_bound` records
+       themselves (`assignment_bindings`, `work_brief_collect.rs:628-651`),
+       and a declaration the fold **excluded** prints the exclusion's own
+       sentence: the `../../etc/passwd` case is refused by
+       `planRef.path must start with plans/ and contain no ..` before git is
+       ever asked. Found by writing the tests, not by review.
      - **Tests.** Nine golden renders in `work_brief_tests.rs`: a builder
        under a declaration with two criteria; a verifier with its resolved
        `reportRef` and a lane-202 `established` base; a verifier whose report
@@ -17866,7 +17898,8 @@ removed from here.
        `agents_plan_blob.rs` prove the blob comes from the pinned commit and
        not the tip, the working copy or a scribble. Seven in
        `crates/buzz-cli/tests/work_brief_flags.rs` cross-check the flag table
-       against the real `clap` definitions through the binary.
+       against the real `clap` definitions through the binary. Twenty-two in
+       all, every one of them offline.
      - **Two flag facts the cross-check found.** `--assignment` does not
        exist on `report` or `verdict`: the assignment id travels in the body,
        so the brief prints the body key and says the flag does not exist.
@@ -17884,9 +17917,10 @@ removed from here.
        facts. The role text should keep only what is about *craft*.
      - **Owed, live.** The control run's orientation share per seat, measured
        by `bee sessions measure`, against Kettle Smoke's 24–38%. Nothing here
-       has run against a live relay: the collection path
-       (`work_brief_collect.rs`) is exercised by no test, only by its types,
-       and the 8,192-byte budget has never been met by a real plan.
+       has run against a live relay: the collector's tests supply its records
+       from memory, so `RelayAndClone::records` and
+       `team_wake::fetch_verified_snapshot` are still unexercised on this
+       path, and the 8,192-byte budget has never been met by a real plan.
 
 ## 3a. Environment facts that cost real time (do not rediscover)
 
