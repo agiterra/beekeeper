@@ -459,12 +459,18 @@ const COPY: Record<string, TeamReadinessBlockerCopy> = {
   },
   REGISTRY_UNREADABLE: {
     title: "This project pins no provider or model targets",
+    // A project's registry lives in its agents repository first and its
+    // checkout second — the hire host's order (ledger 180). Saying only
+    // "the checkout" told the founder of a project that HAD one to add a
+    // second copy in the wrong place (ledger 207(1)); the host's own remedy,
+    // shown under this, names the place for this project.
     action:
-      "team/model-registry.yaml is what says which provider and model a project routes to. Without it each role pack's own runtime and model is used.",
+      "A project's registry is model-registry.yaml in its agents repository, or team/model-registry.yaml in its checkout. With neither, each role pack's own runtime and model is used.",
   },
   REGISTRY_INVALID: {
     title: "This project's model registry could not be understood",
-    action: "Repair team/model-registry.yaml as a version 1 registry.",
+    action:
+      "Repair it as a version 1 registry; the fact below names the file that was read.",
   },
   PROVIDER_NOT_RUNNING: {
     title: "No coding-session provider is running on this computer",

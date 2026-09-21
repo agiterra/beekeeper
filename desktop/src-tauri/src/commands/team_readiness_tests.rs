@@ -133,6 +133,7 @@ fn local_ready_gathered() -> Gathered {
             covered_targets: Vec::new(),
             uncovered_targets: Vec::new(),
             pending_targets: vec!["codex-primary:gpt-5.6-luna".into()],
+            ..Default::default()
         },
         runtimes: runtime_readiness_metadata(),
         provider: TeamReadinessProvider {
@@ -654,47 +655,6 @@ fn trusted_wire_fold_requires_reachability_and_a_covered_target() {
             .and_then(|fact| fact.remedy.as_deref()),
         Some("Repair metadata, then re-read readiness")
     );
-}
-
-#[test]
-fn registry_unreadable_is_limited_when_packs_come_from_a_project_source() {
-    // Ledger 137: a project whose roles are staged from a kind:30624 packs
-    // repository never reads team/model-registry.yaml at all, so its
-    // absence is a limit on what readiness can say (each pack names its own
-    // runtime and model), not a reason to refuse the session.
-    let temp = tempfile::tempdir().expect("tempdir");
-    let host = CountingHost::default();
-    let mut gathered = Gathered::default();
-    collect_runtimes_and_registry(&host, Some(temp.path()), true, &mut gathered);
-    let fact = gathered
-        .facts
-        .iter()
-        .find(|fact| fact.code == "REGISTRY_UNREADABLE")
-        .expect("registry fact is present for an absent registry file");
-    assert_eq!(fact.state, TeamReadinessFactState::Limited);
-    assert!(
-        fact.summary
-            .contains("each role pack names its own runtime and model instead"),
-        "{}",
-        fact.summary
-    );
-}
-
-#[test]
-fn registry_unreadable_still_blocks_without_a_project_pack_source() {
-    // The counterpart: a project with no packs repository still routes
-    // every session through team/model-registry.yaml, so its absence stays
-    // a hard blocker, unchanged by ledger 140.
-    let temp = tempfile::tempdir().expect("tempdir");
-    let host = CountingHost::default();
-    let mut gathered = Gathered::default();
-    collect_runtimes_and_registry(&host, Some(temp.path()), false, &mut gathered);
-    let fact = gathered
-        .facts
-        .iter()
-        .find(|fact| fact.code == "REGISTRY_UNREADABLE")
-        .expect("registry fact is present for an absent registry file");
-    assert_eq!(fact.state, TeamReadinessFactState::Blocked);
 }
 
 #[test]

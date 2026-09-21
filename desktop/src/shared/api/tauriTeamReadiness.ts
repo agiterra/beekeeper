@@ -34,6 +34,12 @@ export type TeamReadinessResponse = {
   };
   ownerPubkey?: string | null;
   team: {
+    /**
+     * Whether the project names a role source at all (a kind:30624 pack
+     * source / agents repository), staged or not. `null`/absent when nothing
+     * asked. "Use roles" defaults from this fact (ledger 207(2)).
+     */
+    packSourcePresent?: boolean | null;
     selectedRoles: string[];
     availableRoles: string[];
     packsDigest?: string | null;
@@ -70,6 +76,14 @@ export type TeamReadinessResponse = {
     coveredTargets: string[];
     uncoveredTargets: string[];
     pendingTargets: string[];
+    /** Which copy answered — `"agents-repo"` or `"checkout"` (ledger 207(1)). */
+    origin?: string | null;
+    /** That origin as a clause: "the project's agents repository". */
+    originLabel?: string | null;
+    /** The absolute path the bytes came from. */
+    path?: string | null;
+    /** Every place that was looked at, in order. */
+    lookedIn?: string[];
   };
   provider: {
     relayUrl: string;

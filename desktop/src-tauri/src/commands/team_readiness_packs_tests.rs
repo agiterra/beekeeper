@@ -3,9 +3,11 @@
 //! Split from `team_readiness_tests.rs`, which sits at the repository's
 //! 1,000-line ceiling.
 
+use super::super::registry::tests::checkout_only_store;
 use super::super::tests::CountingHost;
 use super::super::*;
 use super::*;
+use crate::coding_sessions::workdir_store::CodingSessionWorkdirStore;
 use crate::managed_agents::crew_roles::DiscoveredRolePack;
 
 const PROJECT_REF: &str =
@@ -157,10 +159,12 @@ fn a_project_with_no_packs_repository_still_falls_back_to_the_checkout() {
 #[test]
 fn the_model_registry_is_a_limit_for_a_project_whose_packs_come_from_a_repository() {
     let checkout = tempfile::tempdir().expect("tempdir");
+    let store = checkout_only_store(PROJECT_REF, checkout.path());
     let mut with_source = Gathered::default();
     collect_runtimes_and_registry(
         &CountingHost::default(),
-        Some(checkout.path()),
+        Some(&store),
+        PROJECT_REF,
         true,
         &mut with_source,
     );
@@ -179,7 +183,8 @@ fn the_model_registry_is_a_limit_for_a_project_whose_packs_come_from_a_repositor
     let mut without_source = Gathered::default();
     collect_runtimes_and_registry(
         &CountingHost::default(),
-        Some(checkout.path()),
+        Some(&store),
+        PROJECT_REF,
         false,
         &mut without_source,
     );
@@ -196,7 +201,8 @@ fn the_model_registry_is_a_limit_for_a_project_whose_packs_come_from_a_repositor
 #[test]
 fn the_unrecorded_checkout_blocker_says_what_to_click() {
     let mut gathered = Gathered::default();
-    let checkout = collect_checkout(&CountingHost::default(), PROJECT_REF, &mut gathered);
+    let store = CodingSessionWorkdirStore::default();
+    let checkout = collect_checkout(Ok(&store), PROJECT_REF, &mut gathered);
     assert!(checkout.is_none());
     let fact = gathered
         .facts

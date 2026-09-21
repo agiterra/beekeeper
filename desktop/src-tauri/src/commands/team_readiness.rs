@@ -7,12 +7,13 @@
 //! Only that path may prompt, mint, publish, migrate, back up, or hydrate keys.
 
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
 use crate::app_state::KEYCHAIN_UNAVAILABLE;
+use crate::coding_sessions::workdir_store::CodingSessionWorkdirStore;
 use crate::managed_agents::ManagedAgentReadinessMetadata;
 use crate::session_provider::runtimes::StrictRuntimeDiagnostic;
 use crate::session_provider::supervisor::CodingSessionProviderProcessState;
@@ -36,6 +37,8 @@ use auth_facts::append_provider_auth_fact;
 
 #[path = "team_readiness_actions.rs"]
 pub mod actions;
+#[path = "team_readiness_registry.rs"]
+mod registry;
 #[path = "team_readiness_wire.rs"]
 mod wire;
 #[cfg(test)]
@@ -161,6 +164,16 @@ pub struct TeamReadinessRolePack {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TeamReadinessTeam {
+    /// Whether this project names a role source at all — a kind:30624 pack
+    /// source, staged or not. `None` when nothing asked (a direct `gather`
+    /// with no relay behind it).
+    ///
+    /// A *fact about the project*, not about this computer's staging: it is
+    /// what "Use roles" defaults from, so a brand-new project whose agents
+    /// repository was seeded with eight roles opens the founding form with
+    /// roles on rather than silently off (ledger 207(2)).
+    #[serde(default)]
+    pub pack_source_present: Option<bool>,
     pub selected_roles: Vec<String>,
     pub available_roles: Vec<String>,
     pub packs_digest: Option<String>,
@@ -176,6 +189,21 @@ pub struct TeamReadinessRegistryCoverage {
     pub covered_targets: Vec<String>,
     pub uncovered_targets: Vec<String>,
     pub pending_targets: Vec<String>,
+    /// Which copy answered — `agents-repo` or `checkout` — or `None` when
+    /// none did. Readiness reads the registry through the same resolver a
+    /// hire does (ledger 207(1)), so this is the copy a hire would route on.
+    #[serde(default)]
+    pub origin: Option<String>,
+    /// That origin as a clause a sentence can carry.
+    #[serde(default)]
+    pub origin_label: Option<String>,
+    /// The absolute, symlink-resolved path the bytes came from.
+    #[serde(default)]
+    pub path: Option<String>,
+    /// Every place that was looked at, in order — so an absence names both
+    /// places rather than implying there was only ever one.
+    #[serde(default)]
+    pub looked_in: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -292,17 +320,17 @@ fn collect_identity(host: &impl ReadinessHost, gathered: &mut Gathered) {
 }
 
 fn collect_checkout(
-    host: &impl ReadinessHost,
+    workdirs: Result<&CodingSessionWorkdirStore, &String>,
     project_ref: &str,
     gathered: &mut Gathered,
 ) -> Option<PathBuf> {
-    let store = match host.workdirs() {
+    let store = match workdirs {
         Ok(store) => store,
         Err(error) => {
             gathered.facts.push(TeamReadinessFact::unknown(
                 "project",
                 "CHECKOUT_STORE_UNREADABLE",
-                error,
+                error.clone(),
                 "Choose the project checkout again.",
             ));
             return None;
@@ -397,7 +425,8 @@ fn registry_targets(text: &str) -> Result<Vec<(String, String)>, String> {
 
 fn collect_runtimes_and_registry(
     host: &impl ReadinessHost,
-    checkout: Option<&Path>,
+    store: Option<&CodingSessionWorkdirStore>,
+    project_ref: &str,
     packs_from_project: bool,
     gathered: &mut Gathered,
 ) {
@@ -408,53 +437,12 @@ fn collect_runtimes_and_registry(
         TeamReadinessFactState::Limited,
         "Runtime install, authentication, adapter version, and model probes are not read locally",
     ));
-    let Some(checkout) = checkout else {
+    // The agents repository first, then the checkout — the hire host's own
+    // order, through the hire host's own resolver (ledger 207(1)).
+    let Some(text) =
+        registry::resolve_registry_text(store, project_ref, packs_from_project, gathered)
+    else {
         return;
-    };
-    let text = match super::project_files::read_allowlisted_project_file(
-        checkout,
-        super::project_files::MODEL_REGISTRY_RELATIVE_PATH,
-    ) {
-        Ok(source) => source.text,
-        Err(refusal) => {
-            // The registry pins which provider and model targets this project
-            // routes to. A project whose roles come from a packs repository
-            // does not need one — every pack names its own runtime and model,
-            // and the hire honours that — so its absence is a limit on what
-            // readiness can say, not a reason to refuse a session
-            // (ledger 135(c), where this blocked a founding form for a
-            // project whose seats were never going to read it).
-            let mut fact = if packs_from_project {
-                TeamReadinessFact::local(
-                    "routing",
-                    "REGISTRY_UNREADABLE",
-                    TeamReadinessFactState::Limited,
-                    format!(
-                        "This project pins no provider or model targets ({}: {}); each \
-                         role pack names its own runtime and model instead",
-                        refusal.code, refusal.message
-                    ),
-                )
-            } else {
-                TeamReadinessFact::local(
-                    "routing",
-                    "REGISTRY_UNREADABLE",
-                    TeamReadinessFactState::Blocked,
-                    format!(
-                        "This project's model registry could not be read, so nothing \
-                         says which provider and model its sessions route to ({}: {})",
-                        refusal.code, refusal.message
-                    ),
-                )
-            };
-            fact.remedy = Some(
-                "Add team/model-registry.yaml to the checkout to pin the provider and \
-                 model targets this project routes to."
-                    .into(),
-            );
-            gathered.facts.push(fact);
-            return;
-        }
     };
     let targets = match registry_targets(&text) {
         Ok(rows) => rows,
@@ -475,11 +463,12 @@ fn collect_runtimes_and_registry(
     gathered.registry.provider_targets.sort();
     gathered.registry.provider_targets.dedup();
     gathered.registry.pending_targets = targets.into_iter().map(|(_, target)| target).collect();
+    let origin = registry::registry_origin_clause(gathered);
     gathered.facts.push(TeamReadinessFact::local(
         "routing",
         "REGISTRY_COVERAGE_AWAITING_CATALOG",
         TeamReadinessFactState::Limited,
-        "Registry targets await a trusted provider-signed catalog observation",
+        format!("Registry targets await a trusted provider-signed catalog observation{origin}"),
     ));
 }
 
@@ -805,7 +794,20 @@ fn gather(
         return finish(project_ref, gathered);
     }
     collect_identity(host, &mut gathered);
-    let checkout = collect_checkout(host, &project_ref, &mut gathered);
+    // Read once: the checkout rung and the registry's two rungs are answers
+    // from the same record, and a second read could disagree with the first.
+    let workdirs = host.workdirs();
+    let checkout = collect_checkout(workdirs.as_ref(), &project_ref, &mut gathered);
+    gathered.team.pack_source_present = match packs {
+        ProjectPackSourceProbe::NotProbed => None,
+        ProjectPackSourceProbe::Absent => Some(false),
+        // A source this computer cannot stage from is still a source the
+        // project names: the fact the default follows is the project's, and a
+        // staging failure is disclosed on its own fact.
+        ProjectPackSourceProbe::Available { .. } | ProjectPackSourceProbe::Unavailable { .. } => {
+            Some(true)
+        }
+    };
     collect_team(host, checkout.as_deref(), packs, &mut gathered);
     if let Some(fact) = git_capability_fact(
         &crate::commands::project_git_version::get_git_capability(),
@@ -815,7 +817,8 @@ fn gather(
     }
     collect_runtimes_and_registry(
         host,
-        checkout.as_deref(),
+        workdirs.as_ref().ok(),
+        &project_ref,
         matches!(packs, ProjectPackSourceProbe::Available { .. }),
         &mut gathered,
     );
