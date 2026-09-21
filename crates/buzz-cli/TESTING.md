@@ -1273,6 +1273,60 @@ Verified live 2026-09-17 against a local relay on :3010 with two keys
 all of it. The e2e file `crates/buzz-test-client/tests/e2e_project_todos.rs`
 covers the relay surfaces.
 
+### 6.13b The agents repository and its drafts (`bee agents-repo`, `bee plans`, kind 44249)
+
+A project's roles, plans, team manifest, actions and skills live in
+`<slug>-beekeeper-agents` (spec § 4.11). Edits travel through the relay as
+shared drafts, NIP-AD (`docs/nips/NIP-AD.md`), and nothing reaches `main`
+until someone commits. Every subcommand takes `--project` as `bee pulse`
+does (`BUZZ_PULSE_PROJECT` when the flag is absent). `ls`/`show` read
+`main`'s tip through the relay's `tree`/`raw` routes (no clone); `drafts`
+folds the op log with the fold Desktop and Mobile bind to; `commit` needs
+git and the credential helper (`just install-git-credentials`) plus the
+shipped templates (`BUZZ_TEMPLATES_DIR` or a Beekeeper checkout).
+
+```bash
+bee projects create demo                                  # creates <demo> and <demo>-beekeeper-agents, seeds and pins it
+P=30621:<owner-hex>:demo
+bee --format compact agents-repo ls --project $P          # files on main, with the open draft on each
+bee agents-repo show --project $P roles/lead.md           # main's text, blob and commit
+printf '# RPG\n\nOverworld first.\n' | bee plans edit rpg --project $P --message "first cut"
+printf 'v2\n' | bee plans edit rpg --project $P           # exit 5: "<author> saved a newer draft (<id>); … --prev <id>"
+printf 'v2\n' | bee plans edit rpg --project $P --prev <id-prefix>
+bee plans show rpg --project $P --draft                   # the head's text; `main: null` until committed
+bee agents-repo draft archive --project $P roles/poker.md # a file.move to roles/archive/poker.md
+bee agents-repo drafts --project $P                       # heads per path, diverged flag, recent records
+bee agents-repo commit --project $P --all                 # refuses: team.yml still names poker
+bee agents-repo show --project $P team.yml | jq -r .text | grep -v poker > /tmp/team.yml
+bee agents-repo draft put --project $P team.yml --file /tmp/team.yml --message "drop poker"
+bee agents-repo commit --project $P --all --message "docs(agents): first plan, poker archived"
+bee agents-repo drafts --project $P                       # open: [], one commit record
+bee agents-repo draft withdraw --project $P <own-draft-id>   # NIP-09; another author's is refused by name
+bee agents-repo commit-record --project $P <sha> --draft <id>   # repair when a push landed but the record did not
+```
+
+| Check | Expect |
+| --- | --- |
+| a second `plans edit` without `--prev` while a head exists | `conflict: … saved a newer draft (<id>) … --prev <id>`, exit **5**; nothing published |
+| `commit` with a head whose file changed on main since | `pushed: "no"`, one `stale-base` refusal naming the path and the author's key, `tip_before` set; `ls-remote` unchanged |
+| `commit` of a tree the composer refuses (archived role still in `team.yml`, broken include) | `pushed: "no"`, `invalid-tree` refusals with the path; nothing pushed |
+| `commit` that lands | `pushed: "yes"`, `commit`, `paths[{path,status}]`, `actions: checked (n) \| absent`, and a `record` the relay accepted (it checked the sha is main's tip) |
+| `drafts` after a landed commit | `open: []` for every path the commit touched, superseded included; the record under `commits` |
+| a draft for a repository the project does not pin | `invalid: <repo> is not this project's agents repository`, exit 2 |
+| `commit-record` with a sha that is not main | `invalid: commit <sha> is not refs/heads/main of <repo> (main is at …)`, exit 2 |
+| a viewer of a private project drafts | `auth_error`, exit **3** |
+| a source pinned to a sha rather than a ref | every write carries `note: "… seats stage nothing new until the pin moves"` |
+
+Verified live 2026-09-21 against a local relay on :3010 from `8c4584141`
+plus the CLI: `bee projects create` (after fixing the root-path seed),
+`bee packs init`, `ls`, `plans edit` → exit 5 conflict → `--prev` save,
+`draft archive`, `commit --all` refused at `team.yml`, manifest draft,
+`commit --all` landed (`ls-remote` moved, record accepted), `drafts` empty
+after the chain-closing fix, `plans show` from main, a new draft with
+`base` set, `draft withdraw`. The e2e file
+`crates/buzz-test-client/tests/e2e_agents_repo_drafts.rs` covers the relay
+surfaces.
+
 ### 6.14 Raw events (`bee events query`)
 
 The debugging verb: one authenticated REQ, no contract decoding, no writes.

@@ -19167,6 +19167,80 @@ removed from here.
        fixtures in the same commit that creates it; `conformance/README.md`
        now says to count the readers by grepping for the decode rather than by
        trusting its own table, because that table is what was wrong twice.
+224. **Shared drafts for the agents repository: kind 44249, the relay's
+     checks, the tree validator, the `tree`/`raw` reads and `bee agents-repo`
+     / `bee plans` (2026-09-21, Andy with Opus; wire half).** Andy's model,
+     in his words: "Users can edit, save and preview (i.e. read the docs
+     changes others have made) changes via the relay, they're not REAL until
+     someone hits the commit button." Contract: `docs/nips/NIP-AD.md`, spec
+     § 4.12, `conformance/agents-repo-draft-fold/CONTRACT.md` (15 vectors).
+     With the code that proves it:
+     - **Kind.** `KIND_AGENTS_REPO_DRAFT_OP = 44249` joins
+       `is_project_a_scoped_kind` and `PROJECT_A_SCOPED_KINDS`
+       (`crates/buzz-core/src/kind.rs`), so admission, withholding, fan-out,
+       the SQL pushdown and the HTTP shape rule are inherited. Allocation
+       greps run 2026-09-21: nothing here, nothing on `vanilla/main`
+       (`12201c49b`). Validator `crates/buzz-core/src/agents_repo_draft.rs`
+       (`file.put`, `file.move`, `file.delete`, `commit.record`; exact key
+       sets; path grammar with `archive` reserved; 60,000-byte text and
+       65,536-byte content caps, the refusal naming which tripped). Fold
+       `agents_repo_draft_fold.rs`: newest `(created_at, id)` per path is
+       the head, the rest superseded, `diverged` reported never resolved,
+       `commit.record` closes what it names, `otherRepo` counted not
+       dropped. Chosen over Plan agent 2's "ignore a save whose `prev` is
+       stale": nothing anyone wrote disappears.
+     - **Relay.** `handlers/agents_repo_draft.rs`: `ad-repo` must equal the
+       project's newest 30624 `repo`; a `commit.record`'s commit must be
+       `refs/heads/main` now or within 32 pushes
+       (`api/git/hydrate.rs` `commit_was_main_tip`, `check_main_history`,
+       manifest chain only, five unit tests). Both are `Rejected` (400),
+       store failures `Internal`. `api/git/read_routes.rs`:
+       `GET /git/{owner}/{repo}/tree/{ref}[/{path}]` and `/raw/{ref}/{path}`
+       under the smart-HTTP `GitAuth` and `authorize_git_read`, the
+       repo-root `u` now binding to them (`git_expected_url`, segment-aware
+       so a repository named `tree` still binds). E2E
+       `crates/buzz-test-client/tests/e2e_agents_repo_drafts.rs`: viewer
+       403, collaborator admitted and folded, wrong repo and no-source
+       refused, off-main record refused, stranger withheld — green on :3010.
+     - **Tree validation.** `buzz_persona::agents_repo::validate_root`:
+       manifest, live roles composed, skills, `actions.yml` through a
+       caller-supplied parser (`Checked(n) | NotChecked(reason)`), every
+       refusal collected with its path (`PERSONA_PACK_SPEC.md` § 17).
+     - **CLI.** `commands/agents_repo.rs` + `agents_repo_git.rs`: `ls`,
+       `show`, `drafts`, `draft put|move|archive|unarchive|delete|withdraw`,
+       `commit`, `commit-record`; `bee plans list|show|edit`. A save whose
+       `prev` is not the head is `CliError::Conflict` (exit 5) naming the
+       author, the head and the `--prev` to pass. Commit: shallow temp clone,
+       `stale-base` per path naming the author, `read-tree`/`hash-object`/
+       `update-index`/`write-tree`, `checkout-index` + `validate_root`,
+       `commit-tree` with `Co-authored-by:`/`Signed-off-by:`/
+       `Beekeeper-Drafts:` trailers, `--force-with-lease`, `ls-remote`
+       verify (`pushed: yes | no | unknown`), then the record closing the
+       whole chain of each landed path. Six tests against a bare remote
+       (`agents_repo_tests.rs`). `client.rs` `get_git_read` signs the
+       repo-root NIP-98 the way the credential helper does.
+     - **Briefing.** Every seated role hears one sentence:
+       `$BEE agents-repo draft put` proposes; a person commits
+       (`session.rs` `AGENTS_REPO_DRAFT_BRIEFING`).
+     - **Two pre-existing defects found by running it live.** (a) The seed's
+       `actions.yml` (`actions: []`, spec § 4.11) was refused by
+       `parse_actions_yml` "must list at least one action"; an empty list is
+       now legal and an unlisted action is `ACTION_UNKNOWN` downstream.
+       (b) `bee projects create` and flat `bee packs init` died at the seed
+       step — `seed_packs_repository` ran `create_dir_all("<tmp>/.")` before
+       the work directory existed — so no project had ever been created from
+       the CLI (ledger 163's "no live `bee projects create`" was this).
+       Pinned by `seeding_at_the_root_path_lands_the_files_at_the_top_of_the_tree`.
+     - **Proved live 2026-09-21** on a local relay at :3010 (`8c4584141`
+       plus the CLI): create → init → `ls` → `plans edit` → exit 5 → `--prev`
+       → `draft archive` → commit refused at `team.yml` → manifest draft →
+       commit landed (`ls-remote` moved, record accepted by the relay's
+       main-tip check) → drafts empty → `plans show` from main → withdraw.
+       Runbook `crates/buzz-cli/TESTING.md` § 6.13b.
+     - **Not done / disclosed.** Desktop Files tab and Mobile are the next
+       two phases of the plan; the conformance binder `implementation.test.mjs`
+       lands with the TypeScript fold. `prev` is client-side only. Nothing
+       exercised against hive.
 
 ## 3a. Environment facts that cost real time (do not rediscover)
 

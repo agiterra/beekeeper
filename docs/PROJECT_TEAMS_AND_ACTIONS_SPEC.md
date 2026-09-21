@@ -705,6 +705,55 @@ from another project's folder (2026-09-19, ledger 175).
 Open (§ 6 items 7–9): the community-wide id namespace, a plan schema, and
 whether `write` should distinguish `plans/` from `roles/`.
 
+### 4.12 Collaborative editing of the agents repository (2026-09-21)
+
+Andy's decision, in his words: "Users can edit, save and preview (i.e. read
+the docs changes others have made) changes via the relay, they're not REAL
+until someone hits the commit button." Every file class of § 4.11 is in
+scope (`plans/`, `roles/`, `team.yml`, `actions.yml`, `skills/`), only in
+the agents repository, never in the code repository. Surfaces: the desktop
+Files tab (edit and commit), `bee agents-repo` and `bee plans` (list, show,
+draft, commit), Mobile (read and draft; no commit — no git on the phone).
+Migration of pre-pivot material is out of scope.
+
+- **A draft is a relay event, kind 44249** ([`nips/NIP-AD.md`](nips/NIP-AD.md)),
+  project-`a`-scoped like Pulse and to-dos, append-only, folded client-side
+  under one contract (`conformance/agents-repo-draft-fold/`). A `file.put`
+  carries the whole new text of one file with `base` (the blob it was made
+  from), `baseCommit` and `prev` (the head it was edited from); `file.move`
+  is archive/unarchive; `file.delete`; `commit.record` is the committer's
+  statement that named drafts landed in a commit on `main`. Per path the
+  newest open op is the head, older ones stay visible as superseded, and a
+  save from a stale head is refused by the client before it is signed —
+  nothing anyone wrote disappears.
+- **The relay checks what only it can**: `ad-repo` is the repository the
+  project's 30624 pins today, and a `commit.record`'s commit is (or within
+  32 pushes was) `refs/heads/main` of that repository. It does not check
+  that the drafts' text is what landed; NIP-AD says so.
+- **Commit** (`bee agents-repo commit`; the desktop's Commit button): fetch
+  `main`, refuse a head whose `base` moved (`stale-base`, naming path and
+  author), build the tree, materialize it and validate it with
+  `buzz_persona::agents_repo::validate_root` — manifest, every live role
+  composed, skills, `actions.yml` — naming every path that refuses; commit
+  as the committer with `Co-authored-by:` per author; push under
+  `--force-with-lease`; verify; publish the record. A verify that could not
+  run is reported **unknown**, never "failed". A commit closes the whole
+  chain of each landed path.
+- **`main` stays the seat's only truth.** Nothing a draft says reaches a
+  seat until committed; `definition_drift` and the briefing are unchanged
+  except for one sentence telling every seated role how to draft
+  (`$BEE agents-repo draft put`). `write` seats keep pushing directly.
+- **Reading without git**: `GET /git/{owner}/{repo}/tree/{ref}[/{path}]` and
+  `/raw/{ref}/{path}` under the smart-HTTP NIP-98 gate, for Mobile and for
+  `bee` before it drafts.
+- **Found while landing this**: the seed's `actions.yml` (`actions: []`)
+  was refused by `parse_actions_yml` ("must list at least one action") —
+  an empty list is now legal, and a run naming an unlisted action is
+  refused by name downstream; and `bee projects create` / flat `bee packs
+  init` died at the seed step (`create_dir_all("<tmp>/.")` before the work
+  directory existed), so no project had ever been created from the CLI.
+  Both fixed and pinned.
+
 ## 5. Part C — agent types and project actions
 
 ### 5.1 An action is a workflow definition
@@ -1036,7 +1085,8 @@ Open, to be settled before the slice that needs them:
    (`status: in-force | superseded`) should replace the directory move is a
    later call.
 9. Whether `workspace.agents_repo: write` should distinguish `plans/` from
-   `roles/` (P4).
+   `roles/` (P4). Since § 4.12 a seat with no grant at all can *draft* any
+   file through the relay; the grant only decides direct clone access.
 10. The project-team setup flow (`PROJECT_TEAM_SETUP_IMPL.md`) still authors
     the pack layout into a draft and publishes `<slug>-packs-<hex>` at a sha;
     a project created today has a source, so that publication refuses. The

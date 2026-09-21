@@ -878,6 +878,57 @@ impl BuzzClient {
         .await
     }
 
+    /// GET one of the relay's git read routes — `tree/{ref}[/{path}]` or
+    /// `raw/{ref}/{path}` under `/git/{owner}/{repo}/` — with a NIP-98 token
+    /// bound to the **repository root**, the way `git-credential-nostr`
+    /// signs, because the relay's git extractor verifies every git route
+    /// against that one `u`. The body comes back as bytes (a raw blob is not
+    /// necessarily text) with the `X-Git-Commit` / `X-Git-Blob` headers the
+    /// routes set.
+    pub async fn get_git_read(
+        &self,
+        owner: &str,
+        repo: &str,
+        tail: &str,
+    ) -> Result<GitReadResponse, CliError> {
+        let root = format!("{}/git/{owner}/{repo}", self.relay_url);
+        let url = format!("{root}/{tail}");
+        self.with_retry_body(|| {
+            let url = url.clone();
+            let root = root.clone();
+            async move {
+                let auth = sign_nip98(&self.keys, "GET", &root, None)?;
+                let resp = self
+                    .with_auth_tag(self.http.get(&url).header("Authorization", auth))
+                    .send()
+                    .await?;
+                if !resp.status().is_success() {
+                    let status = resp.status().as_u16();
+                    let body = resp.text().await.unwrap_or_default();
+                    return Err(CliError::Relay {
+                        status,
+                        body: decorate_refusal(body),
+                    });
+                }
+                let header = |name: &str| {
+                    resp.headers()
+                        .get(name)
+                        .and_then(|v| v.to_str().ok())
+                        .map(str::to_owned)
+                };
+                let commit = header("x-git-commit");
+                let blob = header("x-git-blob");
+                let bytes = resp.bytes().await?.to_vec();
+                Ok(GitReadResponse {
+                    bytes,
+                    commit,
+                    blob,
+                })
+            }
+        })
+        .await
+    }
+
     /// Submit a signed Nostr event via POST /events.
     ///
     /// For non-idempotent moderation command kinds (9040–9044), an ambiguous
@@ -1325,6 +1376,17 @@ impl BuzzClient {
         }
         Ok(resp.text().await?)
     }
+}
+
+/// What a git read route answered.
+#[derive(Debug, Clone)]
+pub struct GitReadResponse {
+    /// The body: JSON for `tree`, the blob for `raw`.
+    pub bytes: Vec<u8>,
+    /// `X-Git-Commit`, when the route set it.
+    pub commit: Option<String>,
+    /// `X-Git-Blob`, when the route set it.
+    pub blob: Option<String>,
 }
 
 /// One gate the relay refuses at, and the sentence that names it.

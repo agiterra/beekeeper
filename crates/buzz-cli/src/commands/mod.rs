@@ -5,6 +5,8 @@ pub mod actions;
 pub mod actions_authority;
 pub mod actions_example;
 pub mod agents;
+pub mod agents_repo;
+pub mod agents_repo_git;
 pub mod channel_templates;
 pub mod channels;
 pub mod ci;

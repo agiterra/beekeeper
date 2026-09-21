@@ -1820,8 +1820,16 @@ fn seat_role_briefing(role: &str, pack: &SeatRoleBriefing) -> String {
     if let Some(agents) = &pack.agents_checkout {
         text.push_str(&agents_checkout_briefing(agents));
     }
+    text.push_str(AGENTS_REPO_DRAFT_BRIEFING);
     text
 }
+
+/// The one sentence every seated role hears about shared drafts (NIP-AD):
+/// a proposal to a plan or a role goes through the relay as a draft that a
+/// person commits, and `bee` is the way to make one. A seat is a roster
+/// collaborator, so the relay admits its drafts whether or not the role has
+/// an `agents_repo` grant.
+const AGENTS_REPO_DRAFT_BRIEFING: &str = "\n\nTo propose a change to a plan or a role     definition, draft it rather than editing quietly: `$BEE agents-repo draft put <path>`     (or `$BEE plans edit <name>`) publishes the whole new text of one file as a shared draft     that everyone on the project can read and build on; `$BEE agents-repo drafts` lists what is     open. A draft becomes real only when a person commits it to the agents repository's main;     nothing you draft changes any seat's instructions until then.";
 
 /// The paragraph a seat granted the project's agents repository receives
 /// (spec § 4.11): where the clone is, what is in force and what is retired,
@@ -4657,7 +4665,12 @@ done
             bundle_dir: None,
             agents_checkout: None,
         };
-        assert!(!seat_role_briefing("lead", &base).contains("agents repository"));
+        let none = seat_role_briefing("lead", &base);
+        assert!(!none.contains("agents repository is checked out"), "{none}");
+        assert!(
+            none.contains("agents-repo draft put"),
+            "every seat hears how to draft: {none}"
+        );
 
         let read = SeatRoleBriefing {
             agents_checkout: Some(crate::actor_seats::SeatAgentsCheckout {

@@ -762,7 +762,17 @@ pub(crate) fn seed_packs_repository(
 ) -> Result<SeededPacks, CliError> {
     let work =
         std::env::temp_dir().join(format!("bee-packs-init-{}", uuid::Uuid::new_v4().simple()));
-    let target = work.join(path);
+    // The work directory first, on its own: `create_dir_all("<work>/.")` for a
+    // `<work>` that does not exist yet fails on macOS, which is exactly the
+    // flat layout's `path: "."` (found live 2026-09-21).
+    std::fs::create_dir_all(&work).map_err(|error| {
+        CliError::Other(format!("could not create {}: {error}", work.display()))
+    })?;
+    let target = if buzz_core::project_pack_source::is_root_pack_path(path) {
+        work.clone()
+    } else {
+        work.join(path)
+    };
     std::fs::create_dir_all(&target).map_err(|error| {
         CliError::Other(format!("could not create {}: {error}", target.display()))
     })?;
@@ -878,7 +888,7 @@ fn resolve_seed_dir(from: Option<&Path>) -> Result<PathBuf, CliError> {
 /// Rows that do not decode are dropped rather than printed: the relay refuses
 /// them at ingest, so one on a read is either a pre-gate record or a bug, and
 /// either way a client must not act on a record it cannot fully read.
-async fn query_pack_sources(
+pub(crate) async fn query_pack_sources(
     client: &BuzzClient,
     coordinate: &str,
 ) -> Result<Vec<(buzz_core::project_pack_source::ProjectPackSource, Value)>, CliError> {

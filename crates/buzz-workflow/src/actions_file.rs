@@ -87,11 +87,9 @@ pub fn parse_actions_yml(text: &str, project: &str) -> Result<Vec<ActionEntry>, 
         }
         None => None,
     };
-    if file.actions.is_empty() {
-        return Err(WorkflowError::InvalidDefinition(
-            "actions.yml must list at least one action".into(),
-        ));
-    }
+    // An empty list is legal: a project's agents repository is seeded with
+    // `actions: []` (spec § 4.11) and a run naming an action the file does
+    // not list is refused by name downstream, which is the honest answer.
     if file.actions.len() > MAX_ACTIONS {
         return Err(WorkflowError::InvalidDefinition(format!(
             "actions.yml lists {} actions; at most {MAX_ACTIONS} are allowed",

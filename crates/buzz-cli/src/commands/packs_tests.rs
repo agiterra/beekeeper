@@ -228,6 +228,45 @@ fn seeding_writes_the_packs_under_the_path_and_pushes_one_signed_commit() {
     std::fs::remove_dir_all(&root).ok();
 }
 
+/// The flat layout seeds at the repository root (`path: "."`): the files
+/// land at the top of the tree, not under a `./` directory. Found live on
+/// 2026-09-21: `create_dir_all("<tmp>/.")` failed before the work directory
+/// existed, so every `bee projects create` and flat `bee packs init` died
+/// at the seed step.
+#[test]
+fn seeding_at_the_root_path_lands_the_files_at_the_top_of_the_tree() {
+    let root = std::env::temp_dir().join(format!("bee-seedroot-{}", uuid::Uuid::new_v4().simple()));
+    let seed = root.join("seed");
+    std::fs::create_dir_all(seed.join("roles")).expect("mkdir");
+    std::fs::write(
+        seed.join("team.yml"),
+        "schema: beekeeper-team/v1\nversion: '1'\n",
+    )
+    .expect("write");
+    std::fs::write(seed.join("roles/lead.md"), "you lead\n").expect("write");
+
+    let remote = root.join("remote.git");
+    let init = crate::commands::sessions::worktree::git_command(&root)
+        .args(["init", "--bare", "--quiet", "--initial-branch=main"])
+        .arg(&remote)
+        .output()
+        .expect("git init --bare");
+    assert!(init.status.success(), "bare init: {init:?}");
+
+    seed_packs_repository(&seed, ".", remote.to_str().expect("utf8 remote path"))
+        .expect("seeding at the root succeeds");
+
+    let listing = crate::commands::sessions::worktree::git_command(&remote)
+        .args(["ls-tree", "-r", "--name-only", "refs/heads/main"])
+        .output()
+        .expect("ls-tree");
+    let files = String::from_utf8_lossy(&listing.stdout);
+    let mut names: Vec<&str> = files.lines().collect();
+    names.sort();
+    assert_eq!(names, ["roles/lead.md", "team.yml"], "{files}");
+    std::fs::remove_dir_all(&root).ok();
+}
+
 // --- finding 135(e): the packs cache must name which fact resolved it ---
 
 /// Serializes tests that mutate `BUZZ_MANAGED_AGENT` — `std::env::set_var`

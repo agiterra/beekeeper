@@ -1241,6 +1241,22 @@ which must be a role slug; `description` defaults to the role's own first
 line of prose (a template's opening line describes the template, not the
 role). `skills:` paths are relative to `<root>`.
 
+
+### Validating an agents repository tree
+
+`buzz_persona::agents_repo::validate_root(root, catalog, actions_parser)`
+answers, for a whole flat tree on disk, whether every seat could still be
+staged from it: `team.yml` parses and names only live role files (a role
+under `roles/archive/` refuses at `team.yml`), every `roles/<role>.md`
+composes against `catalog`, every `skills/*/SKILL.md` and
+`roles/*/skills/*/SKILL.md` reads, and `actions.yml` — which this crate
+cannot parse — passes the caller's parser, or is reported `NotChecked`
+with the reason when none was supplied, so nobody reads "validated" where
+it was not. Every refusal is collected with its path; an empty refusal
+list is the only clean answer. Committers of shared drafts (NIP-AD) run it
+on the materialized candidate tree before anything is pushed. Plans are
+never read: they have no parser.
+
 ### Staged output and provenance
 
 `compose_role` returns a `ComposedRole`; `write_staged_pack` writes it as an

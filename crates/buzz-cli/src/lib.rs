@@ -368,6 +368,13 @@ enum Cmd {
     /// Read and edit a project's shared to-do lists (NIP-TD, kind 44248)
     #[command(subcommand)]
     Todos(TodosCmd),
+    /// Read a project's agents repository, draft changes to it, and commit them
+    /// (NIP-AD, kind 44249)
+    #[command(subcommand, name = "agents-repo")]
+    AgentsRepo(AgentsRepoCmd),
+    /// A project's plans: `plans/<name>.md` in its agents repository
+    #[command(subcommand)]
+    Plans(PlansCmd),
     /// Run raw Nostr filters against the relay — the debugging verb
     #[command(subcommand)]
     Events(EventsCmd),
@@ -4777,6 +4784,211 @@ impl PulseKindArg {
     }
 }
 
+/// `bee agents-repo` — a project's agents repository (`<slug>-beekeeper-agents`,
+/// the only place its roles, plans, team manifest, actions and skills live).
+/// Reads name their source: `main`'s tip through the relay, or the open draft
+/// log (NIP-AD, kind 44249). A draft is not a commit: `draft put` publishes
+/// the whole new text of one file for everyone in the project to read and
+/// build on; `commit` lands the open heads on `main` and marks them
+/// committed. Every verb takes `--project` (`BUZZ_PULSE_PROJECT` supplies it
+/// for a seat the harness launched).
+#[derive(Subcommand)]
+pub enum AgentsRepoCmd {
+    /// List the files on main, with the open draft on each
+    Ls {
+        /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
+        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        project: Option<String>,
+    },
+    /// Print one file as main has it, or as its open draft has it
+    Show {
+        /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
+        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        project: Option<String>,
+        /// Path inside the repository, e.g. `plans/rpg.md`
+        path: String,
+        /// The open draft's text rather than main's
+        #[arg(long)]
+        draft: bool,
+    },
+    /// List the open drafts (the head per path) and recent commit records
+    Drafts {
+        /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
+        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        project: Option<String>,
+        /// Only this path
+        #[arg(long)]
+        path: Option<String>,
+        /// Include superseded drafts and every commit record
+        #[arg(long)]
+        all: bool,
+    },
+    /// Propose a change: put, move, delete, or withdraw your own draft
+    #[command(subcommand)]
+    Draft(AgentsRepoDraftCmd),
+    /// Land open drafts on main: fetch, check bases, validate the tree, push
+    /// under a lease, and mark the drafts committed
+    Commit {
+        /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
+        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        project: Option<String>,
+        /// Every open head
+        #[arg(long)]
+        all: bool,
+        /// One draft id (or an 8+ character prefix); repeatable
+        #[arg(long)]
+        draft: Vec<String>,
+        /// The commit subject (default names the paths)
+        #[arg(long)]
+        message: Option<String>,
+        /// The shipped templates directory (default: `BUZZ_TEMPLATES_DIR` or
+        /// the nearest `personas/templates` above the working directory)
+        #[arg(long)]
+        templates: Option<std::path::PathBuf>,
+    },
+    /// Repair: mark drafts committed for a commit that is already on main
+    #[command(name = "commit-record")]
+    CommitRecord {
+        /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
+        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        project: Option<String>,
+        /// The commit sha on main
+        commit: String,
+        /// One draft id; repeatable
+        #[arg(long)]
+        draft: Vec<String>,
+        /// One line recorded with the mark
+        #[arg(long)]
+        message: Option<String>,
+    },
+}
+
+/// `bee agents-repo draft` — one proposed change to one file.
+#[derive(Subcommand)]
+pub enum AgentsRepoDraftCmd {
+    /// Draft the whole new text of a file (from --file or stdin)
+    Put {
+        /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
+        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        project: Option<String>,
+        /// Path inside the repository, e.g. `plans/rpg.md`
+        path: String,
+        /// Read the text from this file instead of stdin
+        #[arg(long)]
+        file: Option<std::path::PathBuf>,
+        /// One line saying why
+        #[arg(long)]
+        message: Option<String>,
+        /// The draft head you edited from (id or 8+ prefix); required when
+        /// one exists, so a save never silently layers over someone's
+        #[arg(long)]
+        prev: Option<String>,
+    },
+    /// Draft moving a role or plan between its live path and archive/
+    Move {
+        /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
+        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        project: Option<String>,
+        /// The path to move; its only destination is its archive counterpart
+        path: String,
+        /// One line saying why
+        #[arg(long)]
+        message: Option<String>,
+        /// The draft head you edited from (id or 8+ prefix)
+        #[arg(long)]
+        prev: Option<String>,
+    },
+    /// Draft archiving a live role or plan
+    Archive {
+        /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
+        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        project: Option<String>,
+        /// `roles/<role>.md` or `plans/<plan>.md`
+        path: String,
+        /// One line saying why
+        #[arg(long)]
+        message: Option<String>,
+        /// The draft head you edited from (id or 8+ prefix)
+        #[arg(long)]
+        prev: Option<String>,
+    },
+    /// Draft putting an archived role or plan back in force
+    Unarchive {
+        /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
+        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        project: Option<String>,
+        /// `roles/archive/<role>.md` or `plans/archive/<plan>.md`
+        path: String,
+        /// One line saying why
+        #[arg(long)]
+        message: Option<String>,
+        /// The draft head you edited from (id or 8+ prefix)
+        #[arg(long)]
+        prev: Option<String>,
+    },
+    /// Draft deleting a file that is on main
+    Delete {
+        /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
+        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        project: Option<String>,
+        /// Path inside the repository
+        path: String,
+        /// One line saying why
+        #[arg(long)]
+        message: Option<String>,
+        /// The draft head you edited from (id or 8+ prefix)
+        #[arg(long)]
+        prev: Option<String>,
+    },
+    /// Withdraw a draft you wrote (a NIP-09 deletion of it)
+    Withdraw {
+        /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
+        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        project: Option<String>,
+        /// The draft id (or an 8+ character prefix)
+        id: String,
+    },
+}
+
+/// `bee plans` — sugar over `plans/<name>.md` in the agents repository.
+#[derive(Subcommand)]
+pub enum PlansCmd {
+    /// List the plans on main (in force and archived) and drafts of new ones
+    List {
+        /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
+        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        project: Option<String>,
+    },
+    /// Print a plan as main has it, or as its open draft has it
+    Show {
+        /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
+        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        project: Option<String>,
+        /// The plan's name (`rpg`), file (`rpg.md`) or path (`plans/rpg.md`)
+        name: String,
+        /// The open draft's text rather than main's
+        #[arg(long)]
+        draft: bool,
+    },
+    /// Draft the whole new text of a plan (from --file or stdin)
+    Edit {
+        /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
+        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        project: Option<String>,
+        /// The plan's name (`rpg`), file (`rpg.md`) or path (`plans/rpg.md`)
+        name: String,
+        /// Read the text from this file instead of stdin
+        #[arg(long)]
+        file: Option<std::path::PathBuf>,
+        /// One line saying why
+        #[arg(long)]
+        message: Option<String>,
+        /// The draft head you edited from (id or 8+ prefix)
+        #[arg(long)]
+        prev: Option<String>,
+    },
+}
+
 /// `bee todos` — a project's shared to-do lists.
 ///
 /// Every subcommand takes `--project`, resolved exactly as `bee pulse` does
@@ -5326,6 +5538,8 @@ async fn run(cli: Cli) -> Result<(), CliError> {
         Cmd::Terminals(sub) => commands::terminals::dispatch(sub, &client).await,
         Cmd::Pulse(sub) => commands::pulse::dispatch(sub, &client, &cli.format).await,
         Cmd::Todos(sub) => commands::todos::dispatch(sub, &client, &cli.format).await,
+        Cmd::AgentsRepo(sub) => commands::agents_repo::dispatch(sub, &client, &cli.format).await,
+        Cmd::Plans(sub) => commands::agents_repo::dispatch_plans(sub, &client, &cli.format).await,
         Cmd::Events(sub) => commands::events::dispatch(sub, &client, &cli.format).await,
         Cmd::Packs(sub) => commands::packs_cli::dispatch(sub, &client).await,
         Cmd::Pack(_) => unreachable!("handled above"),
@@ -5976,6 +6190,7 @@ mod tests {
         let expected_groups: Vec<&str> = vec![
             "actions",
             "agents",
+            "agents-repo",
             "canvas",
             "channels",
             "ci",
@@ -5993,6 +6208,7 @@ mod tests {
             "pack",
             "packs",
             "patches",
+            "plans",
             "pr",
             "projects",
             "pulse",
