@@ -15,14 +15,14 @@ import {
   hasExactFields,
   hasStrictRoutingRecord,
   isPlainObject,
-} from "./sessionCoordinationJsonShapes";
+} from "./sessionCoordinationJsonShapes.ts";
 
 // Re-exported so every existing importer of this module keeps working: the
 // lane-216 split moved where these live, not what they mean.
 export {
   hasExactFields,
   hasStrictRoutingRecord,
-} from "./sessionCoordinationJsonShapes";
+} from "./sessionCoordinationJsonShapes.ts";
 
 const MAX_IDENTIFIER_BYTES = 256;
 /** `1024 + '…'.len_utf8()` — the exact bound `validate_lifecycle_receipt`

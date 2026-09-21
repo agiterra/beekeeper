@@ -17497,288 +17497,6 @@ removed from here.
        2026-09-20 did not reproduce across 5 full desktop-suite runs during
        this investigation and remains open and unexplained.
 
-214. **Contract amendment A5: coverage now reads the canonical team
-     projection, action definitions keep their plan commit, and a declaration
-     with no criterion rows can no longer look finished (built 2026-09-20,
-     lane W0 on `work/lane-214-contract-a5`; fixtures and documentation only,
-     `conformance/project-work/**`).** Closes findings 5, 6 and 7 of the Wave 2
-     adversarial review (`/tmp/astra-wave2-review.md`), each of which let a
-     wrong answer through the frozen contract itself rather than through an
-     implementation slip.
-     - **(A) Evidence facts come from the canonical 44244 projection, not raw
-       events (finding 6).** The input gains `teamProjection`:
-       `includedEventIds` (every record `fold_coding_session_team_transactions`
-       includes — not excluded, not superseded, not corrected away) and
-       `assignments` (its projected assignment records with `assigneeActor` and
-       `assigneeRole`). A `review` criterion is covered only when its report
-       and its disposition are both in that projection, the report's signer is
-       its assignment's **assignee**, and the assignment is bound to that
-       criterion under the declaration being projected. Two new reason codes,
-       `report_not_canonical` and `disposition_not_canonical`, with an explicit
-       six-step precedence so two implementations name the same reason for the
-       same fact. The defect was real: relay ingest validates structure and
-       never the authorship relationship, so a channel peer's well-formed
-       report about somebody else's assignment — approved and bound by a lead —
-       was coverage the team fold itself rejects.
-     - **(B) Action definitions keep their provenance (finding 7).**
-       `actionDefinitions` is keyed
-       `<30617 coordinate>@<commit>#<action name>`, and a declaration's
-       `action` criteria are evaluated **only** against definitions compiled at
-       that declaration's own `planRef.commit`. Keyed by name alone, one of two
-       same-named definitions wins by sort order: the amended head's correct
-       evidence fails and the superseded plan's old evidence passes. Both sort
-       orders have a fixture, because the bug is invisible in one of them.
-     - **(C) An un-evaluable declaration says so at the declaration level
-       (finding 5).** A head whose plan blob is unavailable carries
-       `planResolved: false`, no criterion rows, `coverageComplete: false` and
-       `coverageReasonCode: "plan_unavailable"`; a `conflict` declaration
-       already carried `conflict` and was verified to. The README now states
-       the gating rule in as many words: **a consumer gating completion reads
-       the declaration's `state`, `planResolved` and `coverageComplete`, never
-       the presence of criterion rows.** A gate keyed on a non-empty criteria
-       list let an unreadable plan and two competing heads through.
-     - **Fixtures added**: `sequences/wrong-assignee-report`,
-       `sequences/superseded-disposition`, `sequences/same-action-two-commits`,
-       `sequences/same-action-two-commits-reversed`,
-       `sequences/plan-unavailable-before-bindings`. **Changed**: all 13
-       existing `sequences/*/inputs.json` (action definitions re-keyed with
-       repository and commit; `teamProjection` added, with an unauthorized
-       disposition honestly absent from `includedEventIds`), plus `README.md`
-       and `check-fixtures.mjs`. Every event id, pubkey and timestamp is
-       unchanged; no expected fold of an existing sequence changed.
-     - **(D) The checker's own evaluation covers A–C and bites**, proven by
-       perturbation: marking the wrong-assignee report `covered` failed twice
-       (excluded by the projection, and signer ≠ assignee); marking the
-       superseded disposition `covered` failed; covering the head's action
-       criterion with the old plan commit's run failed naming that commit;
-       collapsing an `actionDefinitions` key back to `verify` failed the key
-       grammar and then the lookup; and marking the plan-unavailable head
-       complete failed twice.
-     - **Expected Rust disagreement.** `cargo test -p buzz-core` is **5 failed
-       / 1227 passed** on this branch: `project_work_fold::tests::{a_record_
-       signed_by_a_non_lead_is_excluded_by_name_and_breaks_nothing,
-       coverage_is_about_one_revision_not_a_per_criterion_scoreboard,
-       every_sequence_folds_to_exactly_its_expected_output,
-       evidence_that_resolved_and_failed_is_open_with_its_reason_named}` and
-       `project_work_inputs::tests::folding_an_assembled_input_matches_every_
-       expected_fold`. Every one reads these fixtures, and the oracle moved
-       first on purpose: this lane owns `conformance/project-work/**` alone and
-       touched no Rust. W1/W2 close them by implementing A–C; the assembler
-       boundary of (A) and `docs/nips/NIP-PW.md` are theirs, not this lane's.
-     - **Addendum, amendment A6 (same day).** Two defects the implementing
-       lane hit, both of them the fixtures disagreeing with themselves or with
-       the prose. (1) `wrong_run_or_hash` had two wordings for one code path —
-       `action-hash-mismatch` said "compiled at the plan commit" while the two
-       `same-action-two-commits*` sequences named the declaration's commit.
-       Ruled: that reason **always** names the commit, since the expected
-       definition is meaningless without the plan commit it was compiled at
-       (the whole of finding 7). `action-hash-mismatch` was corrected, and the
-       README now carries a table of the **exact reason string** for all twelve
-       codes, so an implementer never infers wording from a fixture.
-       (2) `candidateArtifact`: the README says there is no candidate until
-       delivery is observed, and the two `same-action-two-commits*` expected
-       folds set one while their `git-ref` criterion was still open. Ruled:
-       **the README wins** — `candidateArtifact` is `null` whenever the plan
-       has an uncovered `git-ref` criterion, however many others are covered;
-       `coverageComplete` is unaffected. Both expected folds corrected and
-       `check-fixtures.mjs` now asserts the rule across all 18 sequences,
-       proven to bite on `same-action-two-commits` and on `happy-path` with its
-       delivery demoted. Changed: `fixtures/sequences/action-hash-mismatch/`,
-       `fixtures/sequences/same-action-two-commits/`,
-       `fixtures/sequences/same-action-two-commits-reversed/`, `README.md`,
-       `check-fixtures.mjs`. The Rust disagreement listed above is unchanged in
-       kind by this addendum.
-     - Gates on `work/lane-214-contract-a5`, bare after committing:
-       `cargo fmt --all --check`, `cargo clippy -p buzz-core --all-targets --
-       -D warnings`, `node conformance/project-work/check-fixtures.mjs`,
-       `just file-size-check`, `just current-state-check` — all green;
-       `cargo test -p buzz-core` red exactly as listed above.
-
-213. **The four Wave 2 review defects in `bee sessions work` and its fold,
-     each reproduced as a failing test before it was fixed (built 2026-09-21,
-     `work/lane-213-coverage-fixes`, rebased onto A5 `96b16f0ae`).** Findings
-     5–8 of `/tmp/astra-wave2-review.md`, at `220a29195`.
-     - **(a) The completion gate failed open (finding 5).** It selected an
-       incomplete declaration only when that declaration had *rendered
-       criterion rows*, and the two cases that most need refusing render
-       none: a head whose plan blob could not be read, and a conflicted fork,
-       which carries no criteria because it is not a current contract. Red
-       first: `a_head_whose_plan_could_not_be_read_is_refused` and
-       `conflicted_heads_are_refused` both passed `None` before the fix. The
-       gate now reads state ∈ {head, stale, conflict} **and**
-       `coverageComplete`, and prints a declaration-level sentence naming the
-       fork or the unreadable plan. `superseded` still blocks nothing, and
-       the no-declaration and `--without-coverage` paths are unchanged
-       (`operations_completion.rs`).
-     - **(b) Evidence came from raw events, not the canonical projection
-       (finding 6).** A channel peer's well-formed report about somebody
-       else's assignment, approved and bound by the lead, was accepted as
-       coverage although the 44244 fold excludes it — and a historical
-       approval a later ruling replaced stayed usable. The assembler now
-       **calls** `fold_coding_session_team_transactions` (never a second
-       implementation) and hands the fold `teamProjection`; `team_events`
-       crossed to signed `nostr::Event`s for that reason, and a fold that
-       refuses the set is `team_projection_refused` rather than a silent
-       empty projection. New reasons `report_not_canonical` and
-       `disposition_not_canonical`, with A5's six-step precedence implemented
-       exactly so `wrong_signer` / `not_approving` / `revision_mismatch` keep
-       their existing fixtures. Red first:
-       `a_report_by_someone_who_is_not_the_assignee_is_not_evidence` and
-       `an_approval_a_later_ruling_replaced_is_not_evidence`, both built from
-       **real signed records**.
-     - **(c) Action definitions lost their plan commit (finding 7).** The
-       assembler collapsed `(repository, commit, name)` to the name, so of two
-       same-named definitions one won by sort order: the amended head's
-       correct evidence failed and the superseded plan's passed. The key is
-       now `<30617 coordinate>@<commit>#<action>` end to end
-       (`action_definition_key`), and evaluation looks up **the declaration's
-       own** `planRef.commit`. Both lexicographic orders pass
-       (`same-action-two-commits`, `…-reversed`). The desktop reads through
-       the same function, and its plan reader already compiled per commit.
-     - **(d) Initial adoption minted a new work identity on retry (finding
-       8).** A publish whose response was lost produced a second `workId` and
-       a second set of obligations. The initial id is now derived —
-       `derive_work_id`, UUID v5 over (project, session, plan repository,
-       plan path, plan id), **no clock and no randomness**, the commit
-       deliberately excluded so a new commit of the same plan is an
-       amendment. Re-adopting without `--supersedes` is refused naming the
-       declaration to supersede, and the dedupe compares the whole body it
-       always claimed to. Red first:
-       `an_initial_adoption_whose_response_was_lost_republishes_nothing`
-       (two publishes before, one after).
-     - **(e) `--verifies` parsed on five verbs and meant one (lane 209).**
-       Six verbs share `TeamTransactionWriteArgs`. The refusal existed but
-       said only that the flag was "only meaningful on an assignment"; it now
-       says where the id belongs — "`--verifies` applies to `sessions
-       assign`; a report/verdict names its assignment in the body's
-       `assignmentRef`" — and `work_contract.rs` pins it on all five verbs,
-       plus that `report`/`verdict` take no `--assignment` flag and their
-       `--example` body carries `assignmentRef`. The refusal is **behind the
-       key gate**: a keyless run answers `auth` first, which is why the test
-       supplies one.
-     - **Both contract disagreements were ruled in A6** (`39f659c79`), and
-       this lane follows the ruling. (1) `wrong_run_or_hash` **always** names
-       the declaration's plan commit; the conditional wording is gone, and
-       the README's new table of the exact reason string for all twelve codes
-       is now loaded by `every_reason_string_matches_the_contracts_table`,
-       which checks each produced reason against its template and names the
-       four codes no sequence exercises. (2) **The README wins** on
-       `candidateArtifact`: `null` whenever the plan has a `git-ref`
-       criterion that is not yet covered, and the two `same-action-*`
-       expected folds were corrected to match. The declaration-level sentence
-       still distinguishes a run of *another commit's* definition from a run
-       of an unrelated hash, but that discriminator now travels as a computed
-       fact from where the inputs are, not read back out of a message.
-     - **One test could not survive A5 in its old form.**
-       `project_work_inputs::tests::folding_an_assembled_input_matches_every_expected_fold`
-       rebuilt each sequence's `inputs.json` from a raw event set. Canonical
-       derivation keys every record by its own **event id**, and the frozen
-       fixtures state fake ids, so no signed record can carry `1ea1…`. The
-       18-sequence oracle is pinned in `project_work_fold_tests.rs`
-       (all 18, under permutation); the assembler file now pins the
-       derivation with real signed records plus the non-id-bound fixture
-       parts (goals, ref states, authority, blob and action keys). The CLI's
-       stub-relay status test skips the six sequences carrying 44244 records
-       for the same reason, and names them.
-
-212. **Lane 202's preparation was not fenced where it runs: four ways a
-     seat's tree could move under the turn using it (2026-09-21, lane W3a
-     follow-up, branch `work/lane-212-preparation-fences`, base `220a29195`).**
-     Astra's Wave 2 review, findings 2, 3, 4 and 12; all four blocked the Wave
-     3 control run. Each was reproduced as a test before it was fixed.
-     - (a) **Finding 2 — preparing the next assignment could change a running
-       seat's tree.** *Before, measured:* with lane 202's path a turn holding
-       the seat was irrelevant — an establishment run while a turn was in
-       flight moved `HEAD` from `874186d2` to `c7836149` mid-turn, and a later
-       assignment could move it again, so an assignment that had passed its
-       check started on another one's tree. *After:* custody. A per-seat token
-       (`crates/buzz-session-provider/src/assignment_custody.rs`) is taken by
-       an establishment before git runs and by a **turn** from the actor's
-       dequeue until the turn ends
-       (`crates/buzz-session-provider/src/session.rs`, +36 lines at the
-       dequeue/turn-start boundary and nowhere else). A busy seat answers
-       `seat_busy` and **nothing is spawned behind the turn** — an attempt
-       queued there would take the tree the instant the turn released it,
-       which is the second half of the finding. The dequeue then re-reads
-       `HEAD` under custody before the prompt is sent and refuses rather than
-       prompting a verifier about a commit it is not on, recording
-       `tree_moved` with both ids.
-       `two_assignments_behind_a_running_verifier_each_run_on_their_own_commit`
-       is the review's own scenario: 2 assignments queued behind a running
-       verifier, 0 checkouts during its turn, then B on B and C on C.
-     - (b) **Finding 3 — a live slow checkout was read as an interrupted
-       attempt.** *Before:* an `establishing` record with `attempts: 1` and a
-       task still running started a second attempt (1 → 2) and either task's
-       terminal write landed unconditionally. *After:* an attempt carries an
-       owner (`attemptOwner`, additive and serde-default) written with its
-       started-attempt record; a second attempt while the first is live is
-       refused `AlreadyRunning` with the count still 1; terminal writes go
-       through `commit_terminal_record`, which compares the owner, so a
-       detached task's outcome is dropped in favour of the newer one; and a
-       process that restarts knows no owner at all, which is exactly what
-       makes every `establishing` record it finds the interrupted case the
-       one-replay rule is for (1 → 2, then abandoned). The 120 s bound now
-       means "stop waiting, keep the wake deferred", never "start another".
-       Barrier-controlled by holding custody rather than by sleeping:
-       `a_timed_out_waiter_starts_no_second_attempt_and_one_git_task_runs`
-       (attempts 1 after timeout + redelivery),
-       `overlapping_assignments_for_one_seat_are_serialised` (≤1 attempt each,
-       no record left `establishing`).
-     - (c) **Finding 4 — a deferred wake had no durable owner.** *Before,
-       measured:* with a wake held at `created_at 1700000100` and no in-flight
-       turn, `watermark_ceiling` answered `None`, so a newer channel event
-       moved the floor past the one command the provider still owed; the
-       replay path advanced the floor on `Ok(Undecided)` as readily as on a
-       delivery; and nothing re-delivered the wake, so a fetch finishing at
-       130 s released nothing. *After:*
-       `crates/buzz-session-provider/src/deferred_turns.rs` persists the exact
-       command — target, text, attachments, delivery class, operation key,
-       channel, signer, `created_at` — under `<state-dir>/deferred-turns.json`;
-       `watermark_ceiling` now answers `Some(1700000100)` and still does after
-       the in-process mirror is dropped, because the file is the truth;
-       `deliver_held_commands` `continue`s on `Ok(Undecided)` instead of
-       marking; and `Provider::release_deferred_turns`, on the ordinary tick,
-       decides held wakes oldest-first, one seat per pass, skipping seats that
-       are mid-turn — held 1 → 0 with no reconnect and no second command, and
-       a second pass is a no-op.
-     - (d) **Finding 12 — persistence failures still permitted the checkout.**
-       *Before, measured:* with every write to the store's directory failing,
-       `establish_recorded_assignment` logged the error, ran `git checkout -B`
-       anyway (`HEAD` `bba4d92d` → `fd1fb91b`) and reported `established` with
-       no record on disk at all. *After:* `with_records` hands `act` a
-       `persist` that **returns** its error, and a started-attempt record that
-       cannot be saved returns `EstablishmentError::Unstarted` **before** git
-       runs, with the tree untouched. A terminal record that cannot be saved
-       *after* a completed checkout is a different fact and is reported as
-       `EstablishmentError::Unrecorded { record, error }`: the effect is real,
-       the record is owed, and the next pass writes it through
-       `commit_terminal_record` with the attempt count still 1 — proof that
-       the git work was not repeated. An injected `StoreWriter` is what makes
-       both testable.
-     - (e) **Ownership kept.** New modules `assignment_custody.rs` (+ tests)
-       and `deferred_turns.rs` (+ tests); `assignment_inputs.rs` and its tests;
-       `verification_input.rs`'s `TurnInput::Deferred` unchanged in meaning;
-       in `lib.rs` only `apply_turn_decision` (the Deferred arm persists and
-       the Open/Refused arms release), `prepare_assignment_input`,
-       `watermark_ceiling`, `deliver_held_commands`, the runtime tick, the new
-       `release_deferred_turns`, and `mod` lines. `session.rs` is +36/−0 at
-       the dequeue boundary; the first-turn text function lane 209 owns was
-       not touched, and neither was `pending_completion.rs` (lane 210).
-     - (f) **Tests and gates.** 8 custody cases, 4 deferred-wake cases, 4 new
-       record cases (persistence both ways, superseded terminal write, live
-       versus interrupted owner) and 4 new provider cases (busy seat defers,
-       the clamp, the release, a busy seat's wake stays held). Gates bare:
-       workspace fmt and `clippy --workspace --all-targets -D warnings`;
-       `cargo test -p buzz-session-provider` 942 passed; sidecar stubs; Tauri
-       fmt, clippy and `cargo test`; `just desktop-check`; `pnpm test`;
-       `just file-size-check`; `just current-state-check`; Python NUL scan.
-     - (g) **Owed, live.** Still nothing against a live seat. The control run
-       is the proof: a verifier mid-turn while two more assignments arrive,
-       and a wake that times out while its fetch finishes afterwards. Also
-       unproven live: the deferred-wake file surviving a real provider
-       restart, and a seat whose tree a person moves by hand between the
-       decision and the prompt.
-
 209. **The host now hands a seat its work: a compact, exact brief assembled
      from verified facts and prepended to the first turn of any seat opened
      for a canonical assignment (2026-09-20, lane W3b, branch
@@ -18111,6 +17829,432 @@ removed from here.
        closing with **zero acknowledgement-only turns**, with `bee sessions
        measure` reporting `acknowledgement_only_turns: 0` and a canonical
        terminal.
+
+211. **The approval card could show a command from a definition the run was
+     not bound to, asked the wrong key whether it may approve, could not name
+     the commit a waiting run would test, and wrote to a managed cache just
+     because someone opened the tab (2026-09-20, lane W5 follow-up/211;
+     source: Astra's Wave 2 review findings 1, 9, 10, 11, against
+     `220a29195`).** Built, gated, not landed and not exercised live. Every
+     defect was reproduced red before it was fixed.
+     - **(a) Finding 1 — what is shown is what is approved.**
+       `HostStepApprovalInboxCard.tsx:54` fetched the run and the *current*
+       workflow separately: `:84` showed the run's bound hash while `:86`
+       took the command from whatever was published now, with no comparison;
+       `ProjectActionRunRow.tsx:81` repeated it. The dangerous interleaving is
+       ordinary — A waits for approval, B is published, the card reads hash A
+       beside command B, A is republished before the click — so the relay and
+       host correctly execute A while the owner approved what they read as B.
+       Two further holes: `ProjectActionApprovalCard.tsx:162` gated the
+       buttons on identity alone, so even a **failed** definition read left
+       Approve enabled, and `actionDefinition.ts:149` joined an argv with
+       spaces, so `["sh","-c","a b"]` rendered as `sh -c a b` — four arguments
+       where the definition names three.
+       **Fixed.** `hostStepCommand` now returns structure
+       (`{form:"argv"|"shell"}`), never a line; the card renders one numbered
+       argument per row plus the JSON array beside them. `matchBoundDefinition`
+       compares the run's `definition_hash` with the relay's **own** hash of
+       the current definition (`GET /workflows/{id}/autorun`'s
+       `definition_hash`, which the relay computes with the function the run
+       was bound with — a check, not a second implementation). Four outcomes:
+       `resolved`, `not-current`, `unread`, `hash-unknown`. A command is shown
+       only for `resolved`, and `view.grantAvailable` is true only when the
+       run's hash is known, a definition with that exact hash resolved, the
+       step was found in it, and the checkout state is known. **Deny stays
+       available to an approver throughout**: refusing what you cannot fully
+       see is always a safe answer, and withholding it would strand a run.
+       *Red:* `'sh -c a b'` returned where `{form:"argv",…}` was expected, and
+       `grantAvailable` was `undefined` on a mismatched definition. *Green:*
+       16/16 in `lib/approvalTruth.test.mjs` and 5/5 in
+       `ui/ProjectActionApprovalCard.test.mjs`, including both grant buttons
+       `disabled` and Deny enabled on `not-current`.
+     - **(b) Finding 9 — the approver is the project's, not the publisher's.**
+       The inbox took authority from the 46010's `p` tag, which is the
+       *workflow owner* — under lane 186's delegation, normally a lead seat —
+       so Brian's card withheld Approve and the lead's offered a grant the
+       relay refuses. The Actions tab used the project creator, still
+       excluding legitimate co-owners. The relay's actual rule is
+       `approver_admitted` (`command_executor.rs:1334`): for
+       `project-owner:<coordinate>`, the coordinate's creator **or** a current
+       roster `Owner`. New `useApprovalAuthority` mirrors exactly that over
+       the kind:39010 roster read the desktop already has, and is the **one**
+       resolver both the inbox card and the Actions tab call — the run row
+       now resolves it itself rather than receiving a prop, so the two cannot
+       drift. `resolveApprovalAuthority` accepts `publisherPubkey` and
+       deliberately never consults it, so a caller holding it cannot quietly
+       reintroduce the bug. An unread roster is `unknown`: no grant, and the
+       sentence says why. *Red:* a roster Owner who is not the creator was
+       refused. *Green:* creator, delegated-publisher, co-owner, non-owner,
+       unread-roster and unrecognised-spec cases.
+     - **(c) Finding 10 — the run's own bound commit.** Lane 206 put
+       `checkout` on the run wire (`api/workflows.rs:428`); the desktop's raw
+       type and mapper dropped it, and both cards looked for the commit in a
+       later host result — which for a run awaiting its **first** approval
+       cannot exist yet, and will not until that approval is granted. The raw
+       type and `fromRawWorkflowRun` now carry it as a three-state
+       `RunCheckout`, and `"checkout" in raw` is load-bearing: **absent** (an
+       older relay does not report it), **null** (the run names no commit and
+       the step runs in the working directory as found) and **a sha** are
+       three different claims, and `?? null` would collapse the first two. An
+       unreported commit blocks Approve; a null one does not. Both cards read
+       it from the run.
+     - **(d) Finding 11 — render never writes.** `ProjectActionsScreen.tsx:26`
+       mounted `useRecordProjectAgentsRepo`, whose effect invoked
+       `record_project_agents_repo`; that native call synchronizes the managed
+       packs cache with `git checkout --detach --force` and
+       `git clean -x -d --force` (`packs_cache.rs:543`) and then writes the
+       workdir store. Opening the tab, as any viewer, mutated a managed cache
+       and this computer's execution configuration. The hook is deleted. New
+       read-only Tauri command `project_agents_repo_status` answers where the
+       clone is; the screen states the fact (including "Nothing has been
+       changed by opening this tab") and offers an explicit **Prepare**
+       control, shown only to the project's owner because the write is theirs.
+       **Every other mount-time effect in `project-actions/**` and Part C's
+       hook was audited and none writes:** `ProjectActionRunControl.tsx:60` is
+       a `useEffect` that seeds local state from the prefill tip; the three
+       `useMutation`s (Run, Approve/Deny, Revoke autorun) are user-initiated;
+       `useProjectWork` is a `useQuery` whose native command only reads
+       (`git show`, and the workdir record).
+     - **(e) The smoke timeout, and what caused it.** The cold
+       `waitForBridge` timeout seen in a landing is **this spec's setup, not
+       the shared helper**: `installMockBridge(page)` with no second argument
+       never configures the bridge, so neither
+       `__BUZZ_E2E_INVOKE_MOCK_COMMAND__` nor `__TAURI_INTERNALS__` is ever
+       defined and the wait burns its whole budget. Reproduced
+       deterministically (that test failed every run; its sibling, which
+       passes a mock object, passed). Fixed by passing `{}`; both cases now
+       pass in 3.2 s. The wait is also bounded under Playwright's own per-test
+       timeout so a slow bridge reports as a bridge failure rather than an
+       unattributable test timeout. Separately: a dynamic `import()` of a
+       source path cannot work against the built preview bundle, so finding
+       1's surface proof is the JSDOM render test in (a) rather than an e2e
+       case.
+     - **(f) Gates**, bare on the tip: `just _ensure-sidecar-stubs`,
+       `cargo fmt --check`, `cargo clippy --all-targets -D warnings`,
+       `cargo test`, `just desktop-check`, `pnpm test`, the Playwright spec by
+       name, `just file-size-check`, `just current-state-check`. Figures in
+       the lane report.
+     - **(h) Addendum — lane 213's request shape, and the drift class it
+       belongs to.** Lane 213 made the native `project_work_coverage` request
+       require `channelRef` and `genesisRef` and take the kind:44244
+       `team_events` as **full signed events** (its assembler now folds them
+       with the canonical 44244 fold, which verifies what it judges). It
+       changed the Rust side and its own test literal only, so every
+       TypeScript unit test stayed green while the coverage view would have
+       failed at runtime in front of a person — the same shape of defect as
+       finding 10, a wire field that one side carries and the other does not.
+       The TypeScript caller is matched to that struct exactly:
+       `ProjectWorkRequest` gains both fields as required, `useProjectWork`
+       sends them (`genesisRef` off the umbrella record the Mission surface
+       already holds), and `teamEvents` cross as `SignedWireEvent` — exactly
+       the seven signed fields, the same set the team-transaction fold
+       already sends, so the local-only render keys `localKey` and `pending`,
+       which no signature ever covered, are not offered to a strict decoder.
+       Three guards, so this class fails a test next time rather than a
+       person: `assertProjectWorkRequestComplete` refuses an incomplete
+       request **before** the invoke and names the missing field, rather than
+       letting it arrive as a serde error about a struct the caller cannot
+       see; `hooks/useProjectWork.test.mjs` asserts the built payload carries
+       every key in `PROJECT_WORK_REQUIRED_KEYS` and that team events keep
+       their signatures and nothing else; and the mock bridge holds the same
+       contract, so `tests/e2e/project-work.spec.ts` fails in a browser when
+       a required key or a signature is missing.
+       Also found while gating: one case of this spec times out in
+       `waitForBridge` when it runs **after** another case in the same worker
+       and its mock configuration is bare (`installMockBridge(page)` or
+       `{}`); in isolation it passes in 2 s. Giving it a configuration of the
+       same shape as its siblings, with only the fact under test withheld,
+       makes all three pass (3 passed, 29.9 s). So the cold
+       "waitForBridge timed out" reported from a landing is this spec's own
+       setup, not the shared helper — but the underlying sensitivity of a
+       bare mock config to test order is the helper's, and is left named
+       here rather than papered over with a longer timeout.
+     - **(g) Owed live.** Nothing ran against hive. The Wave 3 control run
+       must still approve a host step from the app — now with the guarantee
+       that the command displayed is the one the run is bound to, or no
+       command and no Approve.
+
+212. **Lane 202's preparation was not fenced where it runs: four ways a
+     seat's tree could move under the turn using it (2026-09-21, lane W3a
+     follow-up, branch `work/lane-212-preparation-fences`, base `220a29195`).**
+     Astra's Wave 2 review, findings 2, 3, 4 and 12; all four blocked the Wave
+     3 control run. Each was reproduced as a test before it was fixed.
+     - (a) **Finding 2 — preparing the next assignment could change a running
+       seat's tree.** *Before, measured:* with lane 202's path a turn holding
+       the seat was irrelevant — an establishment run while a turn was in
+       flight moved `HEAD` from `874186d2` to `c7836149` mid-turn, and a later
+       assignment could move it again, so an assignment that had passed its
+       check started on another one's tree. *After:* custody. A per-seat token
+       (`crates/buzz-session-provider/src/assignment_custody.rs`) is taken by
+       an establishment before git runs and by a **turn** from the actor's
+       dequeue until the turn ends
+       (`crates/buzz-session-provider/src/session.rs`, +36 lines at the
+       dequeue/turn-start boundary and nowhere else). A busy seat answers
+       `seat_busy` and **nothing is spawned behind the turn** — an attempt
+       queued there would take the tree the instant the turn released it,
+       which is the second half of the finding. The dequeue then re-reads
+       `HEAD` under custody before the prompt is sent and refuses rather than
+       prompting a verifier about a commit it is not on, recording
+       `tree_moved` with both ids.
+       `two_assignments_behind_a_running_verifier_each_run_on_their_own_commit`
+       is the review's own scenario: 2 assignments queued behind a running
+       verifier, 0 checkouts during its turn, then B on B and C on C.
+     - (b) **Finding 3 — a live slow checkout was read as an interrupted
+       attempt.** *Before:* an `establishing` record with `attempts: 1` and a
+       task still running started a second attempt (1 → 2) and either task's
+       terminal write landed unconditionally. *After:* an attempt carries an
+       owner (`attemptOwner`, additive and serde-default) written with its
+       started-attempt record; a second attempt while the first is live is
+       refused `AlreadyRunning` with the count still 1; terminal writes go
+       through `commit_terminal_record`, which compares the owner, so a
+       detached task's outcome is dropped in favour of the newer one; and a
+       process that restarts knows no owner at all, which is exactly what
+       makes every `establishing` record it finds the interrupted case the
+       one-replay rule is for (1 → 2, then abandoned). The 120 s bound now
+       means "stop waiting, keep the wake deferred", never "start another".
+       Barrier-controlled by holding custody rather than by sleeping:
+       `a_timed_out_waiter_starts_no_second_attempt_and_one_git_task_runs`
+       (attempts 1 after timeout + redelivery),
+       `overlapping_assignments_for_one_seat_are_serialised` (≤1 attempt each,
+       no record left `establishing`).
+     - (c) **Finding 4 — a deferred wake had no durable owner.** *Before,
+       measured:* with a wake held at `created_at 1700000100` and no in-flight
+       turn, `watermark_ceiling` answered `None`, so a newer channel event
+       moved the floor past the one command the provider still owed; the
+       replay path advanced the floor on `Ok(Undecided)` as readily as on a
+       delivery; and nothing re-delivered the wake, so a fetch finishing at
+       130 s released nothing. *After:*
+       `crates/buzz-session-provider/src/deferred_turns.rs` persists the exact
+       command — target, text, attachments, delivery class, operation key,
+       channel, signer, `created_at` — under `<state-dir>/deferred-turns.json`;
+       `watermark_ceiling` now answers `Some(1700000100)` and still does after
+       the in-process mirror is dropped, because the file is the truth;
+       `deliver_held_commands` `continue`s on `Ok(Undecided)` instead of
+       marking; and `Provider::release_deferred_turns`, on the ordinary tick,
+       decides held wakes oldest-first, one seat per pass, skipping seats that
+       are mid-turn — held 1 → 0 with no reconnect and no second command, and
+       a second pass is a no-op.
+     - (d) **Finding 12 — persistence failures still permitted the checkout.**
+       *Before, measured:* with every write to the store's directory failing,
+       `establish_recorded_assignment` logged the error, ran `git checkout -B`
+       anyway (`HEAD` `bba4d92d` → `fd1fb91b`) and reported `established` with
+       no record on disk at all. *After:* `with_records` hands `act` a
+       `persist` that **returns** its error, and a started-attempt record that
+       cannot be saved returns `EstablishmentError::Unstarted` **before** git
+       runs, with the tree untouched. A terminal record that cannot be saved
+       *after* a completed checkout is a different fact and is reported as
+       `EstablishmentError::Unrecorded { record, error }`: the effect is real,
+       the record is owed, and the next pass writes it through
+       `commit_terminal_record` with the attempt count still 1 — proof that
+       the git work was not repeated. An injected `StoreWriter` is what makes
+       both testable.
+     - (e) **Ownership kept.** New modules `assignment_custody.rs` (+ tests)
+       and `deferred_turns.rs` (+ tests); `assignment_inputs.rs` and its tests;
+       `verification_input.rs`'s `TurnInput::Deferred` unchanged in meaning;
+       in `lib.rs` only `apply_turn_decision` (the Deferred arm persists and
+       the Open/Refused arms release), `prepare_assignment_input`,
+       `watermark_ceiling`, `deliver_held_commands`, the runtime tick, the new
+       `release_deferred_turns`, and `mod` lines. `session.rs` is +36/−0 at
+       the dequeue boundary; the first-turn text function lane 209 owns was
+       not touched, and neither was `pending_completion.rs` (lane 210).
+     - (f) **Tests and gates.** 8 custody cases, 4 deferred-wake cases, 4 new
+       record cases (persistence both ways, superseded terminal write, live
+       versus interrupted owner) and 4 new provider cases (busy seat defers,
+       the clamp, the release, a busy seat's wake stays held). Gates bare:
+       workspace fmt and `clippy --workspace --all-targets -D warnings`;
+       `cargo test -p buzz-session-provider` 942 passed; sidecar stubs; Tauri
+       fmt, clippy and `cargo test`; `just desktop-check`; `pnpm test`;
+       `just file-size-check`; `just current-state-check`; Python NUL scan.
+     - (g) **Owed, live.** Still nothing against a live seat. The control run
+       is the proof: a verifier mid-turn while two more assignments arrive,
+       and a wake that times out while its fetch finishes afterwards. Also
+       unproven live: the deferred-wake file surviving a real provider
+       restart, and a seat whose tree a person moves by hand between the
+       decision and the prompt.
+
+213. **The four Wave 2 review defects in `bee sessions work` and its fold,
+     each reproduced as a failing test before it was fixed (built 2026-09-21,
+     `work/lane-213-coverage-fixes`, rebased onto A5 `96b16f0ae`).** Findings
+     5–8 of `/tmp/astra-wave2-review.md`, at `220a29195`.
+     - **(a) The completion gate failed open (finding 5).** It selected an
+       incomplete declaration only when that declaration had *rendered
+       criterion rows*, and the two cases that most need refusing render
+       none: a head whose plan blob could not be read, and a conflicted fork,
+       which carries no criteria because it is not a current contract. Red
+       first: `a_head_whose_plan_could_not_be_read_is_refused` and
+       `conflicted_heads_are_refused` both passed `None` before the fix. The
+       gate now reads state ∈ {head, stale, conflict} **and**
+       `coverageComplete`, and prints a declaration-level sentence naming the
+       fork or the unreadable plan. `superseded` still blocks nothing, and
+       the no-declaration and `--without-coverage` paths are unchanged
+       (`operations_completion.rs`).
+     - **(b) Evidence came from raw events, not the canonical projection
+       (finding 6).** A channel peer's well-formed report about somebody
+       else's assignment, approved and bound by the lead, was accepted as
+       coverage although the 44244 fold excludes it — and a historical
+       approval a later ruling replaced stayed usable. The assembler now
+       **calls** `fold_coding_session_team_transactions` (never a second
+       implementation) and hands the fold `teamProjection`; `team_events`
+       crossed to signed `nostr::Event`s for that reason, and a fold that
+       refuses the set is `team_projection_refused` rather than a silent
+       empty projection. New reasons `report_not_canonical` and
+       `disposition_not_canonical`, with A5's six-step precedence implemented
+       exactly so `wrong_signer` / `not_approving` / `revision_mismatch` keep
+       their existing fixtures. Red first:
+       `a_report_by_someone_who_is_not_the_assignee_is_not_evidence` and
+       `an_approval_a_later_ruling_replaced_is_not_evidence`, both built from
+       **real signed records**.
+     - **(c) Action definitions lost their plan commit (finding 7).** The
+       assembler collapsed `(repository, commit, name)` to the name, so of two
+       same-named definitions one won by sort order: the amended head's
+       correct evidence failed and the superseded plan's passed. The key is
+       now `<30617 coordinate>@<commit>#<action>` end to end
+       (`action_definition_key`), and evaluation looks up **the declaration's
+       own** `planRef.commit`. Both lexicographic orders pass
+       (`same-action-two-commits`, `…-reversed`). The desktop reads through
+       the same function, and its plan reader already compiled per commit.
+     - **(d) Initial adoption minted a new work identity on retry (finding
+       8).** A publish whose response was lost produced a second `workId` and
+       a second set of obligations. The initial id is now derived —
+       `derive_work_id`, UUID v5 over (project, session, plan repository,
+       plan path, plan id), **no clock and no randomness**, the commit
+       deliberately excluded so a new commit of the same plan is an
+       amendment. Re-adopting without `--supersedes` is refused naming the
+       declaration to supersede, and the dedupe compares the whole body it
+       always claimed to. Red first:
+       `an_initial_adoption_whose_response_was_lost_republishes_nothing`
+       (two publishes before, one after).
+     - **(e) `--verifies` parsed on five verbs and meant one (lane 209).**
+       Six verbs share `TeamTransactionWriteArgs`. The refusal existed but
+       said only that the flag was "only meaningful on an assignment"; it now
+       says where the id belongs — "`--verifies` applies to `sessions
+       assign`; a report/verdict names its assignment in the body's
+       `assignmentRef`" — and `work_contract.rs` pins it on all five verbs,
+       plus that `report`/`verdict` take no `--assignment` flag and their
+       `--example` body carries `assignmentRef`. The refusal is **behind the
+       key gate**: a keyless run answers `auth` first, which is why the test
+       supplies one.
+     - **Both contract disagreements were ruled in A6** (`39f659c79`), and
+       this lane follows the ruling. (1) `wrong_run_or_hash` **always** names
+       the declaration's plan commit; the conditional wording is gone, and
+       the README's new table of the exact reason string for all twelve codes
+       is now loaded by `every_reason_string_matches_the_contracts_table`,
+       which checks each produced reason against its template and names the
+       four codes no sequence exercises. (2) **The README wins** on
+       `candidateArtifact`: `null` whenever the plan has a `git-ref`
+       criterion that is not yet covered, and the two `same-action-*`
+       expected folds were corrected to match. The declaration-level sentence
+       still distinguishes a run of *another commit's* definition from a run
+       of an unrelated hash, but that discriminator now travels as a computed
+       fact from where the inputs are, not read back out of a message.
+     - **One test could not survive A5 in its old form.**
+       `project_work_inputs::tests::folding_an_assembled_input_matches_every_expected_fold`
+       rebuilt each sequence's `inputs.json` from a raw event set. Canonical
+       derivation keys every record by its own **event id**, and the frozen
+       fixtures state fake ids, so no signed record can carry `1ea1…`. The
+       18-sequence oracle is pinned in `project_work_fold_tests.rs`
+       (all 18, under permutation); the assembler file now pins the
+       derivation with real signed records plus the non-id-bound fixture
+       parts (goals, ref states, authority, blob and action keys). The CLI's
+       stub-relay status test skips the six sequences carrying 44244 records
+       for the same reason, and names them.
+
+214. **Contract amendment A5: coverage now reads the canonical team
+     projection, action definitions keep their plan commit, and a declaration
+     with no criterion rows can no longer look finished (built 2026-09-20,
+     lane W0 on `work/lane-214-contract-a5`; fixtures and documentation only,
+     `conformance/project-work/**`).** Closes findings 5, 6 and 7 of the Wave 2
+     adversarial review (`/tmp/astra-wave2-review.md`), each of which let a
+     wrong answer through the frozen contract itself rather than through an
+     implementation slip.
+     - **(A) Evidence facts come from the canonical 44244 projection, not raw
+       events (finding 6).** The input gains `teamProjection`:
+       `includedEventIds` (every record `fold_coding_session_team_transactions`
+       includes — not excluded, not superseded, not corrected away) and
+       `assignments` (its projected assignment records with `assigneeActor` and
+       `assigneeRole`). A `review` criterion is covered only when its report
+       and its disposition are both in that projection, the report's signer is
+       its assignment's **assignee**, and the assignment is bound to that
+       criterion under the declaration being projected. Two new reason codes,
+       `report_not_canonical` and `disposition_not_canonical`, with an explicit
+       six-step precedence so two implementations name the same reason for the
+       same fact. The defect was real: relay ingest validates structure and
+       never the authorship relationship, so a channel peer's well-formed
+       report about somebody else's assignment — approved and bound by a lead —
+       was coverage the team fold itself rejects.
+     - **(B) Action definitions keep their provenance (finding 7).**
+       `actionDefinitions` is keyed
+       `<30617 coordinate>@<commit>#<action name>`, and a declaration's
+       `action` criteria are evaluated **only** against definitions compiled at
+       that declaration's own `planRef.commit`. Keyed by name alone, one of two
+       same-named definitions wins by sort order: the amended head's correct
+       evidence fails and the superseded plan's old evidence passes. Both sort
+       orders have a fixture, because the bug is invisible in one of them.
+     - **(C) An un-evaluable declaration says so at the declaration level
+       (finding 5).** A head whose plan blob is unavailable carries
+       `planResolved: false`, no criterion rows, `coverageComplete: false` and
+       `coverageReasonCode: "plan_unavailable"`; a `conflict` declaration
+       already carried `conflict` and was verified to. The README now states
+       the gating rule in as many words: **a consumer gating completion reads
+       the declaration's `state`, `planResolved` and `coverageComplete`, never
+       the presence of criterion rows.** A gate keyed on a non-empty criteria
+       list let an unreadable plan and two competing heads through.
+     - **Fixtures added**: `sequences/wrong-assignee-report`,
+       `sequences/superseded-disposition`, `sequences/same-action-two-commits`,
+       `sequences/same-action-two-commits-reversed`,
+       `sequences/plan-unavailable-before-bindings`. **Changed**: all 13
+       existing `sequences/*/inputs.json` (action definitions re-keyed with
+       repository and commit; `teamProjection` added, with an unauthorized
+       disposition honestly absent from `includedEventIds`), plus `README.md`
+       and `check-fixtures.mjs`. Every event id, pubkey and timestamp is
+       unchanged; no expected fold of an existing sequence changed.
+     - **(D) The checker's own evaluation covers A–C and bites**, proven by
+       perturbation: marking the wrong-assignee report `covered` failed twice
+       (excluded by the projection, and signer ≠ assignee); marking the
+       superseded disposition `covered` failed; covering the head's action
+       criterion with the old plan commit's run failed naming that commit;
+       collapsing an `actionDefinitions` key back to `verify` failed the key
+       grammar and then the lookup; and marking the plan-unavailable head
+       complete failed twice.
+     - **Expected Rust disagreement.** `cargo test -p buzz-core` is **5 failed
+       / 1227 passed** on this branch: `project_work_fold::tests::{a_record_
+       signed_by_a_non_lead_is_excluded_by_name_and_breaks_nothing,
+       coverage_is_about_one_revision_not_a_per_criterion_scoreboard,
+       every_sequence_folds_to_exactly_its_expected_output,
+       evidence_that_resolved_and_failed_is_open_with_its_reason_named}` and
+       `project_work_inputs::tests::folding_an_assembled_input_matches_every_
+       expected_fold`. Every one reads these fixtures, and the oracle moved
+       first on purpose: this lane owns `conformance/project-work/**` alone and
+       touched no Rust. W1/W2 close them by implementing A–C; the assembler
+       boundary of (A) and `docs/nips/NIP-PW.md` are theirs, not this lane's.
+     - **Addendum, amendment A6 (same day).** Two defects the implementing
+       lane hit, both of them the fixtures disagreeing with themselves or with
+       the prose. (1) `wrong_run_or_hash` had two wordings for one code path —
+       `action-hash-mismatch` said "compiled at the plan commit" while the two
+       `same-action-two-commits*` sequences named the declaration's commit.
+       Ruled: that reason **always** names the commit, since the expected
+       definition is meaningless without the plan commit it was compiled at
+       (the whole of finding 7). `action-hash-mismatch` was corrected, and the
+       README now carries a table of the **exact reason string** for all twelve
+       codes, so an implementer never infers wording from a fixture.
+       (2) `candidateArtifact`: the README says there is no candidate until
+       delivery is observed, and the two `same-action-two-commits*` expected
+       folds set one while their `git-ref` criterion was still open. Ruled:
+       **the README wins** — `candidateArtifact` is `null` whenever the plan
+       has an uncovered `git-ref` criterion, however many others are covered;
+       `coverageComplete` is unaffected. Both expected folds corrected and
+       `check-fixtures.mjs` now asserts the rule across all 18 sequences,
+       proven to bite on `same-action-two-commits` and on `happy-path` with its
+       delivery demoted. Changed: `fixtures/sequences/action-hash-mismatch/`,
+       `fixtures/sequences/same-action-two-commits/`,
+       `fixtures/sequences/same-action-two-commits-reversed/`, `README.md`,
+       `check-fixtures.mjs`. The Rust disagreement listed above is unchanged in
+       kind by this addendum.
+     - Gates on `work/lane-214-contract-a5`, bare after committing:
+       `cargo fmt --all --check`, `cargo clippy -p buzz-core --all-targets --
+       -D warnings`, `node conformance/project-work/check-fixtures.mjs`,
+       `just file-size-check`, `just current-state-check` — all green;
+       `cargo test -p buzz-core` red exactly as listed above.
 
 215. **Five more closed coding-session records had independent strict readers
      in three languages and no shared vectors; the vectors written for them
@@ -18470,150 +18614,6 @@ removed from here.
        The Overview card's missing caveat, the `web/` reader, the mobile
        archived-versus-closed distinction and the desktop's missing strict
        hire reader are all recorded above and owned by no lane yet.
-
-211. **The approval card could show a command from a definition the run was
-     not bound to, asked the wrong key whether it may approve, could not name
-     the commit a waiting run would test, and wrote to a managed cache just
-     because someone opened the tab (2026-09-20, lane W5 follow-up/211;
-     source: Astra's Wave 2 review findings 1, 9, 10, 11, against
-     `220a29195`).** Built, gated, not landed and not exercised live. Every
-     defect was reproduced red before it was fixed.
-     - **(a) Finding 1 — what is shown is what is approved.**
-       `HostStepApprovalInboxCard.tsx:54` fetched the run and the *current*
-       workflow separately: `:84` showed the run's bound hash while `:86`
-       took the command from whatever was published now, with no comparison;
-       `ProjectActionRunRow.tsx:81` repeated it. The dangerous interleaving is
-       ordinary — A waits for approval, B is published, the card reads hash A
-       beside command B, A is republished before the click — so the relay and
-       host correctly execute A while the owner approved what they read as B.
-       Two further holes: `ProjectActionApprovalCard.tsx:162` gated the
-       buttons on identity alone, so even a **failed** definition read left
-       Approve enabled, and `actionDefinition.ts:149` joined an argv with
-       spaces, so `["sh","-c","a b"]` rendered as `sh -c a b` — four arguments
-       where the definition names three.
-       **Fixed.** `hostStepCommand` now returns structure
-       (`{form:"argv"|"shell"}`), never a line; the card renders one numbered
-       argument per row plus the JSON array beside them. `matchBoundDefinition`
-       compares the run's `definition_hash` with the relay's **own** hash of
-       the current definition (`GET /workflows/{id}/autorun`'s
-       `definition_hash`, which the relay computes with the function the run
-       was bound with — a check, not a second implementation). Four outcomes:
-       `resolved`, `not-current`, `unread`, `hash-unknown`. A command is shown
-       only for `resolved`, and `view.grantAvailable` is true only when the
-       run's hash is known, a definition with that exact hash resolved, the
-       step was found in it, and the checkout state is known. **Deny stays
-       available to an approver throughout**: refusing what you cannot fully
-       see is always a safe answer, and withholding it would strand a run.
-       *Red:* `'sh -c a b'` returned where `{form:"argv",…}` was expected, and
-       `grantAvailable` was `undefined` on a mismatched definition. *Green:*
-       16/16 in `lib/approvalTruth.test.mjs` and 5/5 in
-       `ui/ProjectActionApprovalCard.test.mjs`, including both grant buttons
-       `disabled` and Deny enabled on `not-current`.
-     - **(b) Finding 9 — the approver is the project's, not the publisher's.**
-       The inbox took authority from the 46010's `p` tag, which is the
-       *workflow owner* — under lane 186's delegation, normally a lead seat —
-       so Brian's card withheld Approve and the lead's offered a grant the
-       relay refuses. The Actions tab used the project creator, still
-       excluding legitimate co-owners. The relay's actual rule is
-       `approver_admitted` (`command_executor.rs:1334`): for
-       `project-owner:<coordinate>`, the coordinate's creator **or** a current
-       roster `Owner`. New `useApprovalAuthority` mirrors exactly that over
-       the kind:39010 roster read the desktop already has, and is the **one**
-       resolver both the inbox card and the Actions tab call — the run row
-       now resolves it itself rather than receiving a prop, so the two cannot
-       drift. `resolveApprovalAuthority` accepts `publisherPubkey` and
-       deliberately never consults it, so a caller holding it cannot quietly
-       reintroduce the bug. An unread roster is `unknown`: no grant, and the
-       sentence says why. *Red:* a roster Owner who is not the creator was
-       refused. *Green:* creator, delegated-publisher, co-owner, non-owner,
-       unread-roster and unrecognised-spec cases.
-     - **(c) Finding 10 — the run's own bound commit.** Lane 206 put
-       `checkout` on the run wire (`api/workflows.rs:428`); the desktop's raw
-       type and mapper dropped it, and both cards looked for the commit in a
-       later host result — which for a run awaiting its **first** approval
-       cannot exist yet, and will not until that approval is granted. The raw
-       type and `fromRawWorkflowRun` now carry it as a three-state
-       `RunCheckout`, and `"checkout" in raw` is load-bearing: **absent** (an
-       older relay does not report it), **null** (the run names no commit and
-       the step runs in the working directory as found) and **a sha** are
-       three different claims, and `?? null` would collapse the first two. An
-       unreported commit blocks Approve; a null one does not. Both cards read
-       it from the run.
-     - **(d) Finding 11 — render never writes.** `ProjectActionsScreen.tsx:26`
-       mounted `useRecordProjectAgentsRepo`, whose effect invoked
-       `record_project_agents_repo`; that native call synchronizes the managed
-       packs cache with `git checkout --detach --force` and
-       `git clean -x -d --force` (`packs_cache.rs:543`) and then writes the
-       workdir store. Opening the tab, as any viewer, mutated a managed cache
-       and this computer's execution configuration. The hook is deleted. New
-       read-only Tauri command `project_agents_repo_status` answers where the
-       clone is; the screen states the fact (including "Nothing has been
-       changed by opening this tab") and offers an explicit **Prepare**
-       control, shown only to the project's owner because the write is theirs.
-       **Every other mount-time effect in `project-actions/**` and Part C's
-       hook was audited and none writes:** `ProjectActionRunControl.tsx:60` is
-       a `useEffect` that seeds local state from the prefill tip; the three
-       `useMutation`s (Run, Approve/Deny, Revoke autorun) are user-initiated;
-       `useProjectWork` is a `useQuery` whose native command only reads
-       (`git show`, and the workdir record).
-     - **(e) The smoke timeout, and what caused it.** The cold
-       `waitForBridge` timeout seen in a landing is **this spec's setup, not
-       the shared helper**: `installMockBridge(page)` with no second argument
-       never configures the bridge, so neither
-       `__BUZZ_E2E_INVOKE_MOCK_COMMAND__` nor `__TAURI_INTERNALS__` is ever
-       defined and the wait burns its whole budget. Reproduced
-       deterministically (that test failed every run; its sibling, which
-       passes a mock object, passed). Fixed by passing `{}`; both cases now
-       pass in 3.2 s. The wait is also bounded under Playwright's own per-test
-       timeout so a slow bridge reports as a bridge failure rather than an
-       unattributable test timeout. Separately: a dynamic `import()` of a
-       source path cannot work against the built preview bundle, so finding
-       1's surface proof is the JSDOM render test in (a) rather than an e2e
-       case.
-     - **(f) Gates**, bare on the tip: `just _ensure-sidecar-stubs`,
-       `cargo fmt --check`, `cargo clippy --all-targets -D warnings`,
-       `cargo test`, `just desktop-check`, `pnpm test`, the Playwright spec by
-       name, `just file-size-check`, `just current-state-check`. Figures in
-       the lane report.
-     - **(h) Addendum — lane 213's request shape, and the drift class it
-       belongs to.** Lane 213 made the native `project_work_coverage` request
-       require `channelRef` and `genesisRef` and take the kind:44244
-       `team_events` as **full signed events** (its assembler now folds them
-       with the canonical 44244 fold, which verifies what it judges). It
-       changed the Rust side and its own test literal only, so every
-       TypeScript unit test stayed green while the coverage view would have
-       failed at runtime in front of a person — the same shape of defect as
-       finding 10, a wire field that one side carries and the other does not.
-       The TypeScript caller is matched to that struct exactly:
-       `ProjectWorkRequest` gains both fields as required, `useProjectWork`
-       sends them (`genesisRef` off the umbrella record the Mission surface
-       already holds), and `teamEvents` cross as `SignedWireEvent` — exactly
-       the seven signed fields, the same set the team-transaction fold
-       already sends, so the local-only render keys `localKey` and `pending`,
-       which no signature ever covered, are not offered to a strict decoder.
-       Three guards, so this class fails a test next time rather than a
-       person: `assertProjectWorkRequestComplete` refuses an incomplete
-       request **before** the invoke and names the missing field, rather than
-       letting it arrive as a serde error about a struct the caller cannot
-       see; `hooks/useProjectWork.test.mjs` asserts the built payload carries
-       every key in `PROJECT_WORK_REQUIRED_KEYS` and that team events keep
-       their signatures and nothing else; and the mock bridge holds the same
-       contract, so `tests/e2e/project-work.spec.ts` fails in a browser when
-       a required key or a signature is missing.
-       Also found while gating: one case of this spec times out in
-       `waitForBridge` when it runs **after** another case in the same worker
-       and its mock configuration is bare (`installMockBridge(page)` or
-       `{}`); in isolation it passes in 2 s. Giving it a configuration of the
-       same shape as its siblings, with only the fact under test withheld,
-       makes all three pass (3 passed, 29.9 s). So the cold
-       "waitForBridge timed out" reported from a landing is this spec's own
-       setup, not the shared helper — but the underlying sensitivity of a
-       bare mock config to test order is the helper's, and is left named
-       here rather than papered over with a longer timeout.
-     - **(g) Owed live.** Nothing ran against hive. The Wave 3 control run
-       must still approve a host step from the app — now with the guarantee
-       that the command displayed is the one the run is bound to, or no
-       command and no Approve.
 
 ## 3a. Environment facts that cost real time (do not rediscover)
 

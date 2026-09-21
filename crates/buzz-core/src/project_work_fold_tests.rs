@@ -597,7 +597,7 @@ fn every_reason_string_matches_the_contracts_table() {
     // placeholders: a produced reason must contain each fragment, in order.
     let matches_template = |template: &str, produced: &str| -> bool {
         let mut rest = produced;
-        for fragment in template.split(|c| c == '<' || c == '>').step_by(2) {
+        for fragment in template.split(['<', '>']).step_by(2) {
             if fragment.is_empty() {
                 continue;
             }

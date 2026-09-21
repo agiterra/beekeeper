@@ -22,10 +22,6 @@ unknown and both links kept. "Ledger §" means a heading in
 | Windows | unavailable: Brian no longer has the Windows machine (2026-09-09). Native Windows agent setup and cross-account acceptance are deferred, not done | ledger § "September 9 checkpoint published; Windows testing deferred" |
 | Mobile | not independently checked for this map. Last claim recorded: the phone drops a deleted session only on its next channel refresh (Andy, 2026-09-11) | ledger § "Fixed 2026-09-11 — Discard deletes a never-started session" |
 
-The last product landing before Andy's two 2026-09-11 fixes was `0fc2beaf9`
-on 2026-09-09, with `just ci` and `just test` green on that exact commit
-(ledger § "September 9 main published").
-
 ## Active work and owners
 
 | Work | Owner | State (check date in row) | Where |
@@ -42,7 +38,7 @@ on 2026-09-09, with `just ci` and `just test` green on that exact commit
 | Hires cut from the project's checkout and honour the agent's runtime | Opus built; Fable landed | 2026-09-16: landed as `3e22f8ef8`, installed in `7fcc45a04`, **live at 12:57 EDT**: both Tank Loop hires succeeded first try, Kiln on Codex (ledger 136 addendum). Closes 135(a)/(b): no recorded repository folder is **refused** `HIRE_CHECKOUT_NOT_RECORDED`; runtime resolves record pin → effective harness → provider; the refusal code joined the contract in 139. Stale-cache hire refusal fixed 2026-09-19 (ledger 167) | ledger 136, 167 |
 | Readiness reads the project's pack source, and a deleted session's worktrees are disposed of | Opus built; Fable landed | 2026-09-16: landed as `139e83334` (project name wired into the button in `7fcc45a04`), installing; nothing exercised against hive yet. Closes 135(c) and 135(f): "Use roles" reads the project's kind:30624 source through the staging code, `personas/roles` stays the fallback, the model registry downgrades to Limited where packs carry the runtime, and a whole-session deletion settles its trees as a closure does. Detail, including the new `bee sessions close`, is ledger 137 | ledger 137, `crates/buzz-core/src/worktree_lifecycle.rs`, `desktop/src-tauri/src/commands/team_readiness.rs` |
 | Catalog coverage no longer fakes Unknown for an absent registry, and Unknown only gates Start when required for the first session | Sonnet built | 2026-09-16: gates green in `work/readiness-catalog-sonnet`, not landed. Closes the two ledger-137 contradictions Brian hit live 12:05 EDT | ledger 140 |
-| Native mid-turn steering for Claude sessions | Fable/Opus; landed by Astra | 2026-09-13: static checks and a fresh E2E build passed; the selected browser matrix was 44 passed/1 failed, only dense history. The isolated dense repeat also failed (336/450; matrix 286/450), so diagnosis stays open. Brian accepted landing with that limitation; final CI succeeded; [recovered evidence](history/2026-09-13-final-ci-recovery.md) records every recipe leg. Push completed as `e12495c63`; Mac installation completed at `1820d238d`; installed UI acceptance remains pending | [startup evidence](history/2026-09-13-startup-smoke-corrections.md), [integration evidence](history/2026-09-12-steering-integration.md), `NATIVE_STEERING_IMPL.md` |
+| Native mid-turn steering for Claude sessions | Fable/Opus; landed by Astra | 2026-09-13: landed `e12495c63`, installed at `1820d238d`; installed UI acceptance pending. Static checks and a fresh E2E build passed; only dense history still fails (selected matrix 44/1, 286/450 rows; isolated repeat 336/450), accepted by Brian with diagnosis open. [Recovered CI evidence](history/2026-09-13-final-ci-recovery.md) records every recipe leg | [startup evidence](history/2026-09-13-startup-smoke-corrections.md), [integration evidence](history/2026-09-12-steering-integration.md), `NATIVE_STEERING_IMPL.md` |
 | Automatic project context beside ordinary agent work | paused by Brian 2026-09-10 | findings saved; next is proving a harmless marker reaches a fresh Claude session through a hook | ledger § "September 10 — automatic project context: findings saved, work paused" |
 | Collaborative workspace plan, steps 0–6 | Astra finalizes and lands `main`; Fable takes delegated slices; Andy lands his own topic branches | steps 0–4 have integrated candidates per the ledger's September 7–9 sections; no landing of step 5 or 6 is recorded anywhere found, so treat them as open | [`COLLABORATIVE_WORKSPACE_PLAN.md`](COLLABORATIVE_WORKSPACE_PLAN.md) |
 | Founded-session fixes: Discard deletes, project filing | Andy | landed on `main` 2026-09-11 | ledger § "Fixed 2026-09-11 —" (two) |
@@ -51,7 +47,7 @@ on 2026-09-09, with `just ci` and `just test` green on that exact commit
 | The Dashboard shows the relay's machine (CPU, memory, disk) from `GET /health/system`, stewards only | Andy | landed 2026-09-14; on hive since 2026-09-18 (image `71efd0da1`), live check owed | ledger § "Built 2026-09-14 — the Dashboard shows the relay's machine" |
 | Project teams, composable roles and project actions | Andy | 2026-09-18: A1–A4, C1–C6 built (ledger 142–148, 150–156), on hive; live runs owed. **Pivot**: roles and plans move to `<slug>-beekeeper-agents` (spec § 4.11), built (158–163); dev-stack retest fixed missing default agents (164) and the `buzz-agent` harness hire refusal (165); live proofs ran 2026-09-19 (171); the first RPG Test session found five host defects, all fixed and proved live that day (173–177): seats run bash, project agents join the roster, the code repo is seeded, cloned and recorded; setup-flow redesign open (§ 6 item 10) | [`PROJECT_TEAMS_AND_ACTIONS_SPEC.md`](PROJECT_TEAMS_AND_ACTIONS_SPEC.md), ledger 141, 158, D18–D19 |
 | System proof: the acceptance story as a measured run | Brian with Fable; Astra audits | 2026-09-20 kettle run: landed in 10 min; goal→terminal 20,042 s; six repairs is an operator count — the wire shows 7 founder-signed non-host-answer commands (178, 178(r)); Andy's audited (179); 180–191 landed, mission closed (178(o)); 189–191 fix 178(j)/(k)/(n), see 178(p); 190's run-status endpoint is on hive (19:40Z). Run two (205) proved 180, 186, 189, 190 and 171(c) live; 203 closed 171(a)/(b). Owed: 191's proof, the CI listener's probe cadence (189) | ledger 178–179, [runbook](history/2026-09-20-system-proof-runbook.md), [audits](history/2026-09-20-astra-kettle-audit.md), [durable plan](history/2026-09-20-astra-durable-work-plan.md) |
-| Durable work: governing plan | Fable finalizes; lanes build | 2026-09-20: Waves 0–1 closed (192–200; Wave 1 `a5be5c1a5`: 195–197). **Wave 2** landed `228da8f9c` — 201 `bee sessions work` over the one assembler `assemble_fold_inputs`; 202 provider-owned preparation; 203 surface; 204 every strict 40099 reader. **Kettle Smoke** (205): zero repairs, ~70 min gross of which ~55 one approval wait, no terminal — 204's defect. 206 and 207 landed `942eb00dc`: every 205(b)–(h) finding now has a landed fix bar the two recorded observations. Next **Wave 3**: W3b work brief, Astra's Wave 2 review, control run | [`UNIFIED_WORK_PLAN.md`](UNIFIED_WORK_PLAN.md), ledger 192–207 |
+| Durable work: governing plan | Fable finalizes; lanes build | 2026-09-21: Waves 0–2 closed (192–207; Wave 2 `228da8f9c`, 206–207 `942eb00dc`). **Wave 3** landed in the `1620c3d25` stack, 208–216: 208 the mobile flake and named test failures; 209 the host-assembled work brief; 210 a no-ask approving disposition settles without an ACK; 211 approval truth; 212 four preparation fences; 214 then 213 contract A5/A6 and the coverage fixes; 215 shared vectors for five closed records; 216 every strict reader agrees with `buzz-core`. Gates bare on the tip, log in the landing report. In flight: lane 217, the four remaining mobile flakes. Pending: Astra's re-check of 210–213, then the control run on a fresh `kettle-control` | [`UNIFIED_WORK_PLAN.md`](UNIFIED_WORK_PLAN.md) § 8 A5, ledger 192–216 |
 | Project To-Do lists: kind 44248, personal/project visibility, pins, `bee todos`, Desktop tab + sidebar rows, Mobile page | Andy with Opus | 2026-09-17: on `main` (`0cbfcf296`); relay, CLI, Desktop, Mobile (iOS 26.5 sim) verified live | [`nips/NIP-TD.md`](nips/NIP-TD.md), ledger 149 |
 | Delegated agent-directory visibility follow-up | unassigned | "can resume separately on main" (Astra, 2026-09-09) | ledger § "September 9 main published" |
 | This map, the ledger split and its size gate | Fable | landed 2026-09-11 (`f80781969`); lead pack on `agiterra-packs` (`5f4ae76fa`) | `AGENTS.md` top block; `scripts/check-current-state-size.mjs` |
@@ -102,6 +98,13 @@ Rules, each with where it is written down.
   browser evidence are linked above. The queued-steer prevention race found
   during integration is corrected and has a failing-before/passing-after
   process test. codex-acp 1.6.2 has no idle guard and stays in boundary mode.
+- **A fourth strict reader is unguarded (2026-09-21, ledger 216).**
+  `web/src/features/coding-sessions/domain/ingressPayloads.ts` is a hand-copy
+  of the desktop ingress decoder, decodes 44223/44224 for `web/`'s session
+  surfaces, and no conformance fixture loads it — so it still carries the
+  pre-216 shape of four of the fixed defects. 204's shape, live; no lane owns
+  it. Instruction to add a `web` column is in
+  `conformance/coding-session-records/README.md`.
 - **Provider outbox**: final relay refusals park, not retry (ledger 170); unproven live.
 - **Automatic context** is blocked on Brian resuming it; the Claude hook
   transport is a candidate, not proven in the installed adapter.
@@ -120,32 +123,26 @@ The steering/startup/setup-authoring stack is published on main. The activation
 slice is published as `1820d238d`; it preserves ordinary Solo sessions and
 separates publication, installation and provider-confirmed lead startup.
 
-1. Brian completed Tank Loop publication and six-role installation, then ran
-   Loom at the adopted role revision. The subsequent walkthrough corrections
-   landed and are installed at `566e31075`; bundled version and signature verified.
-   See the [walkthrough report](history/2026-09-13-tank-loop-walkthrough.md).
+1. Tank Loop publication, six-role installation and the Loom run at the
+   adopted revision are done; the walkthrough corrections are installed at
+   `566e31075`, version and signature verified (row above).
 2. After installation, reopen Project State Planning as Brian and confirm
    control without joining its transport channel. Check Tank Loop's installed
    agents, Loom's default selection and setup progress. Existing-source pack
    maintenance and automatic setup completion remain deferred. Tank Loop's
    already-published role text is unchanged.
-3. Project agents slice (ledger 128–130) is landed and installed at
-   `d698c7773`. Owed is the live
-   [rollout](history/2026-09-14-project-agent-rollout.md): confirm Tank Loop's
-   backfill, then explicitly associate Beekeeper's agents before its leads
-   hire. The seat-isolation stack (four rows above, ledger 131–134) is landed
-   and installed at `1459c1186`, and the
+3. Project agents (ledger 128–130) is installed at `d698c7773`; the live
+   [rollout](history/2026-09-14-project-agent-rollout.md) is owed — confirm
+   Tank Loop's backfill, then associate Beekeeper's agents before its leads
+   hire. The seat-isolation stack (131–134) is installed at `1459c1186` and the
    [seat-bundles experiment](history/2026-09-15-seat-bundles-experiment.md)
-   passed live 2026-09-16 (ledger 135); orchestration and what is still owed
-   are in the
+   passed live 2026-09-16 (135); orchestration is in the
    [two-lane report](history/2026-09-15-seat-bundles-two-lane-orchestration.md).
-   All five host bugs 135 found are fixed and landed (136–139), and Tank
-   Loop's pack source is back at `f0132d1`. Next, in order: Brian re-runs a
-   Tank Loop team hire on the installed build to see the new refusals, the
-   "worktree cut from" line and the readiness panel live; then bind the
-   established commit into the turn receipt (a `buzz-core` key-set change,
-   ledger 133); the Claude write fence moves to `_meta` settings; a shared
-   cargo target directory per repository to cut per-tree disk.
+   All five host bugs 135 found are fixed (136–139) and Tank Loop's pack source
+   is back at `f0132d1`. Next, in order: Brian re-runs a Tank Loop team hire on
+   the installed build; bind the established commit into the turn receipt (a
+   `buzz-core` key-set change, 133); move the Claude write fence to `_meta`
+   settings; share one cargo target directory per repository.
 4. Diagnose the accepted dense-history limitation: the selected matrix was
    44 passed/1 failed (286/450 rows), its isolated repeat 336/450. No repeated
    full smoke marathon is required for the activation slice.

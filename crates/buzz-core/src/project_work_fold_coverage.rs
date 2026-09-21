@@ -11,6 +11,13 @@
 use super::*;
 
 /// Decide `coverageComplete` and compose its reason.
+///
+/// Eight arguments: A5 added `artifact_commits` and A6 `candidate_artifact` in
+/// two separate commits, each under the lint's limit on its own and over it
+/// together. They stay separate arguments rather than moving into a struct
+/// because each is a distinct fact this function is the only reader of, and a
+/// wrapper type would have exactly one construction site.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn coverage(
     state: WorkDeclarationState,
     plan_ref: &ProjectWorkPlanRef,

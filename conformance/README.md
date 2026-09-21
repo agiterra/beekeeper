@@ -55,6 +55,7 @@ scope decision becomes an invisible defect.
 | [`project-pack-source/`](project-pack-source/) | the `packRef` half of kind:44223 | `buzz-core`, desktop |
 | [`project-work/`](project-work/) | the work declaration / assignment / evidence records | `buzz-core`, `buzz-cli`, desktop |
 | [`coding-session-team-transaction/`](coding-session-team-transaction/) | kind:44244 | `buzz-core`, `buzz-sdk`, desktop |
+| [`team-settlement/`](team-settlement/README.md) | the settlement projection over kind:44244 dispositions | `buzz-core`, `buzz-cli`, desktop (Tauri fold + the strict frontend reader) |
 | [`project-pulse-fold/`](project-pulse-fold/), [`project-todo-fold/`](project-todo-fold/), [`transcript-export/`](transcript-export/) | fold outputs, not wire key sets | as documented in each |
 
 A record with exactly one strict reader in one language does not need vectors;
