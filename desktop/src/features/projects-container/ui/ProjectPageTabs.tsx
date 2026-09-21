@@ -13,7 +13,8 @@ export type ProjectPageTab =
   | "todos"
   | "agents"
   | "actions"
-  | "packs";
+  | "packs"
+  | "files";
 
 export function parseProjectPageTab(value: unknown): ProjectPageTab {
   return value === "pulse" ? "pulse" : "overview";
@@ -21,13 +22,14 @@ export function parseProjectPageTab(value: unknown): ProjectPageTab {
 
 type SearchTab = { id: "overview" | "pulse"; label: string };
 type PathTab = {
-  id: "todos" | "agents" | "actions" | "packs";
+  id: "todos" | "agents" | "actions" | "packs" | "files";
   label: string;
   to:
     | "/projects/$projectId/todos"
     | "/projects/$projectId/agents"
     | "/projects/$projectId/actions"
-    | "/projects/$projectId/packs";
+    | "/projects/$projectId/packs"
+    | "/projects/$projectId/files";
 };
 
 const PATH_TABS: readonly PathTab[] = [
@@ -44,6 +46,11 @@ const PATH_TABS: readonly PathTab[] = [
   // version of its instructions is here". Its id, path and testid stay
   // `packs` so routes, links and existing selectors keep working.
   { id: "packs", label: "Roles", to: "/projects/$projectId/packs" },
+  // Files: the agents repository itself — plans, roles, skills, team and
+  // actions — edited as shared drafts and committed to main (spec § 4.12).
+  // "Files" rather than "Plans": the tab holds every file class, and the
+  // tree lists plans first.
+  { id: "files", label: "Files", to: "/projects/$projectId/files" },
 ];
 
 /**

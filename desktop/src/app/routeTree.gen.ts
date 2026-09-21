@@ -23,6 +23,7 @@ import { Route as projectsDotprojectIdDotindexRouteImport } from "./routes/proje
 import { Route as projectsDotprojectIdDottodosRouteImport } from "./routes/projects.$projectId.todos";
 import { Route as projectsDotprojectIdDotpulseRouteImport } from "./routes/projects.$projectId.pulse";
 import { Route as projectsDotprojectIdDotpacksRouteImport } from "./routes/projects.$projectId.packs";
+import { Route as projectsDotprojectIdDotfilesRouteImport } from "./routes/projects.$projectId.files";
 import { Route as projectsDotprojectIdDotcontributorsRouteImport } from "./routes/projects.$projectId.contributors";
 import { Route as projectsDotprojectIdDotagentsRouteImport } from "./routes/projects.$projectId.agents";
 import { Route as projectsDotprojectIdDotactionsRouteImport } from "./routes/projects.$projectId.actions";
@@ -127,6 +128,12 @@ const projectsDotprojectIdDotpacksRoute =
     path: "/packs",
     getParentRoute: () => projectsDotprojectIdRoute,
   } as any);
+const projectsDotprojectIdDotfilesRoute =
+  projectsDotprojectIdDotfilesRouteImport.update({
+    id: "/files",
+    path: "/files",
+    getParentRoute: () => projectsDotprojectIdRoute,
+  } as any);
 const projectsDotprojectIdDotcontributorsRoute =
   projectsDotprojectIdDotcontributorsRouteImport.update({
     id: "/contributors",
@@ -202,6 +209,7 @@ export interface FileRoutesByFullPath {
   "/projects/$projectId/actions": typeof projectsDotprojectIdDotactionsRoute;
   "/projects/$projectId/agents": typeof projectsDotprojectIdDotagentsRoute;
   "/projects/$projectId/contributors": typeof projectsDotprojectIdDotcontributorsRoute;
+  "/projects/$projectId/files": typeof projectsDotprojectIdDotfilesRoute;
   "/projects/$projectId/packs": typeof projectsDotprojectIdDotpacksRoute;
   "/projects/$projectId/pulse": typeof projectsDotprojectIdDotpulseRoute;
   "/projects/$projectId/todos": typeof projectsDotprojectIdDottodosRoute;
@@ -230,6 +238,7 @@ export interface FileRoutesByTo {
   "/projects/$projectId/actions": typeof projectsDotprojectIdDotactionsRoute;
   "/projects/$projectId/agents": typeof projectsDotprojectIdDotagentsRoute;
   "/projects/$projectId/contributors": typeof projectsDotprojectIdDotcontributorsRoute;
+  "/projects/$projectId/files": typeof projectsDotprojectIdDotfilesRoute;
   "/projects/$projectId/packs": typeof projectsDotprojectIdDotpacksRoute;
   "/projects/$projectId/pulse": typeof projectsDotprojectIdDotpulseRoute;
   "/projects/$projectId/todos": typeof projectsDotprojectIdDottodosRoute;
@@ -260,6 +269,7 @@ export interface FileRoutesById {
   "/projects/$projectId/actions": typeof projectsDotprojectIdDotactionsRoute;
   "/projects/$projectId/agents": typeof projectsDotprojectIdDotagentsRoute;
   "/projects/$projectId/contributors": typeof projectsDotprojectIdDotcontributorsRoute;
+  "/projects/$projectId/files": typeof projectsDotprojectIdDotfilesRoute;
   "/projects/$projectId/packs": typeof projectsDotprojectIdDotpacksRoute;
   "/projects/$projectId/pulse": typeof projectsDotprojectIdDotpulseRoute;
   "/projects/$projectId/todos": typeof projectsDotprojectIdDottodosRoute;
@@ -291,6 +301,7 @@ export interface FileRouteTypes {
     | "/projects/$projectId/actions"
     | "/projects/$projectId/agents"
     | "/projects/$projectId/contributors"
+    | "/projects/$projectId/files"
     | "/projects/$projectId/packs"
     | "/projects/$projectId/pulse"
     | "/projects/$projectId/todos"
@@ -319,6 +330,7 @@ export interface FileRouteTypes {
     | "/projects/$projectId/actions"
     | "/projects/$projectId/agents"
     | "/projects/$projectId/contributors"
+    | "/projects/$projectId/files"
     | "/projects/$projectId/packs"
     | "/projects/$projectId/pulse"
     | "/projects/$projectId/todos"
@@ -348,6 +360,7 @@ export interface FileRouteTypes {
     | "/projects/$projectId/actions"
     | "/projects/$projectId/agents"
     | "/projects/$projectId/contributors"
+    | "/projects/$projectId/files"
     | "/projects/$projectId/packs"
     | "/projects/$projectId/pulse"
     | "/projects/$projectId/todos"
@@ -507,6 +520,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof projectsDotprojectIdDotpacksRouteImport;
       parentRoute: typeof projectsDotprojectIdRoute;
     };
+    "/projects/$projectId/files": {
+      id: "/projects/$projectId/files";
+      path: "/files";
+      fullPath: "/projects/$projectId/files";
+      preLoaderRoute: typeof projectsDotprojectIdDotfilesRouteImport;
+      parentRoute: typeof projectsDotprojectIdRoute;
+    };
     "/projects/$projectId/contributors": {
       id: "/projects/$projectId/contributors";
       path: "/contributors";
@@ -577,6 +597,7 @@ interface projectsDotprojectIdRouteChildren {
   projectsDotprojectIdDotactionsRoute: typeof projectsDotprojectIdDotactionsRoute;
   projectsDotprojectIdDotagentsRoute: typeof projectsDotprojectIdDotagentsRoute;
   projectsDotprojectIdDotcontributorsRoute: typeof projectsDotprojectIdDotcontributorsRoute;
+  projectsDotprojectIdDotfilesRoute: typeof projectsDotprojectIdDotfilesRoute;
   projectsDotprojectIdDotpacksRoute: typeof projectsDotprojectIdDotpacksRoute;
   projectsDotprojectIdDotpulseRoute: typeof projectsDotprojectIdDotpulseRoute;
   projectsDotprojectIdDottodosRoute: typeof projectsDotprojectIdDottodosRoute;
@@ -590,6 +611,7 @@ const projectsDotprojectIdRouteChildren: projectsDotprojectIdRouteChildren = {
   projectsDotprojectIdDotagentsRoute: projectsDotprojectIdDotagentsRoute,
   projectsDotprojectIdDotcontributorsRoute:
     projectsDotprojectIdDotcontributorsRoute,
+  projectsDotprojectIdDotfilesRoute: projectsDotprojectIdDotfilesRoute,
   projectsDotprojectIdDotpacksRoute: projectsDotprojectIdDotpacksRoute,
   projectsDotprojectIdDotpulseRoute: projectsDotprojectIdDotpulseRoute,
   projectsDotprojectIdDottodosRoute: projectsDotprojectIdDottodosRoute,

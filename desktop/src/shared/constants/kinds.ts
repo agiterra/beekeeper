@@ -248,6 +248,14 @@ export const KIND_PULSE_ENTRY = 44240;
 // `crates/buzz-core/src/kind.rs` and `mobile/lib/shared/relay/nostr_models.dart`.
 export const KIND_PROJECT_TODO_OP = 44248;
 
+// NIP-AD: an agents-repository draft op — one proposed change to one file of
+// the project's agents repository (`<slug>-beekeeper-agents`), or the
+// committer's record that named drafts landed on `main`. Same project-scoped
+// gate as 44240/44248. Folded by features/agents-repo/lib/agentsRepoDraftFold.ts,
+// pinned by conformance/agents-repo-draft-fold/. Mirrored in
+// `crates/buzz-core/src/kind.rs` and `mobile/lib/shared/relay/nostr_models.dart`.
+export const KIND_AGENTS_REPO_DRAFT_OP = 44249;
+
 // The coding-session kinds Desktop's own consumer reads, in one place, so the
 // regression guard keeping them out of the chat timeline cannot silently miss a
 // newly added member.
