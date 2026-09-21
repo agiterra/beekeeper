@@ -249,28 +249,34 @@ test("an oversized title is refused by the label bound", () => {
   );
 });
 
-test("an oversized summary is refused by the summary bound", () => {
-  assert.equal(
-    parseBuzzCodingSessionMetadata(
-      metadataJson({ contextSummary: "x".repeat(17 * 1024) }),
-    ),
-    null,
-    "17 KiB is under the content bound, so only the summary bound can refuse it",
-  );
+// These two tests used to be about a `contextSummary` bound. That key, and
+// its two siblings, are gone as of lane 223: `METADATA_BASE_FIELDS` never
+// named them, and the sole writer of a 44223 is
+// `serde_json::to_string(&SessionMetadata)` in the provider, whose struct has
+// no such fields — so no signed event has ever carried one. Left as they were
+// the two tests would still have passed, for a reason their own names denied:
+// refused as an unknown key, not by a bound that no longer exists.
+test("a summary key is refused as the unknown key it always was", () => {
+  for (const key of ["contextSummary", "diffSummary", "planSummary"]) {
+    assert.equal(
+      parseBuzzCodingSessionMetadata(metadataJson({ [key]: "a summary." })),
+      null,
+      `${key} is not a field of SessionMetadata, so a 44223 carrying one is ` +
+        `malformed at any length — vector context-summary in ` +
+        `conformance/coding-session-records/44223-metadata`,
+    );
+  }
 });
 
 test("metadata over 32 KiB is refused rather than truncated", () => {
-  const huge = metadataJson({
-    contextSummary: "c".repeat(12 * 1024),
-    diffSummary: "d".repeat(12 * 1024),
-    planSummary: "p".repeat(12 * 1024),
-  });
+  // No combination of *within-bound* fields can reach 32 KiB any more: the
+  // three 16 KiB summary keys were the only fields wide enough, and they are
+  // gone. So this exercises the content bound with one deliberately oversized
+  // field and claims no isolation from the label bound — both refuse it, and
+  // saying otherwise would be the kind of comment that outlives its code.
+  const huge = metadataJson({ title: "t".repeat(40 * 1024) });
   assert.ok(huge.length > 32 * 1024, "the payload really is over the bound");
-  assert.equal(
-    parseBuzzCodingSessionMetadata(huge),
-    null,
-    "every field is within its own bound, so only the content bound refuses it",
-  );
+  assert.equal(parseBuzzCodingSessionMetadata(huge), null);
 });
 
 test("a transcript envelope has exactly six keys and a positive eventSeq", () => {

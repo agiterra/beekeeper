@@ -7,14 +7,34 @@
  * anything looser than exact-key matching would admit an envelope this client
  * cannot claim to have verified.
  */
+import { hasDuplicateJsonKeys } from "@/shared/coordination/sessionCoordinationStrictJson";
+
 import type { CodingSessionCommandTarget } from "./codingSessionCommand";
 
 export const MAX_TARGET_IDENTITY_BYTES = 512;
 
+/**
+ * Parse signed content, refusing duplicate JSON keys before anything reads it.
+ *
+ * `JSON.parse` keeps the last of two same-named keys and loses the fact that
+ * there were two, so every decoder downstream of this function validated an
+ * object the signed bytes do not uniquely describe. `serde_json` refuses the
+ * repeated field when `buzz-core` decodes the same content into its typed
+ * payload (`coding_session_payload.rs:775`, `:1813`), and the coordination
+ * gate beside this file has always refused it — so on
+ * `{"status":"failed","status":"running"}` the gate said no and this decoder
+ * said yes, over the same event. Astra's 2026-09-21 re-check reproduced it
+ * with a shared vector; `rawVectors[]` in
+ * `conformance/coding-session-records/` pin it now.
+ *
+ * The scanner is imported, not re-implemented: two answers to "are these bytes
+ * unambiguous" is the defect this fixes, one layer up.
+ */
 export function parseBoundedJson(content: unknown, maxBytes: number): unknown {
   if (
     typeof content !== "string" ||
-    new TextEncoder().encode(content).byteLength > maxBytes
+    new TextEncoder().encode(content).byteLength > maxBytes ||
+    hasDuplicateJsonKeys(content)
   ) {
     return null;
   }

@@ -165,7 +165,7 @@
     },
     {
       "name": "v-as-json-float",
-      "why": "`\"v\": 1.0` \u2014 serde refuses a float for u64; JavaScript and Dart both read 1.0 == 1.",
+      "why": "`\"v\": 1.0` — serde refuses a float for u64; JavaScript and Dart both read 1.0 == 1.",
       "content": {
         "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
         "v": 1.0
@@ -174,6 +174,29 @@
         "rust": false,
         "desktop": true,
         "dart": true
+      },
+      "reason": "wrong-type"
+    }
+  ],
+  "rawVectors": [
+    {
+      "name": "raw-canonical-genesis",
+      "why": "The canonical bytes of the base genesis, fed as a string.",
+      "raw": "{\"sessionRef\":\"5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10\",\"v\":1}",
+      "accepts": {
+        "rust": true,
+        "desktop": true,
+        "dart": true
+      }
+    },
+    {
+      "name": "raw-duplicate-v",
+      "why": "A duplicate schema version `v`. `CodingSessionGenesisPayload` is `deny_unknown_fields`, and serde refuses a repeated field.",
+      "raw": "{\"sessionRef\":\"5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10\",\"v\":2,\"v\":1}",
+      "accepts": {
+        "rust": false,
+        "desktop": false,
+        "dart": false
       },
       "reason": "wrong-type"
     }

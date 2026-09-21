@@ -9,14 +9,81 @@ import 'coding_session_keys.dart';
 /// is not exactly the declared shape decodes to `null`/`false` rather than to
 /// a best guess. Mirror of the desktop's `codingSessionWireDecode.ts`.
 
-/// Parse bounded JSON content; `null` for non-JSON or oversized input.
+/// Parse bounded JSON content; `null` for non-JSON, oversized, or ambiguous
+/// input.
+///
+/// `jsonDecode` keeps the last of two same-named keys and loses the fact that
+/// there were two, so every decoder downstream of this function validated an
+/// object the signed bytes do not uniquely describe. `serde_json` refuses the
+/// repeated field when `buzz-core` decodes the same content into its typed
+/// payload (`coding_session_payload.rs:775`, `:1813`), and the desktop's
+/// coordination gate has always refused it — so
+/// `{"status":"failed","status":"running"}` was accepted here and refused
+/// there, over the same event. `rawVectors[]` in
+/// `conformance/coding-session-records/` pin it now, and the mobile
+/// conformance test executes them against this function rather than
+/// inspecting it (ledger 223).
 Object? parseBoundedJson(String content, int maxBytes) {
   if (utf8ByteLength(content) > maxBytes) return null;
+  if (hasDuplicateJsonKeys(content)) return null;
   try {
     return jsonDecode(content);
   } on FormatException {
     return null;
   }
+}
+
+/// Whether [source] names the same key twice inside one object, at any depth.
+///
+/// A single left-to-right scan with a stack, because the question is about the
+/// bytes and not about the value `jsonDecode` would produce. Objects collect
+/// their keys; arrays do not (an array has no keys, and `wantsKey` must not
+/// mistake its elements for them). A string that will not parse is reported as
+/// a duplicate, which is the safe answer: the caller refuses either way, and
+/// saying "no duplicates" about bytes this scan could not read would be a
+/// claim it has not earned.
+///
+/// Mirror of the desktop's `hasDuplicateJsonKeys`
+/// (`desktop/src/shared/coordination/sessionCoordinationStrictJson.ts`) — the
+/// shared raw vectors are what keep the two honest, since Dart and TypeScript
+/// cannot share the one implementation the desktop's two readers do.
+bool hasDuplicateJsonKeys(String source) {
+  final keyStack = <Set<String>?>[];
+  final wantsKey = <bool>[];
+  for (var index = 0; index < source.length; index += 1) {
+    final token = source[index];
+    if (token == '"') {
+      var end = index + 1;
+      while (end < source.length && source[end] != '"') {
+        end += source[end] == r'\' ? 2 : 1;
+      }
+      if (end >= source.length) return true;
+      if (keyStack.isNotEmpty && keyStack.last != null && wantsKey.last) {
+        final String decoded;
+        try {
+          decoded = jsonDecode(source.substring(index, end + 1)) as String;
+        } on FormatException {
+          return true;
+        }
+        if (!keyStack.last!.add(decoded)) return true;
+        wantsKey[wantsKey.length - 1] = false;
+      }
+      index = end;
+    } else if (token == '{') {
+      keyStack.add(<String>{});
+      wantsKey.add(true);
+    } else if (token == '[') {
+      keyStack.add(null);
+      wantsKey.add(false);
+    } else if (token == '}' || token == ']') {
+      if (keyStack.isEmpty) return true;
+      keyStack.removeLast();
+      wantsKey.removeLast();
+    } else if (token == ',' && keyStack.isNotEmpty && keyStack.last != null) {
+      wantsKey[wantsKey.length - 1] = true;
+    }
+  }
+  return false;
 }
 
 /// True when [value] is a non-blank string within [maxBytes] UTF-8 bytes.

@@ -88,3 +88,63 @@ test("desktop genesis classifier runs the shared 44226 vectors", () => {
   // construction. Nothing signs it.
   assert.deepEqual(divergent, ["v-as-json-float"]);
 });
+
+/**
+ * The same classifier over the **raw** bytes, nothing re-serialized.
+ *
+ * `vectors[]` hold a parsed `content` object and this file stringifies it
+ * again, which can never produce a duplicate key: `JSON.parse` keeps one of
+ * the two and loses the fact that there were two. `rawVectors[]` carry the
+ * exact string, so a genesis whose `v` is written twice is finally measurable
+ * (Astra's 2026-09-21 re-check; ledger 223).
+ */
+test("desktop genesis classifier runs the raw 44226 vectors byte for byte", () => {
+  const fixture = JSON.parse(
+    readFileSync(
+      resolve(
+        process.cwd(),
+        "../conformance/coding-session-records/44226-genesis/fixtures/vectors.json",
+      ),
+      "utf8",
+    ),
+  );
+  assert.ok(fixture.rawVectors.length >= 2);
+  let accepted = 0;
+  for (const vector of fixture.rawVectors) {
+    assert.ok(vector.why, `raw vector ${vector.name} says why it exists`);
+    const expected = vector.accepts.desktop;
+    if (expected === null) continue;
+    let sessionTag = NO_SESSION_REF;
+    try {
+      const probe = JSON.parse(vector.raw);
+      if (probe && typeof probe.sessionRef === "string") {
+        sessionTag = probe.sessionRef;
+      }
+    } catch {
+      // A payload that does not parse still gets a well-formed envelope: the
+      // classifier must answer on the content, not fall over on the tag.
+    }
+    const event = finalizeEvent(
+      {
+        kind: KIND_CODING_SESSION_GENESIS,
+        content: vector.raw,
+        tags: [
+          ["h", CHANNEL],
+          ["csg-v", CODING_SESSION_GENESIS_TAG_VERSION],
+          ["csg-session", sessionTag],
+        ],
+        created_at: 1,
+      },
+      FOUNDER_SECRET,
+    );
+    assert.equal(
+      classifyCodingSessionGenesisEvent(event, new Set([CHANNEL])).kind ===
+        "genesis",
+      expected,
+      `raw vector ${vector.name}: this classifier disagreed with the fixture ` +
+        `(expected ${expected}). Bytes: ${vector.raw}`,
+    );
+    if (expected) accepted += 1;
+  }
+  assert.ok(accepted > 0, "the raw suite's positive control is accepted here");
+});

@@ -686,5 +686,39 @@
       },
       "reason": "wrong-type"
     }
+  ],
+  "rawVectors": [
+    {
+      "name": "raw-canonical-create",
+      "why": "The canonical bytes of the historical eight-key create, fed as a string.",
+      "raw": "{\"schema\":\"buzz-coding-session-lifecycle-command/v1\",\"commandId\":\"cmd-1\",\"action\":{\"type\":\"session.create\",\"projectRef\":null,\"repoRef\":null,\"providerInstanceRef\":\"claude-primary\",\"providerAuthorityPubkey\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"model\":null,\"title\":null,\"initialTurn\":null}}",
+      "accepts": {
+        "rust": true,
+        "desktopCoordination": true,
+        "dart": true
+      }
+    },
+    {
+      "name": "raw-duplicate-command-id",
+      "why": "A duplicate `commandId` on a create. buzz-core decodes a second time into the strict serde type precisely to keep serde's duplicate-field detection, which a `Value` alone cannot represent (`coding_session_lifecycle_command.rs`).",
+      "raw": "{\"schema\":\"buzz-coding-session-lifecycle-command/v1\",\"commandId\":\"cmd-other\",\"commandId\":\"cmd-1\",\"action\":{\"type\":\"session.create\",\"projectRef\":null,\"repoRef\":null,\"providerInstanceRef\":\"claude-primary\",\"providerAuthorityPubkey\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"model\":null,\"title\":null,\"initialTurn\":null}}",
+      "accepts": {
+        "rust": false,
+        "desktopCoordination": false,
+        "dart": false
+      },
+      "reason": "wrong-type"
+    },
+    {
+      "name": "raw-duplicate-authority-pubkey",
+      "why": "A duplicate `action.providerAuthorityPubkey`, each a different valid key. This is the duplicate that matters most: it is the authority the whole generation is bound to, and \"whichever the parser kept\" is not an answer anybody signed.",
+      "raw": "{\"schema\":\"buzz-coding-session-lifecycle-command/v1\",\"commandId\":\"cmd-1\",\"action\":{\"type\":\"session.create\",\"projectRef\":null,\"repoRef\":null,\"providerInstanceRef\":\"claude-primary\",\"providerAuthorityPubkey\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"providerAuthorityPubkey\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"model\":null,\"title\":null,\"initialTurn\":null}}",
+      "accepts": {
+        "rust": false,
+        "desktopCoordination": false,
+        "dart": false
+      },
+      "reason": "wrong-type"
+    }
   ]
 }

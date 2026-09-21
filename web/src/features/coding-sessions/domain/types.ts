@@ -45,6 +45,15 @@ export type CodingSessionCapabilities = {
   context: boolean;
   diff: boolean;
   plan: boolean;
+  /**
+   * Whether this execution's runtime accepts image content blocks, as it
+   * advertised at ACP `initialize`. Additive on the wire: metadata published
+   * before the field existed decodes as `false`, which is the honest answer
+   * for a build that never said. Required-keying it rejected every capability
+   * set from a newer provider — finding 34, and a disagreement with the two
+   * desktop readers until lane 223 taught this copy the shared vectors.
+   */
+  promptImage: boolean;
 };
 
 /**

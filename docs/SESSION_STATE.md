@@ -18757,6 +18757,115 @@ removed from here.
        too — the same class of wall-clock race, now gone as well. Proved:
        the file 20/20 under 12 CPU burners, three full suites
        2101/2101 each.
+223. **Reader agreement was still partial after 216, and the two gaps were
+     structural rather than careless: a whole class of malformed payload the
+     shared vectors could not express, and a fourth strict reader no fixture
+     answered for. Both are closed, and both were measured before and after
+     rather than reasoned about.** Astra's re-check is
+     [`docs/history/2026-09-21-astra-wave2-recheck.md`](history/2026-09-21-astra-wave2-recheck.md)
+     § "Lanes 215/216"; the ruling is `docs/UNIFIED_WORK_PLAN.md` § 8 A7.5.
+     Nothing in `buzz-core` changed: every raw vector this lane wrote was
+     already answered correctly by the Rust decoder, which is the evidence
+     that it is the definition and not merely the first implementation.
+     - **(a) `vectors[]` store a parsed object, so every loader re-serialized
+       it, so no vector could ever carry a duplicate key.**
+       `serde_json::Value`, `JSON.parse` and `jsonDecode` all keep one of two
+       same-named keys and lose the fact that there were two, so a fixture held
+       as an object cannot round-trip to
+       `{"status":"failed","status":"running"}`. The suite was green over a
+       class of bytes it could not represent. **Added `rawVectors[]` to all
+       five records** — `raw` is the exact string and **no loader
+       re-serializes it**: `crates/buzz-core/tests/coding_session_record_conformance.rs`
+       (`run_raw`), `desktop/src/shared/coordination/codingSessionRecordConformance.test.mjs`
+       (`runRaw`, and every reader adapter there is now a function of the
+       source string rather than of a parsed object — taking an object is how
+       the class stayed invisible), `desktop/src/features/coding-sessions/lib/codingSessionGenesisConformance.test.mjs`,
+       `mobile/test/features/coding_sessions/domain/coding_session_record_conformance_test.dart`
+       (`_runRaw`), and the new web loader below. Fourteen raw vectors:
+       duplicate `status` on a 44223 and on a 44224, duplicate nested
+       `session.generation`, duplicate `schema` with two different values,
+       duplicate `commandId` on a create and on a receipt, duplicate
+       `action.providerAuthorityPubkey` with two different valid keys,
+       duplicate `v` on a genesis, duplicate `action` on a closure — plus **a
+       canonical positive control per record**, and every loader asserts that
+       control is accepted, because a raw suite whose valid case is refused is
+       measuring the loader and not the decoder.
+     - **(b) Three readers accepted duplicate keys that `buzz-core` and the
+       desktop's coordination gate refuse.** `buzz-core` decodes the content a
+       second time into its typed payload precisely so serde's duplicate-field
+       detection applies (`coding_session_payload.rs:775`, `:1813`); the
+       coordination gate has scanned for them since it was written. The
+       desktop ingress decoder, the mobile decoders and the web decoder all
+       parsed first and validated the parsed object
+       (`codingSessionWireDecode.ts:14`, `coding_session_wire.dart:13`,
+       `web/.../wireDecode.ts:20`), so over the same signed event the gate said
+       no and the decoder beside it said yes. Fixed in each
+       `parseBoundedJson`. **Measured, not assumed:** with the scan disabled
+       again, three desktop test suites fail naming the bytes — the 44223
+       ingress suite, the 44224 ingress suite and the genesis raw suite — and
+       the web decoder accepted four of its own raw vectors. The desktop
+       **imports** the gate's `hasDuplicateJsonKeys` rather than growing a
+       second copy, so its two readers cannot drift. Mobile and web share no
+       code with the desktop by design, so each carries its own scan;
+       `coding_session_wire.dart` has six unit tests beside the raw suite
+       (nested duplicates, sibling objects, values that look like keys, an
+       escaped quote inside a key, unterminated bytes) and the raw vectors are
+       what keep the three answers equal. All three report unreadable bytes as
+       *ambiguous* rather than clean: the caller refuses either way, and
+       answering "no duplicates" about bytes the scan could not read is a
+       claim it has not earned.
+     - **(c) The web client is a fourth strict reader, and it had drifted to
+       fifteen disagreements.** 215's README said the web client "decodes none
+       of these kinds; it is a repo browser"; 216 found that claim false and
+       recorded it without fixing it. It is
+       `web/src/features/coding-sessions/domain/ingressPayloads.ts`, a
+       hand-copy of the desktop ingress decoder whose own header says so, and
+       `web/.../trust.ts:235` drops every 44223 it refuses. Reproduced Astra's
+       count exactly by running the old file against the fixtures — **ten on
+       44223**: `bee-stamp`, `bee-stamp-unparsed`, `pack-ref`,
+       `pack-ref-shipped`, `handover`, `compose-ref`,
+       `every-amendment-at-once` (its optional list named none of the four
+       additive amendments, `:453`), `capabilities-carrying-prompt-image` (a
+       six-key exact match, `:603` — finding 34's own defect),
+       `invalid-routing-null` (accepted, `:523`) and `context-summary`
+       (accepted); **five on 44224**: `turn-injected`,
+       `turn-delivery-unknown`, `continuation-registered` (three statuses
+       missing from its set, `:142`), `oversized-turn-error-code` and
+       `oversized-error-message` (`:39`, `:398`) — **plus four raw vectors** no
+       parsed suite could have shown. All nineteen fixed, and
+       `web/src/features/coding-sessions/domain/recordConformance.test.mjs`
+       now loads both records' vectors and raw vectors. The `web` column is
+       stated for every vector of 44223 and 44224, and the loader asserts the
+       fixture *names* its reader, so it cannot be forgotten a third time. The
+       four amendment validators are a third copy of the desktop gate's
+       checkers, which this lane does not pretend otherwise about: web shares
+       no code with either client, and the shared vectors are the only thing
+       that can keep hand-copies honest. They are validated but not surfaced —
+       this client renders no seat bee, pack, fence or composition in v1, and
+       refusing a key `buzz-core` accepts drops the whole session.
+     - **Two web tests were passing for a reason their own names denied.**
+       `web/.../decoders.test.mjs` had "an oversized summary is refused by the
+       summary bound" and a 32 KiB test built from three 16 KiB summary keys.
+       With the summary keys gone both still passed — as unknown keys, by a
+       bound that no longer exists. Rewritten to say what they now prove, and
+       the 32 KiB case explicitly gives up its isolation claim rather than
+       keeping a sentence that outlived its code: no combination of
+       within-bound fields can reach 32 KiB any more, because those three keys
+       were the only fields wide enough.
+     - **What this does not establish.** These are decoder-level tests;
+       nothing was exercised against hive or an installed bundle. Astra's own
+       note stands: the relay deliberately applies scope, membership and
+       content caps rather than strict envelope validation to these provider
+       records (`crates/buzz-relay/src/handlers/ingest.rs:815`, `:873`), so a
+       duplicate-key record is **not** relay-inaccessible — which is why every
+       client reader refusing it matters rather than being belt-and-braces.
+       The four pinned non-divergences from 216 are unchanged and still
+       reasoned in `conformance/coding-session-records/README.md`. A fifth
+       hand-copy of any of these decoders, anywhere, must be loaded by these
+       fixtures in the same commit that creates it; `conformance/README.md`
+       now says to count the readers by grepping for the decode rather than by
+       trusting its own table, because that table is what was wrong twice.
+
 
 219. **Custody belonged to the assignment, not to the turn, and a turn
      refused at the dequeue was never answered (2026-09-21, lane 219,

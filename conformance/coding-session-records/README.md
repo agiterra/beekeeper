@@ -26,8 +26,10 @@ is where every divergence below lives.
 
 The web client carries a fourth strict reader for 44223 and 44224 — a hand-copy
 of the desktop's ingress decoder at
-`web/src/features/coding-sessions/domain/ingressPayloads.ts` — which no fixture
-here loads yet. See the last section.
+`web/src/features/coding-sessions/domain/ingressPayloads.ts`. Since lane 223 it
+loads these fixtures (`web/src/features/coding-sessions/domain/recordConformance.test.mjs`)
+and agrees with `buzz-core` on every vector; the `web` column in the two
+fixtures it reads is what keeps it that way.
 
 ## Who runs them
 
@@ -55,14 +57,35 @@ What remains recorded here is **not** a disagreement:
 | every turn-stage 44224 | `false` for `desktopCoordination` | Deliberate scope: that reader is the lifecycle vocabulary the coordination fold acts on, and the caller discriminates by the tag pair a turn receipt never carries. Turn stages decode through `codingSessionIngressPayloads.ts`. |
 | `resume`, `stop`, `restart` (44221) | `null` for `dart` | `decodeCodingSessionCreate` answers `wrongKind`; `decodeCodingSessionResume` is its sibling. |
 
-**A reader these vectors do not yet load.** `web/src/features/coding-sessions/domain/ingressPayloads.ts`
+**The web reader, closed by lane 223.** `web/src/features/coding-sessions/domain/ingressPayloads.ts`
 is a copied-by-hand fourth strict reader for 44223 and 44224 — its own header
 says "Copied from `desktop/.../codingSessionIngressPayloads.ts`". Nothing in
-`conformance/` loads it, and it carries the 2026-09 shape of the defects lane
-216 just fixed elsewhere: its optional list names neither `beeStamp`,
-`packRef`, `handover` nor `composeRef` (`:453-459`), it still accepts
-`contextSummary`/`diffSummary`/`planSummary`, and it bounds a turn error code
-at 256 (`:39`). It is recorded, not fixed: `web/` was outside lane 216's file
-ownership. A lane that takes it should add a `web` column to all five fixtures
-so the reader is answered for every vector, exactly as the four existing
-columns are.
+`conformance/` loaded it until lane 223, and it had drifted to fifteen
+disagreements with `buzz-core`, reproduced by running it against these
+fixtures: ten on 44223 (`bee-stamp`, `bee-stamp-unparsed`, `pack-ref`,
+`pack-ref-shipped`, `handover`, `compose-ref`, `every-amendment-at-once`,
+`capabilities-carrying-prompt-image`, `invalid-routing-null`,
+`context-summary`) and five on 44224 (`turn-injected`,
+`turn-delivery-unknown`, `continuation-registered`,
+`oversized-turn-error-code`, `oversized-error-message`). All fifteen are
+fixed, the `web` column is stated for every vector of both records, and
+`recordConformance.test.mjs` in that directory loads them.
+
+**The raw suites, added by lane 223.** Every fixture now carries
+`rawVectors[]` beside `vectors[]` — the exact bytes, never re-serialized. See
+[`../README.md`](../README.md) § Raw-content vectors for why the parsed suite
+cannot express a duplicate key. Measured, not assumed: with the scan removed,
+the desktop ingress decoder, the desktop genesis classifier, the mobile
+decoders and the web decoder all accept
+`{"status":"failed","status":"running"}`, which `buzz-core` and the desktop
+coordination gate refuse. All four now refuse it too.
+
+**Where the duplicate-key scan lives, and why there are three of them.** The
+desktop has one scanner (`sessionCoordinationStrictJson.ts`), imported by both
+its readers — the gate and the ingress decoder — so they cannot drift. Mobile
+and web cannot share it: they share no code with the desktop, by design.
+`coding_session_wire.dart` and `web/.../wireDecode.ts` therefore carry their
+own, and the mobile copy has its own unit tests beside the raw suite (nested
+duplicates, sibling objects, values that look like keys, escaped quotes in a
+key, unterminated bytes). The raw vectors are what keep the three answers
+equal; a fourth copy anywhere else must be loaded by them in the same commit.

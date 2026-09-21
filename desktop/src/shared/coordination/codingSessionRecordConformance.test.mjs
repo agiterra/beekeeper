@@ -66,7 +66,7 @@ function runReader(parsed, reader, accepts) {
     );
     const expected = vector.accepts[reader];
     if (expected === null) continue;
-    const actual = accepts(vector.content);
+    const actual = accepts(JSON.stringify(vector.content));
     const pinned =
       vector.accepts.rust !== null && vector.accepts.rust !== expected;
     assert.equal(
@@ -86,22 +86,90 @@ function runReader(parsed, reader, accepts) {
   return divergent;
 }
 
-/** The two-step coordination readers take the source text and the value. */
-const lifecycleCommand = (content) => {
-  const source = JSON.stringify(content);
+/**
+ * Every reader is a function of the **source string**, never of a parsed
+ * object.
+ *
+ * That is what lets one adapter serve both suites: `vectors[]` are handed
+ * `JSON.stringify(content)` and `rawVectors[]` are handed their own bytes
+ * untouched. Taking a parsed object here is exactly how the duplicate-key
+ * class stayed invisible — `JSON.parse` keeps one of two same-named keys, so
+ * re-serializing a parsed fixture can never produce the malformed bytes a
+ * provider might actually sign.
+ */
+const parsedOr = (source) => {
+  try {
+    return JSON.parse(source);
+  } catch {
+    return null;
+  }
+};
+
+const lifecycleCommand = (source) => {
+  const content = parsedOr(source);
   return (
     hasStrictLifecycleCommandJson(source, content) &&
     hasStrictLifecycleCommandValues(content)
   );
 };
 
-const lifecycleReceipt = (content) => {
-  const source = JSON.stringify(content);
+const lifecycleReceipt = (source) => {
+  const content = parsedOr(source);
   return (
+    content !== null &&
     hasStrictLifecycleReceiptJson(source, content) &&
     hasStrictLifecycleReceiptValues(content)
   );
 };
+
+const metadataGate = (source) => isStrictMetadataContent(source);
+
+const metadataIngress = (source) =>
+  parseBuzzCodingSessionMetadata(source) !== null;
+
+const receiptIngress = (source) =>
+  parseCodingSessionLifecycleReceipt(source) !== null;
+
+const closure = (source) => {
+  const content = parsedOr(source);
+  return content !== null && hasStrictClosureJson(source, content);
+};
+
+/**
+ * Run every **raw** vector of one record through one named reader.
+ *
+ * Nothing re-serializes: `vector.raw` is the exact string, which is the whole
+ * point (Astra's 2026-09-21 re-check, ledger 223). A raw vector's verdict is
+ * never "pinned" — the raw suite exists to assert agreement, so a mismatch is
+ * a plain failure naming the bytes.
+ */
+function runRaw(parsed, reader, accepts) {
+  assert.ok(
+    Array.isArray(parsed.rawVectors) && parsed.rawVectors.length >= 2,
+    `${parsed.kind} carries raw vectors including a positive control`,
+  );
+  let accepted = 0;
+  for (const vector of parsed.rawVectors) {
+    assert.ok(vector.why, `raw vector ${vector.name} says why it exists`);
+    assert.ok(
+      Object.hasOwn(vector.accepts, reader),
+      `raw vector ${vector.name} states a verdict for reader ${reader}`,
+    );
+    const expected = vector.accepts[reader];
+    if (expected === null) continue;
+    assert.equal(
+      accepts(vector.raw),
+      expected,
+      `raw vector ${vector.name}: reader ${reader} disagreed with the fixture ` +
+        `(expected ${expected}). Bytes: ${vector.raw}`,
+    );
+    if (expected) accepted += 1;
+  }
+  assert.ok(
+    accepted > 0,
+    `reader ${reader} accepts the raw suite's positive control`,
+  );
+}
 
 test("44221 lifecycle command — the coordination reader runs the shared vectors", () => {
   const parsed = fixture("44221-lifecycle-command", 44221);
@@ -111,29 +179,30 @@ test("44221 lifecycle command — the coordination reader runs the shared vector
   // read by the sibling `readLifecycleHire`, so its vectors state `null`
   // rather than a refusal (conformance/README.md).
   assert.deepEqual(divergent, []);
+  runRaw(parsed, "desktopCoordination", lifecycleCommand);
 });
 
 test("44223 metadata — the Pulse gate runs the shared vectors", () => {
   const parsed = fixture("44223-metadata", 44223);
-  const divergent = runReader(parsed, "desktopGate", (content) =>
-    isStrictMetadataContent(JSON.stringify(content)),
-  );
+  const divergent = runReader(parsed, "desktopGate", metadataGate);
   // Both closed in lane 216: `composeRef` is taught, and an explicit
   // `"routing": null` is refused rather than short-circuited past.
   assert.deepEqual(divergent, []);
+  // This gate has always refused duplicate keys; the raw suite is what makes
+  // that a checked fact shared with the decoder beside it, rather than a
+  // property one reader happened to have.
+  runRaw(parsed, "desktopGate", metadataGate);
 });
 
 test("44223 metadata — the session ingress decoder runs the shared vectors", () => {
   const parsed = fixture("44223-metadata", 44223);
-  const divergent = runReader(
-    parsed,
-    "desktopIngress",
-    (content) =>
-      parseBuzzCodingSessionMetadata(JSON.stringify(content)) !== null,
-  );
+  const divergent = runReader(parsed, "desktopIngress", metadataIngress);
   // Both closed in lane 216: `handover` is taught, and the three summary keys
   // no writer has ever emitted are gone from its optional list.
   assert.deepEqual(divergent, []);
+  // Lane 223: `parseBoundedJson` now refuses duplicate keys, so this decoder
+  // and the gate above give one answer over the same bytes.
+  runRaw(parsed, "desktopIngress", metadataIngress);
 });
 
 test("44224 lifecycle receipt — the coordination reader runs the shared vectors", () => {
@@ -143,28 +212,24 @@ test("44224 lifecycle receipt — the coordination reader runs the shared vector
   // stages are read by the ingress decoder below, and the fold discriminates
   // by tag. Pinned so the scope stays a decision rather than an accident.
   assert.equal(divergent.length, 9);
+  runRaw(parsed, "desktopCoordination", lifecycleReceipt);
 });
 
 test("44224 lifecycle receipt — the session ingress decoder runs the shared vectors", () => {
   const parsed = fixture("44224-lifecycle-receipt", 44224);
-  const divergent = runReader(
-    parsed,
-    "desktopIngress",
-    (content) =>
-      parseCodingSessionLifecycleReceipt(JSON.stringify(content)) !== null,
-  );
+  const divergent = runReader(parsed, "desktopIngress", receiptIngress);
   // Both bounds now match buzz-core's exactly (64-byte code, 1027-byte
   // message), on the turn half and the lifecycle half alike.
   assert.deepEqual(divergent, []);
+  runRaw(parsed, "desktopIngress", receiptIngress);
 });
 
 test("44230 closure — the coordination reader runs the shared vectors", () => {
   const parsed = fixture("44230-closure", 44230);
-  const divergent = runReader(parsed, "desktopCoordination", (content) =>
-    hasStrictClosureJson(JSON.stringify(content), content),
-  );
+  const divergent = runReader(parsed, "desktopCoordination", closure);
   // `"v": 1.0` is a float serde refuses for a u64 and JavaScript cannot tell
   // from 1. Nothing signs it; it is pinned because it is the one shape where
   // the two languages cannot agree by construction.
   assert.deepEqual(divergent, ["v-as-json-float"]);
+  runRaw(parsed, "desktopCoordination", closure);
 });

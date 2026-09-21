@@ -81,6 +81,55 @@ fn run(record_dir: &str, kind: u64, decode: impl Fn(&str) -> Result<(), String>)
         checked += 1;
     }
     assert!(checked > 0, "{record_dir} exercised this reader");
+    run_raw(record_dir, &fixture, decode);
+}
+
+/// Run every **raw** vector through `decode`, byte for byte.
+///
+/// `vectors[]` store a parsed `content` object, and every loader serializes it
+/// again before handing it to its reader. That cannot express a duplicate key:
+/// `serde_json::Value`, `JSON.parse` and `jsonDecode` all keep one of the two
+/// and lose the fact that there were two, so a whole class of malformed
+/// payload was invisible to the shared suite (Astra's 2026-09-21 re-check).
+/// `rawVectors[]` carry the exact string instead, and **nothing re-serializes
+/// it** — this loop is the reason the class is now measurable.
+fn run_raw(record_dir: &str, fixture: &Value, decode: impl Fn(&str) -> Result<(), String>) {
+    let vectors = fixture["rawVectors"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{record_dir} carries rawVectors"));
+    assert!(
+        vectors.len() >= 2,
+        "{record_dir} carries a canonical raw vector and at least one malformed one: a raw \
+         suite with no positive control measures the loader, not the decoder"
+    );
+    let mut accepted = 0usize;
+    for vector in vectors {
+        let name = vector["name"].as_str().expect("every raw vector is named");
+        assert!(
+            vector["why"].as_str().is_some_and(|why| !why.is_empty()),
+            "raw vector {name:?} says why it exists"
+        );
+        let expected = vector["accepts"]["rust"]
+            .as_bool()
+            .unwrap_or_else(|| panic!("raw vector {name:?} states this reader's verdict"));
+        let raw = vector["raw"]
+            .as_str()
+            .unwrap_or_else(|| panic!("raw vector {name:?} carries its bytes as a string"));
+        let actual = decode(raw);
+        assert_eq!(
+            actual.is_ok(),
+            expected,
+            "raw vector {name:?} of {record_dir}: this crate's decoder disagreed with the \
+             fixture. Decoder said {actual:?}"
+        );
+        if expected {
+            accepted += 1;
+        }
+    }
+    assert!(
+        accepted > 0,
+        "{record_dir}'s raw suite has a positive control that this decoder accepts"
+    );
 }
 
 /// Every refusal class a vector may name, so a typo cannot silently become a
@@ -101,7 +150,13 @@ fn every_record_declares_a_known_refusal_class_and_names_every_reader() {
             .as_object()
             .expect("readers is an object");
         assert!(readers.len() >= 2, "{dir} names more than one reader");
-        for vector in fixture["vectors"].as_array().expect("vectors") {
+        let raw_vectors = fixture["rawVectors"].as_array().expect("rawVectors");
+        for vector in fixture["vectors"]
+            .as_array()
+            .expect("vectors")
+            .iter()
+            .chain(raw_vectors)
+        {
             let name = vector["name"].as_str().expect("named");
             let accepts = vector["accepts"].as_object().expect("accepts is an object");
             for reader in readers.keys() {

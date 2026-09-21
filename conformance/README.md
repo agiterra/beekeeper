@@ -51,7 +51,7 @@ scope decision becomes an invisible defect.
 | Directory | Record | Readers |
 | --- | --- | --- |
 | [`authority-chain/`](authority-chain/README.md) | kind:44228 transition + kind:40099 acceptance receipt | `buzz-core`, `buzz-cli`, `buzz-session-provider`, desktop timeline |
-| [`coding-session-records/`](coding-session-records/README.md) | kinds 44221, 44223, 44224, 44226, 44230 | `buzz-core` (the single Rust reader every crate calls), two desktop readers each for 44223 and 44224, the mobile Dart decoders |
+| [`coding-session-records/`](coding-session-records/README.md) | kinds 44221, 44223, 44224, 44226, 44230 | `buzz-core` (the single Rust reader every crate calls), two desktop readers each for 44223 and 44224, the mobile Dart decoders, and — since lane 223 — the **web** client's own hand-copied decoder for 44223 and 44224 |
 | [`project-pack-source/`](project-pack-source/) | the `packRef` half of kind:44223 | `buzz-core`, desktop |
 | [`project-work/`](project-work/) | the work declaration / assignment / evidence records | `buzz-core`, `buzz-cli`, desktop |
 | [`coding-session-team-transaction/`](coding-session-team-transaction/) | kind:44244 | `buzz-core`, `buzz-sdk`, desktop |
@@ -60,3 +60,39 @@ scope decision becomes an invisible defect.
 
 A record with exactly one strict reader in one language does not need vectors;
 a record with two does.
+
+**Count the readers by grepping for the decode, not by trusting this table.**
+Lane 215 wrote that the web client "decodes none of these kinds; it is a repo
+browser", and it was wrong: `web/src/features/coding-sessions/domain/ingressPayloads.ts`
+is a hand-copy of the desktop ingress decoder, `trust.ts` drops every 44223 it
+refuses, and no fixture answered for it. When Astra imported it and fed it the
+shared vectors on 2026-09-21 it disagreed with `buzz-core` about **ten**
+metadata vectors and **five** receipt vectors. A reader nobody listed is a
+reader nobody checked.
+
+## Raw-content vectors
+
+Every fixture carries two suites, and the second exists because the first
+cannot express one whole class of malformed payload.
+
+- `vectors[]` hold `content` as a **parsed object**. Every loader serializes it
+  again before handing it to its reader.
+- `rawVectors[]` hold `raw`, the **exact string** a producer would sign.
+  **Nothing re-serializes it.**
+
+The class the first suite cannot reach is the duplicate key.
+`serde_json::Value`, `JSON.parse` and `jsonDecode` all keep one of two
+same-named keys and lose the fact that there were two, so a fixture stored as an
+object can never round-trip to `{"status":"failed","status":"running"}`.
+`buzz-core` refuses those bytes — it decodes the content a second time into its
+typed payload precisely so serde's duplicate-field detection applies
+(`crates/buzz-core/src/coding_session_payload.rs:775`, `:1813`) — and the
+desktop's coordination gate has always refused them too, while the desktop
+ingress decoder, the mobile decoder and the web decoder accepted them. Three
+readers saying yes and two saying no about the same signed event, invisible to
+a green suite.
+
+A raw vector's verdict is never *pinned*. The suite is small on purpose: a
+canonical positive control per record, so a refusal proves the decoder rather
+than a broken loader, plus the duplicate-key cases. Every loader asserts that
+the positive control is accepted for exactly that reason.

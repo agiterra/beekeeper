@@ -36,10 +36,27 @@ const MAX_METADATA_CONTENT_BYTES = 32 * 1024;
 const MAX_RECEIPT_COMMAND_ID_BYTES = 256;
 /** A provider's own turn id, bounded exactly like the command id it answers. */
 const MAX_RECEIPT_TURN_ID_BYTES = 256;
+/**
+ * A lifecycle receipt's error code, bounded as `validate_lifecycle_receipt`'s
+ * generic check bounds it (`coding_session_payload.rs:826`).
+ */
 const MAX_ERROR_CODE_BYTES = 256;
+/**
+ * A **turn** failure code: `MAX_RECEIPT_ERROR_CODE_BYTES`
+ * (`coding_session_payload.rs:278`) — 64. `is_receipt_error_code` is applied
+ * only to the four turn-failure statuses, whose code vocabulary is
+ * deliberately open and therefore kept tight. This copy used 256 for both
+ * until lane 223.
+ */
+const MAX_TURN_ERROR_CODE_BYTES = 64;
+/**
+ * `1024 + '…'.len_utf8()` — the exact bound the writer's validator sets on a
+ * receipt error message (`coding_session_payload.rs:829`). This copy used the
+ * generic 2 KiB reference bound.
+ */
+const MAX_ERROR_MESSAGE_BYTES = 1024 + 3;
 const MAX_REFERENCE_BYTES = 2 * 1024;
 const MAX_LABEL_BYTES = 2 * 1024;
-const MAX_SUMMARY_BYTES = 16 * 1024;
 
 /**
  * `created_with_failed_initial_turn` is its own status because it is its own
@@ -93,23 +110,27 @@ export type CodingSessionLifecycleReceipt =
   | {
       schema: typeof CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA;
       commandId: string;
-      status: "turn_started";
+      status: "turn_started" | "turn_injected";
       session: CodingSessionTarget;
       error: null;
-      /** The provider's own id for the turn that just began. */
+      /** The provider's own id for the turn that began, or was steered into. */
       turnId: string;
     }
   | {
       schema: typeof CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA;
       commandId: string;
-      status: "turn_dropped" | "turn_refused" | "turn_degraded";
+      status:
+        | "turn_dropped"
+        | "turn_refused"
+        | "turn_degraded"
+        | "turn_delivery_unknown";
       session: CodingSessionTarget;
       error: { code: string; message: string };
     }
   | {
       schema: typeof CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA;
       commandId: string;
-      status: "interrupt_delivered";
+      status: "interrupt_delivered" | "continuation_registered";
       session: CodingSessionTarget;
       error: null;
     };
@@ -142,10 +163,20 @@ export type CodingSessionLifecycleReceiptStatus =
 export const CODING_SESSION_TURN_RECEIPT_STATUSES = [
   "turn_queued",
   "turn_started",
+  // A `deliver: "steer"` input the runtime joined into the turn already
+  // running. Carries that turn's `turnId`; no new turn begins.
+  "turn_injected",
   "turn_degraded",
   "turn_dropped",
   "turn_refused",
+  // A native steer written to the runtime whose delivery could not be
+  // established. Terminal, and neither a drop nor a refusal: the words may
+  // already be inside the running turn.
+  "turn_delivery_unknown",
   "interrupt_delivered",
+  // A stage of one 44220 saying a CI continuation was stored. It creates,
+  // confirms and ends nothing, exactly as a queued turn does.
+  "continuation_registered",
 ] as const;
 
 /** A per-stage turn status, as opposed to a generation lifecycle status. */
@@ -213,9 +244,6 @@ export type BuzzCodingSessionMetadataV1 = {
   status: CodingSessionStatus;
   branch: string | null;
   capabilities: CodingSessionCapabilities;
-  contextSummary?: string;
-  diffSummary?: string;
-  planSummary?: string;
   sessionRef?: string;
   /** The seat's role slug, present exactly when `agentRef` is. */
   role?: string;
@@ -252,7 +280,7 @@ export function parseCodingSessionLifecycleReceipt(
   const value = parseBoundedJson(content, MAX_RECEIPT_CONTENT_BYTES);
   if (!isPlainRecord(value) || typeof value.status !== "string") return null;
   const expectedKeys =
-    value.status === "turn_started"
+    value.status === "turn_started" || value.status === "turn_injected"
       ? [...RECEIPT_ENVELOPE_KEYS, "turnId"]
       : RECEIPT_ENVELOPE_KEYS;
   if (
@@ -283,7 +311,7 @@ export function parseCodingSessionLifecycleReceipt(
       !isPlainRecord(value.error) ||
       !hasExactKeys(value.error, ["code", "message"]) ||
       value.error.code !== "INITIAL_TURN_FAILED" ||
-      !boundedNonempty(value.error.message, MAX_REFERENCE_BYTES)
+      !boundedNonempty(value.error.message, MAX_ERROR_MESSAGE_BYTES)
     ) {
       return null;
     }
@@ -316,7 +344,7 @@ export function parseCodingSessionLifecycleReceipt(
       !isPlainRecord(value.error) ||
       !hasExactKeys(value.error, ["code", "message"]) ||
       value.error.code !== "CONTEXT_NOT_RECOVERED" ||
-      !boundedNonempty(value.error.message, MAX_REFERENCE_BYTES)
+      !boundedNonempty(value.error.message, MAX_ERROR_MESSAGE_BYTES)
     ) {
       return null;
     }
@@ -337,7 +365,7 @@ export function parseCodingSessionLifecycleReceipt(
     !isPlainRecord(value.error) ||
     !hasExactKeys(value.error, ["code", "message"]) ||
     !boundedNonempty(value.error.code, MAX_ERROR_CODE_BYTES) ||
-    !boundedNonempty(value.error.message, MAX_REFERENCE_BYTES)
+    !boundedNonempty(value.error.message, MAX_ERROR_MESSAGE_BYTES)
   ) {
     return null;
   }
@@ -368,7 +396,14 @@ function parseTurnReceipt(
   const session = decodeTarget(value.session);
   if (!session) return null;
   const commandId = value.commandId as string;
-  if (status === "turn_queued" || status === "interrupt_delivered") {
+  if (
+    status === "turn_queued" ||
+    status === "interrupt_delivered" ||
+    // A registration carries no error for the same reason a queued turn does
+    // not: everything a CI continuation can be refused for happens later, as
+    // a turn stage of this same command.
+    status === "continuation_registered"
+  ) {
     if (value.error !== null) return null;
     return Object.freeze({
       schema: CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
@@ -378,7 +413,7 @@ function parseTurnReceipt(
       error: null,
     });
   }
-  if (status === "turn_started") {
+  if (status === "turn_started" || status === "turn_injected") {
     if (
       value.error !== null ||
       !boundedNonempty(value.turnId, MAX_RECEIPT_TURN_ID_BYTES)
@@ -397,8 +432,8 @@ function parseTurnReceipt(
   if (
     !isPlainRecord(value.error) ||
     !hasExactKeys(value.error, ["code", "message"]) ||
-    !boundedNonempty(value.error.code, MAX_ERROR_CODE_BYTES) ||
-    !boundedNonempty(value.error.message, MAX_REFERENCE_BYTES)
+    !boundedNonempty(value.error.code, MAX_TURN_ERROR_CODE_BYTES) ||
+    !boundedNonempty(value.error.message, MAX_ERROR_MESSAGE_BYTES)
   ) {
     return null;
   }
@@ -432,11 +467,6 @@ export function parseBuzzCodingSessionMetadata(
     "branch",
     "capabilities",
   ] as const;
-  const optionalSummaries = [
-    "contextSummary",
-    "diffSummary",
-    "planSummary",
-  ] as const;
   const factFields = [
     "observedCommit",
     "dirty",
@@ -450,12 +480,27 @@ export function parseBuzzCodingSessionMetadata(
   // here, and `routing` is the new one — which is the failure mode this
   // comment exists to keep naming: a forgotten amendment is not a strictness
   // nuance, it is a blank session list.
+  // `contextSummary`, `diffSummary` and `planSummary` were here until lane 223
+  // and are gone: `METADATA_BASE_FIELDS` never named them, and the only writer
+  // of a 44223 is `serde_json::to_string(&SessionMetadata)` in the provider,
+  // whose struct has no such fields — so no signed event has ever carried one
+  // and the relay would refuse it if one did (ledger 216(k)).
+  //
+  // `beeStamp`, `packRef`, `handover` and `composeRef` are the four additive
+  // amendments this copy never grew, so every seat with an observed bee, a
+  // staged pack, a fence or a composed pack decoded as corruption here while
+  // both desktop readers accepted it. That is a blank session list, not a
+  // strictness nuance, and it is exactly what the comment above kept warning
+  // about.
   const optional = [
-    ...optionalSummaries,
     "sessionRef",
     "role",
     "turnBudget",
     "routing",
+    "beeStamp",
+    "packRef",
+    "handover",
+    "composeRef",
     ...factFields,
   ] as const;
   if (
@@ -480,14 +525,6 @@ export function parseBuzzCodingSessionMetadata(
     !boundedNullable(value.branch, MAX_LABEL_BYTES)
   ) {
     return null;
-  }
-  for (const key of optionalSummaries) {
-    if (
-      hasOwnKey(value, key) &&
-      !boundedNonempty(value[key], MAX_SUMMARY_BYTES)
-    ) {
-      return null;
-    }
   }
   // A present `sessionRef` must be exactly the canonical UUID shape the create
   // validated — the echo is a projection convenience, never a looser claim.
@@ -519,10 +556,29 @@ export function parseBuzzCodingSessionMetadata(
   ) {
     return null;
   }
+  // An explicit `null` is refused, not short-circuited past: `routing`,
+  // `beeStamp`, `packRef`, `handover` and `composeRef` were every one of them
+  // introduced with an omit-when-absent writer contract, and
+  // `decode_coding_session_metadata` refuses each null **naming the key**.
+  // `role` and `turnBudget` above are the exception — their serde `Option`s do
+  // read a null as absent.
+  if (hasOwnKey(value, "routing") && !isStrictRoutingRecord(value.routing)) {
+    return null;
+  }
+  if (hasOwnKey(value, "beeStamp") && !isMetadataBeeStamp(value.beeStamp)) {
+    return null;
+  }
+  if (hasOwnKey(value, "packRef") && !isMetadataPackRef(value.packRef)) {
+    return null;
+  }
+  if (hasOwnKey(value, "handover") && !isMetadataHandover(value.handover)) {
+    return null;
+  }
+  // A composition of nothing is not a fact: `validate_session_metadata`
+  // refuses `composeRef` without a `packRef`.
   if (
-    hasOwnKey(value, "routing") &&
-    value.routing !== null &&
-    !isStrictRoutingRecord(value.routing)
+    hasOwnKey(value, "composeRef") &&
+    (!hasOwnKey(value, "packRef") || !isMetadataComposeRef(value.composeRef))
   ) {
     return null;
   }
@@ -553,15 +609,6 @@ export function parseBuzzCodingSessionMetadata(
     status: value.status,
     branch: value.branch,
     capabilities,
-    ...(typeof value.contextSummary === "string"
-      ? { contextSummary: value.contextSummary }
-      : {}),
-    ...(typeof value.diffSummary === "string"
-      ? { diffSummary: value.diffSummary }
-      : {}),
-    ...(typeof value.planSummary === "string"
-      ? { planSummary: value.planSummary }
-      : {}),
     ...(typeof value.sessionRef === "string"
       ? { sessionRef: value.sessionRef }
       : {}),
@@ -600,6 +647,112 @@ function isMetadataTurnBudget(value: unknown, sessionRef: unknown): boolean {
   );
 }
 
+const HEX64 = /^[0-9a-f]{64}$/;
+const EXACT_SHA = /^[0-9a-f]{40}$/;
+const SHORT_SHA = /^[0-9a-f]{7,40}$/;
+const ROLE_SLUG = /^[a-z0-9-]{1,64}$/;
+/** `30617:<64-hex>:<dtag>` — a git repository announcement coordinate. */
+const PACK_REF_REPO_COORD = /^30617:[0-9a-f]{64}:[a-zA-Z0-9._-]{1,200}$/;
+/** The literal `repo` a shipped-defaults `packRef` carries. */
+const PACK_REF_SHIPPED_REPO = "app:shipped";
+const PACK_REF_APP_VERSION = /^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$/;
+const COMPOSE_REF_DIGEST = /^sha256:[0-9a-f]{64}$/;
+const MAX_COMPOSE_REF_APP_VERSION_BYTES = 64;
+const BEE_STAMP_SOURCES: ReadonlySet<string> = new Set(["bundled", "path"]);
+
+/*
+ * The four additive amendments this observer reads but does not surface.
+ *
+ * Read, because a reader that refuses a key `buzz-core` accepts drops the
+ * whole session and shows nothing — the failure this file's own comment above
+ * the optional list has been warning about since 2026-08-30, and the one
+ * Astra measured here on 2026-09-21. Not surfaced, because this client renders
+ * no seat bee, pack, fence or composition in v1; validating them is how the
+ * decoder stays exactly as strict as the writer without pretending to more.
+ *
+ * Each mirrors the desktop gate's checker of the same name. The shared vectors
+ * are what keep the copies honest.
+ */
+
+/** `BeeStamp`: exactly five keys, `source` a closed two-variant Rust enum. */
+function isMetadataBeeStamp(value: unknown): boolean {
+  return (
+    isPlainRecord(value) &&
+    hasExactKeys(value, ["path", "source", "version", "sha", "dirty"]) &&
+    typeof value.path === "string" &&
+    value.path.length > 0 &&
+    BEE_STAMP_SOURCES.has(value.source as string) &&
+    (value.version === null || typeof value.version === "string") &&
+    (value.sha === null ||
+      (typeof value.sha === "string" && SHORT_SHA.test(value.sha))) &&
+    (value.dirty === null || typeof value.dirty === "boolean")
+  );
+}
+
+/**
+ * `PackRef`: exactly four keys. `sha` is an exact 40-hex commit — never the
+ * 7-40 shorthand a `beeStamp` allows, because a pack is pinned to one commit
+ * and not to a prefix — unless `repo` is the shipped-defaults literal, whose
+ * `sha` is the app version that bundled the packs instead.
+ */
+function isMetadataPackRef(value: unknown): boolean {
+  if (
+    !isPlainRecord(value) ||
+    !hasExactKeys(value, ["repo", "sha", "role", "path"]) ||
+    typeof value.repo !== "string" ||
+    typeof value.sha !== "string" ||
+    typeof value.role !== "string" ||
+    !ROLE_SLUG.test(value.role) ||
+    typeof value.path !== "string" ||
+    value.path.length === 0 ||
+    value.path.length > 512
+  ) {
+    return false;
+  }
+  if (value.repo === PACK_REF_SHIPPED_REPO) {
+    return PACK_REF_APP_VERSION.test(value.sha);
+  }
+  return PACK_REF_REPO_COORD.test(value.repo) && EXACT_SHA.test(value.sha);
+}
+
+/**
+ * `SessionMetadataHandover`: exactly four keys, each a lowercase 64-hex id.
+ *
+ * There is no "none" token — absence of the whole key is how a provider says
+ * no claim stands — and a partial object is refused rather than read loosely:
+ * reading a half-written fence as "not fenced" tells a person nobody took this
+ * session over.
+ */
+function isMetadataHandover(value: unknown): boolean {
+  return (
+    isPlainRecord(value) &&
+    hasExactKeys(value, [
+      "state",
+      "claimant",
+      "bodyPubkey",
+      "acceptedEventId",
+    ]) &&
+    (value.state === "active" || value.state === "voided") &&
+    typeof value.claimant === "string" &&
+    HEX64.test(value.claimant) &&
+    typeof value.bodyPubkey === "string" &&
+    HEX64.test(value.bodyPubkey) &&
+    typeof value.acceptedEventId === "string" &&
+    HEX64.test(value.acceptedEventId)
+  );
+}
+
+/** `ComposeRef`: exactly `{appVersion, digest}` (spec § 4.6). */
+function isMetadataComposeRef(value: unknown): boolean {
+  return (
+    isPlainRecord(value) &&
+    hasExactKeys(value, ["appVersion", "digest"]) &&
+    boundedNonempty(value.appVersion, MAX_COMPOSE_REF_APP_VERSION_BYTES) &&
+    typeof value.digest === "string" &&
+    COMPOSE_REF_DIGEST.test(value.digest)
+  );
+}
+
 function decodeCapabilities(value: unknown): CodingSessionCapabilities | null {
   const keys = [
     "threadTurnStart",
@@ -609,10 +762,18 @@ function decodeCapabilities(value: unknown): CodingSessionCapabilities | null {
     "diff",
     "plan",
   ] as const;
+  // `promptImage` is optional, not exact-keyed: a provider that predates it
+  // publishes six keys and must keep decoding, and a provider that has it must
+  // not be refused. Requiring or forbidding it turns a whole newer host's
+  // sessions into `null`, which reads as "this execution can do nothing" —
+  // finding 34, and the disagreement Astra measured in this copy on
+  // 2026-09-21.
+  const optionalKeys = ["promptImage"] as const;
   if (
     !isPlainRecord(value) ||
-    !hasExactKeys(value, keys) ||
-    !keys.every((key) => typeof value[key] === "boolean")
+    !hasRequiredAndOptionalKeys(value, keys, optionalKeys) ||
+    !keys.every((key) => typeof value[key] === "boolean") ||
+    (hasOwnKey(value, "promptImage") && typeof value.promptImage !== "boolean")
   ) {
     return null;
   }
@@ -623,6 +784,7 @@ function decodeCapabilities(value: unknown): CodingSessionCapabilities | null {
     context: value.context as boolean,
     diff: value.diff as boolean,
     plan: value.plan as boolean,
+    promptImage: value.promptImage === true,
   });
 }
 

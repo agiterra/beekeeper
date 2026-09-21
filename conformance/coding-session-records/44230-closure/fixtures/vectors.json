@@ -181,5 +181,28 @@
       },
       "reason": "wrong-type"
     }
+  ],
+  "rawVectors": [
+    {
+      "name": "raw-canonical-closure",
+      "why": "The canonical bytes of the base closure, fed as a string.",
+      "raw": "{\"action\":\"closed\",\"genesisRef\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"sessionRef\":\"5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10\",\"v\":1}",
+      "accepts": {
+        "rust": true,
+        "desktopCoordination": true,
+        "dart": true
+      }
+    },
+    {
+      "name": "raw-duplicate-action",
+      "why": "A duplicate `action`: `\"closed\"` then `\"open\"`. The one field that decides whether the umbrella is on its settled shelf.",
+      "raw": "{\"action\":\"closed\",\"action\":\"open\",\"genesisRef\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"sessionRef\":\"5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10\",\"v\":1}",
+      "accepts": {
+        "rust": false,
+        "desktopCoordination": false,
+        "dart": false
+      },
+      "reason": "wrong-type"
+    }
   ]
 }

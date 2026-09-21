@@ -17,10 +17,28 @@ export const MAX_TARGET_IDENTITY_BYTES = 512;
 /** The reference ceiling buzz-core applies to every ref-shaped string. */
 export const MAX_REFERENCE_BYTES = 2 * 1024;
 
+/**
+ * Parse signed content, refusing duplicate JSON keys before anything reads it.
+ *
+ * `JSON.parse` keeps the last of two same-named keys and loses the fact that
+ * there were two, so a decoder that validates the parsed object cannot see
+ * `{"status":"failed","status":"running"}` for what it is. `serde_json`
+ * refuses the repeated field when `buzz-core` decodes the same bytes into its
+ * typed payload (`crates/buzz-core/src/coding_session_payload.rs:775`,
+ * `:1813`), so accepting it here would render a session no other party agrees
+ * exists.
+ *
+ * The scan is a third copy of one idea — the desktop has it in
+ * `sessionCoordinationStrictJson.ts` and mobile in `coding_session_wire.dart`
+ * — because this client shares no code with either. The shared raw vectors
+ * (`conformance/coding-session-records/**`, `rawVectors[]`) are what keep the
+ * three honest, and this file is loaded by them since lane 223.
+ */
 export function parseBoundedJson(content: unknown, maxBytes: number): unknown {
   if (
     typeof content !== "string" ||
-    new TextEncoder().encode(content).byteLength > maxBytes
+    new TextEncoder().encode(content).byteLength > maxBytes ||
+    hasDuplicateJsonKeys(content)
   ) {
     return null;
   }
@@ -29,6 +47,52 @@ export function parseBoundedJson(content: unknown, maxBytes: number): unknown {
   } catch {
     return null;
   }
+}
+
+/**
+ * Whether `source` names the same key twice inside one object, at any depth.
+ *
+ * One left-to-right scan with a stack, because the question is about the bytes
+ * and not about the value `JSON.parse` would produce. Objects collect their
+ * keys; arrays do not. Bytes this scan cannot read are reported as duplicate,
+ * which is the safe answer: the caller refuses either way, and answering "no
+ * duplicates" about unreadable bytes is a claim it has not earned.
+ */
+export function hasDuplicateJsonKeys(source: string): boolean {
+  const stack: Array<{ keys: Set<string> | null; wantsKey: boolean }> = [];
+  for (let index = 0; index < source.length; index += 1) {
+    const token = source[index];
+    if (token === '"') {
+      let end = index + 1;
+      while (end < source.length && source[end] !== '"') {
+        end += source[end] === "\\" ? 2 : 1;
+      }
+      // `stack.at(-1)` would be clearer, but this file targets ES2020.
+      const frame = stack.length > 0 ? stack[stack.length - 1] : undefined;
+      if (frame?.keys && frame.wantsKey) {
+        let decoded: unknown;
+        try {
+          decoded = JSON.parse(source.slice(index, end + 1));
+        } catch {
+          return true;
+        }
+        if (typeof decoded !== "string" || frame.keys.has(decoded)) return true;
+        frame.keys.add(decoded);
+        frame.wantsKey = false;
+      }
+      index = end;
+    } else if (token === "{") {
+      stack.push({ keys: new Set(), wantsKey: true });
+    } else if (token === "[") {
+      stack.push({ keys: null, wantsKey: false });
+    } else if (token === "}" || token === "]") {
+      stack.pop();
+    } else if (token === ",") {
+      const frame = stack.length > 0 ? stack[stack.length - 1] : undefined;
+      if (frame?.keys) frame.wantsKey = true;
+    }
+  }
+  return false;
 }
 
 export function decodeTarget(

@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:buzz/features/coding_sessions/domain/coding_session_wire.dart';
 import 'package:buzz/features/coding_sessions/domain/coding_sessions_domain.dart';
 import 'package:buzz/shared/relay/nostr_models.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -88,6 +89,77 @@ List<String> _run(
   expect(checked, greaterThan(0), reason: '$recordDir exercised this decoder');
   divergent.sort();
   return divergent;
+}
+
+/// Run every **raw** vector of [recordDir] through [decode], byte for byte.
+///
+/// `_run` above hands the decoder `jsonEncode(content)`, which can never carry
+/// a duplicate key: `jsonDecode` keeps one of the two and loses the fact that
+/// there were two. `rawVectors[]` carry the exact string a provider would
+/// sign, and nothing here re-encodes it — that is the whole point (Astra's
+/// 2026-09-21 re-check; ledger 223). A raw verdict is never "pinned": the raw
+/// suite exists to assert agreement.
+void _runRaw(String recordDir, int kind, bool Function(String raw) decode) {
+  final fixture = _fixture(recordDir, kind);
+  final vectors = fixture['rawVectors'] as List<dynamic>;
+  expect(
+    vectors.length,
+    greaterThanOrEqualTo(2),
+    reason: '$recordDir carries a canonical raw vector and a malformed one',
+  );
+  var accepted = 0;
+  for (final entry in vectors) {
+    final vector = entry as Map<String, dynamic>;
+    final name = vector['name'] as String;
+    expect(vector['why'], isNotEmpty, reason: 'raw vector $name says why');
+    final accepts = vector['accepts'] as Map<String, dynamic>;
+    expect(
+      accepts.containsKey('dart'),
+      isTrue,
+      reason: 'raw vector $name states a verdict for this decoder',
+    );
+    final expected = accepts['dart'];
+    if (expected == null) continue;
+    final raw = vector['raw'] as String;
+    expect(
+      decode(raw),
+      expected,
+      reason:
+          'raw vector $name of $recordDir disagreed with the fixture. '
+          'Bytes: $raw',
+    );
+    if (expected == true) accepted += 1;
+  }
+  expect(
+    accepted,
+    greaterThan(0),
+    reason: "$recordDir's raw suite has a positive control this decoder takes",
+  );
+}
+
+NostrEvent _rawEvent(int kind, List<List<String>> tags, String raw) =>
+    NostrEvent(
+      id: _hex64,
+      pubkey: 'c' * 64,
+      createdAt: 1,
+      kind: kind,
+      tags: tags,
+      content: raw,
+      sig: '0' * 128,
+    );
+
+/// The parsed view of raw bytes, for deriving an envelope tag only.
+///
+/// Never for deciding the verdict: the decoder under test is handed [raw]
+/// itself. A payload that will not parse still gets a well-formed envelope, so
+/// the decoder answers on the content rather than on a malformed tag.
+Map<String, dynamic> _probe(String raw) {
+  try {
+    final value = jsonDecode(raw);
+    return value is Map<String, dynamic> ? value : <String, dynamic>{};
+  } on FormatException {
+    return <String, dynamic>{};
+  }
 }
 
 void main() {
@@ -180,5 +252,129 @@ void main() {
     // pinned: serde refuses a float for a `u64` and Dart reads 1.0 == 1, which
     // is a property of the languages, not of anyone's code. Nothing signs it.
     expect(divergent, ['v-as-json-float']);
+  });
+
+  test('44221 create decoder runs the raw vectors byte for byte', () {
+    _runRaw('44221-lifecycle-command', 44221, (raw) {
+      final commandId = _probe(raw)['commandId'] as String? ?? 'cmd-1';
+      return decodeCodingSessionCreate(
+            _rawEvent(EventKind.codingSessionLifecycleCommand, [
+              ['h', _channel],
+              ['csl-v', codingSessionLifecycleCommandTagVersion],
+              ['csl-command', commandId],
+            ], raw),
+          ).value !=
+          null;
+    });
+  });
+
+  test('44223 metadata decoder runs the raw vectors byte for byte', () {
+    _runRaw('44223-metadata', 44223, (raw) {
+      final target = CodingSessionTarget.decode(_probe(raw)['session']);
+      return decodeCodingSessionMetadata(
+            _rawEvent(EventKind.codingSessionMetadata, [
+              ['h', _channel],
+              ['csm-v', codingSessionMetadataTagVersion],
+              ['cs-target', target?.key ?? ''],
+              ['csm-key', target?.metadataSemanticKey ?? ''],
+            ], raw),
+          ).value !=
+          null;
+    });
+  });
+
+  test('44224 receipt decoder runs the raw vectors byte for byte', () {
+    _runRaw('44224-lifecycle-receipt', 44224, (raw) {
+      final payload = _probe(raw);
+      final commandId = payload['commandId'] as String? ?? 'cmd-1';
+      final status = CodingSessionReceiptStatus.fromWire(payload['status']);
+      return decodeCodingSessionReceipt(
+            _rawEvent(EventKind.codingSessionLifecycleReceipt, [
+              ['h', _channel],
+              ['cslr-v', codingSessionReceiptTagVersion],
+              ['csl-command', commandId],
+              [
+                'csl-key',
+                status == null
+                    ? encodeStructuredKey(codingSessionReceiptKeyDomain, [
+                        commandId,
+                      ])
+                    : codingSessionReceiptSemanticKey(commandId, status),
+              ],
+            ], raw),
+          ).value !=
+          null;
+    });
+  });
+
+  test('44226 genesis decoder runs the raw vectors byte for byte', () {
+    _runRaw('44226-genesis', 44226, (raw) {
+      final sessionRef = _probe(raw)['sessionRef'];
+      return decodeCodingSessionGenesis(
+            _rawEvent(EventKind.codingSessionGenesis, [
+              ['h', _channel],
+              ['csg-v', codingSessionGenesisTagVersion],
+              ['csg-session', sessionRef is String ? sessionRef : ''],
+            ], raw),
+          ).value !=
+          null;
+    });
+  });
+
+  test('44230 closure decoder runs the raw vectors byte for byte', () {
+    _runRaw('44230-closure', 44230, (raw) {
+      final payload = _probe(raw);
+      final sessionRef = payload['sessionRef'];
+      final genesisRef = payload['genesisRef'];
+      return decodeCodingSessionClosure(
+            _rawEvent(EventKind.codingSessionClosure, [
+              ['h', _channel],
+              ['d', sessionRef is String ? sessionRef : ''],
+              ['cscl-v', codingSessionClosureTagVersion],
+              ['cscl-genesis', genesisRef is String ? genesisRef : 'b' * 64],
+            ], raw),
+          ).value !=
+          null;
+    });
+  });
+
+  // The scanner itself, directly: the raw suites above prove the decoders
+  // refuse these payloads, and this proves *why* — so a later change that
+  // removes the scan fails here with a sentence about duplicate keys rather
+  // than only as five decoder mismatches.
+  group('hasDuplicateJsonKeys', () {
+    test('canonical provider bytes carry no duplicate', () {
+      expect(
+        hasDuplicateJsonKeys('{"a":1,"b":{"c":[1,2,{"d":3}]},"e":"f"}'),
+        isFalse,
+      );
+    });
+
+    test('a repeated key at any depth is a duplicate', () {
+      expect(hasDuplicateJsonKeys('{"a":1,"a":2}'), isTrue);
+      expect(hasDuplicateJsonKeys('{"o":{"a":1,"a":2}}'), isTrue);
+      expect(hasDuplicateJsonKeys('{"l":[{"a":1,"a":2}]}'), isTrue);
+    });
+
+    test('the same key in sibling objects is not a duplicate', () {
+      expect(hasDuplicateJsonKeys('{"x":{"a":1},"y":{"a":2}}'), isFalse);
+      expect(hasDuplicateJsonKeys('{"l":[{"a":1},{"a":2}]}'), isFalse);
+    });
+
+    test('a value that merely looks like a key is not one', () {
+      expect(hasDuplicateJsonKeys('{"a":"b","c":"b"}'), isFalse);
+      expect(hasDuplicateJsonKeys('{"a":["k","k"]}'), isFalse);
+    });
+
+    test('an escaped quote inside a key does not end the key', () {
+      expect(hasDuplicateJsonKeys(r'{"a\"b":1,"c":2}'), isFalse);
+      expect(hasDuplicateJsonKeys(r'{"a\"b":1,"a\"b":2}'), isTrue);
+    });
+
+    test('unterminated bytes are reported as ambiguous, never as clean', () {
+      expect(hasDuplicateJsonKeys('{"a":1'), isFalse);
+      expect(hasDuplicateJsonKeys('{"a'), isTrue);
+      expect(hasDuplicateJsonKeys('}'), isTrue);
+    });
   });
 }

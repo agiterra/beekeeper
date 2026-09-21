@@ -6,7 +6,8 @@
     "rust": "crates/buzz-core/src/coding_session_payload.rs :: decode_coding_session_lifecycle_receipt",
     "desktopCoordination": "desktop/src/shared/coordination/sessionCoordinationStrictJson.ts :: hasStrictLifecycleReceiptJson + hasStrictLifecycleReceiptValues (lifecycle vocabulary only, by design)",
     "desktopIngress": "desktop/src/features/coding-sessions/lib/codingSessionIngressPayloads.ts :: parseCodingSessionLifecycleReceipt",
-    "dart": "mobile/lib/features/coding_sessions/domain/coding_session_decoders.dart :: decodeCodingSessionReceipt"
+    "dart": "mobile/lib/features/coding_sessions/domain/coding_session_decoders.dart :: decodeCodingSessionReceipt",
+    "web": "web/src/features/coding-sessions/domain/ingressPayloads.ts :: parseCodingSessionLifecycleReceipt (a hand-copy of the desktop ingress decoder; loaded since lane 223)"
   },
   "vectors": [
     {
@@ -28,7 +29,8 @@
         "rust": true,
         "desktopCoordination": true,
         "desktopIngress": true,
-        "dart": true
+        "dart": true,
+        "web": true
       }
     },
     {
@@ -53,7 +55,8 @@
         "rust": true,
         "desktopCoordination": true,
         "desktopIngress": true,
-        "dart": true
+        "dart": true,
+        "web": true
       }
     },
     {
@@ -73,7 +76,8 @@
         "rust": true,
         "desktopCoordination": true,
         "desktopIngress": true,
-        "dart": true
+        "dart": true,
+        "web": true
       }
     },
     {
@@ -95,7 +99,8 @@
         "rust": true,
         "desktopCoordination": true,
         "desktopIngress": true,
-        "dart": true
+        "dart": true,
+        "web": true
       }
     },
     {
@@ -120,7 +125,8 @@
         "rust": true,
         "desktopCoordination": true,
         "desktopIngress": true,
-        "dart": true
+        "dart": true,
+        "web": true
       }
     },
     {
@@ -142,7 +148,8 @@
         "rust": true,
         "desktopCoordination": true,
         "desktopIngress": true,
-        "dart": true
+        "dart": true,
+        "web": true
       }
     },
     {
@@ -164,7 +171,8 @@
         "rust": true,
         "desktopCoordination": false,
         "desktopIngress": true,
-        "dart": true
+        "dart": true,
+        "web": true
       }
     },
     {
@@ -187,7 +195,8 @@
         "rust": true,
         "desktopCoordination": false,
         "desktopIngress": true,
-        "dart": true
+        "dart": true,
+        "web": true
       }
     },
     {
@@ -210,7 +219,8 @@
         "rust": true,
         "desktopCoordination": false,
         "desktopIngress": true,
-        "dart": true
+        "dart": true,
+        "web": true
       }
     },
     {
@@ -235,7 +245,8 @@
         "rust": true,
         "desktopCoordination": false,
         "desktopIngress": true,
-        "dart": true
+        "dart": true,
+        "web": true
       }
     },
     {
@@ -260,7 +271,8 @@
         "rust": true,
         "desktopCoordination": false,
         "desktopIngress": true,
-        "dart": true
+        "dart": true,
+        "web": true
       }
     },
     {
@@ -285,7 +297,8 @@
         "rust": true,
         "desktopCoordination": false,
         "desktopIngress": true,
-        "dart": true
+        "dart": true,
+        "web": true
       }
     },
     {
@@ -310,7 +323,8 @@
         "rust": true,
         "desktopCoordination": false,
         "desktopIngress": true,
-        "dart": true
+        "dart": true,
+        "web": true
       }
     },
     {
@@ -332,7 +346,8 @@
         "rust": true,
         "desktopCoordination": false,
         "desktopIngress": true,
-        "dart": true
+        "dart": true,
+        "web": true
       }
     },
     {
@@ -354,7 +369,8 @@
         "rust": true,
         "desktopCoordination": false,
         "desktopIngress": true,
-        "dart": true
+        "dart": true,
+        "web": true
       }
     },
     {
@@ -377,7 +393,8 @@
         "rust": false,
         "desktopCoordination": false,
         "desktopIngress": false,
-        "dart": false
+        "dart": false,
+        "web": false
       },
       "reason": "unknown-key"
     },
@@ -399,7 +416,8 @@
         "rust": false,
         "desktopCoordination": false,
         "desktopIngress": false,
-        "dart": false
+        "dart": false,
+        "web": false
       },
       "reason": "missing-required"
     },
@@ -423,7 +441,8 @@
         "rust": false,
         "desktopCoordination": false,
         "desktopIngress": false,
-        "dart": false
+        "dart": false,
+        "web": false
       },
       "reason": "unknown-key"
     },
@@ -446,7 +465,8 @@
         "rust": false,
         "desktopCoordination": false,
         "desktopIngress": false,
-        "dart": false
+        "dart": false,
+        "web": false
       },
       "reason": "missing-required"
     },
@@ -470,7 +490,8 @@
         "rust": false,
         "desktopCoordination": false,
         "desktopIngress": false,
-        "dart": false
+        "dart": false,
+        "web": false
       },
       "reason": "wrong-type"
     },
@@ -496,7 +517,8 @@
         "rust": false,
         "desktopCoordination": false,
         "desktopIngress": false,
-        "dart": false
+        "dart": false,
+        "web": false
       },
       "reason": "wrong-type"
     },
@@ -522,7 +544,8 @@
         "rust": false,
         "desktopCoordination": false,
         "desktopIngress": false,
-        "dart": false
+        "dart": false,
+        "web": false
       },
       "reason": "wrong-type"
     },
@@ -548,7 +571,8 @@
         "rust": false,
         "desktopCoordination": false,
         "desktopIngress": false,
-        "dart": false
+        "dart": false,
+        "web": false
       },
       "reason": "wrong-type"
     },
@@ -574,7 +598,8 @@
         "rust": false,
         "desktopCoordination": false,
         "desktopIngress": false,
-        "dart": false
+        "dart": false,
+        "web": false
       },
       "reason": "wrong-type"
     },
@@ -597,7 +622,8 @@
         "rust": false,
         "desktopCoordination": false,
         "desktopIngress": false,
-        "dart": false
+        "dart": false,
+        "web": false
       },
       "reason": "wrong-type"
     },
@@ -623,7 +649,8 @@
         "rust": false,
         "desktopCoordination": false,
         "desktopIngress": false,
-        "dart": false
+        "dart": false,
+        "web": false
       },
       "reason": "wrong-type"
     },
@@ -644,7 +671,48 @@
         "rust": false,
         "desktopCoordination": false,
         "desktopIngress": false,
-        "dart": false
+        "dart": false,
+        "web": false
+      },
+      "reason": "wrong-type"
+    }
+  ],
+  "rawVectors": [
+    {
+      "name": "raw-canonical-receipt",
+      "why": "The canonical bytes of a `failed` receipt, fed as a string. The raw suite's positive control.",
+      "raw": "{\"schema\":\"buzz-coding-session-lifecycle-receipt/v1\",\"commandId\":\"cmd-1\",\"status\":\"failed\",\"session\":null,\"error\":{\"code\":\"PROVIDER_UNAVAILABLE\",\"message\":\"something went wrong\"}}",
+      "accepts": {
+        "rust": true,
+        "desktopCoordination": true,
+        "desktopIngress": true,
+        "dart": true,
+        "web": true
+      }
+    },
+    {
+      "name": "raw-duplicate-status",
+      "why": "Astra's second counterexample: a receipt carrying `\"status\":\"failed\",\"status\":\"running\"`. Same class as the metadata case and the same refusal in buzz-core (`coding_session_payload.rs:775`).",
+      "raw": "{\"schema\":\"buzz-coding-session-lifecycle-receipt/v1\",\"commandId\":\"cmd-1\",\"status\":\"running\",\"status\":\"failed\",\"session\":null,\"error\":{\"code\":\"PROVIDER_UNAVAILABLE\",\"message\":\"something went wrong\"}}",
+      "accepts": {
+        "rust": false,
+        "desktopCoordination": false,
+        "desktopIngress": false,
+        "dart": false,
+        "web": false
+      },
+      "reason": "wrong-type"
+    },
+    {
+      "name": "raw-duplicate-command-id",
+      "why": "A duplicate `commandId`. The receipt's command id is what joins it to the 44220 that asked, so two of them is a receipt that answers two commands.",
+      "raw": "{\"schema\":\"buzz-coding-session-lifecycle-receipt/v1\",\"commandId\":\"cmd-other\",\"commandId\":\"cmd-1\",\"status\":\"failed\",\"session\":null,\"error\":{\"code\":\"PROVIDER_UNAVAILABLE\",\"message\":\"something went wrong\"}}",
+      "accepts": {
+        "rust": false,
+        "desktopCoordination": false,
+        "desktopIngress": false,
+        "dart": false,
+        "web": false
       },
       "reason": "wrong-type"
     }
