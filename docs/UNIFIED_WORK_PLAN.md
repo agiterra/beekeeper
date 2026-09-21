@@ -217,3 +217,36 @@ accepted; the Wave 0 gate reopens until 198–200 land.
    count for a run is `person_actions` from `bee sessions measure` plus the
    operator's written list of acts that sign nothing (ticks, relaunches).
 
+**A5 — Astra's adversarial review of Wave 2, 2026-09-21**
+([review](history/2026-09-21-astra-wave2-review.md)). Twelve findings, all
+accepted; seven block the control run. Each went back to the lane that built
+the code, reproduced as a failing test before its fix; the contract lane
+writes new fixtures first (the implementer never writes its own oracle).
+1. **Lane 211, approval truth** (findings 1, 9, 10, 11): what the card shows
+   is what is approved or Approve is unavailable — definition resolved by the
+   run's bound hash, argv displayed unambiguously, Deny always available; the
+   approver is the project's creator or a roster Owner, never the publisher;
+   the run's pre-approval bound commit is carried (absent / null / sha kept
+   distinct); rendering never writes.
+2. **Lane 212, preparation fences** (2, 3, 4, 12): establish and verify at the
+   actor's idle boundary with custody held through the turn; a live slow
+   checkout is not an interrupted attempt (attempt identity, conditional
+   terminal writes); a deferred wake is durable, clamps the watermark and is
+   released when establishment settles; a failed intent save stops the git
+   work.
+3. **Lanes 214 then 213, coverage** (5, 6, 7, 8): the completion gate fails
+   closed on declaration state, not on rendered rows; evidence comes from the
+   canonical team projection, never raw events; action definitions keep
+   (repository, commit, name) through evaluation; the initial `workId` is
+   derived from stable inputs so a lost response cannot double-declare.
+4. **Lane 210 acceptance requirements**: no-ask is `approving &&
+   requiredAction == null`, never prose; settled is not acknowledged and
+   gates no resource; an already acknowledged chain keeps governing; fixtures
+   for every non-approving and corrected case; the strict frontend reader
+   ships in the same commit.
+5. **Lane 215, preventive**: shared vectors for the four other closed records
+   with independent Rust and TypeScript readers (44221, 44224, 44226, 44230)
+   and 44223's unloaded ones; reader disagreements are pinned and reported,
+   not silently fixed.
+6. The control run waits on 209–215 landed and Astra's re-check of 211–213.
+
