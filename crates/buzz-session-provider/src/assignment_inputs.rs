@@ -66,6 +66,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
@@ -80,6 +81,10 @@ pub const ASSIGNMENT_INPUT_ABANDONED: &str = "establish_abandoned";
 
 /// The tree was moved to the commit the assignment names.
 pub const ASSIGNMENT_INPUT_ESTABLISHED: &str = "established";
+
+/// The tree stopped holding the commit between its establishment and the
+/// moment its turn was about to start, so the prompt was not sent.
+pub const ASSIGNMENT_INPUT_MOVED: &str = "tree_moved";
 
 /// The tree already held that commit on that branch; nothing was written.
 pub const ASSIGNMENT_INPUT_ALREADY_CURRENT: &str = "already_current";
@@ -98,6 +103,13 @@ pub const MAX_ESTABLISH_ATTEMPTS: u32 = 2;
 /// `recordedAt` is evicted, because the newest attempt is the one somebody is
 /// asking about.
 pub const MAX_ASSIGNMENT_INPUT_RECORDS: usize = 256;
+
+/// The owner recorded by a caller that runs the attempt to completion inline
+/// under the store's own lock, with no separate waiter to time out.
+///
+/// The in-memory drain is that caller: there is no task to outlive it, so the
+/// record it leaves behind is either terminal or genuinely interrupted.
+pub const UNOWNED_ATTEMPT: &str = "inline";
 
 /// How many `git status --porcelain` lines are quoted back in `detail`.
 const REFUSAL_DETAIL_LINES: usize = 5;
@@ -148,6 +160,21 @@ pub struct AssignmentInputRecord {
     /// crash is indistinguishable from one never tried.
     #[serde(default)]
     pub attempts: u32,
+    /// Which attempt, on which run of which process, owns the in-flight
+    /// establishment this record describes.
+    ///
+    /// The difference between "a fetch that is still running" and "an attempt
+    /// a crash interrupted", which `establishing` alone cannot tell apart
+    /// (Astra's Wave 2 review, finding 3). An owner this process knows to be
+    /// live is a *running* attempt: nothing replays it and nothing abandons
+    /// it. An owner nobody alive claims is the interrupted case, and the
+    /// one-replay rule applies to it. Terminal writes compare this field, so
+    /// a detached old task can never overwrite a newer outcome.
+    ///
+    /// `#[serde(default)]`: a record written before this field reads as
+    /// unowned, which is what an attempt from a previous process is.
+    #[serde(default)]
+    pub attempt_owner: Option<String>,
     /// Whether the blocker for a terminal *failure* has already been published
     /// to the lead.
     ///
@@ -178,6 +205,7 @@ impl AssignmentInputRecord {
             message: None,
             changes: None,
             attempts: 0,
+            attempt_owner: None,
             blocker_published: false,
             recorded_at: now_iso(),
         }
@@ -520,6 +548,7 @@ pub fn requeue_assignment_input(records: &mut AssignmentInputRecords, assignment
     requeued.message = None;
     requeued.changes = None;
     requeued.attempts = 0;
+    requeued.attempt_owner = None;
     requeued.blocker_published = false;
     requeued.recorded_at = now_iso();
     record_assignment_input(records, requeued);
@@ -538,7 +567,7 @@ pub fn requeue_assignment_input(records: &mut AssignmentInputRecords, assignment
 pub fn drain_pending_assignment_inputs(
     records: &mut AssignmentInputRecords,
     resolve: impl Fn(&AssignmentInputRecord) -> Option<SeatCheckout>,
-    mut persist: impl FnMut(&AssignmentInputRecords),
+    mut persist: impl FnMut(&AssignmentInputRecords) -> Result<(), String>,
 ) -> Vec<String> {
     let mut drained = Vec::new();
     for assignment_id in pending_assignment_inputs(records) {
@@ -563,7 +592,7 @@ pub fn drain_one_assignment_input(
     records: &mut AssignmentInputRecords,
     assignment_id: &str,
     checkout: Option<&SeatCheckout>,
-    persist: &mut impl FnMut(&AssignmentInputRecords),
+    persist: &mut impl FnMut(&AssignmentInputRecords) -> Result<(), String>,
 ) -> bool {
     let Some(record) = assignment_input(records, assignment_id).cloned() else {
         return false;
@@ -573,11 +602,22 @@ pub fn drain_one_assignment_input(
     }
     if record.attempts >= MAX_ESTABLISH_ATTEMPTS {
         record_assignment_input(records, abandon(record));
-        persist(records);
+        let _ = persist(records);
         return true;
     }
-    record_assignment_input(records, start_attempt(record));
-    persist(records);
+    record_assignment_input(records, start_attempt(record, UNOWNED_ATTEMPT));
+    if let Err(error) = persist(records) {
+        // The count did not reach the disk, so it bounds nothing. Refusing to
+        // run git here is the whole of finding 12: an effect whose record was
+        // lost is an effect nobody can replay safely.
+        tracing::error!(
+            target: "csp::assignment_inputs",
+            %assignment_id,
+            %error,
+            "not establishing an input whose started-attempt record could not be saved"
+        );
+        return false;
+    }
     // The attempt files its own terminal record, carrying the count forward.
     // Its refusal is the record; nothing here re-reads it, and nothing here
     // tries again.
@@ -589,7 +629,7 @@ pub fn drain_one_assignment_input(
         },
         checkout,
     );
-    persist(records);
+    let _ = persist(records);
     true
 }
 
@@ -606,12 +646,14 @@ fn abandon(record: AssignmentInputRecord) -> AssignmentInputRecord {
     abandoned
 }
 
-/// The record that says an attempt has been started, count already raised.
-fn start_attempt(record: AssignmentInputRecord) -> AssignmentInputRecord {
+/// The record that says an attempt has been started, count already raised and
+/// its owner named.
+fn start_attempt(record: AssignmentInputRecord, owner: &str) -> AssignmentInputRecord {
     let mut started = record;
     started.outcome = ASSIGNMENT_INPUT_ESTABLISHING.to_owned();
     started.attempts += 1;
     started.message = None;
+    started.attempt_owner = Some(owner.to_owned());
     started.recorded_at = now_iso();
     started
 }
@@ -1099,6 +1141,7 @@ pub fn establish(
             message,
             changes,
             attempts,
+            attempt_owner: None,
             blocker_published,
             recorded_at: now_iso(),
         },
@@ -1232,16 +1275,52 @@ pub fn lock_store_file(store_path: &Path) -> Result<std::fs::File, String> {
 ///
 /// One instance per store file. Every mutation goes through
 /// [`Self::with_records`], which holds the lock for the whole read-act-write.
-#[derive(Debug, Clone)]
+/// How a store document reaches the disk.
+///
+/// Injectable so a test can make persistence fail on purpose: the guarantee
+/// that a started-attempt record reaches the disk *before* git runs is only
+/// worth as much as the test that fails when it does not.
+pub type StoreWriter = dyn Fn(&Path, &[u8]) -> Result<(), String> + Send + Sync;
+
+#[derive(Clone)]
 pub struct AssignmentInputStore {
     path: PathBuf,
+    writer: Arc<StoreWriter>,
+}
+
+impl std::fmt::Debug for AssignmentInputStore {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("AssignmentInputStore")
+            .field("path", &self.path)
+            .finish_non_exhaustive()
+    }
 }
 
 impl AssignmentInputStore {
     /// Address the store at `path`, without touching it.
     #[must_use]
     pub fn new(path: impl Into<PathBuf>) -> Self {
-        Self { path: path.into() }
+        Self {
+            path: path.into(),
+            writer: Arc::new(|path: &Path, payload: &[u8]| {
+                let temporary = path.with_extension("json.tmp");
+                write_restricted(&temporary, payload)?;
+                std::fs::rename(&temporary, path)
+                    .map_err(|error| format!("failed to replace the host workdir store: {error}"))
+            }),
+        }
+    }
+
+    /// The same store, writing through `writer`.
+    ///
+    /// For tests that have to see what happens when the disk refuses.
+    #[must_use]
+    pub fn with_writer(self, writer: Arc<StoreWriter>) -> Self {
+        Self {
+            path: self.path,
+            writer,
+        }
     }
 
     /// The store file this instance reads and writes.
@@ -1276,108 +1355,174 @@ impl AssignmentInputStore {
 
     /// Write the document back, atomically and owner-only.
     pub fn save(&self, document: &AssignmentInputDocument) -> Result<(), String> {
-        save_document(&self.path, document)
+        let payload = serde_json::to_vec_pretty(document)
+            .map_err(|error| format!("failed to serialize the host workdir store: {error}"))?;
+        (self.writer)(&self.path, &payload)
     }
 
     /// Run one mutation under the lock: lock, load, act, save.
     ///
-    /// `act` is handed a `persist` it may call as often as it likes — the
-    /// drain uses it to get the attempt count onto the disk before the git
-    /// work it bounds. A `persist` that fails is reported where it happens and
-    /// does not abandon the mutation: the tree is already in the state the
-    /// record describes, so what is lost is the record, and saying so is
-    /// better than pretending the checkout did not happen.
+    /// `act` is handed a `persist` that **returns its error**. A save that
+    /// fails before a side effect has to stop that side effect — the
+    /// started-attempt count is a bound only if it reached the disk — so
+    /// nothing here swallows a write failure any more (Astra's Wave 2 review,
+    /// finding 12). The final save is returned to the caller for the same
+    /// reason.
     pub fn with_records<T>(
         &self,
-        act: impl FnOnce(&mut AssignmentInputRecords, &mut dyn FnMut(&AssignmentInputRecords)) -> T,
+        act: impl FnOnce(
+            &mut AssignmentInputRecords,
+            &mut dyn FnMut(&AssignmentInputRecords) -> Result<(), String>,
+        ) -> T,
     ) -> Result<T, String> {
         let _lock = lock_store_file(&self.path)?;
         let mut document = self.load()?;
         let rest = document.rest.clone();
-        let path = self.path.clone();
         let mut records = std::mem::take(&mut document.assignment_inputs);
-        let mut persist = |records: &AssignmentInputRecords| {
-            let snapshot = AssignmentInputDocument {
-                assignment_inputs: records.clone(),
-                rest: rest.clone(),
+        let answer = {
+            let mut persist = |records: &AssignmentInputRecords| {
+                self.save(&AssignmentInputDocument {
+                    assignment_inputs: records.clone(),
+                    rest: rest.clone(),
+                })
             };
-            if let Err(error) = save_document(&path, &snapshot) {
-                tracing::error!(
-                    target: "csp::assignment_inputs",
-                    %error,
-                    "an assignment-input record could not be saved"
-                );
-            }
+            let answer = act(&mut records, &mut persist);
+            persist(&records)?;
+            answer
         };
-        let answer = act(&mut records, &mut persist);
-        persist(&records);
         Ok(answer)
     }
 }
 
-/// Write one document to `path`, atomically and owner-only.
-fn save_document(path: &Path, document: &AssignmentInputDocument) -> Result<(), String> {
-    let payload = serde_json::to_vec_pretty(document)
-        .map_err(|error| format!("failed to serialize the host workdir store: {error}"))?;
-    let temporary = path.with_extension("json.tmp");
-    write_restricted(&temporary, &payload)?;
-    std::fs::rename(&temporary, path)
-        .map_err(|error| format!("failed to replace the host workdir store: {error}"))
+/// What an establishment could not do, told apart by whether anything
+/// happened.
+///
+/// The distinction is the point (Astra's Wave 2 review, finding 12): a save
+/// that failed *before* git ran means nothing happened and nothing may, while
+/// a save that failed *after* a completed checkout means the tree moved and
+/// only the record of it is missing. They need opposite remedies, so they are
+/// not one error.
+#[derive(Debug, Clone)]
+pub enum EstablishmentError {
+    /// There is no record to establish anything against.
+    Missing(String),
+    /// Nothing ran: the started-attempt record could not be saved, or the
+    /// store could not be read or locked. The seat's tree is untouched.
+    Unstarted(String),
+    /// An attempt for this assignment is already running in this process.
+    /// Nothing was started a second time.
+    AlreadyRunning {
+        /// The live attempt that owns it.
+        owner: String,
+    },
+    /// The git work finished and its terminal record could not be saved. The
+    /// effect is real; the record is owed, and retrying it must not redo the
+    /// git work.
+    Unrecorded {
+        /// The terminal record that has to reach the disk.
+        record: Box<AssignmentInputRecord>,
+        /// Why the write failed.
+        error: String,
+    },
+}
+
+impl std::fmt::Display for EstablishmentError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Missing(assignment) => {
+                write!(formatter, "no assignment-input record for {assignment}")
+            }
+            Self::Unstarted(error) => write!(formatter, "nothing was established: {error}"),
+            Self::AlreadyRunning { owner } => {
+                write!(formatter, "an attempt is already running (owner {owner})")
+            }
+            Self::Unrecorded { error, .. } => write!(
+                formatter,
+                "the tree was established and the record could not be saved: {error}"
+            ),
+        }
+    }
 }
 
 /// Take one assignment from its recorded intent to a terminal outcome,
 /// holding the store's lock only around the two writes.
 ///
 /// The git work — which may include a fetch, and may take as long as a network
-/// takes — runs **outside** the lock. Holding an advisory lock on a file the
-/// desktop app writes on every preference change, for the length of a fetch,
-/// would stall a person's UI on somebody else's network.
+/// takes — runs **outside** the lock, so a person's UI never waits on somebody
+/// else's network.
 ///
-/// What the lock still covers is what it has to: the started-attempt count
-/// reaches the disk before the git work begins, and the terminal record
-/// replaces it afterwards. A process that dies in between leaves
-/// `establishing` with the count already raised, which is exactly the state
-/// [`MAX_ESTABLISH_ATTEMPTS`] bounds — one replay, then
-/// [`ASSIGNMENT_INPUT_ABANDONED`].
+/// # Ownership, and what a slow fetch is not
 ///
-/// Returns the record as it stands afterwards. A record that was already
-/// settled is returned unchanged and nothing runs, so two callers racing over
-/// one assignment cost one establishment.
+/// `owner` names this attempt: a string unique to this process *and* this
+/// attempt. It is written with the started-attempt record and compared again
+/// before the terminal record replaces it, so a detached task whose waiter
+/// gave up can never overwrite a newer outcome. `live` answers whether an
+/// owner already recorded is an attempt still running here; an `establishing`
+/// record whose owner is live is refused
+/// [`EstablishmentError::AlreadyRunning`] rather than replayed, and one whose
+/// owner nobody alive claims is the interrupted case the one-replay rule
+/// exists for (Astra's Wave 2 review, finding 3).
+///
+/// # Persistence
+///
+/// A started-attempt record that cannot be saved stops the attempt before git
+/// runs ([`EstablishmentError::Unstarted`]). A terminal record that cannot be
+/// saved after a completed checkout is returned as
+/// [`EstablishmentError::Unrecorded`] with the record to retry, so the next
+/// pass writes it rather than doing the work again
+/// ([`commit_terminal_record`]).
 pub fn establish_recorded_assignment(
     store: &AssignmentInputStore,
     assignment_id: &str,
     checkout: &SeatCheckout,
-) -> Result<AssignmentInputRecord, String> {
+    owner: &str,
+    live: &dyn Fn(&str) -> bool,
+) -> Result<AssignmentInputRecord, EstablishmentError> {
     enum Step {
         Settled(AssignmentInputRecord),
+        Running(String),
         Started(AssignmentInputRecord),
+        Unsaved(String),
     }
 
-    let step = store.with_records(|records, persist| {
-        let record = assignment_input(records, assignment_id).cloned()?;
-        if !record.is_pending() {
-            return Some(Step::Settled(record));
-        }
-        if record.attempts >= MAX_ESTABLISH_ATTEMPTS {
-            let abandoned = abandon(record);
-            record_assignment_input(records, abandoned.clone());
-            persist(records);
-            return Some(Step::Settled(abandoned));
-        }
-        let started = start_attempt(record);
-        record_assignment_input(records, started.clone());
-        persist(records);
-        Some(Step::Started(started))
-    })?;
+    let step = store
+        .with_records(|records, persist| {
+            let Some(record) = assignment_input(records, assignment_id).cloned() else {
+                return None;
+            };
+            if !record.is_pending() {
+                return Some(Step::Settled(record));
+            }
+            if let Some(existing) = record.attempt_owner.as_deref() {
+                if existing != owner && live(existing) {
+                    return Some(Step::Running(existing.to_owned()));
+                }
+            }
+            if record.attempts >= MAX_ESTABLISH_ATTEMPTS {
+                let abandoned = abandon(record);
+                record_assignment_input(records, abandoned.clone());
+                return match persist(records) {
+                    Ok(()) => Some(Step::Settled(abandoned)),
+                    Err(error) => Some(Step::Unsaved(error)),
+                };
+            }
+            let started = start_attempt(record, owner);
+            record_assignment_input(records, started.clone());
+            match persist(records) {
+                Ok(()) => Some(Step::Started(started)),
+                Err(error) => Some(Step::Unsaved(error)),
+            }
+        })
+        .map_err(EstablishmentError::Unstarted)?;
     let started = match step {
-        None => return Err(format!("no assignment-input record for {assignment_id}")),
+        None => return Err(EstablishmentError::Missing(assignment_id.to_owned())),
         Some(Step::Settled(record)) => return Ok(record),
+        Some(Step::Running(owner)) => return Err(EstablishmentError::AlreadyRunning { owner }),
+        Some(Step::Unsaved(error)) => return Err(EstablishmentError::Unstarted(error)),
         Some(Step::Started(started)) => started,
     };
 
-    // Unlocked, against a scratch record set holding only this assignment:
-    // the inputs it replays are the ones just written, and nothing else in the
-    // store can be touched by a failure here.
+    // Unlocked, against a scratch record set holding only this assignment.
     let mut scratch = AssignmentInputRecords::new();
     record_assignment_input(&mut scratch, started);
     let _ = establish(
@@ -1389,18 +1534,52 @@ pub fn establish_recorded_assignment(
         Some(checkout),
     );
     let Some(mut terminal) = scratch.get(assignment_id).cloned() else {
-        return Err(format!("the attempt for {assignment_id} filed no record"));
+        return Err(EstablishmentError::Missing(assignment_id.to_owned()));
     };
+    terminal.attempt_owner = Some(owner.to_owned());
+    commit_terminal_record(store, owner, terminal)
+}
 
-    store.with_records(|records, _| {
-        // Whether a blocker was already published belongs to the assignment,
-        // not to this attempt, and another writer may have set it while the
-        // git work ran.
-        terminal.blocker_published =
-            assignment_input(records, assignment_id).is_some_and(|record| record.blocker_published);
+/// Write one attempt's terminal record, and only if this attempt still owns
+/// the row.
+///
+/// Split out so a caller holding an [`EstablishmentError::Unrecorded`] can
+/// retry the write on its next pass without redoing the checkout. A row whose
+/// owner has moved on belongs to a newer attempt, and the newer outcome is
+/// returned unchanged rather than overwritten.
+pub fn commit_terminal_record(
+    store: &AssignmentInputStore,
+    owner: &str,
+    mut terminal: AssignmentInputRecord,
+) -> Result<AssignmentInputRecord, EstablishmentError> {
+    let assignment_id = terminal.assignment_id.clone();
+    let committed = store.with_records(|records, persist| {
+        let current = assignment_input(records, &assignment_id).cloned();
+        if let Some(current) = current.as_ref() {
+            if current.attempt_owner.as_deref() != Some(owner) {
+                // Somebody else's row now. A detached task must never speak
+                // over a newer outcome.
+                return Ok(current.clone());
+            }
+            // Whether a blocker was published belongs to the assignment, not
+            // to this attempt.
+            terminal.blocker_published = current.blocker_published;
+        }
+        terminal.attempt_owner = None;
         record_assignment_input(records, terminal.clone());
-    })?;
-    Ok(terminal)
+        persist(records).map(|()| terminal.clone())
+    });
+    match committed {
+        Ok(Ok(record)) => Ok(record),
+        Ok(Err(error)) => Err(EstablishmentError::Unrecorded {
+            record: Box::new(terminal),
+            error,
+        }),
+        Err(error) => Err(EstablishmentError::Unrecorded {
+            record: Box::new(terminal),
+            error,
+        }),
+    }
 }
 
 /// Claim the one blocker a failed establishment is allowed to publish.
@@ -1424,8 +1603,7 @@ pub fn claim_establishment_blocker(
         let mut claimed = record;
         claimed.blocker_published = true;
         record_assignment_input(records, claimed);
-        persist(records);
-        true
+        persist(records).is_ok()
     })
 }
 

@@ -2492,6 +2492,42 @@ impl SessionActor {
                         );
                         continue;
                     }
+                    // The seat's input, checked where the prompt is sent
+                    // rather than where the turn was decided, and held for as
+                    // long as this turn runs (Astra's Wave 2 review, finding
+                    // 2). `_custody` is a token, not a value: while it is
+                    // alive no establishment may move this seat's checkout,
+                    // so a verifier testing one commit cannot have the tree
+                    // changed under it by preparation for the next
+                    // assignment. A tree that is no longer the one the
+                    // assignment named refuses here, because a prompt sent
+                    // now would produce a verdict about the wrong commit.
+                    let _custody = match crate::assignment_custody::verify_for_turn(
+                        &self.session_id,
+                        &command_id,
+                    )
+                    .await
+                    {
+                        crate::assignment_custody::TurnCustody::NotRequired => None,
+                        crate::assignment_custody::TurnCustody::Held(guard) => Some(guard),
+                        crate::assignment_custody::TurnCustody::Refused {
+                            assignment_ref,
+                            observed,
+                            required,
+                        } => {
+                            tracing::warn!(
+                                target: "csp::session",
+                                session_id = %self.session_id,
+                                %command_id,
+                                %assignment_ref,
+                                observed = observed.as_deref().unwrap_or("unreadable"),
+                                %required,
+                                "not prompting an assignment turn whose seat no longer holds the \
+                                 commit it names"
+                            );
+                            continue;
+                        }
+                    };
                     let outcome = self
                         .run_turn(
                             &mut rx,

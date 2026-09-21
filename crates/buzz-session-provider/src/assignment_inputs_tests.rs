@@ -85,9 +85,16 @@ fn head_of(path: &Path) -> String {
     run_git(path, &["rev-parse", "HEAD"])
 }
 
+/// The `assignmentInputs` object as it stands on disk.
+fn records_of(store: &Path) -> serde_json::Value {
+    serde_json::from_slice::<serde_json::Value>(&std::fs::read(store).expect("read")).expect("json")
+        ["assignmentInputs"]
+        .clone()
+}
+
 fn drain(records: &mut AssignmentInputRecords, checkout: &SeatCheckout) -> Vec<String> {
     let checkout = checkout.clone();
-    drain_pending_assignment_inputs(records, move |_| Some(checkout.clone()), |_| {})
+    drain_pending_assignment_inputs(records, move |_| Some(checkout.clone()), |_| Ok(()))
 }
 
 #[test]
@@ -823,4 +830,198 @@ fn an_unsafe_branch_name_is_refused_before_git_sees_it() {
         assignment_input(&records, &id).expect("record").outcome,
         EstablishAssignmentInputCode::InvalidInput.as_str()
     );
+}
+
+/// Finding 12, first half: a started-attempt record that never reached the
+/// disk bounds nothing, so the checkout it was supposed to bound must not
+/// happen. Before the fix this test failed with the tree already moved and
+/// the outcome reported as `established`.
+#[cfg(unix)]
+#[test]
+fn a_started_attempt_that_cannot_be_saved_stops_before_git() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = tempfile::tempdir().expect("temp");
+    let origin = root.path().join("origin");
+    let first = repo_with_one_commit(&origin);
+    let second = add_commit(&origin, "second.txt");
+    let seat = root.path().join("seat");
+    let checkout = seat_clone(&origin, &seat, "seat/verifier");
+    run_git(
+        &seat,
+        &["checkout", "--quiet", "-B", "seat/verifier", &first],
+    );
+
+    let dir = root.path().join("store");
+    std::fs::create_dir_all(&dir).expect("dir");
+    let path = dir.join("coding-session-workdirs.json");
+    desktop_shaped_store(&path);
+    let store = AssignmentInputStore::new(&path);
+    let id = assignment_id("f1");
+    store
+        .with_records(|records, _| {
+            record_assignment_input(
+                records,
+                AssignmentInputRecord::intended(&intent(&id, &second), Some(&checkout)),
+            );
+        })
+        .expect("seed");
+    // Every write to this directory now fails: rename cannot replace the file.
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).expect("chmod");
+    let outcome = establish_recorded_assignment(&store, &id, &checkout, "test-owner", &|_| false);
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).expect("restore");
+    assert_eq!(
+        head_of(&seat),
+        first,
+        "a started-attempt record that never reached the disk must not be followed by a checkout; \
+         got {outcome:?}"
+    );
+    assert!(
+        matches!(outcome, Err(EstablishmentError::Unstarted(_))),
+        "the caller is told nothing ran: {outcome:?}"
+    );
+}
+
+/// Finding 12, second half: a terminal record that cannot be saved *after* a
+/// completed checkout is a different fact — the effect is real — so it is
+/// reported distinctly and written on the next pass without redoing the git
+/// work.
+#[test]
+fn a_terminal_record_that_cannot_be_saved_is_retried_without_redoing_the_checkout() {
+    let root = tempfile::tempdir().expect("temp");
+    let origin = root.path().join("origin");
+    let first = repo_with_one_commit(&origin);
+    let second = add_commit(&origin, "second.txt");
+    let seat = root.path().join("seat");
+    let checkout = seat_clone(&origin, &seat, "seat/verifier");
+    run_git(
+        &seat,
+        &["checkout", "--quiet", "-B", "seat/verifier", &first],
+    );
+
+    let path = root.path().join("coding-session-workdirs.json");
+    desktop_shaped_store(&path);
+    let id = assignment_id("f2");
+    AssignmentInputStore::new(&path)
+        .with_records(|records, _| {
+            record_assignment_input(
+                records,
+                AssignmentInputRecord::intended(&intent(&id, &second), Some(&checkout)),
+            );
+        })
+        .expect("seed");
+
+    // Fail only the write that follows the git work — the one carrying the
+    // terminal outcome. The started-attempt save has to succeed, or nothing
+    // would run at all and this would be the other half of the finding.
+    let store = AssignmentInputStore::new(&path).with_writer(std::sync::Arc::new(
+        move |path: &Path, payload: &[u8]| {
+            if String::from_utf8_lossy(payload).contains(ASSIGNMENT_INPUT_ESTABLISHED) {
+                return Err("the disk is full".to_owned());
+            }
+            std::fs::write(path, payload).map_err(|error| error.to_string())
+        },
+    ));
+    let outcome = establish_recorded_assignment(&store, &id, &checkout, "owner-1", &|_| false);
+    let Err(EstablishmentError::Unrecorded { record, error }) = outcome else {
+        panic!("a completed checkout with an unsaved record is its own answer: {outcome:?}");
+    };
+    assert!(error.contains("the disk is full"), "{error}");
+    assert_eq!(record.outcome, ASSIGNMENT_INPUT_ESTABLISHED);
+    assert_eq!(
+        head_of(&seat),
+        second,
+        "the effect is real; only its record is owed"
+    );
+
+    // The retry writes the record. It does not run git again — the proof is
+    // that the working store still says `establishing` before the retry, and
+    // that no third attempt is started by it.
+    let stored_before = records_of(&path)[&id]["outcome"].clone();
+    assert_eq!(stored_before, ASSIGNMENT_INPUT_ESTABLISHING);
+    let written = commit_terminal_record(
+        &AssignmentInputStore::new(&path),
+        "owner-1",
+        (*record).clone(),
+    )
+    .expect("the retry writes it");
+    assert_eq!(written.outcome, ASSIGNMENT_INPUT_ESTABLISHED);
+    assert_eq!(written.attempts, 1, "the retry started no further attempt");
+    assert_eq!(
+        records_of(&path)[&id]["outcome"],
+        ASSIGNMENT_INPUT_ESTABLISHED
+    );
+}
+
+/// A detached task whose waiter gave up must never speak over a newer
+/// outcome: the terminal write is conditional on still owning the row.
+#[test]
+fn a_terminal_write_from_a_superseded_attempt_is_dropped() {
+    let root = tempfile::tempdir().expect("temp");
+    let path = root.path().join("coding-session-workdirs.json");
+    desktop_shaped_store(&path);
+    let store = AssignmentInputStore::new(&path);
+    let id = assignment_id("f3");
+    let commit = "a".repeat(40);
+    store
+        .with_records(|records, _| {
+            let mut newer = AssignmentInputRecord::intended(&intent(&id, &commit), None);
+            newer.outcome = ASSIGNMENT_INPUT_ESTABLISHED.to_owned();
+            newer.attempts = 2;
+            record_assignment_input(records, newer);
+        })
+        .expect("seed a newer outcome");
+
+    let mut stale = AssignmentInputRecord::intended(&intent(&id, &commit), None);
+    stale.outcome = EstablishAssignmentInputCode::DirtyTree.as_str().to_owned();
+    stale.attempts = 1;
+    let kept = commit_terminal_record(&store, "owner-that-has-moved-on", stale).expect("answered");
+    assert_eq!(
+        kept.outcome, ASSIGNMENT_INPUT_ESTABLISHED,
+        "the newer outcome stands"
+    );
+    assert_eq!(records_of(&path)[&id]["attempts"], 2);
+}
+
+/// An `establishing` record whose owner is still running here is a live
+/// attempt, not an interrupted one: nothing starts a second.
+#[test]
+fn a_live_attempt_is_not_replayed_as_an_interrupted_one() {
+    let root = tempfile::tempdir().expect("temp");
+    let path = root.path().join("coding-session-workdirs.json");
+    desktop_shaped_store(&path);
+    let store = AssignmentInputStore::new(&path);
+    let id = assignment_id("f4");
+    let commit = "a".repeat(40);
+    store
+        .with_records(|records, _| {
+            let mut running = AssignmentInputRecord::intended(&intent(&id, &commit), None);
+            running.outcome = ASSIGNMENT_INPUT_ESTABLISHING.to_owned();
+            running.attempts = 1;
+            running.attempt_owner = Some("owner-alive".to_owned());
+            record_assignment_input(records, running);
+        })
+        .expect("seed a live attempt");
+
+    let checkout = SeatCheckout {
+        path: root.path().join("seat"),
+        branch: "seat/verifier".to_owned(),
+    };
+    let outcome = establish_recorded_assignment(&store, &id, &checkout, "owner-2", &|owner| {
+        owner == "owner-alive"
+    });
+    assert!(
+        matches!(outcome, Err(EstablishmentError::AlreadyRunning { ref owner }) if owner == "owner-alive"),
+        "a live attempt is joined, never duplicated: {outcome:?}"
+    );
+    assert_eq!(
+        records_of(&path)[&id]["attempts"],
+        1,
+        "no second attempt was started"
+    );
+
+    // The same record after a restart: nobody alive owns it, so it is the
+    // interrupted case and the one-replay rule applies.
+    let replayed = establish_recorded_assignment(&store, &id, &checkout, "owner-3", &|_| false);
+    assert!(replayed.is_ok(), "{replayed:?}");
+    assert_eq!(records_of(&path)[&id]["attempts"], 2);
 }

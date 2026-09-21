@@ -500,7 +500,8 @@ async fn an_undecided_wake_stays_decidable_under_the_same_command_id() {
 use crate::assignment_inputs::{
     assignment_input, host_store_from_pointer, record_assignment_input, AssignmentInputRecord,
     AssignmentIntent, SeatCheckout, ASSIGNMENT_INPUT_ABANDONED, ASSIGNMENT_INPUT_ESTABLISHED,
-    ASSIGNMENT_INPUT_ESTABLISHING, HOST_STORE_POINTER_VERSION, MAX_ESTABLISH_ATTEMPTS,
+    ASSIGNMENT_INPUT_ESTABLISHING, ASSIGNMENT_INPUT_INTENDED, HOST_STORE_POINTER_VERSION,
+    MAX_ESTABLISH_ATTEMPTS,
 };
 
 /// A desktop-shaped store file, plus the pointer that tells this provider
@@ -591,8 +592,16 @@ async fn a_wake_that_races_the_checkout_establishes_the_input_and_opens_once() {
     assert_eq!(head_of(&seat), first);
 
     let mut provider = provider(&state, None);
+    let session_key = format!("seat-{}", Uuid::new_v4());
     let preparation = provider
-        .prepare_assignment_input(&operation_id(), Some(&second), "session-1", &seat)
+        .prepare_assignment_input(
+            &operation_id(),
+            Some(&second),
+            "session-1",
+            &session_key,
+            "wake-1",
+            &seat,
+        )
         .await;
     assert!(
         matches!(preparation, AssignmentInputPreparation::Ready),
@@ -603,7 +612,14 @@ async fn a_wake_that_races_the_checkout_establishes_the_input_and_opens_once() {
 
     // The same wake again: nothing to do, and no second attempt.
     let again = provider
-        .prepare_assignment_input(&operation_id(), Some(&second), "session-1", &seat)
+        .prepare_assignment_input(
+            &operation_id(),
+            Some(&second),
+            "session-1",
+            &session_key,
+            "wake-1",
+            &seat,
+        )
         .await;
     assert!(matches!(again, AssignmentInputPreparation::Ready));
     assert_eq!(
@@ -653,8 +669,16 @@ async fn a_restart_mid_checkout_replays_once_and_then_blocks() {
         .expect("seed the interrupted attempt");
 
     let mut provider = provider(&state, None);
+    let session_key = format!("seat-{}", Uuid::new_v4());
     let finished = provider
-        .prepare_assignment_input(&operation_id(), Some(&second), "session-1", &seat)
+        .prepare_assignment_input(
+            &operation_id(),
+            Some(&second),
+            "session-1",
+            &session_key,
+            "wake-1",
+            &seat,
+        )
         .await;
     assert!(matches!(finished, AssignmentInputPreparation::Ready));
     assert_eq!(head_of(&seat), second);
@@ -679,7 +703,14 @@ async fn a_restart_mid_checkout_replays_once_and_then_blocks() {
         .expect("seed the second interruption");
 
     let blocked = provider
-        .prepare_assignment_input(&operation_id(), Some(&second), "session-1", &seat)
+        .prepare_assignment_input(
+            &operation_id(),
+            Some(&second),
+            "session-1",
+            &session_key,
+            "wake-1",
+            &seat,
+        )
         .await;
     let AssignmentInputPreparation::Blocked(refusal) = blocked else {
         panic!("an abandoned establishment must not open the turn: {blocked:?}");
@@ -719,8 +750,16 @@ async fn a_dirty_seat_is_preserved_blocked_and_told_about_once() {
     std::fs::write(seat.join("wip.txt"), "work nobody else has\n").expect("write");
 
     let mut provider = provider(&state, None);
+    let session_key = format!("seat-{}", Uuid::new_v4());
     let blocked = provider
-        .prepare_assignment_input(&operation_id(), Some(&second), "session-1", &seat)
+        .prepare_assignment_input(
+            &operation_id(),
+            Some(&second),
+            "session-1",
+            &session_key,
+            "wake-1",
+            &seat,
+        )
         .await;
     assert!(
         matches!(blocked, AssignmentInputPreparation::Blocked(_)),
@@ -743,7 +782,14 @@ async fn a_dirty_seat_is_preserved_blocked_and_told_about_once() {
     // A second delivery blocks again — the seat must not start — but the
     // blocker was already claimed, so nobody is told twice.
     let again = provider
-        .prepare_assignment_input(&operation_id(), Some(&second), "session-1", &seat)
+        .prepare_assignment_input(
+            &operation_id(),
+            Some(&second),
+            "session-1",
+            &session_key,
+            "wake-1",
+            &seat,
+        )
         .await;
     assert!(matches!(again, AssignmentInputPreparation::Blocked(_)));
     assert_eq!(
@@ -765,8 +811,16 @@ async fn without_a_host_store_pointer_preparation_is_a_no_op() {
     let (_first, second) = repo_with_two_commits(&seat);
 
     let mut provider = provider(&state, None);
+    let session_key = format!("seat-{}", Uuid::new_v4());
     let preparation = provider
-        .prepare_assignment_input(&operation_id(), Some(&second), "session-1", &seat)
+        .prepare_assignment_input(
+            &operation_id(),
+            Some(&second),
+            "session-1",
+            &session_key,
+            "wake-1",
+            &seat,
+        )
         .await;
     assert!(
         matches!(preparation, AssignmentInputPreparation::Unmanaged),
@@ -786,9 +840,17 @@ async fn an_unnamed_commit_or_a_detached_checkout_prepares_nothing() {
     let (first, second) = repo_with_two_commits(&seat);
 
     let mut provider = provider(&state, None);
+    let session_key = format!("seat-{}", Uuid::new_v4());
     assert!(matches!(
         provider
-            .prepare_assignment_input(&operation_id(), None, "session-1", &seat)
+            .prepare_assignment_input(
+                &operation_id(),
+                None,
+                "session-1",
+                &session_key,
+                "wake-1",
+                &seat,
+            )
             .await,
         AssignmentInputPreparation::Unmanaged
     ));
@@ -796,7 +858,14 @@ async fn an_unnamed_commit_or_a_detached_checkout_prepares_nothing() {
     git(&seat, &["checkout", "-q", "--detach", &first]);
     assert!(matches!(
         provider
-            .prepare_assignment_input(&operation_id(), Some(&second), "session-1", &seat)
+            .prepare_assignment_input(
+                &operation_id(),
+                Some(&second),
+                "session-1",
+                &session_key,
+                "wake-1",
+                &seat,
+            )
             .await,
         AssignmentInputPreparation::Unmanaged
     ));
@@ -821,4 +890,210 @@ fn the_blocker_carries_gits_words_without_carrying_its_control_characters() {
         "fatal: could not read Username for 'https://example.invalid'"
     );
     assert!(crate::verification_input::bounded_git_words(&"x".repeat(4096)).len() <= 512);
+}
+
+// ------------------------------- custody and deferral (lane 212, review 2–4)
+
+/// A seat with a turn in flight is not prepared for its next assignment: its
+/// tree is not anybody else's to move while it is being used (finding 2).
+#[tokio::test]
+async fn a_busy_seat_defers_its_next_assignment_instead_of_moving_its_tree() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let state = dir.path().join("state");
+    let store_path = host_store(&state, dir.path());
+    let seat = dir.path().join("seat");
+    std::fs::create_dir_all(&seat).expect("seat");
+    let (first, second) = repo_with_two_commits(&seat);
+    git(&seat, &["checkout", "-q", "-B", "seat/verifier", &first]);
+
+    let mut provider = provider(&state, None);
+    let session_key = format!("seat-{}", Uuid::new_v4());
+    let session_key = format!("seat-{}", Uuid::new_v4());
+    // The seat's own turn holds custody, exactly as the actor's dequeue does.
+    let running = crate::assignment_custody::hold(&session_key).await;
+
+    let preparation = provider
+        .prepare_assignment_input(
+            &operation_id(),
+            Some(&second),
+            "session-1",
+            &session_key,
+            "wake-1",
+            &seat,
+        )
+        .await;
+    assert!(
+        matches!(
+            preparation,
+            AssignmentInputPreparation::Deferred("seat_busy")
+        ),
+        "a running seat's tree is not prepared underneath it: {preparation:?}"
+    );
+    assert_eq!(head_of(&seat), first, "nothing moved during the turn");
+    assert_eq!(
+        records_of(&store_path)[operation_id()]["outcome"],
+        ASSIGNMENT_INPUT_INTENDED,
+        "the intent is recorded and owed, not attempted"
+    );
+
+    // The turn ends; the same wake now establishes and is ready.
+    drop(running);
+    let preparation = provider
+        .prepare_assignment_input(
+            &operation_id(),
+            Some(&second),
+            "session-1",
+            &session_key,
+            "wake-1",
+            &seat,
+        )
+        .await;
+    assert!(
+        matches!(preparation, AssignmentInputPreparation::Ready),
+        "{preparation:?}"
+    );
+    assert_eq!(head_of(&seat), second);
+}
+
+/// A wake held for an unestablished input clamps its channel's watermark, so a
+/// newer event on that channel cannot move the floor past it (finding 4).
+#[tokio::test]
+async fn a_held_wake_stops_a_newer_event_moving_the_floor_past_it() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let state = dir.path().join("state");
+    crate::deferred_turns::forget_mirror();
+    let provider = provider(&state, None);
+    let channel = Uuid::new_v4();
+    assert_eq!(provider.watermark_ceiling(channel), None);
+
+    crate::deferred_turns::defer(
+        &state,
+        crate::deferred_turns::DeferredTurn {
+            command_id: "wake-1".to_owned(),
+            channel_id: channel,
+            created_at: 1_700_000_100,
+            operator_pubkey: "ab".repeat(32),
+            event_id: "cd".repeat(32),
+            target: CodingSessionTarget {
+                driver: "claude".to_owned(),
+                instance_id: "instance".to_owned(),
+                session_id: "seat-1".to_owned(),
+                generation: 1,
+            },
+            text: assignment_pointer(&operation_id()),
+            attachments: Vec::new(),
+            deliver: buzz_core::coding_session_command::CodingSessionDelivery::Boundary,
+            operation_key: None,
+            assignment_ref: operation_id(),
+            reason: "establishment_in_flight".to_owned(),
+            deferred_at: "2026-09-21T00:00:00Z".to_owned(),
+        },
+    );
+    assert_eq!(
+        provider.watermark_ceiling(channel),
+        Some(1_700_000_100),
+        "a newer event marks the floor at the held wake, not past it"
+    );
+    // And it survives this process: the ceiling is read from the file, not
+    // from a map that dies with the run.
+    crate::deferred_turns::forget_mirror();
+    assert_eq!(provider.watermark_ceiling(channel), Some(1_700_000_100));
+}
+
+/// The release side: a held wake is decided by the provider's own pass, with
+/// nobody sending a second command, and it is released exactly once.
+#[tokio::test]
+async fn a_held_wake_is_decided_by_the_next_pass_and_released_once() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let state = dir.path().join("state");
+    crate::deferred_turns::forget_mirror();
+    let mut provider = provider(&state, None);
+    let session_key = format!("seat-{}", Uuid::new_v4());
+    let channel = Uuid::new_v4();
+    // A target this provider runs no execution for: its decision is an
+    // ordinary answer rather than a deferral, which is all this case needs —
+    // what is under test is that the pass decides a held wake at all and then
+    // stops holding it.
+    crate::deferred_turns::defer(
+        &state,
+        crate::deferred_turns::DeferredTurn {
+            command_id: "wake-1".to_owned(),
+            channel_id: channel,
+            created_at: now_secs(),
+            operator_pubkey: "ab".repeat(32),
+            event_id: "cd".repeat(32),
+            target: CodingSessionTarget {
+                driver: "claude".to_owned(),
+                instance_id: provider.config.instance_id.clone(),
+                session_id: "no-such-seat".to_owned(),
+                generation: 1,
+            },
+            text: assignment_pointer(&operation_id()),
+            attachments: Vec::new(),
+            deliver: buzz_core::coding_session_command::CodingSessionDelivery::Boundary,
+            operation_key: None,
+            assignment_ref: operation_id(),
+            reason: "establishment_in_flight".to_owned(),
+            deferred_at: "2026-09-21T00:00:00Z".to_owned(),
+        },
+    );
+    assert_eq!(crate::deferred_turns::held(&state).len(), 1);
+
+    provider.release_deferred_turns().await;
+    assert!(
+        crate::deferred_turns::held(&state).is_empty(),
+        "a decided wake stops being held"
+    );
+    assert_eq!(
+        provider.watermark_ceiling(channel),
+        None,
+        "and stops clamping the floor"
+    );
+
+    // Idempotent: a second pass has nothing to decide and publishes nothing.
+    provider.release_deferred_turns().await;
+    assert!(crate::deferred_turns::held(&state).is_empty());
+}
+
+/// A held wake whose seat is mid-turn is left alone by the release pass: the
+/// ordering the control run needs is oldest-first, one seat at a time.
+#[tokio::test]
+async fn the_release_pass_leaves_a_busy_seats_wake_held() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let state = dir.path().join("state");
+    crate::deferred_turns::forget_mirror();
+    let mut provider = provider(&state, None);
+    let session_key = format!("seat-{}", Uuid::new_v4());
+    let session_key = format!("seat-{}", Uuid::new_v4());
+    crate::deferred_turns::defer(
+        &state,
+        crate::deferred_turns::DeferredTurn {
+            command_id: "wake-1".to_owned(),
+            channel_id: Uuid::new_v4(),
+            created_at: now_secs(),
+            operator_pubkey: "ab".repeat(32),
+            event_id: "cd".repeat(32),
+            target: CodingSessionTarget {
+                driver: "claude".to_owned(),
+                instance_id: provider.config.instance_id.clone(),
+                session_id: session_key.clone(),
+                generation: 1,
+            },
+            text: assignment_pointer(&operation_id()),
+            attachments: Vec::new(),
+            deliver: buzz_core::coding_session_command::CodingSessionDelivery::Boundary,
+            operation_key: None,
+            assignment_ref: operation_id(),
+            reason: "seat_busy".to_owned(),
+            deferred_at: "2026-09-21T00:00:00Z".to_owned(),
+        },
+    );
+    let running = crate::assignment_custody::hold(&session_key).await;
+    provider.release_deferred_turns().await;
+    assert_eq!(
+        crate::deferred_turns::held(&state).len(),
+        1,
+        "a wake whose seat is mid-turn waits for the seat, not for a person"
+    );
+    drop(running);
 }

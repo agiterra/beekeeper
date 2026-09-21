@@ -39,6 +39,8 @@ pub mod agents_checkout;
 // The durable host-owned queue that puts a seat on its exact input (lane 185,
 // moved here by lane 202 so the party holding the turn gate owns the order).
 mod artifact_upload;
+// Who may move a seat's checkout, and when (lane 212, review finding 2).
+pub mod assignment_custody;
 pub mod assignment_inputs;
 pub mod attachments;
 pub mod authority;
@@ -48,9 +50,11 @@ pub mod ci_continuation_store;
 pub mod ci_result_listener;
 pub mod commands;
 pub mod config;
+// Assignment wakes held until their seat's input settles (review finding 4).
 pub mod context_projector;
 mod context_store;
 mod context_window;
+pub mod deferred_turns;
 mod gate_cwd;
 mod gate_observer;
 mod git_exclude;
@@ -573,6 +577,9 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
                 if let Err(error) = provider.run_one_team_wake_tick(&publisher).await {
                     tracing::warn!(target: "csp::team_wake", "team wake processing failed: {error}");
                 }
+                // The release side of a deferred assignment wake: a fetch that
+                // finished since the last tick opens its turn here, unaided.
+                provider.release_deferred_turns().await;
                 if let Err(error) = provider.run_ci_continuation_tick().await {
                     tracing::warn!(target: "csp::ci", "CI continuation processing failed: {error}");
                 }
@@ -1680,6 +1687,20 @@ impl Provider {
                     command.host_answer,
                 )
                 .await;
+            if let Ok(TurnDisposition::Undecided) = delivered {
+                // Nothing was written for this command and nothing was
+                // published, so the floor must not move past it — the same
+                // rule the live path has always applied, which this path did
+                // not (review finding 4). A deferred wake also has a durable
+                // owner now, so the floor is clamped across a restart as
+                // well; this keeps it clamped within one.
+                tracing::debug!(
+                    target: "csp::deferred_turns",
+                    command_id = %command.event_id,
+                    "a replayed command is undecided; leaving this channel's floor where it is"
+                );
+                continue;
+            }
             if let Err(error) = delivered {
                 // Back it goes with the rest — but not because it "never
                 // reached a mailbox": `on_turn` can fail *after*
@@ -4671,8 +4692,13 @@ impl Provider {
                 .verification_input_outcome(target, command_id, text)
                 .await
             {
-                verification_input::TurnInput::Open => {}
+                verification_input::TurnInput::Open => {
+                    // Decided: this command is nobody's to hold any more.
+                    deferred_turns::release(&self.config.state_dir, command_id);
+                }
                 verification_input::TurnInput::Refused(refusal) => {
+                    deferred_turns::release(&self.config.state_dir, command_id);
+                    assignment_custody::forget_requirement(&target.session_id, command_id);
                     let receipt = LifecycleReceipt::turn_refused(
                         command_id,
                         target,
@@ -4694,6 +4720,36 @@ impl Provider {
                     return Ok(TurnDisposition::Answered(refusal.code.to_owned()));
                 }
                 verification_input::TurnInput::Deferred(reason) => {
+                    // Durable, and owned. Before this the command was simply
+                    // dropped on the floor with its watermark unmoved, and
+                    // nothing ever brought it back (review finding 4).
+                    if let TurnDecision::Start {
+                        attachments,
+                        deliver,
+                        operation_key,
+                        ..
+                    } = &decision
+                    {
+                        deferred_turns::defer(
+                            &self.config.state_dir,
+                            deferred_turns::DeferredTurn {
+                                command_id: command_id.clone(),
+                                channel_id,
+                                created_at,
+                                operator_pubkey: operator_pubkey.to_owned(),
+                                event_id: registration_event_id.to_owned(),
+                                target: target.clone(),
+                                text: text.clone(),
+                                attachments: attachments.clone(),
+                                deliver: *deliver,
+                                operation_key: operation_key.clone(),
+                                assignment_ref: verification_input::assignment_pointer(text)
+                                    .unwrap_or_default(),
+                                reason: reason.to_owned(),
+                                deferred_at: chrono::Utc::now().to_rfc3339(),
+                            },
+                        );
+                    }
                     // The wake is not wrong, it is early. Nothing durable and
                     // nothing published: this provider owes the seat's tree an
                     // establishment, that work is recorded in the host store,
@@ -6063,16 +6119,23 @@ impl Provider {
     /// in-memory matcher (`crates/buzz-core/src/filter.rs:53-55`), so a
     /// watermark equal to a command's `created_at` still replays that command.
     fn watermark_ceiling(&self, channel_id: Uuid) -> Option<u64> {
-        self.in_flight
-            .values()
-            .filter(|turn| turn.channel_id == channel_id)
-            .map(|turn| turn.created_at)
+        // A wake held for an unestablished input is owed exactly as much as
+        // one sitting in a mailbox, and it outlives this process, so the floor
+        // may not pass it either (review finding 4).
+        deferred_turns::floor_for_channel(&self.config.state_dir, channel_id)
+            .into_iter()
             .chain(
-                self.replay
-                    .held
-                    .iter()
-                    .filter(|held| held.channel_id == channel_id)
-                    .map(|held| held.created_at),
+                self.in_flight
+                    .values()
+                    .filter(|turn| turn.channel_id == channel_id)
+                    .map(|turn| turn.created_at)
+                    .chain(
+                        self.replay
+                            .held
+                            .iter()
+                            .filter(|held| held.channel_id == channel_id)
+                            .map(|held| held.created_at),
+                    ),
             )
             .min()
     }
@@ -7800,6 +7863,8 @@ impl Provider {
                     &assignment_ref,
                     base_sha.as_deref(),
                     &scope.session_ref,
+                    &target.session_id,
+                    command_id,
                     cwd,
                 )
                 .await
@@ -7960,9 +8025,9 @@ impl Provider {
                 for (intent, checkout) in intents.iter().zip(checkouts.iter()) {
                     crate::assignment_inputs::queue_intent(records, intent, checkout.as_ref());
                 }
-                persist(records);
+                persist(records)
             });
-            if let Err(error) = outcome {
+            if let Err(error) = outcome.and_then(std::convert::identity) {
                 tracing::warn!(
                     target: "csp::verification_input",
                     %error,
@@ -7997,6 +8062,77 @@ impl Provider {
         })
     }
 
+    /// Decide every held wake whose seat can now be prepared, oldest first.
+    ///
+    /// The release side of the durable deferral (review finding 4). It runs on
+    /// the ordinary tick, so a fetch that finishes at 130 seconds is followed
+    /// by the turn opening on its own — no reconnect, and no second command
+    /// from a lead or a person. One wake per seat per pass, oldest first,
+    /// because a later assignment must not be prepared before an earlier one
+    /// that is still waiting for the same tree (review finding 2).
+    ///
+    /// A wake whose decision comes back undecided again is simply left where
+    /// it is: the record on disk is unchanged, and the next tick asks again.
+    pub async fn release_deferred_turns(&mut self) {
+        let held = deferred_turns::held(&self.config.state_dir);
+        let mut seats_served: HashSet<String> = HashSet::new();
+        for turn in held {
+            if !seats_served.insert(turn.target.session_id.clone()) {
+                continue;
+            }
+            if assignment_custody::is_busy(&turn.target.session_id) {
+                // Its seat is mid-turn; the tree is not anybody's to move and
+                // the wake keeps waiting.
+                continue;
+            }
+            let decision = TurnDecision::Start {
+                command_id: turn.command_id.clone(),
+                target: turn.target.clone(),
+                text: turn.text.clone(),
+                attachments: turn.attachments.clone(),
+                deliver: turn.deliver,
+                operation_key: turn.operation_key.clone(),
+            };
+            let disposition = self
+                .apply_turn_decision(
+                    turn.channel_id,
+                    turn.created_at,
+                    &turn.operator_pubkey,
+                    &turn.event_id,
+                    decision,
+                )
+                .await;
+            match disposition {
+                Ok(TurnDisposition::Undecided) => {
+                    tracing::debug!(
+                        target: "csp::deferred_turns",
+                        command_id = %turn.command_id,
+                        "a held wake is still waiting for its seat's input"
+                    );
+                }
+                Ok(other) => {
+                    tracing::info!(
+                        target: "csp::deferred_turns",
+                        command_id = %turn.command_id,
+                        assignment_ref = %turn.assignment_ref,
+                        disposition = ?other,
+                        code = "deferred_turn_released",
+                        "a held assignment wake was decided once its input settled"
+                    );
+                    deferred_turns::release(&self.config.state_dir, &turn.command_id);
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        target: "csp::deferred_turns",
+                        command_id = %turn.command_id,
+                        %error,
+                        "a held assignment wake could not be decided; it stays held"
+                    );
+                }
+            }
+        }
+    }
+
     /// Put this seat's tree on the commit its assignment names, or say why
     /// not.
     ///
@@ -8019,6 +8155,8 @@ impl Provider {
         assignment_ref: &str,
         base_sha: Option<&str>,
         session_ref: &str,
+        session_id_key: &str,
+        command_id: &str,
         cwd: &Path,
     ) -> AssignmentInputPreparation {
         use crate::assignment_inputs as inputs;
@@ -8067,47 +8205,53 @@ impl Provider {
             tokio::task::spawn_blocking(move || {
                 store.with_records(|records, persist| {
                     inputs::queue_intent(records, &intent, Some(&checkout));
-                    persist(records);
-                    inputs::assignment_input(records, &assignment_id).cloned()
+                    persist(records)
+                        .map(|()| inputs::assignment_input(records, &assignment_id).cloned())
                 })
             })
             .await
         };
         let record = match queued {
-            Ok(Ok(Some(record))) => record,
-            Ok(Ok(None)) => return AssignmentInputPreparation::Unmanaged,
-            Ok(Err(error)) => {
-                tracing::warn!(
+            Ok(Ok(Ok(Some(record)))) => record,
+            Ok(Ok(Ok(None))) => return AssignmentInputPreparation::Unmanaged,
+            Ok(Ok(Err(error))) | Ok(Err(error)) => {
+                // Finding 12: a record that did not reach the disk bounds
+                // nothing, so nothing is established on the strength of it.
+                tracing::error!(
                     target: "csp::verification_input",
                     %error,
-                    "the host's assignment-input record could not be read; leaving the fence to \
-                     measure the tree"
+                    "the assignment-input record could not be saved; nothing was established"
                 );
-                return AssignmentInputPreparation::Unmanaged;
+                return AssignmentInputPreparation::Deferred("intent_unsaved");
             }
             Err(error) => {
                 tracing::warn!(target: "csp::verification_input", %error, "recording the assignment input panicked");
                 return AssignmentInputPreparation::Unmanaged;
             }
         };
+        let requirement = assignment_custody::TurnRequirement {
+            assignment_ref: assignment_ref.to_owned(),
+            base_sha: base_sha.to_owned(),
+            cwd: cwd.to_path_buf(),
+            store: store.clone(),
+            branch: checkout.branch.clone(),
+        };
         if record.is_established() && record.commit.as_deref() == Some(base_sha) {
+            // The tree holds it now; the actor re-reads it under custody
+            // before the prompt goes out, because "now" is not "when the
+            // prompt is sent" (review finding 2).
+            assignment_custody::remember_requirement(session_id_key, command_id, requirement);
             return AssignmentInputPreparation::Ready;
         }
         if record.is_pending() {
-            let settled = {
-                let store = store.clone();
-                let assignment_id = assignment_id.clone();
-                let checkout = checkout.clone();
-                tokio::time::timeout(
-                    ASSIGNMENT_INPUT_ESTABLISH_BOUND,
-                    tokio::task::spawn_blocking(move || {
-                        inputs::establish_recorded_assignment(&store, &assignment_id, &checkout)
-                    }),
-                )
-                .await
-            };
-            match settled {
-                Ok(Ok(Ok(settled))) => {
+            match assignment_custody::establish_for_turn(
+                session_id_key,
+                &requirement,
+                ASSIGNMENT_INPUT_ESTABLISH_BOUND,
+            )
+            .await
+            {
+                assignment_custody::Establishment::Settled(settled) => {
                     if settled.is_established() && settled.commit.as_deref() == Some(base_sha) {
                         tracing::info!(
                             target: "csp::verification_input",
@@ -8116,23 +8260,29 @@ impl Provider {
                             code = "assignment_input_established",
                             "this computer established the assignment's input before the turn"
                         );
+                        assignment_custody::remember_requirement(
+                            session_id_key,
+                            command_id,
+                            requirement,
+                        );
                         return AssignmentInputPreparation::Ready;
                     }
                     return self.block_on_establishment(&store, assignment_ref, &settled);
                 }
-                Ok(Ok(Err(error))) => {
-                    tracing::warn!(target: "csp::verification_input", %error, "the establishment could not be recorded");
-                    return AssignmentInputPreparation::Deferred("establishment_unrecorded");
+                assignment_custody::Establishment::SeatBusy => {
+                    // The seat is mid-turn. Its tree does not move for
+                    // anybody until that turn ends, and this wake waits
+                    // durably rather than being spent (review finding 2).
+                    return AssignmentInputPreparation::Deferred("seat_busy");
                 }
-                Ok(Err(error)) => {
-                    tracing::warn!(target: "csp::verification_input", %error, "the establishment task did not finish");
-                    return AssignmentInputPreparation::Deferred("establishment_interrupted");
-                }
-                Err(_) => {
-                    // Still running, or waiting on the lock another writer
-                    // holds. The record says `establishing`, so nothing is
-                    // lost and nothing is repeated.
+                assignment_custody::Establishment::InFlight(_) => {
+                    // A live attempt, not an interrupted one: stop waiting,
+                    // keep the wake (review finding 3).
                     return AssignmentInputPreparation::Deferred("establishment_in_flight");
+                }
+                assignment_custody::Establishment::Unstarted(error) => {
+                    tracing::warn!(target: "csp::verification_input", %error, "nothing was established");
+                    return AssignmentInputPreparation::Deferred("establishment_unstarted");
                 }
             }
         }
