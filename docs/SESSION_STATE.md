@@ -18648,6 +18648,99 @@ removed from here.
        The Overview card's missing caveat, the `web/` reader, the mobile
        archived-versus-closed distinction and the desktop's missing strict
        hire reader are all recorded above and owned by no lane yet.
+217. **Item 208's fix was incomplete, `PairingNotifier` leaks its session
+     timeout past disposal, and two of the four files named as flaky on
+     2026-09-21 were named by a reporter artefact, not by failing.**
+     Four mobile test files were reported as passing alone and failing
+     intermittently in the full `flutter test` run. Three full baseline runs
+     on `work/lane-208-mobile-flake` (c6143d130) gave 2101/2101, then
+     2100/2101 twice. In both red runs the *only* test that actually failed
+     was `mobile/test/features/project_todos/state/project_todos_provider_test.dart:125`
+     — neither run contained an `[E]` block for any other file
+     (`grep -oE '/[^ ]*_test\.dart: .*\[E\]$'` over both logs returns that
+     one test and nothing else).
+     - **Cause per file.**
+       - `shell_observer_provider_test.dart` — real. Item 208 virtualised the
+         two keepalive tests and left the other twelve on real time, where
+         `_settle()`'s six `Future.delayed(Duration.zero)` turns race the
+         provider's real 60 ms handshake `Timer`
+         (`shell_observer_provider.dart:337`, armed from the harness's
+         `ShellObserverConfig(handshake: 60ms)`). When a starved isolate makes
+         those six turns take longer than 60 ms, `status` flips from
+         `connecting` to `stalled` under tests that never asked about the
+         handshake. Proved by making each `_settle` round take 20 ms:
+         "subscribes to the owner's frames and publishes a watch" and
+         "another member's frame … is ignored" both failed with
+         `Expected: connecting / Actual: stalled`. Fixed by virtualising the
+         file: `_fakeTest` wraps every test in `fakeAsync`, `_settle(async)`
+         calls `async.elapse(Duration.zero)` (drains microtasks and
+         zero-delay timers without moving the clock), and `_finish(async, …)`
+         replaces the five awaited `sendLine`/`sendInput` calls. With the
+         same 20 ms-per-round starvation injected afterwards the file is
+         14/14 — the configured timers cannot fire at all now.
+       - `profile_provider_test.dart` — real, same shape as 208. Both
+         `heartbeat` tests awaited a real `Future.delayed(120ms)` and
+         asserted `beats.length >= 2` against a 20 ms `Timer.periodic`
+         (`profile_provider.dart:127`) whose first beat is randomly phased
+         inside the period (`_startHeartbeat` → `phaseOffset(…, random:
+         Random().nextDouble())`). Fixed with `fakeAsync` +
+         `async.elapse(120ms)`; the `SharedPreferences` load stays outside
+         the fake zone and `_resolve(async, …)` resolves the provider's
+         future in virtual time.
+       - `pairing_provider_test.dart` — real, and a **product defect**.
+         `PairingNotifier` arms `_sessionTimeout = Timer(120s)`
+         (`pairing_provider.dart:446` after this change) and only
+         `_cleanup()` cancels it, but
+         the notifier registered no `ref.onDispose`, so `container.dispose()`
+         in the test's `tearDown` left both the timer and the `PairingSocket`
+         alive. When the timer later fires it writes `state` on a disposed
+         `Ref` and throws `Cannot use the Ref of NotifierProvider<…> after it
+         has been disposed`, failing whatever test is running then ("This
+         test failed after it had already completed"). The file runs in ~16 s
+         alone, so the 120 s window never closes solo; under full-suite
+         contention it can. Proved by narrowing the product timeout to 200 ms
+         in a scratch edit: the file went from 34/34 to **21 passed, 13
+         failed** with exactly that Ref error, and back to 34/34 once
+         `build()` registered `ref.onDispose(_cleanup)` — the same 200 ms
+         patch, the fix as the only difference. Timeout restored to 120 s;
+         the one-line product change is the fix and it closes a real leak
+         (a disposed pairing provider used to keep a live timer and an open
+         WebSocket).
+       - `keyboard_dismiss_on_drag_test.dart` — **not reproduced, and no
+         real-time dependence found.** Every test is `testWidgets`, which
+         already runs in the binding's fake-async zone; the file has no real
+         `Future.delayed`, no `Timer`, no wall-clock read, and
+         `KeyboardDismissOnDrag` itself only reads `View.of(context)
+         .viewInsets` inside a notification callback. 20/20 under 14 CPU
+         burners. It was almost certainly named because of the next item.
+     - **`--reporter expanded` smears the failure count across unrelated
+       files.** Once any test fails, every subsequent progress line in the
+       run carries the `-1` counter — including lines naming other files
+       entirely. In baseline run 2 the `-1` rides lines for
+       `community_theme_provider_test.dart`, `keyboard_dismiss_on_drag_test.dart`
+       and `shell_observer_provider_test.dart` while the only failing test is
+       in `project_todos_provider_test.dart`. Reading "file X flaked" off a
+       `-1` line is wrong; the `[E]` block is the only thing that names a
+       failure. This is the trap immediately after the one item 208 fixed,
+       and `scripts/mobile-test-failure-summary.mjs` (which parses `[E]`) is
+       the right reader.
+     - **Loop evidence, after the fixes.** Each changed file 20 runs under
+       12 CPU burners on a 10-core machine: `pairing_provider_test` 20/20,
+       `profile_provider_test` 20/20, `shell_observer_provider_test` 20/20.
+       `keyboard_dismiss_on_drag_test` (unchanged) 20/20 under 14 burners.
+       Then three unloaded full `flutter test` runs: **2101/2101, 2101/2101,
+       2101/2101** (`/tmp/l217/after/full-{1,2,3}.log`, and the per-file
+       loops beside them). No retries, no skips, no widened timeouts: the
+       only durations touched were replaced by virtual ones.
+     - **Still open, not this lane's file:**
+       `project_todos_provider_test.dart:125` asserts
+       `live.since! >= before - 900 - 5`, a five-second wall-clock tolerance
+       between the test's own `DateTime.now()` (line 105) and the provider's;
+       it is the one test that actually reddened 2 of 3 baseline full runs.
+       It did not recur in this lane's three green full runs, so it is still
+       a live flake rather than a fixed one. Needs a lane, and an injected
+       clock rather than a wider tolerance — it is outside this lane's file
+       ownership and was deliberately not touched.
 
 ## 3a. Environment facts that cost real time (do not rediscover)
 

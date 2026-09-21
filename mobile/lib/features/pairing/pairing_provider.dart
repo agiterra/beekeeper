@@ -118,7 +118,15 @@ class PairingNotifier extends Notifier<PairingState> {
   );
 
   @override
-  PairingState build() => const PairingState();
+  PairingState build() {
+    // A pairing session owns a 120 s timeout timer and a WebSocket. Without
+    // this, disposing the provider mid-session left both alive: the timer
+    // later wrote `state` on a disposed Ref (a thrown
+    // "Cannot use the Ref ... after it has been disposed") and the socket
+    // stayed open. Item 217.
+    ref.onDispose(_cleanup);
+    return const PairingState();
+  }
 
   Future<void> pair(String rawInput) async {
     if (state.status == PairingStatus.connecting ||

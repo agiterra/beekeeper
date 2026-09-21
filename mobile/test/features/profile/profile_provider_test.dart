@@ -2,6 +2,7 @@ import 'package:buzz/features/profile/profile_provider.dart';
 import 'package:buzz/features/profile/user_profile.dart';
 import 'package:buzz/shared/relay/relay.dart';
 import 'package:buzz/shared/theme/theme.dart';
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -69,48 +70,84 @@ void main() {
       SharedPreferences.setMockInitialValues({});
       final prefs = await SharedPreferences.getInstance();
       final relay = RecordingRelaySessionNotifier();
-      final container = _buildHeartbeatContainer(prefs, relay);
-      addTearDown(container.dispose);
+      fakeAsync((async) {
+        final container = _buildHeartbeatContainer(prefs, relay);
+        addTearDown(container.dispose);
 
-      expect(await container.read(presenceProvider.future), 'online');
-      // The status change itself is a publish the notifier waits on.
-      expect(relay.published.map((event) => event.kind), [20001]);
-      expect(relay.published.single.content, 'online');
+        expect(
+          _resolve(async, container.read(presenceProvider.future)),
+          'online',
+        );
+        // The status change itself is a publish the notifier waits on.
+        expect(relay.published.map((event) => event.kind), [20001]);
+        expect(relay.published.single.content, 'online');
 
-      await Future<void>.delayed(const Duration(milliseconds: 120));
-      final beats = relay.ephemeralEvents;
-      expect(beats.length, greaterThanOrEqualTo(2));
-      for (final beat in beats) {
-        expect(beat.kind, EventKind.presenceUpdate);
-        expect(beat.content, 'online');
-        expect(beat.sig, isNotEmpty);
-      }
-      expect(relay.published, hasLength(1), reason: 'no beat is a publish');
+        async.elapse(const Duration(milliseconds: 120));
+        final beats = relay.ephemeralEvents;
+        expect(beats.length, greaterThanOrEqualTo(2));
+        for (final beat in beats) {
+          expect(beat.kind, EventKind.presenceUpdate);
+          expect(beat.content, 'online');
+          expect(beat.sig, isNotEmpty);
+        }
+        expect(relay.published, hasLength(1), reason: 'no beat is a publish');
 
-      // Under the gate or a thin write lane the transport answers false and
-      // sends nothing; the notifier must not fall back to a publish.
-      relay.acceptEphemeral = false;
-      final offered = relay.ephemeralEvents.length;
-      await Future<void>.delayed(const Duration(milliseconds: 80));
-      expect(relay.ephemeralEvents.length, greaterThan(offered));
-      expect(relay.published, hasLength(1));
+        // Under the gate or a thin write lane the transport answers false and
+        // sends nothing; the notifier must not fall back to a publish.
+        relay.acceptEphemeral = false;
+        final offered = relay.ephemeralEvents.length;
+        async.elapse(const Duration(milliseconds: 80));
+        expect(relay.ephemeralEvents.length, greaterThan(offered));
+        expect(relay.published, hasLength(1));
+      });
     });
 
     test('no beat while the session is not connected', () async {
       SharedPreferences.setMockInitialValues({});
       final prefs = await SharedPreferences.getInstance();
       final relay = RecordingRelaySessionNotifier();
-      final container = _buildHeartbeatContainer(prefs, relay);
-      addTearDown(container.dispose);
+      fakeAsync((async) {
+        final container = _buildHeartbeatContainer(prefs, relay);
+        addTearDown(container.dispose);
 
-      expect(await container.read(presenceProvider.future), 'online');
-      relay.setConnected(false);
-      await Future<void>.delayed(const Duration(milliseconds: 120));
+        expect(
+          _resolve(async, container.read(presenceProvider.future)),
+          'online',
+        );
+        relay.setConnected(false);
+        async.elapse(const Duration(milliseconds: 120));
 
-      expect(relay.ephemeralEvents, isEmpty);
-      expect(relay.published, hasLength(1));
+        expect(relay.ephemeralEvents, isEmpty);
+        expect(relay.published, hasLength(1));
+      });
     });
   });
+}
+
+/// Resolves [work] in virtual time and returns its value.
+///
+/// Both heartbeat tests run inside [fakeAsync] because the beat they assert
+/// on is a 20 ms `Timer.periodic` (`_buildHeartbeatContainer`) whose first
+/// beat is a randomly phased `Timer` (`PresenceNotifier._startHeartbeat`).
+/// Waiting on it with a real `Future.delayed(120ms)` is a race the wall
+/// clock decides — the same shape as the keepalive race in ledger item 208,
+/// and one the full mobile suite's starved isolates lose. `async.elapse`
+/// fires those timers deterministically; nothing on this path reads a raw
+/// `DateTime.now()`, so virtual time is enough. Item 217.
+T _resolve<T>(FakeAsync async, Future<T> work, {int rounds = 6}) {
+  late T value;
+  var done = false;
+  Object? failure;
+  work.then<void>((result) {
+    value = result;
+    done = true;
+  }, onError: (Object error) => failure = error);
+  for (var i = 0; i < rounds; i++) {
+    async.elapse(Duration.zero);
+  }
+  if (failure != null) throw failure!;
+  expect(done, isTrue, reason: 'the future never completed in virtual time');
+  return value;
 }
 
 ProviderContainer _buildHeartbeatContainer(

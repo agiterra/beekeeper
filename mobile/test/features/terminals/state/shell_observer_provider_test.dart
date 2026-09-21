@@ -81,10 +81,38 @@ class _FakeConfig extends RelayConfigNotifier {
       RelayConfig(baseUrl: 'https://relay.example', nsec: nsec);
 }
 
-Future<void> _settle([int rounds = 6]) async {
+/// Runs [body] in virtual time (`package:fake_async`).
+///
+/// The observer arms real `Timer`s from [ShellObserverConfig] — a 40 ms
+/// keepalive, a 60 ms handshake, a 1 s liveness sweep — so on real time
+/// every assertion here races the wall clock. `_settle`'s event-loop turns
+/// are not free: on a starved isolate (the full mobile suite runs many test
+/// files at once) six of them can outlast the 60 ms handshake, which flips
+/// `status` from `connecting` to `stalled` underneath a test that never
+/// asked about the handshake at all. Item 208 virtualised only the two
+/// keepalive tests; item 217 virtualises the file.
+void _fakeTest(String description, void Function(FakeAsync async) body) =>
+    test(description, () => fakeAsync(body));
+
+/// Drains microtasks and zero-delay timers without moving the clock, so no
+/// configured timer can fire early. The virtual-time `await _settle()`.
+void _settle(FakeAsync async, [int rounds = 6]) {
   for (var i = 0; i < rounds; i++) {
-    await Future<void>.delayed(Duration.zero);
+    async.elapse(Duration.zero);
   }
+}
+
+/// Runs [work] to completion in virtual time — the virtual-time `await`.
+void _finish(FakeAsync async, Future<void> work, {int rounds = 6}) {
+  var done = false;
+  Object? failure;
+  work.then<void>(
+    (_) => done = true,
+    onError: (Object error) => failure = error,
+  );
+  _settle(async, rounds);
+  if (failure != null) throw failure!;
+  expect(done, isTrue, reason: 'the future never completed in virtual time');
 }
 
 ({
@@ -122,14 +150,14 @@ Map<String, dynamic> _watchContent(NostrEvent event) =>
 
 void main() {
   inputTests();
-  test('subscribes to the owner\'s frames and publishes a watch', () async {
+  _fakeTest('subscribes to the owner\'s frames and publishes a watch', (async) {
     final h = _harness();
     final listener = h.container.listen(
       shellObserverProvider(target),
       (_, _) {},
     );
     addTearDown(listener.close);
-    await _settle();
+    _settle(async);
 
     expect(h.relay.operations.first, 'subscribe');
     final filter = h.relay.liveFilters.single;
@@ -153,50 +181,53 @@ void main() {
     );
   });
 
-  test('frames become writes: a snap resizes and paints, a diff appends, an '
-      'end ends', () async {
+  _fakeTest(
+    'frames become writes: a snap resizes and paints, a diff appends, an '
+    'end ends',
+    (async) {
+      final h = _harness();
+      final notifier = h.container.read(shellObserverProvider(target).notifier);
+      final writes = <ShellTerminalWrite>[];
+      final sub = notifier.writes.listen(writes.add);
+      addTearDown(sub.cancel);
+      final listener = h.container.listen(
+        shellObserverProvider(target),
+        (_, _) {},
+      );
+      addTearDown(listener.close);
+      _settle(async);
+
+      h.relay.emit(_frame(type: 'snap', seq: 1, dims: '24x80', text: 'one'));
+      h.relay.emit(_frame(type: 'diff', seq: 2, text: 'two'));
+      _settle(async);
+
+      // A snap with dims is two writes: the grid, then the bytes.
+      expect(writes.map((w) => w.resize?.cols), [80, null, null]);
+      expect(writes.map((w) => w.text), [null, 'one', 'two']);
+      final state = h.container.read(shellObserverProvider(target));
+      expect(state.status, ShellObserverStatus.live);
+      expect(state.framesApplied, 2);
+
+      h.relay.emit(_frame(type: 'end', seq: 3));
+      _settle(async);
+      expect(
+        h.container.read(shellObserverProvider(target)).status,
+        ShellObserverStatus.ended,
+      );
+    },
+  );
+
+  _fakeTest('a seq gap asks the owner for a resync', (async) {
     final h = _harness();
-    final notifier = h.container.read(shellObserverProvider(target).notifier);
-    final writes = <ShellTerminalWrite>[];
-    final sub = notifier.writes.listen(writes.add);
-    addTearDown(sub.cancel);
     final listener = h.container.listen(
       shellObserverProvider(target),
       (_, _) {},
     );
     addTearDown(listener.close);
-    await _settle();
-
-    h.relay.emit(_frame(type: 'snap', seq: 1, dims: '24x80', text: 'one'));
-    h.relay.emit(_frame(type: 'diff', seq: 2, text: 'two'));
-    await _settle();
-
-    // A snap with dims is two writes: the grid, then the bytes.
-    expect(writes.map((w) => w.resize?.cols), [80, null, null]);
-    expect(writes.map((w) => w.text), [null, 'one', 'two']);
-    final state = h.container.read(shellObserverProvider(target));
-    expect(state.status, ShellObserverStatus.live);
-    expect(state.framesApplied, 2);
-
-    h.relay.emit(_frame(type: 'end', seq: 3));
-    await _settle();
-    expect(
-      h.container.read(shellObserverProvider(target)).status,
-      ShellObserverStatus.ended,
-    );
-  });
-
-  test('a seq gap asks the owner for a resync', () async {
-    final h = _harness();
-    final listener = h.container.listen(
-      shellObserverProvider(target),
-      (_, _) {},
-    );
-    addTearDown(listener.close);
-    await _settle();
+    _settle(async);
     h.relay.emit(_frame(type: 'snap', seq: 1));
     h.relay.emit(_frame(type: 'diff', seq: 4));
-    await _settle();
+    _settle(async);
 
     final actions = h.relay.published
         .where((event) => event.kind == 24310)
@@ -205,7 +236,7 @@ void main() {
     expect(actions, ['watch', 'resync']);
   });
 
-  test('another member\'s frame for the same session is ignored', () async {
+  _fakeTest('another member\'s frame for the same session is ignored', (async) {
     final h = _harness();
     final notifier = h.container.read(shellObserverProvider(target).notifier);
     final writes = <ShellTerminalWrite>[];
@@ -216,7 +247,7 @@ void main() {
       (_, _) {},
     );
     addTearDown(listener.close);
-    await _settle();
+    _settle(async);
     final forged = _frame(type: 'snap', seq: 1);
     h.relay.emit(
       NostrEvent(
@@ -230,7 +261,7 @@ void main() {
         sig: '',
       ),
     );
-    await _settle();
+    _settle(async);
     expect(writes, isEmpty);
     expect(
       h.container.read(shellObserverProvider(target)).status,
@@ -238,14 +269,10 @@ void main() {
     );
   });
 
-  test('no frame within the handshake reads "Not streaming"; the keepalive '
-      'keeps watching', () {
-    // Virtual time (fake_async): the keepalive/handshake timers below race
-    // the wall clock under load in the real suite (item 208) — a real
-    // `Future.delayed(150ms)` against a 40ms `Timer.periodic` sometimes
-    // only fires once before the delay resolves. `async.elapse` advances
-    // the zone's timers deterministically instead of waiting on the clock.
-    fakeAsync((async) {
+  _fakeTest(
+    'no frame within the handshake reads "Not streaming"; the keepalive '
+    'keeps watching',
+    (async) {
       final h = _harness();
       final listener = h.container.listen(
         shellObserverProvider(target),
@@ -271,34 +298,31 @@ void main() {
         expect(beat.pubkey, opening.single.pubkey);
       }
       expect(_watchContent(beats.first)['action'], 'watch');
-    });
+    },
+  );
+
+  _fakeTest('a dropped keepalive beat is not retried as a publish', (async) {
+    final h = _harness();
+    h.relay.acceptEphemeral = false;
+    final listener = h.container.listen(
+      shellObserverProvider(target),
+      (_, _) {},
+    );
+    addTearDown(listener.close);
+    async.elapse(const Duration(milliseconds: 150));
+    expect(
+      h.relay.ephemeralEvents.where((event) => event.kind == 24310).length,
+      greaterThanOrEqualTo(2),
+      reason: 'beats keep being offered; the transport decides',
+    );
+    expect(
+      h.relay.published.where((event) => event.kind == 24310),
+      hasLength(1),
+      reason: 'only the opening watch is a publish',
+    );
   });
 
-  test('a dropped keepalive beat is not retried as a publish', () {
-    // Virtual time (fake_async) — see the handshake test above for why.
-    fakeAsync((async) {
-      final h = _harness();
-      h.relay.acceptEphemeral = false;
-      final listener = h.container.listen(
-        shellObserverProvider(target),
-        (_, _) {},
-      );
-      addTearDown(listener.close);
-      async.elapse(const Duration(milliseconds: 150));
-      expect(
-        h.relay.ephemeralEvents.where((event) => event.kind == 24310).length,
-        greaterThanOrEqualTo(2),
-        reason: 'beats keep being offered; the transport decides',
-      );
-      expect(
-        h.relay.published.where((event) => event.kind == 24310),
-        hasLength(1),
-        reason: 'only the opening watch is a publish',
-      );
-    });
-  });
-
-  test('a watch the relay refuses is disclosed verbatim', () async {
+  _fakeTest('a watch the relay refuses is disclosed verbatim', (async) {
     final h = _harness(
       publishResults: [Exception('restricted: not a project member')],
     );
@@ -307,15 +331,15 @@ void main() {
       (_, _) {},
     );
     addTearDown(listener.close);
-    await _settle();
+    _settle(async);
     expect(
       h.container.read(shellObserverProvider(target)).lastWatchError,
       'restricted: not a project member',
     );
   });
 
-  test('backgrounding stops the watch; resuming watches again and treats '
-      'the next diff as a gap', () async {
+  _fakeTest('backgrounding stops the watch; resuming watches again and treats '
+      'the next diff as a gap', (async) {
     final h = _harness();
     final notifier = h.container.read(shellObserverProvider(target).notifier);
     final writes = <ShellTerminalWrite>[];
@@ -326,13 +350,13 @@ void main() {
       (_, _) {},
     );
     addTearDown(listener.close);
-    await _settle();
+    _settle(async);
     h.relay.emit(_frame(type: 'snap', seq: 1));
-    await _settle();
+    _settle(async);
     expect(h.relay.listenerCount, 1);
 
     h.lifecycle.set(AppLifecycleState.paused);
-    await _settle();
+    _settle(async);
     expect(h.relay.listenerCount, 0);
     expect(
       h.container.read(shellObserverProvider(target)).status,
@@ -341,32 +365,32 @@ void main() {
     final watchesWhilePaused = h.relay.published.length;
 
     h.lifecycle.set(AppLifecycleState.resumed);
-    await _settle();
+    _settle(async);
     expect(h.relay.listenerCount, 1);
     expect(h.relay.published.length, greaterThan(watchesWhilePaused));
     expect(_watchContent(h.relay.published.last)['action'], 'watch');
 
     // A diff continuing the old sequence is a gap now: no write, a resync.
     h.relay.emit(_frame(type: 'diff', seq: 2));
-    await _settle();
+    _settle(async);
     expect(writes.length, 1);
     expect(_watchContent(h.relay.published.last)['action'], 'resync');
   });
 
-  test('disposing says goodbye with a stop', () async {
+  _fakeTest('disposing says goodbye with a stop', (async) {
     final h = _harness();
     final listener = h.container.listen(
       shellObserverProvider(target),
       (_, _) {},
     );
-    await _settle();
+    _settle(async);
     listener.close();
-    await _settle();
+    _settle(async);
     expect(_watchContent(h.relay.published.last)['action'], 'stop');
     expect(h.relay.listenerCount, 0);
   });
 
-  test('the announce head is read once and follows a close live', () async {
+  _fakeTest('the announce head is read once and follows a close live', (async) {
     final relay = RecordingRelaySessionNotifier(
       historyResults: [
         [_announce()],
@@ -381,7 +405,7 @@ void main() {
       (_, _) {},
     );
     addTearDown(listener.close);
-    await _settle();
+    _settle(async);
 
     expect(relay.historyFilters.single.kinds, [30623]);
     expect(relay.historyFilters.single.authors, [owner]);
@@ -391,7 +415,7 @@ void main() {
     expect(head.terminal?.title, 'build shell');
 
     relay.emit(_announce(status: 'closed', createdAt: 200));
-    await _settle();
+    _settle(async);
     final closed = container.read(shellAnnounceHeadProvider(target));
     expect(closed.hasRead, isTrue);
     expect(closed.terminal, isNull);
@@ -399,19 +423,19 @@ void main() {
 }
 
 void inputTests() {
-  test(
+  _fakeTest(
     'a line is one input event: the text plus a carriage return, base64',
-    () async {
+    (async) {
       final h = _harness();
       final listener = h.container.listen(
         shellObserverProvider(target),
         (_, _) {},
       );
       addTearDown(listener.close);
-      await _settle();
+      _settle(async);
       final notifier = h.container.read(shellObserverProvider(target).notifier);
 
-      await notifier.sendLine('ls -la');
+      _finish(async, notifier.sendLine('ls -la'));
 
       final inputs = h.relay.published.where((e) => e.kind == 24312).toList();
       expect(inputs.length, 1);
@@ -425,18 +449,18 @@ void inputTests() {
     },
   );
 
-  test('a large paste is chunked in order under the cap', () async {
+  _fakeTest('a large paste is chunked in order under the cap', (async) {
     final h = _harness();
     final listener = h.container.listen(
       shellObserverProvider(target),
       (_, _) {},
     );
     addTearDown(listener.close);
-    await _settle();
+    _settle(async);
     final notifier = h.container.read(shellObserverProvider(target).notifier);
     final big = List<int>.generate(13000, (i) => 0x61 + (i % 26));
 
-    await notifier.sendInput(Uint8List.fromList(big));
+    _finish(async, notifier.sendInput(Uint8List.fromList(big)));
 
     final inputs = h.relay.published.where((e) => e.kind == 24312).toList();
     expect(inputs.length, 3);
@@ -447,9 +471,9 @@ void inputTests() {
     }
   });
 
-  test(
+  _fakeTest(
     'a restricted answer is a revocation: kept verbatim, no more sends',
-    () async {
+    (async) {
       final h = _harness(
         publishResults: [
           // The first publish is the watch; the second is the input.
@@ -470,22 +494,22 @@ void inputTests() {
         (_, _) {},
       );
       addTearDown(listener.close);
-      await _settle();
+      _settle(async);
       final notifier = h.container.read(shellObserverProvider(target).notifier);
 
-      await notifier.sendLine('whoami');
+      _finish(async, notifier.sendLine('whoami'));
       expect(
         h.container.read(shellObserverProvider(target)).inputRefused,
         'restricted: not a collaborator on this session',
       );
       final before = h.relay.published.length;
-      await notifier.sendLine('again');
+      _finish(async, notifier.sendLine('again'));
       expect(h.relay.published.length, before, reason: 'revoked: nothing sent');
     },
   );
 
-  test('a rate-limited answer pauses input for the relay\'s window and is '
-      'not a revocation', () async {
+  _fakeTest('a rate-limited answer pauses input for the relay\'s window and is '
+      'not a revocation', (async) {
     final h = _harness(
       publishResults: [
         NostrEvent(
@@ -505,19 +529,24 @@ void inputTests() {
       (_, _) {},
     );
     addTearDown(listener.close);
-    await _settle();
+    _settle(async);
     final notifier = h.container.read(shellObserverProvider(target).notifier);
 
-    await notifier.sendLine('make');
+    _finish(async, notifier.sendLine('make'));
     final state = h.container.read(shellObserverProvider(target));
     expect(state.inputRefused, isNull);
+    // The pause window is the one thing here the provider keeps on the wall
+    // clock (`inputPausedUntil = DateTime.now().add(retry)`), which
+    // `fakeAsync` does not virtualise. Virtual time makes that safer, not
+    // less so: no real time passes between the provider's read and these,
+    // so the 7 s window is still ~7 s wide.
     expect(state.inputPausedAt(DateTime.now()), isTrue);
     expect(
       state.inputPausedUntil!.difference(DateTime.now()).inSeconds,
       inInclusiveRange(5, 7),
     );
     final before = h.relay.published.length;
-    await notifier.sendLine('again');
+    _finish(async, notifier.sendLine('again'));
     expect(h.relay.published.length, before, reason: 'paused: nothing sent');
   });
 }
