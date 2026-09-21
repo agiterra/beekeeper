@@ -19332,6 +19332,110 @@ removed from here.
      - **Not done / disclosed.** Not run on a simulator; reader and widgets
        are proved separately.
 
+227. **Lane 219's own restart fix was the next hole: replacing a locked mutex
+     is not a handoff (2026-09-21, lane 227,
+     `work/lane-224-225-custody-identity-staged-refusals`, base `d83f04f66`, rebased onto `2708f64a8` on landing).**
+     Astra's third look, R2; plan § 8 A8.1. She executed a primitive
+     counterexample against the compiled provider
+     (`/tmp/astra-custody-reset-probe.rs`): holding a guard gave `busy=true`,
+     `supersede_seat` made it `busy=false`, and a second guard was acquired
+     while the first was still alive. That probe is now a test
+     (`no_second_custody_exists_while_the_first_is_held`).
+     - (a) **One custody identity per seat, for the life of the process.**
+       `supersede_seat` is deleted and the seat's lock is never replaced. The
+       interleaving it enabled was real: an establishment holding the old lock
+       across a slow fetch, a restart admitted because no model turn was open,
+       and an ordinary follow-up running against the new lock while B's
+       checkout landed underneath it.
+     - (b) **The deadlock is cured by ending the holder.** `SessionHandle`
+       keeps the actor's `JoinHandle` — it was detached, which is what made
+       "has it stopped?" unanswerable — and `restart_session` calls
+       `SessionManager::shutdown_and_join` before the successor resumes.
+       Quiescence is *proven*: the actor's own `run` ends with
+       `AcpClient::shutdown`, which kills the agent's process group and reaps
+       it, so a joined actor is an actor whose child is gone. Past
+       `ACTOR_RETIRE_GRACE` (40s, chosen to cover the 30s cancellation grace
+       plus the 5s kill-and-reap bound) the task is aborted — it can execute
+       nothing further, and dropping its client kills the child through the
+       spawn's `kill_on_drop(true)` — and the caller is told which of the two
+       it got (`ActorQuiescence::Joined | Aborted | AlreadyGone`). No
+       `buzz-acp` change was needed: both mechanisms were already there.
+     - (c) **A dropped provider ends its actors.** `impl Drop for
+       SessionManager` shuts down and aborts each one. This is the in-process
+       restart case — the deadlock lane 219 hit in `cargo test` — cured
+       without a second lock. `Drop` cannot await, so it aborts rather than
+       joins, and says so in its own doc.
+     - (d) **A successor that cannot get custody does not run.** The dequeue
+       waits `CUSTODY_WAIT_BOUND` (300s) and then answers: the actor reports
+       `TurnDropped::SeatBusy` and the provider publishes
+       `VERIFICATION_INPUT_SEAT_BUSY`, discharging the delivery instead of
+       leaving it accepted. The blocking git helper gained a 240s process
+       bound that **kills and reaps** the child
+       (`assignment_inputs::GIT_PROCESS_BOUND`), so an establishment holding
+       custody always ends — `GIT_TERMINAL_PROMPT=0` stops a credential
+       prompt, not a hanging connection.
+     - (e) **Tests, through the real actor** (`tests/custody_boundary_tests.rs`,
+       live sessions on `STALLING_AGENT`): the probe as a test; a turn that
+       cannot get custody is discharged and never prompted; a restart ends the
+       predecessor and frees its seat; an establishment that outlives the wait
+       keeps the tree and B's checkout lands only after it ends; a dropped
+       provider releases its seats and a successor takes *the same* identity.
+       The compressed dequeue wait two of them need is a test-only override,
+       serialized by a test mutex so the two cannot unset each other.
+     - (f) **Design choices A8 did not dictate, so they can be attacked:** the
+       two bounds (300s dequeue wait, 240s git) and their ordering; treating
+       an aborted actor as quiescent for the *actor* while the child's death
+       rests on `kill_on_drop`; and `seat_busy` being a discharge (the lead
+       re-sends) rather than a durable refusal.
+
+228. **A refusal recorded before its answer was published could lose that
+     answer for good (2026-09-21, lane 228, same branch).** Astra's third
+     look, R4; plan § 8 A8.2. Her sequence: a held wake becomes
+     stale-generation, re-admission records the refusal and *then* enqueues
+     the receipt, and a crash or a failed outbox append between them leaves
+     `AlreadyRefused` — which has no receipt — so the next pass went Silent
+     and release deleted the held record. The lead never heard anything.
+     - (a) **Staged, then recorded.** `refuse_with_staged_answer` puts the
+       signed receipt through the durable terminal mechanism *before*
+       `record_refusal`, on all four branches A8 names: verification input,
+       the ignore refusals (stale generation, unknown target) and the `Fail`
+       arm (authority). The ordering matters because
+       `stage_terminal_disposition` deliberately skips a command the refusal
+       ledger already names — which is exactly what defeated a later staging
+       attempt, including expiry's.
+     - (b) **`AlreadyRefused` republishes.** It now carries its command id
+       (`commands.rs`), and a command with a staged-but-unprojected answer
+       gets that answer flushed and returns `Answered` instead of `Silent`.
+     - (c) **Release holds what it cannot show an answer for.** A silent
+       decision with nothing in the refusal ledger leaves the record held;
+       the command horizon still expires it, so nothing is held forever.
+     - (d) **The conflicting registration keeps its key and its promise.**
+       Its answer is staged under `{commandId}:conflict:{eventId}` rather than
+       under the command id, because staging under the command id would close
+       a command whose original promise still stands — two ci-continuation
+       tests caught exactly that, which is why it is stated here.
+     - (e) **Measured red** with the outbox's injected failure: before,
+       nothing published, the retry was silent and the hold was deleted;
+       after, the original `UNAUTHORIZED_OPERATOR` answer publishes **exactly
+       once**, the staged disposition retires, the hold ends, and a third pass
+       publishes nothing.
+     - (f) **An unreadable held-wake file is not an empty one.** `read_file`
+       distinguishes absent (empty) from unreadable (an error): the bytes are
+       left untouched, `held` logs `deferred_store_unreadable` and releases
+       nothing, and `defer` refuses. The test named for the provider's
+       unheld branch now drives the **provider** with a store whose path is a
+       **directory** — `ENOTDIR` on the rename, which root cannot override
+       either (ledger 212(h)).
+     - (g) **Gates** bare: `cargo fmt --all -- --check`; `cargo clippy
+       --workspace --all-targets -D warnings`; `cargo test -p
+       buzz-session-provider -p buzz-acp` — the provider suite run **three
+       times**, 979 passed each time, and `buzz-acp` 944; sidecar stubs;
+       Tauri clippy and `cargo test` 3,485 passed; `just file-size-check`;
+       Python NUL scan.
+     - (h) **Owed, live.** Both lanes are unproven against a live seat. The
+       control run is the proof for 227; a crash between the two writes is the
+       proof for 228, and only an injected failure has stood in for it.
+
 ## 3a. Environment facts that cost real time (do not rediscover)
 
 - **pnpm 11's answer to a stale workspace state is to DELETE `node_modules`,
