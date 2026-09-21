@@ -255,6 +255,33 @@ pub fn unresolved(reason: &'static str) -> TurnInput {
     })
 }
 
+/// The seat's tree stopped holding the assignment's commit between the
+/// provider's decision and the moment its prompt would have been sent.
+///
+/// Its own code, not a reuse of [`VERIFICATION_INPUT_NOT_PRESENT`]: that one
+/// says the fence refused *before* the turn was ever accepted, while this one
+/// says an accepted delivery was discharged at the execution boundary. A lead
+/// reading them needs to know which.
+pub const VERIFICATION_INPUT_MOVED_AT_START: &str = "VERIFICATION_INPUT_MOVED_AT_START";
+
+/// The sentence published for [`VERIFICATION_INPUT_MOVED_AT_START`].
+#[must_use]
+pub fn moved_at_start_message(
+    assignment_ref: &str,
+    observed: Option<&str>,
+    required: &str,
+) -> String {
+    let tree = match observed {
+        Some(head) => format!("the seat's tree held {head}"),
+        None => "the seat's tree could not be read".to_owned(),
+    };
+    format!(
+        "{tree} when assignment {assignment_ref}'s turn was about to start, and that assignment \
+         names {required}; the prompt was not sent, so nothing was verified against the wrong \
+         commit. To continue, {REMEDY}"
+    )
+}
+
 /// Refuse a turn whose seat's input this provider tried and failed to
 /// establish, in git's own words.
 ///

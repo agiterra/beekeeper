@@ -238,14 +238,20 @@ async fn a_tree_that_moved_after_the_decision_refuses_at_the_dequeue() {
     );
 }
 
-/// A turn that was never an assignment turn is untouched by any of this.
+/// A turn that was never an assignment turn still takes custody of the seat:
+/// it is using that tree, and before the Wave 2 re-check it ran unguarded
+/// (R2). Nothing is verified, and everything is held.
 #[tokio::test]
-async fn a_turn_with_no_recorded_requirement_needs_no_custody() {
+async fn a_turn_with_no_recorded_requirement_still_holds_the_seat() {
     let session = format!("seat-{}", uuid::Uuid::new_v4());
-    assert!(matches!(
-        verify_for_turn(&session, "ordinary-prose").await,
-        TurnCustody::NotRequired
-    ));
+    let custody = verify_for_turn(&session, "ordinary-prose").await;
+    assert!(matches!(custody, TurnCustody::Unmanaged(_)), "{custody:?}");
+    assert!(
+        is_busy(&session),
+        "an unmanaged turn holds the seat for as long as it runs"
+    );
+    drop(custody);
+    assert!(!is_busy(&session), "and releases it when the turn ends");
 }
 
 /// Review finding 3: a waiter that gives up does not make the record

@@ -631,6 +631,23 @@ pub enum SteerDispatch {
     Idle,
 }
 
+/// Why a queued turn never reached the runtime.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TurnDropReason {
+    /// The execution's queue was full when the turn arrived.
+    QueueFull,
+    /// The seat's tree no longer held the commit the turn's assignment named,
+    /// so the prompt was never sent.
+    InputMoved {
+        /// The assignment the turn pointed at.
+        assignment_ref: String,
+        /// What the tree held instead, when it could be read.
+        observed: Option<String>,
+        /// The commit the assignment named.
+        required: String,
+    },
+}
+
 /// Something the provider loop must fold into state and publish.
 ///
 /// Mostly reports from a session actor. [`SessionEvent::WorktreeObserved`] is
@@ -726,6 +743,13 @@ pub enum SessionEvent {
         session_id: String,
         /// The command that was refused.
         command_id: String,
+        /// Why it never reached the runtime.
+        ///
+        /// Carried rather than assumed: the publisher used to state "the
+        /// execution's queue is full" for every drop, and a turn refused at
+        /// the dequeue boundary for holding the wrong commit is not that
+        /// (Astra's Wave 2 re-check, R2).
+        reason: TurnDropReason,
     },
     /// The actor stopped and the subprocess is gone.
     Exited {
@@ -2507,42 +2531,55 @@ impl SessionActor {
                         );
                         continue;
                     }
-                    // The seat's input, checked where the prompt is sent
-                    // rather than where the turn was decided, and held for as
-                    // long as this turn runs (Astra's Wave 2 review, finding
-                    // 2). `_custody` is a token, not a value: while it is
-                    // alive no establishment may move this seat's checkout,
-                    // so a verifier testing one commit cannot have the tree
-                    // changed under it by preparation for the next
-                    // assignment. A tree that is no longer the one the
-                    // assignment named refuses here, because a prompt sent
-                    // now would produce a verdict about the wrong commit.
-                    let _custody = match crate::assignment_custody::verify_for_turn(
-                        &self.session_id,
-                        &command_id,
-                    )
-                    .await
+                    // Custody of this seat's checkout, taken before the
+                    // prompt and held for as long as the turn runs.
+                    //
+                    // Unconditional (Astra's Wave 2 re-check, R2): the tree
+                    // belongs to whichever turn is using it, and an ordinary
+                    // follow-up to a verifier examining one commit is using
+                    // it exactly as much as an assignment turn is. Taking the
+                    // token only for prompts that named an assignment left
+                    // every other turn unguarded, so preparation for the next
+                    // assignment could move the tree mid-turn.
+                    //
+                    // A turn whose assignment's commit is no longer there is
+                    // refused *and discharged*: the provider is told, so the
+                    // delivery is answered instead of sitting accepted and
+                    // never started.
+                    let custody =
+                        crate::assignment_custody::verify_for_turn(&self.session_id, &command_id)
+                            .await;
+                    if let crate::assignment_custody::TurnCustody::Refused {
+                        assignment_ref,
+                        observed,
+                        required,
+                    } = &custody
                     {
-                        crate::assignment_custody::TurnCustody::NotRequired => None,
-                        crate::assignment_custody::TurnCustody::Held(guard) => Some(guard),
-                        crate::assignment_custody::TurnCustody::Refused {
-                            assignment_ref,
-                            observed,
-                            required,
-                        } => {
-                            tracing::warn!(
-                                target: "csp::session",
-                                session_id = %self.session_id,
-                                %command_id,
-                                %assignment_ref,
-                                observed = observed.as_deref().unwrap_or("unreadable"),
-                                %required,
-                                "not prompting an assignment turn whose seat no longer holds the \
-                                 commit it names"
-                            );
-                            continue;
-                        }
-                    };
+                        tracing::warn!(
+                            target: "csp::session",
+                            session_id = %self.session_id,
+                            %command_id,
+                            %assignment_ref,
+                            observed = observed.as_deref().unwrap_or("unreadable"),
+                            %required,
+                            "not prompting an assignment turn whose seat no longer holds the \
+                             commit it names"
+                        );
+                        let _ = self
+                            .events
+                            .send(SessionEvent::TurnDropped {
+                                session_id: self.session_id.clone(),
+                                command_id,
+                                reason: TurnDropReason::InputMoved {
+                                    assignment_ref: assignment_ref.clone(),
+                                    observed: observed.clone(),
+                                    required: required.clone(),
+                                },
+                            })
+                            .await;
+                        continue;
+                    }
+                    let _custody = custody.into_guard();
                     let outcome = self
                         .run_turn(
                             &mut rx,
@@ -2850,6 +2887,7 @@ impl SessionActor {
                                 .send(SessionEvent::TurnDropped {
                                     session_id: self.session_id.clone(),
                                     command_id,
+                                    reason: TurnDropReason::QueueFull,
                                 })
                                 .await;
                         } else {

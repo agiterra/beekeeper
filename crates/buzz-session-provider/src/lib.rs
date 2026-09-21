@@ -9102,32 +9102,68 @@ impl Provider {
             SessionEvent::TurnDropped {
                 session_id,
                 command_id,
+                reason,
             } => {
                 self.in_flight.remove(&command_id);
                 let Some((channel_id, target)) = self.locate(&session_id) else {
                     return Ok(());
                 };
+                // The code and the sentence come from the actor's own reason.
+                // Stating "the execution's queue is full" for a turn refused
+                // at the dequeue boundary was a false answer about the only
+                // thing the lead can act on (Astra's Wave 2 re-check, R2).
+                let (code, message, status) = match &reason {
+                    session::TurnDropReason::QueueFull => (
+                        payload::QUEUE_FULL,
+                        "the execution's queue is full".to_owned(),
+                        "turn_dropped:queue_full",
+                    ),
+                    session::TurnDropReason::InputMoved {
+                        assignment_ref,
+                        observed,
+                        required,
+                    } => (
+                        verification_input::VERIFICATION_INPUT_MOVED_AT_START,
+                        verification_input::moved_at_start_message(
+                            assignment_ref,
+                            observed.as_deref(),
+                            required,
+                        ),
+                        "turn_dropped:input_moved",
+                    ),
+                };
                 tracing::warn!(
                     target: "csp",
                     %session_id,
                     %command_id,
-                    "turn dropped: the session's queue is full"
+                    code,
+                    "turn dropped: {message}"
                 );
                 // Fence the decision and exact answer atomically before any
                 // visible report. A failed outbox or ledger projection is retried
                 // without re-admitting this turn when queue pressure disappears.
-                let receipt = LifecycleReceipt::turn_dropped(
-                    &command_id,
-                    &target,
-                    payload::QUEUE_FULL,
-                    "the execution's queue is full",
-                );
+                let receipt = LifecycleReceipt::turn_dropped(&command_id, &target, code, &message);
+                // The staged terminal disposition *is* the durable fence here
+                // — `stage_terminal_disposition` persists the signed bytes
+                // before anything is projected, and skips a command that
+                // already has an answer. So it comes first: recording the
+                // refusal before it would suppress the very receipt the lead
+                // needs, which is how the first version of this published
+                // nothing at all.
                 self.enqueue_terminal_receipt(channel_id, &command_id, &receipt)?;
+                if matches!(reason, session::TurnDropReason::InputMoved { .. }) {
+                    // Then the refusal, so the same wake delivered again is
+                    // answered rather than queued behind the same tree. The
+                    // remedy the message names is a new assignment.
+                    self.state.record_refusal(&command_id, now_secs())?;
+                    assignment_custody::forget_requirement(&session_id, &command_id);
+                    deferred_turns::release(&self.config.state_dir, &command_id);
+                }
                 self.enqueue_transcript(
                     channel_id,
                     &target,
                     None,
-                    payload::status_item("turn_dropped:queue_full"),
+                    payload::status_item(status),
                     Priority::High,
                 )?;
             }
@@ -10355,6 +10391,9 @@ mod tests {
     mod team_wake_pressure_tests;
     #[path = "verification_input_tests.rs"]
     mod verification_input_tests;
+    // Custody through the real actor path (lane 219, re-check R2/R3).
+    #[path = "custody_boundary_tests.rs"]
+    mod custody_boundary_tests;
 
     struct CollectingSink {
         events: Mutex<Vec<Event>>,
@@ -17445,6 +17484,7 @@ mod tests {
             .handle_session_event(SessionEvent::TurnDropped {
                 session_id: record.session_id.clone(),
                 command_id: "turn-overflow".into(),
+                reason: session::TurnDropReason::QueueFull,
             })
             .expect("record the drop");
 

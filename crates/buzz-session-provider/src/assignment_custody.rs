@@ -378,16 +378,25 @@ async fn retry_unrecorded(
 }
 
 /// What the actor found when it checked its seat's tree at the last moment it
-/// could.
+/// could — and, in every case but a refusal, the custody it now holds.
+///
+/// There is deliberately no "not required" variant that hands back nothing.
+/// Custody belongs to the **turn**, not to the assignment (Astra's Wave 2
+/// re-check, R2): an ordinary follow-up prompt to a verifier examining commit
+/// A is using that tree just as much as an assignment turn is, and before
+/// this the unguarded path let preparation for B move the tree underneath it.
 #[derive(Debug)]
 pub enum TurnCustody {
-    /// Not an assignment turn, or nothing recorded about it: run as before.
-    NotRequired,
-    /// The tree holds the commit the assignment names. Hold this until the
-    /// turn ends.
+    /// Custody of the seat, with nothing to verify: this turn carries no
+    /// assignment requirement. The guard is still held, because the turn is
+    /// still using the tree.
+    Unmanaged(Box<CustodyGuard>),
+    /// Custody of the seat, and the tree holds the commit the assignment
+    /// names. Hold this until the turn ends.
     Held(Box<CustodyGuard>),
     /// The tree is not what the assignment named. The prompt must not be
-    /// sent.
+    /// sent, and the delivery must be discharged rather than left accepted
+    /// (R2's second hole).
     Refused {
         /// The assignment the turn pointed at.
         assignment_ref: String,
@@ -398,6 +407,17 @@ pub enum TurnCustody {
     },
 }
 
+impl TurnCustody {
+    /// The guard to keep for the length of the turn, when there is one.
+    #[must_use]
+    pub fn into_guard(self) -> Option<Box<CustodyGuard>> {
+        match self {
+            Self::Unmanaged(guard) | Self::Held(guard) => Some(guard),
+            Self::Refused { .. } => None,
+        }
+    }
+}
+
 /// Take custody of the seat and re-verify its tree, at the dequeue boundary.
 ///
 /// The provider decided this turn against a tree it read earlier; this reads
@@ -405,10 +425,28 @@ pub enum TurnCustody {
 /// has ended, before this prompt is sent — and holds custody for as long as
 /// the caller keeps the guard, so nothing can move it while the turn runs.
 pub async fn verify_for_turn(session_id: &str, command_id: &str) -> TurnCustody {
-    let Some(requirement) = take_requirement(session_id, command_id) else {
-        return TurnCustody::NotRequired;
-    };
+    // The lock comes first, unconditionally. Deciding whether to take custody
+    // by asking whether this particular prompt names an assignment was R2:
+    // the tree is the seat's, and whichever turn is running is using it.
     let guard = hold(session_id).await;
+    let Some(requirement) = take_requirement(session_id, command_id) else {
+        return TurnCustody::Unmanaged(Box::new(guard));
+    };
+    // Read the row *now*, under custody, so the observation this boundary
+    // writes can be conditioned on the exact attempt it saw (R3).
+    let store = requirement.store.clone();
+    let assignment_ref = requirement.assignment_ref.clone();
+    let observed_record = {
+        let store = store.clone();
+        let assignment_ref = assignment_ref.clone();
+        tokio::task::spawn_blocking(move || {
+            store.with_records(|records, _| assignment_input(records, &assignment_ref).cloned())
+        })
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .flatten()
+    };
     let observed = crate::git_probe::probe_verification_input(&requirement.cwd)
         .await
         .ok();
@@ -432,19 +470,38 @@ pub async fn verify_for_turn(session_id: &str, command_id: &str) -> TurnCustody 
         );
         return TurnCustody::Held(Box::new(guard));
     }
-    drop(guard);
+
     // The record keeps the reason, so the party that publishes blockers can
-    // find it without this boundary having to reach the relay.
-    let store = requirement.store.clone();
-    let assignment_ref = requirement.assignment_ref.clone();
+    // find it without this boundary having to reach the relay. Written while
+    // custody is still held, and **only** if the row is still the one this
+    // boundary observed: between a dropped guard and this write, an operator
+    // requeue could have minted a new attempt, and overwriting its
+    // `attemptOwner` made that attempt's own terminal write fail its
+    // ownership comparison (R3).
     let observed_head = head.clone();
     let required = requirement.base_sha.clone();
-    let _ = tokio::task::spawn_blocking(move || {
+    let recorded = tokio::task::spawn_blocking(move || {
         store.with_records(|records, persist| {
-            let Some(record) = assignment_input(records, &assignment_ref).cloned() else {
-                return;
+            let Some(current) = assignment_input(records, &assignment_ref).cloned() else {
+                return Ok(false);
             };
-            let mut moved = record;
+            if Some(&current) != observed_record.as_ref() {
+                // The row changed under this boundary. Its observation is
+                // already stale, and writing it would speak over whatever
+                // replaced it.
+                return Ok(false);
+            }
+            if current.attempt_owner.is_some() {
+                // An attempt owns this row. This boundary is not an attempt:
+                // it observed a tree, it did not try to move one, and the
+                // owner's own terminal write is the answer for this row. R3's
+                // interleaving is exactly this case — a requeue mints a new
+                // attempt between the mismatch and this write, and clearing
+                // or overwriting its row made that attempt's terminal write
+                // fail its ownership comparison.
+                return Ok(false);
+            }
+            let mut moved = current;
             moved.outcome = crate::assignment_inputs::ASSIGNMENT_INPUT_MOVED.to_owned();
             moved.message = Some(match observed_head.as_deref() {
                 Some(head) => format!(
@@ -456,12 +513,34 @@ pub async fn verify_for_turn(session_id: &str, command_id: &str) -> TurnCustody 
                      whether it holds {required} is unknown"
                 ),
             });
-            moved.attempt_owner = None;
+            // Untouched deliberately: this row's `attemptOwner` was `None` in
+            // the snapshot this write is conditioned on, so there is nothing
+            // to clear and no newer owner to lose.
             crate::assignment_inputs::record_assignment_input(records, moved);
-            let _ = persist(records);
+            persist(records).map(|()| true)
         })
     })
     .await;
+    match recorded {
+        Ok(Ok(Ok(true))) => {}
+        Ok(Ok(Ok(false))) => tracing::info!(
+            target: "csp::assignment_custody",
+            %command_id,
+            assignment_ref = %requirement.assignment_ref,
+            "leaving a newer attempt's record alone; this boundary's observation is stale"
+        ),
+        Ok(Ok(Err(error))) | Ok(Err(error)) => tracing::warn!(
+            target: "csp::assignment_custody",
+            %error,
+            "the moved-tree observation could not be saved"
+        ),
+        Err(error) => tracing::warn!(
+            target: "csp::assignment_custody",
+            %error,
+            "the moved-tree observation panicked"
+        ),
+    }
+    drop(guard);
     TurnCustody::Refused {
         assignment_ref: requirement.assignment_ref,
         observed: head,

@@ -419,6 +419,7 @@ async fn a_dropped_owner_releases_the_fence_for_a_rearmed_command() {
         .handle_session_event(SessionEvent::TurnDropped {
             session_id: record.session_id.clone(),
             command_id: "wake-owner".into(),
+            reason: crate::session::TurnDropReason::QueueFull,
         })
         .expect("record the drop");
     assert!(

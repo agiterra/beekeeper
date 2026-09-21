@@ -1829,6 +1829,7 @@ async fn a_dropped_turn_publishes_its_receipt_even_when_the_refusal_ledger_fails
         .handle_session_event(SessionEvent::TurnDropped {
             session_id: target.session_id.clone(),
             command_id: "turn-overflow".into(),
+            reason: crate::session::TurnDropReason::QueueFull,
         })
         .expect_err("the ledger write fails after the receipt is queued");
     assert!(
@@ -2068,6 +2069,7 @@ async fn terminal_queue_drop_fences_ci_redelivery_after_a_ledger_failure_and_res
         .handle_session_event(SessionEvent::TurnDropped {
             session_id: target.session_id.clone(),
             command_id: "cic-expiry".into(),
+            reason: crate::session::TurnDropReason::QueueFull,
         })
         .expect_err("legacy ledger projection fails");
     assert!(running.state.is_command_refused("cic-expiry"));
@@ -2107,6 +2109,7 @@ async fn a_terminal_answer_survives_restart_when_its_outbox_projection_failed() 
         .handle_session_event(SessionEvent::TurnDropped {
             session_id: target.session_id.clone(),
             command_id: "cic-expiry".into(),
+            reason: crate::session::TurnDropReason::QueueFull,
         })
         .expect_err("outbox projection fails");
     assert!(running.state.is_command_refused("cic-expiry"));
