@@ -152,6 +152,31 @@ pub async fn cmd_measure(
     events.extend(fetch_window(client, channel_id, MEASURE_IDENTITY_KINDS, None, until).await?);
     events.extend(fetch_window(client, channel_id, MEASURE_ACTION_KINDS, since, until).await?);
 
+    // An approval the person signed by hand carries no `h` tag (ledger 197),
+    // so the channel-scoped reads above can never return one. It is reachable
+    // only by author and kind over the same window. A refusal here is not
+    // fatal: the rest of the report stands, and `measure_report` discloses
+    // the absence rather than reporting zero approvals as a fact.
+    if let Some(owner) = founder_key(&events) {
+        let mut filter = json!({
+            "kinds": [KIND_APPROVAL_GRANT, KIND_APPROVAL_DENY],
+            "authors": [owner],
+        });
+        if let Some(since) = since {
+            filter["since"] = json!(since);
+        }
+        if let Some(until) = until {
+            filter["until"] = json!(until);
+        }
+        match client.query_all(filter).await {
+            Ok(approvals) => events.extend(approvals),
+            Err(error) => eprintln!(
+                "note: the founder's approvals (46030/46031) could not be read by author and \
+                 kind, so none is counted: {error}"
+            ),
+        }
+    }
+
     // Git ref state is repo-scoped by its own `d` tag, never `h`-scoped, so it
     // needs a second filter keyed on the repository names the session's own
     // metadata records. Without one the landed sha has no observed delivery.
@@ -162,6 +187,15 @@ pub async fn cmd_measure(
         }
         events.extend(client.query_all(filter).await?);
     }
+
+    // The author-scoped approval read overlaps the channel-scoped action read
+    // for any grant that *does* carry an `h` tag, so the same event can arrive
+    // twice and would be folded twice.
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    events.retain(|event| match event.get("id").and_then(Value::as_str) {
+        Some(id) => seen.insert(id.to_owned()),
+        None => true,
+    });
 
     let report = measure_report(&events, session_ref, since, until);
     match format {
@@ -208,6 +242,26 @@ async fn fetch_window(
         filter["until"] = json!(until);
     }
     client.query_all(filter).await
+}
+
+/// The founder key a `projectRef` names, read off raw events.
+///
+/// The same derivation [`project_owner`] makes over parsed events, needed
+/// once before parsing so the fetch layer can ask for that key's approvals.
+fn founder_key(events: &[Value]) -> Option<String> {
+    events.iter().find_map(|event| {
+        if event.get("kind").and_then(Value::as_u64)? != u64::from(KIND_CODING_SESSION_METADATA) {
+            return None;
+        }
+        let content = event.get("content").and_then(Value::as_str)?;
+        let parsed: Value = serde_json::from_str(content).ok()?;
+        parsed
+            .get("projectRef")?
+            .as_str()?
+            .split(':')
+            .nth(1)
+            .map(str::to_owned)
+    })
 }
 
 /// Repository names named by any 44223 `repoRef` or `projectRef`.
@@ -599,27 +653,25 @@ pub fn measure_report(
     }
 
     let owner = project_owner(&evs);
-    let mut human_actions: Vec<Value> = Vec::new();
+    let mut attribution = FounderActions::default();
     if let Some(owner) = owner.as_deref() {
-        for ev in evs.iter().filter(|e| {
-            e.kind == KIND_CODING_SESSION_COMMAND || e.kind == KIND_CODING_SESSION_LIFECYCLE_COMMAND
-        }) {
-            if ev.pubkey != owner || ev.tag("buzz-host-answer").is_some() {
-                continue;
-            }
-            if !command_is_this_umbrellas(ev, session_ref, &selected) {
-                continue;
-            }
-            human_actions.push(json!({
-                "at": rfc3339(ev.created_at),
-                "kind": ev.kind,
-                "event_id": ev.id,
-                "action": ev.content.pointer("/action/type").and_then(Value::as_str),
+        attribution = attribute_founder_actions(&evs, owner, session_ref, &selected);
+        if evs
+            .iter()
+            .all(|ev| ev.kind != KIND_APPROVAL_GRANT && ev.kind != KIND_APPROVAL_DENY)
+        {
+            honesty.push(json!({
+                "metric": "approvals the person signed",
+                "value": "unknown",
+                "reason": "no kind 46030/46031 is in the input. A hand-signed grant carries no \
+                           `h` tag (ledger 197), so it is reachable only by an author+kind read \
+                           over the window; none was returned or none was made, and the wire \
+                           cannot tell those apart",
             }));
         }
     } else {
         honesty.push(json!({
-            "metric": "human actions",
+            "metric": "person and host actions under the founder key",
             "value": "unknown",
             "reason": "no 44223 metadata names a projectRef, so the founder key this session \
                        answers to cannot be derived from the wire",
@@ -749,8 +801,16 @@ pub fn measure_report(
             "verdict_woken_turns": verdict_woken,
             "disposition_or_acknowledgement_turns": disposition_or_ack,
             "disposition_or_acknowledgement_share": share(disposition_or_ack, turns.len()),
-            "human_actions": human_actions,
-            "human_action_count": human_actions.len(),
+            // Founder-signed acts, split by who performed them. `person_*`
+            // is the number to compare across runs; the host's own acts under
+            // the founder's key are not human interventions and were counted
+            // as such until ledger 206 C.
+            "person_actions": attribution.person,
+            "person_action_count": attribution.person.len(),
+            "host_actions_under_founder_key": attribution.host,
+            "host_action_under_founder_key_count": attribution.host.len(),
+            "unattributed_founder_actions": attribution.unattributed,
+            "unattributed_founder_action_count": attribution.unattributed.len(),
             "rulings_opened": rulings_opened,
             "rulings_answered": rulings_answered,
             "founder_key": owner,
@@ -1396,6 +1456,189 @@ fn command_is_this_umbrellas(
     }
     ev.tag("cs-target")
         .is_some_and(|target| selected.iter().any(|session| target.contains(session)))
+}
+
+/// Founder-signed acts, split by who actually performed them.
+#[derive(Default)]
+struct FounderActions {
+    /// A goal or turn the person typed, a ruling they answered, an approval
+    /// they signed, a trigger they started by hand.
+    person: Vec<Value>,
+    /// This computer, signing with the founder's key: a seat created to
+    /// answer a lead's hire request, a host answer, a launch-time act.
+    host: Vec<Value>,
+    /// Founder-signed, and the wire does not say which. Never guessed into
+    /// one of the other two.
+    unattributed: Vec<Value>,
+}
+
+/// Split every founder-signed act into person, host and unattributed.
+///
+/// **Why this exists.** The count this replaced was every founder-signed
+/// 44220/44221 that was not a tagged host answer, reported as
+/// `human_actions`. On a team session that is wrong in one specific,
+/// repeatable way: when a lead hires, the desktop answers the hire by
+/// signing `session.create` **with the founder's key**, so a seat this
+/// computer created to satisfy an agent's own request was counted as an
+/// unrequested human intervention. The 2026-09-20 kettle run reported 7 such
+/// actions; 2 of the 7 are host-made seat creations, and the RPG run's 9 are
+/// 2 and 7 (ledger 206 C).
+///
+/// **The rules, each named on the row it decides.**
+///
+/// - A `session.create` is the host's when some earlier `session.hire` in the
+///   window names the same umbrella and role and the create's `initialTurn`
+///   *contains* that hire's `brief`. Containment, not equality: the host
+///   prepends its own attribution line (`[From the lead] `) and trims the
+///   brief's trailing newline, so equality would miss every real pair.
+/// - A `session.create` with no `initialTurn` and no matching hire is the
+///   person's: that is a seat opened from the app with nothing to say to it.
+/// - A `session.create` carrying an `initialTurn` that matches no hire is
+///   **unattributed**. It could be a person typing a first turn, or a hire
+///   whose request fell outside the window; the wire does not say.
+/// - A `thread.turn.start` is the person's unless its command id carries the
+///   `cli-wake-v1:` prefix, which is one seat waking another — under the
+///   founder's key that is a CLI acting, not a person typing, and it is
+///   unattributed rather than assigned.
+/// - A tagged host answer is the host's, by its own tag.
+/// - A founder-signed approval (46030/46031), manual trigger (46020) or
+///   `decision.answer` is the person's. These are channel- or author-scoped
+///   rather than umbrella-scoped, and each row says so.
+fn attribute_founder_actions(
+    evs: &[Ev],
+    owner: &str,
+    session_ref: Option<&str>,
+    selected: &BTreeSet<String>,
+) -> FounderActions {
+    let mut out = FounderActions::default();
+    let hires: Vec<&Ev> = evs
+        .iter()
+        .filter(|ev| {
+            ev.kind == KIND_CODING_SESSION_LIFECYCLE_COMMAND
+                && ev.content.pointer("/action/type").and_then(Value::as_str)
+                    == Some("session.hire")
+        })
+        .collect();
+
+    for ev in evs.iter().filter(|ev| ev.pubkey == owner) {
+        let action = ev.content.pointer("/action/type").and_then(Value::as_str);
+        let row = |rule: &str, answers: Option<&str>| {
+            json!({
+                "at": rfc3339(ev.created_at),
+                "kind": ev.kind,
+                "event_id": ev.id,
+                "action": action,
+                "rule": rule,
+                "answers_hire_request": answers,
+            })
+        };
+        match ev.kind {
+            KIND_CODING_SESSION_COMMAND | KIND_CODING_SESSION_LIFECYCLE_COMMAND => {
+                if !command_is_this_umbrellas(ev, session_ref, selected) {
+                    continue;
+                }
+                if ev.tag("buzz-host-answer").is_some() {
+                    out.host
+                        .push(row("carries the `buzz-host-answer` tag", None));
+                    continue;
+                }
+                match action {
+                    Some("session.create") => {
+                        let initial_turn = ev
+                            .content
+                            .pointer("/action/initialTurn")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default();
+                        match answering_hire(ev, initial_turn, &hires) {
+                            Some(hire) => out.host.push(row(
+                                "a seat created to answer a lead's `session.hire`: same umbrella \
+                                 and role, and the hire's brief is the create's initial turn",
+                                Some(&hire),
+                            )),
+                            None if initial_turn.is_empty() => out.person.push(row(
+                                "a seat created with no initial turn and no hire request naming \
+                                 it",
+                                None,
+                            )),
+                            None => out.unattributed.push(row(
+                                "a seat created with an initial turn that matches no \
+                                 `session.hire` in this window; a person's first turn and a hire \
+                                 requested outside the window look the same here",
+                                None,
+                            )),
+                        }
+                    }
+                    Some("thread.turn.start") => {
+                        let command_id = ev
+                            .content
+                            .get("commandId")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default();
+                        if command_id.starts_with(WAKE_COMMAND_PREFIX) {
+                            out.unattributed.push(row(
+                                "a turn opened by a `cli-wake-v1:` command id — a CLI waking a \
+                                 seat, signed with the founder's key",
+                                None,
+                            ));
+                        } else {
+                            out.person
+                                .push(row("a turn opened with no wake command id", None));
+                        }
+                    }
+                    _ => out.person.push(row(
+                        "a founder-signed lifecycle command that is neither a create nor a turn",
+                        None,
+                    )),
+                }
+            }
+            KIND_APPROVAL_GRANT | KIND_APPROVAL_DENY => out.person.push(row(
+                "an approval signed by the founder key (46030/46031 carry no `h` tag, so these \
+                 are reached by an author+kind read over the window, not by channel scope)",
+                None,
+            )),
+            KIND_WORKFLOW_TRIGGER => out.person.push(row(
+                "a manual trigger signed by the founder key; scoped to this channel, not to this \
+                 umbrella",
+                None,
+            )),
+            KIND_CODING_SESSION_TEAM_TRANSACTION
+                if ev.content.get("type").and_then(Value::as_str) == Some("decision.answer") =>
+            {
+                out.person
+                    .push(row("a ruling answered under the founder key", None));
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// The id of the `session.hire` a founder-signed `session.create` answers.
+fn answering_hire(create: &Ev, initial_turn: &str, hires: &[&Ev]) -> Option<String> {
+    if initial_turn.is_empty() {
+        return None;
+    }
+    let field = |ev: &Ev, name: &str| {
+        ev.content
+            .pointer(&format!("/action/{name}"))
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    };
+    let session = field(create, "sessionRef");
+    let role = field(create, "role");
+    hires
+        .iter()
+        .filter(|hire| hire.created_at <= create.created_at)
+        .filter(|hire| field(hire, "sessionRef") == session && field(hire, "role") == role)
+        .filter(|hire| {
+            field(hire, "brief")
+                .map(|brief| brief.trim().to_owned())
+                .is_some_and(|brief| !brief.is_empty() && initial_turn.contains(&brief))
+        })
+        // The latest such hire: a refused hire is retried, and it is the
+        // request this create actually answered that the row should name.
+        .max_by_key(|hire| hire.created_at)
+        .map(|hire| hire.id.to_owned())
 }
 
 /// The founder key this session answers to, from the `projectRef` address.

@@ -19,6 +19,7 @@ use crate::client::BuzzClient;
 use crate::commands::actions_authority::{
     decide_project_action_authority, project_action_grant_remedy, read_project_action_authority,
 };
+use crate::commands::actions_example::explain_actions_error;
 use crate::error::CliError;
 use crate::validate::{parse_uuid, read_file_or_stdin, sdk_err};
 
@@ -38,9 +39,18 @@ pub fn bound_definition_yaml(entry: &ActionEntry) -> Result<String, CliError> {
         .map_err(|error| CliError::Other(format!("serialize action {:?}: {error}", entry.name)))
 }
 
+/// Read and parse the actions file, answering for its shape when it fails.
+///
+/// The parser's own words are preserved verbatim; what is added is the thing
+/// no error message could supply — which object the missing key belongs to,
+/// the whole of that object's required keys, and the command that prints a
+/// working file (ledger 206 A). The old behaviour handed serde's one-field-
+/// at-a-time message straight on, which is what made a lead learn this
+/// schema by probing.
 fn parse_file(file: &str, project: &str) -> Result<Vec<ActionEntry>, CliError> {
     let text = read_file_or_stdin(file)?;
-    parse_actions_yml(&text, project).map_err(|error| CliError::Usage(format!("{file}: {error}")))
+    parse_actions_yml(&text, project)
+        .map_err(|error| explain_actions_error(file, &text, &error.to_string()))
 }
 
 fn trigger_name(entry: &ActionEntry) -> String {
@@ -200,6 +210,9 @@ pub async fn cmd_status(
 pub async fn dispatch(cmd: crate::ActionsCmd, client: &BuzzClient) -> Result<(), CliError> {
     use crate::ActionsCmd;
     match cmd {
+        // Dispatched ahead of the key gate in `lib.rs` too, so it answers
+        // offline; this arm is the one a caller with a key reaches.
+        ActionsCmd::Example { kind } => crate::commands::actions_example::cmd_example(kind),
         ActionsCmd::Publish {
             project,
             channel,

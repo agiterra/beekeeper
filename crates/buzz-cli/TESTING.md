@@ -413,6 +413,11 @@ bee workflows trigger --workflow "$WF_ID" | jq .
 # has not produced a run row yet — it is not a blanket "empty is normal".
 bee workflows runs --workflow "$WF_ID" | jq .
 
+# Each run names the commit it is bound to, before any host claims a step:
+#   .runs[].checkout          the bound 40-hex sha, or null for an unbound run
+#   .runs[].checkout_reported false only against a relay older than ledger 206 B
+bee workflows runs --workflow "$WF_ID" | jq '.runs[] | {id, status, checkout}'
+
 # workflows run-status — one run's full state by run id alone (status, host
 # steps, approvals), once you have a run id from `runs` above or from a
 # kind:46010/46013/46023 event:
@@ -1842,7 +1847,7 @@ bee channels delete --channel "$FORUM_ID" | jq .
 | 37 | `workflows update` | ☐ | |
 | 38 | `workflows delete` | ☐ | |
 | 39 | `workflows trigger` | ☐ | |
-| 40 | `workflows runs` | ☐ | Reads `GET /workflows/{id}/runs` (relay-owned DB rows), never kinds 46001-46003 (nothing publishes those; ledger 178(k)); each row's `status` is the run's real lifecycle state |
+| 40 | `workflows runs` | ☐ | Reads `GET /workflows/{id}/runs` (relay-owned DB rows), never kinds 46001-46003 (nothing publishes those; ledger 178(k)); each row's `status` is the run's real lifecycle state, and `checkout` names the commit the run is bound to — `null` when it names none (ledger 206 B). `checkout_reported: false` means the relay is older than that change and said nothing; the key is then absent rather than invented |
 | 41 | `workflows get` | ☐ | |
 | 42 | `workflows approve` | ☐ | `--token` is the 64-hex approval ref, never a UUID (ledger 171(c)); a UUID is refused locally; bare = approve, `--approved false` = deny |
 | 43 | `feed get` | ☐ | |
@@ -1883,8 +1888,9 @@ bee channels delete --channel "$FORUM_ID" | jq .
 | 76 | `sessions grant-seat` / `revoke-seat` | ☐ | Seat granted by founder / steering operator / lead; a lead cannot grant `lead`; second run is `already_granted` with no write; `revoke-seat` refuses a pubkey with no seat and one holding a different role, and the roster loses the seat after it; `grant --role <slug>` is a parse error naming the two tiers |
 | 77 | `sessions policy set/get/clear` | ☐ | `set` refuses a signer who is neither the founder nor the holder of an accepted operator grant, **before signing**; a sub-object nobody set is omitted, never `{}`; a closed-vocabulary miss carries serde's own sentence, listing the four legal words (it does not name the field — see the ledger residual); `set` with no policy flag names `policy clear`; `get` prints `null` (not `{}`) when nobody set one and lists every record it refused with author, time, code and reason; a stranger's later record never wins; all three print the enforcement disclosure |
 | 78 | pre-publish fold check on every 44244 verb | ☐ | A causal reference that is absent, excluded or present-but-not-included is refused before signing, naming the id and the rule; a `--supersedes` that changes the subject, the author or the type is refused; a record that points at nothing makes zero relay reads; `complete` adopts your own canonical `mission.blocked` and the answer carries `supersedes` (present and `null` when it corrected nothing) plus a `correctedTerminal` sentence |
-| 79 | `workflows run-status` | ☐ | `GET /workflow-runs/{run_id}` resolves a run by run id alone (no workflow id needed); response carries the run's status, `workflow_name`, `trigger_event_id`/`trigger_author`, every host step (exit code, `headSha`, `dirty`, `checkout`, duration, result event id) and every approval; 404 on an unknown run id, 403 when the caller's key cannot read the workflow's channel |
-| 80 | `sessions measure` | ☐ | Reproduces both 2026-09-20 audits from the relay: kettle at `--until 2026-09-20T11:49:46Z` gives 5 completed turns, 9,250,152 input / 106,661 output, 155 tool calls, `$2.297416` with `results_priced: 2` of 5, lead queue→start `[0,0,0,43]`; the RPG umbrella gives 32 turns, 66,492,119 / 714,115, `$38.540707` and 14/32 disposition-or-ACK turns. Writes nothing; the goal is on the timeline even when it precedes `--since`; an unpriced result is coverage, never a zero; a second umbrella in the same channel contributes no human actions and no action-chain rows; every unsupported metric appears in `honesty` as `unknown` with its reason |
+| 79 | `workflows run-status` | ☐ | `GET /workflow-runs/{run_id}` resolves a run by run id alone (no workflow id needed); response carries the run's status, `workflow_name`, `trigger_event_id`/`trigger_author`, the run's own `checkout` (the bound commit, or `null`, readable while the run is still waiting — ledger 206 B), every host step (exit code, `headSha`, `dirty`, `checkout`, duration, result event id) and every approval; 404 on an unknown run id, 403 when the caller's key cannot read the workflow's channel |
+| 80 | `sessions measure` | ☐ | Reproduces both 2026-09-20 audits from the relay: kettle at `--until 2026-09-20T11:49:46Z` gives 5 completed turns, 9,250,152 input / 106,661 output, 155 tool calls, `$2.297416` with `results_priced: 2` of 5, lead queue→start `[0,0,0,43]`; the RPG umbrella gives 32 turns, 66,492,119 / 714,115, `$38.540707` and 14/32 disposition-or-ACK turns. Writes nothing; the goal is on the timeline even when it precedes `--since`; an unpriced result is coverage, never a zero; a second umbrella in the same channel contributes no founder-signed actions and no action-chain rows; founder-signed acts split into `person_actions` (kettle 5, RPG 2), `host_actions_under_founder_key` (kettle 2, RPG 7 — each naming the `session.hire` it answered) and `unattributed_founder_actions` (0 in both), and each row states the rule that placed it (ledger 206 C); every unsupported metric appears in `honesty` as `unknown` with its reason, including `approvals the person signed` when the author+kind read of 46030/46031 returns none |
+| 81 | `actions example` | ☐ | Offline and keyless: `BUZZ_PRIVATE_KEY= bee actions example > /tmp/a.yml` exits 0 with no relay reachable, and the file it writes publishes as-is (`bee actions publish --file /tmp/a.yml`) once the project coordinate is supplied. `--kind manual-verify|ref-updated|schedule|ci-result` prints one whole file with just that action; the verify one carries `checkout: required`. A file whose `trigger` has no `on` is refused with where the key goes; one carrying `true:` (what a YAML 1.1 tool writes back) is told exactly that; every refusal lists the object's required keys and names `bee actions example` (ledger 206 A) |
 
 ---
 

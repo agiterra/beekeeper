@@ -3,6 +3,7 @@ pub mod actions;
 /// Whether the caller may actually publish and trigger a project's actions
 /// (ledger 186, finding 178(f)).
 pub mod actions_authority;
+pub mod actions_example;
 pub mod agents;
 pub mod channel_templates;
 pub mod channels;

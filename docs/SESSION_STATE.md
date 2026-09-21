@@ -17113,6 +17113,173 @@ removed from here.
        owns “Lead” on this computer; the default checkout path contains a
        space (`…/Kettle Smoke/kettle-smoke`) and caused no failure.
 
+206. **Three fixes from the 2026-09-20 Kettle Smoke run: the actions file now
+     answers for its own shape, a run names the commit it will test before a
+     host claims it, and `bee sessions measure` stops counting this computer's
+     acts as a person's (lane 206 on `work/lane-206-actions-polish`).**
+     Session channel `971fb28d-990f-438b-adb1-e5100a71a718`, session
+     `f9e0c67f-e326-410a-87ce-ebf613bdd437`.
+
+     - **A. `actions.yml` had no way to state its own shape, so a lead learned
+       it from six rounds of parser errors.**
+       - **Evidence.** The Kettle Smoke lead had to write a `verify` action
+         into the project's agents repository and found the schema only
+         through successive refusals; roughly a third of its tool calls that
+         session were orientation. Its own memory note lists the traps it
+         collected: `id` is separate from `name`, `trigger` is an internally
+         tagged enum, `on` belongs inside `trigger`, `command` is an argv
+         sequence, steps need `id` — and, it believed, `on` must be quoted
+         because YAML reads it as the boolean true.
+       - **When the YAML boolean trap actually bites — measured, not
+         assumed.** It does **not** bite this loader. `parse_actions_yml`
+         goes through `serde_yaml` 0.9.34 (`Cargo.toml:87`), which resolves
+         only `true` and `false` as booleans: `on`, `On`, `ON`, `yes` and `y`
+         all stay strings, in block style and in flow style alike, so the
+         spec's own `trigger: { on: manual }` is correct unquoted and every
+         existing test in `crates/buzz-workflow/src/actions_file.rs` writes
+         it that way. The trap belongs to YAML **1.1** parsers and emitters
+         (PyYAML, Ruby's Psych, `yq`): send the file through one of those and
+         the key comes back as `true:`, after which serde reports
+         ``missing field `on` `` — the symptom the lead saw. The same message
+         is produced, far more often, by a `trigger` mapping that simply has
+         no `on` key (`on:` one level up beside `name`, or `type:` instead),
+         because `TriggerDef` is `#[serde(tag = "on")]`
+         (`crates/buzz-workflow/src/schema.rs:52-55`). So the note recorded a
+         real message and a wrong cause, and both are now answered
+         separately.
+       - **Cause.** Nothing in the binary could print a valid file, and
+         `parse_file` handed the parser's words straight on
+         (`crates/buzz-cli/src/commands/actions.rs:42-54`, pre-fix
+         `CliError::Usage(format!("{file}: {error}"))`). serde names one
+         missing field per attempt, so an object with three required keys
+         cost three writes — the same defect ledger 182 fixed for the 44244
+         bodies, unfixed here. The seeded file a new project opens was
+         `schema: …` plus `actions: []`
+         (`crates/buzz-persona/src/seed.rs`, pre-fix), which shows nothing —
+         and which `parse_actions_yml` itself refuses, since it requires at
+         least one action.
+       - **Fix.** New `crates/buzz-cli/src/commands/actions_example.rs`.
+         (1) `bee actions example [--kind manual-verify|ref-updated|schedule|
+         ci-result]` prints a complete, commented `actions.yml` — schema
+         line, `timezone`, one action per trigger kind, `checkout: required`
+         on the verify one — and is dispatched **ahead of the key gate**
+         (`crates/buzz-cli/src/lib.rs`, beside the `sessions --example`
+         block, ledger 182), so it exits 0 with no key and no relay.
+         (2) `explain_actions_error` names the boolean trap **only when a
+         `true` key is really sitting where `on` belongs**, tells a
+         ``missing field `on` `` where the key goes otherwise, lists every
+         required key of the object a missing field belongs to, and ends with
+         `bee actions example`. (3) `bee actions --help` and `bee actions
+         status --help` name `example` first, in `long_about`. (4) The
+         seeded `actions.yml` now carries the verify action commented out
+         between two `---8<---` lines, with the instruction that uncomments
+         it; `seeded_actions_yml` and `uncomment_seeded_actions_example` live
+         in `crates/buzz-persona/src/seed.rs`.
+       - **Tests.** Eight in `actions_example.rs`. The load-bearing ones:
+         `the_whole_file_example_parses_as_the_publisher_parses_it` and
+         `every_kind_prints_a_whole_valid_file_with_the_trigger_it_names`
+         run the real `parse_actions_yml` over every printed example and
+         check the parsed trigger variant, so a schema change breaks the
+         example rather than a lead's session;
+         `the_boolean_on_trap_is_named_only_when_a_true_key_is_really_there`
+         pins all three cases (bare `on` parses, quoting changes nothing,
+         `true:` is named);
+         `every_listed_required_field_is_really_required` drops each listed
+         key from a minimal file and requires the parser to complain about
+         that key, so the printed list cannot outlive a schema change; and
+         `the_seeded_actions_file_example_parses_when_uncommented` runs the
+         seed's own uncommenting rule through the real parser.
+         `the_seeded_example_uncomments_into_one_action` in `buzz-persona`
+         covers the shape where the workflow parser is not available.
+
+     - **B. The relay did not name a run's bound commit until a host claimed
+       the step.**
+       - **Evidence.** `run_json`
+         (`crates/buzz-relay/src/api/workflows.rs:410-438`, pre-fix) exposed
+         `trigger_context.author` and not `trigger_context.checkout`, which
+         lane 184 put on `TriggerContext`
+         (`crates/buzz-workflow/src/executor.rs:79-84`). The commit reached a
+         reader only through `HostStepResult.checkout`, which exists only
+         after a host has claimed and run the step — so the desktop's
+         approval card for a run in `waiting_approval` could not say which
+         commit it would test, which is the one fact an approver needs.
+       - **Fix.** `run_json` now reads `checkout` off the trigger context and
+         puts it on both run reads (`GET /workflows/{id}/runs` and
+         `GET /workflow-runs/{run_id}` share the function). `null` means the
+         run names no commit and a host step will run in the recorded project
+         directory as found, exactly as ledger 184(c) records it. CLI:
+         `disclose_run_checkouts` in
+         `crates/buzz-cli/src/commands/workflows.rs` passes the relay's page
+         through verbatim and adds `checkout_reported` per run, because an
+         **absent** key (an older relay) and a `null` (an unbound run) mean
+         opposite things and inventing `null` for the first would turn "this
+         relay cannot say" into "this run tests the tree as found".
+       - **Tests.** `run_wire_names_the_commit_a_bound_run_will_test` in the
+         relay's api module (bound sha on a `waiting_approval` run, and the
+         empty string read as absent, since the field is
+         `skip_serializing_if = "String::is_empty"`), plus the existing
+         `run_wire_*` pair extended to assert `checkout` is null without one.
+         Three CLI tests cover the page, the older relay and the single-run
+         `run-status` body, and a non-JSON body passing through untouched.
+
+     - **C. `bee sessions measure` counted the host's own acts as human
+       actions.**
+       - **Evidence.** The Kettle Smoke run reported 5 human actions, of
+         which 3 were seat creations this computer made to answer the lead's
+         hire requests. The same defect is in both frozen audit fixtures:
+         the kettle run's 7 and Andy's RPG run's 9.
+       - **Cause.** `human_actions`
+         (`crates/buzz-cli/src/commands/sessions/measure.rs:602-620`,
+         pre-fix) counted every founder-signed 44220/44221 that was not a
+         tagged host answer. When a lead hires, the desktop answers by
+         signing `session.create` **with the founder's key**, so an act
+         requested by an agent and performed by this computer was reported as
+         an unrequested human intervention.
+       - **Fix.** `attribute_founder_actions` splits the block into
+         `person_actions`, `host_actions_under_founder_key` and
+         `unattributed_founder_actions`, and every row carries the `rule`
+         that placed it. A `session.create` is the host's when an earlier
+         `session.hire` names the same umbrella and role and the create's
+         `initialTurn` **contains** that hire's `brief` — containment, not
+         equality, because the host prepends `[From the lead] ` and trims the
+         brief's trailing newline (measured on the kettle capture: the two
+         strings differ by exactly that 15-character prefix); the row names
+         the hire request's event id, taking the latest matching hire, since
+         a refused hire is retried. A create with no initial turn and no hire
+         is the person's; a create whose initial turn matches no hire is
+         **unattributed**, never guessed. A `thread.turn.start` is the
+         person's unless its command id carries `cli-wake-v1:`, which is a
+         CLI waking a seat and is unattributed. Founder-signed approvals
+         (46030/46031), manual triggers (46020) and `decision.answer` are the
+         person's, each row saying it is channel- or author-scoped rather
+         than umbrella-scoped.
+       - **Approvals.** A hand-signed 46030 carries no `h` tag (ledger 197),
+         so `cmd_measure` now makes a fourth read, by author and kind over
+         the same window, deduplicating by event id against the channel-
+         scoped read. A refusal there is not fatal: it prints a note and the
+         report's `honesty` block carries `approvals the person signed =
+         unknown` with the reason, so zero approvals is never presented as a
+         fact.
+       - **How the audited numbers change.** Kettle, whole run: 7 founder-
+         signed acts become **5 person / 2 host / 0 unattributed** — the two
+         host rows are the builder and verifier seats created at 11:31:02Z
+         and 11:38:55Z answering the lead's hires at 11:30:59Z and 11:38:53Z.
+         The person's five are the lead seat opened at 11:27:12Z with no
+         initial turn and four typed turns. RPG, whole run: 9 become
+         **2 person / 7 host / 0 unattributed**, each host row naming a
+         distinct hire request. Ledger 197's point 4 — that the wire carries
+         7 founder-signed non-host-answer commands for the kettle run, not
+         the runbook's 6 — stands as a statement about that set; what changes
+         is that the set is no longer called human actions.
+       - **Tests.** `kettle_full_run_separates_the_persons_acts_from_the_hosts`
+         and `rpg_separates_the_persons_acts_from_the_hosts` in
+         `measure_tests.rs`, replacing
+         `kettle_full_run_counts_founder_signed_commands_as_human_actions`;
+         both run against the frozen captures, assert the rule text and the
+         hire ids, and require the seven RPG hire references to be distinct
+         so one hire cannot be matched twice.
+
+
 ## 3a. Environment facts that cost real time (do not rediscover)
 
 - **pnpm 11's answer to a stale workspace state is to DELETE `node_modules`,

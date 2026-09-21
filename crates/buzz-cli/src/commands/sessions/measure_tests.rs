@@ -384,34 +384,97 @@ fn kettle_full_run_times_the_action_chain_and_the_terminal_record() {
     );
 }
 
-/// The unrequested human actions the runbook counted are 44220/44221 commands
-/// signed by the project owner's key, and the tool names them.
+/// Ledger 206 C: the founder-signed commands split into what a person did
+/// and what this computer did under the person's key.
 #[test]
-fn kettle_full_run_counts_founder_signed_commands_as_human_actions() {
+fn kettle_full_run_separates_the_persons_acts_from_the_hosts() {
     let report = measure_report(&kettle(), Some(KETTLE_SESSION), None, None);
     let owner = report
         .pointer("/coordination/founder_key")
         .and_then(Value::as_str)
         .expect("founder key");
     assert!(owner.starts_with("3d3b7169"), "{owner}");
-    // Seven, all of them on 2026-09-20 and all of them this umbrella's: three
-    // `session.create` (the host signs a seat's creation as the founder) and
-    // four `thread.turn.start`. The kettle channel also holds an earlier
+
+    // Seven founder-signed commands in this umbrella, as before — but two of
+    // them are seats the desktop created to answer the lead's `session.hire`,
+    // so the person's own count is five: one seat opened with no initial
+    // turn, and four turns typed. The kettle channel also holds an earlier
     // hiring-verification umbrella from 2026-09-19 whose founder-signed
     // commands must not be counted here.
-    let actions = report
-        .pointer("/coordination/human_actions")
+    let person = report
+        .pointer("/coordination/person_actions")
         .and_then(Value::as_array)
-        .expect("human actions");
-    assert_eq!(actions.len(), 7);
-    assert_eq!(i64_at(&report, "/coordination/human_action_count"), 7);
-    for action in actions {
+        .expect("person actions");
+    let host = report
+        .pointer("/coordination/host_actions_under_founder_key")
+        .and_then(Value::as_array)
+        .expect("host actions");
+    assert_eq!(person.len(), 5);
+    assert_eq!(i64_at(&report, "/coordination/person_action_count"), 5);
+    assert_eq!(host.len(), 2);
+    assert_eq!(
+        i64_at(&report, "/coordination/host_action_under_founder_key_count"),
+        2
+    );
+    assert_eq!(
+        i64_at(&report, "/coordination/unattributed_founder_action_count"),
+        0,
+        "every founder-signed act in this run is attributable"
+    );
+
+    // The person's five: one create, four turns.
+    let kinds: Vec<i64> = person
+        .iter()
+        .filter_map(|action| action.get("kind").and_then(Value::as_i64))
+        .collect();
+    assert_eq!(kinds, vec![44221, 44220, 44220, 44220, 44220]);
+
+    // Each host row names the hire request it answered, and says which rule
+    // placed it there — never a bare classification.
+    for action in host {
+        assert_eq!(
+            action.get("action").and_then(Value::as_str),
+            Some("session.create")
+        );
+        let hire = action
+            .get("answers_hire_request")
+            .and_then(Value::as_str)
+            .expect("the hire request this create answered");
+        assert_eq!(hire.len(), 64, "a hire request event id");
+        assert!(action
+            .get("rule")
+            .and_then(Value::as_str)
+            .is_some_and(|rule| rule.contains("session.hire")));
+    }
+    for action in person {
+        assert!(action.get("rule").and_then(Value::as_str).is_some());
+        assert!(action
+            .get("answers_hire_request")
+            .is_some_and(Value::is_null));
+    }
+
+    for action in person.iter().chain(host) {
         let at = action.get("at").and_then(Value::as_str).unwrap_or_default();
         assert!(
             at.starts_with("2026-09-20"),
             "{at} belongs to an earlier umbrella in the same channel"
         );
     }
+
+    // No 46030/46031 is readable for this run, and the report says so rather
+    // than reporting zero approvals as a fact.
+    let honesty = report
+        .get("honesty")
+        .and_then(Value::as_array)
+        .expect("honesty");
+    assert!(
+        honesty.iter().any(|row| {
+            row.get("metric").and_then(Value::as_str) == Some("approvals the person signed")
+                && row.get("value").and_then(Value::as_str) == Some("unknown")
+        }),
+        "{honesty:#?}"
+    );
+
     // Every action-chain row is this session's too.
     for row in report
         .get("timeline")
@@ -535,6 +598,36 @@ fn rpg_reproduces_the_disposition_and_acknowledgement_turn_count() {
         ),
         43.75
     );
+}
+
+/// Ledger 206 C on Andy's run: nine founder-signed commands, of which seven
+/// are seats his desktop created to answer a lead's hire. Two are his own —
+/// the first seat, opened with no initial turn, and the turn he typed into it.
+#[test]
+fn rpg_separates_the_persons_acts_from_the_hosts() {
+    let report = measure_report(&rpg(), Some(RPG_SESSION), None, None);
+    assert_eq!(i64_at(&report, "/coordination/person_action_count"), 2);
+    assert_eq!(
+        i64_at(&report, "/coordination/host_action_under_founder_key_count"),
+        7
+    );
+    assert_eq!(
+        i64_at(&report, "/coordination/unattributed_founder_action_count"),
+        0
+    );
+    let host = report
+        .pointer("/coordination/host_actions_under_founder_key")
+        .and_then(Value::as_array)
+        .expect("host actions");
+    // Every one of the seven names a distinct hire request: a create matched
+    // to the same hire twice would inflate the host count and deflate his.
+    let mut hires: Vec<&str> = host
+        .iter()
+        .filter_map(|action| action.get("answers_hire_request").and_then(Value::as_str))
+        .collect();
+    hires.sort_unstable();
+    hires.dedup();
+    assert_eq!(hires.len(), 7);
 }
 
 /// "No whole turn consisting of repeated 'is it done yet?' polling was

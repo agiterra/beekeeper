@@ -44,6 +44,96 @@ pub const ACTIONS_YML: &str = "actions.yml";
 /// The schema `actions.yml` must name — `buzz_workflow::actions_file::ACTIONS_SCHEMA`.
 pub const ACTIONS_SCHEMA: &str = "buzz-project-actions/v1";
 
+/// The `actions.yml` a new agents repository starts with: the schema line, an
+/// empty list, and a **commented-out** manual verify action with
+/// `checkout: required`.
+///
+/// A new project's first encounter with this file used to be four lines that
+/// showed nothing, so its shape had to be learned from parser errors (ledger
+/// 206 A). The commented example is the shape, in place, at the moment an
+/// author opens the file — and
+/// [`uncomment_seeded_actions_example`] plus a test in `buzz-cli` (the crate
+/// that can call the real parser) keep it from becoming a lie.
+///
+/// The empty list is deliberate: `bee actions publish` refuses a file that
+/// lists no action, so a project that has not written one publishes nothing
+/// rather than publishing a placeholder.
+pub fn seeded_actions_yml() -> String {
+    format!(
+        "\
+# This project's actions (spec § 5). Each entry is a workflow definition;
+# `bee actions publish` reads this file from the agents repository root, and
+# `bee actions example` prints a complete, valid file with every trigger kind.
+#
+# There are no actions yet. To add the verify action below, delete the
+# `actions: []` line and remove the leading `# ` from every line between the
+# two `{SCISSORS}` lines.
+#
+# `checkout: required` makes the relay refuse a run that names no commit, so
+# that action can only be started as
+#   bee workflows trigger --workflow <id> --checkout <40-hex sha>
+# and the host runs it in a fresh detached worktree at that commit, never in
+# the project folder as it happens to be checked out.
+#
+# {SCISSORS}
+# actions:
+#   - name: verify
+#     description: Run the gate against one named commit.
+#     trigger:
+#       on: manual
+#     steps:
+#       - id: verify
+#         action: run_on_host
+#         command: [\"just\", \"ci\"]
+#         working_directory: \".\"
+#         checkout: required
+#         timeout: 30m
+# {SCISSORS}
+schema: {ACTIONS_SCHEMA}
+actions: []
+"
+    )
+}
+
+/// The mark that brackets the commented example in [`seeded_actions_yml`].
+pub const SCISSORS: &str = "---8<---";
+
+/// The whole marker line, matched exactly so prose that *mentions* the mark
+/// (the instruction above the example does) never toggles the block.
+const MARKER_LINE: &str = "# ---8<---";
+
+/// Apply the instruction [`seeded_actions_yml`] gives its reader: drop the
+/// `actions: []` line and remove the leading `# ` from every line between the
+/// two [`SCISSORS`] marks.
+///
+/// Prose outside the marks keeps its `#` and stays a comment. This exists so
+/// a test can prove the seeded example really parses, rather than asserting
+/// that some bytes are present in a file nobody ever ran through the parser.
+pub fn uncomment_seeded_actions_example(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut inside = false;
+    for line in text.lines() {
+        if line.trim() == MARKER_LINE {
+            inside = !inside;
+            continue;
+        }
+        if line.trim() == "actions: []" {
+            continue;
+        }
+        if inside {
+            let stripped = line
+                .strip_prefix("# ")
+                .or_else(|| line.strip_prefix('#'))
+                .unwrap_or(line);
+            out.push_str(stripped);
+        } else {
+            out.push_str(line);
+        }
+        out.push('\n');
+    }
+    out
+}
+
 /// The README the seed writes.
 pub const README_MD: &str = "README.md";
 
@@ -171,14 +261,7 @@ pub fn write_agents_repo_seed(
 
     write(README_MD, &readme(name))?;
     write(TEAM_YML, &team_yml(name, &lead, &roles))?;
-    write(
-        ACTIONS_YML,
-        &format!(
-            "# This project's actions (spec § 5). Each entry is a workflow definition;\n\
-             # `bee actions publish` reads this file from the agents repository root.\n\
-             schema: {ACTIONS_SCHEMA}\nactions: []\n"
-        ),
-    )?;
+    write(ACTIONS_YML, &seeded_actions_yml())?;
     // The registry travels with the project (ledger 178(a)): without it here
     // a routed hire is refused on every project but Beekeeper's own, and the
     // unrouted retry runs the identity's pin — the most expensive target.
@@ -465,6 +548,39 @@ mod tests {
         let actions = std::fs::read_to_string(root.join("actions.yml")).unwrap();
         assert!(actions.contains(&format!("schema: {ACTIONS_SCHEMA}")));
         assert!(actions.contains("actions: []"));
+        assert_eq!(actions, seeded_actions_yml());
+    }
+
+    /// The commented verify action is what an author finds in the file, so
+    /// the instruction printed above it has to work: stripping the marked
+    /// `#`s and dropping `actions: []` must yield a document with one action
+    /// that still declares `checkout: required`.
+    ///
+    /// This asserts the *shape* only — this crate has no workflow parser.
+    /// `the_seeded_actions_file_example_parses_when_uncommented` in
+    /// `buzz-cli` runs the real `parse_actions_yml` over the same two
+    /// functions.
+    #[test]
+    fn the_seeded_example_uncomments_into_one_action() {
+        let uncommented = uncomment_seeded_actions_example(&seeded_actions_yml());
+        assert!(
+            !uncommented.lines().any(|line| line.trim() == "actions: []"),
+            "the empty list is gone (the prose above it still names it):\n{uncommented}"
+        );
+        assert!(uncommented.contains(&format!("schema: {ACTIONS_SCHEMA}")));
+        for line in [
+            "actions:",
+            "  - name: verify",
+            "      on: manual",
+            "        checkout: required",
+        ] {
+            assert!(
+                uncommented.lines().any(|candidate| candidate == line),
+                "expected {line:?} in\n{uncommented}"
+            );
+        }
+        // Prose keeps its `# `, so the result is still readable as guidance.
+        assert!(uncommented.contains("# This project's actions"));
     }
 
     /// Ledger 178(a): the registry a project routes against must be this

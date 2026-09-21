@@ -78,8 +78,40 @@ pub async fn cmd_get_workflow_runs(
     let resp = client
         .get_authed(&format!("/workflows/{workflow_id}/runs?limit={limit}"))
         .await?;
-    println!("{resp}");
+    println!("{}", disclose_run_checkouts(&resp));
     Ok(())
+}
+
+/// Mark each run in a relay page with whether the relay reported the commit
+/// the run is bound to.
+///
+/// The relay has named `checkout` on both run reads since ledger 206 B, so a
+/// current relay always carries the key — `null` when the run names no
+/// commit, a 40-hex sha when it does. An **older** relay omits the key
+/// entirely, and an absent key and a `null` mean opposite things: "this relay
+/// cannot say" versus "this run tests the working tree as found". Adding
+/// `checkout: null` to an older relay's page would turn the first into the
+/// second, so instead each run gets `checkout_reported`, and a run the relay
+/// said nothing about keeps no `checkout` key at all. Everything else in the
+/// page is passed through verbatim; a body that is not the expected shape is
+/// printed exactly as the relay sent it.
+fn disclose_run_checkouts(body: &str) -> String {
+    let Ok(mut page) = serde_json::from_str::<serde_json::Value>(body) else {
+        return body.to_owned();
+    };
+    let runs = match page.get_mut("runs").and_then(|runs| runs.as_array_mut()) {
+        Some(runs) => runs,
+        // `run-status` returns one run, not a page of them.
+        None => std::slice::from_mut(&mut page),
+    };
+    for run in runs {
+        let Some(run) = run.as_object_mut() else {
+            continue;
+        };
+        let reported = run.contains_key("checkout");
+        run.insert("checkout_reported".to_owned(), serde_json::json!(reported));
+    }
+    page.to_string()
 }
 
 /// Get one run's full state by run id alone — `GET /workflow-runs/{run_id}`.
@@ -97,7 +129,7 @@ pub async fn cmd_get_run_status(client: &BuzzClient, run_id: &str) -> Result<(),
     let resp = client
         .get_authed(&format!("/workflow-runs/{run_id}"))
         .await?;
-    println!("{resp}");
+    println!("{}", disclose_run_checkouts(&resp));
     Ok(())
 }
 
@@ -396,6 +428,52 @@ mod tests {
         assert!(matches!(error, CliError::Usage(_)), "{error:?}");
         // The same commit twice is fine.
         trigger_content(Some(&inputs), Some(&"AB".repeat(20))).expect("agreeing values");
+    }
+
+    /// Ledger 206 B: the relay names the commit a run is bound to on both run
+    /// reads. The page is passed through verbatim apart from
+    /// `checkout_reported`, which keeps "this relay does not say" from reading
+    /// as "this run tests the tree as found".
+    #[test]
+    fn a_runs_page_keeps_the_relays_checkout_and_says_whether_it_was_reported() {
+        let sha = "fa927fd".repeat(6);
+        let page = format!(
+            r#"{{"runs":[{{"id":"a","checkout":"{sha}"}},{{"id":"b","checkout":null}}],"next":null}}"#
+        );
+        let out: serde_json::Value =
+            serde_json::from_str(&disclose_run_checkouts(&page)).expect("json");
+        assert_eq!(out["runs"][0]["checkout"], sha);
+        assert_eq!(out["runs"][0]["checkout_reported"], true);
+        assert!(out["runs"][1]["checkout"].is_null());
+        assert_eq!(out["runs"][1]["checkout_reported"], true);
+        assert!(out["next"].is_null(), "the rest of the page is untouched");
+    }
+
+    /// A relay older than that change omits the key. It must not be invented:
+    /// the run keeps no `checkout`, and `checkout_reported` is false.
+    #[test]
+    fn an_older_relays_page_is_not_given_a_checkout_it_never_reported() {
+        let out: serde_json::Value = serde_json::from_str(&disclose_run_checkouts(
+            r#"{"runs":[{"id":"a","status":"waiting_approval"}]}"#,
+        ))
+        .expect("json");
+        assert!(out["runs"][0].get("checkout").is_none());
+        assert_eq!(out["runs"][0]["checkout_reported"], false);
+        assert_eq!(out["runs"][0]["status"], "waiting_approval");
+    }
+
+    /// `run-status` returns one run, not a page of them, and gets the same
+    /// treatment. A body that is not JSON at all is printed exactly as the
+    /// relay sent it.
+    #[test]
+    fn a_single_run_status_body_is_disclosed_and_a_non_json_body_is_untouched() {
+        let out: serde_json::Value = serde_json::from_str(&disclose_run_checkouts(
+            r#"{"id":"a","checkout":null,"host_steps":[]}"#,
+        ))
+        .expect("json");
+        assert_eq!(out["checkout_reported"], true);
+        assert!(out["checkout"].is_null());
+        assert_eq!(disclose_run_checkouts("not json at all"), "not json at all");
     }
 
     #[test]

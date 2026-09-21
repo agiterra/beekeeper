@@ -300,6 +300,9 @@ enum Cmd {
     Workflows(WorkflowsCmd),
     /// Publish a project's `actions.yml` (the agents repository's root) as workflows
     #[command(subcommand)]
+    #[command(
+        long_about = "A project's actions — the `actions.yml` at the root of its agents repository, published one kind:30620 per entry.\n\nStart with `bee actions example`: it prints a complete, valid actions.yml (offline, no key) with one action per trigger kind and a comment on every key. Then `bee actions status` to see what the file would publish and whether this key may, and `bee actions publish` to publish it."
+    )]
     Actions(ActionsCmd),
     /// Read the activity feed
     #[command(subcommand)]
@@ -1315,6 +1318,16 @@ pub enum WorkflowsCmd {
 
 #[derive(Subcommand)]
 pub enum ActionsCmd {
+    /// Print a complete, valid `actions.yml` — start here (offline, no key)
+    #[command(
+        after_help = "Writes a whole file to stdout, schema line included, so it can be saved straight to the agents repository root:\n\n  bee actions example > actions.yml\n  bee actions example --kind manual-verify\n\nReaches no relay and needs no key. The examples are parsed by the real publisher in this binary's tests, so they cannot drift from the schema."
+    )]
+    Example {
+        /// Print only one action: manual-verify, ref-updated, schedule or
+        /// ci-result. Without it, every kind is printed in one file
+        #[arg(long)]
+        kind: Option<commands::actions_example::ExampleKind>,
+    },
     /// Publish every entry of the agents repository's `actions.yml` as a kind:30620 workflow
     #[command(
         after_help = "Each entry becomes one workflow whose id is derived from the project and \
@@ -1335,6 +1348,9 @@ bee actions publish --project 30621:<owner-hex>:<id> --channel <UUID>\n  bee act
         file: Option<String>,
     },
     /// Show what the actions file would publish: name, hash, trigger, host steps, and whether this key may publish and trigger it
+    #[command(
+        long_about = "Show what the actions file would publish: name, hash, trigger, host steps, and whether this key may publish and trigger it.\n\nIf you are writing the file rather than checking one, run `bee actions example` first: it prints a complete, valid actions.yml offline, with a comment on every key."
+    )]
     Status {
         /// The project's kind:30621 coordinate (30621:<owner-hex>:<id>)
         #[arg(long)]
@@ -5223,6 +5239,15 @@ async fn run(cli: Cli) -> Result<(), CliError> {
         }
     }
 
+    // `bee actions example` prints a whole, valid `actions.yml` and reaches
+    // nothing: it is the answer to a file whose shape used to be learned from
+    // parser errors (ledger 206 A). Dispatched here, ahead of the key gate,
+    // for the same reason `sessions --example` is — an author who has not yet
+    // written the file has no reason to have an identity in hand.
+    if let Cmd::Actions(ActionsCmd::Example { kind }) = cli.command {
+        return commands::actions_example::cmd_example(kind);
+    }
+
     // `sessions explain` answers from a data file compiled into this binary.
     // It is handled here, before the key requirement below, on purpose: a seat
     // that has to ask what a word its own tool printed means should not have to
@@ -6332,14 +6357,22 @@ mod tests {
             .filter(|name| name != "help")
             .collect();
         names.sort();
-        assert_eq!(names, vec!["publish".to_owned(), "status".to_owned()]);
+        assert_eq!(
+            names,
+            vec![
+                "example".to_owned(),
+                "publish".to_owned(),
+                "status".to_owned()
+            ]
+        );
     }
 
     #[test]
     fn subcommand_counts_are_stable() {
         let expected: Vec<(&str, usize)> = vec![
-            // C1: `publish` and `status` (spec § 5.1).
-            ("actions", 2),
+            // C1: `publish` and `status` (spec § 5.1), plus the offline
+            // `example` (ledger 206 A).
+            ("actions", 3),
             ("agents", 5),
             ("canvas", 2),
             ("channels", 16),

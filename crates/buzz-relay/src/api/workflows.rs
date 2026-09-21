@@ -408,12 +408,24 @@ pub async fn run_host_steps(
 /// itself, so every call site passes it in from its own `get_workflow` read
 /// rather than this function re-deriving it.
 fn run_json(run: &buzz_db::workflow::WorkflowRunRecord, workflow_name: &str) -> Value {
-    let trigger_author = run
-        .trigger_context
-        .as_ref()
-        .and_then(|context| context.get("author"))
-        .and_then(Value::as_str)
-        .filter(|author| !author.is_empty());
+    let trigger_field = |name: &str| {
+        run.trigger_context
+            .as_ref()
+            .and_then(|context| context.get(name))
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+    };
+    let trigger_author = trigger_field("author");
+    // The commit this run is bound to, from the trigger context lane 184 put
+    // it on (`TriggerContext::checkout`). Until now it left the relay only
+    // once a host had claimed the step and recorded a result, so an approval
+    // card for a *waiting* run could not say which commit it would test —
+    // which is the one fact an approver needs before saying yes. `null` means
+    // the run names no commit and a host step will run in the recorded
+    // project directory as it is found, exactly as an unbound manual trigger
+    // does (ledger 184(c)).
+    let checkout = trigger_field("checkout");
     serde_json::json!({
         "id": run.id,
         "workflow_id": run.workflow_id,
@@ -423,6 +435,7 @@ fn run_json(run: &buzz_db::workflow::WorkflowRunRecord, workflow_name: &str) -> 
         "execution_trace": run.execution_trace,
         "trigger_event_id": run.trigger_event_id.as_ref().map(hex::encode),
         "trigger_author": trigger_author,
+        "checkout": checkout,
         "started_at": run.started_at.map(|value| value.timestamp()),
         "completed_at": run.completed_at.map(|value| value.timestamp()),
         "error_code": run.error_code,
@@ -678,6 +691,30 @@ mod tests {
         assert_eq!(wire["status"], "waiting_host");
         assert_eq!(wire["trigger_event_id"], hex::encode([0xde; 32]));
         assert_eq!(wire["trigger_author"], "abc123");
+        assert!(
+            wire["checkout"].is_null(),
+            "a run whose trigger bound no commit says so"
+        );
+    }
+
+    /// Ledger 206 B: a run bound to a commit names it on both run reads,
+    /// before any host has claimed a step. The desktop's approval card reads
+    /// this to say which commit a waiting run will test.
+    #[test]
+    fn run_wire_names_the_commit_a_bound_run_will_test() {
+        let sha = "fa927fd".repeat(6);
+        let mut run = sample_run(buzz_db::workflow::RunStatus::WaitingApproval);
+        run.trigger_context = Some(serde_json::json!({
+            "author": "abc123",
+            "checkout": sha,
+        }));
+        let wire = run_json(&run, "verify");
+        assert_eq!(wire["checkout"], sha);
+        assert_eq!(wire["status"], "waiting_approval");
+        // An empty string is the absent case on the wire (the field is
+        // `skip_serializing_if = "String::is_empty"`), never a commit.
+        run.trigger_context = Some(serde_json::json!({"author": "abc123", "checkout": ""}));
+        assert!(run_json(&run, "verify")["checkout"].is_null());
     }
 
     #[test]
