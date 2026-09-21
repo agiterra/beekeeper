@@ -3,6 +3,7 @@ import * as React from "react";
 import { toast } from "sonner";
 
 import { PersonaShareRecipients } from "@/features/agents/ui/PersonaShareRecipients";
+import { useManagedAgentsQuery } from "@/features/agents/hooks";
 import { useUsersBatchQuery } from "@/features/profile/hooks";
 import { ProfileAvatar } from "@/features/profile/ui/ProfileAvatar";
 import type { UserSearchResult } from "@/shared/api/types";
@@ -51,6 +52,7 @@ import {
   useRemoveProjectRosterMutation,
   type ProjectRosterEntry,
 } from "../lib/projectMembers";
+import { projectMemberIdentity } from "../lib/projectMemberIdentity";
 import { EmptyHint } from "./SectionCard";
 
 /** Members the add dialog can hold at once — well above the picker's default
@@ -125,11 +127,35 @@ export function ProjectMembersManager({
   );
   const profilesQuery = useUsersBatchQuery(memberPubkeys);
   const profiles = profilesQuery.data?.profiles;
+  // The host holding this panel knows its own managed agents by name and
+  // primary role; without this the project's own agents rendered as bare hex
+  // keys labelled Collaborator (ledger 207(4)).
+  const managedAgentsQuery = useManagedAgentsQuery();
+  const managedAgentsByPubkey = React.useMemo(
+    () =>
+      new Map(
+        (managedAgentsQuery.data ?? []).map((agent) => [
+          agent.pubkey.toLowerCase(),
+          agent,
+        ]),
+      ),
+    [managedAgentsQuery.data],
+  );
 
-  const displayName = React.useCallback(
+  const identityFor = React.useCallback(
     (pubkey: string) =>
-      profiles?.[pubkey]?.displayName?.trim() || truncatePubkey(pubkey),
-    [profiles],
+      projectMemberIdentity({
+        pubkey,
+        profileName: profiles?.[pubkey]?.displayName ?? null,
+        profileIsAgent: profiles?.[pubkey]?.isAgent ?? null,
+        managedAgent: managedAgentsByPubkey.get(pubkey.toLowerCase()) ?? null,
+        truncate: truncatePubkey,
+      }),
+    [managedAgentsByPubkey, profiles],
+  );
+  const displayName = React.useCallback(
+    (pubkey: string) => identityFor(pubkey).name,
+    [identityFor],
   );
 
   const sortedEntries = React.useMemo(
@@ -222,7 +248,8 @@ export function ProjectMembersManager({
         <ul className="flex flex-col gap-1">
           {sortedEntries.map((entry) => {
             const profile = profiles?.[entry.pubkey];
-            const name = displayName(entry.pubkey);
+            const identity = identityFor(entry.pubkey);
+            const name = identity.name;
             return (
               <li
                 className="flex min-h-8 items-center gap-2 px-2"
@@ -235,8 +262,20 @@ export function ProjectMembersManager({
                   iconClassName="h-3 w-3"
                   label={name}
                 />
-                <span className="min-w-0 flex-1 truncate text-sm">{name}</span>
-                {profile?.isAgent ? (
+                <span className="flex min-w-0 flex-1 flex-col">
+                  <span className="truncate text-sm">{name}</span>
+                  {identity.role || identity.showKey ? (
+                    <span
+                      className="truncate text-2xs text-muted-foreground"
+                      data-testid={`project-member-secondary-${entry.pubkey}`}
+                    >
+                      {[identity.role, identity.showKey ? entry.pubkey : null]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </span>
+                  ) : null}
+                </span>
+                {identity.kind === "agent" ? (
                   <Badge variant="outline">Agent</Badge>
                 ) : null}
                 {entry.isCreator ? (
