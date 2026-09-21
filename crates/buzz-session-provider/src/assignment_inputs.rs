@@ -67,6 +67,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -110,6 +111,17 @@ pub const MAX_ASSIGNMENT_INPUT_RECORDS: usize = 256;
 /// The in-memory drain is that caller: there is no task to outlive it, so the
 /// record it leaves behind is either terminal or genuinely interrupted.
 pub const UNOWNED_ATTEMPT: &str = "inline";
+
+/// How long one git invocation may run before it is killed.
+///
+/// Every invocation here happens while the seat's custody is held, so an
+/// invocation that never returns is custody nobody can ever take back. Five
+/// minutes is generous for a fetch on a slow network and finite for one
+/// against a host that will never answer.
+pub const GIT_PROCESS_BOUND: Duration = Duration::from_secs(240);
+
+/// How often the bounded wait looks at the child.
+const GIT_PROCESS_POLL: Duration = Duration::from_millis(25);
 
 /// How many `git status --porcelain` lines are quoted back in `detail`.
 const REFUSAL_DETAIL_LINES: usize = 5;
@@ -766,6 +778,8 @@ fn resolve_request(
 /// no one will answer. The `GIT_DIR` family comes from the single shared
 /// [`crate::git_probe::GIT_REPO_SELECTION_VARS`] list.
 fn git(tree: &Path, args: &[&str]) -> Result<String, String> {
+    use std::io::Read;
+
     let mut command = std::process::Command::new("git");
     command.args(args);
     command.current_dir(tree);
@@ -777,18 +791,61 @@ fn git(tree: &Path, args: &[&str]) -> Result<String, String> {
     for key in crate::git_probe::GIT_REPO_SELECTION_VARS {
         command.env_remove(key);
     }
-    let output = command
-        .output()
+    command.stdin(std::process::Stdio::null());
+    command.stdout(std::process::Stdio::piped());
+    command.stderr(std::process::Stdio::piped());
+    let mut child = command
+        .spawn()
         .map_err(|error| format!("failed to run git: {error}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+
+    // Bounded, and bounded by *killing the child* (Astra's third look, R2).
+    // This runs while the seat's custody is held, so a git invocation that
+    // never returns is a seat nothing can ever take back: an establishment
+    // holding the tree forever, and every later turn on that seat waiting on
+    // it. A fetch against an unreachable host is the ordinary way that
+    // happens — `GIT_TERMINAL_PROMPT=0` stops a credential prompt, not a
+    // hanging TCP connection.
+    let deadline = std::time::Instant::now() + GIT_PROCESS_BOUND;
+    let timed_out = loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break false,
+            Ok(None) => {}
+            Err(error) => return Err(format!("failed to wait for git: {error}")),
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            break true;
+        }
+        std::thread::sleep(GIT_PROCESS_POLL);
+    };
+    if timed_out {
+        return Err(format!(
+            "git {} did not finish within {}s and was killed",
+            args.join(" "),
+            GIT_PROCESS_BOUND.as_secs()
+        ));
+    }
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+    if let Some(mut pipe) = child.stdout.take() {
+        let _ = pipe.read_to_string(&mut stdout);
+    }
+    if let Some(mut pipe) = child.stderr.take() {
+        let _ = pipe.read_to_string(&mut stderr);
+    }
+    let status = child
+        .wait()
+        .map_err(|error| format!("failed to reap git: {error}"))?;
+    if !status.success() {
+        let stderr = stderr.trim().to_owned();
         return Err(if stderr.is_empty() {
             format!("git {} failed", args.join(" "))
         } else {
             stderr
         });
     }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+    Ok(stdout.trim().to_owned())
 }
 
 /// A `git config --get` that treats "unset" as `None`, since git exits 1 for

@@ -494,3 +494,286 @@ async fn a_dequeue_observation_is_written_when_the_row_is_the_one_it_saw() {
         row.message
     );
 }
+
+// ------------------- one custody identity per seat (lane 227, third look R2)
+
+/// The compressed dequeue wait is process-global, so the two cases that use
+/// it take turns. Without this they can unset each other's bound and one of
+/// them waits the production five minutes — a flake that would look like a
+/// custody bug.
+static WAIT_BOUND: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Hold the compressed wait for the length of one case.
+fn compressed_wait(bound: Duration) -> impl Drop {
+    struct Restore(std::sync::MutexGuard<'static, ()>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            crate::assignment_custody::set_wait_bound_for_tests(None);
+        }
+    }
+    let guard = match WAIT_BOUND.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    crate::assignment_custody::set_wait_bound_for_tests(Some(bound));
+    Restore(guard)
+}
+
+/// Astra's probe, as a test: with one custody identity per seat, no public
+/// path produces a second concurrent guard while the first is alive.
+///
+/// Before this lane `supersede_seat` replaced the seat's mutex, so the probe
+/// printed `busy=false` with the old guard still held and then acquired a
+/// second guard. Replacing a locked mutex is not a handoff.
+#[tokio::test]
+async fn no_second_custody_exists_while_the_first_is_held() {
+    let seat = format!("seat-{}", Uuid::new_v4());
+    let first = crate::assignment_custody::hold(&seat).await;
+    assert!(crate::assignment_custody::is_busy(&seat));
+    // Every way in: the plain wait, and the bounded one the dequeue uses.
+    assert!(
+        crate::assignment_custody::hold_for_turn(&seat, Duration::from_millis(50))
+            .await
+            .is_none(),
+        "a second guard must not be obtainable while the first is alive"
+    );
+    assert!(
+        tokio::time::timeout(
+            Duration::from_millis(50),
+            crate::assignment_custody::hold(&seat)
+        )
+        .await
+        .is_err(),
+        "and waiting does not conjure one either"
+    );
+    assert!(crate::assignment_custody::is_busy(&seat));
+    drop(first);
+    assert!(!crate::assignment_custody::is_busy(&seat));
+}
+
+/// A turn that cannot obtain custody is **discharged, not run**: the actor
+/// reports it, the provider publishes `VERIFICATION_INPUT_SEAT_BUSY`, and the
+/// agent is never prompted.
+///
+/// This is the shape the old fix hid: with a replaced lock the follow-up ran
+/// happily while somebody else still held the tree.
+#[tokio::test]
+async fn a_turn_that_cannot_get_custody_is_discharged_and_never_prompted() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let state = dir.path().join("state");
+    let seat = dir.path().join("checkout");
+    std::fs::create_dir_all(&seat).expect("mkdir");
+    seat_repo(&seat);
+    let channel_id = Uuid::new_v4();
+    let projects = write_projects(dir.path(), channel_id, &seat);
+    let agent = fake_agent(dir.path(), "stalling-agent", STALLING_AGENT);
+    let mut provider = Provider::new(config_of(Keys::generate(), &state, Some(&projects), agent))
+        .expect("provider");
+    provider
+        .handle_command_event(channel_id, &create_event(&provider, channel_id, "create-1"))
+        .await
+        .expect("handle");
+    pump_available(&mut provider).await;
+    let record = provider.state().sessions().next().expect("session").clone();
+    let target = provider.target_for(&record);
+    let session_id = record.session_id.clone();
+
+    // Somebody else holds this seat's checkout — an establishment that has
+    // not finished. Compress the dequeue's wait so the answer arrives in test
+    // time; production waits `CUSTODY_WAIT_BOUND`.
+    let squatter = crate::assignment_custody::hold(&session_id).await;
+    let _compressed = compressed_wait(Duration::from_millis(100));
+
+    provider
+        .handle_command_event(channel_id, &turn_event(channel_id, "wake-1", &target))
+        .await
+        .expect("handle");
+    let dropped = tokio::time::timeout(Duration::from_secs(10), provider.next_session_event())
+        .await
+        .expect("the actor reports rather than running")
+        .expect("event");
+    assert!(
+        matches!(
+            &dropped,
+            SessionEvent::TurnDropped {
+                reason: crate::session::TurnDropReason::SeatBusy,
+                ..
+            }
+        ),
+        "{dropped:?}"
+    );
+    provider.handle_session_event(dropped).expect("fold");
+    let sink = CollectingSink::new();
+    provider.flush(&sink).await.expect("flush");
+    let answer = sink
+        .contents_of(buzz_core::kind::KIND_CODING_SESSION_LIFECYCLE_RECEIPT)
+        .into_iter()
+        .find(|receipt| receipt["commandId"] == "wake-1" && receipt["status"] == "turn_dropped")
+        .expect("a receipt a person can see");
+    assert_eq!(
+        answer["error"]["code"],
+        crate::verification_input::VERIFICATION_INPUT_SEAT_BUSY
+    );
+    assert!(
+        !provider.in_flight.contains_key("wake-1"),
+        "the delivery is discharged"
+    );
+    drop(squatter);
+}
+
+/// Restart during a cancellation grace: the predecessor is **ended**, not
+/// out-voted. `shutdown_and_join` reports which proof it got, the seat's
+/// custody is free afterwards, and no second lock was ever minted.
+#[tokio::test]
+async fn a_restart_ends_the_predecessor_and_frees_its_seat() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let state = dir.path().join("state");
+    let seat = dir.path().join("checkout");
+    std::fs::create_dir_all(&seat).expect("mkdir");
+    seat_repo(&seat);
+    let (mut provider, session_id, _channel) =
+        provider_with_a_running_turn(dir.path(), &state, &seat).await;
+    // The running turn holds the seat, as it must.
+    assert!(crate::assignment_custody::is_busy(&session_id));
+
+    // The grace is compressed: what is under test is that the predecessor is
+    // ended and says how, not how long a real agent gets to wind down.
+    let quiescence = provider
+        .sessions
+        .shutdown_and_join(&session_id, Duration::from_millis(250))
+        .await;
+    assert!(
+        matches!(
+            quiescence,
+            crate::session::ActorQuiescence::Joined | crate::session::ActorQuiescence::Aborted
+        ),
+        "a successor learns what happened to its predecessor: {quiescence:?}"
+    );
+    // The custody the predecessor held is released because the predecessor is
+    // gone — not because anybody replaced its lock.
+    for _ in 0..50 {
+        if !crate::assignment_custody::is_busy(&session_id) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(
+        !crate::assignment_custody::is_busy(&session_id),
+        "ending the holder is what frees the seat"
+    );
+}
+
+/// An establishment that outlives the dequeue's wait keeps the tree: the
+/// follow-up turn does not run, and the checkout it was racing lands on the
+/// seat afterwards rather than underneath it.
+#[tokio::test]
+async fn an_establishment_that_outlives_the_wait_keeps_the_tree() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let state = dir.path().join("state");
+    let seat = dir.path().join("checkout");
+    std::fs::create_dir_all(&seat).expect("mkdir");
+    let (first, second) = seat_repo(&seat);
+    let channel_id = Uuid::new_v4();
+    let projects = write_projects(dir.path(), channel_id, &seat);
+    let agent = fake_agent(dir.path(), "stalling-agent", STALLING_AGENT);
+    let mut provider = Provider::new(config_of(Keys::generate(), &state, Some(&projects), agent))
+        .expect("provider");
+    provider
+        .handle_command_event(channel_id, &create_event(&provider, channel_id, "create-1"))
+        .await
+        .expect("handle");
+    pump_available(&mut provider).await;
+    let record = provider.state().sessions().next().expect("session").clone();
+    let target = provider.target_for(&record);
+    let session_id = record.session_id.clone();
+
+    // B's establishment, holding the seat across its git work.
+    let assignment = "56".repeat(32);
+    let store = queued_store(&state, dir.path(), &seat, &assignment, &second);
+    let establishing = crate::assignment_custody::hold(&session_id).await;
+    let _compressed = compressed_wait(Duration::from_millis(100));
+
+    // The ordinary follow-up arrives while that establishment still runs.
+    provider
+        .handle_command_event(channel_id, &turn_event(channel_id, "follow-up", &target))
+        .await
+        .expect("handle");
+    let dropped = tokio::time::timeout(Duration::from_secs(10), provider.next_session_event())
+        .await
+        .expect("the follow-up is answered, not run")
+        .expect("event");
+    assert!(
+        matches!(
+            &dropped,
+            SessionEvent::TurnDropped {
+                reason: crate::session::TurnDropReason::SeatBusy,
+                ..
+            }
+        ),
+        "{dropped:?}"
+    );
+    assert_eq!(
+        head_of(&seat),
+        first,
+        "and B's checkout has not landed under it"
+    );
+
+    // Only once the establishment ends does the tree move — and then it is
+    // B's own turn that would use it.
+    drop(establishing);
+    let settled = crate::assignment_custody::establish_for_turn(
+        &session_id,
+        &crate::assignment_custody::TurnRequirement {
+            assignment_ref: assignment.clone(),
+            base_sha: second.clone(),
+            cwd: seat.clone(),
+            store,
+            branch: "seat/verifier".to_owned(),
+        },
+        Duration::from_secs(30),
+    )
+    .await;
+    assert!(
+        matches!(
+            settled,
+            crate::assignment_custody::Establishment::Settled(_)
+        ),
+        "{settled:?}"
+    );
+    assert_eq!(head_of(&seat), second);
+}
+
+/// A dropped provider does not leave an execution holding a seat: the manager
+/// ends its actors, so the next provider in this process can take custody.
+/// This is the in-process restart case, cured without replacing any lock.
+#[tokio::test]
+async fn a_dropped_provider_releases_its_seats() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let state = dir.path().join("state");
+    let seat = dir.path().join("checkout");
+    std::fs::create_dir_all(&seat).expect("mkdir");
+    seat_repo(&seat);
+    let session_id = {
+        let (provider, session_id, _channel) =
+            provider_with_a_running_turn(dir.path(), &state, &seat).await;
+        assert!(crate::assignment_custody::is_busy(&session_id));
+        drop(provider);
+        session_id
+    };
+    for _ in 0..100 {
+        if !crate::assignment_custody::is_busy(&session_id) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(
+        !crate::assignment_custody::is_busy(&session_id),
+        "a provider that is gone holds nothing"
+    );
+    assert!(
+        crate::assignment_custody::hold_for_turn(&session_id, Duration::from_millis(100))
+            .await
+            .is_some(),
+        "and a successor takes the same custody identity, not a new one"
+    );
+}

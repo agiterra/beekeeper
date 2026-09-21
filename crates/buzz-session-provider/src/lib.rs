@@ -4492,13 +4492,25 @@ impl Provider {
         if self.sessions.handle(&session_id).is_some() {
             // The handover fence's detach, made reachable by a command: the
             // child ends, its packages go, the record stays resumable.
-            self.sessions.shutdown(&session_id);
+            //
+            // **Joined, not just asked.** A successor that starts while its
+            // predecessor is still awaiting a cancellation grace has two
+            // executions on one seat, and lane 219 papered over the resulting
+            // deadlock by minting a second custody lock — which is how both
+            // could believe they held the tree (Astra's third look, R2). The
+            // predecessor is ended here: the task is joined, and its own
+            // `run` kills and reaps the agent's process group on the way out.
+            let quiescence = self
+                .sessions
+                .shutdown_and_join(&session_id, session::ACTOR_RETIRE_GRACE)
+                .await;
             self.discard_context_packages(&session_id);
             self.publish_metadata(plan.channel_id, &plan.target, SessionStatus::Disconnected)?;
             tracing::info!(
                 target: "csp",
                 command_id = %plan.command_id,
                 session_id = %session_id,
+                quiescence = ?quiescence,
                 "session detached for restart"
             );
         }
@@ -9255,6 +9267,11 @@ impl Provider {
                         payload::QUEUE_FULL,
                         "the execution's queue is full".to_owned(),
                         "turn_dropped:queue_full",
+                    ),
+                    session::TurnDropReason::SeatBusy => (
+                        verification_input::VERIFICATION_INPUT_SEAT_BUSY,
+                        verification_input::seat_busy_message(),
+                        "turn_dropped:seat_busy",
                     ),
                     session::TurnDropReason::InputMoved {
                         assignment_ref,

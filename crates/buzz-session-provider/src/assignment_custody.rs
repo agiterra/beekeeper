@@ -105,6 +105,10 @@ struct Registry {
     /// Terminal records whose write failed, kept so the next pass can write
     /// them instead of doing the git work again (finding 12).
     unrecorded: HashMap<String, (String, AssignmentInputRecord)>,
+    /// A shorter dequeue wait, for tests that have to observe the
+    /// custody-unavailable answer without waiting minutes for it.
+    #[cfg(test)]
+    test_wait_bound: Option<Duration>,
 }
 
 fn registry() -> &'static Mutex<Registry> {
@@ -126,45 +130,51 @@ fn seat_lock(session_id: &str) -> Arc<tokio::sync::Mutex<()>> {
     )
 }
 
-/// Hand this seat's custody to a new execution.
-///
-/// One live actor per session id is an invariant the provider already keeps: a
-/// resume replaces the actor, and a provider that goes away takes its actors
-/// with it. Custody follows that, so a fresh actor starts with a lock nobody
-/// else holds. Without this, an actor whose prompt will never be answered —
-/// or one whose provider was dropped mid-turn — would hold the seat against
-/// its own successor forever, and every turn the new actor dequeued would
-/// wait on a turn that no longer exists.
-///
-/// It does **not** weaken the fence it serves: what it replaces is the lock
-/// belonging to an execution that is over, and establishments take the lock
-/// through [`hold`] just as before.
-pub fn supersede_seat(session_id: &str) {
-    let mut registry = match registry().lock() {
-        Ok(registry) => registry,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    if let Some(previous) = registry
-        .seats
-        .insert(session_id.to_owned(), Arc::new(tokio::sync::Mutex::new(())))
-    {
-        if previous.try_lock().is_err() {
-            tracing::warn!(
-                target: "csp::assignment_custody",
-                %session_id,
-                code = "seat_custody_superseded",
-                "a new execution took this seat's checkout from a predecessor that still held it"
-            );
-        }
-    }
-}
-
 /// Take custody of a seat's checkout, waiting for whoever holds it.
 ///
 /// Held by a turn from the actor's dequeue until the turn ends, which is what
 /// stops a checkout running underneath a running verifier.
+///
+/// There is exactly **one** custody identity per seat for the life of this
+/// process, and it is never replaced. Lane 219 replaced a locked mutex to
+/// cure a restart deadlock, which is not a handoff at all: the old holder kept
+/// running against the old lock while a successor took the new one, and both
+/// believed they had the tree (Astra's third look, R2). A deadlock is cured by
+/// **ending the holder** — the predecessor actor is joined and its child is
+/// killed — never by minting a second lock.
 pub async fn hold(session_id: &str) -> CustodyGuard {
     seat_lock(session_id).lock_owned().await
+}
+
+/// How long a turn waits at its dequeue for custody another party holds.
+///
+/// Longer than the bound on any single git invocation
+/// ([`crate::assignment_inputs::GIT_PROCESS_BOUND`]), so an establishment that
+/// is genuinely working keeps the tree and the turn waits for it; short enough
+/// that a holder which will never finish is answered instead of hanging this
+/// actor for the life of the process.
+pub const CUSTODY_WAIT_BOUND: Duration = Duration::from_secs(300);
+
+/// Take custody for a turn, or give up saying so.
+///
+/// `None` means some other party still holds this seat's checkout. The caller
+/// must **not** run: a prompt that runs without custody is the hole R2 named,
+/// and a turn that cannot get custody is a delivery to discharge, not a turn
+/// to open.
+pub async fn hold_for_turn(session_id: &str, bound: Duration) -> Option<CustodyGuard> {
+    match tokio::time::timeout(bound, hold(session_id)).await {
+        Ok(guard) => Some(guard),
+        Err(_) => {
+            tracing::warn!(
+                target: "csp::assignment_custody",
+                %session_id,
+                bound_secs = bound.as_secs(),
+                code = "seat_custody_unavailable",
+                "another party still holds this seat's checkout; the turn will not be opened"
+            );
+            None
+        }
+    }
 }
 
 /// Whether some party is holding this seat's checkout right now.
@@ -427,6 +437,10 @@ pub enum TurnCustody {
     /// Custody of the seat, and the tree holds the commit the assignment
     /// names. Hold this until the turn ends.
     Held(Box<CustodyGuard>),
+    /// Some other party — an establishment that has not finished, or a
+    /// predecessor execution that has not ended — still holds this seat's
+    /// checkout. The prompt must not be sent.
+    SeatBusy,
     /// The tree is not what the assignment named. The prompt must not be
     /// sent, and the delivery must be discharged rather than left accepted
     /// (R2's second hole).
@@ -446,7 +460,7 @@ impl TurnCustody {
     pub fn into_guard(self) -> Option<Box<CustodyGuard>> {
         match self {
             Self::Unmanaged(guard) | Self::Held(guard) => Some(guard),
-            Self::Refused { .. } => None,
+            Self::SeatBusy | Self::Refused { .. } => None,
         }
     }
 }
@@ -457,11 +471,42 @@ impl TurnCustody {
 /// the tree again at the only moment that matters — after the previous turn
 /// has ended, before this prompt is sent — and holds custody for as long as
 /// the caller keeps the guard, so nothing can move it while the turn runs.
+/// Shorten the dequeue's custody wait for the current test process.
+///
+/// Test-only: production always waits [`CUSTODY_WAIT_BOUND`]. What a test
+/// needs is the *answer* a turn gives when somebody else holds the seat, and
+/// waiting five real minutes for it proves nothing extra.
+#[cfg(test)]
+pub fn set_wait_bound_for_tests(bound: Option<Duration>) {
+    let mut registry = match registry().lock() {
+        Ok(registry) => registry,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    registry.test_wait_bound = bound;
+}
+
+/// The bound this process's dequeues wait for custody.
+fn wait_bound() -> Duration {
+    #[cfg(test)]
+    {
+        let registry = match registry().lock() {
+            Ok(registry) => registry,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if let Some(bound) = registry.test_wait_bound {
+            return bound;
+        }
+    }
+    CUSTODY_WAIT_BOUND
+}
+
 pub async fn verify_for_turn(session_id: &str, command_id: &str) -> TurnCustody {
     // The lock comes first, unconditionally. Deciding whether to take custody
     // by asking whether this particular prompt names an assignment was R2:
     // the tree is the seat's, and whichever turn is running is using it.
-    let guard = hold(session_id).await;
+    let Some(guard) = hold_for_turn(session_id, wait_bound()).await else {
+        return TurnCustody::SeatBusy;
+    };
     let Some(requirement) = take_requirement(session_id, command_id) else {
         return TurnCustody::Unmanaged(Box::new(guard));
     };

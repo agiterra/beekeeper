@@ -631,11 +631,22 @@ pub enum SteerDispatch {
     Idle,
 }
 
+/// How long a successor waits for its predecessor's actor to retire.
+///
+/// Long enough to cover the cancellation grace an interrupted prompt is
+/// allowed ([`CANCEL_GRACE`]) plus the agent child's own kill-and-reap bound,
+/// so an execution winding down properly is joined rather than aborted.
+pub const ACTOR_RETIRE_GRACE: std::time::Duration = std::time::Duration::from_secs(40);
+
 /// Why a queued turn never reached the runtime.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TurnDropReason {
     /// The execution's queue was full when the turn arrived.
     QueueFull,
+    /// Another party still held this seat's checkout, so the prompt was never
+    /// sent. A turn that cannot get custody is a delivery to discharge, not a
+    /// turn to open (Astra's third look, R2).
+    SeatBusy,
     /// The seat's tree no longer held the commit the turn's assignment named,
     /// so the prompt was never sent.
     InputMoved {
@@ -815,6 +826,28 @@ pub struct SessionHandle {
     shutdown: watch::Sender<bool>,
     /// Late-refusal bookkeeping shared with the actor. See [`FenceState`].
     fenced: Arc<Mutex<FenceState>>,
+    /// The actor task, kept so a successor can prove the predecessor ended.
+    ///
+    /// Detaching it — which is what this did before Astra's third look —
+    /// left "has it stopped?" unanswerable, so a restart inferred quiescence
+    /// from its own existence and started a second execution over the first
+    /// one's checkout (R2). Taken by whoever joins it; `None` afterwards.
+    actor: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+}
+
+/// What was established about a predecessor execution before a successor ran.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActorQuiescence {
+    /// The actor task finished on its own. Its `run` ends with
+    /// `AcpClient::shutdown`, which kills the child's process group and reaps
+    /// it, so this is proof of both.
+    Joined,
+    /// The grace expired and the task was aborted. It can execute nothing
+    /// further, and dropping its client kills the child — the spawn sets
+    /// `kill_on_drop`.
+    Aborted,
+    /// There was no live actor to end.
+    AlreadyGone,
 }
 
 /// What the provider learned when it refused a command it had already
@@ -937,6 +970,38 @@ impl SessionHandle {
     fn shutdown(&self) {
         let _ = self.shutdown.send(true);
     }
+
+    /// Ask the actor to retire, and wait for proof that it has.
+    ///
+    /// Proof, not inference: the task is joined. Its own `run` ends by calling
+    /// `AcpClient::shutdown`, which kills the agent's process group and reaps
+    /// it, so a joined actor is an actor whose child is gone. Past `grace` the
+    /// task is aborted — after which it can run no further code, and dropping
+    /// its client kills the child through `kill_on_drop` — and the caller is
+    /// told which of the two happened.
+    async fn shutdown_and_join(&self, grace: std::time::Duration) -> ActorQuiescence {
+        let _ = self.shutdown.send(true);
+        let handle = match self.actor.lock() {
+            Ok(mut slot) => slot.take(),
+            Err(poisoned) => poisoned.into_inner().take(),
+        };
+        let Some(handle) = handle else {
+            return ActorQuiescence::AlreadyGone;
+        };
+        match tokio::time::timeout(grace, handle).await {
+            Ok(_) => ActorQuiescence::Joined,
+            Err(_) => {
+                tracing::warn!(
+                    target: "csp::session",
+                    session_id = %self.session_id,
+                    grace_secs = grace.as_secs(),
+                    code = "actor_join_timed_out",
+                    "a predecessor execution did not retire inside its grace; aborting it"
+                );
+                ActorQuiescence::Aborted
+            }
+        }
+    }
 }
 
 /// Registry of live session actors.
@@ -1025,7 +1090,7 @@ impl SessionManager {
             late_sink_closed: false,
             steer_commands: HashMap::new(),
         };
-        tokio::spawn(actor.run(rx, shutdown_rx));
+        let task = tokio::spawn(actor.run(rx, shutdown_rx));
         Ok(StartedSession {
             startup,
             handle: SessionHandle {
@@ -1033,6 +1098,7 @@ impl SessionManager {
                 tx,
                 shutdown,
                 fenced,
+                actor: Arc::new(Mutex::new(Some(task))),
             },
         })
     }
@@ -1073,6 +1139,7 @@ impl SessionManager {
                 tx,
                 shutdown,
                 fenced: Arc::default(),
+                actor: Arc::new(Mutex::new(None)),
             },
         );
         shutdown_rx
@@ -1089,11 +1156,30 @@ impl SessionManager {
             .map(|handle| handle.session_id())
     }
 
-    /// Ask a session to retire and forget it.
+    /// Ask a session to retire and forget it, without waiting.
+    ///
+    /// For the paths where nothing is about to take that seat's place. A
+    /// successor must use [`Self::shutdown_and_join`] instead: it has to know
+    /// the predecessor ended, and "I exist" is not that knowledge.
     pub fn shutdown(&mut self, session_id: &str) {
         if let Some(handle) = self.live.remove(session_id) {
             handle.shutdown();
         }
+    }
+
+    /// Ask a session to retire and wait for proof that it did.
+    ///
+    /// The one path a restart may use. Returns what was established, so a
+    /// caller can say so rather than assume it.
+    pub async fn shutdown_and_join(
+        &mut self,
+        session_id: &str,
+        grace: std::time::Duration,
+    ) -> ActorQuiescence {
+        let Some(handle) = self.live.remove(session_id) else {
+            return ActorQuiescence::AlreadyGone;
+        };
+        handle.shutdown_and_join(grace).await
     }
 
     /// Forget a session whose actor has already stopped.
@@ -1104,6 +1190,30 @@ impl SessionManager {
     /// Number of live actors.
     pub fn live_count(&self) -> usize {
         self.live.len()
+    }
+}
+
+impl Drop for SessionManager {
+    /// End every actor this manager owns.
+    ///
+    /// A dropped provider used to leave its actors running, which is how an
+    /// execution that no longer belonged to anything could still hold a
+    /// seat's checkout against the next provider in the same process
+    /// (Astra's third look, R2 — the in-process restart case). `Drop` cannot
+    /// await, so this aborts rather than joins: an aborted task runs no
+    /// further code, releases the custody it held, and drops its client,
+    /// which kills the agent's process group through `kill_on_drop`.
+    fn drop(&mut self) {
+        for handle in self.live.values() {
+            handle.shutdown();
+            let task = match handle.actor.lock() {
+                Ok(mut slot) => slot.take(),
+                Err(poisoned) => poisoned.into_inner().take(),
+            };
+            if let Some(task) = task {
+                task.abort();
+            }
+        }
     }
 }
 
@@ -2407,14 +2517,14 @@ impl SessionActor {
         );
         let mut queued: VecDeque<SessionCommand> = VecDeque::new();
         let mut reason = ExitReason::Requested;
-        // This actor is now the one live execution for this session id, so it
-        // is the party that holds that seat's checkout. Any custody left by a
-        // predecessor — an actor whose provider is gone, or one wedged in a
-        // prompt nobody will answer — belonged to an execution that no longer
-        // exists, and leaving it in place would block every turn this actor
-        // is about to dequeue. Superseding it is the only answer that keeps
-        // the guarantee *and* stays live.
-        crate::assignment_custody::supersede_seat(&self.session_id);
+        // No custody is taken or reset here. A seat has one serialization
+        // identity for the life of this process, and this actor takes it per
+        // turn at the dequeue below. Lane 219 replaced the seat's lock at this
+        // point to cure a restart deadlock; replacing a locked mutex is not a
+        // handoff, and the predecessor went on holding the old one (Astra's
+        // third look, R2). The deadlock is cured where it belongs: the
+        // predecessor is *ended* before a successor starts
+        // (`SessionManager::shutdown_and_join`).
 
         'actor: loop {
             if *shutdown.borrow() {
@@ -2565,6 +2675,28 @@ impl SessionActor {
                     let custody =
                         crate::assignment_custody::verify_for_turn(&self.session_id, &command_id)
                             .await;
+                    if matches!(custody, crate::assignment_custody::TurnCustody::SeatBusy) {
+                        // Another party still holds this seat's checkout: an
+                        // establishment that has not finished, or an
+                        // execution still retiring. Running anyway is the
+                        // hole R2 named, so this is a delivery to discharge
+                        // rather than a turn to open.
+                        tracing::warn!(
+                            target: "csp::session",
+                            session_id = %self.session_id,
+                            %command_id,
+                            "not prompting: another party still holds this seat's checkout"
+                        );
+                        let _ = self
+                            .events
+                            .send(SessionEvent::TurnDropped {
+                                session_id: self.session_id.clone(),
+                                command_id,
+                                reason: TurnDropReason::SeatBusy,
+                            })
+                            .await;
+                        continue;
+                    }
                     if let crate::assignment_custody::TurnCustody::Refused {
                         assignment_ref,
                         observed,
@@ -6380,6 +6512,7 @@ done
             tx,
             shutdown,
             fenced: Arc::default(),
+            actor: Arc::new(Mutex::new(None)),
         };
         handle
             .deliver(SessionCommand::Interrupt {
@@ -6403,6 +6536,7 @@ done
             tx,
             shutdown,
             fenced: Arc::default(),
+            actor: Arc::new(Mutex::new(None)),
         };
         handle
             .deliver(SessionCommand::Turn {
@@ -6429,6 +6563,7 @@ done
             tx,
             shutdown,
             fenced: Arc::default(),
+            actor: Arc::new(Mutex::new(None)),
         };
         assert_eq!(
             handle.deliver(SessionCommand::Shutdown),
@@ -6450,6 +6585,7 @@ done
                 tx: live_tx,
                 shutdown: live_shutdown,
                 fenced: Arc::default(),
+                actor: Arc::new(Mutex::new(None)),
             },
         );
         let (dead_tx, dead_rx) = mpsc::channel(1);
@@ -6462,6 +6598,7 @@ done
                 tx: dead_tx,
                 shutdown: dead_shutdown,
                 fenced: Arc::default(),
+                actor: Arc::new(Mutex::new(None)),
             },
         );
 

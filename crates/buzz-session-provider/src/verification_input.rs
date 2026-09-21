@@ -268,6 +268,23 @@ pub const VERIFICATION_INPUT_EXPIRED: &str = "VERIFICATION_INPUT_EXPIRED";
 /// being silently forgotten.
 pub const VERIFICATION_INPUT_UNHELD: &str = "VERIFICATION_INPUT_UNHELD";
 
+/// Another party still held the seat's checkout when this turn reached the
+/// front of its queue, so the prompt was not sent.
+///
+/// Recoverable and ordinary: an establishment that had not finished, or a
+/// predecessor execution still retiring. The remedy is to send the turn again
+/// once the seat is free, which is why this says nothing about the tree.
+pub const VERIFICATION_INPUT_SEAT_BUSY: &str = "VERIFICATION_INPUT_SEAT_BUSY";
+
+/// The sentence published for [`VERIFICATION_INPUT_SEAT_BUSY`].
+#[must_use]
+pub fn seat_busy_message() -> String {
+    "another party still held this seat's checkout when the turn reached the front of its queue \
+     — an establishment that had not finished, or an execution still retiring — so the prompt was \
+     not sent and nothing ran. Send it again once the seat is free."
+        .to_owned()
+}
+
 /// The seat's tree stopped holding the assignment's commit between the
 /// provider's decision and the moment its prompt would have been sent.
 ///
