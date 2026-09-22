@@ -13,7 +13,9 @@ pub(crate) use agent_env::{
 };
 pub(crate) mod agents_repo;
 pub(crate) mod agents_repo_commit;
+pub(crate) mod agents_repo_migrate;
 pub(crate) mod agents_repo_read;
+pub(crate) mod agents_repo_result;
 mod backend;
 pub(crate) mod config_bridge;
 pub(crate) mod crew_roles;

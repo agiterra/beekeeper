@@ -6653,7 +6653,9 @@ mod tests {
             ("issues", 6),
             ("media", 1),
             ("messages", 8),
-            ("pack", 4),
+            // 4, plus `migrate` — a pack-layout role source converted into
+            // the flat agents-repository layout for a legacy project.
+            ("pack", 5),
             ("patches", 4),
             ("pr", 5),
             ("projects", 12),

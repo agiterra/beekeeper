@@ -530,7 +530,31 @@ fn a_role_two_identities_already_fill_is_not_adopted_by_guessing() {
     let other_root = tempfile::tempdir().expect("temp dir");
     write_role_pack(other_root.path(), "builder");
     let other = super::super::crew_roles::scan_role_packs(other_root.path()).expect("scan");
-    let second = install_team(&other, Some(&first), agents);
+    // A mint that cannot collide with either existing key: `install_team`'s
+    // counter restarts at 1 every call, and a minted pubkey equal to an
+    // existing one is matched by pubkey and *replaces* that record, which
+    // would read as "nothing was minted" whatever the reuse rule did.
+    let mut minted = 0usize;
+    let mut mint = || {
+        minted += 1;
+        Ok(super::super::crew_roles::MintedCrewIdentity {
+            pubkey: format!("a{minted:0>63}"),
+            private_key_nsec: format!("nsec1fresh{minted}"),
+            auth_tag: None,
+        })
+    };
+    let second = super::super::crew_roles::install_role_packs_in_named_team(
+        &other,
+        first.definitions.clone(),
+        agents,
+        std::slice::from_ref(&first.team),
+        "2026-09-14T00:00:00Z",
+        &Default::default(),
+        &mut mint,
+        "team-tank".to_string(),
+        "Project team",
+    )
+    .expect("install succeeds");
 
     assert_eq!(
         second.agents.len(),

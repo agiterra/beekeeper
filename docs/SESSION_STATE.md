@@ -19651,6 +19651,124 @@ removed from here.
        caught the `SystemKeyring`/`LocalFile` mistake above, 3,488 passed / 1
        failed; fixed, reran clean); `just file-size-check`; Python NUL scan.
 
+233. **A project created before the pivot could not be moved into an agents
+     repository at all, and Beekeeper's own project was the clearest case
+     (2026-09-22, Andy with Opus, branch `feat/agents-repo-migration`, base
+     `8e47df57a`).** Read live from hive the same day: `bee packs get-source
+     --project 30621:6cbdf445…:bee-keeper` answers event
+     `2f400ee7b8f8e3913fd4eebe15c9a3848d1402d59bfd1337fffb5bba271e1c5f`
+     naming **Brian's** `30617:3d3b7169…:agiterra-packs`, `ref
+     refs/heads/main`, `path personas/roles` — a pack layout. Three walls,
+     each in the code:
+     - `project_agents_init` refused any project whose 30624 named another
+       repository, before anything was signed
+       (`desktop/src-tauri/src/managed_agents/agents_repo.rs`, the
+       `already has a pack source naming` arm), and `bee packs init` refused
+       the same way (`crates/buzz-cli/src/commands/packs.rs`). So **Finish
+       repository setup** could not finish, and the settings panel offered it
+       anyway: its only test was "is there any 30624 at all"
+       (`ProjectPacksSettingsSection.tsx`).
+     - `resolve_agents_repo` refuses a pack-layout source by name
+       (`managed_agents/agents_repo_read.rs`), so the **Files** tab — ledger
+       225's whole surface — could not open Beekeeper's own project.
+     - The code repository id was derived from the slug, but a pre-pivot
+       project's is not its slug: `bee-keeper`'s is `agiterra-beekeeper` and
+       Tank Loop's is `tankloop` (`bee repos list`, checked 2026-09-22). A run
+       would have announced and seeded a second, empty `bee-keeper`, then
+       refused the recorded folder as "not a git checkout of `<slug>`".
+
+     Fixed in two commits. **The converter** (`crates/buzz-persona/src/migrate.rs`,
+     `convert_pack_tree`) writes the flat layout from the pack layout: each
+     persona's body verbatim, each `SKILL.md` verbatim, plus the furniture a
+     seed writes. Two things cannot survive and are **reported, not hidden** —
+     the frontmatter `skills:` list is dropped (in the flat layout a claimed
+     path resolves against the repository root, and the composer auto-claims
+     everything under `roles/<role>/skills/`, so keeping it would either point
+     at the shared directory or collide with the auto-claim), and the pack's
+     identity gives way to `project:<name>`, so the composed provenance digest
+     differs. What a seat reads does not change, and a test composes both
+     layouts and pins the prompt, the description and every skill's bytes as
+     equal. Run against Beekeeper's own `agiterra-packs@5f4ae76fa`, all seven
+     roles convert with every prompt and skill intact (architect 2,444 bytes /
+     1 skill; builder 3,721 / 3; designer 5,615 / 4; lead 11,446 / 6; poker
+     2,682 / 1; runner 2,675 / 2; verifier 2,987 / 2), and
+     `bee agents-repo check` validates the converted tree clean: seven roles,
+     nineteen skills.
+
+     **The host** (`agents_repo.rs`) now reads the project's head first and
+     adopts the code repository it already names under the viewer's key;
+     takes `migrate: Option<MigrateFromSource>` carrying the exact 30624 the
+     caller read; seeds by conversion when asked; and publishes the new source
+     with `build_conditional_project_pack_source` on that event id, so a
+     source re-pointed meanwhile comes back `PACK_SOURCE_CONFLICT` with the
+     new repository standing and `sourceConflict: true` on the result. The
+     repository being migrated off is **only read**. Without `migrate` the old
+     refusal stands, now naming the control. New result fields:
+     `codeRepoAdopted`, `migratedFrom`, `migratedRoles`, `migrationNotes`,
+     `sourceConflict`.
+
+     **Identities.** `existing_agent_for_team` keyed reuse on the pack
+     directory (`crew_roles_project.rs`), which a migration necessarily
+     changes, so every role would have been minted a *second* identity beside
+     the one the operator knows. It now falls back, inside the project's own
+     team, to the single identity whose `home_role` is the role — and only
+     when exactly one fills it, because two builders are an arrangement
+     someone made on purpose. Two tests pin both halves.
+
+     **`team.yml` gains `limits:`** — a per-file ceiling in lines or bytes,
+     enforced by `buzz_persona::agents_repo::validate_root`, which every
+     committer runs. It is the mechanism Beekeeper's current-state map needs
+     once that map leaves the code repository and its pre-push script; a limit
+     naming a file the tree does not have **refuses**, because a guard that
+     silently does nothing is the failure it exists to prevent. Proved with
+     the real map: under the ceiling it reports `within_limits`, and a
+     400-line stand-in refuses twice, "26266 bytes; team.yml caps it at 24000"
+     and "400 lines; team.yml caps it at 300".
+
+     **Surfaces.** Project settings → Packs has three states, and the third
+     names the repository the project reads today and what converting it would
+     do. `bee pack migrate --from --into --name` converts a tree locally (no
+     relay, no key); `bee packs init --expect-source <id>` replaces exactly
+     the source you read; `bee agents-repo check` runs the committer's own
+     validation over a working tree, so a `write` seat that pushes with git —
+     which never passes through the committer — can gate itself.
+
+     **Not done, and owed:** nothing has run against hive. Beekeeper's own
+     migration (its documents as well as its roles) is the next step and is
+     Andy's to run from an installed build, because it re-points a project
+     Brian's seats read. Spec § 4.12's "Migration of pre-pivot material is out
+     of scope" is superseded for *roles*; the document move is item 234.
+
+234. **Beekeeper's own documents have not moved yet, and the manifest says
+     exactly what would (2026-09-22, Andy with Opus).** Decision 5 (spec § 1
+     item 5) says a project's plans do not sit beside its code; Beekeeper's
+     still do — `AGENTS.md` (38 KB), the map (23,915 bytes), the ledger
+     (1,780,438 bytes), ten plans in force, forty-three retired ones,
+     thirty-eight dated reports. The product half is item 233; this is the
+     editorial half, and it is **not applied**: the manifest is
+     [`docs/history/2026-09-22-beekeeper-agents-repo-move.md`](history/2026-09-22-beekeeper-agents-repo-move.md),
+     file by file, with three judgment calls flagged for a second opinion.
+     Three facts decide its shape:
+     - **`plans/` has no nested directory.** The draft path grammar admits
+       `plans/<name>.md` and `plans/archive/<name>.md` and nothing else
+       (`crates/buzz-core/src/agents_repo_draft.rs`), so `docs/history/`
+       flattens into `plans/archive/` under its own dated filenames.
+     - **The ledger cannot be edited in the Files tab.** A draft carries a
+       whole file, capped at 60,000 bytes of text and 65,536 of content; the
+       ledger is 1.78 MB and the teams spec 79,734 bytes. Both are readable
+       there and editable only through git, and the tab should say so rather
+       than fail a save.
+     - **Order is a correctness property.** The agents repository must hold
+       the map before the code repository stops naming it, or the project has
+       no map at all between the two commits. So: migrate (item 233), push the
+       documents, *then* the code repository's commit — which also retires
+       `scripts/check-current-state-size.mjs`, its `just current-state-check`
+       recipe and its pre-push step, because `team.yml` `limits:` is the
+       ceiling from then on.
+
+     Blocked on one thing only: the migration re-points a project Brian's seats
+     read, from a build that is not installed here, so it is Andy's to run.
+
 236. **kettle-control control run — 1h15m, 2 interventions, plan adoption
      refused live (2026-09-22, Brian at the keyboard, Fable orchestrating;
      installed `36f337d4a`, hive `build_time` `2026-09-22T03:19:28Z`).**

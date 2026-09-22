@@ -698,6 +698,26 @@ from another project's folder (2026-09-19, ledger 175).
   the candidate ref `setup/<id>` as today, adoption is a fast-forward of
   `main` to it, and no 30624 sha is written while the pin is a `ref`. The
   setup actor's grant is `agents_repo: write`.
+- **A project created before this section** points its 30624 somewhere else
+  — a pack-layout packs repository, usually at a sub-path. `project_agents_init`
+  moves it, but only when the caller passes the **exact kind:30624 event it
+  read**: the roles are converted into the flat layout verbatim
+  (`buzz_persona::migrate`, each persona's body and every `SKILL.md`), every
+  role is granted `agents_repo: read` and the lead `write`, and the new source
+  is published *conditionally* on that event, so one re-pointed meanwhile is
+  refused rather than overwritten. The old repository is only read. The code
+  repository is whichever the project's head already names under the viewer's
+  key, not one derived from the slug — a pre-pivot project's code repository
+  is rarely `<slug>`. Without the request, a project pointed elsewhere still
+  refuses. Two things the conversion cannot carry are reported on the result:
+  a persona's frontmatter `skills:` list (the flat layout derives it from the
+  directory) and the pack's identity, which becomes `project:<name>`. Ledger
+  233.
+- **`team.yml` `limits:`** — `[{path, max_lines?, max_bytes?}]`, enforced by
+  `validate_root` at every commit. A project that keeps a document every agent
+  is asked to read whole puts its ceiling here, where it travels with the
+  document; a limit naming a file the tree does not have refuses. Neutral
+  mechanism, per-project policy.
 - **Retired.** The sparse exclusion, `hideRoles`, the `Read` denial,
   `roles_visible` and `branch_override.rs` (§ 4.9, § 4.10). The
   definition-drift comparison and **Restart with current definition** stay.
@@ -714,7 +734,10 @@ scope (`plans/`, `roles/`, `team.yml`, `actions.yml`, `skills/`), only in
 the agents repository, never in the code repository. Surfaces: the desktop
 Files tab (edit and commit), `bee agents-repo` and `bee plans` (list, show,
 draft, commit), Mobile (read and draft; no commit — no git on the phone).
-Migration of pre-pivot material is out of scope.
+~~Migration of pre-pivot material is out of scope.~~ Superseded 2026-09-22
+for roles: a project pointed at a pack-layout repository is migrated by
+§ 4.11's own creation command (ledger 233). Moving a project's *documents*
+into `plans/` stays a per-project editorial act, not a product feature.
 
 - **A draft is a relay event, kind 44250** ([`nips/NIP-AD.md`](nips/NIP-AD.md)),
   project-`a`-scoped like Pulse and to-dos, append-only, folded client-side

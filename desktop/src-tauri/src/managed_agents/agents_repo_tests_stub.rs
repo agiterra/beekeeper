@@ -452,6 +452,31 @@ pub(super) fn project_head_with_repo_json(
     event_json(&event)
 }
 
+/// [`push_pack_layout_repo`], off the test's runtime thread.
+///
+/// The stub relay serves git from an axum handler on the *same* runtime a
+/// `#[tokio::test]` gives the test body — a current-thread one. Pushing
+/// straight from the body therefore blocks the only thread that could
+/// answer the push, and the test hangs forever rather than failing.
+pub(super) async fn push_legacy_repo(
+    work: PathBuf,
+    relay_url: String,
+    owner: String,
+    repo_id: &str,
+    path: &str,
+    roles: &[&str],
+) {
+    let repo_id = repo_id.to_owned();
+    let path = path.to_owned();
+    let roles: Vec<String> = roles.iter().map(|role| (*role).to_owned()).collect();
+    tokio::task::spawn_blocking(move || {
+        let roles: Vec<&str> = roles.iter().map(String::as_str).collect();
+        push_pack_layout_repo(&work, &relay_url, &owner, &repo_id, &path, &roles);
+    })
+    .await
+    .expect("seeding the legacy repository did not finish");
+}
+
 /// Build a pack-layout role source in a scratch directory and push it to
 /// the stub relay's git server as `repo_id` — what a project created before
 /// the pivot points at.

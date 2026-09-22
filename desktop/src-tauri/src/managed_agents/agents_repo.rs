@@ -63,7 +63,6 @@
 use std::path::{Path, PathBuf};
 
 use nostr::{Event, EventBuilder, Keys, Kind, Tag};
-use serde::Serialize;
 use tauri::{AppHandle, State};
 
 use crate::app_state::AppState;
@@ -76,16 +75,23 @@ use crate::managed_agents::packs_repo::{
 use crate::managed_agents::project_roster;
 use buzz_core_pkg::kind::KIND_PROJECT;
 use buzz_core_pkg::project_pack_source::{
-    build_conditional_project_pack_source, decode_project_pack_source, PackPin, PACK_PATH_ROOT,
-    PROJECT_PACK_SOURCE_SCHEMA,
+    decode_project_pack_source, PackPin, PACK_PATH_ROOT, PROJECT_PACK_SOURCE_SCHEMA,
 };
 use buzz_persona_pkg::template::TemplateCatalog;
+
+pub(crate) use super::agents_repo_migrate::MigrateFromSource;
+pub use super::agents_repo_migrate::MigrateRequest;
+pub(crate) use super::agents_repo_migrate::{
+    adopted_code_repo_id, build_migrated_pack_source, convert_agents_checkout, LegacySource,
+};
+pub use super::agents_repo_result::ProjectAgentsInit;
 
 /// Suffix appended to a project's slug to name its agents repository.
 pub const AGENTS_REPO_SUFFIX: &str = "-beekeeper-agents";
 
 /// Kind of a project's pack-source record.
-const KIND_PROJECT_PACK_SOURCE: u16 = buzz_core_pkg::kind::KIND_PROJECT_PACK_SOURCE as u16;
+pub(crate) const KIND_PROJECT_PACK_SOURCE: u16 =
+    buzz_core_pkg::kind::KIND_PROJECT_PACK_SOURCE as u16;
 
 /// Message on the one commit the agents seed writes.
 const SEED_COMMIT_MESSAGE: &str = "seed the team from Beekeeper's shipped role templates";
@@ -94,7 +100,7 @@ const SEED_COMMIT_MESSAGE: &str = "seed the team from Beekeeper's shipped role t
 const CODE_SEED_COMMIT_MESSAGE: &str = "seed the project's code repository";
 
 /// Message on the one commit a migration's conversion writes.
-const MIGRATE_COMMIT_MESSAGE: &str =
+pub(crate) const MIGRATE_COMMIT_MESSAGE: &str =
     "convert the project's roles from its pack-layout source into this repository";
 
 /// The relay's refusal code when a conditional source's expectation did not
@@ -104,258 +110,6 @@ const PACK_SOURCE_CONFLICT: &str = "PACK_SOURCE_CONFLICT";
 /// `<slug>-beekeeper-agents`, the suffix kept whole inside the 64-byte id.
 pub fn default_agents_repo_id(project_slug: &str) -> Result<String, String> {
     default_repo_id(project_slug, AGENTS_REPO_SUFFIX)
-}
-
-/// What creating a project's repositories actually produced — every wire
-/// fact, and `gap` when the sequence did not finish.
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ProjectAgentsInit {
-    /// The project coordinate this ran for.
-    pub project_ref: String,
-    /// `30617:<viewer>:<slug>`.
-    pub code_repo_ref: String,
-    /// The code repository's `d` tag.
-    pub code_repo_id: String,
-    /// Event id of the code repository's announcement when this run
-    /// published it; `null` when it already existed or was not reached.
-    pub code_announcement_event_id: Option<String>,
-    /// The code repository was already announced under the viewer's key.
-    pub code_repo_existed: bool,
-    /// The code repository named by the project's own head rather than
-    /// derived from its slug — a project created before the pivot keeps the
-    /// repository it already has (`false` when the slug was used).
-    pub code_repo_adopted: bool,
-    /// The code repository's seed commit (its `README.md` on `main`), or
-    /// `null` when seeding failed or was skipped.
-    pub code_seed_commit_sha: Option<String>,
-    /// The relay already held a push record for the code repository, so
-    /// nothing was seeded or pushed to it.
-    pub code_seed_skipped: bool,
-    /// The code seed's or its push's own words when the seed is not on the
-    /// relay.
-    pub code_seed_error: Option<String>,
-    /// `30617:<viewer>:<slug>-beekeeper-agents`.
-    pub agents_repo_ref: String,
-    /// The agents repository's `d` tag.
-    pub agents_repo_id: String,
-    /// The relay git URL the agents repository is served at.
-    pub agents_clone_url: String,
-    /// Event id of the agents repository's announcement when this run
-    /// published it.
-    pub agents_announcement_event_id: Option<String>,
-    /// The agents repository was already announced under the viewer's key.
-    pub agents_repo_existed: bool,
-    /// The branch the seed is on.
-    pub branch: String,
-    /// The roles seeded, ascending; empty when the seed was skipped or failed.
-    pub roles: Vec<String>,
-    /// The seed commit, or `null` when seeding failed or was skipped.
-    pub seed_commit_sha: Option<String>,
-    /// The seed step's own words when it failed before there was a commit.
-    pub seed_error: Option<String>,
-    /// The relay already held a push record, so nothing was seeded or pushed.
-    pub seed_skipped: bool,
-    /// Whether the agents repository holds the seed on the relay — pushed
-    /// by this run, or already there.
-    pub pushed: bool,
-    /// The push's own words when it did not land.
-    pub push_error: Option<String>,
-    /// The relay-signed kind:30618 recording the push, read back; never
-    /// fabricated.
-    pub push_record_event_id: Option<String>,
-    /// Event id of the kind:30624 this run published.
-    pub source_event_id: Option<String>,
-    /// The project already had a pack source naming the agents repository.
-    pub source_existed: bool,
-    /// The repository coordinate this run migrated the project *off*, when
-    /// it was asked to; `null` for an ordinary create or finish.
-    pub migrated_from: Option<String>,
-    /// The roles converted out of that repository, ascending.
-    pub migrated_roles: Vec<String>,
-    /// What the conversion could not carry across, one sentence per role;
-    /// empty when nothing was dropped.
-    pub migration_notes: Vec<String>,
-    /// The relay refused the conditional source because the project's
-    /// source had moved since the caller read it. Everything else stands;
-    /// nothing was re-pointed.
-    pub source_conflict: bool,
-    /// The relay's refusal of a published event, when one was refused.
-    pub publication_error: Option<String>,
-    /// The identity the seed commit was (or would have been) authored as.
-    pub commit_identity_name: String,
-    pub commit_identity_email: String,
-    /// Event id of the kind:5 withdrawing this run's agents announcement
-    /// after its seed or push failed.
-    pub agents_announcement_withdrawn_event_id: Option<String>,
-    /// The withdrawal's own words when the tombstone itself failed.
-    pub agents_announcement_withdrawal_error: Option<String>,
-    /// This host's checkout of the code repository, recorded as the
-    /// project's folder; `null` when there is none.
-    pub checkout_path: Option<String>,
-    /// `checkout_path` was cloned by this run — `false` when an existing
-    /// checkout was reused or was already recorded.
-    pub checkout_cloned: bool,
-    /// Why there is no recorded checkout, in words: the clone failed, the
-    /// record failed, or the recorded folder is not a checkout of this
-    /// repository (named, not overwritten).
-    pub checkout_error: Option<String>,
-    /// The agent pubkeys this run put on the project's roster.
-    pub roster_added: Vec<String>,
-    /// Why some project agents are not on the roster after this run.
-    pub roster_error: Option<String>,
-    /// Both repositories announced and seeded, the source set, the checkout
-    /// recorded, the roster complete.
-    pub complete: bool,
-    /// One sentence naming what is missing when `complete` is `false`.
-    pub gap: Option<String>,
-    /// The project's default agents this computer installed from the
-    /// seeded team, in role order (spec § 4.11). Empty when the seed did
-    /// not land or the install failed — see `agents_error`.
-    pub agents_installed: Vec<crate::managed_agents::default_agents::InstalledDefaultAgent>,
-    /// Why no agents were installed, when `agents_installed` is empty after
-    /// a seed that landed.
-    pub agents_error: Option<String>,
-}
-
-impl ProjectAgentsInit {
-    fn started(
-        project_ref: &str,
-        viewer: &str,
-        code_repo_id: &str,
-        agents_repo_id: &str,
-        agents_clone_url: &str,
-        identity: (String, String),
-    ) -> Self {
-        Self {
-            project_ref: project_ref.to_string(),
-            code_repo_ref: format!("30617:{viewer}:{code_repo_id}"),
-            code_repo_id: code_repo_id.to_string(),
-            code_announcement_event_id: None,
-            code_repo_existed: false,
-            code_repo_adopted: false,
-            code_seed_commit_sha: None,
-            code_seed_skipped: false,
-            code_seed_error: None,
-            agents_repo_ref: format!("30617:{viewer}:{agents_repo_id}"),
-            agents_repo_id: agents_repo_id.to_string(),
-            agents_clone_url: agents_clone_url.to_string(),
-            agents_announcement_event_id: None,
-            agents_repo_existed: false,
-            branch: SEED_BRANCH.to_string(),
-            roles: Vec::new(),
-            seed_commit_sha: None,
-            seed_error: None,
-            seed_skipped: false,
-            pushed: false,
-            push_error: None,
-            push_record_event_id: None,
-            source_event_id: None,
-            source_existed: false,
-            migrated_from: None,
-            migrated_roles: Vec::new(),
-            migration_notes: Vec::new(),
-            source_conflict: false,
-            publication_error: None,
-            commit_identity_name: identity.0,
-            commit_identity_email: identity.1,
-            agents_announcement_withdrawn_event_id: None,
-            agents_announcement_withdrawal_error: None,
-            checkout_path: None,
-            checkout_cloned: false,
-            checkout_error: None,
-            roster_added: Vec::new(),
-            roster_error: None,
-            complete: false,
-            gap: None,
-            agents_installed: Vec::new(),
-            agents_error: None,
-        }
-    }
-
-    /// The code repository holds its seed on the relay — pushed by this run
-    /// or already there.
-    fn code_seeded(&self) -> bool {
-        self.code_seed_skipped
-            || (self.code_seed_commit_sha.is_some() && self.code_seed_error.is_none())
-    }
-
-    /// Settle `complete` and `gap` from the facts. An announcement this run
-    /// withdrew counts as not announced: the next run announces it again.
-    /// Re-callable: the command settles again once the roster step ran.
-    fn settle(mut self) -> Self {
-        let code_ok = self.code_repo_existed || self.code_announcement_event_id.is_some();
-        let agents_ok = self.agents_repo_existed
-            || (self.agents_announcement_event_id.is_some()
-                && self.agents_announcement_withdrawn_event_id.is_none());
-        let source_ok = self.source_existed || self.source_event_id.is_some();
-        let checkout_ok = self.checkout_path.is_some() && self.checkout_error.is_none();
-        let roster_ok = self.roster_error.is_none();
-        self.complete = code_ok
-            && self.code_seeded()
-            && agents_ok
-            && self.pushed
-            && source_ok
-            && checkout_ok
-            && roster_ok;
-        self.gap = if self.complete {
-            None
-        } else if !code_ok {
-            Some(format!(
-                "code repository {} not announced: {}",
-                self.code_repo_id,
-                self.publication_error.as_deref().unwrap_or("not reached")
-            ))
-        } else if !self.code_seeded() {
-            Some(format!(
-                "code repository {} not seeded: {}",
-                self.code_repo_id,
-                self.code_seed_error.as_deref().unwrap_or("not reached")
-            ))
-        } else if !self.pushed {
-            Some(format!(
-                "agents repository {} not seeded: {}",
-                self.agents_repo_id,
-                self.seed_error
-                    .as_deref()
-                    .or(self.push_error.as_deref())
-                    .or(self.publication_error.as_deref())
-                    .unwrap_or("not reached")
-            ))
-        } else if !agents_ok {
-            Some(format!(
-                "agents repository {} not announced: {}",
-                self.agents_repo_id,
-                self.publication_error.as_deref().unwrap_or("not reached")
-            ))
-        } else if !source_ok {
-            Some(if self.source_conflict {
-                format!(
-                    "the project's role source moved while this ran, so it was not re-pointed at \
-                     {}; read the source again and decide against what is there now. Everything \
-                     else landed",
-                    self.agents_repo_id
-                )
-            } else {
-                format!(
-                    "pack source not set: {}",
-                    self.publication_error.as_deref().unwrap_or("not reached")
-                )
-            })
-        } else if !checkout_ok {
-            Some(format!(
-                "code repository {} not checked out as the project's folder: {}",
-                self.code_repo_id,
-                self.checkout_error.as_deref().unwrap_or("not reached")
-            ))
-        } else {
-            Some(format!(
-                "project agents not all on the roster: {}",
-                self.roster_error.as_deref().unwrap_or("not reached")
-            ))
-        };
-        self
-    }
 }
 
 /// What the seed step (write, git init/commit, then push) produced.
@@ -373,18 +127,6 @@ enum SeedOutcome {
     },
 }
 
-/// The role source a migration is moving the project off: enough to sync
-/// that repository and find its roles, plus the event the re-point is
-/// conditional on.
-struct LegacySource {
-    repo: String,
-    git_ref: Option<String>,
-    sha: Option<String>,
-    path: String,
-    event_id: String,
-    convert: bool,
-}
-
 /// How [`project_agents_init_with_paths`] reaches this host's disk and git —
 /// the command fills it from the app; tests from scratch directories.
 pub(crate) struct ProjectAgentsInitOptions {
@@ -400,66 +142,6 @@ pub(crate) struct ProjectAgentsInitOptions {
     /// Set when the caller asked to move a project off a source that names
     /// another repository. Absent, such a project refuses.
     pub migrate: Option<MigrateFromSource>,
-}
-
-/// What a screen or the CLI sends to ask for a migration.
-///
-/// Separate from [`MigrateFromSource`] because this crosses the IPC
-/// boundary: it is unvalidated until [`MigrateFromSource::try_from`] has
-/// looked at it.
-#[derive(Clone, Debug, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MigrateRequest {
-    /// The kind:30624 the caller read and decided against.
-    pub expected_source_id: String,
-    /// Convert the legacy roles rather than seeding fresh ones. Defaults to
-    /// `true`: a migration that silently replaced a project's roles with
-    /// this build's templates would be the worst possible default.
-    #[serde(default = "default_convert")]
-    pub convert: bool,
-}
-
-const fn default_convert() -> bool {
-    true
-}
-
-impl TryFrom<MigrateRequest> for MigrateFromSource {
-    type Error = String;
-
-    fn try_from(request: MigrateRequest) -> Result<Self, Self::Error> {
-        let expected_source_id = request.expected_source_id.trim().to_owned();
-        if expected_source_id.len() != 64
-            || !expected_source_id
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        {
-            return Err(format!(
-                "the source event to replace must be 64 lowercase hex characters, got {:?}",
-                request.expected_source_id
-            ));
-        }
-        Ok(Self {
-            expected_source_id,
-            convert: request.convert,
-        })
-    }
-}
-
-/// A caller's deliberate instruction to re-point a project's role source at
-/// its own agents repository (spec § 4.11, legacy projects).
-///
-/// The expected event id is the one the caller *observed*: a migration is a
-/// decision about a specific record, so a source that changed underneath is
-/// a conflict the relay refuses rather than a race this host wins.
-#[derive(Clone, Debug)]
-pub(crate) struct MigrateFromSource {
-    /// The kind:30624 event this migration replaces, 64 lowercase hex.
-    pub expected_source_id: String,
-    /// Convert the legacy source's roles into the new repository instead of
-    /// seeding it from the shipped templates. `false` starts the project's
-    /// team over from this build's templates, which is a different decision
-    /// and is never the default.
-    pub convert: bool,
 }
 
 /// Where a checkout was recorded — the command writes `by_project`; tests
@@ -1181,7 +863,11 @@ pub(crate) fn seed_code_checkout(
 
 /// `git init` on [`SEED_BRANCH`], add everything, commit once with
 /// `message`; returns the commit.
-fn commit_seed(checkout: &Path, message: &str, auth: &GitAuthConfig) -> Result<String, String> {
+pub(crate) fn commit_seed(
+    checkout: &Path,
+    message: &str,
+    auth: &GitAuthConfig,
+) -> Result<String, String> {
     run_git(
         &["init", "--quiet", "--initial-branch", SEED_BRANCH],
         Some(checkout),
@@ -1195,117 +881,6 @@ fn commit_seed(checkout: &Path, message: &str, auth: &GitAuthConfig) -> Result<S
     Ok(run_git(&["rev-parse", "HEAD"], Some(checkout), auth)?
         .trim()
         .to_string())
-}
-
-/// The code repository the project's own head names, when it names one
-/// under the viewer's key that is not the agents repository.
-///
-/// A project created before the pivot has a code repository whose id is not
-/// its slug — Beekeeper's own project `bee-keeper` carries
-/// `agiterra-beekeeper`, Tank Loop carries `tankloop`. Deriving the id from
-/// the slug there would announce and seed a second, empty repository and
-/// then refuse the folder every seat is cut from as "not a checkout of
-/// `<slug>`" (ledger 175). `None` when the head names none, names only the
-/// agents repository, or names one under another key — this host can only
-/// push to its own.
-fn adopted_code_repo_id(
-    head: Option<&Event>,
-    viewer: &str,
-    agents_repo_id: &str,
-) -> Option<String> {
-    let prefix = format!("30617:{viewer}:");
-    head?.tags.iter().find_map(|tag| {
-        let parts = tag.as_slice();
-        if parts.first().map(String::as_str) != Some("a") {
-            return None;
-        }
-        let id = parts.get(1)?.strip_prefix(&prefix)?;
-        (!id.is_empty() && id != agents_repo_id).then(|| id.to_owned())
-    })
-}
-
-/// Sync the repository a legacy project points at, convert its roles into
-/// the flat layout in a fresh `checkout`, and commit that once.
-///
-/// Returns `(commit, roles, notes)`. The legacy repository is only read:
-/// the conversion writes into this host's cache directory for the *new*
-/// repository, and the old one keeps every byte it had.
-pub(crate) fn convert_agents_checkout(
-    checkout: &Path,
-    legacy: &packs_cache::ProjectPackSource,
-    relay_http: &str,
-    packs_root: &Path,
-    slug: &str,
-    auth: &GitAuthConfig,
-) -> Result<(String, Vec<String>, Vec<String>), String> {
-    let (owner, id) = packs_cache::parse_repo_coordinate(&legacy.repo)?;
-    let legacy_checkout = packs_cache::packs_checkout_dir(packs_root, &owner, &id);
-    let clone_url = packs_cache::packs_clone_url(relay_http, &owner, &id);
-    crate::commands::project_git_exec::validate_clone_url(&clone_url)?;
-    packs_cache::sync_packs_checkout(&legacy_checkout, &clone_url, legacy, auth).map_err(
-        |error| {
-            format!(
-                "could not read the roles this project points at ({}): {error}",
-                legacy.repo
-            )
-        },
-    )?;
-    let roles_dir = if buzz_core_pkg::project_pack_source::is_root_pack_path(&legacy.path) {
-        legacy_checkout.clone()
-    } else {
-        legacy_checkout.join(&legacy.path)
-    };
-
-    if checkout.exists() {
-        std::fs::remove_dir_all(checkout)
-            .map_err(|error| format!("clear {}: {error}", checkout.display()))?;
-    }
-    std::fs::create_dir_all(checkout)
-        .map_err(|error| format!("create {}: {error}", checkout.display()))?;
-    let report = buzz_persona_pkg::migrate::convert_pack_tree(&roles_dir, checkout, slug)
-        .map_err(|error| error.to_string())?;
-    let notes = report
-        .roles
-        .iter()
-        .filter(|role| !role.dropped_keys.is_empty())
-        .map(|role| {
-            format!(
-                "{}: the frontmatter's {} did not survive the layout change; every skill was \
-                 copied and still reaches the seat",
-                role.role,
-                role.dropped_keys.join(" and ")
-            )
-        })
-        .collect();
-    let commit = commit_seed(checkout, MIGRATE_COMMIT_MESSAGE, auth)?;
-    Ok((commit, report.role_slugs(), notes))
-}
-
-/// The kind:30624 a migration publishes: the same record
-/// [`build_agents_pack_source`] builds, conditional on the source event the
-/// caller decided against, so the relay refuses it if that moved.
-fn build_migrated_pack_source(
-    keys: &Keys,
-    project: &str,
-    repo: &str,
-    expected_source_id: &str,
-) -> Result<nostr::Event, String> {
-    let draft = build_conditional_project_pack_source(
-        project,
-        repo,
-        &PackPin::Ref(format!("refs/heads/{SEED_BRANCH}")),
-        Some(PACK_PATH_ROOT),
-        None,
-        Some(expected_source_id),
-    )?;
-    let mut tags = Vec::with_capacity(draft.tags.len());
-    for tag in draft.tags {
-        tags.push(Tag::parse(tag).map_err(|error| format!("invalid pack source tag: {error}"))?);
-    }
-    EventBuilder::new(Kind::Custom(KIND_PROJECT_PACK_SOURCE), draft.content)
-        .tags(tags)
-        .sign_with_keys(keys)
-        .map_err(|error| format!("sign the pack source: {error}"))
 }
 
 /// The kind:30624 for `project` naming its agents repository: the branch,
