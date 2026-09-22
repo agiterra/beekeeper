@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 import { expect, test, type Page } from "@playwright/test";
 
 import type { RelayEvent } from "@/shared/api/types";
@@ -29,6 +31,13 @@ const TIP = "5c2bf83980041e5a38a0dbbe881788b7f032d3e5";
 const ROADMAP_BLOB = "29aadf90f27a03d826fb8d9db2852b3a46c4b89b";
 const LEAD_BLOB = "a2dcee2c4f048401fdcc1e054abfcd72e40a7c98";
 const ROADMAP_TEXT = "# Roadmap\n\nOverworld first.\n";
+/** Run 2's plan, byte-exact (ledger 249(B)); 47 lines, 1854 bytes. */
+const KETTLE_PLAN = readFileSync(
+  new URL("../fixtures/kettle-control-2-plan.md", import.meta.url),
+  "utf8",
+);
+/** The smallest text the mock plan reader accepts, for commit plumbing. */
+const ROADMAP_V2 = "---\nschema: beekeeper-plan/v1\n---\n# Roadmap\n\nv2\n";
 
 function generalProject(): RelayEvent {
   return {
@@ -351,7 +360,7 @@ test("the commit dialog prints a stale-base refusal verbatim, then a landing, an
   await page.getByTestId("agents-repo-file-plans/roadmap.md").click();
   await page.getByTestId("agents-repo-editor-tab-edit").click();
   await page.getByTestId("agents-repo-edit").click();
-  await page.getByTestId("agents-repo-textarea").fill("# Roadmap\n\nv2\n");
+  await page.getByTestId("agents-repo-textarea").fill(ROADMAP_V2);
   await page.getByTestId("agents-repo-save").click();
   await expect(
     page.getByTestId("agents-repo-draft-badge-plans/roadmap.md"),
@@ -493,4 +502,74 @@ test("a viewer of a private project reads only, and the commit button is replace
   );
   await expect(page.getByTestId("agents-repo-edit")).toHaveCount(0);
   await expect(page.getByTestId("agents-repo-new-plan")).toHaveCount(0);
+});
+
+test("a plan round-trips byte-identical through New plan, draft, edit and the commit payload, and a flattened one is refused", async ({
+  page,
+}) => {
+  expect(KETTLE_PLAN.split("\n")).toHaveLength(48);
+  await openFilesTab(page);
+  await page.getByTestId("agents-repo-new-plan").click();
+  await page.getByTestId("agents-repo-new-plan-name").fill("kettle");
+  await page.getByTestId("agents-repo-new-plan-create").click();
+  await expect(
+    page.getByTestId("agents-repo-plan-source-disclosure"),
+  ).toBeVisible();
+  await page.getByTestId("agents-repo-textarea").fill(KETTLE_PLAN);
+  await page.getByTestId("agents-repo-save").click();
+  await expect(
+    page.getByTestId("agents-repo-draft-badge-plans/kettle.md"),
+  ).toBeVisible();
+
+  // Preview shows the source, not a rendering of it.
+  await page.getByTestId("agents-repo-editor-tab-preview").click();
+  await expect(page.getByTestId("agents-repo-preview")).toContainText(
+    "add <text> appends",
+  );
+  await page.getByTestId("agents-repo-editor-tab-edit").click();
+  await page.getByTestId("agents-repo-edit").click();
+  await expect(page.getByTestId("agents-repo-textarea")).toHaveValue(
+    KETTLE_PLAN,
+  );
+
+  await page.getByTestId("agents-repo-commit-open").click();
+  await waitForAnimations(page);
+  await page.getByTestId("agents-repo-commit-message").fill("plan");
+  await page.getByTestId("agents-repo-commit-confirm").click();
+  await expect(page.getByTestId("agents-repo-commit-result-no")).toBeVisible();
+  const sent = await page.evaluate(
+    () =>
+      (
+        window as unknown as {
+          __BUZZ_E2E_AGENTS_REPO_COMMIT_CALLS__: {
+            request: { drafts: { path: string; text: string | null }[] };
+          }[];
+        }
+      ).__BUZZ_E2E_AGENTS_REPO_COMMIT_CALLS__[0]?.request.drafts,
+  );
+  expect(sent?.find((d) => d.path === "plans/kettle.md")?.text).toBe(
+    KETTLE_PLAN,
+  );
+  await page.getByTestId("agents-repo-commit-close").click();
+
+  // What 32cb99de landed: the opening fence gone. Refused before the host
+  // is asked, with the reader's words. (Still editing from above.)
+  await page
+    .getByTestId("agents-repo-textarea")
+    .fill(KETTLE_PLAN.replace("---\n", ""));
+  await page.getByTestId("agents-repo-save").click();
+  await page.getByTestId("agents-repo-commit-open").click();
+  await waitForAnimations(page);
+  await page.getByTestId("agents-repo-commit-message").fill("plan");
+  await page.getByTestId("agents-repo-commit-confirm").click();
+  await expect(page.getByText("is not a readable plan")).toBeVisible();
+  const calls = await page.evaluate(
+    () =>
+      (
+        window as unknown as {
+          __BUZZ_E2E_AGENTS_REPO_COMMIT_CALLS__: unknown[];
+        }
+      ).__BUZZ_E2E_AGENTS_REPO_COMMIT_CALLS__.length,
+  );
+  expect(calls).toBe(1);
 });

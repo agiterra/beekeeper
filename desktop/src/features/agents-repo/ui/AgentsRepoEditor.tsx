@@ -15,6 +15,7 @@ import { draftPatch } from "../lib/agentsRepoDiff";
 import type { DraftPath } from "../lib/agentsRepoDraftFold";
 import { archiveCounterpart, draftPathClass } from "../lib/agentsRepoDraftOp";
 import { isDraftablePath, isMarkdownPath } from "../lib/agentsRepoPaths";
+import { isPlanSourcePath } from "../lib/agentsRepoPlanSource";
 
 export type EditorTab = "edit" | "preview" | "diff";
 
@@ -162,7 +163,12 @@ export function AgentsRepoEditor({
   }, [editing, subject]);
 
   const canWrite = access.kind === "writable" && isDraftablePath(subject.path);
-  const isMarkdown = isMarkdownPath(subject.path);
+  // Ledger 249(B): plan source is YAML frontmatter a Markdown renderer
+  // destroys (the fence becomes a rule, lists flatten, `<text>` is stripped),
+  // and that rendering is what run 2's flattened commit copied as. A plan is
+  // shown as the bytes it is, never rendered.
+  const isPlanSource = isPlanSourcePath(subject.path);
+  const isMarkdown = isMarkdownPath(subject.path) && !isPlanSource;
   const mainText = subject.main?.text ?? null;
   const draftText = subject.draft?.head.op === "file.delete" ? null : text;
   const removedByDraft =
@@ -261,6 +267,14 @@ export function AgentsRepoEditor({
           {subject.draft
             ? `${personName(subject.draft.head.author)} saved a newer draft while you were editing; saving now will be refused until you reload.`
             : "The draft you were editing was committed or withdrawn; reload to start from what is there now."}
+        </p>
+      ) : null}
+      {isPlanSource ? (
+        <p
+          className="rounded-md bg-muted/50 px-2 py-1 text-xs text-muted-foreground"
+          data-testid="agents-repo-plan-source-disclosure"
+        >
+          {copy.planSourceDisclosure}
         </p>
       ) : null}
       {subject.mainError ? (

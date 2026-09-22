@@ -3,6 +3,7 @@ import type {
   AgentsRepoCommitResult,
   AgentsRepoFile,
   AgentsRepoListing,
+  PlanSourceCheck,
 } from "@/shared/api/agentsRepoTypes";
 import { invokeTauri } from "@/shared/api/tauri";
 
@@ -46,4 +47,11 @@ export async function agentsRepoCommitDrafts(
   return invokeTauri<AgentsRepoCommitResult>("agents_repo_commit_drafts", {
     request,
   });
+}
+
+/** Check a plan's source with the same reader `bee plans` and the relay use. */
+export async function validatePlanSource(
+  text: string,
+): Promise<PlanSourceCheck> {
+  return invokeTauri<PlanSourceCheck>("validate_plan_source", { text });
 }

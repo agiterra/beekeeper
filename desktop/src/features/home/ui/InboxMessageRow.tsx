@@ -19,6 +19,8 @@ import { useReactionHandler } from "@/features/messages/ui/useReactionHandler";
 import { useMessageEmoji } from "@/features/messages/lib/useMessageEmoji";
 import { readHostStepApprovalRequest } from "@/features/project-actions/lib/hostStepApproval";
 import { HostStepApprovalInboxCard } from "@/features/project-actions/ui/HostStepApprovalInboxCard";
+import { readInboxDecisionRequest } from "../lib/decisionRequestInbox";
+import { DecisionRequestInboxCard } from "./DecisionRequestInboxCard";
 import { UserProfilePopover } from "@/features/profile/ui/UserProfilePopover";
 import { cn } from "@/shared/lib/cn";
 import { normalizePubkey } from "@/shared/lib/pubkey";
@@ -88,6 +90,25 @@ export function InboxMessageRow({
     };
     return readHostStepApprovalRequest(candidate) === null ? null : candidate;
   }, [message.content, message.kind, message.tags]);
+  // Ledger 249(A): a `decision.request` held on the viewer renders its
+  // question and options with an answer form, never its JSON body.
+  const decisionRequest = React.useMemo(
+    () =>
+      readInboxDecisionRequest({
+        id: message.id,
+        kind: message.kind ?? 0,
+        pubkey: message.authorPubkey,
+        tags: message.tags ?? [],
+        content: message.content,
+      }),
+    [
+      message.authorPubkey,
+      message.content,
+      message.id,
+      message.kind,
+      message.tags,
+    ],
+  );
   const imetaByUrl = React.useMemo(
     () => (message.tags ? parseImetaTags(message.tags) : undefined),
     [message.tags],
@@ -268,7 +289,10 @@ export function InboxMessageRow({
             {approvalEvent ? (
               <HostStepApprovalInboxCard event={approvalEvent} />
             ) : null}
-            {approvalEvent ? null : (
+            {decisionRequest ? (
+              <DecisionRequestInboxCard request={decisionRequest} />
+            ) : null}
+            {approvalEvent || decisionRequest ? null : (
               <VideoReviewCommentMarkdown
                 className={cn(
                   "max-w-full text-left text-sm text-foreground",

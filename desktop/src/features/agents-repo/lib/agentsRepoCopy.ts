@@ -19,6 +19,8 @@ export const agentsRepoCopy = {
   save: "Save draft",
   discard: "Discard",
   preview: "Preview",
+  planSourceDisclosure:
+    "Plan source is shown and edited as plain text, byte for byte. Paste it from the file, not from a rendered view: a plan whose frontmatter does not read as beekeeper-plan/v1 is refused at commit.",
   diff: "Diff vs main",
   editTab: "Edit",
   archive: "Archive",

@@ -13512,6 +13512,7 @@ export function maybeInstallE2eTauriMocks() {
       case "agents_repo_ls":
       case "agents_repo_read":
       case "agents_repo_commit_drafts":
+      case "validate_plan_source":
         return handleMockAgentsRepoCommand(command, payload);
       case "project_agents_init": {
         const input = (payload ?? {}) as {

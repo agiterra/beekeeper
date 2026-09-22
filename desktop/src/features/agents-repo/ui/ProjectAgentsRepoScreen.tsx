@@ -12,7 +12,10 @@ import { ProjectPageTabs } from "@/features/projects-container/ui/ProjectPageTab
 import { todoPerson } from "@/features/project-todos/lib/todoPeople";
 import { useIdentityQuery } from "@/shared/api/hooks";
 import type { AgentsRepoCommitResult } from "@/shared/api/agentsRepoTypes";
-import { agentsRepoCommitDrafts } from "@/shared/api/tauriAgentsRepo";
+import {
+  agentsRepoCommitDrafts,
+  validatePlanSource,
+} from "@/shared/api/tauriAgentsRepo";
 import { useFeatureEnabled } from "@/shared/features";
 import { Button } from "@/shared/ui/button";
 
@@ -24,6 +27,7 @@ import { gitBlobSha } from "../lib/agentsRepoBlobSha";
 import { agentsRepoCopy as copy } from "../lib/agentsRepoCopy";
 import type { DraftPath } from "../lib/agentsRepoDraftFold";
 import { useAgentsRepoMutations } from "../lib/agentsRepoMutations";
+import { planCommitRefusals } from "../lib/agentsRepoPlanSource";
 import {
   agentsRepoDraftsQueryKey,
   agentsRepoFileQueryKey,
@@ -208,6 +212,11 @@ export function ProjectAgentsRepoScreen({
       setBusy(true);
       setRecordError(null);
       try {
+        const refusals = await planCommitRefusals(
+          chosen.map(changeOf),
+          validatePlanSource,
+        );
+        if (refusals.length > 0) throw new Error(refusals.join(" "));
         const result = await agentsRepoCommitDrafts({
           projectRef: coordinate,
           expectedTip: listing.data?.commit ?? null,

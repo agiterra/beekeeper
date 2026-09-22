@@ -1,3 +1,4 @@
+import { readInboxDecisionRequest } from "@/features/home/lib/decisionRequestInbox";
 import {
   AlertCircle,
   ArrowLeft,
@@ -279,7 +280,11 @@ function InboxMessageDetailPane({
         authorLabel: item.senderLabel,
         authorPubkey: item.item.pubkey,
         avatarUrl: item.avatarUrl,
-        content: item.preview,
+        // A decision request's preview is its question; the card needs the
+        // signed record itself (ledger 249(A)).
+        content: readInboxDecisionRequest(item.item)
+          ? item.item.content
+          : item.preview,
         createdAt: item.item.createdAt,
         depth: 0,
         fullTimestampLabel: item.fullTimestampLabel,

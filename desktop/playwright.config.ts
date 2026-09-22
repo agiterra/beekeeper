@@ -206,6 +206,7 @@ export default defineConfig({
         "**/inbox-live-update.spec.ts",
         // Ledger 238(e): the approval card the founder was never shown.
         "**/inbox-approval-request.spec.ts",
+        "**/inbox-decision-request.spec.ts",
         "**/mesh-compute.spec.ts",
         "**/observer-archive-policy.spec.ts",
         "**/harness-management.spec.ts",

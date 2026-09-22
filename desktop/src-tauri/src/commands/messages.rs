@@ -1,6 +1,7 @@
 use nostr::{Event, EventId, Keys, PublicKey};
 use tauri::{AppHandle, State};
 
+mod decision_inbox;
 mod forum;
 
 use forum::{
@@ -108,9 +109,7 @@ pub async fn get_feed(
         Vec::new()
     };
     let approval_events = if want_needs_action {
-        query_relay(&state, &[approval_filter])
-            .await
-            .unwrap_or_default()
+        decision_inbox::needs_action_events(&state, approval_filter, &my_pubkey, since).await
     } else {
         Vec::new()
     };

@@ -11,6 +11,10 @@ import {
   isProjectInboxItem,
 } from "@/features/home/lib/projectInbox";
 import type { TimelineReaction } from "@/features/messages/types";
+import {
+  KIND_CODING_SESSION_TEAM_TRANSACTION,
+  readInboxDecisionRequest,
+} from "@/features/home/lib/decisionRequestInbox";
 import type {
   Channel,
   FeedItem,
@@ -164,6 +168,8 @@ function feedHeadline(item: FeedItem, groupItems: readonly FeedItem[] = []) {
       return "Forum reply";
     case 46010:
       return "Approval requested";
+    case KIND_CODING_SESSION_TEAM_TRANSACTION:
+      return "Decision requested";
     default:
       if (item.category === "mention") {
         return "Mention";
@@ -178,6 +184,8 @@ function feedHeadline(item: FeedItem, groupItems: readonly FeedItem[] = []) {
 }
 
 function feedPreview(item: FeedItem) {
+  const decision = readInboxDecisionRequest(item);
+  if (decision) return decision.question;
   const content = item.content.trim();
   if (content.length > 0) {
     return content;

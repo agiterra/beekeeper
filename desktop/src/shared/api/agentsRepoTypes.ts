@@ -97,3 +97,10 @@ export type AgentsRepoCommitResult = {
   committerEmail: string;
   draftIds: string[];
 };
+
+/** `buzz-core`'s `beekeeper-plan/v1` reader's answer; all null when it reads. */
+export type PlanSourceCheck = {
+  code: string | null;
+  path: string | null;
+  message: string | null;
+};

@@ -109,6 +109,20 @@ export function handleMockAgentsRepoCommand(
         draftIds: drafts.map((draft) => draft.id),
       };
     }
+    // Not buzz-core: the mock refuses only what 32cb99de broke (the opening
+    // fence and the schema line), so a spec can drive both answers. The real
+    // reader's rules are tested in `commands/plan_source.rs`.
+    case "validate_plan_source": {
+      const text = (payload as { text?: string }).text ?? "";
+      return text.startsWith("---\n") &&
+        /^schema: beekeeper-plan\/v1$/m.test(text)
+        ? { code: null, path: null, message: null }
+        : {
+            code: "missing_frontmatter",
+            path: "frontmatter",
+            message: "a plan file opens with a `---` frontmatter fence",
+          };
+    }
     default:
       return undefined;
   }
