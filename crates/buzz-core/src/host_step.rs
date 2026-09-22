@@ -873,6 +873,23 @@ mod tests {
         assert_eq!(decode_host_step_claim(&event).expect("decode"), claim);
     }
 
+    /// Closed-record vector (ledger 250): a kind:46023 whose content carries
+    /// `agentsCommit` decodes under `deny_unknown_fields`, and a malformed
+    /// value is refused rather than carried.
+    #[test]
+    fn result_with_agents_commit_decodes_and_malformed_is_refused() {
+        let (tags, content) = build_host_step_result(&result()).expect("build");
+        let mut body: serde_json::Value = serde_json::from_str(&content).expect("json");
+        body["agentsCommit"] = serde_json::Value::String("4".repeat(40));
+        let event = signed(KIND_HOST_STEP_RESULT, tags.clone(), body.to_string());
+        let decoded = decode_host_step_result(&event).expect("decode with agentsCommit");
+        assert_eq!(decoded.agents_commit, Some("4".repeat(40)));
+
+        body["agentsCommit"] = serde_json::Value::String("A".repeat(40));
+        let event = signed(KIND_HOST_STEP_RESULT, tags, body.to_string());
+        assert!(decode_host_step_result(&event).is_err());
+    }
+
     #[test]
     fn result_round_trips_and_checks_disposition_consistency() {
         let result = result();
