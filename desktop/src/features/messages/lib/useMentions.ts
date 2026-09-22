@@ -44,6 +44,7 @@ import { trimMapToSize } from "@/shared/lib/trimMapToSize";
 import { flushMentionDebounce } from "./flushMentionDebounce";
 import { useAgentMentionRevalidation } from "./agentMentionRevalidation";
 import { hasMention } from "./hasMention";
+import { mentionLabelFor } from "./mentionDisambiguator";
 import { extractMentionPubkeys } from "./extractMentionPubkeys";
 import { useDraftMentionRouting } from "./useDraftMentionRouting";
 import { rankMentionCandidates } from "./mentionRanking";
@@ -686,24 +687,23 @@ export function useMentions(
     (displayName: string, pubkey: string, options?: { isAgent?: boolean }) => {
       const trimmedName = displayName.trim();
       if (!trimmedName) {
-        return;
+        return "";
       }
-
-      mentionMapRef.current.set(trimmedName, pubkey);
-      personaMentionMapRef.current.delete(trimmedName);
+      const label = mentionLabelFor(trimmedName, pubkey, mentionMapRef.current);
+      mentionMapRef.current.set(label, pubkey);
+      personaMentionMapRef.current.delete(label);
       trimMapToSize(mentionMapRef.current, 200);
 
-      setSelectedMentionNames((current) =>
-        appendUniqueName(current, trimmedName),
-      );
+      setSelectedMentionNames((current) => appendUniqueName(current, label));
 
       if (options?.isAgent) {
         setSelectedAgentMentionNames((current) => {
-          const next = appendUniqueName(current, trimmedName);
+          const next = appendUniqueName(current, label);
           selectedAgentMentionNamesRef.current = next;
           return next;
         });
       }
+      return label;
     },
     [],
   );
@@ -722,11 +722,11 @@ export function useMentions(
       replaceToOffset: number;
       isAgent?: boolean;
     }): AutocompleteEdit => {
-      registerMentionPubkey(displayName, pubkey, { isAgent });
+      const label = registerMentionPubkey(displayName, pubkey, { isAgent });
       return {
         replaceFromOffset,
         replaceToOffset,
-        insertText: `@${displayName.trim()} `,
+        insertText: `@${label} `,
       };
     },
     [registerMentionPubkey],

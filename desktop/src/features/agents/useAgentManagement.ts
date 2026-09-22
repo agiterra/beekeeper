@@ -152,6 +152,26 @@ export function useAgentManagement() {
   const currentPersona =
     matchingPersonas.length === 1 ? matchingPersonas[0] : undefined;
 
+  /**
+   * The requested name belongs to a project agent — a persona the installer
+   * owns (`sourceTeam`), which this path deliberately never edits.
+   *
+   * Tracked apart from `matchingPersonas` so the refusal can say *why* nothing
+   * matched instead of implying the name is unknown. Since agent names became
+   * unique per project rather than per computer (ledger 246), a project agent
+   * is far likelier to be called a plain `Lead` — exactly the name someone
+   * would type here.
+   */
+  const nameMatchesProjectAgent = React.useMemo(() => {
+    if (request?.action !== "update") return false;
+    const target = request.request.agentName.trim().toLocaleLowerCase();
+    return (personasQuery.data ?? []).some(
+      (persona) =>
+        persona.displayName.trim().toLocaleLowerCase() === target &&
+        !requestTargetsEditablePersona(persona),
+    );
+  }, [personasQuery.data, request]);
+
   const isPending =
     createPersonaMutation.isPending ||
     updatePersonaMutation.isPending ||
@@ -284,13 +304,21 @@ export function useAgentManagement() {
     if (request?.action !== "update") return error;
     if (error) return error;
     if (matchingPersonas.length > 1) {
-      return "More than one personal agent has that name. Rename it in Agents, then ask the agent again.";
+      return "More than one personal agent on this computer is called that. Agent names are unique inside a project, not across this computer, so rename the one you mean in Agents and ask again.";
     }
     if (!currentPersona) {
-      return "Agents can only update a personal agent profile by its current name.";
+      return nameMatchesProjectAgent
+        ? "That name belongs to a project agent. Project agents are named per project and are edited from that project, not through a draft request."
+        : "Agents can only update a personal agent profile by its current name.";
     }
     return null;
-  }, [currentPersona, error, matchingPersonas.length, request]);
+  }, [
+    currentPersona,
+    error,
+    matchingPersonas.length,
+    nameMatchesProjectAgent,
+    request,
+  ]);
 
   return {
     request,

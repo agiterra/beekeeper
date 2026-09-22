@@ -51,6 +51,7 @@ fn preview_activities() -> Option<Vec<TrayAgentActivity>> {
         TrayAgentActivity {
             activity_id: "tray-preview-planning-scout".into(),
             agent_name: "Scout".into(),
+            agent_pubkey: "11111111".repeat(8),
             channel_id: "tray-preview-planning".into(),
             channel_name: "planning".into(),
             elapsed: format_elapsed(Duration::from_secs(192) + preview_elapsed),
@@ -58,6 +59,7 @@ fn preview_activities() -> Option<Vec<TrayAgentActivity>> {
         TrayAgentActivity {
             activity_id: "tray-preview-planning-builder".into(),
             agent_name: "Builder".into(),
+            agent_pubkey: "22222222".repeat(8),
             channel_id: "tray-preview-planning".into(),
             channel_name: "planning".into(),
             elapsed: format_elapsed(Duration::from_secs(68) + preview_elapsed),
@@ -65,6 +67,7 @@ fn preview_activities() -> Option<Vec<TrayAgentActivity>> {
         TrayAgentActivity {
             activity_id: "tray-preview-mobile-reviewer".into(),
             agent_name: "Reviewer".into(),
+            agent_pubkey: "33333333".repeat(8),
             channel_id: "tray-preview-mobile".into(),
             channel_name: "mobile".into(),
             elapsed: format_elapsed(Duration::from_secs(31) + preview_elapsed),
@@ -81,6 +84,7 @@ fn preview_recent_activities() -> Option<Vec<TrayAgentActivity>> {
     Some(vec![TrayAgentActivity {
         activity_id: "recent:tray-preview-design-architect".into(),
         agent_name: "Architect".into(),
+        agent_pubkey: "44444444".repeat(8),
         channel_id: "tray-preview-design".into(),
         channel_name: "design".into(),
         elapsed: "4m 25s".into(),
@@ -131,6 +135,13 @@ fn tray_hat_icon() -> Image<'static> {
 pub struct TrayAgentActivity {
     activity_id: String,
     agent_name: String,
+    /// The agent's identity. Carried because the tray is a machine-wide list
+    /// and agent names are unique per project, not per computer (ledger 246):
+    /// two projects may each have a `Builder`, and the name alone would render
+    /// two rows a person cannot tell apart. `#[serde(default)]` so an older
+    /// frontend that does not send it still renders (unambiguously or not).
+    #[serde(default)]
+    agent_pubkey: String,
     channel_id: String,
     channel_name: String,
     elapsed: String,
@@ -206,8 +217,56 @@ fn append_separator<R: Runtime>(app: &AppHandle<R>, menu: &Menu<R>) -> tauri::Re
     menu.append(&PredefinedMenuItem::separator(app)?)
 }
 
-fn agent_item_label(activity: &TrayAgentActivity) -> String {
-    let primary = format!("{} · {}", activity.agent_name, activity.elapsed);
+/// `abcd1234…` — enough to tell two same-named agents apart at a glance,
+/// the same shape the mention autocomplete uses for the same job.
+fn short_pubkey(pubkey: &str) -> String {
+    let head: String = pubkey.chars().take(8).collect();
+    format!("{head}\u{2026}")
+}
+
+/// Names carried by more than one activity in this menu, folded.
+///
+/// The tray spans every project and channel on this computer, and names are
+/// unique per project rather than per computer, so two rows really can both say
+/// `Builder`. Only the ones that actually collide are disambiguated — the same
+/// rule the mention autocomplete uses ("name collisions are the impersonation
+/// vector"), and for the same reason.
+fn ambiguous_agent_names<'a>(
+    activities: impl Iterator<Item = &'a TrayAgentActivity>,
+) -> std::collections::HashSet<String> {
+    let mut seen: std::collections::HashMap<String, &str> = std::collections::HashMap::new();
+    let mut ambiguous = std::collections::HashSet::new();
+    for activity in activities {
+        let folded = activity.agent_name.trim().to_lowercase();
+        match seen.get(&folded) {
+            Some(pubkey) if *pubkey != activity.agent_pubkey => {
+                ambiguous.insert(folded);
+            }
+            Some(_) => {}
+            None => {
+                seen.insert(folded, activity.agent_pubkey.as_str());
+            }
+        }
+    }
+    ambiguous
+}
+
+fn agent_item_label(
+    activity: &TrayAgentActivity,
+    ambiguous: &std::collections::HashSet<String>,
+) -> String {
+    let name = if ambiguous.contains(&activity.agent_name.trim().to_lowercase())
+        && !activity.agent_pubkey.is_empty()
+    {
+        format!(
+            "{} ({})",
+            activity.agent_name,
+            short_pubkey(&activity.agent_pubkey)
+        )
+    } else {
+        activity.agent_name.clone()
+    };
+    let primary = format!("{name} · {}", activity.elapsed);
 
     #[cfg(target_os = "macos")]
     {
@@ -302,11 +361,12 @@ fn append_activity_items<R: Runtime>(
     activities: &[TrayAgentActivity],
     activity_items: &mut Vec<TrayActivityMenuItem<R>>,
 ) -> tauri::Result<()> {
+    let ambiguous = ambiguous_agent_names(activities.iter());
     for activity in activities {
         let agent_item = MenuItem::with_id(
             app,
             channel_item_id(activity),
-            agent_item_label(activity),
+            agent_item_label(activity, &ambiguous),
             true,
             None::<&str>,
         )?;
@@ -529,12 +589,13 @@ pub fn update_tray_agent_activity<R: Runtime>(
                 item.activity_id == activity.activity_id && item.channel_id == activity.channel_id
             })
     {
+        let ambiguous = ambiguous_agent_names(activities.iter().chain(recent_activities));
         for (item, activity) in activity_items
             .iter()
             .zip(activities.iter().chain(recent_activities))
         {
             item.agent_item
-                .set_text(agent_item_label(activity))
+                .set_text(agent_item_label(activity, &ambiguous))
                 .map_err(|error| error.to_string())?;
         }
         let tray = app
@@ -558,7 +619,10 @@ pub fn update_tray_agent_activity<R: Runtime>(
 
 #[cfg(test)]
 mod tests {
-    use super::{requeue_actions, TrayAction, TrayActionQueue};
+    use super::{
+        agent_item_label, ambiguous_agent_names, requeue_actions, TrayAction, TrayActionQueue,
+        TrayAgentActivity,
+    };
 
     #[test]
     fn open_channel_action_serializes_with_frontend_field_names() {
@@ -605,5 +669,48 @@ mod tests {
         requeue_actions(&mut queue, vec![TrayAction::NewChannel]);
 
         assert_eq!(queue.pending_actions, vec![TrayAction::NewChannel]);
+    }
+
+    fn activity(name: &str, pubkey: &str) -> TrayAgentActivity {
+        TrayAgentActivity {
+            activity_id: format!("channel:{pubkey}"),
+            agent_name: name.into(),
+            agent_pubkey: pubkey.into(),
+            channel_id: "channel".into(),
+            channel_name: "planning".into(),
+            elapsed: "12s".into(),
+        }
+    }
+
+    /// Names are unique per project, not per computer (ledger 246), and the
+    /// tray spans every project — so two rows really can both say `Builder`.
+    #[test]
+    fn two_agents_sharing_a_name_are_told_apart_in_the_tray() {
+        let activities = [
+            activity("Builder", &"a".repeat(64)),
+            activity("Builder", &"b".repeat(64)),
+            activity("Runner", &"c".repeat(64)),
+        ];
+        let ambiguous = ambiguous_agent_names(activities.iter());
+
+        assert!(agent_item_label(&activities[0], &ambiguous).starts_with("Builder (aaaaaaaa"));
+        assert!(agent_item_label(&activities[1], &ambiguous).starts_with("Builder (bbbbbbbb"));
+        assert!(
+            agent_item_label(&activities[2], &ambiguous).starts_with("Runner \u{b7}"),
+            "a name nothing collides with is left plain"
+        );
+    }
+
+    /// The same agent working in two channels is one identity, not a collision.
+    #[test]
+    fn one_agent_in_two_channels_is_not_a_collision() {
+        let pubkey = "a".repeat(64);
+        let mut second = activity("Builder", &pubkey);
+        second.activity_id = "other:a".into();
+        second.channel_id = "other".into();
+        let activities = [activity("Builder", &pubkey), second];
+
+        assert!(ambiguous_agent_names(activities.iter()).is_empty());
+        assert!(agent_item_label(&activities[0], &Default::default()).starts_with("Builder \u{b7}"));
     }
 }

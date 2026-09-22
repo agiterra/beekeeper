@@ -48,7 +48,8 @@ use crate::managed_agents::{
     env_vars::merged_user_env,
     global_config::GlobalAgentConfig,
     normalize_agent_args,
-    types::{AcpAvailabilityStatus, AgentDefinition, ManagedAgentRecord},
+    types::{AgentDefinition, ManagedAgentRecord},
+    types_runtime::AcpAvailabilityStatus,
 };
 
 mod cli_login;

@@ -2,11 +2,13 @@ import * as React from "react";
 import { CircleAlert, Plus } from "lucide-react";
 
 import {
+  groupAgentDirectoryByProject,
   installationsForProject,
   type AgentDirectoryFilters,
   type AgentDirectoryRow,
   type AgentDirectoryStatusFilter,
 } from "@/features/agents/lib/agentDirectoryModel";
+import { usePendingProfileRepublish } from "@/features/agents/lib/usePendingProfileRepublish";
 import type { ProjectContainer } from "@/features/projects-container/hooks";
 import { Button } from "@/shared/ui/button";
 import { Skeleton } from "@/shared/ui/skeleton";
@@ -24,6 +26,10 @@ import {
   AGENT_DIRECTORY_SEAT_NOTICE_TESTID,
   AGENT_FILTERS_TESTID,
   AGENT_FILTER_ALL_ROLES,
+  AGENT_GROUP_HEADING_TESTID,
+  AGENT_GROUP_TESTID,
+  AGENT_ROW_PROFILE_BEHIND,
+  AGENT_ROW_PROFILE_BEHIND_TESTID,
   AGENT_FILTER_ANY_PROJECT,
   AGENT_FILTER_ANY_STATUS,
   AGENT_FILTER_INSTALLED_HELPER,
@@ -94,12 +100,15 @@ function AgentDirectoryRowItem({
   isSelected,
   seatUnknown,
   projectId,
+  profileBehind,
   onSelect,
 }: {
   row: AgentDirectoryRow;
   isSelected: boolean;
   seatUnknown: boolean;
   projectId: string | null;
+  /** This computer renamed the agent and the relay has not been told yet. */
+  profileBehind: boolean;
   onSelect: (pubkey: string) => void;
 }) {
   const [isRenaming, setIsRenaming] = React.useState(false);
@@ -128,6 +137,14 @@ function AgentDirectoryRowItem({
           onDone={() => setIsRenaming(false)}
           pubkey={row.pubkey}
         />
+      ) : null}
+      {profileBehind ? (
+        <span
+          className="text-xs text-muted-foreground"
+          data-testid={AGENT_ROW_PROFILE_BEHIND_TESTID}
+        >
+          {AGENT_ROW_PROFILE_BEHIND}
+        </span>
       ) : null}
     </div>
   );
@@ -313,6 +330,17 @@ export function AgentDirectoryList({
     return [...slugs].sort();
   }, [allRows]);
 
+  // A rename the boot migration made is only local until the relay is
+  // reachable; the row has to say so rather than let the two disagree quietly.
+  const profileBehind = usePendingProfileRepublish();
+
+  // Names are unique per project now, so this list can hold two rows called
+  // `Builder`. The heading is what tells them apart.
+  const groups = React.useMemo(
+    () => groupAgentDirectoryByProject(rows, projects),
+    [rows, projects],
+  );
+
   if (isLoading) {
     return <AgentDirectoryListSkeleton />;
   }
@@ -459,16 +487,32 @@ export function AgentDirectoryList({
           {AGENT_DIRECTORY_FILTERED_EMPTY}
         </div>
       ) : (
-        <div className="flex flex-col gap-2">
-          {rows.map((row) => (
-            <AgentDirectoryRowItem
-              isSelected={row.pubkey === selectedPubkey}
-              key={row.pubkey}
-              onSelect={onSelectRow}
-              projectId={filters.projectId}
-              row={row}
-              seatUnknown={seatNotice !== null && row.currentSeat === null}
-            />
+        <div className="flex flex-col gap-6">
+          {groups.map((group) => (
+            <div
+              className="flex flex-col gap-2"
+              data-project-ref={group.projectRef ?? undefined}
+              data-testid={AGENT_GROUP_TESTID}
+              key={group.projectRef ?? "\u0000no-project"}
+            >
+              <h3
+                className="text-xs font-medium uppercase tracking-wide text-muted-foreground"
+                data-testid={AGENT_GROUP_HEADING_TESTID}
+              >
+                {group.label}
+              </h3>
+              {group.rows.map((row) => (
+                <AgentDirectoryRowItem
+                  isSelected={row.pubkey === selectedPubkey}
+                  key={row.pubkey}
+                  onSelect={onSelectRow}
+                  profileBehind={profileBehind.has(row.pubkey.toLowerCase())}
+                  projectId={filters.projectId}
+                  row={row}
+                  seatUnknown={seatNotice !== null && row.currentSeat === null}
+                />
+              ))}
+            </div>
           ))}
         </div>
       )}

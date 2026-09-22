@@ -65,6 +65,7 @@ mod team_repair;
 pub(crate) use team_repair::team_persona_key;
 mod teams;
 mod types;
+pub(crate) mod types_runtime;
 
 // Shared guard for tests that mutate or read process-global PATH.
 #[cfg(test)]
@@ -122,6 +123,7 @@ pub(crate) use storage_readiness::{
 };
 pub use teams::*;
 pub use types::*;
+pub use types_runtime::*;
 
 /// Returns the Buzz nest directory (`~/.beekeeper`) if it exists as a real
 /// directory (not a symlink), falling back to the user's home directory.

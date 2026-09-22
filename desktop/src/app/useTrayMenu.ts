@@ -18,6 +18,13 @@ import type { Channel } from "@/shared/api/types";
 type TrayAgentActivity = {
   activityId: string;
   agentName: string;
+  /**
+   * The agent's identity. The tray spans every project and channel on this
+   * computer, and names are unique per project rather than per computer
+   * (ledger 246), so two rows can both say `Builder`; the native menu appends
+   * a truncated key to whichever names actually collide.
+   */
+  agentPubkey: string;
   channelId: string;
   channelName: string;
   elapsed: string;
@@ -70,6 +77,7 @@ export function useTrayMenu({
 
         return {
           activityId: `${channelTurn.channelId}:${normalizePubkey(pubkey)}`,
+          agentPubkey: normalizePubkey(pubkey),
           agentName:
             agentNames.get(normalizePubkey(pubkey)) ??
             `Agent ${truncatePubkey(pubkey)}`,

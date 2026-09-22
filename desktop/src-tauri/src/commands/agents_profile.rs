@@ -275,3 +275,47 @@ pub(super) fn profile_needs_sync(
 // Async so the blocking body (disk reads/writes + process termination) runs off
 // the main UI thread via spawn_blocking. State is re-derived from the owned
 // AppHandle inside the closure (`State<'_, _>` is borrowed, MutexGuard is !Send).
+
+/// Pubkeys whose kind:0 profile this computer renamed and has not yet
+/// republished to `workspace_relay`.
+///
+/// A migration that renames an agent locally cannot publish — boot has no
+/// relay — so it queues the republish (`migration::profile_reconcile`). Until
+/// the queue drains, the app shows `Lead` and everyone else still sees
+/// `Lead 4`. That split has to be visible on the row rather than inferred, so
+/// the directory asks for this set and says so.
+///
+/// Answers the empty set when the queue is absent or unreadable: an unknown
+/// state is reported as "nothing owed" here only because the drain itself is
+/// idempotent and will still run — the row simply stops claiming a staleness
+/// it cannot prove.
+#[tauri::command]
+pub async fn pending_profile_republish_pubkeys(
+    app: AppHandle,
+    workspace_relay: String,
+) -> Result<Vec<String>, String> {
+    let store_path = crate::managed_agents::managed_agents_store_path(&app)?;
+    let queue_path = crate::migration::profile_reconcile_queue_path(&store_path);
+    if !queue_path.exists() {
+        return Ok(Vec::new());
+    }
+    let relay_key = crate::migration::profile_reconcile_relay_key(&workspace_relay)?;
+    let pending = crate::migration::read_profile_reconcile_queue(&queue_path)?;
+    let records = crate::managed_agents::load_managed_agents(&app)?;
+    Ok(records
+        .iter()
+        .filter(|record| {
+            // The same guard the drain uses: an entry whose expected name no
+            // longer matches the record is stale, not owed.
+            pending.iter().any(|entry| {
+                entry.pubkey == record.pubkey
+                    && entry.expected_name == record.name
+                    && !entry
+                        .reconciled_relays
+                        .iter()
+                        .any(|relay| relay == &relay_key)
+            })
+        })
+        .map(|record| record.pubkey.clone())
+        .collect())
+}

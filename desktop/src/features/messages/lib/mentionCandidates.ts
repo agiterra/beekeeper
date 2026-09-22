@@ -17,6 +17,16 @@ export function formatSearchUserSecondaryLabel(user: UserSearchResult) {
   return displayName && nip05Handle ? nip05Handle : null;
 }
 
+/**
+ * Append `name` unless the list already carries it, folding case.
+ *
+ * This dedupes **labels**, not identities. Agent names are unique per project
+ * rather than per computer (ledger 246), so two different agents in one channel
+ * can share a display name — handing both bare names to this function collapses
+ * them and silently drops one. Callers disambiguate first: see
+ * `useMentions.registerMentionPubkey`, which files the second under a label
+ * carrying a truncated key when a name is already bound to another identity.
+ */
 export function appendUniqueName(current: string[], name: string): string[] {
   return current.some(
     (candidate) => candidate.toLowerCase() === name.toLowerCase(),

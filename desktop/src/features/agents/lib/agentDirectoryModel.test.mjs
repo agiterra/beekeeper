@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  AGENT_DIRECTORY_NO_PROJECT_GROUP,
   agentDirectoryFilter,
   buildAgentDirectory,
+  groupAgentDirectoryByProject,
   roleHistoryText,
 } from "@/features/agents/lib/agentDirectoryModel";
 
@@ -488,4 +490,97 @@ test("building without installation or project input leaves every row with none 
   assert.deepEqual(rows[0].installedProjects, []);
   assert.equal(rows[0].installedProjectIds.size, 0);
   assert.equal(rows[0].project, null);
+});
+
+// ── Grouping by project (ledger 246) ─────────────────────────────────────
+//
+// Agent names are unique per project rather than per computer, so this list
+// can hold two rows called "Builder". The heading is what tells them apart.
+
+function groupRow(pubkey, name, project) {
+  return {
+    pubkey,
+    name,
+    project,
+    projectKnown: project !== null,
+  };
+}
+
+test("two projects each with a Builder become two headed sections", () => {
+  const groups = groupAgentDirectoryByProject(
+    [
+      groupRow("a".repeat(64), "Builder", {
+        projectRef: TANK_LOOP.address,
+        projectId: TANK_LOOP.id,
+        projectName: TANK_LOOP.name,
+      }),
+      groupRow("b".repeat(64), "Builder", {
+        projectRef: OTHER_PROJECT.address,
+        projectId: OTHER_PROJECT.id,
+        projectName: OTHER_PROJECT.name,
+      }),
+    ],
+    [TANK_LOOP, OTHER_PROJECT],
+  );
+
+  assert.deepEqual(
+    groups.map((group) => group.label),
+    ["Attic", "Tank Loop"],
+    "listed projects sort by name",
+  );
+  assert.deepEqual(
+    groups.map((group) => group.rows.length),
+    [1, 1],
+    "one Builder each, and the heading says which is which",
+  );
+});
+
+test("an agent with no project falls to a tail section, never into a project's", () => {
+  const groups = groupAgentDirectoryByProject(
+    [
+      groupRow("a".repeat(64), "Builder", null),
+      groupRow("b".repeat(64), "Builder", {
+        projectRef: TANK_LOOP.address,
+        projectId: TANK_LOOP.id,
+        projectName: TANK_LOOP.name,
+      }),
+    ],
+    [TANK_LOOP],
+  );
+
+  assert.deepEqual(
+    groups.map((group) => group.label),
+    ["Tank Loop", AGENT_DIRECTORY_NO_PROJECT_GROUP],
+    "the no-project section is always last",
+  );
+  assert.equal(groups[1].projectRef, null);
+});
+
+test("a project this viewer does not list is still its own section, named by its coordinate", () => {
+  const unlisted = `30621:${TANK_OWNER}:not-listed`;
+  const groups = groupAgentDirectoryByProject(
+    [
+      groupRow("a".repeat(64), "Lead", {
+        projectRef: unlisted,
+        projectId: null,
+        projectName: null,
+      }),
+      groupRow("b".repeat(64), "Lead", {
+        projectRef: TANK_LOOP.address,
+        projectId: TANK_LOOP.id,
+        projectName: TANK_LOOP.name,
+      }),
+    ],
+    [TANK_LOOP],
+  );
+
+  assert.deepEqual(
+    groups.map((group) => group.label),
+    ["Tank Loop", unlisted],
+    "listed projects first; an unlisted one is named, not hidden or merged",
+  );
+});
+
+test("no rows means no sections at all, including the no-project one", () => {
+  assert.deepEqual(groupAgentDirectoryByProject([], [TANK_LOOP]), []);
 });

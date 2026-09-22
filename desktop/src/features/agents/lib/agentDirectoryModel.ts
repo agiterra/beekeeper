@@ -28,6 +28,15 @@ import type { ManagedAgent, RelayAgent } from "@/shared/api/types";
 /** The `Model not known here` sentence for a wire-only agent (§A row field 2). */
 export const AGENT_MODEL_NOT_KNOWN_HERE = "Model not known here";
 
+/**
+ * Heading for the tail group of agents that belong to no project.
+ *
+ * Declared here rather than in `ui/agentDirectoryCopy.ts` with the rest of the
+ * directory's strings only because that file imports this one; putting it there
+ * would make the two modules import each other.
+ */
+export const AGENT_DIRECTORY_NO_PROJECT_GROUP = "Not in a project";
+
 /** One seat as the directory row/detail pane read it. */
 export type AgentDirectorySeat = {
   key: string;
@@ -484,4 +493,85 @@ export function agentDirectoryFilter(
         return true;
     }
   });
+}
+
+/** One project's section of the directory, plus the no-project tail. */
+export type AgentDirectoryGroup = {
+  /** `null` for the no-project group, which always sorts last. */
+  projectId: string | null;
+  /** Normalized `30621:<owner>:<d>`; `null` for the no-project group. */
+  projectRef: string | null;
+  /** The heading: a listed project's name, else the coordinate it names. */
+  label: string;
+  rows: AgentDirectoryRow[];
+};
+
+/**
+ * Group directory rows by the project their record associates them with.
+ *
+ * Agent names are unique per project rather than per computer (ledger 246), so
+ * this list can legitimately hold two rows called `Builder`. The heading is
+ * what tells them apart — without it the directory would show the same name
+ * twice and say nothing about which is which.
+ *
+ * **Association only** (`row.project`), per this module's contract: an
+ * installation without an association is not membership, so such a row lands in
+ * the no-project group still carrying the warning it already shows, rather than
+ * being quietly filed under a project no record claims.
+ *
+ * Order: listed projects by name, then associated-but-unlisted projects by
+ * their coordinate, then the no-project group. Row order inside a group is the
+ * order given.
+ */
+export function groupAgentDirectoryByProject(
+  rows: readonly AgentDirectoryRow[],
+  projects: readonly AgentDirectoryProject[],
+): AgentDirectoryGroup[] {
+  const listedName = new Map<string, string>();
+  for (const project of projects) {
+    listedName.set(projectAddressKey(project.address), project.name);
+  }
+
+  const groups = new Map<string, AgentDirectoryGroup>();
+  const noProject: AgentDirectoryGroup = {
+    projectId: null,
+    projectRef: null,
+    label: AGENT_DIRECTORY_NO_PROJECT_GROUP,
+    rows: [],
+  };
+
+  for (const row of rows) {
+    const association = row.project;
+    if (association === null) {
+      noProject.rows.push(row);
+      continue;
+    }
+    const key = association.projectRef;
+    let group = groups.get(key);
+    if (!group) {
+      group = {
+        projectId: association.projectId,
+        projectRef: key,
+        label:
+          association.projectName ??
+          listedName.get(projectAddressKey(key)) ??
+          key,
+        rows: [],
+      };
+      groups.set(key, group);
+    }
+    group.rows.push(row);
+  }
+
+  const listed: AgentDirectoryGroup[] = [];
+  const unlisted: AgentDirectoryGroup[] = [];
+  for (const group of groups.values()) {
+    (group.projectId === null ? unlisted : listed).push(group);
+  }
+  listed.sort((a, b) => a.label.localeCompare(b.label));
+  unlisted.sort((a, b) => a.label.localeCompare(b.label));
+
+  const ordered = [...listed, ...unlisted];
+  if (noProject.rows.length > 0) ordered.push(noProject);
+  return ordered;
 }

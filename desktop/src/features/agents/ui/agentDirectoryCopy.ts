@@ -259,3 +259,13 @@ export const AGENT_FILTER_ROLE_TESTID = "agent-filter-role";
 export const AGENT_FILTER_STATUS_TESTID = "agent-filter-status";
 export const AGENT_FILTER_PROJECT_TESTID = "agent-filter-project";
 export const AGENT_FILTER_INSTALLED_TESTID = "agent-filter-installed";
+
+/** One project's section of the directory. */
+export const AGENT_GROUP_TESTID = "agent-group";
+/** That section's heading — the project name, or "Not in a project". */
+export const AGENT_GROUP_HEADING_TESTID = "agent-group-heading";
+
+/** The row says the relay has not been told this agent's current name yet. */
+export const AGENT_ROW_PROFILE_BEHIND_TESTID = "agent-row-profile-behind";
+export const AGENT_ROW_PROFILE_BEHIND =
+  "Renamed on this computer; the relay still shows the old name until it is reachable.";

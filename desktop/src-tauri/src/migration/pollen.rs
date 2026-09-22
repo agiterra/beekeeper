@@ -5,7 +5,7 @@ use std::path::Path;
 
 use tauri::Manager;
 
-use super::persona_version_from_record;
+use super::builtin_avatars::persona_version_from_record;
 
 /// Rename the built-in research agent in persisted definitions and linked
 /// instances without overwriting user-customized fields.

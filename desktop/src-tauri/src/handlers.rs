@@ -268,6 +268,7 @@ pub(crate) fn invoke_handler(
         mesh_installed_models,
         mesh_model_catalog,
         update_managed_agent,
+        pending_profile_republish_pubkeys,
         discover_backend_providers,
         probe_backend_provider,
         list_personas,

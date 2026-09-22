@@ -175,6 +175,19 @@ export function useCommunities(): UseCommunitiesReturn {
   return ctx;
 }
 
+/**
+ * The community context when there is one, `null` when there is not.
+ *
+ * For a component that is *usually* mounted inside the provider but is also
+ * rendered on its own — a list a test drives directly, say. Throwing is right
+ * for a caller that cannot work without a community; a caller whose feature
+ * simply has nothing to show yet should get `null` and render nothing, rather
+ * than force every standalone mount to build a provider.
+ */
+export function useCommunitiesIfPresent(): UseCommunitiesReturn | null {
+  return useContext(CommunitiesContext) ?? null;
+}
+
 function useCommunitiesInternal(): UseCommunitiesReturn {
   const [communities, setCommunitiesState] =
     useState<Community[]>(loadCommunities);

@@ -6,6 +6,10 @@
 //! registered in `lib.rs` through the same `personas::` path as the export
 //! commands.
 
+#[path = "import_definition.rs"]
+mod definition;
+use definition::{imported_definition, ImportedDefinition};
+
 use nostr::ToBech32;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
@@ -18,8 +22,8 @@ use crate::{
             decrypt_envelope, parse_chunk_payload, resolve_unlock_secret, ChunkPayload,
             LOCKED_CARD_REFUSAL,
         },
-        load_managed_agents, load_personas, save_managed_agents, save_personas, AgentDefinition,
-        ManagedAgentRecord, RespondTo,
+        load_managed_agents, load_personas, save_managed_agents, save_personas, ManagedAgentRecord,
+        RespondTo,
     },
     relay::{effective_agent_relay_url, relay_ws_url_with_override, sync_managed_agent_profile},
     util::now_iso,
@@ -557,32 +561,16 @@ pub async fn confirm_agent_snapshot_import(
         let persona_id = uuid::Uuid::new_v4().to_string();
 
         // Build persona from snapshot definition.
-        let persona = AgentDefinition {
-            id: persona_id.clone(),
+        let persona = imported_definition(ImportedDefinition {
+            persona_id: persona_id.clone(),
             display_name: display_name.clone(),
-            avatar_url: effective_avatar.clone(),
-            system_prompt: snapshot
-                .definition
-                .system_prompt
-                .clone()
-                .unwrap_or_default(),
-            runtime: snapshot.definition.runtime.clone(),
-            model: snapshot.definition.model.clone(),
-            provider: snapshot.definition.provider.clone(),
-            name_pool: snapshot.definition.name_pool.clone(),
-            is_builtin: false,
-            is_active: true,
-            shared: false,
-            source_team: None,
-            source_team_persona_slug: None,
-            catalog_source: None,
-            env_vars: std::collections::BTreeMap::new(),
-            respond_to: respond_to_wire.clone(),
+            effective_avatar: effective_avatar.clone(),
+            definition: &snapshot.definition,
+            respond_to_wire: respond_to_wire.clone(),
             respond_to_allowlist: minted.respond_to_allowlist.clone(),
             parallelism: minted_parallelism,
-            created_at: now.clone(),
-            updated_at: now.clone(),
-        };
+            now: now.clone(),
+        });
 
         personas.push(persona.clone());
         save_personas(&app, &personas)?;
