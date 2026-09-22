@@ -17,6 +17,11 @@
       "stateReasonCode": "conflict",
       "stateReason": "2 maximal declarations of this workId have no valid successor (dec10000…, dec60000…); one declaration naming every current head is required before this work can complete",
       "planResolved": true,
+      "planDrift": {
+        "declaredCommit": "abababababababababababababababababababab",
+        "currentCommit": null,
+        "state": "unknown"
+      },
       "candidateArtifact": null,
       "artifactCommits": [],
       "criteria": [],
@@ -38,6 +43,11 @@
       "stateReasonCode": "conflict",
       "stateReason": "2 maximal declarations of this workId have no valid successor (dec10000…, dec60000…); one declaration naming every current head is required before this work can complete",
       "planResolved": true,
+      "planDrift": {
+        "declaredCommit": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "currentCommit": null,
+        "state": "unknown"
+      },
       "candidateArtifact": null,
       "artifactCommits": [],
       "criteria": [],

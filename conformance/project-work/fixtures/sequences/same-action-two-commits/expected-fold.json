@@ -19,6 +19,11 @@
       "stateReasonCode": null,
       "stateReason": null,
       "planResolved": true,
+      "planDrift": {
+        "declaredCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "currentCommit": null,
+        "state": "unknown"
+      },
       "candidateArtifact": null,
       "artifactCommits": [
         "e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7"
@@ -114,6 +119,11 @@
       "stateReasonCode": "superseded",
       "stateReason": "superseded by dec20000…",
       "planResolved": true,
+      "planDrift": {
+        "declaredCommit": "ffffffffffffffffffffffffffffffffffffffff",
+        "currentCommit": null,
+        "state": "unknown"
+      },
       "candidateArtifact": null,
       "artifactCommits": [],
       "criteria": [],
@@ -135,6 +145,11 @@
       "stateReasonCode": null,
       "stateReason": null,
       "planResolved": true,
+      "planDrift": {
+        "declaredCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "currentCommit": null,
+        "state": "unknown"
+      },
       "candidateArtifact": null,
       "artifactCommits": [],
       "criteria": [

@@ -612,6 +612,11 @@ names or in status and reason spellings.
       "stateReasonCode": null,
       "stateReason": null,
       "planResolved": true,
+      "planDrift": {
+        "declaredCommit": "abababababababababababababababababababab",
+        "currentCommit": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "state": "drifted"
+      },
       "candidateArtifact": "e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7",
       "artifactCommits": [
         "e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7"
@@ -709,6 +714,94 @@ the two states that *are* a current contract. A `superseded` or `conflict`
 declaration carries `criteria: []` and a `coverageReason` saying why. Bindings
 made under a conflicted head are retained on the wire and are simply not
 projected; nothing is deleted, and resolving the fork projects them.
+
+### Per-declaration `planDrift`
+
+Every declaration row carries `planDrift`. It is **disclosure, never
+enforcement** (amendment A10): it changes no declaration `state`, no criterion
+`status`, no `coverageComplete` and no reason code, and completion is never
+refused for it. A plan committed out from under a live declaration does *not*
+make that declaration stale — `stale` is a current-goal mismatch and nothing
+else (decision 14) — and the fold still reads the plan at the pinned commit.
+Pinning is the contract working. What was missing was the sentence a reader
+needs in order to decide whether to re-adopt, and this is that sentence.
+
+```json
+"planDrift": {
+  "declaredCommit": "abababababababababababababababababababab",
+  "currentCommit": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+  "state": "drifted"
+}
+```
+
+| key | type | null? | rule |
+|---|---|---|---|
+| `declaredCommit` | hex | no | this declaration's own `planRef.commit`, verbatim |
+| `currentCommit` | hex or `null` | **yes** | the commit the agents repository's contract branch names now; `null` when no supplied ref state says |
+| `state` | enum | no | `none` \| `drifted` \| `unknown` \| `superseded`, ruled below |
+
+| `state` | when |
+|---|---|
+| `none` | `currentCommit` is known and equals `declaredCommit` |
+| `drifted` | `currentCommit` is known, differs from `declaredCommit`, and no successor of this declaration pins it |
+| `superseded` | `currentCommit` is known, differs from `declaredCommit`, and some declaration of the same `workId` that supersedes this one — directly or transitively, over the projected `supersededBy` closure — carries it as its own `planRef.commit`. The drift has already been adopted, so nothing is owed on this row |
+| `unknown` | no relay-signed 30618 for the agents repository was supplied, or the newest one names no `refs/heads/main`. `currentCommit` is `null` |
+
+`superseded` is the narrower answer and takes precedence over `drifted`; the
+two are mutually exclusive by construction, and the checker enforces both
+directions. Equality is exact lowercase-string equality, never a prefix
+comparison: a 40-hex and a 64-hex commit are different strings, and one
+repository has one object format, so the two widths never meet for one
+`planRef.repository`.
+
+**Where `currentCommit` comes from.** The newest relay-signed kind:30618 — by
+`(created_at, id)`, the same ordering the `git-ref` predicate uses — whose `d`
+tag names the **repository id of `planRef.repository`**, read at its
+`refs/heads/main` tag. That is the *agents* repository, not the plan's
+`code_repository`: the two are different repositories and a ref state for one
+says nothing about the other. The agents repository's contract branch is
+`main` (spec § 4.11); `delivery_ref` describes the code repository and is not
+consulted here. The row is selected out of the same `refStates` input the
+`git-ref` predicate already reads, so this fact needs no new fold input and no
+new signer class — an owner-signed claim about its own branch is not ref state
+here either.
+
+**What this fact observes, and what it cannot.** Relay ref state names a
+**branch tip**, never the last commit to touch a path. So `drifted` says *the
+agents repository's `main` is not the commit this declaration pinned* — it does
+**not** say the plan file itself was edited, and it cannot, because nothing the
+relay publishes is path-scoped. Amendment A10 § 1 says "the plan path's tip
+commit"; the input the assembler receives cannot answer at path granularity,
+and this file specifies the fact that exists rather than the one that would be
+convenient. Every surface's wording stays inside that: *the agents repository
+has moved on since this plan commit; the plan at `<declaredCommit>` is still
+what this work is judged against*, with the re-adopt command. A surface that
+says "your plan changed" is claiming an observation the input did not make. A
+path-scoped drift fact needs an input that does not exist yet; it is
+deliberately not invented here, and it is the one thing a later amendment
+should add if the noise proves to matter.
+
+**The key is always present, and the object is never `null`.** A10 § 1 wrote
+"`null` when the ref state is absent"; this file puts the absence one level in,
+as `currentCommit: null` with `state: "unknown"`, for three reasons.
+
+1. It is decision 7's house rule — a nullable *key* is present and written
+   `null`. A nullable *object* makes every reader write `planDrift?.state`, and
+   a strict reader then cannot tell "the fold said unknown" from "this build
+   does not emit the key".
+2. `unknown` must be disclosed as unknown and never as `none` (A10 § 1). An
+   absent object is exactly what a reader defaults to "no drift", which is the
+   comfortable guess A10 exists to forbid.
+3. The key is additive on a closed record, so every strict reader loads these
+   fixtures and must **fail** on an absent key rather than tolerate it (the 204
+   rule, A3 § 3).
+
+`planDrift` has no reason code and no row in the reason-template table above:
+it is not a criterion refusal and not a coverage refusal. `unknown` and
+`superseded` here are facts about ref state, not verdicts about work — a
+`superseded` drift on a `head` declaration is perfectly ordinary and means only
+that an amendment already adopted the tip.
+
 
 ### Per-criterion `status`
 
@@ -1031,6 +1124,20 @@ a branch with no fixture is a wording nobody checked.
 | `action-not-compiled` | the caller could not compile `verify` at this declaration's plan commit: `evidence_unavailable/action-not-compiled`, `unknown` — never a hash mismatch, because evidence must not nominate its own expected definition |
 | `relay-self-key-absent` | `relaySelfKey: null` with a bound ref observation that resolves: `evidence_unavailable/no-relay-self-key`. An owner-signed claim about its own branch is never promoted to fill the gap |
 
+**Amendment A10 — the drift sequences (lane 234).** Five more, authored as the
+oracle for `planDrift` before any implementation. The first three are one base
+(`happy-path`) with three different ref-state inputs and **no other
+difference**, which is what makes them an oracle rather than three examples:
+the only thing that may change between them is `planDrift`.
+
+| sequence | what it pins |
+|---|---|
+| `plan-drift-none` | `happy-path` plus a relay-signed 30618 for the **agents** repository whose `refs/heads/main` still names the declared plan commit: `planDrift.state: "none"`, and every other value is `happy-path`'s |
+| `plan-drift-on-completed` | the same complete coverage with the agents repository's `main` moved past the declared commit: `drifted`, and **nothing else changes** — `state` stays `head`, every criterion stays `covered`, `coverageComplete` stays `true`. Drift is disclosed, never enforced |
+| `plan-drift-unknown` | `happy-path`'s inputs exactly — a 30618 for the *code* repository and none for the agents repository: `unknown` with `currentCommit: null`, never `none`. A ref state for another repository says nothing about where the plan's contract branch is |
+| `plan-drift-drifted` | `goal-changed`'s declaration — `stale` on the goal, every criterion `open` — with the agents `main` moved past its plan commit: `state: "stale"` for `goal_changed` and `planDrift.state: "drifted"`, two independent facts |
+| `plan-drift-superseded` | `amendment`'s P and P2 with the agents `main` naming P2's plan commit: P reads `superseded` (its own successor adopted the drift, so nothing is owed on that row) and P2 reads `none` |
+
 `node conformance/project-work/check-fixtures.mjs` asserts every fixture
 parses and that ids, hex lengths, uuids and byte limits are well-formed, so a
 later edit cannot silently break them. It is deliberately **not** a parser or
@@ -1089,6 +1196,45 @@ expected to go red on `work/lane-221-coverage-oracle`, and why:
    rows, `proof: null`, and the declaration's `plan_unavailable`.
 6. Any strict reader of the coverage document that requires a non-null
    `proof` on a criterion row.
+
+### For lane 235
+
+The oracle lands first again. What is expected to go red on
+`work/lane-234-plan-drift-oracle`, and what must load the new key:
+
+1. `project_work_fold::tests::every_sequence_folds_to_exactly_its_expected_output`
+   and `project_work_inputs::tests::folding_an_assembled_input_matches_every_expected_fold`
+   — every declaration row now carries `planDrift`, and both `SEQUENCES`
+   arrays are `[Sequence; 30]` (`project_work_fold_tests.rs:40`,
+   `project_work_inputs_tests.rs:58`) against 35 sequence directories. The
+   five new names must be added to both.
+2. `WorkDeclarationProjection` (`project_work_fold.rs:205`) gains the field,
+   serialized between `planResolved` and `candidateArtifact` — the key order
+   the fixtures and `check-fixtures.mjs` fix — and both construction sites in
+   `project_work_fold_project.rs` (`:160`, `:180`) must supply it. The `:180`
+   site is the unresolved-plan row: a declaration whose plan blob is missing
+   still reports drift, because drift is about ref state and not about the
+   blob.
+3. The fold reads the agents repository's row out of the existing `refStates`
+   input. Nothing new is added to `RawWorkInputs` or `assemble_fold_inputs`
+   (`project_work_inputs.rs:122`), but the assembler's callers must now
+   *supply* the agents repository's 30618 as well as the code repository's, or
+   every row honestly reads `unknown`.
+4. Strict readers that must load the key, all of which bind these fixtures:
+   `bee sessions work status` (`buzz-cli/src/commands/sessions/work.rs`, bound
+   in `work_tests.rs:74`, whose `SEQUENCES` is `[Sequence; 18]`); the
+   completion result (`operations_completion.rs`, A10 § 2 — the fact travels
+   with it, and completion is still never refused for drift); the desktop type
+   `ProjectWorkDeclaration` (`desktop/src/shared/api/tauriProjectWork.ts:198`),
+   its presentation (`lib/projectWork.ts`) and its surface
+   (`ui/ProjectWorkCoverage.tsx`), with the declared-vs-current line and the
+   re-adopt command.
+5. The provider's work brief (`buzz-session-provider/src/work_brief.rs`) is
+   the follow-on A10 § 2 names, after lane 229 lands the crate's ownership. It
+   is not this pair's work, and it is not a reason to delay the surfaces.
+6. Wording, not merely plumbing: a surface may say the agents repository has
+   moved on since the pinned plan commit. It may **not** say the plan file
+   changed — see "What this fact observes, and what it cannot" in § (c).
 
 ---
 
@@ -1193,6 +1339,16 @@ Where Astra's prose left a choice, the smaller option was taken.
     (A5 ruling, finding 5): `plan_unavailable` for an unreadable plan,
     `conflict` for competing heads. Consumers gate on state and
     `coverageComplete`; an empty list is not an answer.
+
+26. **Plan drift is a fact on every declaration row, and it is disclosure
+    only** (A10, lane 234). `planDrift` is always present — `state: "unknown"`
+    with a null `currentCommit` when no ref state says — because an absent
+    object is what a reader defaults to "no drift", and because a strict
+    reader must be able to tell an unknown from a build that does not emit the
+    key. It reads a **branch tip**, the newest relay-signed 30618 for the
+    agents repository at `refs/heads/main`, so it cannot claim the plan *file*
+    was edited; it changes no `state`, no `status` and no `coverageComplete`,
+    and completion is never refused for it.
 
 ## Owed by other lanes
 

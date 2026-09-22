@@ -20168,6 +20168,132 @@ removed from here.
        --workspace --all-targets -- -D warnings`; `cargo test -p buzz-cli -p
        buzz-core`; `just file-size-check`; Python NUL scan.
 
+234. **The plan-drift oracle: `planDrift` on every declaration row, and the
+     fact it can actually observe is a branch tip, not a path (2026-09-21,
+     lane 234, `work/lane-234-plan-drift-oracle`).** Amendment A10 ruled that
+     drift is disclosed and never enforced; this lane wrote the contract and
+     the fixtures, and lane 235 implements against them. Items 229–233 are
+     unfiled at the time of writing: A10 cites "ledger 233" and no such item
+     exists on `origin/main` or locally (highest is 228), so A10 § 8 is the
+     only authority this lane read for the ruling. 234 was unclaimed on
+     `origin/main` when this was appended.
+     - (a) **The key, in `conformance/project-work/README.md` § (c)
+       "Per-declaration `planDrift`".** `{declaredCommit, currentCommit,
+       state}` with `state ∈ none | drifted | unknown | superseded`, serialized
+       between `planResolved` and `candidateArtifact`. `none` = current known
+       and equal; `drifted` = current known, different, and no successor pins
+       it; `superseded` = current known, different, and a successor of this
+       declaration over the projected `supersededBy` closure carries it as its
+       own `planRef.commit` (the drift was already adopted, so nothing is owed
+       on that row); `unknown` = no relay-signed 30618 for the agents
+       repository, or the newest one names no `refs/heads/main`, and
+       `currentCommit` is `null`. `superseded` is narrower than `drifted` and
+       the two are mutually exclusive, both directions enforced.
+     - (b) **The object is always present; only `currentCommit` is
+       nullable.** A10 § 1 wrote "`null` when the ref state is absent"; the
+       contract puts the absence one level in. Three reasons, recorded in the
+       README: decision 7's house rule (a nullable key is written `null`, so a
+       complete `--example` exists); a nullable *object* makes every reader
+       write `planDrift?.state` and leaves a strict reader unable to tell "the
+       fold said unknown" from "this build does not emit the key"; and an
+       absent object is exactly what a reader defaults to "no drift", which is
+       the comfortable guess A10 exists to forbid. Recorded as decision 26.
+     - (c) **DEVIATION FROM A10, disclosed rather than papered over.** A10 § 1
+       calls `currentCommit` "the plan **path's** tip commit on the agents
+       repo's `main` as the assembler already receives it in relay ref state".
+       The assembler receives no such fact. Relay ref state is kind:30618,
+       which names **branch tips** — one `refs/heads/<branch>` tag per branch
+       (`crates/buzz-core/src/project_work_inputs.rs:122` and the git-ref
+       predicate's "newest 30618" read) — and nothing the relay publishes is
+       path-scoped. So the contract specifies what exists: the newest
+       relay-signed 30618 whose `d` tag names the **repository id of
+       `planRef.repository`** (the *agents* repository, not the plan's
+       `code_repository`), read at `refs/heads/main`. `drifted` therefore means
+       *the agents repository's `main` is not the commit this declaration
+       pinned* — it does **not** mean the plan file was edited, and a surface
+       that says "your plan changed" is claiming an observation the input did
+       not make. The README fixes the permitted wording and names the missing
+       path-scoped input as the one thing a later amendment should add if the
+       noise proves to matter. No new fold input was invented: the agents row
+       is selected out of the existing `refStates` list by `d` tag.
+     - (d) **Fixtures: five new sequences, and all 30 existing ones gained the
+       key.** `plan-drift-none`, `plan-drift-on-completed` and
+       `plan-drift-unknown` are one base (`happy-path`) with three ref-state
+       inputs and **no other difference** — that is what makes them an oracle
+       rather than three examples. `plan-drift-on-completed` is the A10 proof:
+       `drifted` with `state: "head"`, every criterion `covered` and
+       `coverageComplete: true` unchanged. `plan-drift-drifted` puts drift on a
+       `goal-changed` declaration (`state: "stale"` for `goal_changed` *and*
+       `planDrift: "drifted"` — two independent facts). `plan-drift-superseded`
+       is `amendment` with the agents `main` at P2's commit: P reads
+       `superseded`, P2 reads `none`. The 30 existing folds all read
+       `unknown`/`null` — none of them supplies an agents-repository row — and
+       `git diff --numstat` shows **zero deletions** across those 30 files: the
+       key was inserted textually after `"planResolved"`, so no other expected
+       value and no formatting moved.
+     - (e) **Checker.** `check-fixtures.mjs` now enforces, on every
+       declaration row: the key's presence and exact key order, the enum,
+       `declaredCommit == planRef.commit`, `unknown ⇔ currentCommit == null`
+       (both directions), `none ⇒` equality, `drifted|superseded ⇒`
+       inequality, `superseded ⇒` a successor pins it, `drifted ⇒` none does,
+       and — derived from `inputs.json`, not from the expected file — that
+       `currentCommit` is the newest relay-signed agents-repository 30618's
+       `refs/heads/main`, by the same `(created_at, id)` ordering the git-ref
+       predicate uses.
+     - (f) **Proven to bite** (each applied to the green corpus alone, then
+       reverted): restating `plan-drift-unknown` as `none` failed twice (the
+       unknown⇔null rule and the equality rule); reporting
+       `plan-drift-superseded`'s P as `drifted` failed with "a successor …
+       already pins the current commit … that is superseded"; deleting the key
+       from `goal-changed` failed on key order *and* on the always-present
+       rule; and moving `plan-drift-on-completed`'s `currentCommit` to the
+       declared commit failed on the equality rule *and* on the ref-state
+       derivation.
+     - (g) **For lane 235** (also written into the README as "For lane 235").
+       Red on this branch, expected: (1)
+       `project_work_fold::tests::every_sequence_folds_to_exactly_its_expected_output`
+       and
+       `project_work_inputs::tests::folding_an_assembled_input_matches_every_expected_fold`
+       — every row carries a key the fold does not emit, and both `SEQUENCES`
+       arrays are `[Sequence; 30]`
+       (`crates/buzz-core/src/project_work_fold_tests.rs:40`,
+       `crates/buzz-core/src/project_work_inputs_tests.rs:58`) against 35
+       directories. (2) `WorkDeclarationProjection`
+       (`crates/buzz-core/src/project_work_fold.rs:205`) gains the field, and
+       both construction sites must supply it
+       (`crates/buzz-core/src/project_work_fold_project.rs:160` and `:180` —
+       `:180` is the unresolved-plan row, which still reports drift because
+       drift is about ref state, not about the blob). (3) The assembler needs
+       no new input, but its callers must now supply the agents repository's
+       30618 or every row honestly reads `unknown`. Strict readers that must
+       load the key: `bee sessions work status`
+       (`crates/buzz-cli/src/commands/sessions/work.rs`, bound in
+       `work_tests.rs:74`, whose `SEQUENCES` is `[Sequence; 18]`); the
+       completion result
+       (`crates/buzz-cli/src/commands/sessions/operations_completion.rs`) — it
+       carries the fact and still never refuses for drift; the desktop type
+       `ProjectWorkDeclaration`
+       (`desktop/src/shared/api/tauriProjectWork.ts:198`), its presentation
+       (`desktop/src/features/coding-sessions/lib/projectWork.ts`) and its
+       surface (`desktop/src/features/coding-sessions/ui/ProjectWorkCoverage.tsx`),
+       with the declared-vs-current line and the re-adopt command. The
+       provider's work brief
+       (`crates/buzz-session-provider/src/work_brief.rs`) is A10 § 2's
+       follow-on after lane 229, not lane 235's work.
+       `desktop/src/features/coding-sessions/lib/projectWork.test.mjs:43`
+       enumerates the sequence directory with `readdirSync`, so it picks the
+       five new sequences up without an edit and stays green — which is
+       precisely why the TS type and the surface are named here: a structural
+       type does not fail on an unread key, and A10 § 2's surfaces are the
+       point of the fact.
+     - (h) **Gates** bare: `node conformance/project-work/check-fixtures.mjs`
+       ("fixtures are well formed"); `just conformance-check` (77 passed, 0
+       failed — `conformance/project-work` has no `*.test.mjs`, so that recipe
+       does not cover it; the node checker is the gate that does); `just
+       file-size-check`; Python NUL scan (none) and `git diff --cached
+       --numstat` (no binary rows). The Rust fold tests are **not** run as a
+       gate: they are expected red, which is (g).
+
 ## 3a. Environment facts that cost real time (do not rediscover)
 
 - **pnpm 11's answer to a stale workspace state is to DELETE `node_modules`,

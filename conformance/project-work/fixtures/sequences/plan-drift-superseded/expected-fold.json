@@ -21,8 +21,8 @@
       "planResolved": true,
       "planDrift": {
         "declaredCommit": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
-        "currentCommit": null,
-        "state": "unknown"
+        "currentCommit": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "state": "none"
       },
       "candidateArtifact": null,
       "artifactCommits": [],
@@ -112,8 +112,8 @@
       "planResolved": true,
       "planDrift": {
         "declaredCommit": "abababababababababababababababababababab",
-        "currentCommit": null,
-        "state": "unknown"
+        "currentCommit": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "state": "superseded"
       },
       "candidateArtifact": null,
       "artifactCommits": [],

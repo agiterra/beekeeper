@@ -295,10 +295,16 @@ function checkRecords() {
 // ------------------------------------------------------------------ sequences
 const DECLARATION_KEYS = [
   "workId", "declarationRef", "planRef", "state", "supersedes", "supersededBy",
-  "stateReasonCode", "stateReason", "planResolved", "candidateArtifact",
-  "artifactCommits", "criteria", "coverageComplete", "coverageReasonCode",
-  "coverageReason",
+  "stateReasonCode", "stateReason", "planResolved", "planDrift",
+  "candidateArtifact", "artifactCommits", "criteria", "coverageComplete",
+  "coverageReasonCode", "coverageReason",
 ].join(",");
+const PLAN_DRIFT_KEYS = ["declaredCommit", "currentCommit", "state"].join(",");
+const PLAN_DRIFT_STATES = ["none", "drifted", "unknown", "superseded"];
+const AGENTS_MAIN = "refs/heads/main";
+// The repository id out of a full 30617 coordinate: `planDrift` reads the
+// AGENTS repository's ref state, never the plan's code_repository.
+const repoIdOf = (coordinate) => (coordinate ?? "").split(":")[2] ?? "";
 const CRITERION_KEYS = [
   "criterionId", "proof", "status", "assignmentRefs", "evidence",
   "artifactCommit", "reasonCode", "reason",
@@ -435,6 +441,74 @@ function checkFold(fold, where, planCriteria, ctx) {
       check(d.stateReasonCode === null || STATE_REASON_CODES.includes(d.stateReasonCode), where, `unknown stateReasonCode "${d.stateReasonCode}"`);
       check((d.stateReasonCode === null) === (d.stateReason === null), where, "stateReasonCode and stateReason must agree about being absent");
       check(!("missionTerminal" in d) && !("mission" in fold), where, "coverage output must not carry a mission terminal field: two questions, never merged");
+
+      // ------------------------------------------------------------ planDrift
+      // A10: drift is DISCLOSED, never enforced. The key is therefore always
+      // present on every declaration row, in every state, and an unknown is
+      // disclosed as `unknown` with a null currentCommit — never as `none` and
+      // never as an absent object, which every reader defaults to "no drift".
+      const drift = d.planDrift;
+      if (!check(drift && typeof drift === "object", where,
+        `declaration ${short(d.declarationRef)} carries no planDrift object: the key is always present, with state "unknown" when no ref state says`)) {
+        // nothing further to check on this row
+      } else {
+        check(keysOf(drift) === PLAN_DRIFT_KEYS, where,
+          `planDrift on ${short(d.declarationRef)} has keys [${Object.keys(drift)}], expected [${PLAN_DRIFT_KEYS}]`);
+        check(drift.declaredCommit === d.planRef.commit, where,
+          `planDrift.declaredCommit ${drift.declaredCommit} is not this declaration's planRef.commit ${d.planRef.commit}`);
+        check(drift.currentCommit === null || COMMIT.test(drift.currentCommit), where,
+          "planDrift.currentCommit is neither null nor a 40/64-hex commit");
+        check(PLAN_DRIFT_STATES.includes(drift.state), where, `unknown planDrift state "${drift.state}"`);
+        // unknown and a null currentCommit are the same fact, both ways round:
+        // a known tip is never reported as unknown, and an unknown one never
+        // carries a commit it did not read.
+        check((drift.state === "unknown") === (drift.currentCommit === null), where,
+          `planDrift on ${short(d.declarationRef)} is ${drift.state} with currentCommit ${JSON.stringify(drift.currentCommit)}: unknown means a null currentCommit, and nothing else does`);
+        if (drift.state === "none") {
+          check(drift.currentCommit === drift.declaredCommit, where,
+            `planDrift says none while ${drift.currentCommit} differs from the declared ${drift.declaredCommit}`);
+        }
+        if (drift.state === "drifted" || drift.state === "superseded") {
+          check(drift.currentCommit !== drift.declaredCommit, where,
+            `planDrift says ${drift.state} while the current commit equals the declared one: equal commits are none`);
+        }
+        // `superseded` is the narrower answer and takes precedence: the drift
+        // has already been adopted by a successor of THIS declaration, over the
+        // projected supersession closure, so nothing is owed on this row.
+        const successors = new Set();
+        const walk = (ref) => {
+          for (const newer of fold.declarations.find((x) => x.declarationRef === ref)?.supersededBy ?? []) {
+            if (successors.has(newer)) continue;
+            successors.add(newer);
+            walk(newer);
+          }
+        };
+        walk(d.declarationRef);
+        const adopted = [...successors].some((ref) =>
+          fold.declarations.find((x) => x.declarationRef === ref)?.planRef.commit === drift.currentCommit);
+        if (drift.state === "superseded") {
+          check(adopted, where,
+            `planDrift says superseded, but no successor of ${short(d.declarationRef)} pins the current commit ${drift.currentCommit}: an unadopted drift is drifted`);
+        }
+        if (drift.state === "drifted") {
+          check(!adopted, where,
+            `planDrift says drifted, but a successor of ${short(d.declarationRef)} already pins the current commit ${drift.currentCommit}: that is superseded`);
+        }
+        // Derived from the inputs, not from the expected file: the newest
+        // relay-signed 30618 for the AGENTS repository, at refs/heads/main.
+        // Relay ref state names a branch tip, never a path's last commit, so
+        // this is the only fact the fold may report as `currentCommit`.
+        if (ctx) {
+          const want = repoIdOf(d.planRef.repository);
+          const rows = (ctx.inputs.refStates ?? [])
+            .filter((r) => (r.tags ?? []).some((t) => t[0] === "d" && t[1] === want))
+            .sort((a, b) => (a.created_at - b.created_at) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+          const newest = rows[rows.length - 1];
+          const tip = (newest?.tags ?? []).find((t) => t[0] === AGENTS_MAIN)?.[1] ?? null;
+          check(drift.currentCommit === tip, where,
+            `planDrift.currentCommit is ${JSON.stringify(drift.currentCommit)}, but the newest relay-signed ref state for the agents repository "${want}" names ${JSON.stringify(tip)} on ${AGENTS_MAIN}`);
+        }
+      }
       if ((d.state === "head" || d.state === "stale") && d.planResolved) {
         check(d.criteria.length > 0, where, "a head declaration must project its criteria");
       } else if (d.state === "head" || d.state === "stale") {

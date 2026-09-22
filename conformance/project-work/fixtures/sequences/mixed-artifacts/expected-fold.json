@@ -17,6 +17,11 @@
       "stateReasonCode": null,
       "stateReason": null,
       "planResolved": true,
+      "planDrift": {
+        "declaredCommit": "abababababababababababababababababababab",
+        "currentCommit": null,
+        "state": "unknown"
+      },
       "candidateArtifact": "c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5",
       "artifactCommits": [
         "b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4",

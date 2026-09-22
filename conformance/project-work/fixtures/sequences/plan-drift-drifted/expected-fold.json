@@ -11,16 +11,16 @@
         "commit": "abababababababababababababababababababab",
         "path": "plans/kettle.md"
       },
-      "state": "head",
+      "state": "stale",
       "supersedes": [],
       "supersededBy": [],
-      "stateReasonCode": null,
-      "stateReason": null,
+      "stateReasonCode": "goal_changed",
+      "stateReason": "adopted against goal 90a10000…; the session's current goal is 90a20000…. The contract stays pinned until the lead adopts an amendment",
       "planResolved": true,
       "planDrift": {
         "declaredCommit": "abababababababababababababababababababab",
-        "currentCommit": null,
-        "state": "unknown"
+        "currentCommit": "fefefefefefefefefefefefefefefefefefefefe",
+        "state": "drifted"
       },
       "candidateArtifact": null,
       "artifactCommits": [],
@@ -31,7 +31,9 @@
             "kind": "review"
           },
           "status": "open",
-          "assignmentRefs": [],
+          "assignmentRefs": [
+            "a551000000000000000000000000000000000000000000000000000000000000"
+          ],
           "evidence": [],
           "artifactCommit": null,
           "reasonCode": null,
@@ -80,24 +82,17 @@
           "proof": {
             "kind": "git-ref"
           },
-          "status": "unknown",
-          "assignmentRefs": [
-            "a555000000000000000000000000000000000000000000000000000000000000"
-          ],
-          "evidence": [
-            {
-              "kind": "ref_observation",
-              "eventId": "0b51000000000000000000000000000000000000000000000000000000000000"
-            }
-          ],
-          "artifactCommit": "e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7",
-          "reasonCode": "evidence_unavailable",
-          "reason": "the relay's self key was not supplied, so a ref observation cannot be judged"
+          "status": "open",
+          "assignmentRefs": [],
+          "evidence": [],
+          "artifactCommit": null,
+          "reasonCode": null,
+          "reason": null
         }
       ],
       "coverageComplete": false,
       "coverageReasonCode": "criteria_not_covered",
-      "coverageReason": "5 of 5 criteria are not covered under this declaration: delivered-main carries evidence that failed its predicate or could not be resolved, and the other four are open"
+      "coverageReason": "the declaration is stale against the session's current goal, and all 5 criteria are open"
     }
   ],
   "excluded": [],
