@@ -347,6 +347,15 @@ impl Outbox {
         self.parked
     }
 
+    /// The signed events still awaiting delivery, oldest first.
+    ///
+    /// For tests only: a caller that wants to *send* one takes it through the
+    /// ordinary drain, which is the only path that records the attempt.
+    #[cfg(test)]
+    pub(crate) fn pending_events(&self) -> impl Iterator<Item = &nostr::Event> {
+        self.pending.iter().map(|row| &row.entry.event)
+    }
+
     /// Fact identities still awaiting a positive relay OK. Latest-value
     /// replacement preserves this identity even though its row id changes.
     pub(crate) fn pending_keys(&self) -> HashSet<(u32, String)> {

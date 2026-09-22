@@ -61,6 +61,8 @@ mod gate_observer;
 mod git_exclude;
 mod git_probe;
 pub mod host_command;
+// A finished host step wakes the seat that triggered it (ledger 236(g), 240).
+pub mod host_result_wake;
 mod lease;
 mod model_catalog;
 pub mod native_restore;
@@ -116,7 +118,8 @@ use buzz_core::kind::{
     KIND_CODING_SESSION_METADATA, KIND_CODING_SESSION_OBSERVATION, KIND_CODING_SESSION_POLICY,
     KIND_CODING_SESSION_PROVIDER_CATALOG, KIND_CODING_SESSION_TEAM_TRANSACTION,
     KIND_CODING_SESSION_TRANSCRIPT, KIND_DELETION, KIND_MEMBER_ADDED_NOTIFICATION,
-    KIND_MEMBER_REMOVED_NOTIFICATION, KIND_SYSTEM_MESSAGE,
+    KIND_MEMBER_REMOVED_NOTIFICATION, KIND_SYSTEM_MESSAGE, KIND_WORKFLOW_HOST_STEP_EXITED,
+    KIND_WORKFLOW_HOST_STEP_REQUESTED,
 };
 use buzz_sdk::builders::{
     build_coding_session_lifecycle_receipt, build_coding_session_metadata,
@@ -721,6 +724,8 @@ pub struct Provider {
     /// That listener's queue, merged into the run loop's `select!`.
     action_step_events: Option<mpsc::Receiver<action_step_listener::ActionStepEvent>>,
     team_wakes: team_wake::WakeIntentStore,
+    /// Trigger routing and at-most-once custody for host-result wakes.
+    host_result_wakes: host_result_wake::HostResultWakeStore,
     /// Channels whose complete stored 44244 partition was scanned this run.
     team_wake_scanned_channels: HashSet<Uuid>,
     /// Complete-partition refusals are channel-local. Retrying a 32-page
@@ -1082,6 +1087,7 @@ impl Provider {
         let state = StateStore::open(&config.state_dir, config.command_horizon.as_secs())?;
         let outbox = Outbox::open(&config.state_dir, &pubkey_hex)?;
         let team_wakes = team_wake::WakeIntentStore::open(&config.state_dir)?;
+        let host_result_wakes = host_result_wake::HostResultWakeStore::open(&config.state_dir)?;
         let ci_continuations = ci_continuation_store::CiContinuationStore::open(&config.state_dir)?;
         let action_steps = action_step_store::ActionStepStore::open(&config.state_dir)?;
         let team_wake_refusals_at_startup = team_wakes.refused_channels().collect();
@@ -1099,6 +1105,7 @@ impl Provider {
             action_step_listener: None,
             action_step_events: None,
             team_wakes,
+            host_result_wakes,
             team_wake_scanned_channels: HashSet::new(),
             team_wake_discovery_backoff: HashMap::new(),
             team_wake_refusals_at_startup,
@@ -1496,6 +1503,17 @@ impl Provider {
                 // idle timeout — see `release_settled_umbrella`.
                 KIND_CODING_SESSION_CLOSURE,
                 KIND_SYSTEM_MESSAGE,
+                // Neither of these is a command either. They are the two
+                // relay-signed halves of one host step: the kind:46013 names
+                // the seat whose kind:46020 started the run, the kind:46014
+                // says how it ended. Both carry the workflow's channel in
+                // their `h` tag, so the subscription this provider already
+                // holds is the whole mechanism — see
+                // [`crate::host_result_wake`] and ledger 236(g), where a
+                // green result woke nobody for 6 m 29 s because nothing was
+                // listening for it at all.
+                KIND_WORKFLOW_HOST_STEP_REQUESTED,
+                KIND_WORKFLOW_HOST_STEP_EXITED,
                 // A deletion is not a command either, and it is the only
                 // signal that an umbrella is *gone* rather than finished.
                 // Without it a provider that was offline when a session was
@@ -1833,6 +1851,12 @@ impl Provider {
             }
             KIND_CODING_SESSION_CLOSURE => {
                 self.on_closure(event);
+            }
+            KIND_WORKFLOW_HOST_STEP_REQUESTED => {
+                self.on_host_step_requested(event);
+            }
+            KIND_WORKFLOW_HOST_STEP_EXITED => {
+                self.on_host_step_exited(event);
             }
             other => {
                 tracing::debug!(target: "csp", kind = other, "ignoring unrelated event");
@@ -10666,6 +10690,8 @@ mod tests {
     mod handover_retirement_tests;
     #[path = "hire_requester_tests.rs"]
     mod hire_requester_tests;
+    #[path = "host_result_wake_tests.rs"]
+    mod host_result_wake_tests;
     #[path = "observed_gate_row_tests.rs"]
     mod observed_gate_row_tests;
     #[path = "operation_fence_tests.rs"]

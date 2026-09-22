@@ -400,16 +400,27 @@ fn is_terminal_pointer(object: &serde_json::Map<String, serde_json::Value>) -> b
             == Some(TEAM_WAKE_POINTER_SCHEMA)
 }
 
-/// Whether a parsed JSON value is one of the two pointer shapes [`wake_text`]
-/// produces.
+/// Whether a parsed JSON value is one of the pointer shapes this provider
+/// mints for a wake.
 ///
 /// The single recogniser behind both [`operation_fence_key`] and
 /// [`is_team_wake_pointer`]: a second one would be a second opinion about what
 /// a wake is, and the fence and the framing must never disagree about that.
+///
+/// Three shapes, not two, since lane 240: a host-result summary
+/// ([`crate::host_result_wake::is_host_result_pointer`]) is provider-minted
+/// JSON delivered to a seat exactly as the other two are, so it needs the
+/// same two things they need — the `[Context]` framing that tells its
+/// recipient what scope it is in and where to answer, and the operation fence
+/// that stops two producers spending two turns on one fact. Leaving it out
+/// would reproduce COMMS-MAP finding 3, where one pointer arrived framed and
+/// an identical one arrived naked depending on whose key started the host.
 fn is_wake_pointer_value(value: &serde_json::Value) -> bool {
-    value
-        .as_object()
-        .is_some_and(|object| is_report_pointer(object) || is_terminal_pointer(object))
+    value.as_object().is_some_and(|object| {
+        is_report_pointer(object)
+            || is_terminal_pointer(object)
+            || crate::host_result_wake::is_host_result_pointer(object)
+    })
 }
 
 /// Whether `text` is a team-wake pointer this provider itself mints.
