@@ -16,7 +16,7 @@ unknown and both links kept. "Ledger §" means a heading in
 
 | Surface | Observed | How |
 | --- | --- | --- |
-| `main` on the relay | `36f337d4a` (count 3734), checked 2026-09-21 23:28 EDT; 231–232 landed, nine gates bare and green (`/tmp/gate-final-232.log`), pushed with the floor (`/tmp/push-final-232.log`); prior tip `bfd0b04ac`. Read the remote, not a local ref | `GIT_TERMINAL_PROMPT=0 git ls-remote origin refs/heads/main` (`upstream` mirrors to GitHub) |
+| `main` on the relay | 237–240 landed 2026-09-22 on top of A12; code tip `c021c188f`, this map commit above it. Fifteen gates bare and green (`/tmp/gate-final-240.log`); full smoke was **not** run (1,356 specs, one worker, ~5 h) — lane 238's three affected specs were, 9 passed. Prior tip `36f337d4a` (count 3734). Read the remote, not a local ref | `GIT_TERMINAL_PROMPT=0 git ls-remote origin refs/heads/main` (`upstream` mirrors to GitHub) |
 | Relay at hive.agiterra.org | **`build_time` `2026-09-22T03:19:28Z`, the CI-green deploy of `36f337d4a`**, checked 2026-09-21 23:28 EDT; the prior build was `2026-09-21T22:24:42Z` (`f4bfdffd4`). A changed `build_time` is the only deploy signal — `software_commit` and `/health` both answer `unknown` here | `curl -sH 'Accept: application/nostr+json' https://hive.agiterra.org/ \| jq .`; `curl -s https://hive.agiterra.org/health` |
 | Installed Mac dev bundle | `~/Applications/Beekeeper Dev.app`, running `36f337d4a` (count 3734); `bee 0.1.0 (36f337d4)` built 2026-09-22T03:26:47Z, installed 2026-09-21 23:27 EDT (`/tmp/app-from-232-install.log`). Live: run `8f9552c9` reports `checkout` `6ea2e0db…` with `checkout_reported: true` (206) | `scripts/app-from.sh <sha>`; `bee --version` |
 | Windows | unavailable: Brian no longer has the Windows machine (2026-09-09). Native Windows agent setup and cross-account acceptance are deferred, not done | ledger § "September 9 checkpoint published; Windows testing deferred" |
@@ -47,7 +47,7 @@ unknown and both links kept. "Ledger §" means a heading in
 | The Dashboard shows the relay's machine (CPU, memory, disk) from `GET /health/system`, stewards only | Andy | landed 2026-09-14; on hive since 2026-09-18 (image `71efd0da1`), live check owed | ledger § "Built 2026-09-14 — the Dashboard shows the relay's machine" |
 | Project teams, composable roles and project actions | Andy | 2026-09-18: A1–A4, C1–C6 built (ledger 142–148, 150–156), on hive; live runs owed. **Pivot**: roles and plans move to `<slug>-beekeeper-agents` (spec § 4.11), built (158–163); dev-stack retest fixed missing default agents (164) and the `buzz-agent` harness hire refusal (165); live proofs ran 2026-09-19 (171); the first RPG Test session found five host defects, all fixed and proved live that day (173–177): seats run bash, project agents join the roster, the code repo is seeded, cloned and recorded; setup-flow redesign open (§ 6 item 10) | [`PROJECT_TEAMS_AND_ACTIONS_SPEC.md`](PROJECT_TEAMS_AND_ACTIONS_SPEC.md), ledger 141, 158, D18–D19 |
 | System proof: the acceptance story as a measured run | Brian with Fable; Astra audits | 2026-09-20 kettle run: landed in 10 min; goal→terminal 20,042 s; six repairs is an operator count — the wire shows 7 founder-signed commands (178, 178(r)); Andy's audited (179); 180–191 landed, mission closed (178(o)); 189–191 fix 178(j)/(k)/(n), see 178(p); 190's run-status endpoint is on hive (19:40Z). Run two (205) proved 180, 186, 189, 190 and 171(c) live; 203 closed 171(a)/(b). Owed: 191's proof, the CI listener's probe cadence (189) | ledger 178–179, [runbook](history/2026-09-20-system-proof-runbook.md), [audits](history/2026-09-20-astra-kettle-audit.md), [durable plan](history/2026-09-20-astra-durable-work-plan.md) |
-| Durable work: governing plan | Fable finalizes; lanes build | 2026-09-21: Waves 0–2 closed (192–207; Wave 2 `228da8f9c`, 206–207 `942eb00dc`). **Wave 3** landed as `e8c552cf6`, then 212(h)+217 as `ce6df5633`, deployed 13:44:49Z (208–217). **Astra's Wave 2 re-check held R1–R5**; the rulings are plan § 8 A7 and the fixes landed as **218–223**, deployed and installed at `aa055b233`. **Astra's third look closed R1/R3/R5 and held R2/R4**; rulings § 8 A8, fixed as **227–228** at `d209432aa` (renumbered on landing from 224/225). **231–232 landed tonight**: templates 1.2.0, and the five root-bypassable desktop tests fixed by construction. Astra's [fourth look](history/2026-09-21-astra-wave2-fourth-look.md) is filed and **R2/R4 stay open** — lanes 229/230 in flight, as is drift disclosure 234/235. **The `kettle-control` control run ran 2026-09-22** on `36f337d4a` (plan § 8 A11, a measurement and no safety claim): goal→terminal **1 h 15 m 36 s** against 178's 5 h 34 m, two unplanned human acts, one approval through the card — and **plan adoption was refused live** by the relay (`tag-count … carries 7`), so the Waves 1–2 plan-as-contract mechanism is still unexercised. Eight findings in ledger 236; lanes **237** (adopt refusal), **238** (desktop `projectRef` receipt reader + invisible approval request), **239** (seat git identity), **240** (a host result wakes nobody, after custody) in flight | [`UNIFIED_WORK_PLAN.md`](UNIFIED_WORK_PLAN.md) § 8 A8, [third look](history/2026-09-21-astra-wave2-third-look.md), ledger 192–228 |
+| Durable work: governing plan | Fable finalizes; lanes build | 2026-09-21: Waves 0–2 closed (192–207; Wave 2 `228da8f9c`, 206–207 `942eb00dc`). **Wave 3** landed as `e8c552cf6`, then 212(h)+217 as `ce6df5633`, deployed 13:44:49Z (208–217). **Astra's Wave 2 re-check held R1–R5**; the rulings are plan § 8 A7 and the fixes landed as **218–223**, deployed and installed at `aa055b233`. **Astra's third look closed R1/R3/R5 and held R2/R4**; rulings § 8 A8, fixed as **227–228** at `d209432aa` (renumbered on landing from 224/225). **231–232 landed tonight**: templates 1.2.0, and the five root-bypassable desktop tests fixed by construction. Astra's [fourth look](history/2026-09-21-astra-wave2-fourth-look.md) is filed and **R2/R4 stay open** — lanes 229/230 in flight, as is drift disclosure 234/235. **The `kettle-control` control run ran 2026-09-22** on `36f337d4a` (plan § 8 A11, a measurement, no safety claim): goal→terminal **1 h 15 m 36 s** against 178's 5 h 34 m, two unplanned human acts, and **plan adoption refused live** (`tag-count … carries 7`); eight findings in ledger 236. **237–240 landed 2026-09-22** on the A12 docs tip and close 236(f) adopt refusal, 236(b)/(e) the desktop strict receipt reader and the approval request nobody was told about, 236(d) the seat's git identity and the governing prose outside the template catalog, and 236(g) a host result that woke nobody. Custody lanes 229/230 are **parked at `df4851d0f`, not landed** — resume them with disruption-run evidence; drift 234/235 stay in flight | [`UNIFIED_WORK_PLAN.md`](UNIFIED_WORK_PLAN.md) § 8 A8, [third look](history/2026-09-21-astra-wave2-third-look.md), ledger 192–228 |
 | Project To-Do lists: kind 44248, personal/project visibility, pins, `bee todos`, Desktop tab + sidebar rows, Mobile page | Andy with Opus | 2026-09-17: on `main` (`0cbfcf296`); relay, CLI, Desktop, Mobile (iOS 26.5 sim) verified live | [`nips/NIP-TD.md`](nips/NIP-TD.md), ledger 149 |
 | Shared drafts for the agents repository: kind 44250 (renumbered from 44249 on landing; NIP-PW took 44249), `bee agents-repo`/`bee plans`, relay `tree`/`raw`, desktop **Files** tab, mobile Files page | Andy with Opus | 2026-09-21: landing on `main`; Andy drafted, committed and created a plan in the dev app on a local relay; `bee` cycle and mobile reader proved live there; nothing against hive yet | [`nips/NIP-AD.md`](nips/NIP-AD.md), spec § 4.12, ledger 224–226, [run](history/2026-09-21-agents-repo-drafts.md) |
 | Delegated agent-directory visibility follow-up | unassigned | "can resume separately on main" (Astra, 2026-09-09) | ledger § "September 9 main published" |
@@ -101,9 +101,6 @@ Rules, each with where it is written down.
   an installed build with a real session, evidence linked above. The
   queued-steer race is corrected with a failing-before/passing-after process
   test. codex-acp 1.6.2 has no idle guard and stays in boundary mode.
-- ~~**Five desktop tests make their failure out of a permission, which root
-  bypasses** (ledger 212(h)).~~ Fixed 2026-09-21 by lane 232: each fails by
-  construction (`EISDIR`), which no uid bypasses; grep found no others (232).
 - **A webhook-triggered action cannot be approved from its card (2026-09-21,
   ledger 218).** Its stored hash covers a secret the public event does not
   carry, so the card answers `definition_hash: null` with the reason and
@@ -112,14 +109,10 @@ Rules, each with where it is written down.
 - **Provider outbox**: final relay refusals park, not retry (ledger 170); unproven live.
 - **Automatic context** is blocked on Brian resuming it; the Claude hook
   transport is a candidate, not proven in the installed adapter.
-- ~~**Unknown:** whether the 62 e2e-smoke failures ledger §1 calls
-  "inherited, not caused" (2026-08-19) still exist.~~ Settled 2026-09-12/13:
-  six reproduced on base `77b792de9` (ledger 115), the nine later cases pass
-  on the combined candidate, and only dense history still fails (44/1
-  selected; isolated repeat 286/450 and 336/450), accepted by Brian while
-  diagnosis continues — [evidence](history/2026-09-13-startup-smoke-corrections.md).
-  Never run smoke while CI builds the desktop: the plain build overwrites the
-  E2E bundle. Prevent idle sleep during unattended checks.
+- The 62 e2e-smoke failures of 2026-08-19 are settled (ledger 115,
+  [evidence](history/2026-09-13-startup-smoke-corrections.md)): only dense
+  history still fails, accepted by Brian while diagnosis continues. Never run
+  smoke while anything else builds the desktop — they share `desktop/dist`.
 
 ## Next, in order
 
@@ -158,11 +151,15 @@ separates publication, installation and provider-confirmed lead startup.
    remain separate.
 8. Durable work: the `kettle-control` control run ran 2026-09-22 on
    `36f337d4a` — result and eight findings in ledger 236,
-   [runbook](history/2026-09-22-kettle-control-runbook.md). **Next: land
-   237–239, re-run plan adoption live to prove 236(f) closed, then Astra's
-   read.** Lanes 229/230 (custody) and drift 234/235 stay in flight; 240
-   follows custody. The empty-set waiver at `project_work_fold.rs:419` stays
-   documented: an observation, not a lane.
+   [runbook](history/2026-09-22-kettle-control-runbook.md); its fixes 237–240
+   are landed. **Next: `kettle-control` run 2 on this build (plan § 8 A12.5) —
+   same plan, same measurement, the number to beat is 12 minutes of team work
+   and zero hidden asks — and Astra's read of run 1, still pending
+   (`history/2026-09-22-astra-control-run-read.md` when filed).** A live
+   `work adopt` still owes its accepted event id: run 1's mission is terminal,
+   so 236(f) is proved by run 2's first adoption. Custody 229/230 and drift
+   234/235 stay in flight. The empty-set waiver at `project_work_fold.rs:419`
+   stays documented: an observation, not a lane.
 
 ## Environment facts most likely to bite first
 

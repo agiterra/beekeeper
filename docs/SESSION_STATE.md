@@ -19836,6 +19836,31 @@ removed from here.
        buzz-relay (179 ignored, the Postgres/Redis suite), 328 buzz-sdk, 13,
        0 failed; `just conformance-check` 77/77; `just file-size-check`;
        Python NUL scan of every changed file, none.
+     - **Live-proof addendum (finalizer, 2026-09-22, tip `f6c6bfb2a`).** The
+       fix is *not yet* proved by an accepted publish. The kettle-control
+       agents repository was cloned fresh from
+       `hive.agiterra.org/git/3d3b7169…/kettle-control-beekeeper-agents`
+       (HEAD `78c30d4f302deda6f1acac45a0ac3a174944f601`, "Add the verify
+       action for plan kettle-cli") and the **new** `bee`
+       (`bee 0.1.0 (f6c6bfb2-dirty)`, built 2026-09-22T16:57:01Z) ran
+       `bee sessions work validate --plan plans/kettle.md --agents-repo
+       <clone> --commit HEAD` against `wss://hive.agiterra.org`. Exit 0, and
+       the relevant part of the answer verbatim: `"adoptable": true`,
+       `"adoptableReason": null`, `"valid": true`, `"unresolvedActions": []`,
+       `"planId": "kettle-cli"`, and `actionDefinitions.verify.definitionHash`
+       `7dc23ca218a2329d9ac6883614e032eebab16d7bf0672e5623c05d6b9ae72b37`
+       over step `verify`. So the plan *is* adoptable at that commit and the
+       lead did publish the verify action.
+     - **No live `adopt` was attempted, deliberately.** The only live
+       session-ref available is the control run's
+       (`613d53a6-50e3-4010-838a-0a736a0b4da1`, channel
+       `29cc5029-8686-4dd4-85dc-d66423912bab`), whose mission is **terminal**;
+       `bee sessions work adopt` has no `--dry-run` (only `--example`, which
+       is offline), so any attempt would have written a declaration into a
+       closed mission. A12.1's "one accepted publish" is therefore **still
+       owed** for this kind and is discharged by `kettle-control` run 2's
+       first adoption (plan § 8 A12.5). Do not read `validate` as that proof:
+       it never publishes.
 
 238. **Two defects from the 2026-09-22 `kettle-control` control run
    (ledger 236(b),(e)), and the harness flake that was hiding both from
@@ -20011,6 +20036,55 @@ removed from here.
        --manifest-path desktop/src-tauri/Cargo.toml --all-targets -- -D
        warnings`; `cargo test --manifest-path desktop/src-tauri/Cargo.toml`;
        `just file-size-check`; `just desktop-check`; Python NUL scan.
+
+     - **Finalizer addendum, 2026-09-22.** Landing this lane broke
+       `desktop/src/features/coding-sessions/lib/codingSessionWorktreeSource.test.mjs`:
+       the lane added `project` to the `install_coding_session_seat_hooks`
+       request but left the pre-existing `deepEqual` on that request
+       unchanged, so `cd desktop && pnpm test` failed on the integrated tip
+       (`/tmp/gate-final-240-desktop-test.out`) — the lane's own gate list
+       names `pnpm test` at **9,857** passing, which is the count *before*
+       its own TypeScript change, so that run cannot have included this file
+       post-change. Fixed on landing: the expectation names `project: null`
+       and a second case proves the umbrella's title reaches the installer
+       as `project`. `pnpm test` then 9,858 passed / 0 failed
+       (`/tmp/gate-final-240-desktop-test2.out`). The rule this re-proves:
+       a lane that changes a TypeScript payload shape runs the desktop JS
+       suite *after* the change, not before.
+
+240. **A finished host step woke nobody; the provider now answers one by
+     mechanism (ledger 236(g), lane 240, branch
+     `work/lane-240-host-result-wake`, commit `e17e3ab87`).**
+     - **Measured in the kettle-control run**: the lead triggered project
+       action `verify` (kind:46020 `903ce3d2…`, 13:41:55Z), Brian approved,
+       the host ran it and the relay accepted the result at 13:57:25Z — exit
+       0, 19 tests, 756 ms, checkout `0cbe84e8` — and nothing woke the lead.
+       No 44220 was attempted and nothing appeared in the provider log. The
+       lead had itself told the run that "nobody is notified automatically";
+       Brian's message 6 m 29 s later is the only reason the run continued.
+       A decision answer the same hour woke the lead inside a second.
+     - **It believes the kind:46014, not the kind:46023.** The echo is
+       relay-signed and verifies against the NIP-11 `self` this provider
+       already witnesses; a kind:46023 is signed by an arbitrary host key
+       with no chain here, and believing one would let any key that reaches
+       the relay wake somebody else's seat. Same fact the evidence fold rests
+       on (`project_work_inputs.rs:591-603`,
+       `project_work_fold_project.rs:724-737`).
+     - **Routing is the relay's**: 46020 (seat signs) → 46013
+       `triggerContext.author` (derived at `command_executor.rs:1200-1207`) →
+       46014 result, every link relay-signed. Both kinds carry the workflow's
+       channel in their `h` tag, so they arrive on the subscription the
+       provider already holds — no poll, no new socket.
+     - **At-most-once** is keyed on the result event id, claimed and
+       persisted *before* the wake is queued. Stated cost: a crash between
+       the claim and the enqueue loses that one wake. A provider that is
+       neither the seat's founder nor a folded operator does not attempt a
+       wake and does not take the claim.
+     - **Red before green**: with the two dispatch arms removed, 5 of the 18
+       new tests fail including the headline one; with them, all 18 pass.
+       Covered: duplicate echo → one wake; restart between result and wake →
+       still one; unrelated run, unseated or closed seat, forged echo or
+       request, unwitnessed relay → none.
 
 ## 3a. Environment facts that cost real time (do not rediscover)
 
