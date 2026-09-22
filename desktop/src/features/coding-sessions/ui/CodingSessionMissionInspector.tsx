@@ -98,6 +98,11 @@ export type CodingSessionMissionInspectorProps = {
    * coverage is a disclosure, not something to reconcile.
    */
   workCoverage?: ProjectWorkResponse | null;
+  /**
+   * The session this coverage is about, so a plan-drift notice can print a
+   * runnable re-adopt command instead of a template.
+   */
+  workCoverageScope?: { channelRef: string; sessionRef: string };
   workCoverageLoading?: boolean;
   workCoverageError?: string | null;
   /**
@@ -164,6 +169,7 @@ export function CodingSessionMissionInspector({
   settlements,
   pendingCompletion = null,
   workCoverage = null,
+  workCoverageScope,
   workCoverageLoading = false,
   workCoverageError = null,
   unseatedReportEventIds,
@@ -481,6 +487,7 @@ export function CodingSessionMissionInspector({
             loading={workCoverageLoading}
             missionRow={missionStateRow(model.missionState)}
             response={workCoverage}
+            scope={workCoverageScope}
           />
         </InspectorSection>
 

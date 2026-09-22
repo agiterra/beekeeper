@@ -580,6 +580,14 @@ export function useCodingSessionMissionSurface(input: {
                   unseatedReportEventIds={pending.unseatedReportEventIds}
                   settlements={evidence.inspectorInput.settlements}
                   workCoverage={workCoverage.data ?? null}
+                  workCoverageScope={
+                    workScope === null
+                      ? undefined
+                      : {
+                          channelRef: workScope.channelRef,
+                          sessionRef: workScope.sessionRef,
+                        }
+                  }
                   workCoverageLoading={
                     workCoverage.isPending && workScope !== null
                   }

@@ -20294,6 +20294,54 @@ removed from here.
        --numstat` (no binary rows). The Rust fold tests are **not** run as a
        gate: they are expected red, which is (g).
 
+235. **`planDrift` is implemented and surfaced: the agents repository's branch
+     tip, disclosed and never enforced (built 2026-09-21,
+     `work/lane-235-plan-drift`, stacked on the oracle `825714676`).**
+     Implements A10 against lane 234's fixtures; the implementer wrote neither
+     the sequences nor the contract. 235 was unclaimed on `origin/main`
+     (`bfd0b04ac`) when this was appended.
+     - **The fold.** `WorkPlanDrift {declaredCommit, currentCommit, state}` on
+       every declaration row, serialized between `planResolved` and
+       `candidateArtifact`, always present, `currentCommit` the only nullable.
+       `state` is `none` on equality, `superseded` when a successor over the
+       projected `supersededBy` closure of the **same `workId`** already pins
+       the current commit, `drifted` when none does, `unknown` when no
+       relay-signed kind:30618 for the agents repository was supplied or it
+       names no `refs/heads/main`. Nothing it computes touches `state`,
+       `status`, `coverageComplete` or a reason code; the unresolved-plan row
+       reports drift too, because drift is about ref state and not about the
+       blob. All **35** sequences fold to their expected output, permuted.
+     - **No new fold input.** The agents row is selected out of the existing
+       `refStates` list by `d` tag — the repository id of
+       `planRef.repository`, never the plan's `code_repository` — at
+       `refs/heads/main`, newest by `(created_at, id)`, and only when the
+       relay's own key signed it. With no relay key the answer is `unknown`,
+       because an owner-signed claim about its own branch is not ref state.
+     - **Callers now supply it, or the row would honestly read `unknown`.**
+       `bee sessions work status` queries the agents repositories' 30618
+       alongside the code repositories'; the desktop hook derives the agents
+       ids from the kind:44249 records it already fetched, so nothing new
+       crosses the Tauri boundary.
+     - **The wire ships with its surfaces (A10 § 2).** `status` prints
+       `plan moved: <declared>→<current>` with the exact
+       `bee sessions work adopt … --supersedes <declaration>` command, in the
+       compact table and as a `planDrift` array in the JSON; `sessions
+       complete` prints the same fact beside the terminal with
+       `refusesCompletion: false` and still never refuses for drift; the
+       desktop type, `projectWork.ts` presentation and `ProjectWorkCoverage`
+       row carry it, and `decodeProjectWorkResponse` **refuses a response
+       whose declarations omit the key** — decision 26's whole point is that a
+       reader can tell "the fold said unknown" from "this build does not emit
+       it", and a structural type cannot.
+     - **Wording is fenced by tests, not by intent.** Every surface says the
+       agents repository moved on since the pinned commit; the CLI and desktop
+       tests assert the sentence and assert it does **not** claim the plan
+       file changed, which is an observation branch-tip ref state cannot make
+       (README § (c), the oracle's disclosed deviation from A10 § 1).
+     - **Not this lane's:** the provider's work brief
+       (`crates/buzz-session-provider/src/work_brief.rs`) is A10 § 2's
+       follow-on after lane 229; nothing in that crate was touched.
+
 ## 3a. Environment facts that cost real time (do not rediscover)
 
 - **pnpm 11's answer to a stale workspace state is to DELETE `node_modules`,

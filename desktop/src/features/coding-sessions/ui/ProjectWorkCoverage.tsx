@@ -10,6 +10,7 @@ import {
   declarationStateLabel,
   nextStep,
   orderedDeclarations,
+  planDriftNotice,
   owedBy,
   planLabel,
   shortCommit,
@@ -94,10 +95,14 @@ function Criterion({
 function Declaration({
   declaration,
   resolveActorName,
+  scope,
 }: {
   declaration: ProjectWorkDeclaration;
   resolveActorName?: (pubkey: string) => string;
+  /** Fills the re-adopt command's channel and session, when the caller knows them. */
+  scope?: { channelRef: string; sessionRef: string };
 }) {
+  const drift = planDriftNotice(declaration, scope);
   return (
     <section
       className="rounded-lg border border-border/60 p-2"
@@ -122,6 +127,17 @@ function Declaration({
           {declaration.stateReason ? ` — ${declaration.stateReason}` : ""}
         </span>
       </header>
+      {drift ? (
+        <p
+          className="mt-1 flex flex-col gap-0.5 text-2xs text-amber-600 dark:text-amber-400"
+          data-testid="project-work-plan-drift"
+        >
+          <span>{drift.text}</span>
+          <code className="break-all font-mono text-2xs text-muted-foreground">
+            {drift.command}
+          </code>
+        </p>
+      ) : null}
       {declaration.planResolved ? null : (
         <p
           className="mt-1 text-2xs text-muted-foreground"
@@ -196,6 +212,7 @@ export function ProjectWorkCoverage({
   loading = false,
   missionRow,
   resolveActorName,
+  scope,
 }: {
   /** `null` means no fold has answered — unknown, never "nothing remains". */
   response: ProjectWorkResponse | null;
@@ -204,6 +221,8 @@ export function ProjectWorkCoverage({
   /** The 44244 mission state, in its own words, for the separate row. */
   missionRow?: string | null;
   resolveActorName?: (pubkey: string) => string;
+  /** The session this coverage is about, so a re-adopt command is runnable. */
+  scope?: { channelRef: string; sessionRef: string };
 }) {
   if (errorMessage) {
     return (
@@ -248,6 +267,7 @@ export function ProjectWorkCoverage({
             declaration={declaration}
             key={declaration.declarationRef}
             resolveActorName={resolveActorName}
+            scope={scope}
           />
         ))
       )}

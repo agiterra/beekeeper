@@ -222,6 +222,26 @@ pub(super) async fn refuse_incomplete_coverage(
     let (coverage, _reads) =
         crate::commands::sessions::work::coverage_for_session(client, &session, agents_repo)
             .await?;
+    // Drift travels with the completion and **never refuses it** (A10): a
+    // plan committed out from under a live declaration is a fact the operator
+    // should see beside the terminal, not a gate. Printed whether coverage is
+    // complete or not, and before any refusal, so it is never lost.
+    for declaration in &coverage.declarations {
+        if let Some(line) =
+            crate::commands::sessions::work::plan_drift_line(declaration, channel, session_ref)
+        {
+            eprintln!(
+                "{}",
+                json!({
+                    "planDrift": declaration.plan_drift,
+                    "workId": declaration.work_id,
+                    "declarationRef": declaration.declaration_ref,
+                    "refusesCompletion": false,
+                    "message": line,
+                })
+            );
+        }
+    }
     let Some(open) = incomplete_head(&coverage) else {
         return Ok(());
     };

@@ -1519,9 +1519,32 @@ pub async fn cmd_status(
             .retain(|conflict| &conflict.work_id == work_id);
     }
     let mission = mission_row(client, &session).await?;
-    let answer = json!({"coverage": coverage, "mission": mission, "reads": reads});
+    // The drift sentences travel in the JSON too, beside the coverage they
+    // are about: `planDrift` is on every declaration row, and this is the
+    // reader-facing rendering of the rows that moved (A10 § 2).
+    let plan_drift: Vec<Value> = coverage
+        .declarations
+        .iter()
+        .filter_map(|declaration| {
+            plan_drift_line(declaration, &args.channel, &session_ref).map(|line| {
+                json!({
+                    "workId": declaration.work_id,
+                    "declarationRef": declaration.declaration_ref,
+                    "declaredCommit": declaration.plan_drift.declared_commit,
+                    "currentCommit": declaration.plan_drift.current_commit,
+                    "message": line,
+                })
+            })
+        })
+        .collect();
+    let answer = json!({
+        "coverage": coverage,
+        "mission": mission,
+        "reads": reads,
+        "planDrift": plan_drift,
+    });
     if matches!(format, crate::OutputFormat::Compact) {
-        print_table(&coverage, &mission);
+        print_table(&coverage, &mission, &args.channel, &session_ref);
     } else {
         println!(
             "{}",
@@ -1612,7 +1635,14 @@ async fn coverage_with(
     let mut action_definitions = BTreeMap::new();
     let mut unresolved_plans: Vec<Value> = Vec::new();
     let mut code_repositories: BTreeSet<String> = BTreeSet::new();
+    // The agents repository's own ref state, read for `planDrift` (A10): the
+    // fold answers `unknown` unless somebody supplies it, and "we did not
+    // look" must not read as "the tip is what you pinned".
+    let mut agents_repositories: BTreeSet<String> = BTreeSet::new();
     for declared in declarations(&work_events) {
+        if let Some(id) = declared.plan_ref.repository.rsplit(':').next() {
+            agents_repositories.insert(id.to_owned());
+        }
         let key = (
             declared.plan_ref.repository.clone(),
             declared.plan_ref.commit.clone(),
@@ -1700,7 +1730,7 @@ async fn coverage_with(
     let host_truncated = host_rows.len() as u32 >= READ_LIMIT;
     let host_events = decode_rows(host_rows, "host-step event")?;
     let mut ref_states = Vec::new();
-    for repository in &code_repositories {
+    for repository in code_repositories.iter().chain(agents_repositories.iter()) {
         let rows = client
             .query_events(
                 json!({"kinds": [KIND_GIT_REPO_STATE], "#d": [repository]}),
@@ -1802,9 +1832,50 @@ async fn mission_row(client: &BuzzClient, session: &SessionContext) -> Result<Va
     }))
 }
 
+/// The one sentence a reader needs in order to decide whether to re-adopt,
+/// and the command that does it.
+///
+/// **What this says and what it does not** (A10, contract § (c)): the agents
+/// repository's `main` has moved since this declaration pinned its commit.
+/// It does *not* say the plan file changed — relay ref state names a branch
+/// tip, never a path — and the work is still judged against the plan at the
+/// commit it pinned. Nothing here refuses anything.
+pub(super) fn plan_drift_line(
+    declaration: &buzz_core::project_work_fold::WorkDeclarationProjection,
+    channel: &str,
+    session_ref: &str,
+) -> Option<String> {
+    use buzz_core::project_work_fold::WorkPlanDriftState;
+    let drift = &declaration.plan_drift;
+    if drift.state != WorkPlanDriftState::Drifted {
+        return None;
+    }
+    let current = drift.current_commit.as_deref()?;
+    Some(format!(
+        "plan moved: {}→{} — the agents repository's main has moved on since this plan commit; \
+         this work is still judged against the plan at {}. Re-adopt it with: bee sessions work \
+         adopt --plan {} --commit {current} --agents-repo <dir> --channel {channel} \
+         --session-ref {session_ref} --work-id {} --supersedes {}",
+        short_sha(&drift.declared_commit),
+        short_sha(current),
+        short_sha(&drift.declared_commit),
+        declaration.plan_ref.path,
+        declaration.work_id,
+        declaration.declaration_ref
+    ))
+}
+
+/// Twelve characters and an ellipsis, the contract's own abbreviation.
+fn short_sha(commit: &str) -> String {
+    format!("{}…", &commit[..commit.len().min(12)])
+}
+
 /// The compact table: one row per criterion, and the mission on its own row.
-fn print_table(coverage: &WorkProjection, mission: &Value) {
+fn print_table(coverage: &WorkProjection, mission: &Value, channel: &str, session_ref: &str) {
     for declaration in &coverage.declarations {
+        if let Some(line) = plan_drift_line(declaration, channel, session_ref) {
+            println!("  {line}");
+        }
         println!(
             "{} {} {} {}",
             &declaration.work_id[..8],

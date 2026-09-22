@@ -195,6 +195,28 @@ export type ProjectWorkPlanRef = {
   path: string;
 };
 
+/** The four answers `planDrift` gives. */
+export type ProjectWorkPlanDriftState =
+  | "none"
+  | "drifted"
+  | "superseded"
+  | "unknown";
+
+/**
+ * Where the agents repository's `main` stands against the commit a
+ * declaration pinned.
+ *
+ * Always present, and never `null` as an object: `unknown` with a `null`
+ * `currentCommit` is how "no ref state said" is disclosed, so a reader can
+ * tell it from "this build does not emit the key" (contract decision 26).
+ * Disclosure only — it changes no state, no status and no completeness.
+ */
+export type ProjectWorkPlanDrift = {
+  declaredCommit: string;
+  currentCommit: string | null;
+  state: ProjectWorkPlanDriftState;
+};
+
 export type ProjectWorkDeclaration = {
   workId: string;
   declarationRef: string;
@@ -205,6 +227,7 @@ export type ProjectWorkDeclaration = {
   stateReasonCode: string | null;
   stateReason: string | null;
   planResolved: boolean;
+  planDrift: ProjectWorkPlanDrift;
   candidateArtifact: string | null;
   artifactCommits: readonly string[];
   criteria: readonly ProjectWorkCriterion[];
@@ -274,6 +297,22 @@ export function decodeProjectWorkResponse(
   ) {
     throw new Error(
       "the native project-work fold returned a response this build does not recognise",
+    );
+  }
+  // `planDrift` is the one field this envelope does check, because decision
+  // 26 exists so a reader can tell "the fold said unknown" from "this build
+  // does not emit the key". An absent object is what a reader defaults to
+  // "no drift", which is the comfortable guess A10 forbids.
+  if (
+    !value.coverage.declarations.every(
+      (declaration) =>
+        isRecord(declaration) &&
+        isRecord(declaration.planDrift) &&
+        typeof declaration.planDrift.state === "string",
+    )
+  ) {
+    throw new Error(
+      "the native project-work fold returned declarations without planDrift: this build cannot tell an unknown plan tip from an unreported one",
     );
   }
   if (

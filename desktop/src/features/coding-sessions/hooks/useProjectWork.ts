@@ -51,6 +51,31 @@ export type ProjectWorkScope = {
   repositoryIds: readonly string[];
 };
 
+/**
+ * The bare repository ids of the agents repositories a session's declarations
+ * pin, from the kind:44249 records themselves.
+ *
+ * A malformed record contributes nothing rather than throwing: the fold
+ * decides what a record means, and this only decides which `#d` values to
+ * ask the relay for.
+ */
+function agentsRepositoryIds(
+  workEvents: readonly { content: string }[],
+): readonly string[] {
+  const ids: string[] = [];
+  for (const event of workEvents) {
+    try {
+      const repository = JSON.parse(event.content)?.body?.planRef?.repository;
+      if (typeof repository === "string" && repository.length > 0) {
+        ids.push(repository.slice(repository.lastIndexOf(":") + 1));
+      }
+    } catch {
+      // Not a record this read can use; the fold says so, not this helper.
+    }
+  }
+  return ids;
+}
+
 /** React Query key for one session's work coverage. */
 export function projectWorkQueryKey(
   scope: Pick<ProjectWorkScope, "sessionRef">,
@@ -112,12 +137,19 @@ export async function loadProjectWorkCoverage(
       }),
       (deps.relaySelf ?? getRelaySelf)(),
     ]);
+  // The agents repositories the declarations pinned, read out of the work
+  // records themselves: `planDrift` is about the agents repository's own
+  // branch tip (A10), and without its ref state every row honestly reads
+  // `unknown`. The project's code repositories stay in the same query.
+  const repositoryIds = [
+    ...new Set([...scope.repositoryIds, ...agentsRepositoryIds(workEvents)]),
+  ];
   const refStates =
-    scope.repositoryIds.length === 0
+    repositoryIds.length === 0
       ? []
       : await fetchEvents({
           kinds: [KIND_REPO_STATE],
-          "#d": [...scope.repositoryIds],
+          "#d": repositoryIds,
           limit: PROJECT_WORK_READ_LIMIT,
         });
   const fold = deps.fold ?? invokeProjectWorkCoverage;

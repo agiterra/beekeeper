@@ -292,6 +292,13 @@ fn projection_with(
             state_reason_code: None,
             state_reason: None,
             plan_resolved,
+            // A10: drift is disclosure and never a gate, so the gate's own
+            // tests hold it at the answer that asserts nothing.
+            plan_drift: buzz_core::project_work_fold::WorkPlanDrift {
+                declared_commit: "ab".repeat(20),
+                current_commit: None,
+                state: buzz_core::project_work_fold::WorkPlanDriftState::Unknown,
+            },
             candidate_artifact: None,
             artifact_commits: Vec::new(),
             criteria,

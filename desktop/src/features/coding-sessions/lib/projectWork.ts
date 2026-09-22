@@ -141,6 +141,34 @@ export function nextStep(
   return null;
 }
 
+/**
+ * The plan-drift sentence for one declaration, and the command that settles
+ * it — or `null` when nothing moved, nothing is known, or the move was
+ * already adopted.
+ *
+ * **Wording is the contract's** (A10; README § (c) "What this fact observes,
+ * and what it cannot"): relay ref state names a *branch tip*, so this says
+ * the agents repository has moved on since the pinned plan commit. It must
+ * never say the plan file changed — nothing the relay publishes is
+ * path-scoped — and it never claims the work is stale: the plan at the pinned
+ * commit is still what this work is judged against.
+ */
+export function planDriftNotice(
+  declaration: ProjectWorkDeclaration,
+  scope?: { channelRef: string; sessionRef: string },
+): { text: string; command: string } | null {
+  const drift = declaration.planDrift;
+  if (drift.state !== "drifted" || !drift.currentCommit) return null;
+  const declared = shortCommit(drift.declaredCommit);
+  const current = shortCommit(drift.currentCommit);
+  const channel = scope?.channelRef ?? "<channel uuid>";
+  const session = scope?.sessionRef ?? "<session uuid>";
+  return {
+    text: `plan moved: ${declared}→${current} — the agents repository's main has moved on since this plan commit; this work is still judged against the plan at ${declared}.`,
+    command: `bee sessions work adopt --plan ${declaration.planRef.path} --commit ${drift.currentCommit} --agents-repo <dir> --channel ${channel} --session-ref ${session} --work-id ${declaration.workId} --supersedes ${declaration.declarationRef}`,
+  };
+}
+
 /** Declarations a reader should see, current contracts first. */
 export function orderedDeclarations(
   coverage: ProjectWorkCoverage,

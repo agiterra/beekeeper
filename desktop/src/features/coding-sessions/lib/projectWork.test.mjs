@@ -10,6 +10,7 @@ import {
   nextStep,
   orderedDeclarations,
   owedBy,
+  planDriftNotice,
   planLabel,
   shortCommit,
 } from "./projectWork.ts";
@@ -146,4 +147,72 @@ test("a response this build does not recognise is refused by name", () => {
 test("commits are abbreviated the way the contract abbreviates them", () => {
   assert.equal(shortCommit("ab".repeat(20)), "abababababab…");
   assert.equal(shortCommit("abc"), "abc");
+});
+
+// ── plan drift (A10, lane 234's oracle) ───────────────────────────────────
+
+const SCOPE = {
+  channelRef: "22222222-3333-4444-8555-666666666666",
+  sessionRef: "11111111-2222-4333-8444-555555555555",
+};
+
+test("every sequence's declarations carry planDrift, and only drift notices", () => {
+  for (const name of readdirSync(SEQUENCES)) {
+    for (const declaration of fold(name).declarations) {
+      assert.ok(
+        declaration.planDrift,
+        `${name}: every declaration row carries planDrift`,
+      );
+      assert.equal(
+        declaration.planDrift.declaredCommit,
+        declaration.planRef.commit,
+      );
+      const notice = planDriftNotice(declaration, SCOPE);
+      if (declaration.planDrift.state === "drifted") {
+        assert.ok(notice, `${name}: a drifted row says so`);
+      } else {
+        // none, superseded and unknown are each not a thing to act on: a
+        // notice for them would be noise, or a guess.
+        assert.equal(notice, null, `${name}: ${declaration.planDrift.state}`);
+      }
+    }
+  }
+});
+
+test("a drift notice names both commits and a runnable re-adopt command", () => {
+  const declaration = fold("plan-drift-drifted").declarations.find(
+    (one) => one.planDrift.state === "drifted",
+  );
+  assert.ok(declaration, "the fixture has a drifted declaration");
+  const notice = planDriftNotice(declaration, SCOPE);
+  assert.match(
+    notice.text,
+    new RegExp(
+      `plan moved: ${shortCommit(declaration.planDrift.declaredCommit)}→${shortCommit(declaration.planDrift.currentCommit)}`,
+    ),
+  );
+  // The fact is about the repository's branch, never about the file: saying
+  // "your plan changed" would claim an observation the input never made.
+  assert.match(notice.text, /agents repository's main has moved on/);
+  assert.ok(!/plan (file )?changed/.test(notice.text), notice.text);
+  assert.match(notice.command, /^bee sessions work adopt /);
+  assert.ok(
+    notice.command.includes(`--commit ${declaration.planDrift.currentCommit}`),
+  );
+  assert.ok(
+    notice.command.includes(`--supersedes ${declaration.declarationRef}`),
+  );
+  assert.ok(notice.command.includes(`--channel ${SCOPE.channelRef}`));
+});
+
+test("drift never moves state, status or completeness", () => {
+  // `plan-drift-on-completed` is the A10 proof: drifted, head, every
+  // criterion covered, coverage complete.
+  const head = fold("plan-drift-on-completed").declarations[0];
+  assert.equal(head.planDrift.state, "drifted");
+  assert.equal(head.state, "head");
+  assert.equal(head.coverageComplete, true);
+  for (const criterion of head.criteria) {
+    assert.equal(criterion.status, "covered");
+  }
 });

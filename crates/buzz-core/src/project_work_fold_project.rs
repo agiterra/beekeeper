@@ -178,6 +178,7 @@ pub(super) fn project_declaration(
         state_reason_code,
         state_reason,
         plan_resolved,
+        plan_drift: plan_drift(body, declarations, states, inputs),
         candidate_artifact,
         artifact_commits,
         criteria,
@@ -185,6 +186,118 @@ pub(super) fn project_declaration(
         coverage_reason_code,
         coverage_reason,
     }
+}
+
+/// Where the agents repository's `main` stands against this declaration's
+/// pinned plan commit.
+///
+/// Disclosure only (A10): nothing here touches `state`, a criterion's
+/// `status` or `coverageComplete`. The fact is read out of the **existing**
+/// `refStates` input — the newest relay-signed kind:30618 whose `d` tag names
+/// the repository id of `planRef.repository`, at its `refs/heads/main` — so
+/// no new fold input was invented. That is the *agents* repository, never the
+/// plan's `code_repository`: a ref state for one says nothing about the
+/// other.
+fn plan_drift(
+    body: &ProjectWorkDeclared,
+    declarations: &Declarations<'_>,
+    states: &BTreeMap<String, (WorkDeclarationState, Vec<String>)>,
+    inputs: &WorkFoldInputs,
+) -> WorkPlanDrift {
+    let declared_commit = body.plan_ref.commit.clone();
+    let Some(current_commit) = agents_branch_tip(&body.plan_ref, inputs) else {
+        // Unknown is disclosed as unknown and never as `none`: "no ref state
+        // said" and "the tip is what you pinned" are different facts.
+        return WorkPlanDrift {
+            declared_commit,
+            current_commit: None,
+            state: WorkPlanDriftState::Unknown,
+        };
+    };
+    if current_commit == declared_commit {
+        return WorkPlanDrift {
+            declared_commit,
+            current_commit: Some(current_commit),
+            state: WorkPlanDriftState::Unchanged,
+        };
+    }
+    // A successor that already pins the current commit means the drift was
+    // adopted, so nothing is owed on this row. `superseded` is the narrower
+    // answer and takes precedence.
+    let adopted = successor_closure(body, declarations, states)
+        .iter()
+        .any(|commit| commit == &current_commit);
+    WorkPlanDrift {
+        declared_commit,
+        current_commit: Some(current_commit),
+        state: if adopted {
+            WorkPlanDriftState::Superseded
+        } else {
+            WorkPlanDriftState::Drifted
+        },
+    }
+}
+
+/// The commit the agents repository's contract branch names now.
+///
+/// The newest row by `(created_at, id)` — the ordering the `git-ref`
+/// predicate uses — signed by the relay's own key, because an owner-signed
+/// claim about its own branch is not ref state here either. With no relay key
+/// supplied nothing can be believed, and the answer is `None`.
+fn agents_branch_tip(plan_ref: &ProjectWorkPlanRef, inputs: &WorkFoldInputs) -> Option<String> {
+    let relay_self_key = inputs.relay_self_key.as_deref()?;
+    let repository = plan_ref.repository.rsplit(':').next()?;
+    inputs
+        .ref_states
+        .iter()
+        .filter(|state| {
+            state.kind == KIND_REF_STATE
+                && state.pubkey == relay_self_key
+                && state.tag_value("d") == Some(repository)
+        })
+        .max_by_key(|state| state.order_key())
+        .and_then(|state| state.tag_value("refs/heads/main"))
+        .map(str::to_owned)
+}
+
+/// Every plan commit pinned by a declaration that supersedes this one,
+/// directly or transitively over the projected `supersededBy` closure.
+fn successor_closure(
+    body: &ProjectWorkDeclared,
+    declarations: &Declarations<'_>,
+    states: &BTreeMap<String, (WorkDeclarationState, Vec<String>)>,
+) -> BTreeSet<String> {
+    let mut commits: BTreeSet<String> = BTreeSet::new();
+    let mut frontier: Vec<String> = Vec::new();
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    let start = declarations
+        .iter()
+        .find(|(_, other)| std::ptr::eq(*other, body))
+        .map(|(record, _)| record.id.clone());
+    if let Some(start) = start {
+        seen.insert(start.clone());
+        if let Some((_, superseded_by)) = states.get(&start) {
+            frontier.extend(superseded_by.iter().cloned());
+        }
+    }
+    while let Some(id) = frontier.pop() {
+        if !seen.insert(id.clone()) {
+            continue;
+        }
+        let Some((record, successor)) = declarations.iter().find(|(record, _)| record.id == id)
+        else {
+            continue;
+        };
+        // Only the same work: a `supersedes` edge to another workId neither
+        // creates nor clears anything here.
+        if successor.work_id == body.work_id {
+            commits.insert(successor.plan_ref.commit.clone());
+        }
+        if let Some((_, superseded_by)) = states.get(&record.id) {
+            frontier.extend(superseded_by.iter().cloned());
+        }
+    }
+    commits
 }
 
 /// The distinct commits the **covering** evidence names, ascending.

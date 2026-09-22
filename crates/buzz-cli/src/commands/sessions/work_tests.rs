@@ -1253,3 +1253,85 @@ fn a_decorated_work_record_is_refused_before_it_is_published() {
 // does not do, to the declaration that pinned it.
 #[path = "work_stale_declaration_tests.rs"]
 mod stale_declaration;
+// ── plan drift (ledger 235, A10) ───────────────────────────────────────────
+
+/// The status read loads `planDrift` and prints the sentence a reader needs,
+/// with the command that settles it.
+///
+/// Disclosure, never enforcement: the line says the agents repository moved
+/// on since the pinned commit. It must not say the plan file changed — relay
+/// ref state names a branch tip, never a path.
+#[test]
+fn a_drifted_declaration_prints_both_commits_and_the_re_adopt_command() {
+    const DRIFTED: &str = include_str!(
+        "../../../../../conformance/project-work/fixtures/sequences/plan-drift-drifted/expected-fold.json"
+    );
+    let coverage: WorkProjection = serde_json::from_str(DRIFTED).expect("the fixture");
+    let drifted = coverage
+        .declarations
+        .iter()
+        .find(|declaration| {
+            declaration.plan_drift.state
+                == buzz_core::project_work_fold::WorkPlanDriftState::Drifted
+        })
+        .expect("the fixture has a drifted declaration");
+    let line = plan_drift_line(drifted, FIXTURE_CHANNEL, FIXTURE_SESSION).expect("a line");
+    let current = drifted
+        .plan_drift
+        .current_commit
+        .as_deref()
+        .expect("a current commit");
+    assert!(
+        line.contains(&drifted.plan_drift.declared_commit[..12]),
+        "{line}"
+    );
+    assert!(line.contains(&current[..12]), "{line}");
+    assert!(
+        line.contains("agents repository's main has moved on"),
+        "{line}"
+    );
+    assert!(!line.contains("plan file"), "{line}");
+    assert!(line.contains("bee sessions work adopt"), "{line}");
+    assert!(line.contains(&format!("--commit {current}")), "{line}");
+    assert!(
+        line.contains(&format!("--supersedes {}", drifted.declaration_ref)),
+        "{line}"
+    );
+    assert!(
+        line.contains(&format!("--channel {FIXTURE_CHANNEL}")),
+        "{line}"
+    );
+}
+
+/// The three answers that are not `drifted` print nothing: `none` is nothing
+/// to act on, `superseded` was already adopted, and `unknown` is not a fact
+/// to offer a command for.
+#[test]
+fn no_line_is_printed_for_none_superseded_or_unknown() {
+    for name in [
+        include_str!(
+            "../../../../../conformance/project-work/fixtures/sequences/plan-drift-none/expected-fold.json"
+        ),
+        include_str!(
+            "../../../../../conformance/project-work/fixtures/sequences/plan-drift-superseded/expected-fold.json"
+        ),
+        include_str!(
+            "../../../../../conformance/project-work/fixtures/sequences/plan-drift-unknown/expected-fold.json"
+        ),
+    ] {
+        let coverage: WorkProjection = serde_json::from_str(name).expect("the fixture");
+        for declaration in &coverage.declarations {
+            if declaration.plan_drift.state
+                == buzz_core::project_work_fold::WorkPlanDriftState::Drifted
+            {
+                continue;
+            }
+            assert_eq!(
+                plan_drift_line(declaration, FIXTURE_CHANNEL, FIXTURE_SESSION),
+                None,
+                "{:?} printed a notice",
+                declaration.plan_drift.state
+            );
+        }
+    }
+}

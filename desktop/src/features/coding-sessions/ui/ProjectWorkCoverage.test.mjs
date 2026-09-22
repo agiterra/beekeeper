@@ -159,6 +159,34 @@ test("a criterion with no readable plan says its proof is unknown", async () => 
   view.cleanup();
 });
 
+test("a drifted plan shows both commits and the re-adopt command", async () => {
+  // A10: disclosure, never enforcement. The row says the agents repository
+  // moved on and offers the command; it never says the plan file changed and
+  // never marks the work stale.
+  const view = await renderCoverage({
+    response: response("plan-drift-drifted"),
+    scope: {
+      channelRef: "22222222-3333-4444-8555-666666666666",
+      sessionRef: "11111111-2222-4333-8444-555555555555",
+    },
+  });
+  const notice = view.getByTestId("project-work-plan-drift").textContent;
+  assert.match(notice, /plan moved: [0-9a-f]{12}…→[0-9a-f]{12}…/);
+  assert.match(notice, /agents repository's main has moved on/);
+  assert.match(notice, /bee sessions work adopt .*--supersedes /);
+  assert.ok(!/plan file changed/.test(notice), notice);
+  view.cleanup();
+});
+
+test("a plan that did not move shows no drift notice", async () => {
+  const view = await renderCoverage({ response: response("plan-drift-none") });
+  assert.equal(
+    view.container.querySelector("[data-testid='project-work-plan-drift']"),
+    null,
+  );
+  view.cleanup();
+});
+
 test("at most one next step is offered, and it names what releases it", async () => {
   for (const name of ["fork", "mixed-artifacts", "amendment"]) {
     const view = await renderCoverage({ response: response(name) });

@@ -199,6 +199,66 @@ pub struct WorkCriterionProjection {
     pub reason: Option<String>,
 }
 
+/// Where the agents repository's contract branch stands against the commit a
+/// declaration pinned.
+///
+/// **Disclosure, never enforcement** (amendment A10). It changes no
+/// declaration `state`, no criterion `status`, no `coverageComplete` and no
+/// reason code, and completion is never refused for it: a plan committed out
+/// from under a live declaration does not make that declaration stale, and
+/// the fold still reads the plan at the pinned commit. Pinning is the
+/// contract working. What was missing is the sentence a reader needs in order
+/// to decide whether to re-adopt.
+///
+/// **What it observes, and what it cannot.** Relay ref state names a *branch
+/// tip*, never the last commit to touch a path, so `drifted` says the agents
+/// repository's `main` is not the commit this declaration pinned. It does
+/// **not** say the plan file was edited, and a surface that says so is
+/// claiming an observation the input never made
+/// (`conformance/project-work/README.md` § (c)).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkPlanDrift {
+    /// This declaration's own `planRef.commit`, verbatim.
+    pub declared_commit: String,
+    /// The commit the agents repository's `main` names now; `null` when no
+    /// supplied ref state says.
+    pub current_commit: Option<String>,
+    /// Which of the four answers this is.
+    pub state: WorkPlanDriftState,
+}
+
+/// The four answers `planDrift` can give.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WorkPlanDriftState {
+    /// The current commit is known and equals the declared one.
+    #[serde(rename = "none")]
+    Unchanged,
+    /// Known, different, and no successor of this declaration pins it.
+    Drifted,
+    /// Known, different, and a successor over the projected `supersededBy`
+    /// closure already pins it: the drift was adopted, so nothing is owed on
+    /// this row. Narrower than `drifted`, and mutually exclusive with it.
+    Superseded,
+    /// No relay-signed kind:30618 for the agents repository was supplied, or
+    /// the newest one names no `refs/heads/main`. Never reported as `none`.
+    Unknown,
+}
+
+impl WorkPlanDriftState {
+    /// The exact wire token.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Unchanged => "none",
+            Self::Drifted => "drifted",
+            Self::Superseded => "superseded",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
 /// One declaration's standing and coverage.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -221,6 +281,9 @@ pub struct WorkDeclarationProjection {
     pub state_reason: Option<String>,
     /// Whether the plan blob at `planRef.commit` was supplied and parsed.
     pub plan_resolved: bool,
+    /// Where the agents repository's `main` stands against this
+    /// declaration's pinned commit. Always present; disclosure only.
+    pub plan_drift: WorkPlanDrift,
     /// The one delivered revision this declaration's coverage is about.
     ///
     /// Coverage is a statement about *one* revision, not a per-criterion
