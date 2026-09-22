@@ -19651,6 +19651,135 @@ removed from here.
        caught the `SystemKeyring`/`LocalFile` mistake above, 3,488 passed / 1
        failed; fixed, reran clean); `just file-size-check`; Python NUL scan.
 
+236. **kettle-control control run — 1h15m, 2 interventions, plan adoption
+     refused live (2026-09-22, Brian at the keyboard, Fable orchestrating;
+     installed `36f337d4a`, hive `build_time` `2026-09-22T03:19:28Z`).**
+     Runbook, filled in with the clock table, the baseline comparison and the
+     scorecard:
+     [2026-09-22-kettle-control-runbook.md](history/2026-09-22-kettle-control-runbook.md).
+     Governed by `UNIFIED_WORK_PLAN.md` § 8 **A11** — a *measurement*, not a
+     safety claim; R2/R4 stay open and this run says nothing about them.
+     Project `kettle-control`, agents repo seeded `996f9bbd`, plan
+     `plans/kettle.md` committed **through the desktop Files tab** (path A,
+     its first run against hive) as `53385d6c` with the `Beekeeper-Drafts`
+     trailer; `sessions work validate` said `adoptable: false` because no
+     verify action existed at that commit — expected. Session
+     `613d53a6-50e3-4010-838a-0a736a0b4da1` in channel
+     `29cc5029-8686-4dd4-85dc-d66423912bab`. Goal typed **12:48:54Z**
+     (`812784c1…`); lead (Claude opus[1m]) hired builder (Claude sonnet) at
+     12:51:07Z and verifier at 13:42:07Z, both routed from the
+     agents-repository registry; terminal `mission.completed` **`35b6e791` at
+     14:04:15Z**, `completed --without-coverage`. **Goal → terminal 4,536 s
+     (1 h 15 m 36 s)**, against 20,042 s in 178 and ~70 min with no terminal
+     in 205.
+
+     **Measurement** (`bee sessions measure`, raw in
+     `/tmp/kettle-control-measure.json`; per-turn `bee sessions audit` in
+     `/tmp/audit.jsonl`; write-up `/tmp/kettle-control-measure.md` — all three
+     this machine only): 11 completed turns, 0 open (lead 7, builder 3,
+     verifier 1); 8,817,612 cache-inclusive input, 64,012 output, 140 tool
+     calls; `user_error` 0; `disposition_or_acknowledgement_turns: 0` — lane
+     210's rule held; 0 polling turns (a detector, not an asserted fact).
+     Cost **$2.7037, and the honesty block says partial**: 8 of 11 terminal
+     results carry `costUsd`, the figure is the sum of the fields that exist,
+     and no price table was consulted. Quote it as partial. The same block
+     reports host-notice-vs-typed-prompt as **unknown** on this build.
+     Coordination: `person_action_count: 5`,
+     `host_action_under_founder_key_count: 2` (both `session.create`
+     answering a hire — the host's, per 206 C),
+     `unattributed_founder_action_count: 1` (the `cli-wake-v1:` wake).
+     **Two unplanned human acts**, both by CLI on Brian's behalf and both
+     counted: the 13:40:13Z ruling answer and the 14:03:54Z wake. One planned
+     approval, 13:56:37Z, through the card. Scorecard: claims 1, 5, 6, 7
+     **partial**; claim 2 **fail**; claims 3, 4, 8 **not proven**
+     (single machine, no faults, no role change).
+
+     - (a) **The seat had no git identity, and the role template turned a
+       missing config into a founder question.** `user.email` was empty in the
+       seat worktree (the repo's own seed commit is authored `Brian
+       <3d3b7169@beekeeper.local>`), and the working-contract text says stop
+       and ask when it is empty — so the lead opened founder decision request
+       `c8e72f29` at **12:50:46Z**, 1 m 52 s after the goal, and the builder
+       parked **49 m 27 s** with finished code until the answer at 13:40:13Z
+       (option 2 plus a standing condition). Two defects, not one: the host
+       does not configure a git identity in seat worktrees, and the template
+       escalates a missing local config to a person although the plan text
+       says decide without asking Brian. *Triage: lane 239.*
+     - (b) **The desktop refuses the relay's own grant receipt.** The 40099
+       `grant-project-actions` receipt `f89c9d70…` carries `projectRef`, added
+       deliberately by the relay
+       (`crates/buzz-relay/src/handlers/side_effects.rs:1502`, ledger 186);
+       the strict reader
+       `desktop/src/features/coding-sessions/lib/codingSessionMissionAuthority.ts`
+       knows only `takeover`/`transfer` (`isClaimTransitionType`, :214), so
+       `hasExactFields` (:289) rejects the extra key and :317 answers
+       `authority receipt does not match the strict CSAT receipt shape`.
+       **This is ledger 204 again** — fixed in the CLI, never in the desktop.
+       Consequence: Mission, Decisions and Settlement read **"unknown"** for
+       every owner-founded team session, this run included. *Triage: lane
+       238.*
+     - (c) **The founder decision request of (a) surfaced nowhere in the
+       app** — not in the inbox, not in the session. The Decisions panel said
+       "no fold has run", which is the direct consequence of (b). Brian
+       learned of `c8e72f29` only because the orchestrator read it off the
+       wire. *Triage: closes with (b).*
+     - (d) **Roster names read "Architect 3", "Builder 3", "Lead 3"** —
+       another project on this computer owns the unsuffixed names
+       (`desktop/src-tauri/src/managed_agents/crew_roles_project.rs`
+       numbering). Same shape as 205's "Lead 2" observation. *Triage:
+       observation, no lane.*
+     - (e) **The approval request never reached the inbox.** `action.trigger`
+       13:41:55Z → `action.approval_requested` (46010) 13:41:56Z; Brian found
+       it in the **Actions tab** only after being told it existed, and granted
+       at 13:56:37Z. The whole **14 m 41 s** was invisible waiting rather than
+       a considered gate. Cause **not isolated**: it may be the same fold
+       blindness as (b) or a separate inbox path — recorded as unknown, not
+       guessed. *Triage: lane 238, with (b).*
+     - (f) **`bee sessions work adopt` was refused by the relay, twice, at
+       13:44:04Z**, identically: `relay error 400: invalid: tag-count: a work
+       record carries exactly 6 ordered two-field tags; this one carries 7`
+       (plan `plans/kettle.md`, agents commit
+       `78c30d4f302deda6f1acac45a0ac3a174944f601`). The relay contract fixes
+       six ordered tags — `crates/buzz-core/src/project_work.rs:300-313`
+       (`canonical_tags`: `h, d, a, pwk-v, pwk-genesis, pwk-type`), refusal
+       code `TagCount` at :441 — and the SDK builder
+       `crates/buzz-sdk/src/project_work.rs:99-113` (called from
+       `crates/buzz-cli/src/commands/sessions/work.rs:1001`) builds from that
+       *same* `canonical_tags()` and, **as read, emits six**. The seventh
+       tag's source is **not isolated**; it is not in the builder call and is
+       likely injected downstream in the publish path, unconfirmed. Say so
+       rather than naming a cause. Consequence: no 44249 record exists for
+       this run, the completion carries `--without-coverage`, and the
+       plan-as-contract mechanism built in Waves 1–2 **was never exercised
+       live**. *Triage: lane 237.*
+     - (g) **A green host result wakes nobody.** Result 46023 `fd05dc2d…` at
+       13:57:25Z — `exit 0`, 19 tests, 756 ms, `checkout.sha 0cbe84e8` — was
+       followed by no 44220 attempt and nothing in the provider log; the lead
+       had itself said "nobody is notified automatically". Brian woke it at
+       14:03:54Z, **6 m 29 s** later. The gap is specific to host results: the
+       decision answer at 13:40:13Z *did* carry a wake
+       (`cli-wake-v1:` command id, `de5a3157…`). *Triage: lane 240, after
+       custody lands.*
+     - (h) **What worked, recorded so it is not re-litigated.** The Files-tab
+       plan commit against hive, path A, first try. The hire → assignment →
+       report → verdict chain in **four minutes** once the identity question
+       was answered (hire 13:42:07Z, assignment 13:42:21Z, report 13:43:25Z,
+       NOT-REFUTED verdicts 13:43:52/53Z), the verifier testing an archive of
+       the commit rather than a live tree. The approval card's content correct
+       and bound: argv one numbered row per argument, `definition_hash`
+       `f5f248e93ff4…`, commit `0cbe84e8`, `checkout: required`, with
+       allow-future-runs offered and taken. Host execution claimed **47 s**
+       after the grant, with no relaunch. Zero acknowledgement-only turns.
+       A red-before-green fix of the echo bug and 19 passing tests. And a
+       completion that names its own three follow-ups instead of claiming a
+       clean finish.
+
+     **Not a stop.** None of §4's known-open defects (R2, R4, webhook-card
+     approval, plan drift) fired; the run was not halted and no hand-fix was
+     applied to keep it alive. The two interventions above are counted as
+     unplanned human acts, not excused.
+
+
 ## 3a. Environment facts that cost real time (do not rediscover)
 
 - **pnpm 11's answer to a stale workspace state is to DELETE `node_modules`,

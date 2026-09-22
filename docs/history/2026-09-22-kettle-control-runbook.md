@@ -1,7 +1,17 @@
 # `kettle-control` — the control run: runbook, 2026-09-22
 
-Drafted by Fable at Brian's request, 2026-09-21. Not run yet. Whoever runs it
-fills §3's table, §6 and §7 in and dates them. Governing text:
+**Run record — 2026-09-22, 12:48:54Z → 14:04:15Z (1 h 15 m 36 s), Brian at the
+keyboard, Fable orchestrating; installed build `36f337d4a`, hive `build_time`
+`2026-09-22T03:19:28Z`. Session `613d53a6-50e3-4010-838a-0a736a0b4da1` in
+channel `29cc5029-8686-4dd4-85dc-d66423912bab`. Terminal `35b6e791`,
+`completed --without-coverage`. Two unplanned human acts, one planned
+approval. Eight findings, filed as ledger 236(a)–(h). No §4 known-open defect
+fired; the run was not stopped.** Measurement:
+[`/tmp/kettle-control-measure.md`](file:///tmp/kettle-control-measure.md) over
+`bee sessions measure` JSON and `bee sessions audit` (this machine only).
+
+Drafted by Fable at Brian's request, 2026-09-21; filled in the day it ran.
+§3, §5, §6 and §7 are the run's record. Governing text:
 [`UNIFIED_WORK_PLAN.md`](../UNIFIED_WORK_PLAN.md) §1, §2, §8 **A11** (the ruling
 that lifted the "control run waits on R2/R4" gates, for this run only). Modelled
 on [the 09-20 runbook](2026-09-20-system-proof-runbook.md); baselines are ledger
@@ -110,16 +120,17 @@ Clock starts at step 3 (goal typed). Fill a row per step as you go.
 
 | Step | Clock (UTC) | Observed | Finding? |
 |---|---|---|---|
-| 1 project created | | | |
-| 2 plan committed (path A / B) | | | |
-| 3 goal typed — **start** | | | |
-| 4 first seat working | | | |
-| 4 hires routed | | | |
-| 5 approval requested | | | |
-| 5 approval given | | | |
-| 6 landed on main | | | |
-| 6 verify ran green | | | |
-| 6 terminal record | | | |
+| 1 project created | before the clock | project `kettle-control`; agents repo seeded at `996f9bbd` with `model-registry.yaml`, `actions.yml` (verify commented out) and the roles; checkout path recorded | no |
+| 2 plan committed (path A) | before the clock | **Path A worked, first run against hive**: `plans/kettle.md` drafted and committed from the Files tab → commit `53385d6c`, `Beekeeper-Drafts` trailer. `sessions work validate` said `adoptable: false` — no verify action existed at that commit yet, which is expected, not a defect | no |
+| 3 goal typed — **start** | **12:48:54Z** | turn `812784c1…` (kind 44220, no wake command id — Brian's own act). Genesis 12:48:11Z, `session.create` 12:48:42Z, lead's first turn 12:48:43Z. Bench pre-selected, "Use roles" on, registry resolved from the agents repo — 205's three findings all held fixed, no click needed | no |
+| 4 first seat working | 12:51:12Z (builder) | hire `91b8719e…` 12:51:07Z → host `session.create` `22147cb4…` 12:51:09Z → first turn 12:51:12Z → assignment 12:51:23Z → report 12:54:12Z. 2 m 18 s from goal to a builder working | no |
+| 4 hires routed | 12:51:07Z, 13:42:07Z | builder (Claude sonnet, 200k context) and verifier (Claude opus[1m]). Both routed from the agents-repository registry; no `HIRE_NO_ROUTE`. Roster names read "Builder 3", "Lead 3" | **236(d)** |
+| — decision request | 12:50:46Z → 13:40:13Z | ruling `c8e72f29` on the seat's missing git identity; answered 49 m 27 s later, by CLI on Brian's behalf. Builder parked that whole time with finished code. Never surfaced in the app | **236(a)**, **236(c)** |
+| 5 approval requested | 13:41:56Z | `action.trigger` 13:41:55Z → `action.approval_requested` (46010). Never appeared in the inbox; Brian found it in the Actions tab only after being told | **236(e)** |
+| 5 approval given | 13:56:37Z | Actions card, **Approve and allow future runs of this exact definition** → 46030 `ff86e639…`, founder key. Card showed argv one row per argument, `definition_hash` `f5f248e93ff4…`, commit `0cbe84e8`, `checkout: required` — all correct. **Brian's latency: 14 m 41 s** | no |
+| 6 landed on main | by 13:41:55Z | `0cbe84e8`, the commit the trigger and the card both name. Verifier hired 13:42:07Z, report 13:43:25Z, **NOT-REFUTED** verdicts 13:43:52/53Z against an archive-of-commit test run | no |
+| 6 verify ran green | 13:57:25Z | `action.claimed` 13:57:24Z (47 s after the grant), result 46023 `fd05dc2d…`: `exit 0`, 19 tests, 756 ms, `checkout.sha 0cbe84e8`. **It did not wake the lead** — no 44220 attempted, nothing in the provider log; 6 m 29 s until Brian nudged at 14:03:54Z | **236(g)** |
+| 6 terminal record | 14:04:15Z | `mission.completed` `35b6e791`, kind 44244, `completed --without-coverage`. Coverage is absent because `sessions work adopt` was refused by the relay at 13:44:04Z (twice) and no 44249 record exists. The completion names its own three follow-ups | **236(f)** |
 
 *Approval requested → approval given* is **Brian's** latency (55 of 205's 70
 minutes were this); everything else is the system's. Report them apart.
@@ -186,13 +197,28 @@ requested → approval given; last work turn → terminal.
 
 | Measure | This run | Kettle 09-20 (178) | Smoke (205) |
 |---|---|---|---|
-| Goal → terminal | | 20,042 s (5 h 34 m) | ~70 min gross, no terminal |
-| Approval wait (Brian's) | | hand-signed, 46 min | ~55 min |
-| Unplanned human acts | | 6 operator repairs | 0 |
-| Work turns | | 5 | 5 |
-| Cache-inclusive input | | 9.25 M | 8.53 M |
-| Closing protocol | | +11 turns / +8.2 M | n/a |
-| Polling turns | | 0 | 0 |
+| Goal → terminal | **4,536 s (1 h 15 m 36 s)** | 20,042 s (5 h 34 m) | ~70 min gross, no terminal |
+| Approval wait (Brian's) | 881 s (14 m 41 s), through the card | hand-signed, 46 min | ~55 min |
+| Unplanned human acts | **2** (both by CLI on Brian's behalf: the 13:40:13Z ruling answer, the 14:03:54Z wake) + the one planned approval | 6 operator repairs | 0 |
+| Work turns | 11 (lead 7, builder 3, verifier 1) | 5 | 5 |
+| Cache-inclusive input | 8,817,612 (lead 4,834,854; builder 3,225,787; verifier 756,971) | 9.25 M | 8.53 M |
+| Output tokens / tool calls | 64,012 / 140 | 107k / 155 | 89,811 / 142 |
+| Reported cost | **$2.7037 — partial**, 8 of 11 results carry `costUsd`; the honesty block says so and no price table was consulted | $2.30, 3 of 5 unpriced | $2.955081, 2 of 5 priced |
+| Closing protocol | none — the terminal was the lead's own turn | +11 turns / +8.2 M | n/a |
+| Polling turns | 0 (detector, per the honesty block) | 0 | 0 |
+| Acknowledgement-only turns | **0** (`disposition_or_acknowledgement_turns: 0`) — lane 210's rule held | n/a | 0 |
+| `user_error` | 0. The only refusal on the wire is the relay `tag-count` 400, classed `relay_error` | n/a | n/a |
+
+Coordination, verbatim: `person_action_count: 5`,
+`host_action_under_founder_key_count: 2` (both `session.create` answering a
+lead's hire — the host's, not Brian's, per 206 C),
+`unattributed_founder_action_count: 1` (the `cli-wake-v1:` wake at 13:40:13Z).
+Of the five person actions, two are the session create and the goal, one is
+the approval, and two are the interventions counted above.
+
+Quote the honesty block as it stands: dollar cost is **partial**; host notices
+vs typed prompts is **unknown** on this build; orientation, polling and waiting
+are **detectors**, not facts the producer asserted.
 
 ## 6. Scorecard — the eight vision claims (09-20 runbook §5)
 
@@ -201,20 +227,46 @@ Partial is a real grade.
 
 | # | Vision claim | Pass looks like | Result | Evidence |
 |---|---|---|---|---|
-| 1 | Starting work requires intent, not orchestration expertise | one goal, one start, nothing greyed without a remedy | | |
-| 2 | Decisions continue the work | ≥1 recorded agent decision, Brian notified not asked | | |
-| 3 | Continue another participant's work | not exercised — single machine, no faults | not proven | |
-| 4 | Roles evolve with the project | not exercised this run | not proven | |
-| 5 | Observe parallel work before the push | one store, one parser; overlap caught before a second push | | |
-| 6 | Deterministic operations first | zero polling turns; wake on the run's completion | | |
-| 7 | Gates earn their delay | the one approval names what it prevented; no click a grant could have covered | | |
-| 8 | Two machines, one result | not exercised — Andy's machine not assumed | not proven | |
+| 1 | Starting work requires intent, not orchestration expertise | one goal, one start, nothing greyed without a remedy | **partial** | One goal typed 12:48:54Z; bench pre-selected, "Use roles" on, registry resolved — 205(c)–(f) held fixed, no click. But 1 m 52 s in the system asked Brian a question it had the facts to answer (236(a)), and the plan text says decide without asking |
+| 2 | Decisions continue the work | ≥1 recorded agent decision, Brian notified not asked | **fail** | `rulings_opened: 1`, `rulings_answered: 1` — and the one ruling was a question *to* Brian, not a decision taken and reported. It surfaced in no app surface at all (236(c)); the Decisions panel read "no fold has run". The work stopped for 49 m 27 s waiting on it |
+| 3 | Continue another participant's work | not exercised — single machine, no faults | not proven | No fault was scheduled (A11.1) and no second machine was assumed |
+| 4 | Roles evolve with the project | not exercised this run | not proven | Templates 1.2.0 were the seats' text (231), but no role changed during the run |
+| 5 | Observe parallel work before the push | one store, one parser; overlap caught before a second push | **partial** | The wire carried it: verifier hired 13:42:07Z alongside the builder, NOT-REFUTED verdicts 13:43:52/53Z bound to `0cbe84e8` with an archive-of-commit run. The founder could not *observe* any of it — Mission, Decisions and Settlement all read "unknown" for the whole run (236(b)) |
+| 6 | Deterministic operations first | zero polling turns; wake on the run's completion | **partial** | Zero polling turns and zero acknowledgement-only turns. The decision answer's wake did reach the lead (13:40:13Z, `cli-wake-v1:`), but the host result 46023 at 13:57:25Z woke nobody — no 44220 attempted, nothing in the provider log (236(g)). A person closed the loop |
+| 7 | Gates earn their delay | the one approval names what it prevented; no click a grant could have covered | **partial** | The card was right and bound: argv per row, `definition_hash` `f5f248e93ff4…`, commit `0cbe84e8`, `checkout: required`; allow-future-runs offered and taken; the host claimed 47 s after the grant. But the request reached no inbox (236(e)), so all 14 m 41 s of the delay was invisible waiting, not a considered gate |
+| 8 | Two machines, one result | not exercised — Andy's machine not assumed | not proven | Seats were lead, builder and verifier on this Mac only |
+
+Plan adoption, the run's largest gap, is not one of the eight claims: the
+plan-as-contract mechanism Waves 1–2 built was **never exercised live**,
+because the relay refused `sessions work adopt` (236(f)). Nothing in this
+scorecard should be read as evidence for it.
 
 ## 7. Findings
 
-Numbered here, then filed in `SESSION_STATE.md` as ledger items the same day,
-each with the code or transcript that proves it. A stop under §4 is a finding
-too, naming which known-open defect fired.
+Filed the same day as **ledger 236(a)–(h)** in
+[`SESSION_STATE.md`](../SESSION_STATE.md) — `grep -n '^236\. ' docs/SESSION_STATE.md`
+— each with its event ids, times and `file:line`. In short:
 
-1.
-2.
+1. **236(a)** — the seat has no git identity and the role template turns a
+   missing config into a founder question. 49 m 27 s parked. *Lane 239.*
+2. **236(b)** — the desktop's strict CSAT receipt reader rejects the relay's
+   `projectRef` field, so Mission/Decisions/Settlement read "unknown" for every
+   owner-founded team session. Same defect as 204, fixed in the CLI only.
+   *Lane 238.*
+3. **236(c)** — the founder decision request surfaced nowhere in the app.
+   *Closes with (b).*
+4. **236(d)** — roster names read "Builder 3", "Lead 3". *Observation.*
+5. **236(e)** — the 46010 approval request never reached the inbox; cause not
+   isolated, recorded unknown. *Lane 238.*
+6. **236(f)** — `sessions work adopt` refused by the relay, `tag-count … this
+   one carries 7`; the 7th tag's source is **not isolated**. No 44249 record;
+   the plan-as-contract mechanism went unused live. *Lane 237.*
+7. **236(g)** — a green host result wakes nobody. *Lane 240, after custody.*
+8. **236(h)** — what worked, recorded so it is not re-litigated: the Files-tab
+   plan commit against hive; hire → assignment → report → verdict in four
+   minutes; a correct, commit-bound approval card; host execution 47 s after
+   the grant; zero acknowledgement turns; an honest completion that lists its
+   own follow-ups.
+
+No §4 known-open defect fired, and no hand-fix was applied to keep the run
+going. The two interventions are counted, not excused.
