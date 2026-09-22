@@ -69,7 +69,7 @@ const CURRENT: [(&str, &str); 11] = [
     ("architect", "1.1.0"),
     ("builder", "1.2.0"),
     ("designer", "1.1.0"),
-    ("lead", "1.2.0"),
+    ("lead", "1.2.1"),
     ("memory", "1.0.0"),
     ("poker", "1.1.0"),
     ("project-pulse", "1.1.0"),
@@ -92,6 +92,11 @@ const REVISED_IN_1_2_1: [&str; 1] = ["working-contract"];
 /// "stop and ask a person" sentence, and the lead's agents-repo commit duty.
 /// Same single-contract reach as 1.2.1.
 const REVISED_IN_1_2_2: [&str; 1] = ["working-contract"];
+
+/// Lead 1.2.1 (ledger 247): `ask-for-a-ruling` routes a ruling to the
+/// collaborator the project's decision rights name, human or agent, instead
+/// of "a person". Every caret an existing project carries must take it.
+const LEAD_1_2_1_CARETS: [&str; 3] = ["^1.0.0", "^1.1.0", "^1.2.0"];
 
 /// Every file under `<name>/<version>/`, relative path to bytes.
 fn version_files(name: &str, version: &str) -> BTreeMap<String, Vec<u8>> {
@@ -422,6 +427,24 @@ fn a_1_2_2_template_is_picked_up_by_every_earlier_caret_include() {
             );
         }
     }
+    // The lead's 1.2.1 rides the same carets; its 1.2.0 stays a pin.
+    for range in LEAD_1_2_1_CARETS {
+        let resolved = catalog
+            .resolve("lead", &TemplateRange::parse("lead", range).expect("range"))
+            .unwrap_or_else(|e| panic!("lead@{range}: {e}"));
+        assert!(resolved.warning.is_none(), "lead@{range}: {resolved:?}");
+        assert_eq!(
+            resolved.template.version.to_string(),
+            "1.2.1",
+            "lead@{range} must take 1.2.1 without anyone editing a role file"
+        );
+    }
+    for exact in ["1.0.0", "1.1.0", "1.2.0"] {
+        let resolved = catalog
+            .resolve("lead", &TemplateRange::parse("lead", exact).expect("range"))
+            .expect("lead pin resolves");
+        assert_eq!(resolved.template.version.to_string(), exact);
+    }
 
     // And a whole project composes on it: a role file seeded by the 1.2.0-era
     // build, byte for byte, must carry the revised contract into its next hire.
@@ -516,8 +539,10 @@ fn no_seated_role_is_told_to_stop_and_ask_a_person() {
             "ask brian",
             "ask a human",
             "ask a person",
+            "asking a person",
             "a person must",
             "a human must",
+            "founder",
             "stop and ask",
             "wait for a person",
             "wait for a human",
@@ -534,7 +559,9 @@ fn no_seated_role_is_told_to_stop_and_ask_a_person() {
         }
         assert_eq!(
             flowed
-                .matches("an unnecessary permission wait is a finding")
+                .matches(
+                    "decide within your responsibility, consult affected collaborators, record, continue",
+                )
                 .count(),
             1,
             "{role}: the rule is stated once"
@@ -631,7 +658,7 @@ fn a_new_project_seeds_the_current_versions_and_an_existing_projects_caret_resol
 
     let lead = std::fs::read_to_string(root.join("roles/lead.md")).expect("seeded lead");
     for expected in [
-        "![[beekeeper/lead@^1.2.0]]",
+        "![[beekeeper/lead@^1.2.1]]",
         "![[beekeeper/working-contract@^1.2.2]]",
         "![[beekeeper/memory@^1.0.0]]",
         "![[beekeeper/project-pulse@^1.1.0]]",
@@ -681,7 +708,7 @@ fn a_new_project_seeds_the_current_versions_and_an_existing_projects_caret_resol
     assert_eq!(
         resolved,
         vec![
-            ("beekeeper/lead@^1.0.0", "1.2.0"),
+            ("beekeeper/lead@^1.0.0", "1.2.1"),
             ("beekeeper/working-contract@^1.0.0", "1.2.2"),
             ("beekeeper/memory@^1.0.0", "1.0.0"),
             ("beekeeper/project-pulse@^1.0.0", "1.1.0"),
@@ -780,14 +807,15 @@ fn a_1_2_0_role_is_picked_up_by_both_the_caret_1_0_0_and_the_caret_1_1_0_include
     assert_eq!(
         resolved,
         vec![
-            ("beekeeper/lead@^1.1.0", "1.2.0"),
+            ("beekeeper/lead@^1.1.0", "1.2.1"),
             ("beekeeper/working-contract@^1.1.0", "1.2.2"),
             ("beekeeper/memory@^1.0.0", "1.0.0"),
             ("beekeeper/project-pulse@^1.1.0", "1.1.0"),
         ],
-        "a 1.1.0-era caret must carry 1.2.0"
+        "a 1.1.0-era caret must carry the current lead"
     );
-    // The composed body is the 1.2.0 text, not the 1.1.0 text it replaced.
+    // The composed body is the 1.2.0 paragraph (1.2.1 changed only a skill),
+    // not the 1.1.0 text it replaced.
     let lead_1_2_0 = String::from_utf8(
         version_files("lead", "1.2.0")
             .remove(TEMPLATE_MD)
