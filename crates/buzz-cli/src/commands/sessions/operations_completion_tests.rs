@@ -672,3 +672,74 @@ fn the_cli_fold_object_renders_every_settlement_vector() {
         }
     }
 }
+
+// ── drift travels with a completion and never gates it (A10 § 2) ───────────
+
+/// The same projection at `drifted` and at `none` reaches the **same**
+/// verdict.
+///
+/// Until this test, every completion case here pinned `planDrift` at
+/// `unknown`, so A10 § 2's two claims about completion — the fact travels,
+/// and it never refuses — were shipped untested (refuter, 2026-09-22).
+fn drifted(complete: bool) -> WorkProjection {
+    let mut coverage = projection(
+        WorkDeclarationState::Head,
+        vec![criterion(
+            "cli-behaviour",
+            if complete {
+                WorkCriterionStatus::Covered
+            } else {
+                WorkCriterionStatus::Open
+            },
+        )],
+        complete,
+    );
+    coverage.declarations[0].plan_drift = buzz_core::project_work_fold::WorkPlanDrift {
+        declared_commit: "ab".repeat(20),
+        current_commit: Some("fe".repeat(20)),
+        state: buzz_core::project_work_fold::WorkPlanDriftState::Drifted,
+    };
+    coverage
+}
+
+/// A completed contract whose agents repository has moved on still completes:
+/// the gate finds nothing incomplete, exactly as it does with no drift.
+#[test]
+fn a_drifted_declaration_never_blocks_a_completion() {
+    assert!(incomplete_head(&drifted(true)).is_none());
+    // And the drift is not what makes an incomplete one refuse: the refusal
+    // is about the criterion, and it reads the same either way.
+    let open = incomplete_head(&drifted(false)).expect("the open criterion refuses");
+    let without_drift = incomplete_head(&projection(
+        WorkDeclarationState::Head,
+        vec![criterion("cli-behaviour", WorkCriterionStatus::Open)],
+        false,
+    ))
+    .expect("the same criterion refuses");
+    assert_eq!(open.message, without_drift.message);
+    assert_eq!(open.criteria, without_drift.criteria);
+}
+
+/// The completion result carries the fact: both commits and the re-adopt
+/// command, from the same renderer `work status` prints.
+#[test]
+fn a_completion_carries_the_drift_fact_with_both_commits() {
+    let coverage = drifted(true);
+    let declaration = &coverage.declarations[0];
+    let line = crate::commands::sessions::work::plan_drift_line(
+        declaration,
+        "22222222-3333-4444-8555-666666666666",
+        SESSION,
+    )
+    .expect("the completion path prints this line");
+    assert!(line.starts_with("agents repo main moved on:"), "{line}");
+    assert!(line.contains(&"ab".repeat(20)[..12]), "{line}");
+    assert!(line.contains(&"fe".repeat(20)[..12]), "{line}");
+    assert!(line.contains("bee sessions work adopt"), "{line}");
+    assert!(
+        line.contains(&format!("--supersedes {}", declaration.declaration_ref)),
+        "{line}"
+    );
+    // The disclosure the completion path emits says it refuses nothing.
+    assert!(!line.contains("refus"), "{line}");
+}

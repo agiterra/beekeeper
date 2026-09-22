@@ -188,12 +188,18 @@ test("a drift notice names both commits and a runnable re-adopt command", () => 
   assert.match(
     notice.text,
     new RegExp(
-      `plan moved: ${shortCommit(declaration.planDrift.declaredCommit)}→${shortCommit(declaration.planDrift.currentCommit)}`,
+      `agents repo main moved on: ${shortCommit(declaration.planDrift.declaredCommit)}→${shortCommit(declaration.planDrift.currentCommit)}`,
     ),
   );
+  // Not "plan moved": the fact is a branch tip, and the lead line is what a
+  // narrow row, a grep or a glance keeps.
+  assert.ok(!/plan moved/.test(notice.text), notice.text);
   // The fact is about the repository's branch, never about the file: saying
   // "your plan changed" would claim an observation the input never made.
-  assert.match(notice.text, /agents repository's main has moved on/);
+  assert.match(
+    notice.text,
+    /the plan this work is judged against did not change/,
+  );
   assert.ok(!/plan (file )?changed/.test(notice.text), notice.text);
   assert.match(notice.command, /^bee sessions work adopt /);
   assert.ok(

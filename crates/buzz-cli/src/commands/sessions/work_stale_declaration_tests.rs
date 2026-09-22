@@ -97,7 +97,13 @@ fn work_session() -> SessionContext {
             active_grants: Vec::new(),
             verifier_required: false,
         },
-        relay_self: None,
+        // Ledger 235: the fold only believes a **relay-signed** kind:30618,
+        // so a harness with no relay key sees no branch tip and every row
+        // folds to `planDrift: unknown` — which is honest, and which is
+        // exactly why this file's tripwire never tripped before (refuter,
+        // 2026-09-22). These tests now supply the key and sign the row with
+        // it, so they assert what A10 actually promises.
+        relay_self: Some(OWNER.to_owned()),
     }
 }
 
@@ -329,14 +335,25 @@ async fn a_plan_committed_after_adoption_leaves_the_declaration_head() {
         head_before.coverage_reason_code
     );
 
-    // 3. The projection `status` prints never names the newer commit, so
-    //    there is no head-against-declared disclosure to read.
+    // 3. A local commit nobody published moves nothing: the relay's ref
+    //    state still names A, so `planDrift` reads `none` and the projection
+    //    names B nowhere at all. Drift is a fact about what the relay can
+    //    see, never about this machine's checkout.
     let printed = serde_json::to_string(&after).expect("projection");
+    assert!(printed.contains(&commit_a), "it names the declared commit");
     assert!(
         !printed.contains(&commit_b),
-        "the projection names the newer commit {commit_b}, so something did compare it"
+        "an unpublished commit reached the projection"
     );
-    assert!(printed.contains(&commit_a), "it names the declared commit");
+    assert_eq!(
+        head_after.plan_drift.declared_commit, commit_a,
+        "drift is reported against the commit this declaration pinned"
+    );
+    assert_eq!(
+        head_after.plan_drift.state,
+        buzz_core::project_work_fold::WorkPlanDriftState::Unchanged,
+        "the relay's tip is still the declared commit"
+    );
     assert!(
         !printed.contains(ADDED_CRITERION),
         "the projection read the plan at head"
@@ -357,20 +374,49 @@ async fn a_plan_committed_after_adoption_leaves_the_declaration_head() {
         "an unevidenced declaration is refused either way"
     );
 
-    // 5. Nor does the relay knowing that `main` moved change it. The fold
-    //    takes kind:30618 ref states for the plan's **code** repository, and
-    //    nothing compares the agents repository's tip to `planRef.commit`, so
-    //    serving the newer tip is folded identically.
+    // 5. Once the relay serves the newer tip, `planDrift` says so — and
+    //    **nothing else moves**. The declaration is still `head`, its plan
+    //    still resolves at A, its criteria are byte-identical and the
+    //    completion gate's two inputs are unchanged. That is A10 in one
+    //    assertion pair: disclosed, never enforced. (Before ledger 235 this
+    //    step asserted the opposite — that the newer tip changed nothing at
+    //    all — which was true only because nothing looked.)
     for row in wire.rows.borrow_mut().iter_mut() {
         if row["kind"].as_u64() == Some(u64::from(KIND_GIT_REPO_STATE)) {
             row["tags"] = json!([["d", AGENTS_REPO_ID], ["refs/heads/main", commit_b]]);
         }
     }
     let with_new_tip = coverage(&wire, &repo).await;
+    let head_with_tip = only(&with_new_tip, WorkDeclarationState::Head).clone();
     assert_eq!(
-        serde_json::to_value(&with_new_tip).expect("projection"),
+        (
+            head_with_tip.plan_drift.state,
+            head_with_tip.plan_drift.current_commit.clone()
+        ),
+        (
+            buzz_core::project_work_fold::WorkPlanDriftState::Drifted,
+            Some(commit_b.clone())
+        ),
+        "the agents repository moved, and the fold says so"
+    );
+    assert_eq!(head_with_tip.state, WorkDeclarationState::Head);
+    assert_eq!(head_with_tip.plan_ref.commit, commit_a, "it still pins A");
+    assert!(head_with_tip.plan_resolved);
+    assert_eq!(head_with_tip.criteria, head_after.criteria);
+    assert_eq!(
+        head_with_tip.coverage_complete,
+        head_after.coverage_complete
+    );
+    // Apart from that one object, the two folds are byte-identical: the
+    // newer commit reached `planDrift` and nothing that decides a verdict.
+    let mut drifted_copy = with_new_tip.clone();
+    for declaration in &mut drifted_copy.declarations {
+        declaration.plan_drift = head_after.plan_drift.clone();
+    }
+    assert_eq!(
+        serde_json::to_value(&drifted_copy).expect("projection"),
         serde_json::to_value(&after).expect("projection"),
-        "the relay's newer agents tip changes nothing in the projection"
+        "apart from planDrift, a moved agents tip folds identically"
     );
 
     // ── re-adopting at B is what moves the contract ───────────────────────
@@ -477,10 +523,33 @@ async fn an_agents_repo_draft_commit_leaves_the_declaration_head() {
     );
     assert_eq!(head.plan_ref.commit, commit_a, "it still pins A");
     assert!(head.plan_resolved);
-    assert!(
-        !serde_json::to_string(&after)
-            .expect("projection")
-            .contains(&commit_b),
-        "the projection names the landed commit"
+    // The draft landed on the agents repository's `main`, and the harness
+    // serves that tip: the declaration still pins A, and the only thing that
+    // notices is `planDrift`.
+    for row in wire.rows.borrow_mut().iter_mut() {
+        if row["kind"].as_u64() == Some(u64::from(KIND_GIT_REPO_STATE)) {
+            row["tags"] = json!([["d", AGENTS_REPO_ID], ["refs/heads/main", commit_b]]);
+        }
+    }
+    let with_landed_tip = coverage(&wire, &repo).await;
+    let head_with_tip = only(&with_landed_tip, WorkDeclarationState::Head).clone();
+    assert_eq!(
+        head_with_tip.state,
+        WorkDeclarationState::Head,
+        "a landed draft still does not make the declaration stale"
     );
+    assert_eq!(head_with_tip.plan_ref.commit, commit_a, "it still pins A");
+    assert_eq!(
+        (
+            head_with_tip.plan_drift.state,
+            head_with_tip.plan_drift.current_commit.clone()
+        ),
+        (
+            buzz_core::project_work_fold::WorkPlanDriftState::Drifted,
+            Some(commit_b.clone())
+        ),
+        "the landed commit is disclosed as drift, and only as drift"
+    );
+    assert_eq!(head_with_tip.criteria, head.criteria);
+    assert_eq!(head_with_tip.coverage_complete, head.coverage_complete);
 }

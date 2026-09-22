@@ -171,8 +171,15 @@ test("a drifted plan shows both commits and the re-adopt command", async () => {
     },
   });
   const notice = view.getByTestId("project-work-plan-drift").textContent;
-  assert.match(notice, /plan moved: [0-9a-f]{12}…→[0-9a-f]{12}…/);
-  assert.match(notice, /agents repository's main has moved on/);
+  // The lead line names what moved — the agents repository's branch — and
+  // never the plan: "plan moved" states the thing branch-tip ref state
+  // cannot observe, and the prefix is the part that survives a narrow row.
+  assert.match(
+    notice,
+    /agents repo main moved on: [0-9a-f]{12}…→[0-9a-f]{12}…/,
+  );
+  assert.ok(!/plan moved/.test(notice), notice);
+  assert.match(notice, /the plan this work is judged against did not change/);
   assert.match(notice, /bee sessions work adopt .*--supersedes /);
   assert.ok(!/plan file changed/.test(notice), notice);
   view.cleanup();

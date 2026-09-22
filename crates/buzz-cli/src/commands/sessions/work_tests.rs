@@ -1286,11 +1286,16 @@ fn a_drifted_declaration_prints_both_commits_and_the_re_adopt_command() {
         "{line}"
     );
     assert!(line.contains(&current[..12]), "{line}");
+    assert!(line.starts_with("agents repo main moved on:"), "{line}");
+    // Neither "plan file" nor the older "plan moved" lead: branch-tip ref
+    // state observes neither, and the opening words are what survives into a
+    // narrow row, a grep or a glance.
+    assert!(!line.contains("plan file"), "{line}");
+    assert!(!line.contains("plan moved"), "{line}");
     assert!(
-        line.contains("agents repository's main has moved on"),
+        line.contains("the plan this work is judged against did not change"),
         "{line}"
     );
-    assert!(!line.contains("plan file"), "{line}");
     assert!(line.contains("bee sessions work adopt"), "{line}");
     assert!(line.contains(&format!("--commit {current}")), "{line}");
     assert!(

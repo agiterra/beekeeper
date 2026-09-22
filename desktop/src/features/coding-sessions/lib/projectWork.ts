@@ -164,7 +164,7 @@ export function planDriftNotice(
   const channel = scope?.channelRef ?? "<channel uuid>";
   const session = scope?.sessionRef ?? "<session uuid>";
   return {
-    text: `plan moved: ${declared}→${current} — the agents repository's main has moved on since this plan commit; this work is still judged against the plan at ${declared}.`,
+    text: `agents repo main moved on: ${declared}→${current} — the plan this work is judged against did not change; the agents repository's main has moved past the commit it pinned, and this work is still judged against the plan at ${declared}.`,
     command: `bee sessions work adopt --plan ${declaration.planRef.path} --commit ${drift.currentCommit} --agents-repo <dir> --channel ${channel} --session-ref ${session} --work-id ${declaration.workId} --supersedes ${declaration.declarationRef}`,
   };
 }

@@ -1852,8 +1852,9 @@ pub(super) fn plan_drift_line(
     }
     let current = drift.current_commit.as_deref()?;
     Some(format!(
-        "plan moved: {}→{} — the agents repository's main has moved on since this plan commit; \
-         this work is still judged against the plan at {}. Re-adopt it with: bee sessions work \
+        "agents repo main moved on: {}→{} — the plan this work is judged against did not \
+         change; the agents repository's main has moved past the commit it pinned, and this \
+         work is still judged against the plan at {}. Re-adopt it with: bee sessions work \
          adopt --plan {} --commit {current} --agents-repo <dir> --channel {channel} \
          --session-ref {session_ref} --work-id {} --supersedes {}",
         short_sha(&drift.declared_commit),

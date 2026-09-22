@@ -20338,6 +20338,36 @@ removed from here.
        tests assert the sentence and assert it does **not** claim the plan
        file changed, which is an observation branch-tip ref state cannot make
        (README § (c), the oracle's disclosed deviation from A10 § 1).
+     - **Addendum, 2026-09-22 (refuter: fix first, three items).**
+       (1) **Completion was untested at `drifted`.** Every case in
+       `operations_completion_tests.rs` pinned `planDrift` at `unknown`, so
+       A10 § 2's two claims about completion shipped unexercised. Two tests
+       now hold them: a drifted, fully covered declaration completes, and an
+       incomplete one refuses with the **identical** message and criteria
+       list it produces with no drift — the refusal is about the criterion,
+       never the tip — plus the disclosure line itself, both commits and the
+       re-adopt command, asserted to contain no refusal word.
+       (2) **Both surfaces opened with "plan moved:"** — the one claim
+       branch-tip ref state cannot make, and the part of the sentence that
+       survives a narrow row or a grep. The lead line is now
+       `agents repo main moved on: <declared>→<current>`, followed by "the
+       plan this work is judged against did not change", in the CLI and the
+       desktop; three tests assert the new opening **and** that neither
+       "plan moved" nor "plan file" appears.
+       (3) **Lane 233's tripwire was blind.** Its harness set
+       `relay_self: None` and signed its kind:30618 with the owner, so every
+       row folded to `planDrift: unknown` and the tests passed on 235 without
+       noticing it. They are rewritten, not dropped: the harness supplies the
+       relay key and a relay-signed row, step 3 asserts that a **local**
+       commit nobody published moves nothing, and step 5 — where the relay
+       serves the newer tip — asserts `drifted` *and* that the fold is
+       otherwise byte-identical (state `head`, plan still resolved at A,
+       criteria and the completion gate's two inputs unchanged). The second
+       test does the same for a landed `agents-repo commit` draft. They are
+       now the end-to-end proof that drift is disclosed and never enforced.
+       The stack was rebased onto `b3e7ebb88`; the two conflicts were a
+       ledger append and the shared closing brace of lane 237's appended test
+       block, both resolved by keeping both sides.
      - **Not this lane's:** the provider's work brief
        (`crates/buzz-session-provider/src/work_brief.rs`) is A10 § 2's
        follow-on after lane 229; nothing in that crate was touched.
