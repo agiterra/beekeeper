@@ -16,9 +16,9 @@ unknown and both links kept. "Ledger §" means a heading in
 
 | Surface | Observed | How |
 | --- | --- | --- |
-| `main` on the relay | `dec7f2d3d`, checked 2026-09-21 22:40 EDT; 231–232 landed on the A9–A11 plan commits, gates bare and green (`/tmp/gate-final-232.log`), pushed with the floor (`/tmp/push-final-232.log`, run after this commit); prior tip `f4bfdffd4` (227–228). Read the remote, not a local ref | `GIT_TERMINAL_PROMPT=0 git ls-remote origin refs/heads/main` (`upstream` mirrors to GitHub) |
-| Relay at hive.agiterra.org | **`build_time` `2026-09-21T22:24:42Z`, the CI-green deploy of `f4bfdffd4`**, checked 2026-09-21 18:35 EDT; the prior builds were `2026-09-21T19:05:50Z` (`2708f64a8`) and `15:46:41Z` (`aa055b233`). A changed `build_time` is the only deploy signal — `software_commit` and `/health` both answer `unknown` here | `curl -sH 'Accept: application/nostr+json' https://hive.agiterra.org/ \| jq .`; `curl -s https://hive.agiterra.org/health` |
-| Installed Mac dev bundle | `~/Applications/Beekeeper Dev.app`, running `f4bfdffd4` (count 3726); `bee 0.1.0 (f4bfdffd)` built 22:29:49Z, installed 2026-09-21 18:32 EDT (`/tmp/app-from-228-install.log`). Live: run `8f9552c9` reports `checkout` `6ea2e0db…` with `checkout_reported: true` (206) | `scripts/app-from.sh <sha>`; `bee --version` |
+| `main` on the relay | `36f337d4a` (count 3734), checked 2026-09-21 23:28 EDT; 231–232 landed, nine gates bare and green (`/tmp/gate-final-232.log`), pushed with the floor (`/tmp/push-final-232.log`); prior tip `bfd0b04ac`. Read the remote, not a local ref | `GIT_TERMINAL_PROMPT=0 git ls-remote origin refs/heads/main` (`upstream` mirrors to GitHub) |
+| Relay at hive.agiterra.org | **`build_time` `2026-09-22T03:19:28Z`, the CI-green deploy of `36f337d4a`**, checked 2026-09-21 23:28 EDT; the prior build was `2026-09-21T22:24:42Z` (`f4bfdffd4`). A changed `build_time` is the only deploy signal — `software_commit` and `/health` both answer `unknown` here | `curl -sH 'Accept: application/nostr+json' https://hive.agiterra.org/ \| jq .`; `curl -s https://hive.agiterra.org/health` |
+| Installed Mac dev bundle | `~/Applications/Beekeeper Dev.app`, running `36f337d4a` (count 3734); `bee 0.1.0 (36f337d4)` built 2026-09-22T03:26:47Z, installed 2026-09-21 23:27 EDT (`/tmp/app-from-232-install.log`). Live: run `8f9552c9` reports `checkout` `6ea2e0db…` with `checkout_reported: true` (206) | `scripts/app-from.sh <sha>`; `bee --version` |
 | Windows | unavailable: Brian no longer has the Windows machine (2026-09-09). Native Windows agent setup and cross-account acceptance are deferred, not done | ledger § "September 9 checkpoint published; Windows testing deferred" |
 | Mobile | not independently checked for this map. Last claim recorded: the phone drops a deleted session only on its next channel refresh (Andy, 2026-09-11) | ledger § "Fixed 2026-09-11 — Discard deletes a never-started session" |
 
@@ -156,7 +156,7 @@ separates publication, installation and provider-confirmed lead startup.
 7. When Brian resumes automatic context, run the hook-marker experiment in the
    ledger's September 10 section. Collaborative workspace plan steps 5 and 6
    remain separate.
-8. Durable work: 227–228 landed at `d209432aa`, 231–232 tonight at `dec7f2d3d`.
+8. Durable work: 227–228 landed at `d209432aa`, 231–232 tonight at `36f337d4a`.
    The fourth look holds R2/R4; lanes 229/230 and drift 234/235 are in flight.
    Next is the `kettle-control` run on this build, which per plan § 8 A11
    measures the shipped templates and claims no safety. The empty-set waiver at
