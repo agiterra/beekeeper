@@ -126,7 +126,11 @@ export function ProjectSettingsDialog({
 
   return (
     <Dialog onOpenChange={onOpenChange} open={project !== null}>
-      <DialogContent className="max-w-lg">
+      {/* Wider and scrollable: the Packs tab prints the host's own verdict —
+          repository coordinates, a seed commit, per-role notes — and at
+          `max-w-lg` a 64-hex coordinate wrapped across three lines and the
+          result pushed the buttons off the bottom. */}
+      <DialogContent className="max-h-[85vh] max-w-3xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Project settings</DialogTitle>
           <DialogDescription>

@@ -125,15 +125,24 @@ export function ProjectAgentsInitAction({
           the move is refused and nothing is overwritten.
         </p>
       ) : null}
+      {/* A migration seeds the agents repository from the project's OWN
+          roles, so the shipped-templates sentence would contradict the
+          paragraph above it. Each state describes only what it does. */}
       <p className="text-xs text-muted-foreground">
         Announces the code repository and the agents repository under your key,
-        seeds the code repository with one commit and the agents repository from
-        this app&apos;s shipped role templates by reference (roles/, plans/,
-        each with an archive/), pushes main, sets it as this project&apos;s role
-        source, clones the code repository to the folder below and records it as
-        this project&apos;s folder, and adds the project&apos;s agents to its
-        roster as collaborators. What already exists is reused; what is missing
-        is created.
+        seeds the code repository with one commit
+        {migrateFrom ? null : (
+          <>
+            {" "}
+            and the agents repository from this app&apos;s shipped role
+            templates by reference
+          </>
+        )}{" "}
+        (roles/, plans/, each with an archive/), pushes main, sets it as this
+        project&apos;s role source, clones the code repository to the folder
+        below and records it as this project&apos;s folder, and adds the
+        project&apos;s agents to its roster as collaborators. What already
+        exists is reused; what is missing is created.
       </p>
       {askForFolder && result === null ? (
         <ProjectCheckoutFolderField

@@ -290,6 +290,35 @@ export function defaultAgentsRepoId(projectSlug: string): string {
 }
 
 /**
+ * Collapse per-role notes that say the same thing.
+ *
+ * Each note is `"<role>: <sentence>"`. Roles sharing a sentence fold into
+ * one line naming them all, so a seven-role conversion reads as one fact
+ * about seven roles rather than the same fact seven times. A sentence only
+ * one role carries is printed as it stands, and a note in no such shape is
+ * passed through untouched rather than reformatted into something it is not.
+ */
+export function foldMigrationNotes(notes: string[]): string {
+  if (notes.length === 0) return "";
+  const byReason = new Map<string, string[]>();
+  const loose: string[] = [];
+  for (const note of notes) {
+    const split = note.indexOf(": ");
+    if (split <= 0) {
+      loose.push(note);
+      continue;
+    }
+    const role = note.slice(0, split);
+    const reason = note.slice(split + 2);
+    byReason.set(reason, [...(byReason.get(reason) ?? []), role]);
+  }
+  const folded = [...byReason.entries()].map(
+    ([reason, roles]) => `${roles.join(", ")}: ${reason}`,
+  );
+  return ` ${[...folded, ...loose].join(" ")}`;
+}
+
+/**
  * Whether a project's role source is its OWN agents repository — the flat
  * layout at the repository root, under the id this project's slug derives.
  *
@@ -352,10 +381,8 @@ export function describeMigrationOutcome(
   const moved = result.sourceConflict
     ? "the project was NOT re-pointed: its source moved while this ran"
     : "the project now reads its roles from this repository";
-  const notes =
-    result.migrationNotes.length > 0
-      ? ` ${result.migrationNotes.join(" ")}`
-      : "";
+  // One sentence per role, all identical, is seven copies of one fact.
+  const notes = foldMigrationNotes(result.migrationNotes);
   return `From ${result.migratedFrom}: ${roles}; ${moved}.${notes}`;
 }
 

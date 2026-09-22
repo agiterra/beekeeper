@@ -9,6 +9,7 @@ import {
   describeCodeSeedOutcome,
   describeMigrationOutcome,
   describeRosterOutcome,
+  foldMigrationNotes,
   isProjectAgentsRepoSource,
 } from "./projectAgentsInit.ts";
 
@@ -262,4 +263,40 @@ test("describeMigrationOutcome says what moved, and says when nothing was re-poi
     sourceConflict: true,
   });
   assert.match(refused, /NOT re-pointed/);
+});
+
+test("foldMigrationNotes says one fact about seven roles, not seven facts", () => {
+  const same = "the frontmatter's skills did not survive the layout change";
+  const seven = [
+    "architect",
+    "builder",
+    "designer",
+    "lead",
+    "poker",
+    "runner",
+    "verifier",
+  ].map((role) => `${role}: ${same}`);
+  const folded = foldMigrationNotes(seven);
+  assert.equal(
+    folded,
+    ` architect, builder, designer, lead, poker, runner, verifier: ${same}`,
+  );
+  // The sentence appears once, not once per role.
+  assert.equal(folded.split(same).length - 1, 1);
+
+  // Two different reasons stay apart, each naming its own roles.
+  const mixed = foldMigrationNotes([
+    "lead: reason one",
+    "poker: reason two",
+    "runner: reason one",
+  ]);
+  assert.match(mixed, /lead, runner: reason one/);
+  assert.match(mixed, /poker: reason two/);
+
+  // Nothing to say stays silent, and a note in no such shape is untouched.
+  assert.equal(foldMigrationNotes([]), "");
+  assert.equal(
+    foldMigrationNotes(["no role prefix here"]),
+    " no role prefix here",
+  );
 });

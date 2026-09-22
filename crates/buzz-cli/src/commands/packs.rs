@@ -234,7 +234,16 @@ pub async fn cmd_status(
         .map(|(root, name)| root.join(name));
     let role_dirs = cache_dir.as_ref().map(|dir| {
         let root = dir.join(source.path());
-        let mut found = role_directories(&root);
+        // A flat source's roles are `roles/<role>.md` and nothing else. Its
+        // root also holds `.git`, `plans/`, `roles/` and `skills/`, and
+        // listing those as roles told an operator that `.git` was one
+        // (2026-09-22, seen right after Beekeeper's own migration). Only a
+        // pack layout keeps one directory per role at the path.
+        let mut found = if is_root_pack_path(source.path()) {
+            Vec::new()
+        } else {
+            role_directories(&root)
+        };
         for flat in flat_role_files(&root) {
             if !found.contains(&flat) {
                 found.push(flat);
