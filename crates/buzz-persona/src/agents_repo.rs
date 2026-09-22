@@ -16,7 +16,7 @@ use std::path::Path;
 
 use crate::compose::{archived_role_files, compose_role, ComposeOptions, RoleSource};
 use crate::skill_meta::read_skill_meta;
-use crate::team::{is_archived_path, load_team, ARCHIVE_DIR, TEAM_YML};
+use crate::team::{is_archived_path, load_team, TeamLimit, ARCHIVE_DIR, TEAM_YML};
 use crate::template::TemplateCatalog;
 
 /// The actions manifest's file name at the agents repository root.
@@ -45,6 +45,9 @@ pub struct TreeReport {
     pub skills: Vec<String>,
     /// The actions manifest's state.
     pub actions: ActionsCheck,
+    /// The files `team.yml` puts a ceiling on that were checked and are
+    /// under it, ascending.
+    pub within_limits: Vec<String>,
     /// Composer warnings, each prefixed by the role.
     pub warnings: Vec<String>,
 }
@@ -164,6 +167,16 @@ pub fn validate_root(
     }
     skills.sort();
 
+    let mut within_limits = Vec::new();
+    if let Some(team) = &team {
+        for limit in &team.limits {
+            if check_limit(root, limit, &mut refusals) {
+                within_limits.push(limit.path.trim().to_owned());
+            }
+        }
+        within_limits.sort();
+    }
+
     let actions_path = root.join(ACTIONS_YML);
     let actions_state = if !actions_path.is_file() {
         ActionsCheck::Absent
@@ -201,12 +214,64 @@ pub fn validate_root(
             archived,
             skills,
             actions: actions_state,
+            within_limits,
             warnings,
         })
     } else {
         refusals.sort_by(|a, b| a.path.cmp(&b.path).then(a.reason.cmp(&b.reason)));
         Err(refusals)
     }
+}
+
+/// Check one `team.yml` ceiling. Returns whether the file was there and
+/// under it; a refusal is pushed otherwise, including for a file that is
+/// missing — a ceiling over nothing guards nothing, and saying so is the
+/// whole reason the ceiling moved here.
+fn check_limit(root: &Path, limit: &TeamLimit, refusals: &mut Vec<TreeRefusal>) -> bool {
+    let rel = limit.path.trim();
+    let path = root.join(rel);
+    let text = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            refusals.push(TreeRefusal {
+                path: TEAM_YML.to_owned(),
+                reason: format!(
+                    "limits names {rel}, which this tree does not have ({error}); remove the limit \
+                     or restore the file"
+                ),
+            });
+            return false;
+        }
+    };
+    let mut ok = true;
+    if let Some(max) = limit.max_bytes {
+        let bytes = text.len() as u64;
+        if bytes > max {
+            refusals.push(TreeRefusal {
+                path: rel.to_owned(),
+                reason: format!(
+                    "{bytes} bytes; team.yml caps it at {max}. Move detail out rather than raising \
+                     the ceiling"
+                ),
+            });
+            ok = false;
+        }
+    }
+    if let Some(max) = limit.max_lines {
+        let lines = text.iter().filter(|b| **b == b'\n').count()
+            + usize::from(!text.is_empty() && !text.ends_with(b"\n"));
+        if lines > max {
+            refusals.push(TreeRefusal {
+                path: rel.to_owned(),
+                reason: format!(
+                    "{lines} lines; team.yml caps it at {max}. Move detail out rather than raising \
+                     the ceiling"
+                ),
+            });
+            ok = false;
+        }
+    }
+    ok
 }
 
 /// `roles/<slug>.md` files directly under `roles/`, by stem.
@@ -292,6 +357,79 @@ mod tests {
         assert_eq!(report.actions, ActionsCheck::Checked(0));
         let report = validate_root(dir.path(), &catalog, None).expect("clean");
         assert!(matches!(report.actions, ActionsCheck::NotChecked(_)));
+    }
+
+    /// Append a `limits:` block to the seeded manifest.
+    fn with_limits(root: &Path, yaml: &str) {
+        let path = root.join(TEAM_YML);
+        let mut text = std::fs::read_to_string(&path).expect("read team.yml");
+        text.push_str(yaml);
+        std::fs::write(&path, text).expect("write team.yml");
+    }
+
+    #[test]
+    fn a_file_under_its_ceiling_validates_and_is_reported_as_checked() {
+        let (dir, catalog) = seeded();
+        std::fs::write(dir.path().join("plans/MAP.md"), "one\ntwo\n").expect("write");
+        with_limits(
+            dir.path(),
+            "limits:\n  - { path: plans/MAP.md, max_lines: 300, max_bytes: 24000 }\n",
+        );
+        let report = validate_root(dir.path(), &catalog, None).expect("clean");
+        assert_eq!(report.within_limits, vec!["plans/MAP.md".to_owned()]);
+    }
+
+    #[test]
+    fn a_file_over_its_ceiling_refuses_at_its_own_path() {
+        let (dir, catalog) = seeded();
+        std::fs::write(dir.path().join("plans/MAP.md"), "x\n".repeat(11)).expect("write");
+        with_limits(
+            dir.path(),
+            "limits:\n  - { path: plans/MAP.md, max_lines: 10, max_bytes: 24000 }\n",
+        );
+        let refusals = validate_root(dir.path(), &catalog, None).expect_err("refuses");
+        assert_eq!(refusals.len(), 1);
+        assert_eq!(refusals[0].path, "plans/MAP.md");
+        assert!(
+            refusals[0].reason.contains("11 lines") && refusals[0].reason.contains("caps it at 10"),
+            "{}",
+            refusals[0].reason
+        );
+    }
+
+    #[test]
+    fn a_file_over_its_byte_ceiling_refuses_with_the_count() {
+        let (dir, catalog) = seeded();
+        std::fs::write(dir.path().join("plans/MAP.md"), "x".repeat(50)).expect("write");
+        with_limits(
+            dir.path(),
+            "limits:\n  - { path: plans/MAP.md, max_bytes: 10 }\n",
+        );
+        let refusals = validate_root(dir.path(), &catalog, None).expect_err("refuses");
+        assert_eq!(refusals.len(), 1);
+        assert_eq!(refusals[0].path, "plans/MAP.md");
+        assert!(
+            refusals[0].reason.contains("50 bytes") && refusals[0].reason.contains("caps it at 10"),
+            "{}",
+            refusals[0].reason
+        );
+    }
+
+    #[test]
+    fn a_ceiling_over_a_file_that_is_not_there_refuses_rather_than_passing() {
+        let (dir, catalog) = seeded();
+        with_limits(
+            dir.path(),
+            "limits:\n  - { path: plans/MAP.md, max_lines: 300 }\n",
+        );
+        let refusals = validate_root(dir.path(), &catalog, None).expect_err("refuses");
+        assert_eq!(refusals.len(), 1);
+        assert_eq!(refusals[0].path, TEAM_YML);
+        assert!(
+            refusals[0].reason.contains("plans/MAP.md"),
+            "{}",
+            refusals[0].reason
+        );
     }
 
     #[test]

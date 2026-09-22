@@ -123,6 +123,32 @@ pub struct TeamAgent {
     pub lifetime: AgentLifetime,
 }
 
+/// A ceiling the project puts on one of its own files.
+///
+/// A project whose whole working context is a document — Beekeeper's own
+/// current-state map is capped at 300 lines so that every agent can be
+/// asked to read all of it — used to guard that with a script in the code
+/// repository's pre-push hook. The document now lives here, where there is
+/// no CI, so the ceiling travels with it: every committer runs
+/// [`crate::agents_repo::validate_root`], which refuses a tree that breaks
+/// one of these.
+///
+/// The mechanism is neutral; the policy is the project's. A limit naming a
+/// file that is not there refuses too — a guard that silently does nothing
+/// is the failure this exists to prevent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+pub struct TeamLimit {
+    /// The file, relative to the team root.
+    pub path: String,
+    /// Most lines the file may have, counted as `\n`-separated lines.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_lines: Option<usize>,
+    /// Most bytes the file may have.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_bytes: Option<u64>,
+}
+
 /// The parsed manifest.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
@@ -141,6 +167,10 @@ pub struct TeamManifest {
     pub roles: BTreeMap<String, TeamRole>,
     #[serde(default)]
     pub agents: Vec<TeamAgent>,
+    /// Ceilings this project puts on its own files (§ 4.11). Empty by
+    /// default; enforced by every committer, not by this parser.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub limits: Vec<TeamLimit>,
 }
 
 impl TeamManifest {
@@ -255,6 +285,32 @@ pub fn parse_team_yml(content: &str, path: &Path) -> Result<TeamManifest, TeamEr
             return Err(invalid(format!(
                 "agents[{}]: role {:?} is not one of roles",
                 agent.name, agent.role
+            )));
+        }
+    }
+    let mut limited = std::collections::BTreeSet::new();
+    for limit in &manifest.limits {
+        let rel = Path::new(limit.path.trim());
+        if limit.path.trim().is_empty()
+            || rel
+                .components()
+                .any(|c| !matches!(c, Component::Normal(_) | Component::CurDir))
+        {
+            return Err(invalid(format!(
+                "limits[].path must be a relative path inside the team root, got {:?}",
+                limit.path
+            )));
+        }
+        if limit.max_lines.is_none() && limit.max_bytes.is_none() {
+            return Err(invalid(format!(
+                "limits[{}] sets neither max_lines nor max_bytes, so it limits nothing",
+                limit.path
+            )));
+        }
+        if !limited.insert(limit.path.trim()) {
+            return Err(invalid(format!(
+                "limits: {:?} appears twice; one ceiling per file",
+                limit.path
             )));
         }
     }

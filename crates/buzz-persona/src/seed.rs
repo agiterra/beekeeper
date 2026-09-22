@@ -356,7 +356,7 @@ pub fn agent_display_name(role: &str) -> String {
         .join(" ")
 }
 
-fn readme(name: &str) -> String {
+pub(crate) fn readme(name: &str) -> String {
     format!(
         "# {name} — agents repository\n\n\
          This repository holds the project's agent team and plans; the code lives\n\
@@ -392,7 +392,7 @@ fn readme(name: &str) -> String {
 
 /// Quote a string for YAML the way `serde_yaml` would for anything that is
 /// not a plain scalar: double quotes with `"` and `\\` escaped.
-fn yaml_string(value: &str) -> String {
+pub(crate) fn yaml_string(value: &str) -> String {
     let mut out = String::with_capacity(value.len() + 2);
     out.push('"');
     for c in value.chars() {
@@ -407,7 +407,7 @@ fn yaml_string(value: &str) -> String {
     out
 }
 
-fn refuse_non_empty(root: &Path) -> Result<(), SeedError> {
+pub(crate) fn refuse_non_empty(root: &Path) -> Result<(), SeedError> {
     let entries = match std::fs::read_dir(root) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),

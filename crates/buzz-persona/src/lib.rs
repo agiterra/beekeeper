@@ -2,6 +2,7 @@ pub mod agents_repo;
 pub mod compose;
 pub mod manifest;
 pub mod merge;
+pub mod migrate;
 pub mod pack;
 pub mod persona;
 pub mod resolve;
