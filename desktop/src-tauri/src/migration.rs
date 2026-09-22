@@ -153,6 +153,14 @@ fn run_boot_migrations_inner(app: &tauri::AppHandle, reset_completed: bool) {
     // definition never snapshots a suffix this strips).
     strip_baked_team_instructions(app);
     refresh_builtin_agent_avatars(app);
+    // Names became unique per project (ledger 246); strip the suffix this
+    // computer minted only because they used to be unique per computer. AFTER
+    // the fold, so the definition rows it renames in step are in the unified
+    // store, and after the two migrations above, so their content-hash repins
+    // have settled and the hashes it captures are the final pre-rename ones.
+    // BEFORE backfill_standalone_agents, so a manufactured definition never
+    // snapshots a name this is about to change.
+    scope_agent_names_to_projects(app);
     // B5: manufacture definitions for standalone agents AFTER the fold (so
     // pre-existing definition slugs exist for collision checks) and before event
     // sync republishes — the backfilled link flips the 30177 projection.
@@ -1297,9 +1305,12 @@ use fold::load_persona_runtimes;
 mod backfill;
 pub use backfill::backfill_standalone_agents;
 mod detach;
+mod name_scope;
+pub use name_scope::scope_agent_names_to_projects;
+mod profile_reconcile;
+pub(crate) use profile_reconcile::*;
 mod pollen;
 mod team_membership;
-pub(crate) use pollen::*;
 mod team_suffix;
 pub use team_suffix::strip_baked_team_instructions;
 

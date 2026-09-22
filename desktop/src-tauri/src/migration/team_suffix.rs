@@ -132,7 +132,7 @@ pub(super) fn strip_baked_team_instructions_in_dir(base_dir: &Path) -> Result<us
 /// `slug → persona_content_hash` for every definition record, computed through
 /// the same projection the drift indicator uses (`persona_drift_state` in
 /// `managed_agents/runtime.rs`).
-fn definition_hashes(records: &[ManagedAgentRecord]) -> HashMap<String, String> {
+pub(super) fn definition_hashes(records: &[ManagedAgentRecord]) -> HashMap<String, String> {
     records
         .iter()
         .filter(|record| record.pubkey.is_empty())
@@ -153,7 +153,7 @@ fn definition_hashes(records: &[ManagedAgentRecord]) -> HashMap<String, String> 
 /// `refresh_builtin_agent_avatars`: move the pin only when it still equals the
 /// definition's PRE-strip hash. An instance that had genuinely drifted keeps
 /// its stale pin, and its badge.
-fn repin_current_instances(
+pub(super) fn repin_current_instances(
     records: &mut [ManagedAgentRecord],
     pre_strip_hashes: &HashMap<String, String>,
 ) {
