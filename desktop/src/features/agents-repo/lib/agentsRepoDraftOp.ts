@@ -141,10 +141,37 @@ export type DraftPathClass =
   | "plan"
   | "archived-plan";
 
-function mdSlug(segment: string): string | null {
-  if (!segment.endsWith(".md")) return null;
-  const slug = segment.slice(0, -3);
-  return isSlug(slug) ? slug : null;
+/**
+ * A **plan's** filename stem: the name of a document, not a manifest key. It
+ * carries uppercase, `_` and interior dots, because the documents that move
+ * into an agents repository are called `CURRENT_STATE.md`, `SESSION_STATE.md`
+ * and `README.md`. Requiring `isSlug` here was a carry-over from the role rule
+ * and it cost something real — Beekeeper's own map and ledger moved in on
+ * 2026-09-22 at paths the Files tab refuses to open.
+ *
+ * Still bounded, never `archive` in any case (that names the sibling
+ * directory), and never leading with `.` or `-`. Pinned by
+ * `conformance/agents-repo-draft-path/`.
+ */
+function isDocStem(value: string): boolean {
+  return (
+    value.length > 0 &&
+    value.length <= 96 &&
+    !value.startsWith(".") &&
+    !value.startsWith("-") &&
+    /^[A-Za-z0-9._-]+$/.test(value) &&
+    value.toLowerCase() !== ARCHIVE_SEGMENT
+  );
+}
+
+/** A role or skill file: named for its manifest key, so a slug. */
+function isRoleFile(segment: string): boolean {
+  return segment.endsWith(".md") && isSlug(segment.slice(0, -3));
+}
+
+/** A plan file: named for the document it holds. */
+function isPlanFile(segment: string): boolean {
+  return segment.endsWith(".md") && isDocStem(segment.slice(0, -3));
 }
 
 /** Classify a path against the agents repository layout, or say why not. */
@@ -176,7 +203,7 @@ export function draftPathClass(
     a === "roles" &&
     b === ARCHIVE_SEGMENT &&
     c &&
-    mdSlug(c)
+    isRoleFile(c)
   ) {
     return { ok: true, class: "archived-role" };
   }
@@ -185,14 +212,14 @@ export function draftPathClass(
     a === "plans" &&
     b === ARCHIVE_SEGMENT &&
     c &&
-    mdSlug(c)
+    isPlanFile(c)
   ) {
     return { ok: true, class: "archived-plan" };
   }
-  if (segments.length === 2 && a === "roles" && b && mdSlug(b)) {
+  if (segments.length === 2 && a === "roles" && b && isRoleFile(b)) {
     return { ok: true, class: "role" };
   }
-  if (segments.length === 2 && a === "plans" && b && mdSlug(b)) {
+  if (segments.length === 2 && a === "plans" && b && isPlanFile(b)) {
     return { ok: true, class: "plan" };
   }
   if (

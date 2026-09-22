@@ -279,6 +279,7 @@ final _lowerHex40 = RegExp(r'^[0-9a-f]{40}$');
 final _lowerHex64 = RegExp(r'^[0-9a-f]{64}$');
 final _slug = RegExp(r'^[a-z0-9-]{1,64}$');
 final _fileSegment = RegExp(r'^[A-Za-z0-9._-]+$');
+final _docStem = RegExp(r'^[A-Za-z0-9._-]+$');
 
 bool isGitSha(String? value) => value != null && _lowerHex40.hasMatch(value);
 bool isEventId(String? value) => value != null && _lowerHex64.hasMatch(value);
@@ -291,11 +292,33 @@ bool _isFileSegment(String value) =>
     value != '..' &&
     _fileSegment.hasMatch(value);
 
-String? _mdSlug(String segment) {
-  if (!segment.endsWith('.md')) return null;
-  final slug = segment.substring(0, segment.length - 3);
-  return _isSlug(slug) ? slug : null;
-}
+/// A **plan's** filename stem: the name of a document, not a manifest key. It
+/// carries uppercase, `_` and interior dots, because the documents that move
+/// into an agents repository are called `CURRENT_STATE.md`, `SESSION_STATE.md`
+/// and `README.md`. Requiring [_isSlug] here was a carry-over from the role
+/// rule and it cost something real — Beekeeper's own map and ledger moved in on
+/// 2026-09-22 at paths the Files tab refuses to open.
+///
+/// Still bounded, never `archive` in any case (that names the sibling
+/// directory), and never leading with `.` or `-`. Pinned by
+/// `conformance/agents-repo-draft-path/`.
+bool _isDocStem(String value) =>
+    value.isNotEmpty &&
+    value.length <= 96 &&
+    !value.startsWith('.') &&
+    !value.startsWith('-') &&
+    _docStem.hasMatch(value) &&
+    value.toLowerCase() != archiveSegment;
+
+/// A role or skill file: named for its manifest key, so a slug.
+bool _isRoleFile(String segment) =>
+    segment.endsWith('.md') &&
+    _isSlug(segment.substring(0, segment.length - 3));
+
+/// A plan file: named for the document it holds.
+bool _isPlanFile(String segment) =>
+    segment.endsWith('.md') &&
+    _isDocStem(segment.substring(0, segment.length - 3));
 
 /// Classify a path against the agents repository layout, or `null` when it
 /// is outside it.
@@ -308,23 +331,23 @@ DraftPathClass? draftPathClass(String path) {
   if (segments.length == 3 &&
       segments[0] == 'roles' &&
       segments[1] == archiveSegment &&
-      _mdSlug(segments[2]) != null) {
+      _isRoleFile(segments[2])) {
     return DraftPathClass.archivedRole;
   }
   if (segments.length == 3 &&
       segments[0] == 'plans' &&
       segments[1] == archiveSegment &&
-      _mdSlug(segments[2]) != null) {
+      _isPlanFile(segments[2])) {
     return DraftPathClass.archivedPlan;
   }
   if (segments.length == 2 &&
       segments[0] == 'roles' &&
-      _mdSlug(segments[1]) != null) {
+      _isRoleFile(segments[1])) {
     return DraftPathClass.role;
   }
   if (segments.length == 2 &&
       segments[0] == 'plans' &&
-      _mdSlug(segments[1]) != null) {
+      _isPlanFile(segments[1])) {
     return DraftPathClass.plan;
   }
   if (segments.length >= 5 &&

@@ -1,0 +1,198 @@
+{
+  "schema": "buzz-agents-repo-draft-path-vectors/v1",
+  "cases": [
+    {
+      "path": "README.md",
+      "class": "root-file",
+      "note": "the repository's own README is a root file"
+    },
+    {
+      "path": "team.yml",
+      "class": "root-file"
+    },
+    {
+      "path": "actions.yml",
+      "class": "root-file"
+    },
+    {
+      "path": "roles/lead.md",
+      "class": "role"
+    },
+    {
+      "path": "roles/archive/old-lead.md",
+      "class": "archived-role"
+    },
+    {
+      "path": "roles/lead/skills/marker/SKILL.md",
+      "class": "role-skill",
+      "note": "SKILL.md is uppercase: a file under a skill is not a stem"
+    },
+    {
+      "path": "roles/lead/skills/marker/notes/a.md",
+      "class": "role-skill"
+    },
+    {
+      "path": "skills/marker/SKILL.md",
+      "class": "shared-skill"
+    },
+    {
+      "path": "plans/rpg-2.md",
+      "class": "plan"
+    },
+    {
+      "path": "plans/archive/rpg.md",
+      "class": "archived-plan"
+    },
+    {
+      "path": "plans/CURRENT_STATE.md",
+      "class": "plan",
+      "note": "the map that moved into bee-keeper-beekeeper-agents; refused before 2026-09-22 and unopenable in the Files tab"
+    },
+    {
+      "path": "plans/SESSION_STATE.md",
+      "class": "plan",
+      "note": "the ledger, cited across repositories by frozen item number"
+    },
+    {
+      "path": "plans/UNIFIED_WORK_PLAN.md",
+      "class": "plan"
+    },
+    {
+      "path": "plans/archive/README.md",
+      "class": "archived-plan",
+      "note": "a directory guide inside plans/archive/; the root README.md is a root file, this one is a plan"
+    },
+    {
+      "path": "plans/archive/2026-09-22-beekeeper-agents-repo-move.md",
+      "class": "archived-plan"
+    },
+    {
+      "path": "plans/plan.v2.md",
+      "class": "plan",
+      "note": "a dot inside the stem is a document name, not a second extension"
+    },
+    {
+      "path": "plans/p4b-2a-offline-attach.md",
+      "class": "plan"
+    },
+    {
+      "path": "roles/Lead.md",
+      "class": null,
+      "note": "a role stem is the manifest key, which is a slug; widening plans did not widen this"
+    },
+    {
+      "path": "skills/Marker/SKILL.md",
+      "class": null,
+      "note": "a skill directory is named by frontmatter, which is a slug"
+    },
+    {
+      "path": "roles/lead/skills/Marker/SKILL.md",
+      "class": null
+    },
+    {
+      "path": "plans/archive.md",
+      "class": null,
+      "note": "names the sibling directory"
+    },
+    {
+      "path": "plans/Archive.md",
+      "class": null,
+      "note": "same name, different case: still the sibling directory"
+    },
+    {
+      "path": "plans/.hidden.md",
+      "class": null,
+      "note": "a stem may not start with a dot"
+    },
+    {
+      "path": "plans/-leading.md",
+      "class": null,
+      "note": "a stem may not start with a hyphen"
+    },
+    {
+      "path": "plans/x.txt",
+      "class": null,
+      "note": "a plan is markdown"
+    },
+    {
+      "path": "plans/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md",
+      "class": null,
+      "note": "a stem is at most 96 bytes"
+    },
+    {
+      "path": "",
+      "class": null
+    },
+    {
+      "path": "/roles/lead.md",
+      "class": null
+    },
+    {
+      "path": "roles/lead.md/",
+      "class": null
+    },
+    {
+      "path": "roles/../team.yml",
+      "class": null
+    },
+    {
+      "path": "roles/./lead.md",
+      "class": null
+    },
+    {
+      "path": "roles//lead.md",
+      "class": null
+    },
+    {
+      "path": "roles/lead.txt",
+      "class": null
+    },
+    {
+      "path": "roles/archive.md",
+      "class": null
+    },
+    {
+      "path": "roles/archive/archive.md",
+      "class": null
+    },
+    {
+      "path": "plans/archive/deeper/x.md",
+      "class": null,
+      "note": "no nested directory under plans/"
+    },
+    {
+      "path": "roles/lead/skills/marker",
+      "class": null
+    },
+    {
+      "path": "skills/marker",
+      "class": null
+    },
+    {
+      "path": "docs/plan.md",
+      "class": null
+    },
+    {
+      "path": "beekeeper/actions.yml",
+      "class": null
+    },
+    {
+      "path": "roles/lead/notes.md",
+      "class": null
+    },
+    {
+      "path": "roles/lead/skills/marker/../x",
+      "class": null
+    },
+    {
+      "path": "team.yaml",
+      "class": null,
+      "note": "the manifest is team.yml"
+    },
+    {
+      "path": "model-registry.yaml",
+      "class": null,
+      "note": "KNOWN GAP: the product's own seed writes this file and the repository README tells a project to edit it, but no reader admits it as a root file. Pinned as a refusal so the divergence is visible, not so it is correct."
+    }
+  ]
+}

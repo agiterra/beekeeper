@@ -343,6 +343,10 @@ pub fn is_event_id(value: &str) -> bool {
     value.len() == 64 && is_lower_hex(value)
 }
 
+/// A **role** or **skill** name: the key the team manifest or a role's
+/// frontmatter uses, so it is a slug and stays one. `roles/Lead.md` is refused
+/// because `Lead` cannot be a `team.yml` key. See [`is_doc_stem`] for why a
+/// plan's filename is not held to this.
 fn is_slug(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 64
@@ -350,6 +354,28 @@ fn is_slug(value: &str) -> bool {
             .bytes()
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
         && value != ARCHIVE_SEGMENT
+}
+
+/// A **plan's** filename stem, which is the name of a document rather than a
+/// manifest key. It carries uppercase, `_` and interior dots, because the
+/// documents that move into an agents repository are called `CURRENT_STATE.md`,
+/// `SESSION_STATE.md` and `README.md`. Requiring [`is_slug`] here was a
+/// carry-over from the role rule, and it cost something real: Beekeeper's own
+/// map, ledger and in-force plans moved in on 2026-09-22 and every one of them
+/// landed at a path the Files tab lists as `other` and refuses to open.
+///
+/// Still bounded, still never `archive` in any case — that names the sibling
+/// directory — and never leading with `.` or `-`, which would make a hidden
+/// file or something an argument parser reads as a flag.
+/// Pinned by `conformance/agents-repo-draft-path/`.
+fn is_doc_stem(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 96
+        && !value.starts_with(['.', '-'])
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+        && !value.eq_ignore_ascii_case(ARCHIVE_SEGMENT)
 }
 
 fn is_file_segment(value: &str) -> bool {
@@ -401,19 +427,16 @@ pub fn validate_draft_path(path: &str) -> Result<DraftPathClass, String> {
             "draft path {path:?} has an empty, dot or non-portable segment"
         ));
     }
-    let md_slug = |segment: &str| -> Option<String> {
-        let slug = segment.strip_suffix(".md")?;
-        is_slug(slug).then(|| slug.to_owned())
-    };
+    // A role file is named for its manifest key; a plan file is named for the
+    // document it holds. Two rules, deliberately.
+    let role_file = |segment: &str| -> bool { segment.strip_suffix(".md").is_some_and(is_slug) };
+    let plan_file =
+        |segment: &str| -> bool { segment.strip_suffix(".md").is_some_and(is_doc_stem) };
     match segments.as_slice() {
-        ["roles", ARCHIVE_SEGMENT, file] if md_slug(file).is_some() => {
-            Ok(DraftPathClass::ArchivedRole)
-        }
-        ["plans", ARCHIVE_SEGMENT, file] if md_slug(file).is_some() => {
-            Ok(DraftPathClass::ArchivedPlan)
-        }
-        ["roles", file] if md_slug(file).is_some() => Ok(DraftPathClass::Role),
-        ["plans", file] if md_slug(file).is_some() => Ok(DraftPathClass::Plan),
+        ["roles", ARCHIVE_SEGMENT, file] if role_file(file) => Ok(DraftPathClass::ArchivedRole),
+        ["plans", ARCHIVE_SEGMENT, file] if plan_file(file) => Ok(DraftPathClass::ArchivedPlan),
+        ["roles", file] if role_file(file) => Ok(DraftPathClass::Role),
+        ["plans", file] if plan_file(file) => Ok(DraftPathClass::Plan),
         ["roles", role, "skills", skill, rest @ ..]
             if is_slug(role) && is_slug(skill) && !rest.is_empty() =>
         {
@@ -878,6 +901,60 @@ mod tests {
             .insert("mode".into(), Value::from("100755"));
         let err = decode_agents_repo_draft_op(&value.to_string(), REPO).expect_err("refuses");
         assert!(err.contains("unsupported field \"mode\""), "{err}");
+    }
+
+    /// The shared corpus at `conformance/agents-repo-draft-path/`, which the
+    /// Desktop and Mobile readers bind to as well. The table below is this
+    /// reader's own convenience; the corpus is the contract. A rule that
+    /// appears in only one of the three is a defect.
+    #[test]
+    fn conformance_vectors_classify_identically() {
+        #[derive(serde::Deserialize)]
+        struct Case {
+            path: String,
+            class: Option<String>,
+            #[serde(default)]
+            note: Option<String>,
+        }
+        #[derive(serde::Deserialize)]
+        struct Vectors {
+            schema: String,
+            cases: Vec<Case>,
+        }
+        let raw =
+            include_str!("../../../conformance/agents-repo-draft-path/fixtures/path-vectors.json");
+        let vectors: Vectors = serde_json::from_str(raw).expect("vectors parse");
+        assert_eq!(vectors.schema, "buzz-agents-repo-draft-path-vectors/v1");
+        assert!(!vectors.cases.is_empty(), "an empty corpus proves nothing");
+        for case in vectors.cases {
+            let note = case.note.unwrap_or_default();
+            match (validate_draft_path(&case.path), case.class.as_deref()) {
+                (Ok(class), Some(expected)) => {
+                    assert_eq!(wire_class(class), expected, "case {:?} {note}", case.path)
+                }
+                (Err(error), Some(expected)) => {
+                    panic!("case {:?} should be {expected} {note}: {error}", case.path)
+                }
+                (Ok(class), None) => panic!(
+                    "case {:?} should be refused {note}, got {:?}",
+                    case.path, class
+                ),
+                (Err(_), None) => {}
+            }
+        }
+    }
+
+    /// The corpus names a class the way the wire and the other two readers do.
+    fn wire_class(class: DraftPathClass) -> &'static str {
+        match class {
+            DraftPathClass::RootFile => "root-file",
+            DraftPathClass::Role => "role",
+            DraftPathClass::ArchivedRole => "archived-role",
+            DraftPathClass::RoleSkill => "role-skill",
+            DraftPathClass::SharedSkill => "shared-skill",
+            DraftPathClass::Plan => "plan",
+            DraftPathClass::ArchivedPlan => "archived-plan",
+        }
     }
 
     #[test]

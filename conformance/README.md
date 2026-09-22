@@ -52,6 +52,7 @@ scope decision becomes an invisible defect.
 | --- | --- | --- |
 | [`authority-chain/`](authority-chain/README.md) | kind:44228 transition + kind:40099 acceptance receipt | `buzz-core`, `buzz-cli`, `buzz-session-provider`, desktop timeline |
 | [`coding-session-records/`](coding-session-records/README.md) | kinds 44221, 44223, 44224, 44226, 44230 | `buzz-core` (the single Rust reader every crate calls), two desktop readers each for 44223 and 44224, the mobile Dart decoders, and — since lane 223 — the **web** client's own hand-copied decoder for 44223 and 44224 |
+| [`agents-repo-draft-path/`](agents-repo-draft-path/README.md) | which paths an agents repository's layout admits, and what each one is | `buzz-core`, desktop, mobile |
 | [`project-pack-source/`](project-pack-source/) | the `packRef` half of kind:44223 | `buzz-core`, desktop |
 | [`project-work/`](project-work/) | the work declaration / assignment / evidence records | `buzz-core`, `buzz-cli`, desktop |
 | [`coding-session-team-transaction/`](coding-session-team-transaction/) | kind:44244 | `buzz-core`, `buzz-sdk`, desktop |
