@@ -178,7 +178,7 @@ the sequence, in order, so nobody re-derives it.
    Why not a plain `git push`: git mints the NIP-98 credential at ref
    discovery, *before* the pre-push hooks run, and reuses that one credential
    for the whole push — confirmed empirically against a throwaway HTTP git
-   server (`docs/history/2026-09-20-pre-push-floor-stamp.md`): the credential
+   server (`plans/archive/2026-09-20-pre-push-floor-stamp.md`): the credential
    helper's `get` fires exactly once per `git push`, and the identical
    Authorization value is replayed on the retried GET and the receive-pack
    POST. The pre-push floor (clippy, typecheck, the changed crates' unit

@@ -203,7 +203,7 @@ when `isWorking && canSteer`
 What this section does **not** claim: that every `steer` lands. The native
 path has the unknown-delivery outcomes above, and the provider's evidence for
 them is composition fixtures against scripted agents plus adapter validation
-against the installed claude-agent-acp — see `docs/SESSION_STATE.md` for what
+against the installed claude-agent-acp — see `plans/SESSION_STATE.md` for what
 was run.
 
 An unknown `deliver` value is a malformed command, rejected by the relay's

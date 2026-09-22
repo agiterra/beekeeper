@@ -209,7 +209,7 @@ kind-44225 event (`crates/buzz-core/src/kind.rs:649`; built at
 `crates/buzz-sdk/src/builders.rs:2743-2771`; signed at
 `crates/buzz-session-provider/src/lib.rs:1848-1849`).
 
-The SESSION_STATE §2 item 2 claim (`docs/SESSION_STATE.md:47-53`) is confirmed exactly:
+The SESSION_STATE §2 item 2 claim (`plans/SESSION_STATE.md:47-53`) is confirmed exactly:
 
 - `tool_call_item` emits only `{kind, tool:{toolName, toolId, input}}` — `transcript.rs:192-206`.
 - `tool_input` takes the first of `rawInput|input|arguments|args` that is an object, else

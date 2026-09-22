@@ -300,7 +300,7 @@ identity, is per-slug.
 3. `git switch -c pulse-live-b` in that worktree → new slug → new app-data dir →
    new provider identity.
 4. `BUZZ_SHARE_IDENTITY=1 just dev` again. Reconnect on the old row goes
-   unanswered; no provider claims it (`docs/SESSION_STATE.md:75-90`).
+   unanswered; no provider claims it (`plans/SESSION_STATE.md:75-90`).
 
 **Proof**: `bee pulse digest --project "$COORD"` shows that session with
 `"activity":"stale"`, and the Pulse screen renders it under **Last seen** as
@@ -472,6 +472,6 @@ git worktree remove /Users/brian/Projects/buzz-pulse-live   # after 5.4
 rm -f /Users/brian/Projects/buzz/scratch-pulse.txt
 ```
 
-Per `CLAUDE.md` and `docs/SESSION_STATE.md:252-257`, every finding from this run
-lands in **`docs/SESSION_STATE.md` §2 the same day**, with the command or
+Per `CLAUDE.md` and `plans/SESSION_STATE.md:252-257`, every finding from this run
+lands in **`plans/SESSION_STATE.md` §2 the same day**, with the command or
 `file:line` that produced it — never in a new handoff document.

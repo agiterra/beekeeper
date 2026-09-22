@@ -2,7 +2,8 @@
 
 This runbook tests the combined candidate after Fable's recovery work is
 integrated. It is not a record of passing tests. Actual results, versions and
-findings go in `SESSION_STATE.md` with evidence paths or event IDs.
+findings go in `plans/SESSION_STATE.md` (agents repository) with evidence
+paths or event IDs.
 
 ## Establish the test boundary once
 
