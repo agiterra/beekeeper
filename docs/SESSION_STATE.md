@@ -19860,7 +19860,10 @@ removed from here.
        closed mission. A12.1's "one accepted publish" is therefore **still
        owed** for this kind and is discharged by `kettle-control` run 2's
        first adoption (plan § 8 A12.5). Do not read `validate` as that proof:
-       it never publishes.
+       it never publishes. Re-run post-deploy against `build_time`
+       `2026-09-22T17:23:47Z` from a second fresh clone: same answer,
+       `"valid": true`, `"adoptable": true`, `"unresolvedActions": []`
+       (`/tmp/live-proof-240-validate-postdeploy.out`).
 
 238. **Two defects from the 2026-09-22 `kettle-control` control run
    (ledger 236(b),(e)), and the harness flake that was hiding both from
