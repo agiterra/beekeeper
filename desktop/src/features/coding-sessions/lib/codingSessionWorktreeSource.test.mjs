@@ -158,11 +158,33 @@ test("a hire installs the hooks, naming the worktree and the seat", async () => 
     genesisRef: "genesis-1",
     channelId: "c0ffee",
     branch: "lane/refuter",
+    // No umbrella title was given, so the installer is told so in words
+    // rather than left to invent an author name (ledger 239).
+    project: null,
   });
   assert.equal(outcome.kind, "installed");
   assert.equal(outcome.installed.wipRef, "refs/heads/wip/refuter/0f1e2d3c");
   assert.equal(outcome.signing.kind, "none");
   assert.equal(outcome.signing.code, SEAT_KEY_IS_NOT_ON_DISK);
+});
+
+test("the umbrella's title is what names the seat's project to the installer", async () => {
+  ipcCalls.length = 0;
+  await installSeatWipHooks(
+    { path: "/tmp/seat", branch: "lane/refuter" },
+    {
+      actor: "a".repeat(64),
+      role: "refuter",
+      sessionRef: "session-1",
+      genesisRef: "genesis-1",
+      channelId: "c0ffee",
+      title: "Kettle Control",
+    },
+    "0".repeat(64),
+  );
+
+  assert.equal(ipcCalls.length, 1);
+  assert.equal(ipcCalls[0].args.request.project, "Kettle Control");
 });
 
 test("an install that throws is a named failure, never a silent null", async () => {
