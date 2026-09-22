@@ -131,8 +131,18 @@ fi
 # right after `buzz-desktop` became `beekeeper-desktop` the guard stopped
 # recognising every app it was meant to catch, and the install would `rm -rf` a
 # running bundle. The directory is what is actually invariant here.
-if pgrep -f "/Applications/Beekeeper.app/Contents/MacOS/" >/dev/null; then
-  echo "Beekeeper.app is running — quit it, then re-run the install" >&2
+# Name what is actually holding the bundle. The match is the directory, so a
+# *sidecar* that outlived the app (a buzz-shell-host serving a terminal, which
+# is not reaped when the app quits) trips it too — and "Beekeeper.app is
+# running" then sends the reader to quit an app that is already quit.
+if HOLDERS="$(pgrep -lf "/Applications/Beekeeper.app/Contents/MacOS/")"; then
+  echo "something is still running out of /Applications/Beekeeper.app — removing" \
+       "the bundle under it would break it, so nothing was installed:" >&2
+  echo "$HOLDERS" | sed 's/^/  /' >&2
+  echo "Quit the app if it is running. A sidecar left over from an app that" \
+       "already quit (buzz-shell-host, buzz-session-provider) can be ended with" \
+       "\`kill <pid>\`; a shell host takes its terminal session's live process" \
+       "with it." >&2
   exit 1
 fi
 # One-time sweep of the pre-rename bundle: quit anything still running out of

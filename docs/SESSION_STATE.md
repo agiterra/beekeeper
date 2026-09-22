@@ -19769,6 +19769,35 @@ removed from here.
      Blocked on one thing only: the migration re-points a project Brian's seats
      read, from a build that is not installed here, so it is Andy's to run.
 
+235. **A sidecar outlived the app that started it by nearly three days, and
+     pinned the installed bundle so no build could be installed over it
+     (2026-09-22, found installing `4a40e3885` on Andy's Mac).** Andy had quit
+     Beekeeper; `pgrep -f '/Applications/Beekeeper.app/Contents/MacOS/beekeeper-desktop'`
+     found nothing. But `scripts/local-prod-build.sh` refused after a clean
+     bundle: **"Beekeeper.app is running — quit it, then re-run the install"**.
+     What was running was `buzz-shell-host` out of that bundle, `--title
+     rpg-test`, `--created-at 1789852049`, `etime` **2 days 19 hours** — a
+     terminal sidecar of an app that had quit long before, with a live `zsh`
+     under it and a running `claude` under that.
+     - **The guard is right to refuse.** It matches the bundle *directory* on
+       purpose (`local-prod-build.sh:127-134`): naming the current binary
+       reintroduced a bug where a rename made it stop recognising the very apps
+       it exists to catch, and the install then `rm -rf`'d a bundle in use.
+       Removing a bundle a sidecar is executing from would break that sidecar,
+       so refusing is correct.
+     - **The message was not.** It named the app, which was already quit, so the
+       only remedy it offered could not work. Fixed here: the refusal now prints
+       every process holding the bundle, with its pid and command line, and says
+       a leftover sidecar can be ended with `kill <pid>` — and that a shell host
+       takes its terminal session's live process with it, which is exactly why
+       this one was not killed on the operator's behalf.
+     - **Open, and the real bug:** nothing reaps a sidecar when the app exits.
+       A `buzz-shell-host` (and, presumably, a `buzz-session-provider`) survives
+       the quit, keeps serving its socket under
+       `~/.local/state/buzz/shell-hosts/`, and pins the old bundle. Every later
+       `just prod-desktop` is then blocked until someone finds and kills it by
+       hand. No lane owns this. The install of `4a40e3885` is still owed.
+
 236. **kettle-control control run — 1h15m, 2 interventions, plan adoption
      refused live (2026-09-22, Brian at the keyboard, Fable orchestrating;
      installed `36f337d4a`, hive `build_time` `2026-09-22T03:19:28Z`).**
