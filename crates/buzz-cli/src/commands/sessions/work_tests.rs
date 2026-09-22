@@ -1248,3 +1248,8 @@ fn a_decorated_work_record_is_refused_before_it_is_published() {
         "the CLI must say what the relay says: {message}"
     );
 }
+
+// Lane 233: a plan committed after adoption — what it does, and what it
+// does not do, to the declaration that pinned it.
+#[path = "work_stale_declaration_tests.rs"]
+mod stale_declaration;

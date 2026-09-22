@@ -20089,6 +20089,85 @@ removed from here.
        still one; unrelated run, unseated or closed seat, forged echo or
        request, unwitnessed relay → none.
 
+233. **A plan edited after adoption does not go stale, and nothing discloses
+     the drift (2026-09-21, lane 233, verification).** The claim under test
+     was that editing and committing a declared plan — by plain git or by
+     Andy's kind:44250 draft flow — makes the kind:44249 declaration stale
+     against head, that the completion gate refuses on that account, that the
+     fold reports stale/conflict, and that `bee sessions work status` and the
+     desktop surface disclose head against the declared commit. Two passing
+     offline tests in `crates/buzz-cli/src/commands/sessions/work_stale_declaration_tests.rs`
+     (real temp git repo, bare remote, production `GitPlans` plan source, and
+     the real `commit_drafts` path for the draft-flow case) hold what the code
+     actually does.
+     - (a) **FALSE — "the declaration becomes stale relative to head."**
+       `WorkDeclarationState::Stale` means one thing: the session's *current
+       goal* differs from the declaration's `goalRef`
+       (`crates/buzz-core/src/project_work_fold.rs:580-582`, doc at `:130`).
+       `WorkStateReasonCode` has exactly three members — `superseded`,
+       `conflict`, `goal_changed`
+       (`crates/buzz-core/src/project_work_evidence.rs:329-331`). There is no
+       plan-drift state, and grep over `buzz-core`, `buzz-cli` and
+       `desktop/src` finds no comparison of any repository tip to
+       `planRef.commit`. After the edit the declaration is still `head` with
+       `stateReason: null`.
+     - (b) **FALSE — "the fold reports it as stale/conflict."** The fold reads
+       the plan blob at the pinned commit
+       (`GitPlans::plan`,
+       `crates/buzz-cli/src/commands/sessions/work.rs:1553-1560`), so commit A's content is what it keeps seeing: the
+       criterion the edit added never appears, `criteria`,
+       `coverageComplete`, `coverageReason` and `coverageReasonCode` are all
+       byte-identical across the edit, and the serialized projection never
+       names the new commit. Serving the relay a kind:30618 ref state that
+       names the *new* agents tip changes the projection not at all — the
+       fold's `ref_states` are for the plan's **code** repository
+       (`project_work_fold.rs:110-112`).
+     - (c) **FALSE — "the completion gate refuses on it."** `incomplete_head`
+       reads only `state` and `coverage_complete`
+       (`crates/buzz-cli/src/commands/sessions/operations_completion.rs:283-297`);
+       both are unchanged by the edit, so the gate cannot tell the two folds
+       apart. It does refuse an unevidenced declaration — for
+       `criteria_not_covered`, which it would have refused before the edit
+       too. Astra's Wave 0 finding 5 fix is about *failing closed when rows
+       are absent*, not about plan drift; the claim mis-attributes it.
+     - (d) **FALSE — "status and the desktop surface disclose head vs
+       declared."** Both print the declared commit only:
+       `planLabel`/`shortCommit` in
+       `desktop/src/features/coding-sessions/lib/projectWork.ts:19-28` and the
+       plan row in
+       `desktop/src/features/coding-sessions/ui/ProjectWorkCoverage.tsx:267-270`.
+       No head commit is read, so there is nothing to compare against.
+     - (e) **TRUE — "re-adopting at the new commit clears it."** `bee sessions
+       work adopt --commit B --supersedes <A's declaration>` publishes one
+       amendment: A becomes `superseded` with `supersededBy` naming it, the
+       new head pins B, the `workId` is stable, and the new head's criteria
+       come from the plan at B
+       (`work.rs:946-967` derives the body, `project_work_fold.rs:537-556`
+       the supersede graph). Adoption also still refuses a *first*
+       re-adoption that names no `--supersedes`
+       (`amendment-needs-supersedes`, `work.rs:976-984`), which is the only
+       thing in the system that notices the plan was declared before.
+     - (f) **Nothing was fixed.** Per the lane's verification remit the tests
+       were written to the behaviour that exists, so the day someone builds
+       the head-drift check the assertions in (a)-(d) fail and point at it.
+       Whether the drift *should* be disclosed is a product call for Brian:
+       the honest reading is that a declaration is a contract at a commit, and
+       a plan moving on is not a breach of it — but a lead reading
+       `status` today cannot tell that the plan they are looking at is no
+       longer the plan on `main`, and by the map's honesty rule that silence
+       is the defect worth naming.
+     - (g) **UNTESTABLE offline: nothing material.** `bee agents-repo commit`'s
+       relay half (`snapshot`, `cmd_commit`,
+       `crates/buzz-cli/src/commands/agents_repo.rs:84,709`) needs a live
+       relay for the kind:44250 draft rows, but its git half —
+       `commit_drafts` (`crates/buzz-cli/src/commands/agents_repo_git.rs:193`)
+       — takes a local path as `remote` and is exercised for real here, so the
+       commit that lands on `main` is produced by the shipping code path, not
+       a stand-in.
+     - (h) **Gates** bare: `cargo fmt --all -- --check`; `cargo clippy
+       --workspace --all-targets -- -D warnings`; `cargo test -p buzz-cli -p
+       buzz-core`; `just file-size-check`; Python NUL scan.
+
 ## 3a. Environment facts that cost real time (do not rediscover)
 
 - **pnpm 11's answer to a stale workspace state is to DELETE `node_modules`,
