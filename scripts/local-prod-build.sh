@@ -135,7 +135,11 @@ fi
 # *sidecar* that outlived the app (a buzz-shell-host serving a terminal, which
 # is not reaped when the app quits) trips it too — and "Beekeeper.app is
 # running" then sends the reader to quit an app that is already quit.
-if HOLDERS="$(pgrep -lf "/Applications/Beekeeper.app/Contents/MacOS/")"; then
+# Anchored: `pgrep -f` matches whole command lines, so an unanchored pattern
+# also matches any shell or script whose own arguments mention the bundle
+# path — including a wrapper that runs this install. Anchoring to the start
+# matches only processes actually executing out of the bundle.
+if HOLDERS="$(pgrep -lf "^/Applications/Beekeeper.app/Contents/MacOS/")"; then
   echo "something is still running out of /Applications/Beekeeper.app — removing" \
        "the bundle under it would break it, so nothing was installed:" >&2
   echo "$HOLDERS" | sed 's/^/  /' >&2
