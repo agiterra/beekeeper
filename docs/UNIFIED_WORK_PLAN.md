@@ -282,3 +282,11 @@ Review: `docs/history/2026-09-21-astra-wave2-fourth-look.md` at `d209432aa`. All
 2. **Answer custody invariant (lane 230).** Responsibility for a wake moves in one direction: the held record is released only after the signed answer is durably staged; a projection rejected or timed out by the outbox is never retired as delivered — the intent stays, parked durably and visibly, until a recovery publication (fresh signature, same command id) or an operator disposes of it.
 3. **In-house refutation before landing.** Astra's executed probes (`/tmp/astra-fourth-fence-probe.rs`, `/tmp/astra-fourth-git-probe.rs`) become tests in the lane. A separate refuter agent, briefed with A9 and the four reviews, attacks the lane before the finalizer; its findings are fixed in the lane. The control run waits on 229–230 landed and Astra's fifth look at those two.
 
+### A10 — plan drift is disclosed, never enforced (2026-09-21)
+
+Lane 233 tested the claim that a plan committed out from under a live declaration makes it stale and blocks completion. The claim is false: `Stale` means `goal_changed` only; the fold reads the plan at the pinned commit; completion, `status` and the desktop surface never name the plan's current tip (ledger 233). The pinning itself is correct and stands — a declaration's contract never changes underneath a team. What is missing is disclosure.
+
+1. **A new fold fact, `planDrift`** (lane 234 contract, lane 235 implementation): for each declaration, the plan path's tip commit on the agents repo's `main` as the assembler already receives it in relay ref state, compared with the declared commit; `null` when the ref state is absent (unknown is disclosed as unknown, never as "no drift"). The oracle lands first: fixtures for no-drift, drift, unknown, and superseded-then-current; every strict reader of the fold output loads them.
+2. **Surfaces:** `bee sessions work status` and the desktop work row print declared vs current commit when they differ, with the re-adopt command; the completion result carries the same fact. Completion is not refused for drift. The lead's work brief line is a follow-on after lane 229 lands (provider crate ownership).
+3. The note to Andy of 2026-09-21 overstated this ("our completion gate refuses a stale declaration"); a correction is owed and drafted.
+
