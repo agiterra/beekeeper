@@ -469,6 +469,76 @@ fn install_team(
     .expect("install succeeds")
 }
 
+/// A project whose roles moved out of a packs repository and into its own
+/// agents repository installs from a different directory, so the exact
+/// reuse key matches nothing. Without adoption by role, every identity the
+/// operator already knows would be shadowed by a second one.
+#[test]
+fn a_role_installed_from_a_new_directory_adopts_the_identity_the_team_already_has() {
+    let old_root = tempfile::tempdir().expect("temp dir");
+    write_role_pack(old_root.path(), "lead");
+    write_role_pack(old_root.path(), "builder");
+    let old_scan = super::super::crew_roles::scan_role_packs(old_root.path()).expect("scan");
+    let first = install_team(&old_scan, None, Vec::new());
+    assert_eq!(first.agents.len(), 2);
+    let before: Vec<String> = {
+        let mut keys: Vec<String> = first.agents.iter().map(|a| a.pubkey.clone()).collect();
+        keys.sort();
+        keys
+    };
+
+    // The same two roles, now converted into an agents repository, which
+    // this host stages from a different cache directory.
+    let new_root = tempfile::tempdir().expect("temp dir");
+    write_role_pack(new_root.path(), "lead");
+    write_role_pack(new_root.path(), "builder");
+    let new_scan = super::super::crew_roles::scan_role_packs(new_root.path()).expect("scan");
+
+    let second = install_team(&new_scan, Some(&first), first.agents.clone());
+
+    assert_eq!(second.agents.len(), 2, "no second set of identities");
+    assert_eq!(
+        second.installed.iter().filter(|r| r.refreshed).count(),
+        2,
+        "both roles were refreshed, not minted"
+    );
+    let after: Vec<String> = {
+        let mut keys: Vec<String> = second.agents.iter().map(|a| a.pubkey.clone()).collect();
+        keys.sort();
+        keys
+    };
+    assert_eq!(after, before, "the identities kept their keys");
+}
+
+/// Two identities filling one role is an arrangement someone made on
+/// purpose; adopting one of them would be a guess, so the install mints.
+#[test]
+fn a_role_two_identities_already_fill_is_not_adopted_by_guessing() {
+    let root = tempfile::tempdir().expect("temp dir");
+    write_role_pack(root.path(), "builder");
+    let scan = super::super::crew_roles::scan_role_packs(root.path()).expect("scan");
+    let first = install_team(&scan, None, Vec::new());
+
+    // A second builder on the same team, minted from somewhere else.
+    let mut agents = first.agents.clone();
+    let mut twin = agents[0].clone();
+    twin.pubkey = "f".repeat(64);
+    twin.name = format!("{} 2", twin.name);
+    twin.persona_team_dir = Some(std::path::PathBuf::from("/somewhere/else"));
+    agents.push(twin);
+
+    let other_root = tempfile::tempdir().expect("temp dir");
+    write_role_pack(other_root.path(), "builder");
+    let other = super::super::crew_roles::scan_role_packs(other_root.path()).expect("scan");
+    let second = install_team(&other, Some(&first), agents);
+
+    assert_eq!(
+        second.agents.len(),
+        3,
+        "the ambiguous role minted rather than adopting one of the two"
+    );
+}
+
 #[test]
 fn reinstalling_team_roles_keeps_an_associated_agents_project() {
     let root = tempfile::tempdir().expect("temp dir");

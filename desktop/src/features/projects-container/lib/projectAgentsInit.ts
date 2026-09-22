@@ -52,6 +52,25 @@ export type ProjectAgentsInitResult = {
   pushRecordEventId: string | null;
   sourceEventId: string | null;
   sourceExisted: boolean;
+  /**
+   * The repository coordinate this run moved the project OFF, when it was
+   * asked to migrate one; `null` for an ordinary create or finish.
+   */
+  migratedFrom: string | null;
+  /** The roles converted out of that repository, ascending. */
+  migratedRoles: string[];
+  /** What the conversion could not carry, one sentence per role. */
+  migrationNotes: string[];
+  /**
+   * The relay refused the re-point because the project's source had moved
+   * since it was read. Everything else stands; nothing was re-pointed.
+   */
+  sourceConflict: boolean;
+  /**
+   * The code repository is the one the project's own head names rather than
+   * one derived from its slug — what a project created before the pivot has.
+   */
+  codeRepoAdopted: boolean;
   publicationError: string | null;
   commitIdentityName: string;
   commitIdentityEmail: string;
@@ -143,6 +162,13 @@ function isProjectAgentsInitResult(
     isOptionalString(record.pushRecordEventId) &&
     isOptionalString(record.sourceEventId) &&
     typeof record.sourceExisted === "boolean" &&
+    isOptionalString(record.migratedFrom) &&
+    Array.isArray(record.migratedRoles) &&
+    record.migratedRoles.every((role) => typeof role === "string") &&
+    Array.isArray(record.migrationNotes) &&
+    record.migrationNotes.every((note) => typeof note === "string") &&
+    typeof record.sourceConflict === "boolean" &&
+    typeof record.codeRepoAdopted === "boolean" &&
     isOptionalString(record.publicationError) &&
     typeof record.commitIdentityName === "string" &&
     typeof record.commitIdentityEmail === "string" &&
@@ -192,11 +218,19 @@ export async function projectAgentsInit(input: {
    * repos root (`defaultReposRoot`).
    */
   checkoutParent?: string | null;
+  /**
+   * Move the project off the role source it points at today. The id is the
+   * kind:30624 the caller READ: the host refuses if the relay holds another
+   * one, and publishes the new source conditionally on it, so a source that
+   * moved is a refusal rather than a silent overwrite.
+   */
+  migrate?: { expectedSourceId: string; convert: boolean } | null;
 }): Promise<ProjectAgentsInitResult> {
   return decodeProjectAgentsInitResult(
     await invokeTauri(PROJECT_AGENTS_INIT_COMMAND, {
       projectRef: input.projectRef,
       checkoutParent: input.checkoutParent ?? null,
+      migrate: input.migrate ?? null,
     }),
   );
 }
@@ -256,6 +290,28 @@ export function defaultAgentsRepoId(projectSlug: string): string {
 }
 
 /**
+ * Whether a project's role source is its OWN agents repository — the flat
+ * layout at the repository root, under the id this project's slug derives.
+ *
+ * The three states a settings panel has to tell apart: no source at all
+ * (create), this (finish setup), and anything else (a pack-layout or
+ * borrowed source, which only a deliberate migration moves).
+ */
+export function isProjectAgentsRepoSource(
+  source: { repo: string; path: string; ref: string | null } | null,
+  projectSlug: string,
+): boolean {
+  if (!source) return false;
+  const id = source.repo.split(":")[2] ?? "";
+  const path = source.path.trim();
+  return (
+    id === defaultAgentsRepoId(projectSlug) &&
+    (path === "." || path === "") &&
+    source.ref !== null
+  );
+}
+
+/**
  * The sentence a toast or panel prints for what the host actually did.
  * `gap` is the host's own words; nothing here softens them.
  */
@@ -276,6 +332,31 @@ export function describeAgentsSetup(result: ProjectAgentsInitResult): string {
     return `Repositories ready: ${result.codeRepoId} (code) and ${result.agentsRepoId} (${seed}); the project's roles come from ${result.agentsRepoId} on ${result.branch}.${agents}${tail}`;
   }
   return `Not finished: ${result.gap ?? "unknown"}. Finish setup from Project settings → Packs.${tail}`;
+}
+
+/**
+ * What a migration moved, for the panel that asked for one. Empty string
+ * when this run migrated nothing, so a caller can print it unconditionally.
+ */
+export function describeMigrationOutcome(
+  result: Pick<
+    ProjectAgentsInitResult,
+    "migratedFrom" | "migratedRoles" | "migrationNotes" | "sourceConflict"
+  >,
+): string {
+  if (!result.migratedFrom) return "";
+  const roles =
+    result.migratedRoles.length > 0
+      ? `${result.migratedRoles.length} roles converted (${result.migratedRoles.join(", ")})`
+      : "no roles converted";
+  const moved = result.sourceConflict
+    ? "the project was NOT re-pointed: its source moved while this ran"
+    : "the project now reads its roles from this repository";
+  const notes =
+    result.migrationNotes.length > 0
+      ? ` ${result.migrationNotes.join(" ")}`
+      : "";
+  return `From ${result.migratedFrom}: ${roles}; ${moved}.${notes}`;
 }
 
 /**

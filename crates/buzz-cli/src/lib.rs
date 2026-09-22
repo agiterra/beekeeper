@@ -2588,6 +2588,22 @@ pub enum PackCmd {
         #[arg(long)]
         out: Option<PathBuf>,
     },
+    /// Convert a pack-layout role source (one directory per role) into the
+    /// flat agents-repository layout, so a project created before the pivot
+    /// can be moved without rewriting what its roles say
+    Migrate {
+        /// The directory holding one pack directory per role — a packs
+        /// repository's `personas/roles`, or whatever its kind:30624 names
+        #[arg(long)]
+        from: PathBuf,
+        /// Where to write the agents repository. Must be empty (a `.git`
+        /// directory is allowed): a conversion is a first commit
+        #[arg(long)]
+        into: PathBuf,
+        /// `team.yml`'s name — normally the project slug
+        #[arg(long)]
+        name: String,
+    },
     /// Copy a shipped template's text and skills into a project so the
     /// project owns and evolves them (spec § 3.2)
     CloneTemplate {
@@ -4846,6 +4862,21 @@ pub enum AgentsRepoCmd {
         #[arg(long)]
         templates: Option<std::path::PathBuf>,
     },
+    /// Validate a working tree the way `commit` validates the tree it is
+    /// about to push: the manifest, every live role, its skills,
+    /// `actions.yml`, and any ceiling `team.yml` puts on a file
+    Check {
+        /// The agents repository's root (default: the working directory)
+        #[arg(long, default_value = ".")]
+        root: std::path::PathBuf,
+        /// The shipped templates directory (default: `BUZZ_TEMPLATES_DIR` or
+        /// the nearest `personas/templates` above the working directory)
+        #[arg(long)]
+        templates: Option<std::path::PathBuf>,
+        /// The project coordinate `actions.yml` is parsed against
+        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        project: Option<String>,
+    },
     /// Repair: mark drafts committed for a commit that is already on main
     #[command(name = "commit-record")]
     CommitRecord {
@@ -5303,6 +5334,18 @@ fn normalize_auth_tag_input(input: &str) -> String {
 async fn run(cli: Cli) -> Result<(), CliError> {
     let relay_url = client::normalize_relay_url(&cli.relay);
 
+    // `agents-repo check` reads a directory and nothing else: no relay, and
+    // no key. A seat gating its own push before `git push` has both, but a
+    // person checking a clone on a laptop need not.
+    if let Cmd::AgentsRepo(AgentsRepoCmd::Check {
+        ref root,
+        ref templates,
+        ref project,
+    }) = cli.command
+    {
+        return commands::agents_repo::check_tree(root, templates.as_deref(), project.as_deref());
+    }
+
     // Pack commands are local-only — no relay connection needed.
     if let Cmd::Pack(ref sub) = cli.command {
         return match sub {
@@ -5321,6 +5364,7 @@ async fn run(cli: Cli) -> Result<(), CliError> {
                 app_version,
                 out.as_deref(),
             ),
+            PackCmd::Migrate { from, into, name } => commands::pack::cmd_migrate(from, into, name),
             PackCmd::CloneTemplate {
                 template,
                 templates,
@@ -6510,7 +6554,13 @@ mod tests {
         assert_eq!(names(&cmd, "upload"), vec!["file"]);
         assert_eq!(
             names(&cmd, "pack"),
-            vec!["clone-template", "compose", "inspect", "validate"]
+            vec![
+                "clone-template",
+                "compose",
+                "inspect",
+                "migrate",
+                "validate"
+            ]
         );
         assert_eq!(
             names(&cmd, "moderation"),

@@ -13517,6 +13517,7 @@ export function maybeInstallE2eTauriMocks() {
         const input = (payload ?? {}) as {
           projectRef?: string;
           checkoutParent?: string | null;
+          migrate?: { expectedSourceId: string; convert: boolean } | null;
         };
         window.__BUZZ_E2E_PROJECT_AGENTS_INIT_CALLS__ ??= [];
         window.__BUZZ_E2E_PROJECT_AGENTS_INIT_CALLS__.push({ ...input });
@@ -13539,6 +13540,13 @@ export function maybeInstallE2eTauriMocks() {
           checkoutError: null,
           rosterAdded: [],
           rosterError: null,
+          // A migration's facts default to "this was not a migration", so a
+          // spec that asks for one has to say so.
+          migratedFrom: null,
+          migratedRoles: [],
+          migrationNotes: [],
+          sourceConflict: false,
+          codeRepoAdopted: false,
           ...result,
         };
       }

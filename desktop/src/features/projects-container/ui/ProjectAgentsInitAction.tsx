@@ -11,6 +11,7 @@ import {
   describeAgentsSetup,
   describeCheckoutOutcome,
   describeCodeSeedOutcome,
+  describeMigrationOutcome,
   describeRosterOutcome,
   projectAgentsInit,
   type ProjectAgentsInitResult,
@@ -35,11 +36,18 @@ import {
  * so, never re-chosen here (Project settings → This computer owns it).
  */
 export function ProjectAgentsInitAction({
+  migrateFrom,
   onCancel,
   onRan,
   projectRef,
   projectSlug,
 }: {
+  /**
+   * Set when this project's roles live somewhere else: the source the panel
+   * READ, which the host is asked to replace and publishes conditionally
+   * on. `null` for an ordinary create or finish.
+   */
+  migrateFrom?: { eventId: string; repo: string; path: string } | null;
   onCancel: () => void;
   onRan: () => void;
   projectRef: string;
@@ -75,6 +83,9 @@ export function ProjectAgentsInitAction({
       const ran = await projectAgentsInit({
         projectRef,
         checkoutParent: askForFolder ? checkoutParent : null,
+        migrate: migrateFrom
+          ? { expectedSourceId: migrateFrom.eventId, convert: true }
+          : null,
       });
       setResult(ran);
       if (ran.checkoutPath) {
@@ -99,6 +110,21 @@ export function ProjectAgentsInitAction({
       className="flex flex-col gap-2 rounded-md border border-border/60 p-3"
       data-testid="project-agents-init-panel"
     >
+      {migrateFrom ? (
+        <p
+          className="text-xs text-muted-foreground"
+          data-testid="project-agents-init-migrate-note"
+        >
+          This project&apos;s roles live in {migrateFrom.repo} at{" "}
+          {migrateFrom.path}, which is not its own agents repository. This
+          creates {projectSlug}
+          -beekeeper-agents, copies those roles into it — each role&apos;s text
+          and every skill, unchanged — and points the project at the new
+          repository. The repository it points at today is only read; nothing
+          there is changed. If someone re-points the project while this runs,
+          the move is refused and nothing is overwritten.
+        </p>
+      ) : null}
       <p className="text-xs text-muted-foreground">
         Announces the code repository and the agents repository under your key,
         seeds the code repository with one commit and the agents repository from
@@ -132,6 +158,14 @@ export function ProjectAgentsInitAction({
           <p className={result.complete ? "" : "text-destructive"}>
             {describeAgentsSetup(result)}
           </p>
+          {result.migratedFrom ? (
+            <p
+              className={result.sourceConflict ? "text-destructive" : ""}
+              data-testid="project-agents-init-migration"
+            >
+              {describeMigrationOutcome(result)}
+            </p>
+          ) : null}
           <dl className="grid grid-cols-[auto,1fr] gap-x-3 gap-y-0.5 font-mono text-2xs">
             <dt className="text-muted-foreground">code</dt>
             <dd className="truncate">{result.codeRepoRef}</dd>

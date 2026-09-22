@@ -473,6 +473,10 @@ pub struct PackInitRequest<'a> {
     /// The template catalog the flat seed references; resolved as
     /// `bee pack compose` resolves it when `None`.
     pub templates: Option<&'a Path>,
+    /// The kind:30624 event id this run replaces. Without it a project that
+    /// already has a source refuses; with it the new source is published
+    /// conditionally on that exact event, so one that moved is a refusal.
+    pub expect_source: Option<&'a str>,
     /// Print the plan and touch nothing.
     pub dry_run: bool,
 }
@@ -552,19 +556,43 @@ pub async fn cmd_init(client: &BuzzClient, request: &PackInitRequest<'_>) -> Res
         }));
     }
 
-    // A second pack source would silently re-point every seat on the project.
-    // Replacing one is a deliberate `set-source`, never a side effect of init.
-    if let Some((existing, _)) = query_pack_sources(client, &coordinate)
+    // A second pack source would silently re-point every seat on the
+    // project. Replacing one is deliberate: either `bee packs set-source`,
+    // or this command with `--expect-source <the event you read>`.
+    if let Some((existing, event)) = query_pack_sources(client, &coordinate)
         .await?
         .into_iter()
         .next()
     {
+        let existing_id = event
+            .get("id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        match request.expect_source {
+            Some(expected) if expected == existing_id => {}
+            Some(expected) => {
+                return Err(CliError::Usage(format!(
+                    "{coordinate}'s pack source is event {existing_id}, not the {expected} this \
+                     run was told to replace; someone re-pointed it since you read it — read it \
+                     again and decide against what is there now"
+                )));
+            }
+            None => {
+                return Err(CliError::Usage(format!(
+                    "{coordinate} already has a pack source ({} at {} {}, event {existing_id}); \
+                     use `bee packs set-source`, or pass --expect-source {existing_id} to replace \
+                     exactly that one",
+                    existing.repo(),
+                    existing.pin().tag_name(),
+                    existing.pin().value()
+                )));
+            }
+        }
+    } else if let Some(expected) = request.expect_source {
         return Err(CliError::Usage(format!(
-            "{coordinate} already has a pack source ({} at {} {}); use `bee packs set-source` to \
-             replace it deliberately",
-            existing.repo(),
-            existing.pin().tag_name(),
-            existing.pin().value()
+            "{coordinate} has no pack source, so there is nothing to replace; drop \
+             --expect-source {expected}"
         )));
     }
 
@@ -657,13 +685,23 @@ pub async fn cmd_init(client: &BuzzClient, request: &PackInitRequest<'_>) -> Res
         }
         _ => format!("seeded by bee packs init from {}", seed.display()),
     };
-    let draft = build_project_pack_source(
-        &coordinate,
-        &repo_coordinate,
-        &pin,
-        Some(&path),
-        Some(&note),
-    )
+    let draft = match request.expect_source {
+        None => build_project_pack_source(
+            &coordinate,
+            &repo_coordinate,
+            &pin,
+            Some(&path),
+            Some(&note),
+        ),
+        Some(expected) => build_conditional_project_pack_source(
+            &coordinate,
+            &repo_coordinate,
+            &pin,
+            Some(&path),
+            Some(&note),
+            Some(expected),
+        ),
+    }
     .map_err(CliError::Usage)?;
     let tags: Vec<Tag> = draft
         .tags

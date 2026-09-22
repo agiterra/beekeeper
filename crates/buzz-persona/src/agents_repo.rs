@@ -183,7 +183,7 @@ pub fn validate_root(
     } else {
         match actions {
             None => ActionsCheck::NotChecked(
-                "this committer has no actions parser; `bee agents-repo commit` checks it"
+                "no actions parser was supplied; `bee agents-repo commit`, and `check` with --project, parse it against the project coordinate"
                     .to_owned(),
             ),
             Some(parser) => match std::fs::read_to_string(&actions_path) {

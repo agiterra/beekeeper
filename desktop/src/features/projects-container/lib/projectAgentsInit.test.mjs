@@ -7,7 +7,9 @@ import {
   describeAgentsSetup,
   describeCheckoutOutcome,
   describeCodeSeedOutcome,
+  describeMigrationOutcome,
   describeRosterOutcome,
+  isProjectAgentsRepoSource,
 } from "./projectAgentsInit.ts";
 
 const OWNER = "a".repeat(64);
@@ -34,6 +36,11 @@ const COMPLETE = {
   pushRecordEventId: "f".repeat(64),
   sourceEventId: "1".repeat(64),
   sourceExisted: false,
+  migratedFrom: null,
+  migratedRoles: [],
+  migrationNotes: [],
+  sourceConflict: false,
+  codeRepoAdopted: false,
   publicationError: null,
   commitIdentityName: "Beekeeper aaaaaaaa",
   commitIdentityEmail: "aaaaaaaa@beekeeper.local",
@@ -206,4 +213,53 @@ test("the checkout, code seed and roster sentences say what the host did, or why
     }),
     "0 agents added to the project roster. Roster error: restricted: project write access required.",
   );
+});
+
+test("isProjectAgentsRepoSource tells the three states apart", () => {
+  const own = {
+    repo: `30617:${OWNER}:demo-beekeeper-agents`,
+    path: ".",
+    ref: "refs/heads/main",
+  };
+  assert.equal(isProjectAgentsRepoSource(own, "demo"), true);
+  // No source at all: the project has never been pointed anywhere.
+  assert.equal(isProjectAgentsRepoSource(null, "demo"), false);
+  // A pack-layout source under a sub-path, which is what a project created
+  // before the pivot has.
+  assert.equal(
+    isProjectAgentsRepoSource(
+      {
+        repo: `30617:${OWNER}:agiterra-packs`,
+        path: "personas/roles",
+        ref: "refs/heads/main",
+      },
+      "bee-keeper",
+    ),
+    false,
+  );
+  // The right layout, but another project's repository.
+  assert.equal(isProjectAgentsRepoSource({ ...own }, "other"), false);
+  // A sha pin: drafts and seats follow a branch, so this is not the state
+  // "Finish repository setup" can finish.
+  assert.equal(isProjectAgentsRepoSource({ ...own, ref: null }, "demo"), false);
+});
+
+test("describeMigrationOutcome says what moved, and says when nothing was re-pointed", () => {
+  assert.equal(describeMigrationOutcome(COMPLETE), "");
+  const migrated = {
+    migratedFrom: `30617:${OWNER}:agiterra-packs`,
+    migratedRoles: ["builder", "lead"],
+    migrationNotes: ["lead: the frontmatter's skills did not survive."],
+    sourceConflict: false,
+  };
+  const sentence = describeMigrationOutcome(migrated);
+  assert.match(sentence, /agiterra-packs/);
+  assert.match(sentence, /2 roles converted \(builder, lead\)/);
+  assert.match(sentence, /now reads its roles from this repository/);
+  assert.match(sentence, /did not survive/);
+  const refused = describeMigrationOutcome({
+    ...migrated,
+    sourceConflict: true,
+  });
+  assert.match(refused, /NOT re-pointed/);
 });

@@ -76,6 +76,12 @@ pub enum PacksCmd {
         /// above the working directory
         #[arg(long)]
         templates: Option<PathBuf>,
+        /// Replace the project's existing role source instead of refusing:
+        /// the 64-hex kind:30624 event id you read. The new source is
+        /// published conditionally on it, so a source someone re-pointed
+        /// meanwhile is refused rather than overwritten
+        #[arg(long)]
+        expect_source: Option<String>,
         /// Print the plan and touch nothing
         #[arg(long)]
         dry_run: bool,
@@ -160,6 +166,7 @@ pub(crate) async fn dispatch(sub: PacksCmd, client: &BuzzClient) -> Result<(), C
             path,
             layout,
             templates,
+            expect_source,
             dry_run,
         } => {
             let layout = super::packs::PackLayout::parse(&layout)?;
@@ -172,6 +179,7 @@ pub(crate) async fn dispatch(sub: PacksCmd, client: &BuzzClient) -> Result<(), C
                     path: path.as_deref(),
                     layout,
                     templates: templates.as_deref(),
+                    expect_source: expect_source.as_deref(),
                     dry_run,
                 },
             )

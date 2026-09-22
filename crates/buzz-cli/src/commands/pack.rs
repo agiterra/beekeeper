@@ -241,6 +241,42 @@ pub fn cmd_compose(
     Ok(())
 }
 
+/// Run `bee pack migrate --from <pack tree> --into <dir> --name <slug>`.
+///
+/// Turns one directory per role into the flat agents-repository layout,
+/// carrying each persona's body and every skill verbatim
+/// (`buzz_persona::migrate`). Local only: nothing is announced, pushed or
+/// re-pointed here. The relay half is two existing commands — `bee packs
+/// init --from <dir> --layout flat --expect-source <id>` for a project that
+/// already has a source, or plain `bee packs init --from <dir>` for one
+/// that does not.
+///
+/// What it prints is what a reader needs to check the move: the roles, the
+/// skills that came with each, and anything the layout change could not
+/// carry (today, a persona's frontmatter `skills:` list, which the flat
+/// layout derives from the directory instead).
+pub fn cmd_migrate(from: &Path, into: &Path, name: &str) -> Result<(), CliError> {
+    let report = buzz_persona::migrate::convert_pack_tree(from, into, name)
+        .map_err(|error| CliError::Usage(error.to_string()))?;
+    println!(
+        "{}",
+        serde_json::json!({
+            "from": from.display().to_string(),
+            "into": into.display().to_string(),
+            "name": name,
+            "lead": report.lead,
+            "roles": report.roles.iter().map(|role| serde_json::json!({
+                "role": role.role,
+                "persona": role.persona,
+                "skills": role.skills,
+                "dropped_keys": role.dropped_keys,
+            })).collect::<Vec<_>>(),
+            "files": report.files,
+        })
+    );
+    Ok(())
+}
+
 /// Run `bee pack clone-template <name>@<range> [--templates <dir>] [--into <root>]`.
 ///
 /// Spec § 3.2: a project that wants to own a shipped template's text copies

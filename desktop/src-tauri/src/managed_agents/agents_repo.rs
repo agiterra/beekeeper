@@ -17,8 +17,12 @@
 //!    so an id already announced by *another* key refuses the whole command,
 //!    naming the id and the owner, before anything is signed. One announced
 //!    by the viewer is the existing repository, reused. A project that
-//!    already has a pack source naming a *different* repository refuses too:
-//!    re-pointing every seat is a deliberate `bee packs set-source`.
+//!    already has a pack source naming a *different* repository refuses too,
+//!    unless the caller asked for a **migration** and named the exact source
+//!    event it saw: re-pointing every seat is deliberate, never a side
+//!    effect. The head's own `a` references are read here as well, so a
+//!    project created before the pivot keeps the code repository it already
+//!    has instead of being given an empty second one under its slug.
 //! 2. **Announce** the code repository, then **seed** it with one commit on
 //!    `refs/heads/main` — a `README.md` naming the project and where its
 //!    roles and plans live — and **push** it. A repository with no commit
@@ -27,13 +31,19 @@
 //!    already holds a push record for it. A failure here is disclosed and
 //!    the sequence continues: the announcement stands.
 //! 3. **Announce** the agents repository.
-//! 4. **Seed** it in this host's packs cache from this build's shipped role
-//!    templates by reference (`buzz_persona::seed`), one commit authored as
-//!    this host's identity, and **push** `refs/heads/main`. Skipped when the
+//! 4. **Seed** it in this host's packs cache — from this build's shipped role
+//!    templates by reference (`buzz_persona::seed`), or, when migrating a
+//!    pack-layout source, from that source's own roles converted into the
+//!    flat layout (`buzz_persona::migrate`) — one commit authored as this
+//!    host's identity, and **push** `refs/heads/main`. Skipped when the
 //!    relay already holds a push record for it. A seed or push failure after
 //!    this run's own announcement withdraws that announcement, as the packs
 //!    flow does.
-//! 5. **Publish** the kind:30624 — only once the push landed.
+//! 5. **Publish** the kind:30624 — only once the push landed. A migration
+//!    publishes it *conditionally* on the source event it was asked to
+//!    replace, so a source that moved while the seed was being built leaves
+//!    everything standing and says so rather than overwriting a decision
+//!    nobody saw.
 //! 6. **Clone** the seeded code repository to `<checkout parent>/<slug>` and
 //!    **record** it as the project's folder (`by_project`, ledger 174) — the
 //!    folder a founded session pre-fills and a lead's hires are cut from. A
@@ -66,7 +76,8 @@ use crate::managed_agents::packs_repo::{
 use crate::managed_agents::project_roster;
 use buzz_core_pkg::kind::KIND_PROJECT;
 use buzz_core_pkg::project_pack_source::{
-    decode_project_pack_source, PACK_PATH_ROOT, PROJECT_PACK_SOURCE_SCHEMA,
+    build_conditional_project_pack_source, decode_project_pack_source, PackPin, PACK_PATH_ROOT,
+    PROJECT_PACK_SOURCE_SCHEMA,
 };
 use buzz_persona_pkg::template::TemplateCatalog;
 
@@ -81,6 +92,14 @@ const SEED_COMMIT_MESSAGE: &str = "seed the team from Beekeeper's shipped role t
 
 /// Message on the one commit the code seed writes.
 const CODE_SEED_COMMIT_MESSAGE: &str = "seed the project's code repository";
+
+/// Message on the one commit a migration's conversion writes.
+const MIGRATE_COMMIT_MESSAGE: &str =
+    "convert the project's roles from its pack-layout source into this repository";
+
+/// The relay's refusal code when a conditional source's expectation did not
+/// match what it holds (`crates/buzz-relay/src/handlers/ingest_error.rs`).
+const PACK_SOURCE_CONFLICT: &str = "PACK_SOURCE_CONFLICT";
 
 /// `<slug>-beekeeper-agents`, the suffix kept whole inside the 64-byte id.
 pub fn default_agents_repo_id(project_slug: &str) -> Result<String, String> {
@@ -103,6 +122,10 @@ pub struct ProjectAgentsInit {
     pub code_announcement_event_id: Option<String>,
     /// The code repository was already announced under the viewer's key.
     pub code_repo_existed: bool,
+    /// The code repository named by the project's own head rather than
+    /// derived from its slug — a project created before the pivot keeps the
+    /// repository it already has (`false` when the slug was used).
+    pub code_repo_adopted: bool,
     /// The code repository's seed commit (its `README.md` on `main`), or
     /// `null` when seeding failed or was skipped.
     pub code_seed_commit_sha: Option<String>,
@@ -145,6 +168,18 @@ pub struct ProjectAgentsInit {
     pub source_event_id: Option<String>,
     /// The project already had a pack source naming the agents repository.
     pub source_existed: bool,
+    /// The repository coordinate this run migrated the project *off*, when
+    /// it was asked to; `null` for an ordinary create or finish.
+    pub migrated_from: Option<String>,
+    /// The roles converted out of that repository, ascending.
+    pub migrated_roles: Vec<String>,
+    /// What the conversion could not carry across, one sentence per role;
+    /// empty when nothing was dropped.
+    pub migration_notes: Vec<String>,
+    /// The relay refused the conditional source because the project's
+    /// source had moved since the caller read it. Everything else stands;
+    /// nothing was re-pointed.
+    pub source_conflict: bool,
     /// The relay's refusal of a published event, when one was refused.
     pub publication_error: Option<String>,
     /// The identity the seed commit was (or would have been) authored as.
@@ -198,6 +233,7 @@ impl ProjectAgentsInit {
             code_repo_id: code_repo_id.to_string(),
             code_announcement_event_id: None,
             code_repo_existed: false,
+            code_repo_adopted: false,
             code_seed_commit_sha: None,
             code_seed_skipped: false,
             code_seed_error: None,
@@ -216,6 +252,10 @@ impl ProjectAgentsInit {
             push_record_event_id: None,
             source_event_id: None,
             source_existed: false,
+            migrated_from: None,
+            migrated_roles: Vec::new(),
+            migration_notes: Vec::new(),
+            source_conflict: false,
             publication_error: None,
             commit_identity_name: identity.0,
             commit_identity_email: identity.1,
@@ -289,10 +329,19 @@ impl ProjectAgentsInit {
                 self.publication_error.as_deref().unwrap_or("not reached")
             ))
         } else if !source_ok {
-            Some(format!(
-                "pack source not set: {}",
-                self.publication_error.as_deref().unwrap_or("not reached")
-            ))
+            Some(if self.source_conflict {
+                format!(
+                    "the project's role source moved while this ran, so it was not re-pointed at \
+                     {}; read the source again and decide against what is there now. Everything \
+                     else landed",
+                    self.agents_repo_id
+                )
+            } else {
+                format!(
+                    "pack source not set: {}",
+                    self.publication_error.as_deref().unwrap_or("not reached")
+                )
+            })
         } else if !checkout_ok {
             Some(format!(
                 "code repository {} not checked out as the project's folder: {}",
@@ -314,11 +363,26 @@ enum SeedOutcome {
     Seeded {
         commit: String,
         roles: Vec<String>,
+        /// What a conversion could not carry across, one sentence per role;
+        /// empty for an ordinary seed.
+        notes: Vec<String>,
         push_error: Option<String>,
     },
     SeedFailed {
         seed_error: String,
     },
+}
+
+/// The role source a migration is moving the project off: enough to sync
+/// that repository and find its roles, plus the event the re-point is
+/// conditional on.
+struct LegacySource {
+    repo: String,
+    git_ref: Option<String>,
+    sha: Option<String>,
+    path: String,
+    event_id: String,
+    convert: bool,
 }
 
 /// How [`project_agents_init_with_paths`] reaches this host's disk and git —
@@ -333,6 +397,69 @@ pub(crate) struct ProjectAgentsInitOptions {
     /// the given keys — the credentialed git in production
     /// (`build_git_auth_config_for_keys`, ledger 168).
     pub git_auth: fn(&Keys) -> Result<GitAuthConfig, String>,
+    /// Set when the caller asked to move a project off a source that names
+    /// another repository. Absent, such a project refuses.
+    pub migrate: Option<MigrateFromSource>,
+}
+
+/// What a screen or the CLI sends to ask for a migration.
+///
+/// Separate from [`MigrateFromSource`] because this crosses the IPC
+/// boundary: it is unvalidated until [`MigrateFromSource::try_from`] has
+/// looked at it.
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MigrateRequest {
+    /// The kind:30624 the caller read and decided against.
+    pub expected_source_id: String,
+    /// Convert the legacy roles rather than seeding fresh ones. Defaults to
+    /// `true`: a migration that silently replaced a project's roles with
+    /// this build's templates would be the worst possible default.
+    #[serde(default = "default_convert")]
+    pub convert: bool,
+}
+
+const fn default_convert() -> bool {
+    true
+}
+
+impl TryFrom<MigrateRequest> for MigrateFromSource {
+    type Error = String;
+
+    fn try_from(request: MigrateRequest) -> Result<Self, Self::Error> {
+        let expected_source_id = request.expected_source_id.trim().to_owned();
+        if expected_source_id.len() != 64
+            || !expected_source_id
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err(format!(
+                "the source event to replace must be 64 lowercase hex characters, got {:?}",
+                request.expected_source_id
+            ));
+        }
+        Ok(Self {
+            expected_source_id,
+            convert: request.convert,
+        })
+    }
+}
+
+/// A caller's deliberate instruction to re-point a project's role source at
+/// its own agents repository (spec § 4.11, legacy projects).
+///
+/// The expected event id is the one the caller *observed*: a migration is a
+/// decision about a specific record, so a source that changed underneath is
+/// a conflict the relay refuses rather than a race this host wins.
+#[derive(Clone, Debug)]
+pub(crate) struct MigrateFromSource {
+    /// The kind:30624 event this migration replaces, 64 lowercase hex.
+    pub expected_source_id: String,
+    /// Convert the legacy source's roles into the new repository instead of
+    /// seeding it from the shipped templates. `false` starts the project's
+    /// team over from this build's templates, which is a different decision
+    /// and is never the default.
+    pub convert: bool,
 }
 
 /// Where a checkout was recorded — the command writes `by_project`; tests
@@ -353,6 +480,7 @@ pub async fn project_agents_init(
     state: State<'_, AppState>,
     project_ref: String,
     checkout_parent: Option<String>,
+    migrate: Option<MigrateRequest>,
 ) -> Result<ProjectAgentsInit, String> {
     let project = project_ref.trim().to_string();
     parse_project_coordinate(&project)?;
@@ -380,6 +508,7 @@ pub async fn project_agents_init(
         checkout_parent,
         recorded_checkout,
         git_auth: crate::commands::project_git_exec::build_git_auth_config_for_keys,
+        migrate: migrate.map(MigrateFromSource::try_from).transpose()?,
     };
     let record_app = app.clone();
     let record_project = project.clone();
@@ -579,19 +708,37 @@ pub(crate) async fn project_agents_init_with_paths(
     packs_cache::parse_repo_coordinate(&format!("30617:{viewer}:{agents_repo_id}"))?;
     let relay_http =
         crate::relay::relay_http_base_url(&crate::relay::relay_ws_url_with_override(state));
-    let agents_clone_url = packs_cache::packs_clone_url(&relay_http, &viewer, &agents_repo_id);
-    let code_clone_url = packs_cache::packs_clone_url(&relay_http, &viewer, &code_repo_id);
     let agents_repo = format!("30617:{viewer}:{agents_repo_id}");
 
-    // Step 1 — preflight, community-wide. The project head rides along for
-    // its name (the README's first line) — absent is fine, the slug stands.
+    // Step 1a — the project's own record and the source it points at now.
+    // The head is read first because it decides which code repository this
+    // project has: one created before the pivot names its own, under an id
+    // that is not the slug, and giving it a second empty one would strand
+    // the folder every seat is cut from (ledger 175).
+    let head_facts = crate::relay::query_relay(
+        state,
+        &[
+            serde_json::json!({ "kinds": [KIND_PROJECT_PACK_SOURCE], "#d": [project], "limit": 1 }),
+            serde_json::json!({ "kinds": [KIND_PROJECT], "authors": [owner], "#d": [slug], "limit": 8 }),
+        ],
+    )
+    .await
+    .map_err(|error| format!("could not read the relay before creating repositories: {error}"))?;
+    let head = newest_project_head(&head_facts, &owner, &slug);
+    let project_name = project_roster::project_name(head, &slug);
+    let adopted = adopted_code_repo_id(head, &viewer, &agents_repo_id);
+    let code_repo_adopted = adopted.is_some();
+    let code_repo_id = adopted.unwrap_or(code_repo_id);
+    let agents_clone_url = packs_cache::packs_clone_url(&relay_http, &viewer, &agents_repo_id);
+    let code_clone_url = packs_cache::packs_clone_url(&relay_http, &viewer, &code_repo_id);
+    packs_cache::parse_repo_coordinate(&format!("30617:{viewer}:{code_repo_id}"))?;
+
+    // Step 1b — both ids, community-wide.
     let preflight = crate::relay::query_relay(
         state,
         &[
             serde_json::json!({ "kinds": [KIND_REPO_ANNOUNCEMENT], "#d": [code_repo_id], "limit": 8 }),
             serde_json::json!({ "kinds": [KIND_REPO_ANNOUNCEMENT], "#d": [agents_repo_id], "limit": 8 }),
-            serde_json::json!({ "kinds": [KIND_PROJECT_PACK_SOURCE], "#d": [project], "limit": 1 }),
-            serde_json::json!({ "kinds": [KIND_PROJECT], "authors": [owner], "#d": [slug], "limit": 8 }),
         ],
     )
     .await
@@ -623,29 +770,62 @@ pub(crate) async fn project_agents_init_with_paths(
         }
     }
     let mut source_existed = false;
-    if let Some(existing) = preflight
+    // Set when this run is a migration: the repository the project points
+    // at today, and where its roles are inside it.
+    let mut migrating: Option<LegacySource> = None;
+    if let Some(existing) = head_facts
         .iter()
         .find(|event| event.kind == Kind::Custom(KIND_PROJECT_PACK_SOURCE))
     {
+        let existing_id = existing.id.to_hex();
         match decode_project_pack_source(existing) {
             Ok(source) if source.repo() == agents_repo => source_existed = true,
-            Ok(source) => {
-                return Err(format!(
-                    "{project} already has a pack source naming {}; replacing it re-points every \
-                     seat on the project, which is a deliberate `bee packs set-source` — nothing \
-                     was changed",
-                    source.repo()
-                ));
-            }
+            Ok(source) => match &options.migrate {
+                Some(request) if request.expected_source_id == existing_id => {
+                    let (git_ref, sha) = match source.pin() {
+                        PackPin::Ref(name) => (Some(name.clone()), None),
+                        PackPin::Sha(sha) => (None, Some(sha.clone())),
+                    };
+                    migrating = Some(LegacySource {
+                        repo: source.repo().to_string(),
+                        git_ref,
+                        sha,
+                        path: source.path().to_string(),
+                        event_id: existing_id,
+                        convert: request.convert,
+                    });
+                }
+                Some(request) => {
+                    return Err(format!(
+                        "{project}'s pack source is event {existing_id}, not the {} this migration \
+                         was asked to replace; someone re-pointed it since you read it — read it \
+                         again and decide against what is there now. Nothing was changed",
+                        request.expected_source_id
+                    ));
+                }
+                None => {
+                    return Err(format!(
+                        "{project} already has a pack source naming {}; replacing it re-points \
+                         every seat on the project, which is a deliberate `bee packs set-source` \
+                         or the **Move this project's roles into an agents repository** button in \
+                         Project settings → Packs — nothing was changed",
+                        source.repo()
+                    ));
+                }
+            },
             Err(error) => {
                 return Err(format!(
                     "{project} has a pack source this host cannot read ({error}); nothing was changed"
                 ));
             }
         }
+    } else if options.migrate.is_some() {
+        return Err(format!(
+            "{project} has no pack source to migrate: it has never been pointed at a role \
+             repository, so **Create the project's repositories** is the action, not a migration. \
+             Nothing was changed"
+        ));
     }
-    let project_name =
-        project_roster::project_name(newest_project_head(&preflight, &owner, &slug), &slug);
 
     let identity = resolve_app_commit_identity(state, &viewer).await;
     let mut result = ProjectAgentsInit::started(
@@ -657,6 +837,7 @@ pub(crate) async fn project_agents_init_with_paths(
         identity.clone(),
     );
     result.code_repo_existed = code_existed;
+    result.code_repo_adopted = code_repo_adopted;
     result.agents_repo_existed = agents_existed;
     result.source_existed = source_existed;
 
@@ -764,13 +945,42 @@ pub(crate) async fn project_agents_init_with_paths(
         let seed_url = agents_clone_url.clone();
         let seed_slug = slug.clone();
         let git_auth = options.git_auth;
+        // A migration fills the new repository from the roles the project
+        // already has; an ordinary run seeds it from the shipped templates.
+        let legacy = migrating
+            .as_ref()
+            .filter(|source| source.convert)
+            .map(|source| {
+                (
+                    packs_cache::ProjectPackSource {
+                        repo: source.repo.clone(),
+                        git_ref: source.git_ref.clone(),
+                        sha: source.sha.clone(),
+                        path: source.path.clone(),
+                    },
+                    relay_http.clone(),
+                    packs_root.clone(),
+                )
+            });
         let seeded: SeedOutcome =
             tokio::task::spawn_blocking(move || -> Result<SeedOutcome, String> {
                 let mut auth = git_auth(&seed_keys)?;
                 auth.set_commit_identity(identity.0, identity.1);
-                match seed_agents_checkout(&checkout, &catalog, &seed_slug, &auth) {
+                let written = match legacy {
+                    Some((source, relay_http, packs_root)) => convert_agents_checkout(
+                        &checkout,
+                        &source,
+                        &relay_http,
+                        &packs_root,
+                        &seed_slug,
+                        &auth,
+                    ),
+                    None => seed_agents_checkout(&checkout, &catalog, &seed_slug, &auth)
+                        .map(|(commit, roles)| (commit, roles, Vec::new())),
+                };
+                match written {
                     Err(seed_error) => Ok(SeedOutcome::SeedFailed { seed_error }),
-                    Ok((commit, roles)) => {
+                    Ok((commit, roles, notes)) => {
                         let push_error = run_git(
                             &[
                                 "push",
@@ -786,6 +996,7 @@ pub(crate) async fn project_agents_init_with_paths(
                         Ok(SeedOutcome::Seeded {
                             commit,
                             roles,
+                            notes,
                             push_error,
                         })
                     }
@@ -798,10 +1009,15 @@ pub(crate) async fn project_agents_init_with_paths(
             SeedOutcome::Seeded {
                 commit,
                 roles,
+                notes,
                 push_error,
             } => {
                 result.seed_commit_sha = Some(commit);
-                result.roles = roles;
+                result.roles = roles.clone();
+                if migrating.as_ref().is_some_and(|source| source.convert) {
+                    result.migrated_roles = roles;
+                    result.migration_notes = notes;
+                }
                 result.pushed = push_error.is_none();
                 result.push_error = push_error;
             }
@@ -821,18 +1037,30 @@ pub(crate) async fn project_agents_init_with_paths(
         }
     }
 
-    // Step 5 — the source, only over a repository that holds the seed.
+    // Step 5 — the source, only over a repository that holds the seed. A
+    // migration re-points conditionally on the event it was asked to
+    // replace: a source that moved while this ran is the relay's conflict
+    // to refuse, not a race for this host to win.
     if result.pushed && !source_existed {
-        let source = build_agents_pack_source(&keys, &project, &agents_repo)?;
+        let source = match &migrating {
+            None => build_agents_pack_source(&keys, &project, &agents_repo)?,
+            Some(legacy) => {
+                result.migrated_from = Some(legacy.repo.clone());
+                build_migrated_pack_source(&keys, &project, &agents_repo, &legacy.event_id)?
+            }
+        };
         match crate::relay::submit_signed_event_with_keys(&source, state, &keys, None).await {
             Ok(_) => result.source_event_id = Some(source.id.to_hex()),
-            Err(error) => result.publication_error = Some(error),
+            Err(error) => {
+                result.source_conflict = error.contains(PACK_SOURCE_CONFLICT);
+                result.publication_error = Some(error);
+            }
         }
     }
 
     // Step 6 — the checkout, only over a code repository that holds a commit.
     if result.code_seeded() {
-        let target = options.checkout_parent.join(&slug);
+        let target = options.checkout_parent.join(&code_repo_id);
         // A recorded folder is reused only when it is a checkout of this
         // repository — and reused *through* the clone helper, which fetches
         // `main` into a clone cut while the repository was still empty
@@ -967,6 +1195,117 @@ fn commit_seed(checkout: &Path, message: &str, auth: &GitAuthConfig) -> Result<S
     Ok(run_git(&["rev-parse", "HEAD"], Some(checkout), auth)?
         .trim()
         .to_string())
+}
+
+/// The code repository the project's own head names, when it names one
+/// under the viewer's key that is not the agents repository.
+///
+/// A project created before the pivot has a code repository whose id is not
+/// its slug — Beekeeper's own project `bee-keeper` carries
+/// `agiterra-beekeeper`, Tank Loop carries `tankloop`. Deriving the id from
+/// the slug there would announce and seed a second, empty repository and
+/// then refuse the folder every seat is cut from as "not a checkout of
+/// `<slug>`" (ledger 175). `None` when the head names none, names only the
+/// agents repository, or names one under another key — this host can only
+/// push to its own.
+fn adopted_code_repo_id(
+    head: Option<&Event>,
+    viewer: &str,
+    agents_repo_id: &str,
+) -> Option<String> {
+    let prefix = format!("30617:{viewer}:");
+    head?.tags.iter().find_map(|tag| {
+        let parts = tag.as_slice();
+        if parts.first().map(String::as_str) != Some("a") {
+            return None;
+        }
+        let id = parts.get(1)?.strip_prefix(&prefix)?;
+        (!id.is_empty() && id != agents_repo_id).then(|| id.to_owned())
+    })
+}
+
+/// Sync the repository a legacy project points at, convert its roles into
+/// the flat layout in a fresh `checkout`, and commit that once.
+///
+/// Returns `(commit, roles, notes)`. The legacy repository is only read:
+/// the conversion writes into this host's cache directory for the *new*
+/// repository, and the old one keeps every byte it had.
+pub(crate) fn convert_agents_checkout(
+    checkout: &Path,
+    legacy: &packs_cache::ProjectPackSource,
+    relay_http: &str,
+    packs_root: &Path,
+    slug: &str,
+    auth: &GitAuthConfig,
+) -> Result<(String, Vec<String>, Vec<String>), String> {
+    let (owner, id) = packs_cache::parse_repo_coordinate(&legacy.repo)?;
+    let legacy_checkout = packs_cache::packs_checkout_dir(packs_root, &owner, &id);
+    let clone_url = packs_cache::packs_clone_url(relay_http, &owner, &id);
+    crate::commands::project_git_exec::validate_clone_url(&clone_url)?;
+    packs_cache::sync_packs_checkout(&legacy_checkout, &clone_url, legacy, auth).map_err(
+        |error| {
+            format!(
+                "could not read the roles this project points at ({}): {error}",
+                legacy.repo
+            )
+        },
+    )?;
+    let roles_dir = if buzz_core_pkg::project_pack_source::is_root_pack_path(&legacy.path) {
+        legacy_checkout.clone()
+    } else {
+        legacy_checkout.join(&legacy.path)
+    };
+
+    if checkout.exists() {
+        std::fs::remove_dir_all(checkout)
+            .map_err(|error| format!("clear {}: {error}", checkout.display()))?;
+    }
+    std::fs::create_dir_all(checkout)
+        .map_err(|error| format!("create {}: {error}", checkout.display()))?;
+    let report = buzz_persona_pkg::migrate::convert_pack_tree(&roles_dir, checkout, slug)
+        .map_err(|error| error.to_string())?;
+    let notes = report
+        .roles
+        .iter()
+        .filter(|role| !role.dropped_keys.is_empty())
+        .map(|role| {
+            format!(
+                "{}: the frontmatter's {} did not survive the layout change; every skill was \
+                 copied and still reaches the seat",
+                role.role,
+                role.dropped_keys.join(" and ")
+            )
+        })
+        .collect();
+    let commit = commit_seed(checkout, MIGRATE_COMMIT_MESSAGE, auth)?;
+    Ok((commit, report.role_slugs(), notes))
+}
+
+/// The kind:30624 a migration publishes: the same record
+/// [`build_agents_pack_source`] builds, conditional on the source event the
+/// caller decided against, so the relay refuses it if that moved.
+fn build_migrated_pack_source(
+    keys: &Keys,
+    project: &str,
+    repo: &str,
+    expected_source_id: &str,
+) -> Result<nostr::Event, String> {
+    let draft = build_conditional_project_pack_source(
+        project,
+        repo,
+        &PackPin::Ref(format!("refs/heads/{SEED_BRANCH}")),
+        Some(PACK_PATH_ROOT),
+        None,
+        Some(expected_source_id),
+    )?;
+    let mut tags = Vec::with_capacity(draft.tags.len());
+    for tag in draft.tags {
+        tags.push(Tag::parse(tag).map_err(|error| format!("invalid pack source tag: {error}"))?);
+    }
+    EventBuilder::new(Kind::Custom(KIND_PROJECT_PACK_SOURCE), draft.content)
+        .tags(tags)
+        .sign_with_keys(keys)
+        .map_err(|error| format!("sign the pack source: {error}"))
 }
 
 /// The kind:30624 for `project` naming its agents repository: the branch,

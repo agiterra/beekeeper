@@ -16,6 +16,7 @@ import {
   publishProjectPackSource,
   type ProjectPackSource,
 } from "../lib/projectPackSource";
+import { isProjectAgentsRepoSource } from "../lib/projectAgentsInit";
 import {
   defaultPacksRepoId,
   describeSeedOutcome,
@@ -101,6 +102,16 @@ export function ProjectPacksSettingsSection({
   const [activeAction, setActiveAction] = React.useState<
     "none" | "agents" | "create" | "use-existing"
   >("none");
+  // Three states, not two: no source, this project's own agents repository,
+  // or a source somewhere else — which is a project created before roles
+  // moved into their own repository, and only a deliberate migration moves
+  // it (spec § 4.11).
+  const source = sourceQuery.data ?? null;
+  const ownAgentsRepo = isProjectAgentsRepoSource(source, project.dtag);
+  const migrateFrom =
+    source && !ownAgentsRepo
+      ? { eventId: source.eventId, repo: source.repo, path: source.path }
+      : null;
   const invalidateSource = () =>
     void queryClient.invalidateQueries({
       queryKey: projectPackSourceQueryKey(project.address),
@@ -131,9 +142,11 @@ export function ProjectPacksSettingsSection({
                 size="sm"
                 variant="outline"
               >
-                {sourceQuery.data
-                  ? "Finish repository setup"
-                  : "Create the project's repositories"}
+                {sourceQuery.data === null || sourceQuery.data === undefined
+                  ? "Create the project's repositories"
+                  : ownAgentsRepo
+                    ? "Finish repository setup"
+                    : "Move this project's roles into an agents repository"}
               </Button>
               <Button
                 className="self-start"
@@ -165,6 +178,7 @@ export function ProjectPacksSettingsSection({
                   queryKey: managedAgentsQueryKey,
                 });
               }}
+              migrateFrom={migrateFrom}
               projectRef={project.address}
               projectSlug={project.dtag}
             />

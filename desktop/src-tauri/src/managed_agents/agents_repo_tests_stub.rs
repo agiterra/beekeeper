@@ -432,6 +432,95 @@ pub(super) fn project_head_json(keys: &Keys, slug: &str, name: &str) -> serde_js
     event_json(&event)
 }
 
+/// A project head naming `repo_id` as one of its repositories, the shape a
+/// project created before the pivot has.
+pub(super) fn project_head_with_repo_json(
+    keys: &Keys,
+    slug: &str,
+    name: &str,
+    repo_id: &str,
+) -> serde_json::Value {
+    let viewer = keys.public_key().to_hex();
+    let event = EventBuilder::new(Kind::Custom(KIND_PROJECT as u16), "")
+        .tags(vec![
+            Tag::parse(vec!["d".to_string(), slug.to_string()]).unwrap(),
+            Tag::parse(vec!["name".to_string(), name.to_string()]).unwrap(),
+            Tag::parse(vec!["a".to_string(), format!("30617:{viewer}:{repo_id}")]).unwrap(),
+        ])
+        .sign_with_keys(keys)
+        .expect("sign");
+    event_json(&event)
+}
+
+/// Build a pack-layout role source in a scratch directory and push it to
+/// the stub relay's git server as `repo_id` — what a project created before
+/// the pivot points at.
+pub(super) fn push_pack_layout_repo(
+    work: &Path,
+    relay_url: &str,
+    owner: &str,
+    repo_id: &str,
+    path: &str,
+    roles: &[&str],
+) {
+    let auth = {
+        let mut auth = build_test_git_auth_config().expect("auth");
+        auth.set_commit_identity("Test".to_string(), "test@beekeeper.local".to_string());
+        auth
+    };
+    for role in roles {
+        let dir = work.join(path).join(role);
+        std::fs::create_dir_all(dir.join(".plugin")).expect("plugin dir");
+        std::fs::write(
+            dir.join(".plugin/plugin.json"),
+            format!(
+                "{{\n  \"id\": \"com.beekeeper.crew.{role}\",\n  \"name\": \"{role}\",\n  \"version\": \"0.4.0\",\n  \"personas\": [\"personas/{role}.persona.md\"]\n}}\n"
+            ),
+        )
+        .expect("manifest");
+        std::fs::create_dir_all(dir.join("personas")).expect("personas dir");
+        std::fs::write(
+            dir.join(format!("personas/{role}.persona.md")),
+            format!(
+                "---\nname: {role}\nrole: {role}\ndisplay_name: \"{role}\"\ndescription: \"The project's own {role}.\"\nskills:\n  - \"./skills/{role}-skill/\"\n---\nThis is the project's own {role}, written long before the pivot.\n"
+            ),
+        )
+        .expect("persona");
+        let skill = dir.join("skills").join(format!("{role}-skill"));
+        std::fs::create_dir_all(&skill).expect("skill dir");
+        std::fs::write(
+            skill.join("SKILL.md"),
+            format!("---\nname: {role}-skill\ndescription: the {role}'s own skill\n---\nDo the {role} thing.\n"),
+        )
+        .expect("skill");
+    }
+    run_git(
+        &["init", "--quiet", "--initial-branch", "main"],
+        Some(work),
+        &auth,
+    )
+    .expect("init");
+    run_git(&["add", "--all"], Some(work), &auth).expect("add");
+    run_git(
+        &["commit", "--quiet", "-m", "the project's roles"],
+        Some(work),
+        &auth,
+    )
+    .expect("commit");
+    run_git(
+        &[
+            "push",
+            "--quiet",
+            "--",
+            &format!("{relay_url}/git/{owner}/{repo_id}"),
+            "HEAD:refs/heads/main",
+        ],
+        Some(work),
+        &auth,
+    )
+    .expect("push the legacy repository");
+}
+
 /// A relay-signed kind:39010 roster projection for `coordinate`.
 pub(super) fn roster_projection_json(
     coordinate: &str,
@@ -503,6 +592,28 @@ pub(super) async fn run_init(
     checkout_parent: PathBuf,
     recorded_checkout: Option<PathBuf>,
 ) -> (ProjectAgentsInit, Vec<PathBuf>) {
+    run_init_migrating(
+        state,
+        project,
+        catalog,
+        packs_root,
+        checkout_parent,
+        recorded_checkout,
+        None,
+    )
+    .await
+}
+
+/// [`run_init`], asking for a migration off the named source event.
+pub(super) async fn run_init_migrating(
+    state: &AppState,
+    project: &str,
+    catalog: TemplateCatalog,
+    packs_root: PathBuf,
+    checkout_parent: PathBuf,
+    recorded_checkout: Option<PathBuf>,
+    migrate: Option<MigrateFromSource>,
+) -> (ProjectAgentsInit, Vec<PathBuf>) {
     let recorded = Arc::new(Mutex::new(Vec::new()));
     let sink = recorded.clone();
     let mut record = move |path: &Path| -> Result<(), String> {
@@ -518,6 +629,7 @@ pub(super) async fn run_init(
             checkout_parent,
             recorded_checkout,
             git_auth: |_: &Keys| build_test_git_auth_config(),
+            migrate,
         },
         &mut record,
     )

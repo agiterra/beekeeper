@@ -13,11 +13,32 @@ pub(super) fn existing_agent_for_team<'a>(
     pack: &DiscoveredRolePack,
     team_id: &str,
 ) -> Option<&'a ManagedAgentRecord> {
-    agents.iter().find(|record| {
+    let exact = agents.iter().find(|record| {
         record.team_id.as_deref() == Some(team_id)
             && record.persona_team_dir.as_deref() == Some(pack.dir.as_path())
             && record.persona_name_in_team.as_deref() == Some(pack.persona_name.as_str())
-    })
+    });
+    if exact.is_some() {
+        return exact;
+    }
+    // A project whose roles moved — from a packs repository into its own
+    // agents repository — installs from a *different* directory than the
+    // one its identities were minted under, so the exact key above matches
+    // nothing and every role would be minted a second identity beside the
+    // one the operator already knows. The team is already project-scoped,
+    // so the role inside it identifies the same seat.
+    //
+    // Only when exactly one identity in this team fills the role: two
+    // builders are an operator's deliberate arrangement, and silently
+    // adopting one of them would be a guess.
+    let mut by_role = agents.iter().filter(|record| {
+        record.team_id.as_deref() == Some(team_id)
+            && record.home_role.as_deref() == Some(pack.role.as_str())
+    });
+    match (by_role.next(), by_role.next()) {
+        (Some(only), None) => Some(only),
+        _ => None,
+    }
 }
 
 pub(super) fn mint_agent_name(

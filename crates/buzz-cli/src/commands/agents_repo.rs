@@ -893,6 +893,91 @@ async fn publish_record(
     publish(snap, client, &op).await
 }
 
+/// `bee agents-repo check` — validate a working tree the way a commit
+/// validates the tree it is about to push.
+///
+/// The committer runs `validate_root` over the tree it built; a seat with
+/// `workspace.agents_repo: write` pushes with git and never passes through
+/// it. This is how that seat gates itself: the same function, the same
+/// refusals, over the directory in front of it. It reads only — nothing is
+/// published, committed or pushed.
+pub fn check_tree(
+    root: &Path,
+    templates: Option<&Path>,
+    project: Option<&str>,
+) -> Result<(), CliError> {
+    let templates = super::pack::resolve_templates_dir(templates).ok_or_else(|| {
+        CliError::Usage(
+            "no shipped templates found: pass --templates <dir>, set BUZZ_TEMPLATES_DIR, or run inside a Beekeeper checkout"
+                .into(),
+        )
+    })?;
+    let catalog =
+        buzz_persona::template::TemplateCatalog::load(&templates, "cli").map_err(|error| {
+            CliError::Other(format!("templates at {}: {error}", templates.display()))
+        })?;
+    // `actions.yml` is parsed against a project coordinate, so without one
+    // it is reported unchecked rather than judged against a made-up
+    // coordinate it would always refuse.
+    let coordinate = project.map(str::to_owned);
+    let mut actions_parser = move |text: &str| -> Result<usize, String> {
+        let coordinate = coordinate
+            .as_deref()
+            .expect("the parser is only installed when a coordinate was given");
+        buzz_workflow::actions_file::parse_actions_yml(text, coordinate)
+            .map(|entries| entries.len())
+            .map_err(|error| error.to_string())
+    };
+    let parser: Option<buzz_persona::agents_repo::ActionsParser<'_>> = match project {
+        Some(_) => Some(&mut actions_parser),
+        None => None,
+    };
+    match buzz_persona::agents_repo::validate_root(root, &catalog, parser) {
+        Ok(report) => {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "root": root.display().to_string(),
+                    "ok": true,
+                    "roles": report.roles,
+                    "archived": report.archived,
+                    "skills": report.skills,
+                    "within_limits": report.within_limits,
+                    "actions": match report.actions {
+                        buzz_persona::agents_repo::ActionsCheck::Absent => "absent".to_owned(),
+                        buzz_persona::agents_repo::ActionsCheck::Checked(n) => {
+                            format!("checked ({n} actions)")
+                        }
+                        buzz_persona::agents_repo::ActionsCheck::NotChecked(reason) => {
+                            format!("not checked: {reason}")
+                        }
+                    },
+                    "warnings": report.warnings,
+                })
+            );
+            Ok(())
+        }
+        Err(refusals) => {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "root": root.display().to_string(),
+                    "ok": false,
+                    "refusals": refusals.iter().map(|refusal| serde_json::json!({
+                        "path": refusal.path,
+                        "reason": refusal.reason,
+                    })).collect::<Vec<_>>(),
+                })
+            );
+            Err(CliError::Usage(format!(
+                "{} would not commit: {} path(s) refuse",
+                root.display(),
+                refusals.len()
+            )))
+        }
+    }
+}
+
 async fn cmd_commit_record(
     client: &BuzzClient,
     project: Option<&str>,
@@ -1069,6 +1154,12 @@ pub async fn dispatch(
             )
             .await
         }
+        // Answered before the key check in `run`; unreachable here.
+        AgentsRepoCmd::Check {
+            root,
+            templates,
+            project,
+        } => check_tree(&root, templates.as_deref(), project.as_deref()),
         AgentsRepoCmd::CommitRecord {
             project,
             commit,
