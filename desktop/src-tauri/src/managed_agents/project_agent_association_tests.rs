@@ -465,6 +465,7 @@ fn install_team(
         &mut mint,
         "team-tank".to_string(),
         "Project team",
+        super::super::crew_roles::NameScope::Project(project("tank-loop")),
     )
     .expect("install succeeds")
 }
@@ -553,6 +554,7 @@ fn a_role_two_identities_already_fill_is_not_adopted_by_guessing() {
         &mut mint,
         "team-tank".to_string(),
         "Project team",
+        super::super::crew_roles::NameScope::Project(project("tank-loop")),
     )
     .expect("install succeeds");
 

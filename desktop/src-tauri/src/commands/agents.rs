@@ -834,6 +834,7 @@ pub async fn create_managed_agent(
             project_public: None,
             carried_project_digest: None,
             project_publication_withdrawn: false,
+            reserves_name_globally: false,
             env_vars: input.env_vars.clone(),
             created_at: now_iso(),
             updated_at: now_iso(),

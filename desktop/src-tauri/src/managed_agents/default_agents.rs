@@ -146,6 +146,12 @@ pub(crate) fn install_default_agents(
         .map(|team| team.id.clone())
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let mut mint = || crate::commands::mint_agent_identity(&keys).map(|(_, minted)| minted);
+    // Names are unique per project (ledger 246). A coordinate this computer
+    // cannot normalize would silently open a namespace of its own, so it is
+    // refused here the way `project_agent_pubkeys` refuses it.
+    let Some(scope_ref) = association::normalize_project_ref(project_ref) else {
+        return Err(association::ASSOCIATION_MALFORMED_PROJECT.to_string());
+    };
     let mut result = crew_roles::install_role_packs_in_named_team(
         &scan,
         definitions,
@@ -156,6 +162,7 @@ pub(crate) fn install_default_agents(
         &mut mint,
         team_id,
         &team_name,
+        crew_roles::NameScope::Project(scope_ref),
     )
     .map_err(|error| error.detail)?;
     // A pack pins no runtime; without this every record lands on the app's

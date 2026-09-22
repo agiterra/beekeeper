@@ -23,7 +23,7 @@
 //!   packs would make "Delete team" delete the operator's checkout. The pack
 //!   link lives on each agent instead.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -37,6 +37,7 @@ use crate::managed_agents::{
 #[path = "crew_roles_project.rs"]
 mod project;
 pub(crate) use project::install_role_packs_in_named_team;
+pub(crate) use project::NameScope;
 #[path = "crew_roles_runtime.rs"]
 mod default_runtime;
 use default_runtime::derive_harness_fields;
@@ -655,6 +656,11 @@ pub fn install_role_packs(
         mint,
         team_id,
         CREW_ROLES_TEAM_NAME,
+        // The folder picker installs into the one machine-wide team, which
+        // belongs to no project. It takes no scope parameter on purpose: there
+        // is no way for a caller to hand the machine-wide installer a project
+        // namespace by accident.
+        project::NameScope::Unscoped,
         existing_team,
     )
 }
@@ -669,11 +675,21 @@ fn install_role_packs_for_team(
     mint: &mut dyn FnMut() -> Result<MintedCrewIdentity, String>,
     team_id: String,
     team_name: &str,
+    // The namespace names minted by THIS install must be unique inside.
+    // Passed in rather than read off the records being written: on a first
+    // install `project_ref` is still `None` at mint time, because
+    // `associate_installation` writes it after the installer returns.
+    scope: NameScope,
     existing_team: Option<&TeamRecord>,
 ) -> Result<CrewRoleInstall, CrewRoleInstallError> {
     let mut installed: Vec<InstalledCrewRole> = Vec::new();
     let mut persona_ids: Vec<String> = Vec::new();
     let mut roles_to_personas: Vec<(String, String)> = Vec::new();
+    // Identities minted by this run. Their `project_ref` is written by
+    // `associate_installation` after the installer returns, so naming has to
+    // be told they belong to `scope` rather than reading a field that is still
+    // `None` — otherwise two roles of one project are named past each other.
+    let mut minted_here: HashSet<String> = HashSet::new();
 
     for pack in &scan.packs {
         let existing = project::existing_agent_for_team(&agents, pack, &team_id).cloned();
@@ -692,11 +708,27 @@ fn install_role_packs_for_team(
             .map(|name| name.trim())
             .filter(|name| !name.is_empty())
             .unwrap_or(pack.display_name.as_str());
+        // An identity this install adopts keeps the namespace it already lives
+        // in. The folder-picker install mints under `Unscoped`, but a record an
+        // operator later associated with a project has to be named against
+        // THAT project — otherwise this install could mint a second `Lead`
+        // inside a project it never looked at.
+        let pack_scope = existing
+            .as_ref()
+            .map(project::record_name_scope)
+            .unwrap_or_else(|| scope.clone());
         let agent_name = match existing.as_ref() {
             // A refresh keeps the handle the operator already knows unless the
-            // pack renamed the persona; either way the name stays unique.
-            Some(record) => project::mint_agent_name(wanted_name, &agents, Some(&record.pubkey)),
-            None => project::mint_agent_name(wanted_name, &agents, None),
+            // pack renamed the persona; either way the name stays unique inside
+            // its namespace.
+            Some(record) => project::mint_agent_name(
+                wanted_name,
+                &agents,
+                &pack_scope,
+                &minted_here,
+                Some(&record.pubkey),
+            ),
+            None => project::mint_agent_name(wanted_name, &agents, &pack_scope, &minted_here, None),
         };
         // A rename is only a rename when an identity that already existed here
         // ends the run under a different name. A fresh mint is a naming.
@@ -756,6 +788,9 @@ fn install_role_packs_for_team(
                 )
             }
         };
+        if !refreshed {
+            minted_here.insert(pubkey.clone());
+        }
 
         // Build the instance off the definition projection rather than a second
         // hand-written literal, then set the instance-side fields.

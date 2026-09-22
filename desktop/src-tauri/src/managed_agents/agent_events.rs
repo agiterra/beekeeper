@@ -199,6 +199,7 @@ mod tests {
 
     fn sample_agent() -> ManagedAgentRecord {
         ManagedAgentRecord {
+            reserves_name_globally: false,
             pubkey: "agentpubkeyhex".to_string(),
             name: "Test Agent".to_string(),
             persona_id: Some("persona-1".to_string()),

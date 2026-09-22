@@ -11,6 +11,7 @@ fn record(
     provider: Option<&str>,
 ) -> ManagedAgentRecord {
     ManagedAgentRecord {
+        reserves_name_globally: false,
         pubkey: "agent".to_string(),
         name: "Agent".to_string(),
         persona_id: persona_id.map(str::to_string),

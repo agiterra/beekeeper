@@ -12,7 +12,8 @@
 
 use super::*;
 use crate::managed_agents::crew_roles::{
-    install_role_packs, role_name_choices, role_profile_publishes, scan_role_packs,
+    install_role_packs, install_role_packs_in_named_team, role_name_choices,
+    role_profile_publishes, scan_role_packs, NameScope,
 };
 
 // ── Naming every identity, not just the lead (ledger 84) ─────────────────────
@@ -265,4 +266,237 @@ fn the_name_fields_come_off_the_scan_with_the_lead_first() {
         again.iter().all(|choice| !choice.pack_dir.is_empty()),
         "each row names the pack it came from"
     );
+}
+
+// ── Names are unique per project, not per computer (ledger 207 → 246) ────────
+//
+// Until 2026-09-22 `mint_agent_name` scanned every managed agent on the
+// computer, so the second project to install a `builder` got "Builder 2" and
+// the third "Builder 3". Those numbers recorded nothing but the order in which
+// projects happened to be created on one laptop. A project is the namespace
+// now; the reserved every-project namespace is an explicit flag on a record and
+// nothing else.
+
+/// A well-formed project coordinate for `slug`.
+fn project(slug: &str) -> String {
+    format!("30621:{}:{slug}", "ab".repeat(32))
+}
+
+/// What `associate_installation` writes after the installer returns.
+fn associated(records: &[ManagedAgentRecord], project_ref: &str) -> Vec<ManagedAgentRecord> {
+    records
+        .iter()
+        .cloned()
+        .map(|mut record| {
+            record.project_ref = Some(project_ref.to_string());
+            record
+        })
+        .collect()
+}
+
+fn install_builder_for(
+    scan: &crate::managed_agents::crew_roles::RolePackScan,
+    definitions: Vec<AgentDefinition>,
+    agents: Vec<ManagedAgentRecord>,
+    slug: &str,
+    minted: &mut usize,
+) -> crate::managed_agents::crew_roles::CrewRoleInstall {
+    let mut mint = counting_mint(minted);
+    install_role_packs_in_named_team(
+        scan,
+        definitions,
+        agents,
+        &[],
+        NOW,
+        &names(&[("builder", "Builder")]),
+        &mut mint,
+        format!("team-{slug}"),
+        &format!("Project team {}", project(slug)),
+        NameScope::Project(project(slug)),
+    )
+    .expect("install succeeds")
+}
+
+/// The headline: two projects may each have a plain "Builder".
+#[test]
+fn a_second_project_gets_a_builder_not_a_builder_2() {
+    let root = tempfile::tempdir().expect("temp dir");
+    write_pack(root.path(), "builder", "builder", Some("builder"));
+    let scan = scan_role_packs(root.path()).expect("scan succeeds");
+
+    let mut minted = 0usize;
+    let alpha = install_builder_for(&scan, Vec::new(), Vec::new(), "alpha", &mut minted);
+    assert_eq!(alpha.agents[0].name, "Builder");
+
+    let beta = install_builder_for(
+        &scan,
+        alpha.definitions.clone(),
+        associated(&alpha.agents, &project("alpha")),
+        "beta",
+        &mut minted,
+    );
+    assert_eq!(minted, 2, "the second project mints its own identity");
+
+    let beta_pubkey = &beta
+        .installed
+        .iter()
+        .find(|row| row.role == "builder")
+        .expect("builder installed")
+        .agent_pubkey;
+    let record = beta
+        .agents
+        .iter()
+        .find(|agent| &agent.pubkey == beta_pubkey)
+        .expect("beta's builder record");
+    assert_eq!(
+        record.name, "Builder",
+        "alpha's Builder is in another project's namespace and does not push beta's to `Builder 2`"
+    );
+}
+
+/// The rule still holds inside one project: a role a second identity already
+/// fills does get a suffix, because there the name really would be ambiguous.
+#[test]
+fn a_second_identity_in_the_same_project_still_gets_a_suffix() {
+    let root = tempfile::tempdir().expect("temp dir");
+    write_pack(root.path(), "builder", "builder", Some("builder"));
+    let scan = scan_role_packs(root.path()).expect("scan succeeds");
+
+    let mut minted = 0usize;
+    let first = install_builder_for(&scan, Vec::new(), Vec::new(), "alpha", &mut minted);
+
+    // A second builder in the *same* project, minted from somewhere else, so
+    // the installer cannot adopt it and has to name beside it.
+    let mut agents = associated(&first.agents, &project("alpha"));
+    let mut twin = agents[0].clone();
+    twin.pubkey = "f".repeat(64);
+    // A different team, so `existing_agent_for_team` cannot adopt it and the
+    // install has to mint beside it — but the same project, so it is in the
+    // namespace the new name must be unique inside.
+    twin.team_id = Some("team-elsewhere".to_string());
+    twin.persona_team_dir = Some(std::path::PathBuf::from("/somewhere/else"));
+    twin.persona_name_in_team = Some("elsewhere".to_string());
+    twin.persona_id = Some("elsewhere".to_string());
+    agents.push(twin);
+    // Drop the adoptable original so this install must mint rather than refresh.
+    agents.remove(0);
+
+    let second = install_builder_for(
+        &scan,
+        first.definitions.clone(),
+        agents,
+        "alpha",
+        &mut minted,
+    );
+    let fresh = second
+        .installed
+        .iter()
+        .find(|row| row.role == "builder")
+        .expect("builder installed");
+    assert_eq!(
+        fresh.agent_name, "Builder 2",
+        "one project holding two builders is exactly when a number means something"
+    );
+}
+
+/// `project_ref == None` is the no-project bucket, **not** a claim on every
+/// project. A pre-pivot machine is full of unassociated records; if one of them
+/// reserved its name, no project could ever mint a `Builder` again.
+#[test]
+fn an_agent_with_no_project_reserves_nothing_outside_its_own_bucket() {
+    let root = tempfile::tempdir().expect("temp dir");
+    write_pack(root.path(), "builder", "builder", Some("builder"));
+    let scan = scan_role_packs(root.path()).expect("scan succeeds");
+
+    let mut minted = 0usize;
+    let legacy = install_builder_for(&scan, Vec::new(), Vec::new(), "alpha", &mut minted);
+    // The legacy shape: installed long ago, never associated with a project.
+    let unscoped = legacy.agents.clone();
+    assert!(unscoped[0].project_ref.is_none());
+    assert!(!unscoped[0].reserves_name_globally);
+
+    let alpha = install_builder_for(
+        &scan,
+        legacy.definitions.clone(),
+        unscoped,
+        "alpha",
+        &mut minted,
+    );
+    let record = alpha
+        .agents
+        .iter()
+        .find(|agent| agent.name == "Builder")
+        .expect("a plain Builder");
+    assert_eq!(record.name, "Builder");
+}
+
+/// The reserved namespace, which is the whole reason the flag exists. Nothing
+/// sets it today; this is what it will do when something does.
+#[test]
+fn a_globally_reserved_name_is_refused_to_every_project() {
+    let root = tempfile::tempdir().expect("temp dir");
+    write_pack(root.path(), "builder", "builder", Some("builder"));
+    let scan = scan_role_packs(root.path()).expect("scan succeeds");
+
+    let mut minted = 0usize;
+    let seeded = install_builder_for(&scan, Vec::new(), Vec::new(), "alpha", &mut minted);
+    let mut reserved = seeded.agents.clone();
+    reserved[0].project_ref = None;
+    reserved[0].reserves_name_globally = true;
+
+    let beta = install_builder_for(
+        &scan,
+        seeded.definitions.clone(),
+        reserved,
+        "beta",
+        &mut minted,
+    );
+    let fresh = beta
+        .installed
+        .iter()
+        .find(|row| row.role == "builder")
+        .expect("builder installed");
+    assert_eq!(
+        fresh.agent_name, "Builder 2",
+        "a reserved name is taken in every namespace, whatever project asks for it"
+    );
+}
+
+/// Case is folded on both sides. Every other name resolver in this app folds
+/// it, so `builder` and `Builder` are one name and not two.
+#[test]
+fn a_name_differing_only_in_case_is_the_same_name() {
+    let root = tempfile::tempdir().expect("temp dir");
+    write_pack(root.path(), "builder", "builder", Some("builder"));
+    let scan = scan_role_packs(root.path()).expect("scan succeeds");
+
+    let mut minted = 0usize;
+    let first = install_builder_for(&scan, Vec::new(), Vec::new(), "alpha", &mut minted);
+    let mut agents = associated(&first.agents, &project("alpha"));
+    agents[0].name = "builder".to_string();
+    let mut twin = agents[0].clone();
+    twin.pubkey = "f".repeat(64);
+    // A different team, so `existing_agent_for_team` cannot adopt it and the
+    // install has to mint beside it — but the same project, so it is in the
+    // namespace the new name must be unique inside.
+    twin.team_id = Some("team-elsewhere".to_string());
+    twin.persona_team_dir = Some(std::path::PathBuf::from("/somewhere/else"));
+    twin.persona_name_in_team = Some("elsewhere".to_string());
+    twin.persona_id = Some("elsewhere".to_string());
+    agents.push(twin);
+    agents.remove(0);
+
+    let second = install_builder_for(
+        &scan,
+        first.definitions.clone(),
+        agents,
+        "alpha",
+        &mut minted,
+    );
+    let fresh = second
+        .installed
+        .iter()
+        .find(|row| row.role == "builder")
+        .expect("builder installed");
+    assert_eq!(fresh.agent_name, "Builder 2");
 }

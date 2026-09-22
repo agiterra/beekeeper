@@ -608,6 +608,7 @@ pub async fn confirm_team_snapshot_import(
             project_public: None,
             carried_project_digest: None,
             project_publication_withdrawn: false,
+            reserves_name_globally: false,
             created_at: now.clone(),
             updated_at: now.clone(),
             last_started_at: None,

@@ -389,6 +389,12 @@ pub(super) fn install_adopted_roles(
         &mut mint,
         team_id.clone(),
         &format!("Project team {}", draft.project_ref),
+        // Names are unique per project (ledger 246); a coordinate that does not
+        // normalize is refused rather than given a namespace of its own.
+        crew_roles::NameScope::Project(
+            association::normalize_project_ref(&draft.project_ref)
+                .ok_or_else(|| invalid(association::ASSOCIATION_MALFORMED_PROJECT.to_string()))?,
+        ),
     )
     .map_err(|error| external(error.detail))?;
     // A pack pins no runtime; without this every record lands on the app's

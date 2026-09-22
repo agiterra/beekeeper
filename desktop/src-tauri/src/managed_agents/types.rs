@@ -138,6 +138,7 @@ impl AgentDefinition {
             project_public: None,
             carried_project_digest: None,
             project_publication_withdrawn: false,
+            reserves_name_globally: false,
             created_at: self.created_at,
             updated_at: self.updated_at,
             last_started_at: None,
@@ -222,6 +223,14 @@ pub struct RelayAgentInfo {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ManagedAgentRecord {
     pub pubkey: String,
+    /// The name a person reads and types.
+    ///
+    /// **Unique inside this agent's project, not on this computer** (ledger
+    /// 246) — `mint_agent_name` is what holds that, and only at install time.
+    /// The manual rename path (`update_managed_agent`) has never checked a
+    /// collision at all, so this is a convention the installer keeps rather
+    /// than an invariant anything enforces. Identity is `pubkey`, everywhere
+    /// it matters; do not key anything on this field.
     pub name: String,
     #[serde(default)]
     pub persona_id: Option<String>,
@@ -365,6 +374,37 @@ pub struct ManagedAgentRecord {
     /// Association withdrawn as private (sticky; `project_association_carry`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub project_publication_withdrawn: bool,
+    /// This agent's name is reserved against **every** namespace on this
+    /// computer, not only its own.
+    ///
+    /// Names are unique per project (ledger 246): two projects may each have a
+    /// `Builder`. An agent marked here is unique against all of them at once,
+    /// so no project may mint an agent sharing its name.
+    ///
+    /// **`project_ref == None` is not this, and the two are separate fields on
+    /// purpose.** A record that names no project belongs to the no-project
+    /// bucket and reserves nothing outside it. A store written before names
+    /// were scoped is full of unassociated records — this machine had fourteen,
+    /// named `Architect`, `Builder 2`, `Lead 2` — whose names were never meant
+    /// to be reservations; inferring "global" from "no project" would turn
+    /// every one of them into one and block the reuse this change exists for.
+    ///
+    /// `#[serde(default)]` so every record written before this field existed
+    /// reads as `false`, and `skip_serializing_if` so no existing record's JSON
+    /// changes a byte. A `bool` rather than an enum deliberately:
+    /// `load_agent_store` treats a parse failure as fatal and preserves the
+    /// file as `.invalid`, so a newer build writing an unknown variant string
+    /// would stop an older build reading its own agent store. A bool cannot.
+    ///
+    /// **Nothing writes `true` today.** Building app-wide agents is out of
+    /// scope; the reader side is complete and tested so the reserved namespace
+    /// is a fact a record states rather than one a later reader infers from
+    /// silence. The built-in personas (Fizz, Honey, Pollen) are deliberately
+    /// left `false`: they are definitions, which this predicate never scans,
+    /// and reserving three ordinary words across every project buys nothing —
+    /// a project that wants an agent called Honey may have one.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub reserves_name_globally: bool,
     pub created_at: String,
     pub updated_at: String,
     pub last_started_at: Option<String>,
@@ -381,8 +421,8 @@ pub struct ManagedAgentRecord {
     /// Preserved across mode toggles so users don't lose state.
     #[serde(default)]
     pub respond_to_allowlist: Vec<String>,
-    /// Optional display name distinct from the unique `name` handle. Absorbed
-    /// from `AgentDefinition.display_name` (unified agent model, Phase 1A).
+    /// Optional display name distinct from the `name` handle. Absorbed from
+    /// `AgentDefinition.display_name` (unified agent model, Phase 1A).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
     /// Stable definition slug — the former `AgentDefinition.id`. Key-less
