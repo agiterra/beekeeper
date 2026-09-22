@@ -19915,6 +19915,102 @@ removed from here.
      passed / 0 failed; `cargo fmt --all -- --check`; `cargo clippy -p
      buzz-relay --all-targets -- -D warnings`; `just file-size-check`; Python
      NUL scan clean.
+239. **A seat's worktree carried no git identity, and the prose that governs
+     seats told it to stop and ask for one — 49 minutes of finished work parked
+     on a founder decision (2026-09-22, lane 239, branch
+     `work/lane-239-seat-git-identity`, base `ecc08b700`).** Found in today's
+     control run (decision `c8e72f29`, ledger 236(a)): the builder seat's
+     worktree answered nothing for `git config user.email` at local, worktree
+     *and* global scope, while the host's own seed commit in the same session
+     was authored `Brian <3d3b7169@beekeeper.local>`. Two defects, both root,
+     both fixed here.
+     - **Defect 1 — a cut tree inherits no identity.** `git worktree add`
+       copies no `user.name`/`user.email`, the app's git runs with
+       `GIT_CONFIG_GLOBAL=/dev/null`, and nothing between the cut and the
+       seat's first turn wrote one. `build_local_git_auth_config` hard-codes
+       `commit_identity: None` (`project_git_exec.rs:474`), and the one place
+       that does write persistent config into a seat tree — the wip-hook
+       planner, `buzz-core/src/seat_git_hooks.rs:242` — plans `gpg.*`,
+       `user.signingkey`, `nostr.keyfile` and `buzz.*`, and never `user.name`
+       or `user.email`. Pinned by
+       `a_freshly_cut_worktree_has_no_identity_of_its_own`, which asserts the
+       absence on a real linked worktree so the fix below cannot pass for the
+       wrong reason.
+     - **Defect 2 — the rule lived outside the template catalog.** The
+       sentence the seat obeyed ("Before committing, read the repo-local git
+       `user.name` / `user.email`; if email is empty, stop and ask") was
+       `crates/buzz-acp/src/base_prompt.md:186` — **not** in
+       `personas/templates/`. A repo-wide grep of `crates/` and `personas/`
+       for `user.email` / `STOP and ask` / `Signed-off-by` returns it and
+       nothing in any shipped role. *This is itself the finding:* the role
+       templates are versioned, hash-pinned and tested as prose, and the ACP
+       base prompt — which every managed agent also reads — is none of those.
+       A future correction to "what seats are told" that searches only the
+       template catalog will miss half the text in force.
+     - **The derivation, in one place.**
+       `buzz-core/src/seat_commit_identity.rs`: `user.name` is the seat's role
+       and project (`builder · kettle-control`; role lowercased, whitespace and
+       control characters collapsed so a role word cannot write a second config
+       line), `user.email` is `<pubkey8>@beekeeper.local`. A pubkey that is not
+       64 lowercase hex is refused rather than guessed. `beekeeper_local_email`
+       is now the **only** spelling of that address:
+       `desktop/.../managed_agents/packs_repo.rs:79` calls it instead of
+       re-formatting, so one key cannot end up with two authors in one
+       `git log`. Never the operator's name or address — the same reason
+       `seat_git_hooks` refuses to aim a seat's `nostr.keyfile` at
+       `~/.nostr/key`.
+     - **Three host callers, idempotent with each other**, all writing at the
+       worktree's own scope (`--worktree` behind `extensions.worktreeConfig`
+       in a linked tree, `--local` in a main one), so configuring a seat never
+       re-authors the person's checkout:
+       1. the cut — `create_coding_session_worktree` gained `seatPubkey`,
+          `seatRole`, `project` (wired from the hire path's `plan.actor` /
+          `plan.role` / `plan.title`) and records what it wrote on
+          `CodingSessionSeatWorktree.commitIdentity` (additive
+          `#[serde(default, skip_serializing_if)]`, no store version bump);
+       2. the hook installer — `install_coding_session_seat_hooks` reports
+          `commitIdentityName`/`commitIdentityEmail` and writes the two lines
+          **outside** the plan, because an identity is neither a sharing line
+          nor a signing line and the unsigned-seat `buzz.`-prefix filter must
+          not get to decide whether a seat can commit at all;
+       3. the hire-time agents clone — `cut_seat_agents_clone` takes a
+          `SeatCloneIdentity` and configures the clone too; a clone is a
+          checkout a seat may commit in and inherits nothing either.
+       A create that names no seat writes nothing: a founder's own tree keeps
+       the founder's identity.
+     - **Evidence is against real repositories, not planner strings**
+       (`desktop/src-tauri/src/commands/coding_session_seat_identity_tests.rs`,
+       9 cases): the write lands at worktree scope; git *resolves* it there;
+       the main checkout stays unset; a subdirectory is refused rather than
+       re-authoring the tree above it; an unsigned seat keeps its identity
+       while `commit.gpgsign` really is dropped; and a seat with no
+       `GIT_AUTHOR_*`/`GIT_COMMITTER_*` in its environment makes a real commit
+       whose `%an <%ae>` is `refuter · kettle-control <a1b2c3d4@beekeeper.local>`.
+     - **The text.** `working-contract` **1.2.1** — one new version reaches
+       every role, because every role includes the contract — says trailers use
+       the identity the worktree already carries, that an absent `user.email`
+       means author as `<pubkey8>@beekeeper.local` and carry on, and that
+       finished work is never held while you ask: a commit identity is a fact
+       the workspace supplies, not a decision anyone owes you. `@^1.0.0`,
+       `@^1.1.0` and `@^1.2.0` all resolve to it
+       (`a_1_2_1_template_is_picked_up_by_the_caret_1_0_0_1_1_0_and_1_2_0_includes`),
+       and 1.2.0's bytes are now hash-pinned exactly as 1.0.0's and 1.1.0's are
+       (`the_1_2_0_templates_are_byte_for_byte_what_they_shipped_as`). No
+       1.0.0/1.1.0/1.2.0 byte moves. `base_prompt.md:186` is corrected in the
+       same change, with
+       `shared_base_prompt_settles_a_commit_identity_without_asking_anyone`
+       asserting the old sentence is gone rather than only that a new one is
+       present.
+     - **Not fixed here:** the ACP base prompt is still unversioned and
+       unpinned prose outside the template catalog (defect 2's structural
+       half). Naming it, not closing it.
+     - **Gates** bare from the worktree, all exit 0: `cargo fmt --all --
+       --check`; `cargo clippy --workspace --all-targets -- -D warnings`;
+       `cargo test --workspace`; `cargo fmt --manifest-path
+       desktop/src-tauri/Cargo.toml --all -- --check`; `cargo clippy
+       --manifest-path desktop/src-tauri/Cargo.toml --all-targets -- -D
+       warnings`; `cargo test --manifest-path desktop/src-tauri/Cargo.toml`;
+       `just file-size-check`; `just desktop-check`; Python NUL scan.
 
 ## 3a. Environment facts that cost real time (do not rediscover)
 
