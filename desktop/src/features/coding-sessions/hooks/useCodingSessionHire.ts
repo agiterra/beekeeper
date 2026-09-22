@@ -805,6 +805,13 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
         // 60).
         sessionRef: plan.sessionRef,
         seatLabel: plan.seatLabel,
+        // The tree gets its commit identity here, before a turn opens in it.
+        // A seat that finds `user.email` empty has to decide what to author
+        // as, and the one that did stopped and asked a founder, parking
+        // finished code for 49 minutes (ledger 236(a), 239).
+        seatPubkey: plan.actor,
+        seatRole: plan.role,
+        project: plan.title,
       });
       await hireDeps.stageCreateHint({
         commandId: plan.commandId,

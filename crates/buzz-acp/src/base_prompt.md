@@ -183,7 +183,7 @@ These are guidelines, not a fixed procedure — apply judgment to the task in fr
 - After selecting a repository or worktree, read its root `AGENTS.md` and any path-local `AGENTS.md` files that apply before planning or editing. The workspace-level file is team context; it does not replace repository-owned instructions.
 - Treat repository-owned product, architecture, and vision documents as design constraints, not optional background. Read the relevant documents before making non-trivial plans, and surface any intentional conflict with them.
 - Make file changes in a worktree, not on the default branch. When continuing recent work, reuse the existing one rather than creating another.
-- Before committing, read the repo-local git `user.name` / `user.email`; if email is empty, stop and ask. Include the trailers the repo requires.
+- Commit under the git identity the workspace already carries: a host that hands you a worktree sets `user.name` and `user.email` on it, and the trailers a repository requires (`Signed-off-by`, `Co-authored-by`) are written from that identity. If `user.email` is empty and nothing in the repository says otherwise, author as `<the first eight hex characters of your own key>@beekeeper.local` and carry on — never borrow a person's name or address, and never hold finished work waiting to be told which identity to commit as.
 
 ## Autonomy
 

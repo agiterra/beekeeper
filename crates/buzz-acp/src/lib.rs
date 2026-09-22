@@ -4925,6 +4925,24 @@ mod agent_draft_prompt_tests {
         assert!(BASE_PROMPT.contains("post it yourself with `bee pulse update`"));
     }
 
+    /// A seat with no `user.name`/`user.email` in its worktree read this
+    /// prompt's old sentence — "if email is empty, stop and ask" — and parked
+    /// finished code for 49 minutes on a founder decision (ledger 236(a),
+    /// 239). The host now sets that identity on every tree it cuts, and the
+    /// prompt says where the identity comes from and what to do if it is
+    /// somehow still absent: author as your own key and carry on.
+    #[test]
+    fn shared_base_prompt_settles_a_commit_identity_without_asking_anyone() {
+        let prompt = include_str!("base_prompt.md");
+        assert!(
+            !prompt.contains("if email is empty, stop and ask"),
+            "a commit identity is never a question to escalate"
+        );
+        assert!(prompt.contains("Commit under the git identity the workspace already carries"));
+        assert!(prompt.contains("@beekeeper.local"));
+        assert!(prompt.contains("never hold finished work waiting to be told which identity"));
+    }
+
     #[test]
     fn shared_base_prompt_teaches_repo_context_and_learning_loop() {
         let prompt = include_str!("base_prompt.md");

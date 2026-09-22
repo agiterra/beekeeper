@@ -67,6 +67,19 @@ use crate::managed_agents::packs_cache;
 /// unable to find the repository it was given.
 pub use buzz_core_pkg::model_registry_source::seat_agents_clone_path;
 
+/// Who the clone is for, so it can be given a commit identity of its own.
+///
+/// Borrowed rather than owned: every field already exists on the staging
+/// command's arguments, and copying them here would be a second place for the
+/// seat's key to live.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SeatCloneIdentity<'a> {
+    /// The seat's own pubkey, 64 lowercase hex.
+    pub pubkey: &'a str,
+    /// The seat's role word, for the author name in `git log`.
+    pub role: &'a str,
+}
+
 /// Cut (or reuse) the seat's clone of the agents repository `source` names,
 /// landed on `sha` — the resolved commit the caller already staged the
 /// seat's pack from — and record it on the seat's worktree record.
@@ -81,6 +94,7 @@ pub(crate) fn cut_seat_agents_clone(
     source: &packs_cache::ProjectPackSource,
     worktree: &Path,
     sha: &str,
+    seat: SeatCloneIdentity<'_>,
 ) -> Result<PathBuf, String> {
     if !buzz_core_pkg::project_pack_source::is_root_pack_path(&source.path) {
         return Err(format!(
@@ -137,6 +151,25 @@ pub(crate) fn cut_seat_agents_clone(
         Some(&dest),
         &auth,
     )?;
+    // A clone is a checkout the seat may commit in, and it inherits no
+    // identity either — the same gap that parked a finished lane for 49
+    // minutes in the seat's own worktree (ledger 236(a), 239). Best-effort and
+    // named on failure: a clone with no identity is still a usable read.
+    if let Err(error) = crate::commands::coding_session_seat_hooks::ensure_seat_commit_identity(
+        &dest,
+        seat.pubkey,
+        seat.role,
+        // The repository's own identifier, which is what a person reading this
+        // clone's `git log` would recognise — not the `30617:…` coordinate.
+        Some(id.as_str()),
+    ) {
+        tracing::warn!(
+            target: "seat_agents_clone",
+            %error,
+            "the seat's agents clone has no commit identity; a commit made in it would have to \
+             invent an author"
+        );
+    }
     if let Err(error) =
         crate::coding_sessions::workdir_store::attach_agents_clone(app, state, worktree, &dest)
     {

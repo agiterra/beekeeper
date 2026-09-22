@@ -154,6 +154,9 @@ pub mod relay;
 /// Who founded a repository — signer, NIP-34 maintainers, project owners.
 pub mod repository_founders;
 pub mod repository_protection;
+/// The git identity a seat's commits are authored as — derived from its own
+/// key, its role and its project, never asked of a person.
+pub mod seat_commit_identity;
 /// The git hooks a seat's checkout gets so its local commits reach Pulse
 /// without anyone being asked to report them.
 pub mod seat_git_hooks;

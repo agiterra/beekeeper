@@ -76,7 +76,10 @@ pub(crate) fn app_commit_identity_from_profile(
     profile_content: Option<&str>,
 ) -> (String, String) {
     let short = pubkey_short(pubkey_hex);
-    let email = format!("{short}@beekeeper.local");
+    // One spelling of this address, in `buzz_core_pkg::seat_commit_identity`:
+    // the app's own commits and every seat worktree the host configures must
+    // resolve a key to the same author (ledger 239).
+    let email = buzz_core_pkg::seat_commit_identity::beekeeper_local_email(pubkey_hex);
     let name = profile_content
         .and_then(|content| serde_json::from_str::<serde_json::Value>(content).ok())
         .and_then(|value| {

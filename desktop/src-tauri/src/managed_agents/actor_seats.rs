@@ -864,7 +864,15 @@ pub async fn stage_coding_session_actor_seat(
                     )
                 })?;
             let clone = crate::managed_agents::seat_agents_clone::cut_seat_agents_clone(
-                &app, &state, source, worktree, sha,
+                &app,
+                &state,
+                source,
+                worktree,
+                sha,
+                crate::managed_agents::seat_agents_clone::SeatCloneIdentity {
+                    pubkey: &pubkey,
+                    role: role.as_deref().unwrap_or_default(),
+                },
             )?;
             entry.agents_checkout = Some(SeatAgentsCheckout {
                 path: clone,

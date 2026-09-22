@@ -26,7 +26,7 @@ mod coding_session_land;
 mod coding_session_observation_fold;
 mod coding_session_policy;
 pub mod coding_session_popout;
-mod coding_session_seat_hooks;
+pub(crate) mod coding_session_seat_hooks;
 mod coding_session_team_fold;
 mod coding_session_team_transaction;
 mod crew_roles;

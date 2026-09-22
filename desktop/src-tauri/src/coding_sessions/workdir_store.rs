@@ -54,7 +54,7 @@ pub(crate) use lock::lock_workdir_store;
 mod worktrees;
 pub(crate) use worktrees::{
     is_inside_worktree_parent, migrate_pending_worktrees, seat_worktree_key,
-    CodingSessionPrunedWorktree, CodingSessionSeatWorktree,
+    CodingSessionPrunedWorktree, CodingSessionSeatCommitIdentity, CodingSessionSeatWorktree,
 };
 #[path = "workdir_store_agents.rs"]
 mod agents;

@@ -20,9 +20,10 @@ use tauri::{AppHandle, State};
 
 use crate::app_state::AppState;
 use crate::coding_sessions::workdir_store::{
-    load_workdir_store, save_workdir_store, seat_worktree_key, CodingSessionSeatWorktree,
-    WORKDIR_STORE_VERSION,
+    load_workdir_store, save_workdir_store, seat_worktree_key, CodingSessionSeatCommitIdentity,
+    CodingSessionSeatWorktree, WORKDIR_STORE_VERSION,
 };
+use crate::commands::coding_session_seat_hooks::ensure_seat_commit_identity;
 use crate::commands::project_git_exec::{build_local_git_auth_config, run_git};
 use crate::util::now_iso;
 
@@ -629,12 +630,34 @@ pub async fn create_coding_session_worktree(
     session_ref: Option<String>,
     seat_label: Option<String>,
     session_id: Option<String>,
+    seat_pubkey: Option<String>,
+    seat_role: Option<String>,
+    project: Option<String>,
 ) -> Result<CodingSessionWorktreeCreated, String> {
     let created = tauri::async_runtime::spawn_blocking(move || {
         create(&workdir, &name, parent.as_deref(), source.as_deref())
     })
     .await
     .map_err(|error| format!("worktree create task failed: {error}"))??;
+    // Before anything runs in it. A tree with no identity is a tree whose
+    // occupant has to decide what to author as, and the one that did stopped
+    // and asked a founder (ledger 236(a), 239). The hire path names the seat;
+    // a founder's own tree names none and keeps the person's own identity.
+    // Off the async executor like the cut itself: these are `git config`
+    // invocations on a real repository, not futures.
+    let identity = {
+        let created = created.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            configure_created_worktree_identity(
+                &created,
+                seat_pubkey.as_deref(),
+                seat_role.as_deref(),
+                project.as_deref(),
+            )
+        })
+        .await
+        .map_err(|error| format!("worktree identity task failed: {error}"))?
+    };
     if let (Some(session_ref), Some(seat_label)) = (session_ref, seat_label) {
         if let Err(error) = record_created_worktree(
             &app,
@@ -643,11 +666,48 @@ pub async fn create_coding_session_worktree(
             &seat_label,
             session_id.as_deref(),
             &created,
+            identity,
         ) {
             eprintln!("buzz-desktop: failed to record a seat worktree: {error}");
         }
     }
     Ok(created)
+}
+
+/// Give a freshly cut seat tree its commit identity, and say what it got.
+///
+/// Best-effort by construction, like the record that follows it: an identity
+/// that could not be written must not cost the hire the tree it just cut, and
+/// the seat's own hook install ([`ensure_seat_commit_identity`]'s other caller)
+/// is a second chance at exactly the same write. It is never silent, though —
+/// a failure is named on stderr rather than leaving a tree that looks
+/// configured.
+///
+/// Answers `None` when the caller named no seat: a founder's own worktree is
+/// theirs, and overwriting a person's `user.email` with a derived one would be
+/// the mirror-image bug.
+fn configure_created_worktree_identity(
+    created: &CodingSessionWorktreeCreated,
+    seat_pubkey: Option<&str>,
+    seat_role: Option<&str>,
+    project: Option<&str>,
+) -> Option<CodingSessionSeatCommitIdentity> {
+    let pubkey = seat_pubkey.map(str::trim).filter(|key| !key.is_empty())?;
+    let role = seat_role.map(str::trim).unwrap_or_default();
+    match ensure_seat_commit_identity(Path::new(&created.path), pubkey, role, project) {
+        Ok((identity, scope)) => Some(CodingSessionSeatCommitIdentity {
+            name: identity.name,
+            email: identity.email,
+            scope: scope.to_string(),
+        }),
+        Err(error) => {
+            eprintln!(
+                "buzz-desktop: {} has no commit identity: {error}",
+                created.path
+            );
+            None
+        }
+    }
 }
 
 /// Write one created worktree into the host's durable record.
@@ -658,6 +718,7 @@ fn record_created_worktree(
     seat_label: &str,
     session_id: Option<&str>,
     created: &CodingSessionWorktreeCreated,
+    commit_identity: Option<CodingSessionSeatCommitIdentity>,
 ) -> Result<(), String> {
     let _lock = super::workdir_store::lock_workdir_store(app)?;
     let mut store = load_workdir_store(app)?;
@@ -671,6 +732,7 @@ fn record_created_worktree(
             created_at: now_iso(),
             session_id: session_id.map(str::to_owned),
             agents_clone: None,
+            commit_identity,
         },
     )?;
     store.version = WORKDIR_STORE_VERSION;
@@ -741,6 +803,9 @@ pub async fn record_coding_session_worktree(
             created_at: now_iso(),
             session_id,
             agents_clone: None,
+            // An observation, not a cut: this records a tree that already
+            // exists, so it says nothing about an identity it did not write.
+            commit_identity: None,
         },
     )?;
     store.version = WORKDIR_STORE_VERSION;

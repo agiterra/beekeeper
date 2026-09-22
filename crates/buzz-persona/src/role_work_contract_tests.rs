@@ -76,12 +76,17 @@ const CURRENT: [(&str, &str); 11] = [
     ("project-setup", "1.1.0"),
     ("runner", "1.2.0"),
     ("verifier", "1.2.0"),
-    ("working-contract", "1.2.0"),
+    ("working-contract", "1.2.1"),
 ];
 
 /// The roles 1.2.0 thinned, and the version each was thinned from. `verifier`
 /// is here too: its 1.2.0 lost two sentences the brief now supplies.
 const THINNED_IN_1_2_0: [&str; 5] = ["builder", "lead", "runner", "verifier", "working-contract"];
+
+/// What 1.2.1 revised, and the ranges a project on the wire can be carrying
+/// for it. The commit-identity rule (ledger 239) lives in the contract every
+/// shipped role includes, so one new version reaches every seat.
+const REVISED_IN_1_2_1: [&str; 1] = ["working-contract"];
 
 /// Every file under `<name>/<version>/`, relative path to bytes.
 fn version_files(name: &str, version: &str) -> BTreeMap<String, Vec<u8>> {
@@ -277,6 +282,178 @@ fn the_1_1_0_templates_are_byte_for_byte_what_they_shipped_as() {
     }
 }
 
+/// 1.2.0 shipped and was staged by the seats of the control run, so its bytes
+/// are frozen exactly as 1.0.0's and 1.1.0's are. 1.2.1 is a new directory
+/// beside it, not an edit of it.
+#[test]
+fn the_1_2_0_templates_are_byte_for_byte_what_they_shipped_as() {
+    // Update this table only when a version directory is *added*; a change
+    // to a line already here is the bug it exists to catch.
+    let pinned: [(&str, &str); 5] = [
+        (
+            "builder",
+            "2cc88a598cd94078aa86516f2c5e828d493f04360644dfc86d1ca27ae6dfd2d6",
+        ),
+        (
+            "lead",
+            "f50354854a1cfe8ffe02406659647840529163d8b3b03d5468094a2cb19ebb25",
+        ),
+        (
+            "runner",
+            "d093bd0dfe0afb2b734eaa317d44194d7b703f3b0263700126d8d690b0f375dd",
+        ),
+        (
+            "verifier",
+            "c90d8fc272e471830914a27349c2142fb840a450bbb65ec9d8c903ff1595528d",
+        ),
+        (
+            "working-contract",
+            "f81020db3c1c6c9e173d341612abe3fa8776041a18513c56e907d78e8bc031de",
+        ),
+    ];
+    assert_eq!(pinned.len(), THINNED_IN_1_2_0.len());
+    for (name, expected) in pinned {
+        assert_eq!(
+            digest(name, "1.2.0"),
+            expected,
+            "{name}/1.2.0 changed; a published version is immutable — add a new version instead"
+        );
+    }
+}
+
+/// A seat spent 49 minutes asking a founder which email to commit as, because
+/// its workspace had no `user.name`/`user.email` and the text it was staged
+/// with said to stop and ask when that field was empty (ledger 236(a), 239).
+/// The host now sets that identity on every tree it cuts; the contract has to
+/// say so, and has to say what to do if it is somehow still absent — which is
+/// to author as the seat's own key and carry on.
+///
+/// This is a string test over shipped prose: it proves the instruction is
+/// present in the words a seat reads, not that a seat obeys it.
+#[test]
+fn the_working_contract_settles_a_commit_identity_without_asking_anyone() {
+    let text = current_lower("working-contract");
+    for needle in [
+        "user.name",
+        "user.email",
+        "@beekeeper.local",
+        "signed-off-by",
+        "co-authored-by",
+    ] {
+        assert!(
+            text.contains(needle),
+            "the working contract never says {needle:?}"
+        );
+    }
+    // Wrapped prose: compare on one line so a line break cannot hide a rule.
+    let flowed = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        flowed.contains("never hold finished work while you ask about one"),
+        "the contract never forbids parking work on a commit identity"
+    );
+    // The rule it replaces, in every spelling a seat could read as a licence
+    // to escalate. No shipped template may send anyone to a person over this.
+    for banned in ["stop and ask", "if email is empty, stop"] {
+        for (path, body) in current_text() {
+            let lower = body.to_lowercase();
+            if !lower.contains("user.email") {
+                continue;
+            }
+            assert!(
+                !lower.contains(banned),
+                "{path} still tells a seat to {banned:?} about a commit identity"
+            );
+        }
+    }
+}
+
+/// 1.2.1 is worth shipping only if projects already on the wire take it
+/// without editing a file. Every caret a seeded project can be carrying for
+/// the working contract — `@^1.0.0`, `@^1.1.0` and `@^1.2.0` — must resolve to
+/// it, and an exact pin on any earlier version must still answer with that
+/// version's own bytes.
+#[test]
+fn a_1_2_1_template_is_picked_up_by_the_caret_1_0_0_1_1_0_and_1_2_0_includes() {
+    let catalog = catalog();
+    for name in REVISED_IN_1_2_1 {
+        for range in ["^1.0.0", "^1.1.0", "^1.2.0"] {
+            let resolved = catalog
+                .resolve(name, &TemplateRange::parse(name, range).expect("range"))
+                .unwrap_or_else(|e| panic!("{name}@{range}: {e}"));
+            assert!(resolved.warning.is_none(), "{name}@{range}: {resolved:?}");
+            assert_eq!(
+                resolved.template.version.to_string(),
+                "1.2.1",
+                "{name}@{range} must take 1.2.1 without anyone editing a role file"
+            );
+        }
+        for exact in ["1.0.0", "1.1.0", "1.2.0"] {
+            let resolved = catalog
+                .resolve(name, &TemplateRange::parse(name, exact).expect("range"))
+                .unwrap_or_else(|e| panic!("{name}@{exact}: {e}"));
+            assert_eq!(
+                resolved.template.version.to_string(),
+                exact,
+                "{name}@{exact} is a pin and must not move"
+            );
+        }
+    }
+
+    // And a whole project composes on it: a role file seeded by the 1.2.0-era
+    // build, byte for byte, must carry the revised contract into its next hire.
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path().join("caret-1-2-0-beekeeper-agents");
+    std::fs::create_dir_all(root.join("roles")).expect("roles dir");
+    std::fs::write(
+        root.join("team.yml"),
+        "schema: beekeeper-team/v1\nname: recent\nversion: 0.1.0\nlead: builder\nroles:\n  builder: {}\n",
+    )
+    .expect("team.yml");
+    std::fs::write(
+        root.join("roles/builder.md"),
+        "---\ndescription: \"A 1.2.0-era seed.\"\n---\n\n![[beekeeper/builder@^1.2.0]]\n\n\
+         ![[beekeeper/working-contract@^1.2.0]]\n",
+    )
+    .expect("recent role");
+    let composed = compose_role(
+        &RoleSource::Flat {
+            root: root.clone(),
+            role: "builder".to_owned(),
+        },
+        &catalog,
+        &ComposeOptions::local("roles/builder"),
+    )
+    .expect("the 1.2.0-era seed still composes");
+    assert!(composed.provenance.warnings.is_empty(), "{composed:?}");
+    let resolved: Vec<(&str, &str)> = composed
+        .provenance
+        .includes
+        .iter()
+        .map(|i| {
+            (
+                i.reference.as_str(),
+                i.resolved.as_deref().unwrap_or("unresolved"),
+            )
+        })
+        .collect();
+    assert_eq!(
+        resolved,
+        vec![
+            ("beekeeper/builder@^1.2.0", "1.2.0"),
+            ("beekeeper/working-contract@^1.2.0", "1.2.1"),
+        ],
+        "a 1.2.0-era caret must carry the revised contract"
+    );
+    assert!(
+        composed
+            .persona
+            .prompt
+            .to_lowercase()
+            .contains("@beekeeper.local"),
+        "the composed builder never receives the commit-identity rule"
+    );
+}
+
 /// Every template's newest version is loadable, is what a caret range
 /// answers with, and composes into a role a seat can be staged from —
 /// including the renamed builder skill.
@@ -367,7 +544,7 @@ fn a_new_project_seeds_the_current_versions_and_an_existing_projects_caret_resol
     let lead = std::fs::read_to_string(root.join("roles/lead.md")).expect("seeded lead");
     for expected in [
         "![[beekeeper/lead@^1.2.0]]",
-        "![[beekeeper/working-contract@^1.2.0]]",
+        "![[beekeeper/working-contract@^1.2.1]]",
         "![[beekeeper/memory@^1.0.0]]",
         "![[beekeeper/project-pulse@^1.1.0]]",
     ] {
@@ -417,7 +594,7 @@ fn a_new_project_seeds_the_current_versions_and_an_existing_projects_caret_resol
         resolved,
         vec![
             ("beekeeper/lead@^1.0.0", "1.2.0"),
-            ("beekeeper/working-contract@^1.0.0", "1.2.0"),
+            ("beekeeper/working-contract@^1.0.0", "1.2.1"),
             ("beekeeper/memory@^1.0.0", "1.0.0"),
             ("beekeeper/project-pulse@^1.0.0", "1.1.0"),
         ],
@@ -442,6 +619,15 @@ fn a_new_project_seeds_the_current_versions_and_an_existing_projects_caret_resol
 fn a_1_2_0_role_is_picked_up_by_both_the_caret_1_0_0_and_the_caret_1_1_0_includes() {
     let catalog = catalog();
     for name in THINNED_IN_1_2_0 {
+        // What this build actually ships for that name: 1.2.0 for the four
+        // roles, and 1.2.1 for the working contract, which lane 239 revised.
+        // Asserting the current version rather than a literal is the point —
+        // an older caret must never stall on a version it happens to match.
+        let current = CURRENT
+            .iter()
+            .find(|(n, _)| *n == name)
+            .map(|(_, v)| *v)
+            .unwrap_or_else(|| panic!("{name} is not in CURRENT"));
         for range in ["^1.0.0", "^1.1.0"] {
             let resolved = catalog
                 .resolve(name, &TemplateRange::parse(name, range).expect("range"))
@@ -449,8 +635,8 @@ fn a_1_2_0_role_is_picked_up_by_both_the_caret_1_0_0_and_the_caret_1_1_0_include
             assert!(resolved.warning.is_none(), "{name}@{range}: {resolved:?}");
             assert_eq!(
                 resolved.template.version.to_string(),
-                "1.2.0",
-                "{name}@{range} must take 1.2.0 without anyone editing a role file"
+                current,
+                "{name}@{range} must take {current} without anyone editing a role file"
             );
         }
         for exact in ["1.0.0", "1.1.0"] {
@@ -507,7 +693,7 @@ fn a_1_2_0_role_is_picked_up_by_both_the_caret_1_0_0_and_the_caret_1_1_0_include
         resolved,
         vec![
             ("beekeeper/lead@^1.1.0", "1.2.0"),
-            ("beekeeper/working-contract@^1.1.0", "1.2.0"),
+            ("beekeeper/working-contract@^1.1.0", "1.2.1"),
             ("beekeeper/memory@^1.0.0", "1.0.0"),
             ("beekeeper/project-pulse@^1.1.0", "1.1.0"),
         ],

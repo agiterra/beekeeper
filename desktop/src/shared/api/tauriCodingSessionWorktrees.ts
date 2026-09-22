@@ -167,6 +167,20 @@ export async function createCodingSessionWorktree(input: {
   seatLabel?: string | null;
   /** The execution's session id, when it is already known at cut time. */
   sessionId?: string | null;
+  /**
+   * The seat this tree is for, 64 lowercase hex, when the caller is cutting
+   * one for a seat rather than for a person.
+   *
+   * Naming it is what gives the tree a git identity before anything runs in
+   * it: the host derives `user.name`/`user.email` from the seat's own key,
+   * role and project and writes them at the tree's own scope. A cut that
+   * names no seat leaves the person's own identity alone (ledger 239).
+   */
+  seatPubkey?: string | null;
+  /** The seat's role word, for the author name a person reads in `git log`. */
+  seatRole?: string | null;
+  /** The project or session the seat was hired into, for the same name. */
+  project?: string | null;
 }): Promise<CodingSessionWorktreeCreated> {
   return invokeTauri<CodingSessionWorktreeCreated>(
     "create_coding_session_worktree",
@@ -178,6 +192,9 @@ export async function createCodingSessionWorktree(input: {
       sessionRef: input.sessionRef ?? null,
       seatLabel: input.seatLabel ?? null,
       sessionId: input.sessionId ?? null,
+      seatPubkey: input.seatPubkey ?? null,
+      seatRole: input.seatRole ?? null,
+      project: input.project ?? null,
     },
   );
 }

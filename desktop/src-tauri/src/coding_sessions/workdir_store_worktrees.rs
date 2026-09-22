@@ -53,6 +53,31 @@ pub(crate) struct CodingSessionSeatWorktree {
     /// The seat's agents-repository clone beside this tree (spec § 4.11), removed with it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agents_clone: Option<PathBuf>,
+    /// The git identity the host configured on this tree before the seat ran.
+    ///
+    /// Recorded so a person can read what a seat's commits will be authored
+    /// as without opening its config, and so a later repair knows whether this
+    /// host ever set one. Absent means the create named no seat — the founder's
+    /// own tree, or a pre-239 record — not that the identity failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit_identity: Option<CodingSessionSeatCommitIdentity>,
+}
+
+/// The `user.name`/`user.email` one seat worktree was configured with.
+///
+/// A record of what the host did, never an input to anything: the values are
+/// derived from the seat's own key by
+/// [`buzz_core_pkg::seat_commit_identity`], so reading a stale one back and
+/// re-applying it could never be more correct than deriving it again.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CodingSessionSeatCommitIdentity {
+    /// The configured `user.name`, e.g. `builder · kettle-control`.
+    pub name: String,
+    /// The configured `user.email`, always `<pubkey8>@beekeeper.local`.
+    pub email: String,
+    /// `local` or `worktree` — which config file the two lines went to.
+    pub scope: String,
 }
 
 /// One worktree this host removed, and why it was allowed to.
@@ -192,6 +217,7 @@ pub(crate) fn migrate_pending_worktrees(store: &mut CodingSessionWorkdirStore) -
                 created_at: now_iso(),
                 session_id: None,
                 agents_clone: None,
+                commit_identity: None,
             },
         );
         migrated += 1;

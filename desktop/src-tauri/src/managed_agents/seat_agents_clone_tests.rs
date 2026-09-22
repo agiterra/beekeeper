@@ -483,6 +483,7 @@ fn seat_worktree_record(
         created_at: "2026-09-20T13:00:00Z".into(),
         session_id: session_id.map(str::to_owned),
         agents_clone: None,
+        commit_identity: None,
     }
 }
 

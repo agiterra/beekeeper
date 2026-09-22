@@ -47,6 +47,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use buzz_core_pkg::seat_commit_identity::{seat_commit_identity, SeatCommitIdentity};
 use buzz_core_pkg::seat_git_hooks::{plan_seat_git_hooks, SeatGitHookRequest};
 use serde::{Deserialize, Serialize};
 
@@ -82,6 +83,11 @@ pub struct InstallCodingSessionSeatHooksRequest {
     pub channel_id: Option<String>,
     /// The branch the worktree was cut on.
     pub branch: Option<String>,
+    /// The project or session this seat was hired into, for the author name
+    /// a person reads in `git log`. Absent is fine — the name falls back to
+    /// `<role> seat` — but a person's name is never accepted here.
+    #[serde(default)]
+    pub project: Option<String>,
 }
 
 /// What the install actually did — named, so a caller never has to assume.
@@ -116,6 +122,16 @@ pub struct CodingSessionSeatHooksInstalled {
     /// moment `git-sign-nostr` is off its `PATH`, which is strictly worse than
     /// a seat whose shared commits are unsigned.
     pub signing: String,
+    /// The `user.name` this worktree now commits under, e.g.
+    /// `builder · kettle-control`.
+    ///
+    /// Reported rather than assumed: a seat that has to decide what to author
+    /// as is a seat that stops and asks, which cost one control run 49 minutes
+    /// of finished work (ledger 236(a), 239).
+    pub commit_identity_name: String,
+    /// The `user.email` this worktree now commits under, always
+    /// `<pubkey8>@beekeeper.local` — the seat's own key, never a person's.
+    pub commit_identity_email: String,
 }
 
 /// Prefix of every planned config line that arms *sharing* rather than signing.
@@ -260,6 +276,116 @@ fn resolve_config_scope(
     Ok((ConfigScope::Worktree, true))
 }
 
+/// Set the git identity a seat's worktree commits under, at its own scope.
+///
+/// # Why the host does this at all
+///
+/// A linked worktree inherits no identity: `git config user.email` in a tree
+/// the host just cut is empty at local, worktree *and* (because every git
+/// process here runs with `GIT_CONFIG_GLOBAL=/dev/null`) global scope. A seat
+/// that finds it empty has to decide what to author as, and in the control run
+/// of 2026-09-22 a builder seat did the only safe thing its staged text
+/// allowed — it stopped and asked a founder — parking finished code for 49
+/// minutes over a fact the host already knew (ledger 236(a), 239).
+///
+/// So the identity is *derived and written*, never asked for: `user.name` is
+/// the seat's role and project, `user.email` is the seat's own key at
+/// `@beekeeper.local`. It goes to the same scope the sharing lines do — the
+/// worktree's own file — so configuring one seat never re-authors the person's
+/// own checkout.
+///
+/// Idempotent, and it never writes the operator's identity: the values come
+/// from [`buzz_core_pkg::seat_commit_identity`], which can only ever produce
+/// an address derived from the key it was handed.
+///
+/// # Errors
+///
+/// Returns the refusal when `worktree` is not a git worktree root, when the
+/// scope cannot be resolved, or when the seat's pubkey is not 64 lowercase hex.
+///
+/// On success answers the identity and the name of the scope it was written
+/// to (`local` or `worktree`), so a caller can record both.
+pub(crate) fn ensure_seat_commit_identity(
+    worktree: &Path,
+    seat_pubkey: &str,
+    seat_role: &str,
+    project: Option<&str>,
+) -> Result<(SeatCommitIdentity, &'static str), String> {
+    let dirs = resolve_worktree_dirs(worktree)?;
+    let (scope, _) = resolve_config_scope(worktree, &dirs.git_dir, &dirs.common_dir)?;
+    let (identity, _) =
+        write_seat_commit_identity(worktree, scope, seat_pubkey, seat_role, project)?;
+    Ok((identity, scope.name()))
+}
+
+/// The identity write itself, given a scope the caller has already resolved.
+///
+/// Answers whether anything changed, so an installer that reports `changed`
+/// tells the truth about this write too.
+fn write_seat_commit_identity(
+    worktree: &Path,
+    scope: ConfigScope,
+    seat_pubkey: &str,
+    seat_role: &str,
+    project: Option<&str>,
+) -> Result<(SeatCommitIdentity, bool), String> {
+    let identity = seat_commit_identity(seat_pubkey, seat_role, project)?;
+    let mut changed = false;
+    for (key, value) in [
+        ("user.name", identity.name.as_str()),
+        ("user.email", identity.email.as_str()),
+    ] {
+        if git_config_get(worktree, Some(scope.flag()), key).as_deref() == Some(value) {
+            continue;
+        }
+        git(worktree, &["config", scope.flag(), key, value])?;
+        changed = true;
+    }
+    Ok((identity, changed))
+}
+
+/// The two directories the config scope decision needs.
+struct WorktreeDirs {
+    /// This worktree's own git directory.
+    git_dir: PathBuf,
+    /// The repository's shared git directory — equal to `git_dir` in the main
+    /// worktree, different in a linked one.
+    common_dir: PathBuf,
+}
+
+/// Resolve a worktree's own and shared git directories, refusing a path that
+/// is inside a repository but is not that worktree's root.
+///
+/// The root check is not ceremony: `rev-parse` walks *up* until it finds a
+/// repository, so a subdirectory answers happily, and configuring the
+/// enclosing checkout when the caller named a subdirectory is exactly the
+/// accident this refuses.
+fn resolve_worktree_dirs(worktree: &Path) -> Result<WorktreeDirs, String> {
+    if !worktree.is_dir() {
+        return Err(format!("{} is not a directory", worktree.display()));
+    }
+    let git_dir = PathBuf::from(
+        git(worktree, &["rev-parse", "--absolute-git-dir"])
+            .map_err(|error| format!("{} is not a git worktree: {error}", worktree.display()))?,
+    );
+    let toplevel = PathBuf::from(git(worktree, &["rev-parse", "--show-toplevel"])?);
+    if toplevel.canonicalize().ok() != worktree.canonicalize().ok() {
+        return Err(format!(
+            "{} is inside the git worktree at {} but is not its root",
+            worktree.display(),
+            toplevel.display()
+        ));
+    }
+    let common_dir = PathBuf::from(git(
+        worktree,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    )?);
+    Ok(WorktreeDirs {
+        git_dir,
+        common_dir,
+    })
+}
+
 /// Write `contents` to `path` at mode 0755, reporting whether anything changed.
 fn write_hook(path: &Path, contents: &str) -> Result<bool, String> {
     let existing = std::fs::read_to_string(path).ok();
@@ -349,32 +475,14 @@ fn install(
     request: &InstallCodingSessionSeatHooksRequest,
 ) -> Result<CodingSessionSeatHooksInstalled, String> {
     let worktree = PathBuf::from(&request.worktree_path);
-    if !worktree.is_dir() {
-        return Err(format!(
-            "{} is not a directory; no hooks were written",
-            worktree.display()
-        ));
-    }
-    let git_dir = PathBuf::from(
-        git(&worktree, &["rev-parse", "--absolute-git-dir"])
-            .map_err(|error| format!("{} is not a git worktree: {error}", worktree.display()))?,
-    );
-    // `rev-parse` walks *up* until it finds a repository, so a path that is
-    // merely inside one answers happily — and arming the enclosing checkout
-    // when the caller named a subdirectory is exactly the accident this
-    // refuses. The path handed in must be the worktree's own root.
-    let toplevel = PathBuf::from(git(&worktree, &["rev-parse", "--show-toplevel"])?);
-    if toplevel.canonicalize().ok() != worktree.canonicalize().ok() {
-        return Err(format!(
-            "{} is inside the git worktree at {} but is not its root; no hooks were written",
-            worktree.display(),
-            toplevel.display()
-        ));
-    }
-    let common_dir = PathBuf::from(git(
-        &worktree,
-        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-    )?);
+    // Shared with `ensure_seat_commit_identity`, which resolves the same two
+    // directories when it is called on its own at the moment of the cut: one
+    // definition of "is this a worktree root", so the two cannot disagree.
+    let WorktreeDirs {
+        git_dir,
+        common_dir,
+    } = resolve_worktree_dirs(&worktree)
+        .map_err(|error| format!("{error}; no hooks were written"))?;
 
     let keyfile_path = request
         .keyfile_path
@@ -418,6 +526,18 @@ fn install(
 
     let (scope, scope_changed) = resolve_config_scope(&worktree, &git_dir, &common_dir)?;
     changed |= scope_changed;
+    // The commit identity is written *unconditionally*, and deliberately not
+    // through the plan: it is not a sharing line and not a signing line, so
+    // neither the `buzz.` allow-list above nor the presence of a key file may
+    // decide whether this seat can author a commit at all (ledger 239).
+    let (identity, identity_changed) = write_seat_commit_identity(
+        &worktree,
+        scope,
+        &request.seat_pubkey,
+        &request.seat_role,
+        request.project.as_deref(),
+    )?;
+    changed |= identity_changed;
     for line in &plan.config {
         if git_config_get(&worktree, Some(scope.flag()), &line.key).as_deref()
             == Some(line.value.as_str())
@@ -463,6 +583,8 @@ fn install(
         dispatch: dispatch.to_string(),
         changed,
         signing: signing.to_string(),
+        commit_identity_name: identity.name,
+        commit_identity_email: identity.email,
     })
 }
 

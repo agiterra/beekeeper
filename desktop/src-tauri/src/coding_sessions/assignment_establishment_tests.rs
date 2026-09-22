@@ -45,6 +45,7 @@ fn store_with_recorded_seat() -> CodingSessionWorkdirStore {
                 created_at: now_iso(),
                 session_id: None,
                 agents_clone: None,
+                commit_identity: None,
             },
         )
         .expect("recorded seat worktree");

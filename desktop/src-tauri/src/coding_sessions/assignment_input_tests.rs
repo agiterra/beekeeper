@@ -132,6 +132,7 @@ impl Fixture {
                     created_at: now_iso(),
                     session_id: None,
                     agents_clone: None,
+                    commit_identity: None,
                 },
             )
             .expect("recorded seat worktree");

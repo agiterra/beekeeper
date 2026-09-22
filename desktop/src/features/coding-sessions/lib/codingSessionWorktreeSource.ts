@@ -70,6 +70,19 @@ export type CodingSessionSeatHooksInstalled = {
    * commit the seat makes.
    */
   signing: string;
+  /**
+   * The `user.name` this worktree now commits under, e.g.
+   * `builder · kettle-control`.
+   *
+   * Reported rather than assumed: a seat that has to decide what to author as
+   * is a seat that stops and asks (ledger 236(a), 239).
+   */
+  commitIdentityName: string;
+  /**
+   * The `user.email` this worktree now commits under, always
+   * `<pubkey8>@beekeeper.local` — the seat's own key, never a person's.
+   */
+  commitIdentityEmail: string;
 };
 
 /** The signing program the hooks configure. Resolved by git on `PATH`. */
@@ -92,6 +105,8 @@ export function installCodingSessionSeatHooks(input: {
   genesisRef: string | null;
   channelId: string | null;
   branch: string | null;
+  /** The project or session this seat was hired into, for the author name. */
+  project: string | null;
 }): Promise<CodingSessionSeatHooksInstalled> {
   return invokeTauri<CodingSessionSeatHooksInstalled>(
     "install_coding_session_seat_hooks",
@@ -191,6 +206,8 @@ export async function installSeatWipHooks(
     sessionRef: string;
     genesisRef: string;
     channelId: string;
+    /** The umbrella's title, which names the seat's project in `git log`. */
+    title?: string | null;
   },
   assignmentId: string | null,
 ): Promise<SeatWipShareOutcome> {
@@ -207,6 +224,10 @@ export async function installSeatWipHooks(
       genesisRef: seat.genesisRef,
       channelId: seat.channelId,
       branch: created.branch,
+      // The installer re-derives and re-writes the seat's commit identity at
+      // the tree's own scope. Idempotent with the write the cut already did,
+      // and the second chance if that one failed (ledger 239).
+      project: seat.title ?? null,
     });
     return { kind: "installed", installed, signing };
   } catch (error) {
@@ -268,6 +289,8 @@ export async function armSeatWorktreeForSharing(
     sessionRef: string;
     genesisRef: string;
     channelId: string;
+    /** The umbrella's title, which names the seat's project in `git log`. */
+    title?: string | null;
   },
   assignmentId: string | null,
 ): Promise<CodingSessionHireWipShare> {

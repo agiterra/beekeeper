@@ -134,6 +134,7 @@ impl Fixture {
             genesis_ref: Some("genesis-1".to_string()),
             channel_id: Some("c0ffee".to_string()),
             branch: Some("lane/refuter".to_string()),
+            project: Some("kettle-control".to_string()),
         }
     }
 
@@ -931,3 +932,8 @@ fn a_config_write_addresses_the_worktree_it_was_given_not_a_poisoned_git_common_
         "a poisoned GIT_COMMON_DIR must not receive a write meant for the target worktree"
     );
 }
+
+/// The commit identity the host writes into the same tree (ledger 239), in
+/// its own file so neither this one nor that one nears the size ceiling.
+#[path = "coding_session_seat_identity_tests.rs"]
+mod identity;
