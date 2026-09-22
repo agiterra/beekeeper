@@ -483,9 +483,46 @@ pub fn read_template(
     })
 }
 
+/// Every file under a version directory except its own `TEMPLATE.md`,
+/// relative path to bytes. `TEMPLATE.md` is excluded because its
+/// frontmatter carries the version, so two versions' copies always differ;
+/// the caller has already compared the parts of it that mean something (the
+/// body and the declared skill list). An unreadable tree yields `None`
+/// rather than a partial answer, so a version is never called identical to
+/// another on the strength of a failed read.
+fn version_dir_files(dir: &Path) -> Option<BTreeMap<String, Vec<u8>>> {
+    let mut out = BTreeMap::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(next) = stack.pop() {
+        for entry in std::fs::read_dir(&next).ok()? {
+            let path = entry.ok()?.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else {
+                let rel = path
+                    .strip_prefix(dir)
+                    .ok()?
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                if rel == TEMPLATE_MD {
+                    continue;
+                }
+                out.insert(rel, std::fs::read(&path).ok()?);
+            }
+        }
+    }
+    Some(out)
+}
+
 /// Validate a catalog directory: every `TEMPLATE.md` loads, and no two
 /// versions of one template carry identical bytes (a warning — the spec says a
 /// new version exists only when the text changed).
+///
+/// "Identical" is over the whole version directory, not over `TEMPLATE.md`
+/// alone. A template's instruction lives as much in its `skills/*/SKILL.md`
+/// as in its own body: comparing only the body and the declared skill list
+/// called a version whose only change was a skill file a duplicate, which is
+/// exactly what role templates 1.2.0 is (ledger 231).
 pub fn validate_catalog(dir: &Path) -> ValidationReport {
     let mut report = ValidationReport::default();
     let catalog = match TemplateCatalog::load(dir, "validate") {
@@ -499,7 +536,16 @@ pub fn validate_catalog(dir: &Path) -> ValidationReport {
         let versions = catalog.versions(name);
         for (index, later) in versions.iter().enumerate() {
             for earlier in &versions[..index] {
-                if earlier.body == later.body && earlier.skills == later.skills {
+                if earlier.body != later.body || earlier.skills != later.skills {
+                    continue;
+                }
+                let (Some(earlier_files), Some(later_files)) = (
+                    version_dir_files(&earlier.dir),
+                    version_dir_files(&later.dir),
+                ) else {
+                    continue;
+                };
+                if earlier_files == later_files {
                     report.warn(format!(
                         "template {name}: versions {} and {} carry identical text and skills; a new version exists only when the template changes",
                         earlier.version, later.version
@@ -754,6 +800,57 @@ mod tests {
         assert!(report.has_warnings());
         let text = format!("{:?}", report.diagnostics);
         assert!(text.contains("identical"), "{text}");
+    }
+
+    /// A template's instruction lives as much in its skills as in its own
+    /// body. A new version whose only change is a `SKILL.md` is a real new
+    /// version, and the validator called it a duplicate until ledger 231 —
+    /// which would have made `just ci` fail on role templates 1.2.0.
+    #[test]
+    fn a_version_whose_only_change_is_a_skill_file_is_not_a_duplicate() {
+        let dir = tempfile::tempdir().unwrap();
+        for (version, skill) in [
+            ("1.0.0", "Probe the relay.\n"),
+            ("1.1.0", "Read --example.\n"),
+        ] {
+            write(
+                &dir.path().join("memory").join(version).join(TEMPLATE_MD),
+                &template_md("memory", version, None, "same\n"),
+            );
+            write(
+                &dir.path()
+                    .join("memory")
+                    .join(version)
+                    .join("skills/write/SKILL.md"),
+                &format!("---\nname: write\ndescription: \"Write.\"\n---\n\n{skill}"),
+            );
+        }
+        let report = validate_catalog(dir.path());
+        assert!(!report.has_errors(), "{:?}", report.diagnostics);
+        assert!(
+            !report.has_warnings(),
+            "a changed skill file is a changed template: {:?}",
+            report.diagnostics
+        );
+
+        // And the same two versions with the *same* skill file still warn.
+        let same = tempfile::tempdir().unwrap();
+        for version in ["1.0.0", "1.1.0"] {
+            write(
+                &same.path().join("memory").join(version).join(TEMPLATE_MD),
+                &template_md("memory", version, None, "same\n"),
+            );
+            write(
+                &same
+                    .path()
+                    .join("memory")
+                    .join(version)
+                    .join("skills/write/SKILL.md"),
+                "---\nname: write\ndescription: \"Write.\"\n---\n\nSame.\n",
+            );
+        }
+        let report = validate_catalog(same.path());
+        assert!(report.has_warnings(), "{:?}", report.diagnostics);
     }
 
     #[test]

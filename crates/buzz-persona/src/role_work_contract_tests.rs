@@ -7,6 +7,17 @@
 //! demanded, and calling a stale binary. The software answers landed as
 //! ledger 180–191; version 1.1.0 of the templates is the text catching up.
 //!
+//! Version 1.2.0 is the second half of the same correction. Since lane 209 the
+//! host prepends every seat's first turn with a work brief carrying the
+//! objective, the lead's brief, the acceptance steps, file ownership, branch,
+//! worktree, the exact base and what this host did about it, the filled-in
+//! `sessions report`/`verdict` invocations, the bound criteria quoted from the
+//! plan at its pinned commit, the grants and the runtime. Every template
+//! sentence that told a seat to go and find one of those is now redundant, and
+//! 1.2.0 deletes it: the brief is authoritative and the template says only
+//! what the brief cannot know. 1.2.0 also carries lane 210's settlement rule
+//! for the lead, which 1.1.0 understated.
+//!
 //! These are **string tests over shipped prose**. They are necessary and
 //! not sufficient: they prove the instruction is present, spelled the way a
 //! seat will read it, and that a published version's bytes never moved.
@@ -50,6 +61,28 @@ const UPDATED: [&str; 10] = [
     "working-contract",
 ];
 
+/// The newest version of every shipped template — what a `@^1.0.0` include
+/// resolves to in this build, and therefore the text a seat actually reads.
+/// A new version directory is added here in the same change that creates it;
+/// the prose rules below all run over this table, never over a fixed version.
+const CURRENT: [(&str, &str); 11] = [
+    ("architect", "1.1.0"),
+    ("builder", "1.2.0"),
+    ("designer", "1.1.0"),
+    ("lead", "1.2.0"),
+    ("memory", "1.0.0"),
+    ("poker", "1.1.0"),
+    ("project-pulse", "1.1.0"),
+    ("project-setup", "1.1.0"),
+    ("runner", "1.2.0"),
+    ("verifier", "1.2.0"),
+    ("working-contract", "1.2.0"),
+];
+
+/// The roles 1.2.0 thinned, and the version each was thinned from. `verifier`
+/// is here too: its 1.2.0 lost two sentences the brief now supplies.
+const THINNED_IN_1_2_0: [&str; 5] = ["builder", "lead", "runner", "verifier", "working-contract"];
+
 /// Every file under `<name>/<version>/`, relative path to bytes.
 fn version_files(name: &str, version: &str) -> BTreeMap<String, Vec<u8>> {
     let root = templates_dir().join(name).join(version);
@@ -74,18 +107,33 @@ fn version_files(name: &str, version: &str) -> BTreeMap<String, Vec<u8>> {
     out
 }
 
-/// The text of every file under `<name>/1.1.0/`, for the prose rules.
-fn updated_text() -> Vec<(String, String)> {
+/// The text of every file of every template's newest version: what a seat
+/// composed by this build actually receives.
+fn current_text() -> Vec<(String, String)> {
     let mut out = Vec::new();
-    for name in UPDATED {
-        for (rel, bytes) in version_files(name, "1.1.0") {
+    for (name, version) in CURRENT {
+        for (rel, bytes) in version_files(name, version) {
             let text = String::from_utf8(bytes)
-                .unwrap_or_else(|e| panic!("{name}/1.1.0/{rel} is not UTF-8: {e}"));
-            out.push((format!("{name}/1.1.0/{rel}"), text));
+                .unwrap_or_else(|e| panic!("{name}/{version}/{rel} is not UTF-8: {e}"));
+            out.push((format!("{name}/{version}/{rel}"), text));
         }
     }
-    assert!(!out.is_empty(), "no 1.1.0 files found");
+    assert!(!out.is_empty(), "no current template files found");
     out
+}
+
+/// One template's newest version, lowercased, all files joined.
+fn current_lower(name: &str) -> String {
+    let version = CURRENT
+        .iter()
+        .find(|(n, _)| *n == name)
+        .map(|(_, v)| *v)
+        .unwrap_or_else(|| panic!("{name} is not in CURRENT"));
+    version_files(name, version)
+        .values()
+        .map(|b| String::from_utf8_lossy(b).to_lowercase())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// A version directory's identity: one digest over every file's path and
@@ -171,12 +219,71 @@ fn the_1_0_0_templates_are_byte_for_byte_what_they_shipped_as() {
     }
 }
 
-/// Every 1.1.0 template is loadable, current, and composes into a role a
-/// seat can be staged from — including the renamed builder skill.
+/// 1.1.0 is published too: it was staged by seats and pinned by projects, so
+/// its bytes are as frozen as 1.0.0's. 1.2.0 is a new directory beside it.
 #[test]
-fn every_1_1_0_template_is_current_in_the_catalog_and_composes() {
+fn the_1_1_0_templates_are_byte_for_byte_what_they_shipped_as() {
+    // Update this table only when a version directory is *added*; a change
+    // to a line already here is the bug it exists to catch.
+    let pinned: [(&str, &str); 10] = [
+        (
+            "architect",
+            "44a971553bfc6de8cfab3cda851b62dc2d09e37ea906833ac9b4a77f285a2f80",
+        ),
+        (
+            "builder",
+            "4c34b01ada490b52de4edf45536d94178c03a399fa050c20f87601a41f448dd7",
+        ),
+        (
+            "designer",
+            "735a72f62cde02b52a6fd76530db4775ff0e5dfe8a4f22f6bb04cf6372e88016",
+        ),
+        (
+            "lead",
+            "b7a683d66d94dd5f1a00896d2a962960f4dc21b51d488bfb289b2c5e9b42e248",
+        ),
+        (
+            "poker",
+            "c269558c05a3c6625d9859fcea324e926f644eca267fd11428e9cbfd7459add6",
+        ),
+        (
+            "project-pulse",
+            "a0db365a46647a4fefda631243b7bb75876e5a29de65d29035a9320e7d1fe052",
+        ),
+        (
+            "project-setup",
+            "f4676c7265195d279163707dfecca284a0cdf392f55bfc7fa0eba9f4e72d9600",
+        ),
+        (
+            "runner",
+            "76eccb8bb3d1dcc9c23042e0021dcc31089ab7f2d575edc6da571de8fb54cf47",
+        ),
+        (
+            "verifier",
+            "4c35a1dc788667c57c66cccf8e026f0eaf66de66f7a20aa97a21e088bf02f2f1",
+        ),
+        (
+            "working-contract",
+            "3f92a8746f8f1b06970043a55c99b799110e60aa14ab8de8e9edb3ab3e9b40e4",
+        ),
+    ];
+    assert_eq!(pinned.len(), UPDATED.len());
+    for (name, expected) in pinned {
+        assert_eq!(
+            digest(name, "1.1.0"),
+            expected,
+            "{name}/1.1.0 changed; a published version is immutable — add a new version instead"
+        );
+    }
+}
+
+/// Every template's newest version is loadable, is what a caret range
+/// answers with, and composes into a role a seat can be staged from —
+/// including the renamed builder skill.
+#[test]
+fn every_current_template_is_what_a_caret_range_resolves_to_and_composes() {
     let catalog = catalog();
-    for name in UPDATED {
+    for (name, version) in CURRENT {
         let versions = catalog.versions(name);
         assert!(
             versions.iter().any(|t| t.version.to_string() == "1.0.0"),
@@ -187,20 +294,20 @@ fn every_1_1_0_template_is_current_in_the_catalog_and_composes() {
             .unwrap_or_else(|e| panic!("{name}@^1.0.0: {e}"));
         assert_eq!(
             resolved.template.version.to_string(),
-            "1.1.0",
+            version,
             "{name}: a caret range must carry the minor revision to the next hire"
         );
         assert!(resolved.warning.is_none(), "{name}: {resolved:?}");
         assert!(
             templates_dir()
                 .join(name)
-                .join("1.1.0")
+                .join(version)
                 .join(TEMPLATE_MD)
                 .is_file(),
-            "{name}/1.1.0 has no {TEMPLATE_MD}"
+            "{name}/{version} has no {TEMPLATE_MD}"
         );
     }
-    // `memory` did not change, so it ships one version and a caret range
+    // `memory` has never changed, so it ships one version and a caret range
     // still answers with it.
     let memory = catalog
         .resolve(
@@ -248,10 +355,10 @@ fn every_1_1_0_template_is_current_in_the_catalog_and_composes() {
 }
 
 /// A new project seeded by this build, and a project seeded by an earlier
-/// one, must both end up reading 1.1.0 — the first because the seed writes
-/// the newest version's caret, the second because `^1.0.0` admits it.
+/// one, must both end up reading the newest version — the first because the
+/// seed writes that version's caret, the second because `^1.0.0` admits it.
 #[test]
-fn a_new_project_seeds_1_1_0_and_an_existing_projects_caret_resolves_to_it() {
+fn a_new_project_seeds_the_current_versions_and_an_existing_projects_caret_resolves_to_them() {
     let catalog = catalog();
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path().join("demo-beekeeper-agents");
@@ -259,8 +366,8 @@ fn a_new_project_seeds_1_1_0_and_an_existing_projects_caret_resolves_to_it() {
 
     let lead = std::fs::read_to_string(root.join("roles/lead.md")).expect("seeded lead");
     for expected in [
-        "![[beekeeper/lead@^1.1.0]]",
-        "![[beekeeper/working-contract@^1.1.0]]",
+        "![[beekeeper/lead@^1.2.0]]",
+        "![[beekeeper/working-contract@^1.2.0]]",
         "![[beekeeper/memory@^1.0.0]]",
         "![[beekeeper/project-pulse@^1.1.0]]",
     ] {
@@ -309,8 +416,8 @@ fn a_new_project_seeds_1_1_0_and_an_existing_projects_caret_resolves_to_it() {
     assert_eq!(
         resolved,
         vec![
-            ("beekeeper/lead@^1.0.0", "1.1.0"),
-            ("beekeeper/working-contract@^1.0.0", "1.1.0"),
+            ("beekeeper/lead@^1.0.0", "1.2.0"),
+            ("beekeeper/working-contract@^1.0.0", "1.2.0"),
             ("beekeeper/memory@^1.0.0", "1.0.0"),
             ("beekeeper/project-pulse@^1.0.0", "1.1.0"),
         ],
@@ -326,11 +433,109 @@ fn a_new_project_seeds_1_1_0_and_an_existing_projects_caret_resolves_to_it() {
     assert_eq!(pinned.template.version.to_string(), "1.0.0");
 }
 
+/// 1.2.0 is worth shipping only if the projects already on the wire take it
+/// without editing a file. Both include ranges a seeded project can be
+/// carrying — `@^1.0.0` from the original seed and `@^1.1.0` from a seed
+/// written between lane 196 and now — must resolve to 1.2.0, and an exact pin
+/// on either older version must still answer with that version's own bytes.
+#[test]
+fn a_1_2_0_role_is_picked_up_by_both_the_caret_1_0_0_and_the_caret_1_1_0_includes() {
+    let catalog = catalog();
+    for name in THINNED_IN_1_2_0 {
+        for range in ["^1.0.0", "^1.1.0"] {
+            let resolved = catalog
+                .resolve(name, &TemplateRange::parse(name, range).expect("range"))
+                .unwrap_or_else(|e| panic!("{name}@{range}: {e}"));
+            assert!(resolved.warning.is_none(), "{name}@{range}: {resolved:?}");
+            assert_eq!(
+                resolved.template.version.to_string(),
+                "1.2.0",
+                "{name}@{range} must take 1.2.0 without anyone editing a role file"
+            );
+        }
+        for exact in ["1.0.0", "1.1.0"] {
+            let resolved = catalog
+                .resolve(name, &TemplateRange::parse(name, exact).expect("range"))
+                .unwrap_or_else(|e| panic!("{name}@{exact}: {e}"));
+            assert_eq!(
+                resolved.template.version.to_string(),
+                exact,
+                "{name}@{exact} is a pin and must not move"
+            );
+        }
+    }
+
+    // And a whole project composes on the new version: the file an earlier
+    // build seeded with `@^1.1.0` carets, byte for byte.
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path().join("caret-1-1-0-beekeeper-agents");
+    std::fs::create_dir_all(root.join("roles")).expect("roles dir");
+    std::fs::write(
+        root.join("team.yml"),
+        "schema: beekeeper-team/v1\nname: mid\nversion: 0.1.0\nlead: lead\nroles:\n  lead: {}\n",
+    )
+    .expect("team.yml");
+    std::fs::write(
+        root.join("roles/lead.md"),
+        "---\ndescription: \"A 1.1.0-era seed.\"\n---\n\n![[beekeeper/lead@^1.1.0]]\n\n\
+         ![[beekeeper/working-contract@^1.1.0]]\n\n![[beekeeper/memory@^1.0.0]]\n\n\
+         ![[beekeeper/project-pulse@^1.1.0]]\n",
+    )
+    .expect("mid-era role");
+    let composed = compose_role(
+        &RoleSource::Flat {
+            root: root.clone(),
+            role: "lead".to_owned(),
+        },
+        &catalog,
+        &ComposeOptions::local("roles/lead"),
+    )
+    .expect("the 1.1.0-era seed still composes");
+    assert!(composed.provenance.warnings.is_empty(), "{composed:?}");
+    let resolved: Vec<(&str, &str)> = composed
+        .provenance
+        .includes
+        .iter()
+        .map(|i| {
+            (
+                i.reference.as_str(),
+                i.resolved.as_deref().unwrap_or("unresolved"),
+            )
+        })
+        .collect();
+    assert_eq!(
+        resolved,
+        vec![
+            ("beekeeper/lead@^1.1.0", "1.2.0"),
+            ("beekeeper/working-contract@^1.1.0", "1.2.0"),
+            ("beekeeper/memory@^1.0.0", "1.0.0"),
+            ("beekeeper/project-pulse@^1.1.0", "1.1.0"),
+        ],
+        "a 1.1.0-era caret must carry 1.2.0"
+    );
+    // The composed body is the 1.2.0 text, not the 1.1.0 text it replaced.
+    let lead_1_2_0 = String::from_utf8(
+        version_files("lead", "1.2.0")
+            .remove(TEMPLATE_MD)
+            .expect("lead/1.2.0 TEMPLATE.md"),
+    )
+    .expect("utf-8");
+    let paragraph = lead_1_2_0
+        .rsplit("---\n")
+        .next()
+        .map(str::trim)
+        .expect("the role template's own paragraph");
+    assert!(
+        composed.persona.prompt.contains(paragraph),
+        "the composed lead is not 1.2.0"
+    );
+}
+
 /// `bee` on a seat's PATH is somebody else's build (ledger § environment
 /// facts). Every example names the host-selected binary.
 #[test]
-fn no_1_1_0_file_names_a_bare_bee_command() {
-    for (path, text) in updated_text() {
+fn no_current_template_file_names_a_bare_bee_command() {
+    for (path, text) in current_text() {
         for (index, line) in text.lines().enumerate() {
             let scrubbed = line.replace("$BEE", "«bee»");
             let offender = scrubbed
@@ -350,15 +555,11 @@ fn no_1_1_0_file_names_a_bare_bee_command() {
 /// never learned is the one that matters when its input is missing.
 #[test]
 fn the_verifier_teaches_all_three_refutation_decisions() {
-    let text: String = version_files("verifier", "1.1.0")
-        .values()
-        .map(|b| String::from_utf8_lossy(b).to_lowercase())
-        .collect::<Vec<_>>()
-        .join("\n");
+    let text = current_lower("verifier");
     for decision in ["confirmed", "not-refuted", "blocked"] {
         assert!(
             text.contains(decision),
-            "verifier 1.1.0 never says {decision}"
+            "the verifier never says {decision}"
         );
     }
 }
@@ -368,10 +569,10 @@ fn the_verifier_teaches_all_three_refutation_decisions() {
 /// No 1.1.0 text may instruct a role to gather them — a sentence may only
 /// mention it to forbid it.
 #[test]
-fn no_1_1_0_file_instructs_anyone_to_collect_acknowledgements() {
+fn no_current_template_file_instructs_anyone_to_collect_acknowledgements() {
     const COLLECTING: [&str; 5] = ["collect", "wake", "gather", "chase", "poll"];
     const FORBIDDING: [&str; 5] = ["do not", "never", "rather than", "instead of", "without"];
-    for (path, text) in updated_text() {
+    for (path, text) in current_text() {
         for sentence in sentences(&text) {
             if !sentence.contains("acknowledg") {
                 continue;
@@ -389,7 +590,7 @@ fn no_1_1_0_file_instructs_anyone_to_collect_acknowledgements() {
 /// Model names, providers and prices belong to the project's registry and
 /// the host's routing answer, never to a prompt that outlives them.
 #[test]
-fn no_1_1_0_file_encodes_a_model_id_provider_or_price() {
+fn no_current_template_file_encodes_a_model_id_provider_or_price() {
     const BANNED: [&str; 12] = [
         "claude",
         "anthropic",
@@ -404,7 +605,7 @@ fn no_1_1_0_file_encodes_a_model_id_provider_or_price() {
         "usd",
         "per token",
     ];
-    for (path, text) in updated_text() {
+    for (path, text) in current_text() {
         let lower = text.to_lowercase();
         for banned in BANNED {
             assert!(
@@ -425,32 +626,25 @@ fn no_1_1_0_file_encodes_a_model_id_provider_or_price() {
 }
 
 /// The instructions the software landings 180–191 replaced: each role's
-/// 1.1.0 text must carry the new procedure in the words a seat will search
+/// current text must carry the new procedure in the words a seat will search
 /// for.
 #[test]
-fn each_1_1_0_role_carries_the_procedure_its_software_now_supports() {
+fn each_current_role_carries_the_procedure_its_software_now_supports() {
     let by_name: BTreeMap<String, String> = UPDATED
         .iter()
-        .map(|name| {
-            let text = version_files(name, "1.1.0")
-                .values()
-                .map(|b| String::from_utf8_lossy(b).to_lowercase())
-                .collect::<Vec<_>>()
-                .join("\n");
-            ((*name).to_owned(), text)
-        })
+        .map(|name| ((*name).to_owned(), current_lower(name)))
         .collect();
     let says = |name: &str, needle: &str| {
         assert!(
             by_name[name].contains(needle),
-            "{name} 1.1.0 never says {needle:?}"
+            "{name} never says {needle:?}"
         );
     };
-    // Read the body before you write one (182), everywhere it is written.
+    // Read the body before you write one (182). The worker roles no longer
+    // repeat it: the work brief prints their `--example` line with the ids
+    // already filled in (209), so the rule lives once, in the contract, for
+    // the verbs no brief carries.
     says("working-contract", "--example");
-    says("builder", "--example");
-    says("verifier", "--example");
-    says("lead", "--example");
     // Lead: bounded hiring, routed first, the verification input, and a
     // completion that settles itself (180, 182, 183, 184, 190).
     says("lead", "not a staffing plan");
@@ -460,6 +654,10 @@ fn each_1_1_0_role_carries_the_procedure_its_software_now_supports() {
     says("lead", "--checkout");
     says("lead", "run-status");
     says("lead", "pending");
+    // Lead: 210's settlement rule, and where an ask has to go to be read.
+    says("lead", "requiredaction");
+    says("lead", "settles its assignment");
+    says("lead", "new assignment");
     // Builder: the tests are part of the work, and red before green.
     says("builder", "part of the change");
     says("builder", "fails against the unfixed state");
@@ -484,4 +682,81 @@ fn each_1_1_0_role_carries_the_procedure_its_software_now_supports() {
     // task. Nothing here may claim software delivers these entries.
     says("project-pulse", "end of each turn");
     says("project-pulse", "bears on your current");
+}
+
+/// What 1.2.0 deleted, and must stay deleted. Since lane 209 the host
+/// prepends a seat's first turn with the objective, acceptance steps, file
+/// ownership, branch, worktree, base commit and what this host did about it,
+/// the filled-in `sessions report`/`verdict` invocations each preceded by its
+/// own `--example` line, the bound criteria quoted from the plan, the grants
+/// and the runtime. A template sentence that sends a seat to discover one of
+/// those is paid for at full context on every tool call of the turn, and it
+/// can disagree with the brief, which is authoritative. Observability is by
+/// mechanism too: a published disposition is the notification, so no template
+/// asks anyone to send one.
+#[test]
+fn no_current_template_repeats_a_fact_the_work_brief_supplies() {
+    const FORBIDDEN: [(&str, &str, &str); 11] = [
+        (
+            "builder",
+            "--example",
+            "the brief prints the report command and its --example line, filled in",
+        ),
+        (
+            "verifier",
+            "--example",
+            "the brief prints the verdict command and its --example line, filled in",
+        ),
+        (
+            "runner",
+            "--example",
+            "the brief prints the report command and its --example line, filled in",
+        ),
+        (
+            "lead",
+            "--example",
+            "the lead no longer has to point a worker at it; the brief does",
+        ),
+        (
+            "builder",
+            "acceptance checks before editing",
+            "the brief carries the acceptance steps and the bound criteria",
+        ),
+        (
+            "builder",
+            "owned files or artifacts, dependencies",
+            "the brief carries file ownership",
+        ),
+        (
+            "verifier",
+            "establish it in your",
+            "the brief says whether this host established the base here",
+        ),
+        (
+            "runner",
+            "the named workspace, revision",
+            "the brief carries the worktree and the base",
+        ),
+        (
+            "lead",
+            "starting revision, dependencies",
+            "the assignment's own fields carry these; the host assembles them",
+        ),
+        (
+            "lead",
+            "notify affected workers",
+            "the published disposition is the notification (no asking agents to report)",
+        ),
+        (
+            "lead",
+            "include its returned reference",
+            "the brief carries the assignment reference",
+        ),
+    ];
+    for (name, phrase, why) in FORBIDDEN {
+        assert!(
+            !current_lower(name).contains(phrase),
+            "{name} still says {phrase:?}: {why}"
+        );
+    }
 }

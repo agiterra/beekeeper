@@ -19469,6 +19469,136 @@ removed from here.
        control run is the proof for 227; a crash between the two writes is the
        proof for 228, and only an injected failure has stood in for it.
 
+231. **Role templates 1.2.0: the text stops saying what the work brief now
+     hands the seat as a fact, and the lead is taught 210's settlement rule
+     (2026-09-21, lane 231, branch `work/lane-231-role-templates-1.2`, base
+     `2ec147f73`).** Plan § 8 A4. 1.1.0 (196) taught each role the judgment
+     the software had started to supply; 209 then made the host *supply the
+     facts*, and the 1.1.0 text still sent seats to find them. Five new
+     version directories — `lead`, `builder`, `verifier`, `runner`,
+     `working-contract` — under `personas/templates/<name>/1.2.0/`. No 1.0.0
+     or 1.1.0 byte moved, and `architect`, `designer`, `poker`,
+     `project-setup`, `project-pulse` and `memory` needed nothing and ship no
+     1.2.0.
+     - **What was deleted, and what supplies it instead.** `builder`'s
+       write-report paragraph telling it to read `$BEE sessions report
+       --example` and `verifier`'s telling it to read `$BEE sessions verdict
+       --example refutation` — the brief prints both invocations with
+       `--channel`, `--session-ref` and `--genesis` already filled in, each
+       preceded by its own `--example` line (209(b)). `builder`'s "resolve the
+       outcome, owned files or artifacts, dependencies and acceptance checks
+       before editing" — the brief carries all four (209(a), 209(c)).
+       `verifier`'s "establish it in your workspace" — the brief says in words
+       what this host did about the base: established at that commit, not
+       required for this role, failed with git's own sentence, or unrecorded,
+       and "Do not re-checkout it" in the first case. `runner`'s "the named
+       workspace, revision and project-specific environment setup" — worktree
+       and base are brief facts. `lead`'s write-brief enumeration of goal,
+       scope, ownership, starting revision, dependencies, acceptance criteria,
+       capabilities, grants, reporting destination and session/assignment
+       references — that enumeration is what the 2026-09-20 lead hand-typed
+       into every hire brief (209's measured problem); 1.2.0 tells the lead to
+       put the work in the assignment's **fields** and says the host
+       assembles them, leaving prose for what the fields cannot carry.
+       `lead/hire`'s "include its returned reference in the brief" —
+       the brief carries the assignment reference. `working-contract`'s
+       "read a body before you write one" keeps its rule and its reason but
+       cites only `$BEE sessions assign --example verifier`: the brief covers
+       `report` and `verdict`, and the contract is also carried by executions
+       that get no brief, so the rule itself was not deletable.
+     - **The stale sentence 210 named** (`lead/1.1.0/skills/triage-report/SKILL.md:27`,
+       *"Do not wake seats to collect acknowledgements…"*) is replaced, not
+       trimmed: 1.2.0 says an approving disposition carrying no
+       `requiredAction` settles its assignment where it stands and nothing is
+       owed back, that anything actually wanted from the assignee goes in
+       `requiredAction` or a new assignment because an ask in `summary` or
+       `findings` is read by no rule and reaches no seat (210's "prose is
+       never read"), and that a non-approving disposition or one naming a
+       `requiredAction` still needs the assignee's explicit answer, which its
+       own wake collects. This is the positive `requiredAction` instruction
+       210's addendum 1 asked for; it is also why `lead` is the one role whose
+       bytes **grew**.
+     - **Observability is by mechanism.** `triage-report`'s "and notify
+       affected workers" is gone — the published disposition *is* the
+       notification — and `lead`'s "continue and notify" is "and continue" in
+       the template and in `ask-for-a-ruling`. No shipped template now asks
+       anyone to send a status message.
+     - **Bytes** (all files of a version directory): `lead` 8,636 → 9,013
+       (+377, of which `triage-report` is +459 and the four deletions −82);
+       `builder` 3,339 → 3,038 (−301); `verifier` 3,461 → 3,255 (−206);
+       `runner` 3,879 → 3,849 (−30); `working-contract` 3,011 → 2,975 (−36).
+       Net −196 across the five, and −573 for the four worker-facing roles.
+       The lead's growth is the honest price of item 3: the rule it now states
+       is the one that removes a wake per assignment.
+     - **A validator bug this lane had to fix first.**
+       `validate_catalog` warned "versions X and Y carry identical text and
+       skills" whenever two versions' `TEMPLATE.md` body and declared skill
+       *list* matched — it never read a `SKILL.md`. `builder`, `runner` and
+       `verifier` 1.2.0 change only skill files, so a clean catalog was
+       reported as three duplicate versions and
+       `the_shipped_catalog_loads_and_validates_clean` failed. "Identical" is
+       now the whole version directory minus its own `TEMPLATE.md` (whose
+       frontmatter always differs by the version), an unreadable tree
+       declines to answer rather than answering "identical", and
+       `a_version_whose_only_change_is_a_skill_file_is_not_a_duplicate`
+       (`crates/buzz-persona/src/template.rs`) pins both directions.
+     - **Auto-adoption, proved.** `a_1_2_0_role_is_picked_up_by_both_the_caret_1_0_0_and_the_caret_1_1_0_includes`
+       (`crates/buzz-persona/src/role_work_contract_tests.rs`): for each of
+       the five, `@^1.0.0` and `@^1.1.0` both resolve to 1.2.0 with no
+       warning, `@1.0.0` and `@1.1.0` still answer their own versions, and a
+       role file written with 1.1.0-era carets composes — its four includes
+       resolving `1.2.0 / 1.2.0 / 1.0.0 / 1.1.0` — with the 1.2.0 paragraph
+       in the composed prompt. So an existing project takes 1.2.0 at its next
+       hire without anyone editing a file, and a running seat is unaffected:
+       its staged pack is immutable for its life.
+     - **Tests.** 1.1.0 is now pinned by SHA-256 per version directory
+       exactly as 1.0.0 was (`the_1_1_0_templates_are_byte_for_byte_what_they_shipped_as`)
+       — it is a published version two projects have staged. Every prose rule
+       (bare `bee`, acknowledgement collection, model/provider/price, the
+       per-role procedure table) moved off the hard-coded `1.1.0` onto a
+       `CURRENT` table of each template's newest version, so the next minor
+       is covered by construction rather than by remembering; the `--example`
+       needles for `builder`, `verifier` and `lead` are gone and
+       `working-contract` keeps the only one. New:
+       `no_current_template_repeats_a_fact_the_work_brief_supplies`, eleven
+       (template, forbidden phrase, why) rows that fail if any of this lane's
+       deletions is written back. The lead gained needles for
+       `requiredaction`, `settles its assignment` and `new assignment`. **Still
+       string tests over prose**: they prove the sentence is present or absent
+       and spelled the way a seat searches for it; they cannot prove a seat
+       behaves differently.
+     - **The two cross-crate tests 196 names needed no change**, and that is
+       the point of how 196 left them:
+       `session_setup_authoring_tests.rs`'s
+       `setup_first_turn_reaches_real_child_with_draft_cwd_brief_and_shipped_role`
+       and `project_team_setup_actor_tests.rs`'s
+       `real_shipped_bytes_and_identity_survive_interrupted_store_save_and_app_update`
+       both take the expected paragraph from the version their own `@^1.0.0`
+       include resolves to, and both are about `project-setup`, which this
+       lane did not touch. A template change is still a whole-workspace and
+       Tauri gate, because seats resolve carets across crates.
+     - **Gates**, bare and after committing, on
+       `work/lane-231-role-templates-1.2` at `4f88a0357`, which differs from
+       the landed commit only by this ledger paragraph: `cargo fmt --all --
+       --check` (0); `cargo clippy --workspace --all-targets -- -D warnings`
+       (0, no warning line at all); `cargo test --workspace` (0 — **136
+       suites, 8,023 passed, 0 failed, 813 ignored**) plus `cargo test -p
+       buzz-auth --doc` (0, 3 passed); `just file-size-check` (0); a Python
+       NUL scan of all 22 changed files, none. This machine's hermit ships no
+       `cargo-nextest`, so `just test-unit`'s own fallback is the workspace
+       `cargo test` above. **The first run of these gates read a lie**: the
+       script piped cargo through `tail -80` and then read `$?`, which is
+       `tail`'s status and is 0 whatever cargo did — and with only the last 80
+       lines kept, an earlier failure would also have been invisible. Every
+       count here is from a re-run with no pipe on the cargo command
+       (cf. the standing rule that a gate row needs a bare command).
+     - **Owed, live.** Nothing here has run on a seat. The claim that 1.2.0
+       cuts a worker's orientation is the `kettle-control` run's to make or
+       refute, measured by `bee sessions measure` against Kettle Smoke's
+       24–38% (209); the lead's `requiredAction` instruction is proved only by
+       the control run closing with `acknowledgement_only_turns: 0` (210).
+       Not landed, not installed, no seat has run 1.2.0.
+
 ## 3a. Environment facts that cost real time (do not rediscover)
 
 - **pnpm 11's answer to a stale workspace state is to DELETE `node_modules`,

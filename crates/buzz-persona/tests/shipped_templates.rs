@@ -12,8 +12,10 @@
 //!   identity (description, display name) its persona had before it was
 //!   thinned (`tests/fixtures/shipped-roles-2026-09-18/`). Until 1.1.0 the
 //!   composed *body* was pinned to those same fixture bytes; role text is
-//!   now expected to advance through new template versions, and the
-//!   guarantee that a published version never changes is pinned by hash in
+//!   now expected to advance through new template versions (1.1.0, then
+//!   1.2.0), so every assertion here derives the expected text from the
+//!   version a `@^1.0.0` include resolves to, and the guarantee that a
+//!   published version never changes is pinned by hash in
 //!   `src/role_work_contract_tests.rs`;
 //! - the seed writer, given this catalog, yields roles that compose with
 //!   the template's skills and the role's own paragraph.
