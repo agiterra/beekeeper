@@ -387,6 +387,7 @@ fn a_replayed_request_this_host_already_reported_is_skipped() {
         channel_id: "00000000-0000-0000-0000-000000000009".into(),
         created_at: now_secs(),
         state: crate::action_step_store::StepState::Requested,
+        agents_commit: None,
     };
     assert!(store.insert(record.clone()).expect("insert"));
     store

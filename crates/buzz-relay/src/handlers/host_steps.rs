@@ -10,8 +10,10 @@
 //! with the result as the host step's output (spec § 5.4–5.6).
 //!
 //! A `refused` result that carries no `claimEventId` — the host declined
-//! before claiming, e.g. definition drift — is stored as an event and
-//! nothing else: the row stays `requested` so another host may still claim.
+//! before claiming, e.g. definition drift — is stored and echoed as a
+//! kind:46014 (so the seat that triggered the run is woken with the refusal,
+//! ledger 250), and nothing else: the row stays `requested` so another host
+//! may still claim.
 //!
 //! SECURITY: like `command_executor`, this module runs only after the ingest
 //! pipeline has verified the signature, timestamp, pubkey/auth match and
@@ -231,9 +233,9 @@ fn disposition_str(disposition: HostStepDisposition) -> &'static str {
 
 /// Handle a kind:46023 result.
 ///
-/// A result without a `claimEventId` (a refusal before claiming) is stored
-/// and answered `{"status":"refusal_recorded"}`; the row and the run are
-/// untouched. Otherwise only the claiming host's first result closes the
+/// A result without a `claimEventId` (a refusal before claiming) is stored,
+/// echoed as kind:46014, and answered `{"status":"refusal_recorded"}`; the
+/// row and the run are untouched. Otherwise only the claiming host's first result closes the
 /// row: the relay echoes it as kind:46014, records the echo's id, and
 /// resumes the run at the next step. A repeated result from the claiming
 /// host is an accepted duplicate; a result from any other host is rejected.
@@ -277,6 +279,23 @@ pub async fn handle_host_step_result(
         tx.commit().await.map_err(|error| {
             IngestError::Internal(format!("error: commit transaction: {error}"))
         })?;
+        // Echo the refusal too (ledger 250): the seat that triggered the run
+        // is woken on the kind:46014, and a refusal that echoes nothing
+        // leaves it waiting on a step no host will run (kettle-control-2
+        // run b60be720: 46023 `dd359da3…`, 2 h 47 m idle). The row is not
+        // touched — another host may still claim — so the echo's id is not
+        // recorded on it.
+        echo_result(
+            state,
+            tenant,
+            channel_id,
+            &row,
+            &result,
+            &signer,
+            event,
+            EchoRecord::NotOnRow,
+        )
+        .await;
         return Ok(accepted(
             event,
             serde_json::json!({ "status": "refusal_recorded" }),
@@ -377,10 +396,64 @@ pub async fn handle_host_step_result(
     // Echo the accepted result as a relay-signed kind:46014. A failure here
     // is logged, not fatal: the row already records the result event, and
     // the run must still resume.
+    echo_result(
+        state,
+        tenant,
+        channel_id,
+        &row,
+        &result,
+        &signer,
+        event,
+        EchoRecord::OnRow,
+    )
+    .await;
+
+    // Resume post-commit, off the ingest path. A `lost_on_restart` or
+    // `timed_out` result resumes too: later steps see `exit_code` null / 124
+    // and decide with `if:`.
+    spawn_resume(
+        state,
+        tenant.community(),
+        &closed,
+        buzz_workflow::host_step_output(&result),
+    );
+
+    Ok(accepted(
+        event,
+        serde_json::json!({
+            "status": status,
+            "run_id": row.run_id.to_string(),
+            "step_id": row.step_id,
+        }),
+    ))
+}
+
+/// Whether an echo's event id is written onto the host step row.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum EchoRecord {
+    /// The result closed the row: record the echo on it.
+    OnRow,
+    /// A refusal before any claim: the row stays open for another host.
+    NotOnRow,
+}
+
+/// Publish the relay-signed kind:46014 echo of an accepted kind:46023.
+/// Best-effort after commit: a failure is logged, never fatal.
+#[allow(clippy::too_many_arguments)]
+async fn echo_result(
+    state: &Arc<AppState>,
+    tenant: &TenantContext,
+    channel_id: Uuid,
+    row: &HostStepRecord,
+    result: &buzz_core::host_step::HostStepResult,
+    signer: &[u8],
+    event: &Event,
+    record: EchoRecord,
+) {
     let exited = HostStepExited {
         schema: HOST_STEP_SCHEMA.into(),
         result: result.clone(),
-        claimed_by: hex::encode(&signer),
+        claimed_by: hex::encode(signer),
         result_event_id: event.id.to_hex(),
     };
     match build_host_step_exited(&exited) {
@@ -395,6 +468,7 @@ pub async fn handle_host_step_result(
             )
             .await
             {
+                Ok(_) if record == EchoRecord::NotOnRow => {}
                 Ok(exited_event_id) => match hex::decode(&exited_event_id) {
                     Ok(bytes) => {
                         if let Err(error) = state
@@ -432,25 +506,6 @@ pub async fn handle_host_step_result(
             "host step: could not build kind:46014: {error}"
         ),
     }
-
-    // Resume post-commit, off the ingest path. A `lost_on_restart` or
-    // `timed_out` result resumes too: later steps see `exit_code` null / 124
-    // and decide with `if:`.
-    spawn_resume(
-        state,
-        tenant.community(),
-        &closed,
-        buzz_workflow::host_step_output(&result),
-    );
-
-    Ok(accepted(
-        event,
-        serde_json::json!({
-            "status": status,
-            "run_id": row.run_id.to_string(),
-            "step_id": row.step_id,
-        }),
-    ))
 }
 
 /// Resume the run a closed host step belongs to, post-commit and off the
@@ -832,6 +887,84 @@ mod tests {
             .await
             .expect("record request id");
 
+        // Ledger 250 (kettle-control-2 run b60be720, 46023 `dd359da3…`): B
+        // refuses before any claim. The relay echoes the refusal as one
+        // kind:46014 — the fact the triggering seat is woken on — and leaves
+        // the row open for another host.
+        let refusal = buzz_core::host_step::HostStepResult {
+            schema: HOST_STEP_SCHEMA.into(),
+            run_id: run_id.to_string(),
+            step_id: "build".into(),
+            requested_event_id: hex::encode(requested_id),
+            claim_event_id: None,
+            channel_id: channel.id.to_string(),
+            disposition: HostStepDisposition::Refused,
+            exit_code: None,
+            refusal: Some(buzz_core::host_step::HostStepRefusal {
+                code: "ACTION_UNKNOWN".into(),
+                message: "actions.yml has no action named \"nightly\"".into(),
+            }),
+            timed_out: false,
+            duration_ms: None,
+            head_sha: None,
+            agents_commit: Some("4".repeat(40)),
+            dirty: None,
+            checkout: None,
+            stdout_tail: String::new(),
+            stderr_tail: String::new(),
+            truncated: false,
+            artifact_path: None,
+            routed: None,
+            artifacts: Vec::new(),
+        };
+        let (tags, content) = build_host_step_result(&refusal).expect("build refusal");
+        let refused_b = signed(&host_b, KIND_HOST_STEP_RESULT, tags, content);
+        let recorded = handle_host_step_result(&tenant, &state, &refused_b, &http_auth(&host_b))
+            .await
+            .expect("refusal by B");
+        assert_eq!(
+            recorded.message,
+            r#"response:{"status":"refusal_recorded"}"#
+        );
+        let echoes = || async {
+            state
+                .db
+                .query_events(&buzz_db::EventQuery {
+                    kinds: Some(vec![KIND_WORKFLOW_HOST_STEP_EXITED as i32]),
+                    tags_containing: Some(vec![("e".into(), refused_b.id.to_hex())]),
+                    limit: Some(10),
+                    ..buzz_db::EventQuery::for_community(community)
+                })
+                .await
+                .expect("query echoes")
+        };
+        let found = echoes().await;
+        assert_eq!(found.len(), 1, "one kind:46014 echoes the refusal");
+        let echoed: buzz_core::host_step::HostStepExited =
+            serde_json::from_str(&found[0].event.content).expect("echo content");
+        assert_eq!(echoed.claimed_by, host_b.public_key().to_hex());
+        assert_eq!(echoed.result, refusal);
+        assert_eq!(echoed.result_event_id, refused_b.id.to_hex());
+        let again = handle_host_step_result(&tenant, &state, &refused_b, &http_auth(&host_b))
+            .await
+            .expect("repeat refusal");
+        assert!(again.message.starts_with("duplicate:"));
+        assert_eq!(
+            echoes().await.len(),
+            1,
+            "a repeated refusal echoes nothing new"
+        );
+        let open = state
+            .db
+            .get_host_step(community, run_id, "build")
+            .await
+            .expect("row");
+        assert_eq!(open.status, HostStepStatus::Requested);
+        assert!(
+            open.exited_event_id.is_none(),
+            "a refusal's echo is not the row's"
+        );
+
         let claim_for = |keys: &Keys| {
             let claim = HostStepClaim {
                 schema: HOST_STEP_SCHEMA.into(),
@@ -879,6 +1012,7 @@ mod tests {
                 timed_out: false,
                 duration_ms: Some(42),
                 head_sha: Some("b".repeat(40)),
+                agents_commit: None,
                 dirty: Some(false),
                 checkout: None,
                 stdout_tail: "ok".into(),

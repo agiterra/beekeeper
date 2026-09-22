@@ -8,10 +8,23 @@
 //! FETCH_HEAD:<file>` — never from a working copy, so nothing an operator has
 //! open in an editor is ever mistaken for the published definition.
 //!
+//! **The fetch goes to the recorded clone URL** (ledger 250). The desktop's
+//! packs cache clones by URL and never configures an `origin` remote
+//! (`desktop/src-tauri/src/managed_agents/packs_cache.rs`, `fetch`), so the
+//! `git fetch origin <ref>` this module used to run failed on every call. The
+//! failure fell through to the last `refs/remotes/origin/<branch>` the
+//! desktop happened to write, and the refusal called that "as fetched at" the
+//! mtime of a `FETCH_HEAD` the failed fetch had just truncated — in
+//! kettle-control-2 run b60be720 that read "42bc7697, as fetched at 19:43:20Z"
+//! while the relay's main was already 71098e4b. The record now carries the
+//! URL; the fetch updates `refs/remotes/origin/<branch>` so the desktop and
+//! this module agree on the tip.
+//!
 //! When the fetch fails (offline, relay down) the last fetched tip is read
-//! instead and the answer says so: `stale` is `true` and `fetched_at` is when
-//! that tip arrived, so a refusal or a receipt can say "as fetched at …"
-//! rather than pass off an old file as current.
+//! instead and the answer says so: `stale` is `true`, `fetch_error` is what
+//! failed just now, and `fetched_at` is when that tip was last *updated*
+//! (the remote-tracking ref's reflog), never the mtime of a file the failed
+//! fetch itself may have touched.
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -32,6 +45,12 @@ pub struct AgentsRepoRecord {
     /// The pinned ref, fully qualified (`refs/heads/main`).
     #[serde(rename = "ref")]
     pub ref_name: String,
+    /// The repository's clone URL on the relay. `None` in a record written
+    /// before ledger 250; the fetch then falls back to an `origin` remote,
+    /// and without one refuses by name rather than reading an old tip as
+    /// current.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
 }
 
 /// One file read from the agents repository's tip.
@@ -45,6 +64,8 @@ pub struct AgentsFile {
     pub stale: bool,
     /// When the tip was fetched (unix seconds), when known.
     pub fetched_at: Option<u64>,
+    /// Why the fetch just now failed, when `stale`.
+    pub fetch_error: Option<String>,
 }
 
 impl AgentsFile {
@@ -55,10 +76,17 @@ impl AgentsFile {
         if !self.stale {
             return short;
         }
-        match self.fetched_at {
-            Some(at) => format!("{short}, as fetched at {}", format_time(at)),
-            None => format!("{short}, as last fetched (the fetch just now failed)"),
-        }
+        let when = match self.fetched_at {
+            Some(at) => format!("as last fetched at {}", format_time(at)),
+            None => "as last fetched".to_owned(),
+        };
+        let why = self
+            .fetch_error
+            .as_deref()
+            .map(|error| error.lines().next().unwrap_or(error).trim().to_owned())
+            .filter(|error| !error.is_empty())
+            .unwrap_or_else(|| "no reason given".to_owned());
+        format!("{short}, {when}; fetching just now failed: {why}")
     }
 }
 
@@ -106,24 +134,21 @@ pub async fn read_agents_file(
             detail: "no .git directory".to_owned(),
         });
     }
-    let (sha, stale, fetched_at) = match git(
-        &record.path,
-        &["fetch", "--quiet", "origin", &record.ref_name],
-    )
-    .await
-    {
-        Ok(_) => {
-            let sha = git(&record.path, &["rev-parse", "FETCH_HEAD"])
+    let branch = record
+        .ref_name
+        .strip_prefix("refs/heads/")
+        .unwrap_or(&record.ref_name);
+    let remote_ref = format!("refs/remotes/origin/{branch}");
+    let (sha, fetch_error) = match fetch_tip(record, &remote_ref).await {
+        Ok(()) => (
+            git(&record.path, &["rev-parse", "--verify", &remote_ref])
                 .await
-                .map_err(|detail| AgentsReadError::Git { detail })?;
-            (sha.trim().to_owned(), false, Some(now_secs()))
-        }
+                .map_err(|detail| AgentsReadError::Git { detail })?
+                .trim()
+                .to_owned(),
+            None,
+        ),
         Err(fetch_error) => {
-            let branch = record
-                .ref_name
-                .strip_prefix("refs/heads/")
-                .unwrap_or(&record.ref_name);
-            let remote_ref = format!("refs/remotes/origin/{branch}");
             let sha = match git(
                 &record.path,
                 &["rev-parse", "--verify", "--quiet", &remote_ref],
@@ -138,13 +163,14 @@ pub async fn read_agents_file(
                     })
                 }
             };
-            let fetched_at = std::fs::metadata(record.path.join(".git").join("FETCH_HEAD"))
-                .and_then(|meta| meta.modified())
-                .ok()
-                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|d| d.as_secs());
-            (sha, true, fetched_at)
+            (sha, Some(fetch_error))
         }
+    };
+    let stale = fetch_error.is_some();
+    let fetched_at = if stale {
+        last_updated(&record.path, &remote_ref).await
+    } else {
+        Some(now_secs())
     };
     let spec = format!("{sha}:{file}");
     match git(&record.path, &["show", &spec]).await {
@@ -153,6 +179,7 @@ pub async fn read_agents_file(
             sha,
             stale,
             fetched_at,
+            fetch_error,
         }),
         Err(detail)
             if detail.contains("does not exist")
@@ -165,6 +192,52 @@ pub async fn read_agents_file(
         }
         Err(detail) => Err(AgentsReadError::Git { detail }),
     }
+}
+
+/// Fetch the record's ref into `remote_ref`: from the recorded URL, or —
+/// for a record written before the URL was — from an `origin` remote if the
+/// clone has one. `Err` is git's own complaint, or the sentence saying there
+/// is nowhere to fetch from.
+async fn fetch_tip(record: &AgentsRepoRecord, remote_ref: &str) -> Result<(), String> {
+    let source =
+        match record.url.as_deref().map(str::trim) {
+            Some(url) if !url.is_empty() => url.to_owned(),
+            _ => match git(&record.path, &["remote", "get-url", "origin"]).await {
+                Ok(url) if !url.trim().is_empty() => "origin".to_owned(),
+                _ => return Err(
+                    "this host recorded no clone URL for the agents repository and the clone has \
+                     no origin remote; open the project's Actions tab to record it again"
+                        .to_owned(),
+                ),
+            },
+        };
+    let refspec = format!("+{}:{remote_ref}", record.ref_name);
+    git(
+        &record.path,
+        &["fetch", "--quiet", "--no-tags", "--", &source, &refspec],
+    )
+    .await
+    .map(|_| ())
+}
+
+/// When `remote_ref` last moved (unix seconds), from its reflog. `None` when
+/// the clone keeps no reflog for it — an unknown time, never a guessed one.
+async fn last_updated(dir: &Path, remote_ref: &str) -> Option<u64> {
+    git(
+        dir,
+        &["log", "-g", "-1", "--format=%gd", "--date=unix", remote_ref],
+    )
+    .await
+    .ok()
+    .and_then(|line| {
+        let inner = line
+            .trim()
+            .rsplit_once('{')?
+            .1
+            .strip_suffix('}')?
+            .to_owned();
+        inner.parse::<u64>().ok()
+    })
 }
 
 async fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
@@ -247,6 +320,7 @@ mod tests {
             AgentsRepoRecord {
                 path: clone,
                 ref_name: "refs/heads/main".into(),
+                url: None,
             },
         )
     }
@@ -290,7 +364,7 @@ mod tests {
         assert!(stale.stale);
         assert_eq!(stale.text, "schema: v1\nactions: []\n");
         assert!(
-            stale.provenance().contains("as fetched"),
+            stale.provenance().contains("fetching just now failed"),
             "{}",
             stale.provenance()
         );
@@ -298,10 +372,103 @@ mod tests {
         let nowhere = AgentsRepoRecord {
             path: tmp.path().join("nowhere"),
             ref_name: "refs/heads/main".into(),
+            url: None,
         };
         assert!(matches!(
             read_agents_file(&nowhere, "actions.yml").await.unwrap_err(),
             AgentsReadError::NoCheckout { .. }
         ));
+    }
+
+    /// Ledger 250, kettle-control-2 run b60be720 (46023 `dd359da3…`): the
+    /// packs cache clones by URL and configures no `origin` remote, so the
+    /// host's pack copy sat one commit behind the relay's main and every
+    /// fetch failed. A trigger naming an action that exists only on main was
+    /// refused `ACTION_UNKNOWN`, "as fetched at" the moment of the failure.
+    /// The fetch goes to the recorded URL; the action resolves, and the
+    /// answer names the commit it resolved at.
+    #[tokio::test]
+    async fn a_pack_copy_without_an_origin_remote_fetches_main_by_url() {
+        let tmp = tempfile::tempdir().unwrap();
+        let origin = tmp.path().join("origin");
+        std::fs::create_dir_all(&origin).unwrap();
+        sh(&origin, &["init", "--quiet", "--initial-branch", "main"]).await;
+        let old = "schema: v1\nactions:\n  build:\n    steps: []\n";
+        std::fs::write(origin.join("actions.yml"), old).unwrap();
+        sh(&origin, &["add", "--all"]).await;
+        sh(&origin, &["commit", "--quiet", "-m", "seed"]).await;
+        // The packs cache's own shape: init, fetch by URL into
+        // refs/remotes/origin/*, detach — no remote named origin.
+        let copy = tmp.path().join("copy");
+        std::fs::create_dir_all(&copy).unwrap();
+        sh(&copy, &["init", "--quiet"]).await;
+        sh(
+            &copy,
+            &[
+                "fetch",
+                "--quiet",
+                "--",
+                origin.to_str().unwrap(),
+                "+refs/heads/*:refs/remotes/origin/*",
+            ],
+        )
+        .await;
+        sh(
+            &copy,
+            &[
+                "checkout",
+                "--quiet",
+                "--detach",
+                "refs/remotes/origin/main",
+            ],
+        )
+        .await;
+        assert_eq!(
+            sh(&copy, &["remote"]).await,
+            "",
+            "no origin remote, as in the pack cache"
+        );
+        // The lead commits `verify` to main after the copy was synced.
+        let new = "schema: v1\nactions:\n  verify:\n    steps: []\n";
+        std::fs::write(origin.join("actions.yml"), new).unwrap();
+        sh(&origin, &["commit", "--quiet", "-am", "add verify"]).await;
+        let main = sh(&origin, &["rev-parse", "HEAD"]).await;
+
+        let record = AgentsRepoRecord {
+            path: copy.clone(),
+            ref_name: "refs/heads/main".into(),
+            url: Some(origin.to_str().unwrap().to_owned()),
+        };
+        let read = read_agents_file(&record, "actions.yml").await.unwrap();
+        assert!(
+            !read.stale,
+            "the fetch just happened: {}",
+            read.provenance()
+        );
+        assert_eq!(
+            read.sha, main,
+            "resolved at the relay's main, not the copy's tip"
+        );
+        assert_eq!(read.text, new);
+        // The desktop's view of the tip moves with it.
+        assert_eq!(
+            sh(&copy, &["rev-parse", "refs/remotes/origin/main"]).await,
+            main
+        );
+
+        // A record written before the URL was recorded, on a copy with no
+        // origin: the refusal says there is nowhere to fetch from, and never
+        // calls the old tip "fetched" just now.
+        let legacy = AgentsRepoRecord {
+            url: None,
+            ..record.clone()
+        };
+        let stale = read_agents_file(&legacy, "actions.yml").await.unwrap();
+        assert!(stale.stale);
+        assert!(
+            stale.provenance().contains("no origin remote"),
+            "{}",
+            stale.provenance()
+        );
     }
 }

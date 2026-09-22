@@ -129,6 +129,10 @@ pub const ACTION_FILE_MISSING: &str = "ACTION_FILE_MISSING";
 pub const ACTION_FILE_INVALID: &str = "ACTION_FILE_INVALID";
 /// The file has no entry with the request's `workflowName`.
 pub const ACTION_UNKNOWN: &str = "ACTION_UNKNOWN";
+/// The agents repository could not be fetched just now, and the last tip
+/// this host had does not hold the requested definition — so the host cannot
+/// say whether the relay's main does (ledger 250).
+pub const ACTION_AGENTS_FETCH_FAILED: &str = "ACTION_AGENTS_FETCH_FAILED";
 /// The entry compiles to a different hash than the relay's definition.
 pub const ACTION_DEFINITION_DRIFT: &str = "ACTION_DEFINITION_DRIFT";
 /// The indexed step is not the named `run_on_host` step.
@@ -198,8 +202,28 @@ pub struct AgentsFiles {
     /// `team.yml`, when the tip has one.
     pub team_yml: Option<String>,
     /// Where the bytes came from, for messages: the short sha, and "as
-    /// fetched at …" when the fetch just now failed.
+    /// last fetched at …; fetching just now failed: …" when it did.
     pub provenance: String,
+    /// The full commit `actions.yml` was read at — what the kind:46023 names
+    /// as `agentsCommit`.
+    pub commit: String,
+    /// `true` when the fetch made for this request failed and `commit` is
+    /// the last tip this host had.
+    pub stale: bool,
+}
+
+impl AgentsFiles {
+    /// The refusal code for a definition this host's file does not hold:
+    /// `code` when the file is the relay's current tip, and
+    /// [`ACTION_AGENTS_FETCH_FAILED`] when it is only the last tip this host
+    /// managed to fetch — the absence is then this host's, not the relay's.
+    fn absence_code<'a>(&self, code: &'a str) -> &'a str {
+        if self.stale {
+            ACTION_AGENTS_FETCH_FAILED
+        } else {
+            code
+        }
+    }
 }
 
 /// Read the project's agents files for a request, or the refusal to publish.
@@ -238,6 +262,8 @@ pub async fn load_agents_files(
     };
     Ok(AgentsFiles {
         provenance: actions.provenance(),
+        commit: actions.sha.clone(),
+        stale: actions.stale,
         actions_yml: actions.text,
         team_yml,
     })
@@ -275,7 +301,7 @@ pub fn verify_request(
         .find(|entry| entry.name == request.workflow_name)
     else {
         return Err(refusal(
-            ACTION_UNKNOWN,
+            files.absence_code(ACTION_UNKNOWN),
             format!(
                 "{ACTIONS_YML} in the agents repository ({}) has no action named {:?}",
                 files.provenance, request.workflow_name
@@ -284,7 +310,7 @@ pub fn verify_request(
     };
     if entry.hash != request.definition_hash {
         return Err(refusal(
-            ACTION_DEFINITION_DRIFT,
+            files.absence_code(ACTION_DEFINITION_DRIFT),
             format!(
                 "the agents repository's actions.yml ({}) compiles to {}…, the relay's definition \
                  is {}…; publish the file or push the commit that matches",
@@ -408,6 +434,7 @@ pub fn lost_on_restart_result(record: &ActionStepRecord, claim_event_id: &str) -
         timed_out: false,
         duration_ms: None,
         head_sha: None,
+        agents_commit: None,
         dirty: None,
         checkout: None,
         stdout_tail: String::new(),
@@ -438,6 +465,7 @@ pub fn refused_result(
         timed_out: false,
         duration_ms: None,
         head_sha: None,
+        agents_commit: None,
         dirty: None,
         checkout: None,
         stdout_tail: String::new(),
@@ -497,6 +525,7 @@ pub fn exited_result(
         timed_out: outcome.timed_out,
         duration_ms: Some(outcome.duration_ms),
         head_sha,
+        agents_commit: None,
         dirty,
         checkout,
         stdout_tail: outcome.stdout_tail.clone(),
@@ -692,6 +721,7 @@ impl Provider {
             channel_id: request.channel_id.clone(),
             created_at: now,
             state: StepState::Requested,
+            agents_commit: None,
         };
         if !self.action_steps.insert(record)? {
             // A redelivery. Whatever the record says already happened, and a
@@ -713,6 +743,11 @@ impl Provider {
         // The definition comes from the agents repository's fetched tip
         // (spec § 4.11), read before the sync verification below.
         let files = load_agents_files(&projects, &request.project).await;
+        if let Ok(files) = &files {
+            // Named on whatever 46023 this request produces (ledger 250).
+            self.action_steps
+                .set_agents_commit(requested_event_id, &files.commit)?;
+        }
         let plan = match files.and_then(|files| verify_request(&request, &projects.projects, &files).map(|verified| (verified, files))).and_then(|(verified, files)| {
             match verified.action {
                 VerifiedAction::Command(spec) => {
@@ -1352,8 +1387,14 @@ impl Provider {
     fn report_host_step_result(
         &mut self,
         requested_event_id: &str,
-        result: HostStepResult,
+        mut result: HostStepResult,
     ) -> anyhow::Result<()> {
+        if result.agents_commit.is_none() {
+            result.agents_commit = self
+                .action_steps
+                .record(requested_event_id)
+                .and_then(|record| record.agents_commit.clone());
+        }
         let (tags, content) =
             build_host_step_result(&result).map_err(|error| anyhow::anyhow!(error))?;
         let event = signed_event(&self.config.keys, KIND_HOST_STEP_RESULT, tags, content)?;
@@ -1400,6 +1441,8 @@ mod tests {
             actions_yml: actions.to_owned(),
             team_yml: None,
             provenance: "abcd1234".to_owned(),
+            commit: "abcd1234".repeat(5),
+            stale: false,
         }
     }
 
@@ -1567,6 +1610,7 @@ mod tests {
             channel_id: "00000000-0000-0000-0000-000000000009".into(),
             created_at: 0,
             state: StepState::Requested,
+            agents_commit: None,
         };
         let result = exited_result(
             &record,
@@ -1622,6 +1666,7 @@ mod tests {
             channel_id: "00000000-0000-0000-0000-000000000009".into(),
             created_at: 0,
             state: StepState::Requested,
+            agents_commit: None,
         };
         let (head_after, dirty_after) = host_command::git_head_and_dirty(repo.path()).await;
         let result = exited_result(
@@ -1701,6 +1746,7 @@ mod tests {
             crate::agents_checkout::AgentsRepoRecord {
                 path: std::env::temp_dir().join("no-such-agents-clone"),
                 ref_name: "refs/heads/main".into(),
+                url: None,
             },
         );
         assert_eq!(
@@ -1709,6 +1755,90 @@ mod tests {
                 .unwrap_err()
                 .code,
             ACTION_AGENTS_REPO_UNREADABLE
+        );
+    }
+
+    /// Ledger 250 (kettle-control-2 run b60be720, kind:46023 `dd359da3…`):
+    /// the lead committed `verify` to the agents repository's main (71098e4b)
+    /// and triggered it; this host's pack copy — cloned by URL, no `origin`
+    /// remote — was one commit behind and refused `ACTION_UNKNOWN` "as
+    /// fetched at" the moment its fetch failed. Now the host fetches main
+    /// from the recorded URL before resolving, the action resolves, and the
+    /// commit it resolved at is what the 46023 names.
+    #[tokio::test]
+    async fn an_action_only_on_main_resolves_after_a_fetch_and_names_the_commit() {
+        let tmp = tempfile::tempdir().unwrap();
+        let origin = tmp.path().join("origin");
+        std::fs::create_dir_all(&origin).unwrap();
+        git(&origin, &["init", "--quiet", "--initial-branch", "main"]).await;
+        std::fs::write(
+            origin.join("actions.yml"),
+            "schema: buzz-project-actions/v1\nactions: []\n",
+        )
+        .unwrap();
+        git(&origin, &["add", "--all"]).await;
+        git(&origin, &["commit", "--quiet", "-m", "seed"]).await;
+        let copy = tmp.path().join("copy");
+        std::fs::create_dir_all(&copy).unwrap();
+        git(&copy, &["init", "--quiet"]).await;
+        let origin_url = origin.to_str().unwrap().to_owned();
+        git(
+            &copy,
+            &[
+                "fetch",
+                "--quiet",
+                "--",
+                &origin_url,
+                "+refs/heads/*:refs/remotes/origin/*",
+            ],
+        )
+        .await;
+        std::fs::write(origin.join("actions.yml"), ACTIONS).unwrap();
+        git(&origin, &["commit", "--quiet", "-am", "add nightly"]).await;
+        let main = git(&origin, &["rev-parse", "HEAD"]).await;
+
+        let checkout = checkout_with(None);
+        let mut projects = ProjectsFile::default();
+        projects
+            .projects
+            .insert(PROJECT.to_owned(), checkout.path().to_path_buf());
+        projects.agents_repos.insert(
+            PROJECT.to_owned(),
+            crate::agents_checkout::AgentsRepoRecord {
+                path: copy.clone(),
+                ref_name: "refs/heads/main".into(),
+                url: Some(origin_url),
+            },
+        );
+        let files = load_agents_files(&projects, PROJECT).await.expect("read");
+        assert_eq!(files.commit, main.trim(), "resolved at the relay's main");
+        assert!(!files.stale);
+        verify_request(&request(&real_hash()), &projects.projects, &files)
+            .expect("the action on main resolves");
+        let mut result = refused_result(
+            &request(&real_hash()),
+            &"e".repeat(64),
+            &refusal(ACTION_STEP_INVALID, "x"),
+        );
+        result.agents_commit = Some(files.commit.clone());
+        let (_, content) = build_host_step_result(&result).expect("valid");
+        assert!(content.contains(&format!("\"agentsCommit\":\"{}\"", main.trim())));
+
+        // The same copy with nowhere to fetch from: the absence is this
+        // host's, and the refusal says so rather than ACTION_UNKNOWN.
+        let mut unknown = request(&real_hash());
+        unknown.workflow_name = "verify".into();
+        if let Some(record) = projects.agents_repos.get_mut(PROJECT) {
+            record.url = Some(tmp.path().join("gone").to_str().unwrap().to_owned());
+        }
+        let stale = load_agents_files(&projects, PROJECT).await.expect("read");
+        assert!(stale.stale);
+        let refused = verify_request(&unknown, &projects.projects, &stale).unwrap_err();
+        assert_eq!(refused.code, ACTION_AGENTS_FETCH_FAILED);
+        assert!(
+            refused.message.contains("fetching just now failed"),
+            "{}",
+            refused.message
         );
     }
 
@@ -1765,6 +1895,7 @@ mod tests {
                 pid: Some(7),
                 started_at: 2,
             },
+            agents_commit: None,
         };
         let mut alive = dead.clone();
         alive.requested_event_id = "cc".repeat(32);
@@ -1829,6 +1960,7 @@ mod tests {
             channel_id: "00000000-0000-0000-0000-000000000009".into(),
             created_at: 1,
             state: StepState::Requested,
+            agents_commit: None,
         };
         let outcome = HostCommandOutcome {
             exit_code: Some(124),

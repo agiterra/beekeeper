@@ -425,6 +425,7 @@ mod tests {
             timed_out: false,
             duration_ms: Some(5),
             head_sha: None,
+            agents_commit: None,
             dirty: None,
             checkout: None,
             stdout_tail: "x".into(),

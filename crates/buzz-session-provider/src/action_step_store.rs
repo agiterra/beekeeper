@@ -107,6 +107,10 @@ pub struct ActionStepRecord {
     pub created_at: u64,
     /// Lifecycle position.
     pub state: StepState,
+    /// The agents-repository commit `actions.yml` was resolved at for this
+    /// request, once read (ledger 250). Every kind:46023 for it names this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agents_commit: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -291,6 +295,20 @@ impl ActionStepStore {
         self.mutate(|steps| steps.retain(|record| record.requested_event_id != requested_event_id))
     }
 
+    /// Record the agents-repository commit this request was resolved at.
+    pub fn set_agents_commit(&mut self, requested_event_id: &str, commit: &str) -> io::Result<()> {
+        if self.record(requested_event_id).is_none() {
+            return Ok(());
+        }
+        self.mutate(|steps| {
+            for record in steps.iter_mut() {
+                if record.requested_event_id == requested_event_id {
+                    record.agents_commit = Some(commit.to_owned());
+                }
+            }
+        })
+    }
+
     fn set_state(&mut self, requested_event_id: &str, state: StepState) -> io::Result<()> {
         if self.record(requested_event_id).is_none() {
             return Ok(());
@@ -371,6 +389,7 @@ mod tests {
             channel_id: "00000000-0000-0000-0000-000000000009".into(),
             created_at,
             state: StepState::Requested,
+            agents_commit: None,
         }
     }
 
@@ -388,6 +407,7 @@ mod tests {
             timed_out: false,
             duration_ms: Some(10),
             head_sha: None,
+            agents_commit: None,
             dirty: None,
             checkout: None,
             stdout_tail: String::new(),

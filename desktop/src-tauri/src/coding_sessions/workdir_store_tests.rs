@@ -220,6 +220,7 @@ fn the_provider_view_carries_paths_and_nothing_else() {
         PROJECT_REF,
         PathBuf::from("/packs/aa-demo-beekeeper-agents"),
         "refs/heads/main",
+        Some("https://relay.example/git/aa/demo-beekeeper-agents"),
     );
     let view = store.projects_view();
     let agents = view.agents_repos.get(PROJECT_REF).expect("recorded");
@@ -228,6 +229,11 @@ fn the_provider_view_carries_paths_and_nothing_else() {
         PathBuf::from("/packs/aa-demo-beekeeper-agents")
     );
     assert_eq!(agents.ref_name, "refs/heads/main");
+    assert_eq!(
+        agents.url.as_deref(),
+        Some("https://relay.example/git/aa/demo-beekeeper-agents"),
+        "the provider fetches from the URL, not an origin remote (ledger 250)"
+    );
     let encoded = serde_json::to_string(&view).expect("serialize");
     assert!(encoded.contains(r#""agentsRepos""#), "{encoded}");
     assert!(encoded.contains(r#""ref":"refs/heads/main""#), "{encoded}");

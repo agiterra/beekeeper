@@ -40,6 +40,7 @@ fn store(agents: Option<&Path>, checkout: Option<&Path>) -> CodingSessionWorkdir
         store.agents_repos = BTreeMap::from([(
             PROJECT.to_owned(),
             CodingSessionAgentsRepo {
+                url: None,
                 path: path.to_path_buf(),
                 ref_name: "refs/heads/main".to_owned(),
                 updated_at: "2026-09-20T00:00:00Z".to_owned(),

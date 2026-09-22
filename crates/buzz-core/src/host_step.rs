@@ -268,6 +268,11 @@ pub struct HostStepResult {
     /// established are in [`HostStepResult::checkout`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub head_sha: Option<String>,
+    /// The agents-repository commit whose `actions.yml` this host resolved
+    /// the step against, from a fetch made for this request (ledger 250).
+    /// Absent when the host never read the file (e.g. no clone recorded).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agents_commit: Option<String>,
     /// Whether that checkout had uncommitted changes after the command ran.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dirty: Option<bool>,
@@ -308,7 +313,10 @@ pub struct HostStepExited {
     pub schema: String,
     /// The accepted result, verbatim.
     pub result: HostStepResult,
-    /// Lowercase hex pubkey of the host whose claim the relay recorded.
+    /// Lowercase hex pubkey of the host whose claim the relay recorded — or,
+    /// for a refusal made before any claim (`result.claimEventId` absent),
+    /// of the host that refused. The relay echoes refusals too (ledger 250),
+    /// so the seat that triggered the run learns it was refused.
     pub claimed_by: String,
     /// Event id of the accepted kind:46023.
     pub result_event_id: String,
@@ -583,6 +591,15 @@ fn validate_result(result: &HostStepResult) -> Result<(), String> {
             return Err("host step headSha must be lowercase 40-hex".into());
         }
     }
+    if let Some(commit) = &result.agents_commit {
+        if commit.len() != 40
+            || !commit
+                .bytes()
+                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+        {
+            return Err("host step agentsCommit must be lowercase 40-hex".into());
+        }
+    }
     if let Some(checkout) = &result.checkout {
         validate_nonempty_bounded(
             "host step checkout mode",
@@ -774,6 +791,7 @@ mod tests {
             timed_out: false,
             duration_ms: Some(1234),
             head_sha: Some("a".repeat(40)),
+            agents_commit: None,
             dirty: Some(false),
             checkout: Some(HostStepCheckout {
                 mode: host_step_checkout_commit(&"a".repeat(40)),

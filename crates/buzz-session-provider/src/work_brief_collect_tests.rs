@@ -243,6 +243,7 @@ async fn agents_repo(root: &Path) -> (crate::agents_checkout::AgentsRepoRecord, 
         crate::agents_checkout::AgentsRepoRecord {
             path: repo,
             ref_name: "refs/heads/main".into(),
+            url: None,
         },
         pinned,
     )

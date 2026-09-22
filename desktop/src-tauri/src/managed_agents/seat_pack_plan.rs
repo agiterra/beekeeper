@@ -77,6 +77,13 @@ pub(crate) fn plan_seat_pack(
                                     &record.project_ref.clone().unwrap_or_default(),
                                     packs_cache::packs_checkout_dir(&root, &owner, &id),
                                     ref_name,
+                                    Some(&packs_cache::packs_clone_url(
+                                        &crate::relay::relay_http_base_url(
+                                            &relay_ws_url_with_override(state),
+                                        ),
+                                        &owner,
+                                        &id,
+                                    )),
                                 )
                             {
                                 pack.warnings.push(format!(

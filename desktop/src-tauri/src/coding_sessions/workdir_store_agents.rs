@@ -25,26 +25,41 @@ pub(crate) struct CodingSessionAgentsRepo {
     pub path: PathBuf,
     #[serde(rename = "ref")]
     pub ref_name: String,
+    /// The repository's clone URL on the relay: where the provider fetches
+    /// the ref from before resolving a host step (ledger 250). The packs
+    /// cache clones by URL and configures no `origin` remote, so without
+    /// this the provider's fetch fails and it reads a stale tip.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
     pub updated_at: String,
 }
 
-/// The provider's view of [`CodingSessionAgentsRepo`]: path and ref only.
+/// The provider's view of [`CodingSessionAgentsRepo`]: path, ref and URL.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CodingSessionAgentsRepoView {
     pub path: PathBuf,
     #[serde(rename = "ref")]
     pub ref_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
 }
 
 impl CodingSessionWorkdirStore {
     /// Record where this host's clone of a project's agents repository is.
-    pub(crate) fn set_agents_repo(&mut self, project: &str, path: PathBuf, ref_name: &str) {
+    pub(crate) fn set_agents_repo(
+        &mut self,
+        project: &str,
+        path: PathBuf,
+        ref_name: &str,
+        url: Option<&str>,
+    ) {
         self.agents_repos.insert(
             project.to_string(),
             CodingSessionAgentsRepo {
                 path,
                 ref_name: ref_name.to_string(),
+                url: url.map(str::to_string),
                 updated_at: now_iso(),
             },
         );
@@ -60,6 +75,7 @@ pub(crate) fn record_agents_repo(
     project: &str,
     path: PathBuf,
     ref_name: &str,
+    url: Option<&str>,
 ) -> Result<(), String> {
     let project = project.trim().to_string();
     if project.is_empty() {
@@ -69,7 +85,7 @@ pub(crate) fn record_agents_repo(
         return Err("an agents repository clone must be an absolute path".to_string());
     }
     mutate(app, state, |store| {
-        store.set_agents_repo(&project, path, ref_name)
+        store.set_agents_repo(&project, path, ref_name, url)
     })
     .map(|_| ())
 }
@@ -107,7 +123,7 @@ pub(crate) fn attach_agents_clone(
     }
 }
 
-/// The provider's view of the record: path and ref, by project.
+/// The provider's view of the record: path, ref and URL, by project.
 pub(super) fn view_of(
     records: &BTreeMap<String, CodingSessionAgentsRepo>,
 ) -> BTreeMap<String, CodingSessionAgentsRepoView> {
@@ -119,6 +135,7 @@ pub(super) fn view_of(
                 CodingSessionAgentsRepoView {
                     path: entry.path.clone(),
                     ref_name: entry.ref_name.clone(),
+                    url: entry.url.clone(),
                 },
             )
         })

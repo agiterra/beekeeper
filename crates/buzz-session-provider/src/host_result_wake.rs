@@ -46,12 +46,14 @@
 //! 3. **Nothing is lost.** [`HostStepExited`] carries the accepted
 //!    [`HostStepResult`] verbatim, plus `claimedBy` and `resultEventId`.
 //!
-//! The honest cost, recorded rather than hidden: a kind:46023 *refused before
-//! any claim* never produces an echo (`host_steps.rs:270-284`), and the
-//! relay's echo publish is best-effort after commit (`:377-379`). Those
-//! results wake nobody. That is a narrower gap than the one 236(g) names and
-//! it is not closed here.
-//!
+//! A kind:46023 *refused before any claim* used to produce no echo, so it
+//! woke nobody: in kettle-control-2 run b60be720 the host refused `verify`
+//! (46023 `dd359da3…`, `ACTION_UNKNOWN`) and the lead sat idle 2 h 47 m.
+//! Since ledger 250 the relay echoes every host result it accepts, refusals
+//! included, and the wake carries the refusal's code and message. What stays
+//! open: the relay's echo publish is best-effort after commit
+//! (`host_steps.rs`, `echo_result`); a result whose echo failed wakes nobody.
+
 //! # How the run is routed back to the seat that triggered it
 //!
 //! Neither the kind:46014 nor the kind:46023 names the person or agent who
@@ -200,7 +202,28 @@ pub struct HostResultPointer {
     pub checkout_sha: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
+    /// For a `refused` result: the host's refusal code (ledger 250).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refusal_code: Option<String>,
+    /// For a `refused` result: the host's own sentence, capped at
+    /// [`REFUSAL_MESSAGE_MAX_BYTES`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refusal_message: Option<String>,
     pub result_event_id: String,
+}
+
+/// Longest refusal message a wake carries; the rest is on the kind:46023.
+pub const REFUSAL_MESSAGE_MAX_BYTES: usize = 1024;
+
+fn capped(text: &str, max: usize) -> String {
+    if text.len() <= max {
+        return text.to_owned();
+    }
+    let mut end = max;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…", &text[..end])
 }
 
 impl HostResultPointer {
@@ -217,6 +240,11 @@ impl HostResultPointer {
             // The sha the command actually ran against, sampled after it ran.
             checkout_sha: result.head_sha.clone(),
             duration_ms: result.duration_ms,
+            refusal_code: result.refusal.as_ref().map(|r| r.code.clone()),
+            refusal_message: result
+                .refusal
+                .as_ref()
+                .map(|r| capped(&r.message, REFUSAL_MESSAGE_MAX_BYTES)),
             result_event_id: exited.result_event_id.clone(),
         }
     }
@@ -256,7 +284,13 @@ pub fn is_host_result_pointer(object: &serde_json::Map<String, serde_json::Value
         "disposition",
         "resultEventId",
     ];
-    const OPTIONAL: [&str; 3] = ["exitCode", "checkoutSha", "durationMs"];
+    const OPTIONAL: [&str; 5] = [
+        "exitCode",
+        "checkoutSha",
+        "durationMs",
+        "refusalCode",
+        "refusalMessage",
+    ];
     if object.get("schema").and_then(serde_json::Value::as_str) != Some(HOST_RESULT_WAKE_SCHEMA)
         || object.get("type").and_then(serde_json::Value::as_str) != Some(HOST_RESULT_WAKE_TYPE)
     {
@@ -281,6 +315,12 @@ pub fn is_host_result_pointer(object: &serde_json::Map<String, serde_json::Value
         && object
             .get("durationMs")
             .is_none_or(serde_json::Value::is_u64)
+        && object
+            .get("refusalCode")
+            .is_none_or(serde_json::Value::is_string)
+        && object
+            .get("refusalMessage")
+            .is_none_or(serde_json::Value::is_string)
 }
 
 /// The command id one host-result wake is minted under.

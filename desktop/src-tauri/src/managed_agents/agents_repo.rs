@@ -219,12 +219,18 @@ pub async fn project_agents_init(
         let viewer = state.signing_keys()?.public_key().to_hex();
         let checkout =
             packs_cache::packs_checkout_dir(&packs_root, &viewer, &result.agents_repo_id);
+        let clone_url = packs_cache::packs_clone_url(
+            &crate::relay::relay_http_base_url(&crate::relay::relay_ws_url_with_override(&state)),
+            &viewer,
+            &result.agents_repo_id,
+        );
         if let Err(error) = crate::coding_sessions::workdir_store::record_agents_repo(
             &app,
             &state,
             &result.project_ref,
             checkout,
             &format!("refs/heads/{}", result.branch),
+            Some(&clone_url),
         ) {
             tracing::warn!(
                 target: "agents_repo",
@@ -337,13 +343,19 @@ pub async fn record_project_agents_repo(
     let clone_url = packs_cache::packs_clone_url(&relay_http, &owner, &id);
     let auth = crate::commands::project_git_exec::build_git_auth_config(&state)?;
     let sync_checkout = checkout.clone();
+    let sync_url = clone_url.clone();
     tokio::task::spawn_blocking(move || {
-        packs_cache::sync_packs_checkout(&sync_checkout, &clone_url, &source, &auth)
+        packs_cache::sync_packs_checkout(&sync_checkout, &sync_url, &source, &auth)
     })
     .await
     .map_err(|error| format!("syncing the agents repository did not finish: {error}"))??;
     crate::coding_sessions::workdir_store::record_agents_repo(
-        &app, &state, &project, checkout, &ref_name,
+        &app,
+        &state,
+        &project,
+        checkout,
+        &ref_name,
+        Some(&clone_url),
     )?;
     Ok(true)
 }

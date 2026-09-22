@@ -180,6 +180,7 @@ impl Fixture {
             timed_out: false,
             duration_ms: Some(756),
             head_sha: Some("0cbe84e8".to_owned() + &"0".repeat(32)),
+            agents_commit: None,
             dirty: Some(false),
             checkout: None,
             stdout_tail: "19 passed".into(),
@@ -833,4 +834,62 @@ async fn a_granted_operator_wakes_the_seat() {
     fixture.deliver(fixture.workflow_channel, &exited).await;
 
     assert!(fixture.wake_queued(&result.id.to_hex()));
+}
+
+/// Ledger 250, kettle-control-2 run b60be720: this host refused `verify`
+/// before claiming (46023 `dd359da3…`, `ACTION_UNKNOWN`), no kind:46014
+/// followed, and the lead sat idle 2 h 47 m. The relay now echoes the
+/// refusal; the echo wakes the seat once, with the code and the message.
+#[tokio::test]
+async fn a_refusal_before_any_claim_wakes_the_seat_with_the_refusal() {
+    let mut fixture = Fixture::new();
+    let host = Keys::generate();
+    fixture
+        .deliver(fixture.workflow_channel, &fixture.requested())
+        .await;
+    let mut refused = fixture.result(RUN_ID);
+    refused.claim_event_id = None;
+    refused.disposition = HostStepDisposition::Refused;
+    refused.exit_code = None;
+    refused.duration_ms = None;
+    refused.head_sha = None;
+    refused.dirty = None;
+    refused.stdout_tail = String::new();
+    refused.refusal = Some(buzz_core::host_step::HostStepRefusal {
+        code: "ACTION_UNKNOWN".into(),
+        message: "actions.yml in the agents repository (42bc7697) has no action named \"verify\""
+            .into(),
+    });
+    let (tags, content) = build_host_step_result(&refused).expect("build the refusal");
+    let result = signed(&host, KIND_HOST_STEP_RESULT, tags, content);
+    let exited = fixture.exited_for(&result, &host);
+
+    fixture.deliver(fixture.workflow_channel, &exited).await;
+    fixture.deliver(fixture.workflow_channel, &exited).await;
+    assert_eq!(fixture.queued_commands(), 1, "one refusal is one wake");
+    assert!(fixture.wake_queued(&result.id.to_hex()));
+
+    let queued = fixture
+        .provider
+        .outbox
+        .pending_events()
+        .next()
+        .expect("one queued wake");
+    let payload: CodingSessionCommandPayload =
+        serde_json::from_str(&queued.content).expect("a session command");
+    let CodingSessionAction::ThreadTurnStart { text, .. } = payload.action else {
+        panic!("a wake is a turn start");
+    };
+    let pointer: serde_json::Value = serde_json::from_str(&text).expect("JSON");
+    let object = pointer.as_object().expect("an object");
+    assert!(is_host_result_pointer(object), "{text}");
+    assert_eq!(object["disposition"], "refused");
+    assert_eq!(object["refusalCode"], "ACTION_UNKNOWN");
+    assert!(
+        object["refusalMessage"]
+            .as_str()
+            .is_some_and(|message| message.contains("no action named")),
+        "{text}"
+    );
+    assert!(object.get("exitCode").is_none());
 }

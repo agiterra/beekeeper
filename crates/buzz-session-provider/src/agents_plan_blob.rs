@@ -242,6 +242,7 @@ mod tests {
         let record = AgentsRepoRecord {
             path: repo.clone(),
             ref_name: "refs/heads/main".into(),
+            url: None,
         };
         // The pinned commit, not the tip, and not the working copy.
         std::fs::write(repo.join("plans/kettle.md"), "scribble\n").unwrap();
@@ -270,6 +271,7 @@ mod tests {
         let nowhere = AgentsRepoRecord {
             path: tmp.path().join("nowhere"),
             ref_name: "refs/heads/main".into(),
+            url: None,
         };
         assert_eq!(
             read_blob_at_commit(&nowhere, &first, "plans/kettle.md").await,
