@@ -78,7 +78,7 @@ function liveRunSeats() {
           "k-read",
           "k1",
           1,
-          { path: "docs/SESSION_STATE.md" },
+          { path: "plans/SESSION_STATE.md" },
           "x".repeat(8),
         ),
         turnResult("k-result", "k1", 546, {

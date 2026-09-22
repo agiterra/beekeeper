@@ -1,7 +1,7 @@
 //! Tests for `bee sessions audit`.
 //!
 //! The fixtures are built from the shapes the 2026-09-01 live run actually put
-//! on the wire (`docs/SESSION_STATE.md` item 103): Keystone's 64-tool turn with
+//! on the wire (`plans/SESSION_STATE.md` item 103): Keystone's 64-tool turn with
 //! a complete `usage` block, and Bob's 88-tool turn — the two turns whose
 //! numbers had to be read by hand because nothing rendered them.
 

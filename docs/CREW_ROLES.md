@@ -1,11 +1,24 @@
 # Team roles
 
-Seven persona packs under `personas/roles/<role>/` give a team seat its role.
-Each is a valid persona pack (`.plugin/plugin.json` + `personas/<role>.persona.md`
-+ `skills/`) — see `crates/buzz-persona/PERSONA_PACK_SPEC.md` for the pack
-format itself. This document explains what the seven roles are for and how they
-relate to each other; it does not restate the plan (`docs/CREW_SESSIONS_PLAN.md`
-§1, §3, §4 S5) which remains the source of truth for the team model.
+Seven roles give a team seat its role. This repository ships them twice, and
+the difference matters:
+
+- **`personas/templates/<role>/<version>/`** — the versioned, neutral
+  foundation: `TEMPLATE.md` plus that version's `skills/`. This is what a new
+  project's agents repository is seeded from.
+- **`personas/roles/<role>/`** — a valid persona pack
+  (`.plugin/plugin.json` + `personas/<role>.persona.md`), used where the pack
+  format is required; see `crates/buzz-persona/PERSONA_PACK_SPEC.md`. Since
+  2026-09-18 these carry **no `skills/`**: skills ship with the templates, and
+  a project's own skills live in its agents repository.
+
+A running project's roles are in neither place — they are in that project's
+`<slug>-beekeeper-agents` repository, as `roles/<role>.md` and
+`roles/<role>/skills/`, where the project's team can edit them. This document
+explains what the seven roles are for and how they relate to each other; it
+does not restate the plan (`plans/archive/CREW_SESSIONS_PLAN.md` in the agents
+repository, §1, §3, §4 S5) which remains the source of truth for the team
+model.
 
 Any model may fill any role. None of these seven packs names a vendor or a
 model — the seat does, at launch time. Each pack's `plugin.json` `description`
@@ -96,15 +109,21 @@ seven prompts run 20–25 body lines; `lead` (128) and `designer` (81) are longe
 because both carry rules the team paid for in live runs — measure with the
 frontmatter stripped before quoting a number here:
 
-| role | prompt body | skills |
-| --- | --- | --- |
-| lead | 128 | `write-brief`, `hire`, `triage-report`, `choose-model`, `beekeeper-project` |
-| architect | 25 | `shape-verdict` |
-| builder | 23 | `brief-is-law`, `write-report` |
-| verifier | 24 | `refuter-pass` |
-| runner | 20 | `run-and-report` |
-| poker | 22 | `drive-and-report` |
-| designer | 81 | `see-the-app`, `wire-sources-for-surfaces`, `specify-surfaces` |
+| role | prompt body | latest template | its skills |
+| --- | --- | --- | --- |
+| lead | 128 | 1.2.0 | `write-brief`, `hire`, `triage-report`, `choose-model`, `ask-for-a-ruling` |
+| architect | 25 | 1.1.0 | `shape-verdict` |
+| builder | 23 | 1.2.0 | `implement-the-outcome`, `write-report`, `push-your-lane` |
+| verifier | 24 | 1.2.0 | `refuter-pass`, `push-your-lane` |
+| runner | 20 | 1.2.0 | `run-and-report`, `leave-an-action`, `push-your-lane` |
+| poker | 22 | 1.1.0 | `drive-and-report` |
+| designer | 81 | 1.1.0 | `see-the-app`, `wire-sources-for-surfaces`, `specify-surfaces`, `reduce-the-work`, `push-your-lane` |
+
+The skills column is the **template** set, under
+`personas/templates/<role>/<version>/skills/` — count it there, not under
+`personas/roles/`, which has carried no skills since 2026-09-18. A project may
+add its own: Beekeeper's `lead` also holds `beekeeper-project`, which lives in
+`bee-keeper-beekeeper-agents` and has never been in this repository.
 
 ## Materialization
 

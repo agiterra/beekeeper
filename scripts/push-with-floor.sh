@@ -9,7 +9,7 @@
 # touching floor can run ~20 minutes, so by the time the hook finishes and
 # git uploads the pack, the credential minted at the start is long expired —
 # `HTTP 401` with every check green (landing 184, 2026-09-20, see
-# docs/history/2026-09-20-pre-push-floor-stamp.md).
+# plans/archive/2026-09-20-pre-push-floor-stamp.md).
 #
 # This script runs the exact same floor (`scripts/pre-push-floor.sh`) against
 # the outgoing range for the branch being pushed, and on success records a

@@ -207,7 +207,7 @@ Non-empty output with the relay still on the old image is a real fault — read
 the deployer's journal next, not the sha comparison.
 
 After any deploy, confirm the relay's NIP-11 `self` still matches its recorded
-baseline (see `docs/SESSION_STATE.md` § 1). `BUZZ_RELAY_PRIVATE_KEY`
+baseline (see `plans/SESSION_STATE.md` § 1). `BUZZ_RELAY_PRIVATE_KEY`
 auto-generates when unset, so a relay can silently adopt a new identity on
 restart and evict every client's cache.
 

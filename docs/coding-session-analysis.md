@@ -102,7 +102,7 @@ bee sessions status     --channel <uuid>
 ```
 
 The first seven verbs read; the last four are the crew surface of
-[the crew sessions plan](CREW_SESSIONS_PLAN.md)'s D5 — one verb set for every
+the crew sessions plan (`plans/archive/CREW_SESSIONS_PLAN.md`, agents repository)'s D5 — one verb set for every
 runtime, so a seat talks to a sibling the same way a human does.
 
 - **`list`** — one row per generation: target key, title, status, model, and

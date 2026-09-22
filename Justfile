@@ -193,7 +193,7 @@ build-release:
     cargo build --workspace --release
 
 # Run repo lint, formatting, and repository policy checks
-check: fmt-check clippy desktop-check desktop-tauri-fmt-check desktop-tauri-clippy web-check web-test mobile-check file-size-check current-state-check ignore-reasons-check autodeploy-test sidecar-parity-check
+check: fmt-check clippy desktop-check desktop-tauri-fmt-check desktop-tauri-clippy web-check web-test mobile-check file-size-check ignore-reasons-check autodeploy-test sidecar-parity-check
 
 # Test the relay deployers (deploy/autodeploy). They stub incus, flock and
 # sleep on PATH, so they need no host, no containers and no Woodpecker — and
@@ -204,6 +204,36 @@ autodeploy-test:
     ./deploy/autodeploy/tests/autodeploy-behavior.sh
     ./scripts/test-woodpecker-path-filter.sh
 
+# A sibling, not a directory inside this checkout: the whole point of moving
+# those documents out was that an agent working on the code should not trip
+# over the plans, and a path under this tree would put them straight back.
+# Needs relay credentials the same way `git fetch origin` does — run
+# `just install-git-credentials` first if this asks for a username.
+#
+# Clone or fast-forward the agents repository to ../agiterra-beekeeper-agents
+agents-repo:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # The MAIN checkout, not this worktree. `justfile_directory()` in a
+    # worktree under .worktrees/ would put the clone inside the code tree —
+    # precisely what the sibling rule exists to prevent — and give every
+    # worktree its own copy of a 1.8 MB ledger. The common git dir is shared
+    # by every worktree and its parent is always the main checkout.
+    main="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"
+    dest="$(cd "$(dirname "$main")" && pwd)/agiterra-beekeeper-agents"
+    url="https://hive.agiterra.org/git/6cbdf4451d3989c10c20d13240c665a9e11e3959a95488382193481692b68df2/bee-keeper-beekeeper-agents"
+    if [ -d "$dest/.git" ]; then
+        git -C "$dest" fetch origin main
+        # --ff-only, never a merge: a local edit that cannot fast-forward is
+        # something to look at, not something to silently resolve.
+        git -C "$dest" pull --ff-only origin main
+    else
+        git clone "$url" "$dest"
+    fi
+    echo "agents repository: $dest"
+    echo "  the map    $dest/plans/CURRENT_STATE.md"
+    echo "  the ledger $dest/plans/SESSION_STATE.md"
+
 # Run the repository-wide differential file-size ratchet and its policy tests.
 # The ratchet inspects only files changed from the merge base, so this stays
 # cheap enough to run unconditionally without duplicating path filters.
@@ -212,14 +242,6 @@ file-size-check:
     node desktop/scripts/check-file-sizes.mjs
     node web/scripts/check-file-sizes.mjs
     node mobile/scripts/check-file-sizes.mjs
-
-# Hard ceiling on docs/CURRENT_STATE.md, the current-state map every agent
-# reads first and whole: 300 lines and 24,000 UTF-8 bytes. A wall, not a
-# ratchet — the ledger it replaced as the first read grew from 152 lines to
-# 12,000+ against two written promises that it would shrink.
-current-state-check:
-    node --test scripts/check-current-state-size.test.mjs
-    node scripts/check-current-state-size.mjs
 
 # Ratchet on bare `#[ignore]` attributes. An ignored test is invisible; with a
 # reason string the gap is legible and greppable, which is how `test-genesis`

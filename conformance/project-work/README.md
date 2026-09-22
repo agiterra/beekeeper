@@ -19,9 +19,9 @@ here first.
 The NIP now exists: [`docs/nips/NIP-PW.md`](../../docs/nips/NIP-PW.md), written
 from this file by lane W1 (ledger item 195). This file stays normative.
 
-Governing plan: [`docs/UNIFIED_WORK_PLAN.md`](../../docs/UNIFIED_WORK_PLAN.md)
+Governing plan: `plans/UNIFIED_WORK_PLAN.md` (agents repository)
 (W0 in § 3, Wave 0 in § 4). Design source: Astra's
-[unified plan](../../docs/history/2026-09-20-astra-unified-plan.md) § 2.
+the unified plan (`plans/archive/2026-09-20-astra-unified-plan.md`, agents repository) § 2.
 Ledger item 194.
 
 **Frozen means frozen.** After Fable and Astra review it, this file changes

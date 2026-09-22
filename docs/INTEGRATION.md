@@ -857,7 +857,7 @@ a tag; it still creates and fast-forwards branches.
 **Everywhere else the inherited grant is unchanged.** A seat rebases and
 force-pushes its own `lane/*` or `wip/*` branch, and deletes it afterwards,
 exactly as this document's § Landing a batch, `CLAUDE.md` and
-[CREW_SESSIONS_PLAN.md](CREW_SESSIONS_PLAN.md) tell it to. An earlier draft
+`plans/archive/CREW_SESSIONS_PLAN.md` (agents repository) tell it to. An earlier draft
 capped every ref and silently broke all three workflows.
 
 A seat's *own* roster row is unaffected anywhere — a seat added to a channel as

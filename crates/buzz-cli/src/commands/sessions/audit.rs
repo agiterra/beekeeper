@@ -5,7 +5,7 @@
 //! terminal `result` item (`buzz_core::coding_session_payload::TurnUsageReport`),
 //! and until this command existed the only way to see it was to read kind 44225
 //! by hand. The 2026-09-01 live run did exactly that, one turn at a time
-//! (`docs/SESSION_STATE.md` item 103, finding 11).
+//! (`plans/SESSION_STATE.md` item 103, finding 11).
 //!
 //! Three rules govern every number here:
 //!

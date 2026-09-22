@@ -2483,7 +2483,7 @@ pub fn resolve_umbrella_genesis(events: &[Value], umbrella: &str) -> Result<Stri
 /// wait ran to its deadline still holding `Seating` — so on 2026-08-31 and
 /// 2026-09-01 an alias defect in the receipt comparison was read twice as "the
 /// host was slow", and the receipt it rejected had in fact arrived two seconds
-/// after the create (`docs/SESSION_STATE.md` item 103, finding 2). A binding
+/// after the create (`plans/SESSION_STATE.md` item 103, finding 2). A binding
 /// defect must never again be indistinguishable from a slow provider, so the
 /// last verification error is carried out of the wait and printed.
 #[derive(Debug, Default)]
@@ -2604,7 +2604,7 @@ impl HireWait {
 /// a failure that did not happen (REVIEW-A1 F7). On a hire that ended holding
 /// something, the same fact is the reason it is holding — the sentence whose
 /// absence let an alias defect read as a slow host for two nights
-/// (`docs/SESSION_STATE.md` item 103, finding 2).
+/// (`plans/SESSION_STATE.md` item 103, finding 2).
 ///
 /// Returns an empty string when the wait refused nothing and saw no unbound
 /// receipt: there is no fact, so there is no sentence.
@@ -2672,7 +2672,7 @@ pub struct HireCheckRequest<'a> {
 /// and `false` so a reader — or a grep over a seat's transcript — can tell a
 /// check from a hire without knowing which flags were passed. An acceptance
 /// test that publishes a live 44221 is not an acceptance test; one ran on
-/// 2026-09-01 (`docs/SESSION_STATE.md` item 103, finding 10).
+/// 2026-09-01 (`plans/SESSION_STATE.md` item 103, finding 10).
 pub fn hire_check_report(request: &HireCheckRequest<'_>) -> Value {
     let brief_bytes = request.brief.len();
     serde_json::json!({

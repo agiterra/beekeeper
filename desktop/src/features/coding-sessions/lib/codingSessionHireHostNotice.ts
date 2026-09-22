@@ -17,7 +17,7 @@
  * retry — and the lead spent 84.9s and 580,779 input tokens ($0.59)
  * concluding "You're pointing at the refusal from the routed hire" about a
  * message Brian never sent (finding 178(b),
- * `docs/history/2026-09-20-astra-kettle-audit.md` § 4.A).
+ * `plans/archive/2026-09-20-astra-kettle-audit.md` § 4.A).
  *
  * The fix is not to stop publishing that turn — `bee sessions hire` reads the
  * very same event directly off the relay to answer its own poll

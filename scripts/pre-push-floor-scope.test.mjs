@@ -259,7 +259,7 @@ test("personas/** selects the crate whose tests read the packs", () => {
 test("docs and CI configuration select nothing", () => {
   const scope = deriveScope(
     [
-      "docs/SESSION_STATE.md",
+      "docs/INTEGRATION.md",
       "README.md",
       ".github/workflows/ci.yml",
       ".woodpecker/gate.yml",

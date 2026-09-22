@@ -41,7 +41,7 @@ fn two_umbrellas_touching_one_file_give_one_row_naming_both_seats() {
             LEFT_AUTHOR,
             "9a1c4e7b2d3f40516273849506172839405a6b7c",
             Some(9_640),
-            &["crates/buzz-core/src/pulse.rs", "docs/SESSION_STATE.md"],
+            &["crates/buzz-core/src/pulse.rs", "plans/SESSION_STATE.md"],
         ),
         side(
             RIGHT_SESSION,

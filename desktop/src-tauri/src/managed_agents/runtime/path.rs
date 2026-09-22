@@ -110,7 +110,7 @@ pub(crate) fn compose_path_entries(
 /// that anything may write. On 2026-08-27 a hand-repointed `~/.local/bin/bee`
 /// shadowed the `bee` shipped inside the app, so a seat ran a binary this
 /// build never produced and reported behaviour the build could not explain
-/// (`docs/SESSION_STATE.md` item 77, *Fence* (c)). The app-owned directories
+/// (`plans/SESSION_STATE.md` item 77, *Fence* (c)). The app-owned directories
 /// therefore outrank it: what the app ships is what a seat runs, and a user's
 /// own `~/.local/bin` still resolves everything the app does not ship.
 pub(in crate::managed_agents) fn build_augmented_path(

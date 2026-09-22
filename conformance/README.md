@@ -3,7 +3,7 @@
 A **closed record** is one whose readers reject any key they do not know. When
 a record has more than one strict reader, adding a key to it is only safe if
 every reader ships the change in the same landing. That is
-[`docs/UNIFIED_WORK_PLAN.md`](../docs/UNIFIED_WORK_PLAN.md) § 2 decision 2, and
+`plans/UNIFIED_WORK_PLAN.md` (agents repository) § 2 decision 2, and
 § 8 A3.3 states the mechanism this directory exists to provide:
 
 > **Every additive key on a closed record lands with a shared conformance

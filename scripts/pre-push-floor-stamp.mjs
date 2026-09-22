@@ -8,7 +8,7 @@
 // for the whole push (confirmed empirically in a throwaway clone: the
 // credential helper's `get` fires exactly once per `git push`, and the same
 // Authorization value is replayed on the retried GET and the receive-pack
-// POST — see docs/history/2026-09-20-pre-push-floor-stamp.md). The relay's
+// POST — see plans/archive/2026-09-20-pre-push-floor-stamp.md). The relay's
 // token window is +-900s. A crate-touching floor can run ~20 minutes, so by
 // the time the hook finishes and git uploads the pack, the token it minted at
 // the start is long expired and the push fails `HTTP 401` with every check

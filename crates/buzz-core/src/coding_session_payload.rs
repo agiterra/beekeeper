@@ -1210,7 +1210,7 @@ pub struct SessionMetadata {
     /// resolved one, never as an explicit `null`. On 2026-09-01 a seat ran
     /// the desktop app's bundled sidecar — three fixes behind — while the
     /// orchestrator ran the checkout's own debug build, and neither said so
-    /// (`docs/SESSION_STATE.md` item 103, finding 1). This key is how a run
+    /// (`plans/SESSION_STATE.md` item 103, finding 1). This key is how a run
     /// says which binary answered.
     ///
     /// It is an **observed** fact: the host runs `$BEE --version` itself and

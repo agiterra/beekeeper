@@ -1,33 +1,51 @@
 # AGENTS.md — AI Agent Contributor Guide
 
-> **Read [docs/CURRENT_STATE.md](docs/CURRENT_STATE.md) first, all of it; it is
-> gated to 300 lines and 24,000 bytes.** It is the current-state map: what is
-> deployed (with the command that proves it and the date it was last checked),
-> what is being worked on and by whom, the decisions in force, the blockers,
-> and the ordered next steps. Anything needing more than a paragraph links out:
-> to the plan that governs it, to a numbered item in the ledger, or to a dated
-> report under `docs/history/`. Read what your task links to, not everything it
-> could link to. After your context is compacted, re-read the map and the plan
-> it names before continuing.
+> **The map, the ledger and the plans are not in this repository.** They live
+> in Beekeeper's own agents repository, `bee-keeper-beekeeper-agents` on hive,
+> which is where a project's roles and plans belong (spec § 1 decision 5, and
+> ledger 233–234 for the move itself). Two ways in:
 >
-> **Findings go into [docs/SESSION_STATE.md](docs/SESSION_STATE.md), the
-> ledger**, as a numbered item with the code or transcript that proves it, the
-> day they are found. Item numbers are frozen: code and tests cite them. The
-> ledger preserves its historical content; a claim it got wrong is struck where
-> it stands with a pointer to what supersedes it, never deleted. It is far too
-> large to read: find an item with `grep -n '^<n>\. ' docs/SESSION_STATE.md`
-> and read that window. Session reports and lane transcripts are not findings:
-> they go under `docs/history/` as dated files that a ledger item or the map
-> links to, never only on a Desktop or in a review directory this machine
-> alone can see.
+> - **A person or a session working in this checkout**: run `just agents-repo`.
+>   It clones or fast-forwards the repository to the sibling directory
+>   `../agiterra-beekeeper-agents` — beside this checkout, never inside it, so
+>   the code tree stays free of the plans.
+> - **A team seat**: it is already there, cloned beside the seat's worktree as
+>   `<worktree>-agents`. Nothing to run.
+>
+> Paths below are relative to that repository's root.
+>
+> **Read `plans/CURRENT_STATE.md` first, all of it; it is gated to 300 lines
+> and 24,000 bytes** by the `limits:` block in that repository's `team.yml`,
+> enforced on every commit path. It is the current-state map: what is deployed
+> (with the command that proves it and the date it was last checked), what is
+> being worked on and by whom, the decisions in force, the blockers, and the
+> ordered next steps. Anything needing more than a paragraph links out: to the
+> plan that governs it, to a numbered item in the ledger, or to a dated report
+> under `plans/archive/`. Read what your task links to, not everything it could
+> link to. After your context is compacted, re-read the map and the plan it
+> names before continuing.
+>
+> **Findings go into `plans/SESSION_STATE.md`, the ledger**, as a numbered item
+> with the code or transcript that proves it, the day they are found. Item
+> numbers are frozen: code and tests **in this repository** cite them, and
+> those citations now point across repositories — a comment reading
+> `plans/SESSION_STATE.md item 103` means that file in the agents repository,
+> and the numbers did not change when it moved. The ledger preserves its
+> historical content; a claim it got wrong is struck where it stands with a
+> pointer to what supersedes it, never deleted. It is far too large to read:
+> find an item with `grep -n '^<n>\. ' plans/SESSION_STATE.md` and read that
+> window. Session reports and lane transcripts are not findings: they go under
+> `plans/archive/` as dated files that a ledger item or the map links to, never
+> only on a Desktop or in a review directory this machine alone can see.
 >
 > **The map is updated, never appended.** Whoever lands a change that alters
-> active work, decisions, blockers, or what is deployed updates the map in that
-> commit. Where the map disagrees with an older document about *current
-> state*, the map wins. Where the map and the ledger disagree, check the code
-> or the relay, record the result in the map with the check date, and strike
-> the losing claim where it stands; if the evidence cannot settle it, mark the
-> state unknown and keep both links.
+> active work, decisions, blockers, or what is deployed updates the map in the
+> agents repository — a second commit, in a second repository, in the same
+> landing as the code. Where the map disagrees with an older document about
+> *current state*, the map wins. Where the map and the ledger disagree, check
+> the code or the relay, record the result in the map with the check date, and
+> strike the losing claim where it stands; if the evidence cannot settle it,
+> mark the state unknown and keep both links.
 
 > **This repo is Beekeeper, agiterra's fork of
 > [block/buzz](https://github.com/block/buzz).** It is a single-branch repo:

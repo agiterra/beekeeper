@@ -9,7 +9,7 @@ import {
 import { projectAgentDigest } from "@/shared/lib/projectAgentAssociation";
 
 // Authority verification, private projects, carried digests and hiring
-// readiness (docs/history/2026-09-14-project-hiring-review.md).
+// readiness (plans/archive/2026-09-14-project-hiring-review.md).
 
 const OWNER = "6".repeat(64);
 const PROJECT = `30621:${OWNER}:tank-loop`;

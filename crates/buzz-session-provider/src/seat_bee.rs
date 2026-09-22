@@ -10,7 +10,7 @@
 //! `…/beekeeper/target/debug/bee`. One run, two binaries answering about one
 //! channel, and neither of them said so. A path handed to a seat in prose was
 //! honoured only sometimes, because prose is a request and `PATH` is a fact
-//! (`docs/SESSION_STATE.md` item 103 finding 1; `LIVE-RUN-TeamRolesV1.md`
+//! (`plans/SESSION_STATE.md` item 103 finding 1; `LIVE-RUN-TeamRolesV1.md`
 //! finding 13).
 //!
 //! # What this module does about it

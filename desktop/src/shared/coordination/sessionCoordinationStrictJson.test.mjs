@@ -381,7 +381,7 @@ test("the 128 metadata shapes buzz-core accepts all decode", () => {
 // comment right above it says the accepted shape count is sixty-four, not
 // thirty-two. This checker's own `metadataFieldForms` doc said "five... amendments
 // ... thirty-two" and never grew a sixth bit, so every 44223 carrying a real
-// `beeStamp` (docs/SESSION_STATE.md item 103) was rejected outright.
+// `beeStamp` (plans/SESSION_STATE.md item 103) was rejected outright.
 
 test("a real beeStamp decodes", () => {
   const source = metadata({ beeStamp: BEE_STAMP });

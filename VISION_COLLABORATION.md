@@ -1,7 +1,7 @@
 # Beekeeper — work continues
 
 Product direction settled with Brian on 2026-09-06. This is intended behavior;
-implementation and validation status belong in `docs/SESSION_STATE.md`.
+implementation and validation status belong in `plans/SESSION_STATE.md`.
 The delivery sequence is `docs/COLLABORATIVE_WORKSPACE_PLAN.md`.
 
 ## Purpose

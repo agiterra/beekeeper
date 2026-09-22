@@ -3,7 +3,7 @@
 //! A seat runs whichever `bee` its `PATH` reaches first, and on 2026-09-01
 //! that was the desktop app's bundled sidecar (`desktop/src-tauri/tauri.conf.json`
 //! lists `binaries/bee`), not `~/.local/bin/bee` — so a seat ran an old CLI all
-//! night while every fix sat in the checkout (`docs/SESSION_STATE.md` item 103,
+//! night while every fix sat in the checkout (`plans/SESSION_STATE.md` item 103,
 //! finding 1). `bee --version` has to answer "which build is this", and the
 //! only honest answer is the commit, not the crate version, which moves once a
 //! release.

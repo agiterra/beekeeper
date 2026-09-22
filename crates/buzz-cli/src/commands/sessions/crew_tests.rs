@@ -3560,7 +3560,7 @@ fn a_wake_command_id_differs_across_targets_and_operations() {
     );
 }
 
-/// The exact live-run shape from `docs/SESSION_STATE.md` item 103, finding 4:
+/// The exact live-run shape from `plans/SESSION_STATE.md` item 103, finding 4:
 /// Bob's report carried the delivery command id of the assignment that had
 /// already been consumed on his own target, so the lead runner fenced the wake
 /// and published no 44224. The derived id must not be that id, and must not be

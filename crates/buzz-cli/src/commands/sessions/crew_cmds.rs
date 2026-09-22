@@ -237,7 +237,7 @@ const CLI_TEAM_WAKE_TARGET_DIGEST_HEX: usize = 12;
 /// Derived — never inherited. Reusing the command id that already delivered an
 /// assignment makes the lead runner fence the wake as `AlreadyConsumed`, which
 /// is what silently swallowed every CLI report wake in the 2026-09-01 live run
-/// (`docs/SESSION_STATE.md` item 103, finding 4). Deriving from
+/// (`plans/SESSION_STATE.md` item 103, finding 4). Deriving from
 /// `(operation, target)` keeps one operation naming exactly one wake per
 /// target forever, so a retry cannot double-spend a turn either.
 pub(super) fn team_operation_wake_command_id(operation_id: &str, target_key: &str) -> String {

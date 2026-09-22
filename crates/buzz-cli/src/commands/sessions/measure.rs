@@ -2,8 +2,8 @@
 //!
 //! On 2026-09-20 two audits of two team sessions were written by a model
 //! reading relay events one at a time
-//! (`docs/history/2026-09-20-astra-kettle-audit.md` and
-//! `docs/history/2026-09-20-astra-andy-rpg-audit.md`). Both cost hours and
+//! (`plans/archive/2026-09-20-astra-kettle-audit.md` and
+//! `plans/archive/2026-09-20-astra-andy-rpg-audit.md`). Both cost hours and
 //! millions of tokens, and neither is repeatable. This command reads the same
 //! events and prints the same tables.
 //!

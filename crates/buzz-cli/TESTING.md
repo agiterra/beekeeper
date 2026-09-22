@@ -1378,7 +1378,7 @@ still prints a row, with the raw content as its `summary`.
 
 Both commands name the founder of each execution. This exists because a probe
 aimed at "a 3-day-quiet session" once landed in someone else's session
-(`docs/SESSION_STATE.md` item 73): the row said what was running, never whose
+(`plans/SESSION_STATE.md` item 73): the row said what was running, never whose
 it was.
 
 `--format json` is not optional in the first line below: it reads `founders`

@@ -40,7 +40,7 @@ use crate::{TeamDecisionCmd, TeamNoteArgs, TeamOperationCmd, TeamTransactionWrit
 /// == Some(command_id)`). Every other class is *answering* an assignment, so
 /// the only id a caller could hand it is one already spent on the assignee's
 /// own target; the lead runner then fences the wake as `AlreadyConsumed` and
-/// the lead is never woken (`docs/SESSION_STATE.md` item 103, finding 4).
+/// the lead is never woken (`plans/SESSION_STATE.md` item 103, finding 4).
 pub(super) const fn wake_shares_delivery_command_id(
     transaction_type: CodingSessionTeamTransactionType,
 ) -> bool {

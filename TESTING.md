@@ -35,7 +35,7 @@ just smoke              # pnpm build:e2e + the whole desktop smoke project
 the desktop and web *builds*. It does **not** run the Playwright smoke project,
 and neither does any pre-commit or pre-push hook. That is on purpose: the smoke
 project ran 1,319 browser cases in about **1.5 hours** on this M-series
-laptop on 2026-09-12 (see [the steering experience report](docs/history/2026-09-12-steering-experience.md)).
+laptop on 2026-09-12 (see the steering experience report, `plans/archive/2026-09-12-steering-experience.md` in the agents repository).
 That is an observation, not a duration guarantee; fixtures and machine load
 change it. Wiring that run into every commit would make the local gate costly.
 

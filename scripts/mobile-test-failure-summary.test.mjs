@@ -9,7 +9,7 @@ import { extractFailures, formatSummary } from "./mobile-test-failure-summary.mj
 
 // Captured verbatim from a real `flutter test --reporter expanded` run
 // against a two-test file (one passing, one failing) — see item 208's
-// investigation notes in docs/SESSION_STATE.md.
+// investigation notes in plans/SESSION_STATE.md.
 const SAMPLE = `00:00 +0: loading /repo/mobile/test/sample_test.dart
 00:00 +0: a passing test
 00:00 +1: a failing test
