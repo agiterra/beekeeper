@@ -518,6 +518,43 @@ fn decode_body(
     }
 }
 
+/// The six tag names the contract fixes, in the order it fixes them.
+const PROJECT_WORK_TAG_NAMES: [&str; PROJECT_WORK_TAG_COUNT] =
+    ["h", "d", "a", "pwk-v", "pwk-genesis", "pwk-type"];
+
+/// Name the tags a refused record carries that the contract does not admit.
+///
+/// A count alone tells a writer that something is wrong and nothing about
+/// what to remove — and the one real case (ledger 237) was a signer silently
+/// appending a NIP-OA `auth` tag, which a reader of "carries 7" has no way to
+/// guess. Returns an empty string when the count is wrong but every tag is
+/// one the contract knows, because then there is nothing to point at.
+fn name_the_offending_tags(tags: &[Vec<String>]) -> String {
+    let offenders: Vec<String> = tags
+        .iter()
+        .filter(|tag| {
+            let name = tag.first().map_or("", String::as_str);
+            !PROJECT_WORK_TAG_NAMES.contains(&name) || tag.len() != 2
+        })
+        .map(|tag| {
+            format!(
+                "{:?} ({} fields)",
+                tag.first().map_or("", String::as_str),
+                tag.len()
+            )
+        })
+        .collect();
+    if offenders.is_empty() {
+        String::new()
+    } else {
+        format!(
+            " — the {} it does not admit: {}",
+            if offenders.len() == 1 { "tag" } else { "tags" },
+            offenders.join(", ")
+        )
+    }
+}
+
 /// Validate the exact ordered event envelope and return its decoded payload.
 ///
 /// The reader path: the relay's ingest arm, the coverage fold and every
@@ -545,14 +582,13 @@ pub fn validate_project_work_envelope(event: &ProjectWorkEvent) -> Refused<Proje
             ProjectWorkRefusalCode::TagCount,
             "tags",
             format!(
-                "a work record carries exactly {PROJECT_WORK_TAG_COUNT} ordered two-field tags; this one carries {}",
-                event.tags.len()
+                "a work record carries exactly {PROJECT_WORK_TAG_COUNT} ordered two-field tags; this one carries {}{}",
+                event.tags.len(),
+                name_the_offending_tags(&event.tags)
             ),
         );
     }
-    const NAMES: [&str; PROJECT_WORK_TAG_COUNT] =
-        ["h", "d", "a", "pwk-v", "pwk-genesis", "pwk-type"];
-    for (index, name) in NAMES.iter().enumerate() {
+    for (index, name) in PROJECT_WORK_TAG_NAMES.iter().enumerate() {
         if event.tags[index][0] != *name {
             return refuse(
                 ProjectWorkRefusalCode::TagCount,

@@ -33,8 +33,9 @@ use buzz_core::project_plan::{
     check_plan_adoptable, parse_plan, validate_plan_path, Plan, PlanProof,
 };
 use buzz_core::project_work::{
-    ProjectWorkAssignmentBound, ProjectWorkBody, ProjectWorkDeclared, ProjectWorkEvent,
-    ProjectWorkEvidenceBound, ProjectWorkEvidenceKind, ProjectWorkEvidenceRef, ProjectWorkPlanRef,
+    validate_project_work_envelope, ProjectWorkAssignmentBound, ProjectWorkBody,
+    ProjectWorkDeclared, ProjectWorkEvent, ProjectWorkEvidenceBound, ProjectWorkEvidenceKind,
+    ProjectWorkEvidenceRef, ProjectWorkPlanRef,
 };
 use buzz_core::project_work_fold::{fold_work, WorkActionDefinition, WorkProjection};
 use buzz_core::project_work_inputs::{assemble_fold_inputs, RawAuthorityContext, RawWorkInputs};
@@ -84,7 +85,7 @@ impl WorkWire for BuzzClient {
     }
 
     async fn publish(&self, builder: EventBuilder, what: &str) -> Result<String, CliError> {
-        let event = self.sign_event(builder)?;
+        let event = sign_work_record(self, builder)?;
         let event_id = event.id.to_hex();
         let raw = self.submit_event(event).await?;
         crate::commands::parse_write_response(&raw, &format!("{what} was already published"))?;
@@ -94,6 +95,34 @@ impl WorkWire for BuzzClient {
     fn caller_pubkey(&self) -> String {
         self.keys().public_key().to_hex().to_ascii_lowercase()
     }
+}
+
+/// Sign one kind:44249 record the way the publish path signs it.
+///
+/// Named and separated from [`WorkWire::publish`] so the bytes the CLI puts on
+/// the wire are reachable from a unit test without a relay: the defect this
+/// seam exists for was invisible to every test that stubbed the wire, because
+/// the stub never saw the signature step at all.
+fn sign_work_record(client: &BuzzClient, builder: EventBuilder) -> Result<nostr::Event, CliError> {
+    // `sign_event_unchecked`, never `sign_event`. The latter injects this
+    // client's NIP-OA `auth` tag into every event it signs, and a managed
+    // agent always has one (`BUZZ_AUTH_TAG`), so a seat's adopt carried a
+    // seventh tag onto a record whose contract fixes six and hive refused it
+    // with `tag-count` (ledger 237). Membership delegation still reaches the
+    // relay: `submit_event` sends the same tag in the `x-auth-tag` header,
+    // which is where `POST /events` reads it — the same rule the 44220/44221
+    // publishers already keep (`crew_cmds.rs` module doc).
+    let event = client.sign_event_unchecked(builder)?;
+    // Then judge the bytes with the relay's own validator, before the round
+    // trip. A writer that can only learn it is non-conforming from a 400 is
+    // a writer whose conformance nobody tests; this says the same words the
+    // relay would, here, naming the tag at fault.
+    validate_project_work_envelope(&ProjectWorkEvent::from(&event)).map_err(|refusal| {
+        CliError::Other(format!(
+            "this is not a work record the relay will admit, so nothing was published: {refusal}"
+        ))
+    })?;
+    Ok(event)
 }
 
 /// UUID v5 namespace for a session's derived work ids.

@@ -31,10 +31,14 @@ const VALID: [(&str, &str); 3] = [
     ),
 ];
 
-const INVALID: [(&str, &str); 18] = [
+const INVALID: [(&str, &str); 19] = [
     (
         "a-tag-not-canonical",
         fixture!("records/invalid/a-tag-not-canonical.json"),
+    ),
+    (
+        "auth-tag-decoration",
+        fixture!("records/invalid/auth-tag-decoration.json"),
     ),
     (
         "criterion-id-not-a-slug",

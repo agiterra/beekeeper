@@ -19778,6 +19778,64 @@ removed from here.
      approval, plan drift) fired; the run was not halted and no hand-fix was
      applied to keep it alive. The two interventions above are counted as
      unplanned human acts, not excused.
+237. **`bee sessions work adopt` was refused by every relay from the day
+     lane 201 landed it, because the CLI's publish path signed a seventh tag
+     onto a record whose contract fixes six** (found live in the kettle
+     control run, 2026-09-22: `relay error 400: invalid: tag-count: a work
+     record carries exactly 6 ordered two-field tags; this one carries 7`;
+     lane 237, branch `work/lane-237-adopt-tag-count`).
+     - **The seventh tag is the NIP-OA `auth` tag**,
+       `["auth", <owner>, <conditions>, <sig>]` — four fields, not two.
+       `BuzzClient::sign_event` injects it into every event it signs
+       (`crates/buzz-cli/src/client.rs:617-622`), and the ACP harness gives
+       every managed agent a `BUZZ_AUTH_TAG`, so a seat always carries one.
+       `WorkWire::publish` for `BuzzClient`
+       (`crates/buzz-cli/src/commands/sessions/work.rs`) called `sign_event`.
+       The SDK builder is innocent: `build_project_work_declared`
+       (`crates/buzz-sdk/src/project_work.rs:99-113`) emits exactly the six
+       `canonical_tags()` names, and the relay's refusal is
+       `crates/buzz-core/src/project_work_decode.rs:543`.
+     - **Every other closed-envelope publisher already knew this.** The 44220
+       / 44221 / 44227 / 44244 / 40099 paths sign with
+       `BuzzClient::sign_event_unchecked`, and `crew_cmds.rs`'s module doc
+       states the rule and the reason. `work.rs` was the one deviation.
+       Membership delegation is unaffected: `submit_event` sends the same tag
+       in the `x-auth-tag` header, which is where `POST /events` reads it.
+     - **Fixed at the root, the writer conforming to the closed record**
+       (`docs/UNIFIED_WORK_PLAN.md` A3). A named seam, `sign_work_record`,
+       signs unchecked and then judges the bytes with the relay's **own**
+       validator (`validate_project_work_envelope`) before the round trip, so
+       the CLI refuses locally with the relay's words and publishes nothing.
+       The `tag-count` refusal now names the tag at fault rather than only a
+       count: `… this one carries 7 — the tag it does not admit: "auth" (4
+       fields)`.
+     - **Conformance vector**, frozen, loaded by both sides:
+       `conformance/project-work/fixtures/records/invalid/auth-tag-decoration.json`
+       — the exact envelope a decorated signer produces. `buzz-core`'s
+       fixture table (19 invalid records now) binds the relay validator to
+       it, and `work_tests.rs` binds the CLI's pre-publish check to the same
+       bytes and the same declared code.
+     - **Why no test caught it.** Every `bee sessions work` test stubbed the
+       wire, and the stub takes an `EventBuilder` — it never sees the
+       signature step, which is where the decoration happened. The two new
+       tests sign for real and judge the result with the relay's validator:
+       `the_adopt_record_a_seat_signs_is_one_the_relay_admits` (RED before
+       this fix, with the live refusal words verbatim) and
+       `a_decorated_work_record_is_refused_before_it_is_published`.
+     - **What this means for the record.** Adoption has **never** been
+       exercised against a relay. Item 201 landed the command on stub-wire
+       and frozen-sequence evidence only; item 205's Kettle Smoke run records
+       "no terminal exists" and no declaration, so its terminal path was not
+       an adoption; the tag-count refusal in the control run is the first
+       live attempt anyone recorded. Treat any earlier claim that work
+       adoption worked live as unsupported.
+     - **Gates** bare from the worktree, all green: `cargo fmt --all --
+       --check`; `cargo clippy --workspace --all-targets -- -D warnings`
+       (clean, 4 m 21 s); `cargo test -p buzz-core -p buzz-sdk -p buzz-cli -p
+       buzz-relay --lib --bins` — 1,343 buzz-core, 1,258 buzz-cli, 1,113
+       buzz-relay (179 ignored, the Postgres/Redis suite), 328 buzz-sdk, 13,
+       0 failed; `just conformance-check` 77/77; `just file-size-check`;
+       Python NUL scan of every changed file, none.
 
 
 ## 3a. Environment facts that cost real time (do not rediscover)

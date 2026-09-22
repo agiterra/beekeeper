@@ -1113,3 +1113,138 @@ async fn a_body_that_differs_in_its_responsible_actor_is_not_a_retry() {
         .expect("a different body is a new declaration");
     assert_eq!(wire.publishes(), 2);
 }
+
+// ── the bytes the CLI actually publishes ───────────────────────────────────
+//
+// Every test above this line stubs the wire, so none of them ever sees the
+// signature step — and that is exactly where the live refusal came from
+// (ledger 237). These two tests sign for real and judge the result with the
+// relay's own validator, against the frozen fixture that states the refusal
+// a decorated record earns.
+
+/// The `auth` tag the ACP harness's `BUZZ_AUTH_TAG` puts on a seat's client.
+fn seat_auth_tag() -> (nostr::Tag, String) {
+    let parts = vec![
+        "auth".to_owned(),
+        "0a11".to_owned() + &"0".repeat(60),
+        "kind=44249".to_owned(),
+        "c0de".repeat(32),
+    ];
+    let json = serde_json::to_string(&parts).expect("auth tag json");
+    (nostr::Tag::parse(parts).expect("auth tag"), json)
+}
+
+fn declared_for_signing() -> (ProjectWorkEnvelope, ProjectWorkDeclared) {
+    let fixture: Value = serde_json::from_str(SEQUENCES[0].inputs).expect("inputs");
+    let session = fixture_session(&fixture);
+    let body = ProjectWorkDeclared {
+        work_id: "9d0f0f0f-1111-4222-8333-444444444444".to_owned(),
+        goal_ref: "90a1".to_owned() + &"0".repeat(60),
+        decision_ref: None,
+        responsible_actor: "1ead".to_owned() + &"0".repeat(60),
+        plan_ref: ProjectWorkPlanRef {
+            repository: format!(
+                "30617:{}:kettle-beekeeper-agents",
+                "1ead".to_owned() + &"0".repeat(60)
+            ),
+            commit: "ab".repeat(20),
+            path: "plans/kettle.md".to_owned(),
+        },
+        supersedes: Vec::new(),
+    };
+    (session.envelope(), body)
+}
+
+/// A seat runs `bee sessions work adopt`; the relay must admit what it signs.
+///
+/// This is the live defect of ledger 237 reduced to a unit: with a NIP-OA auth
+/// tag configured — which is every managed agent — the publish path signed a
+/// seventh tag onto a record whose contract fixes six, and hive refused it.
+#[test]
+fn the_adopt_record_a_seat_signs_is_one_the_relay_admits() {
+    let (auth_tag, auth_json) = seat_auth_tag();
+    let client = BuzzClient::new(
+        "https://test.relay".into(),
+        nostr::Keys::generate(),
+        Some(auth_tag),
+        Some(auth_json),
+    )
+    .expect("client");
+    let (envelope, body) = declared_for_signing();
+    let builder = build_project_work_declared(&envelope, body).expect("builder");
+    let event = sign_work_record(&client, builder).expect("a seat's adopt record signs");
+    buzz_core::project_work::validate_project_work_envelope(&ProjectWorkEvent::from(&event))
+        .unwrap_or_else(|refusal| {
+            panic!("the relay refuses what the CLI publishes: {refusal}");
+        });
+}
+
+/// The same record, signed by a founder's client with no auth tag, was always
+/// admitted — which is why this went unseen until a seat ran it.
+#[test]
+fn the_adopt_record_an_undecorated_client_signs_is_admitted_too() {
+    let client = BuzzClient::new(
+        "https://test.relay".into(),
+        nostr::Keys::generate(),
+        None,
+        None,
+    )
+    .expect("client");
+    let (envelope, body) = declared_for_signing();
+    let builder = build_project_work_declared(&envelope, body).expect("builder");
+    let event = sign_work_record(&client, builder).expect("signs");
+    buzz_core::project_work::validate_project_work_envelope(&ProjectWorkEvent::from(&event))
+        .expect("an undecorated record is admitted");
+}
+
+/// The frozen vector for the exact envelope a decorated signer produces.
+///
+/// `buzz-core`'s own fixture table loads this same file, so the relay's
+/// validator and the CLI's pre-publish check are judged against one set of
+/// bytes rather than two descriptions of them.
+const AUTH_DECORATED_RECORD: &str = include_str!(
+    "../../../../../conformance/project-work/fixtures/records/invalid/auth-tag-decoration.json"
+);
+
+/// The CLI refuses a decorated record here, in the relay's words, naming the
+/// tag at fault — rather than learning it from a 400 after a round trip.
+#[test]
+fn a_decorated_work_record_is_refused_before_it_is_published() {
+    let fixture: Value = serde_json::from_str(AUTH_DECORATED_RECORD).expect("fixture");
+    let declared = fixture["refusal"]
+        .as_str()
+        .expect("the fixture declares its refusal")
+        .split(':')
+        .next()
+        .expect("a code")
+        .trim();
+    let vector: ProjectWorkEvent =
+        serde_json::from_value(fixture["event"].clone()).expect("fixture event");
+    let vector_refusal = buzz_core::project_work::validate_project_work_envelope(&vector)
+        .expect_err("the vector is a refusal");
+    assert_eq!(vector_refusal.code.as_str(), declared);
+
+    let (auth_tag, auth_json) = seat_auth_tag();
+    let client = BuzzClient::new(
+        "https://test.relay".into(),
+        nostr::Keys::generate(),
+        Some(auth_tag.clone()),
+        Some(auth_json),
+    )
+    .expect("client");
+    let (envelope, body) = declared_for_signing();
+    // The decoration the old publish path applied, applied by hand: the same
+    // seventh tag, on the same record, reaching the same check.
+    let builder = build_project_work_declared(&envelope, body)
+        .expect("builder")
+        .tags([auth_tag]);
+    let error = sign_work_record(&client, builder).expect_err("a decorated record is refused");
+    let message = error.to_string();
+    assert!(message.contains("nothing was published"), "{message}");
+    assert!(message.contains(declared), "{message}");
+    assert!(message.contains("\"auth\""), "{message}");
+    assert!(
+        message.contains(&vector_refusal.message),
+        "the CLI must say what the relay says: {message}"
+    );
+}
