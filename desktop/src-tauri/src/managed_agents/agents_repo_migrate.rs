@@ -1,5 +1,5 @@
 //! Moving a project created before the pivot into its own agents
-//! repository (spec § 4.11, ledger 233).
+//! repository (spec § 4.11, ledger 243).
 //!
 //! A project made before 2026-09-18 points its kind:30624 at a packs
 //! repository laid out one directory per role. [`super::agents_repo`]

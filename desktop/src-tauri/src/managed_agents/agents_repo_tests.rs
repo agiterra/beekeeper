@@ -780,7 +780,7 @@ mod against_a_stub_relay {
 
     /// A project whose pack source already names another repository is
     /// refused: re-pointing is a deliberate act, and the refusal now names
-    /// the control that performs one (ledger 233).
+    /// the control that performs one (ledger 243).
     #[tokio::test]
     async fn a_project_pointed_elsewhere_is_refused() {
         let root = scratch_root();

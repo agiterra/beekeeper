@@ -1,4 +1,4 @@
-//! Migrating a project created before the pivot (ledger 233).
+//! Migrating a project created before the pivot (ledger 243).
 //!
 //! The same stub relay the sibling file uses, with one addition: a
 //! pack-layout repository pushed to it first, standing in for the packs
