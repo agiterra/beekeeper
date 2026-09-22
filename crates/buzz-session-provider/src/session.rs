@@ -2056,12 +2056,20 @@ fn seat_role_briefing(role: &str, pack: &SeatRoleBriefing) -> String {
     text
 }
 
-/// The one sentence every seated role hears about shared drafts (NIP-AD):
-/// a proposal to a plan or a role goes through the relay as a draft that a
-/// person commits, and `bee` is the way to make one. A seat is a roster
-/// collaborator, so the relay admits its drafts whether or not the role has
-/// an `agents_repo` grant.
-const AGENTS_REPO_DRAFT_BRIEFING: &str = "\n\nTo propose a change to a plan or a role     definition, draft it rather than editing quietly: `$BEE agents-repo draft put <path>`     (or `$BEE plans edit <name>`) publishes the whole new text of one file as a shared draft     that everyone on the project can read and build on; `$BEE agents-repo drafts` lists what is     open. A draft becomes real only when a person commits it to the agents repository's main;     nothing you draft changes any seat's instructions until then.";
+/// The facts every seated role hears about shared drafts (NIP-AD): a
+/// proposal to a plan or a role is shared on the relay as a draft, a commit
+/// to the agents repository's main is what makes it real, and `bee` is the
+/// way to make one. A seat is a roster collaborator, so the relay admits its
+/// drafts whether or not the role has an `agents_repo` grant. Who commits is
+/// said by [`agents_checkout_briefing`], which knows this seat's access; this
+/// text names no committer (ledger 247: it once said "a person", and a seat
+/// read that as a gate on a person).
+const AGENTS_REPO_DRAFT_BRIEFING: &str = "\n\nTo propose a change to a plan or a role \
+     definition, draft it rather than editing quietly: `$BEE agents-repo draft put <path>` \
+     (or `$BEE plans edit <name>`) publishes the whole new text of one file as a draft shared on \
+     the relay, which everyone on the project can read and build on; `$BEE agents-repo drafts` \
+     lists what is open. A draft becomes real only when it is committed to the agents \
+     repository's main; nothing drafted changes any seat's instructions until then.";
 
 /// The paragraph a seat granted the project's agents repository receives
 /// (spec § 4.11): where the clone is, what is in force and what is retired,
@@ -2071,9 +2079,11 @@ fn agents_checkout_briefing(agents: &crate::actor_seats::SeatAgentsCheckout) -> 
     let mode = if agents.writable() {
         "You may commit there and push to main; the relay's push gate decides whether your \
          push lands, and a seat pushes with its owner's tier. Commit plans and role edits there, \
-         never in the code repository."
+         never in the code repository. Validate and commit authorized drafts yourself, under \
+         your own identity; never silently overwrite another author's draft."
     } else {
-        "It is read-only for this seat: read it, do not edit it. On Claude Code the file \
+        "It is read-only for this seat: read it, do not edit it, and propose changes as \
+         drafts for a collaborator with write access to commit. On Claude Code the file \
          tools refuse writes there by permission rule; on any other harness this sentence is the \
          whole fence."
     };
@@ -4976,6 +4986,58 @@ done
         let text = seat_role_briefing("lead", &write);
         assert!(text.contains("push to main"), "{text}");
         assert!(!text.contains("read-only for this seat"), "{text}");
+        assert!(
+            text.contains("commit authorized drafts yourself"),
+            "a writable seat is told it commits drafts: {text}"
+        );
+    }
+
+    /// Ledger 247: the drafts paragraph once said a draft "becomes real only
+    /// when a person commits it", and a seat read a commit as a human gate. The
+    /// fact survives (a commit makes a draft real); no seat, whatever its
+    /// access, is told a person must act.
+    #[test]
+    fn no_seat_is_told_a_person_must_commit_its_drafts() {
+        let base = SeatRoleBriefing {
+            display_name: "Lead".into(),
+            prompt: "Lead.".into(),
+            skills: Vec::new(),
+            bundle_dir: None,
+            agents_checkout: None,
+        };
+        let mut texts = vec![seat_role_briefing("builder", &base)];
+        for access in ["read", "write"] {
+            texts.push(seat_role_briefing(
+                "lead",
+                &SeatRoleBriefing {
+                    agents_checkout: Some(crate::actor_seats::SeatAgentsCheckout {
+                        path: PathBuf::from("/src/proj.worktrees/lane-agents"),
+                        access: access.into(),
+                    }),
+                    ..base.clone()
+                },
+            ));
+        }
+        for text in texts {
+            let flowed = text
+                .to_lowercase()
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
+            assert!(
+                flowed.contains("becomes real only when it is committed"),
+                "{flowed}"
+            );
+            for banned in [
+                "a person",
+                "someone",
+                "ask a human",
+                "ask brian",
+                "stop and ask",
+            ] {
+                assert!(!flowed.contains(banned), "{banned:?} in: {flowed}");
+            }
+        }
     }
 
     /// Only `1` turns the comparison switch on; the bundle is the default in

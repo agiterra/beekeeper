@@ -76,7 +76,7 @@ const CURRENT: [(&str, &str); 11] = [
     ("project-setup", "1.1.0"),
     ("runner", "1.2.0"),
     ("verifier", "1.2.0"),
-    ("working-contract", "1.2.1"),
+    ("working-contract", "1.2.2"),
 ];
 
 /// The roles 1.2.0 thinned, and the version each was thinned from. `verifier`
@@ -87,6 +87,11 @@ const THINNED_IN_1_2_0: [&str; 5] = ["builder", "lead", "runner", "verifier", "w
 /// for it. The commit-identity rule (ledger 239) lives in the contract every
 /// shipped role includes, so one new version reaches every seat.
 const REVISED_IN_1_2_1: [&str; 1] = ["working-contract"];
+
+/// What 1.2.2 revised (ledger 247): the one decision rule that replaces every
+/// "stop and ask a person" sentence, and the lead's agents-repo commit duty.
+/// Same single-contract reach as 1.2.1.
+const REVISED_IN_1_2_2: [&str; 1] = ["working-contract"];
 
 /// Every file under `<name>/<version>/`, relative path to bytes.
 fn version_files(name: &str, version: &str) -> BTreeMap<String, Vec<u8>> {
@@ -367,27 +372,46 @@ fn the_working_contract_settles_a_commit_identity_without_asking_anyone() {
     }
 }
 
-/// 1.2.1 is worth shipping only if projects already on the wire take it
-/// without editing a file. Every caret a seeded project can be carrying for
-/// the working contract — `@^1.0.0`, `@^1.1.0` and `@^1.2.0` — must resolve to
-/// it, and an exact pin on any earlier version must still answer with that
-/// version's own bytes.
+/// 1.2.1 shipped to the seats of lane 239's landing, so its bytes are frozen
+/// too. 1.2.2 is a new directory beside it, not an edit of it.
 #[test]
-fn a_1_2_1_template_is_picked_up_by_the_caret_1_0_0_1_1_0_and_1_2_0_includes() {
+fn the_1_2_1_templates_are_byte_for_byte_what_they_shipped_as() {
+    // Update this table only when a version directory is *added*.
+    let pinned: [(&str, &str); 1] = [(
+        "working-contract",
+        "ffdae7f72555a885e93b84a880b9e8afa03f827cdeef27580072ab591f38b37f",
+    )];
+    assert_eq!(pinned.len(), REVISED_IN_1_2_1.len());
+    for (name, expected) in pinned {
+        assert_eq!(
+            digest(name, "1.2.1"),
+            expected,
+            "{name}/1.2.1 changed; a published version is immutable — add a new version instead"
+        );
+    }
+}
+
+/// 1.2.2 is worth shipping only if projects already on the wire take it
+/// without editing a file. Every caret a seeded project can be carrying for
+/// the working contract — `@^1.0.0`, `@^1.1.0`, `@^1.2.0` and `@^1.2.1` — must
+/// resolve to it, and an exact pin on any earlier version must still answer
+/// with that version's own bytes.
+#[test]
+fn a_1_2_2_template_is_picked_up_by_every_earlier_caret_include() {
     let catalog = catalog();
-    for name in REVISED_IN_1_2_1 {
-        for range in ["^1.0.0", "^1.1.0", "^1.2.0"] {
+    for name in REVISED_IN_1_2_2 {
+        for range in ["^1.0.0", "^1.1.0", "^1.2.0", "^1.2.1"] {
             let resolved = catalog
                 .resolve(name, &TemplateRange::parse(name, range).expect("range"))
                 .unwrap_or_else(|e| panic!("{name}@{range}: {e}"));
             assert!(resolved.warning.is_none(), "{name}@{range}: {resolved:?}");
             assert_eq!(
                 resolved.template.version.to_string(),
-                "1.2.1",
-                "{name}@{range} must take 1.2.1 without anyone editing a role file"
+                "1.2.2",
+                "{name}@{range} must take 1.2.2 without anyone editing a role file"
             );
         }
-        for exact in ["1.0.0", "1.1.0", "1.2.0"] {
+        for exact in ["1.0.0", "1.1.0", "1.2.0", "1.2.1"] {
             let resolved = catalog
                 .resolve(name, &TemplateRange::parse(name, exact).expect("range"))
                 .unwrap_or_else(|e| panic!("{name}@{exact}: {e}"));
@@ -440,7 +464,7 @@ fn a_1_2_1_template_is_picked_up_by_the_caret_1_0_0_1_1_0_and_1_2_0_includes() {
         resolved,
         vec![
             ("beekeeper/builder@^1.2.0", "1.2.0"),
-            ("beekeeper/working-contract@^1.2.0", "1.2.1"),
+            ("beekeeper/working-contract@^1.2.0", "1.2.2"),
         ],
         "a 1.2.0-era caret must carry the revised contract"
     );
@@ -452,6 +476,70 @@ fn a_1_2_1_template_is_picked_up_by_the_caret_1_0_0_1_1_0_and_1_2_0_includes() {
             .contains("@beekeeper.local"),
         "the composed builder never receives the commit-identity rule"
     );
+}
+
+/// Ledger 247: the effective instructions of the lead, builder and verifier
+/// seats — each role composed with its includes, exactly as a new project
+/// seeds it — invent no human gate, and carry the one rule that replaces
+/// them plus the lead's agents-repo commit duty.
+#[test]
+fn no_seated_role_is_told_to_stop_and_ask_a_person() {
+    let catalog = catalog();
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path().join("gates-beekeeper-agents");
+    write_agents_repo_seed(&root, &catalog, "gates").expect("seed");
+    for role in ["lead", "builder", "verifier"] {
+        let composed = compose_role(
+            &RoleSource::Flat {
+                root: root.clone(),
+                role: role.to_owned(),
+            },
+            &catalog,
+            &ComposeOptions::local(format!("roles/{role}")),
+        )
+        .unwrap_or_else(|e| panic!("{role} composes: {e}"));
+        let mut text = composed.persona.prompt.clone();
+        for skill in &composed.skills {
+            text.push('\n');
+            let path = skill.dir.join("SKILL.md");
+            text.push_str(
+                &std::fs::read_to_string(&path)
+                    .unwrap_or_else(|e| panic!("{}: {e}", path.display())),
+            );
+        }
+        let flowed = text
+            .to_lowercase()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        for banned in [
+            "ask brian",
+            "ask a human",
+            "ask a person",
+            "a person must",
+            "a human must",
+            "stop and ask",
+            "wait for a person",
+            "wait for a human",
+        ] {
+            assert!(!flowed.contains(banned), "{role} is told {banned:?}");
+        }
+        for needle in [
+            "decide within your responsibility, consult affected collaborators, record, continue",
+            "an unnecessary permission wait is a finding",
+            "adopt the resulting commit, never uncommitted text",
+            "nobody silently overwrites another author's draft",
+        ] {
+            assert!(flowed.contains(needle), "{role} never reads {needle:?}");
+        }
+        assert_eq!(
+            flowed
+                .matches("an unnecessary permission wait is a finding")
+                .count(),
+            1,
+            "{role}: the rule is stated once"
+        );
+    }
 }
 
 /// Every template's newest version is loadable, is what a caret range
@@ -544,7 +632,7 @@ fn a_new_project_seeds_the_current_versions_and_an_existing_projects_caret_resol
     let lead = std::fs::read_to_string(root.join("roles/lead.md")).expect("seeded lead");
     for expected in [
         "![[beekeeper/lead@^1.2.0]]",
-        "![[beekeeper/working-contract@^1.2.1]]",
+        "![[beekeeper/working-contract@^1.2.2]]",
         "![[beekeeper/memory@^1.0.0]]",
         "![[beekeeper/project-pulse@^1.1.0]]",
     ] {
@@ -594,7 +682,7 @@ fn a_new_project_seeds_the_current_versions_and_an_existing_projects_caret_resol
         resolved,
         vec![
             ("beekeeper/lead@^1.0.0", "1.2.0"),
-            ("beekeeper/working-contract@^1.0.0", "1.2.1"),
+            ("beekeeper/working-contract@^1.0.0", "1.2.2"),
             ("beekeeper/memory@^1.0.0", "1.0.0"),
             ("beekeeper/project-pulse@^1.0.0", "1.1.0"),
         ],
@@ -620,7 +708,7 @@ fn a_1_2_0_role_is_picked_up_by_both_the_caret_1_0_0_and_the_caret_1_1_0_include
     let catalog = catalog();
     for name in THINNED_IN_1_2_0 {
         // What this build actually ships for that name: 1.2.0 for the four
-        // roles, and 1.2.1 for the working contract, which lane 239 revised.
+        // roles, and 1.2.2 for the working contract, which lanes 239 and 247 revised.
         // Asserting the current version rather than a literal is the point —
         // an older caret must never stall on a version it happens to match.
         let current = CURRENT
@@ -693,7 +781,7 @@ fn a_1_2_0_role_is_picked_up_by_both_the_caret_1_0_0_and_the_caret_1_1_0_include
         resolved,
         vec![
             ("beekeeper/lead@^1.1.0", "1.2.0"),
-            ("beekeeper/working-contract@^1.1.0", "1.2.1"),
+            ("beekeeper/working-contract@^1.1.0", "1.2.2"),
             ("beekeeper/memory@^1.0.0", "1.0.0"),
             ("beekeeper/project-pulse@^1.1.0", "1.1.0"),
         ],

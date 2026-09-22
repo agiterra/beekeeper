@@ -4943,6 +4943,30 @@ mod agent_draft_prompt_tests {
         assert!(prompt.contains("never hold finished work waiting to be told which identity"));
     }
 
+    /// Ledger 247: no base-prompt sentence sends an agent to a human for
+    /// permission. Humans and agents are collaborators; the decision rule is
+    /// stated once, in the working contract every seat's role includes.
+    #[test]
+    fn shared_base_prompt_invents_no_human_gate() {
+        let flowed = include_str!("base_prompt.md")
+            .to_lowercase()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        for banned in [
+            "ask brian",
+            "ask a human",
+            "ask a person",
+            "a person must",
+            "a human must",
+            "stop and ask",
+            "wait for a person",
+            "wait for a human",
+        ] {
+            assert!(!flowed.contains(banned), "base prompt says {banned:?}");
+        }
+    }
+
     #[test]
     fn shared_base_prompt_teaches_repo_context_and_learning_loop() {
         let prompt = include_str!("base_prompt.md");
