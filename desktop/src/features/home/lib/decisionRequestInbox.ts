@@ -144,13 +144,3 @@ export function inboxDecisionModel(
     genesisRef: request.genesisRef,
   };
 }
-
-/**
- * What an answer from this card does not do, said on the card.
- *
- * `bee sessions decide answer` wakes the asker by default; this app publishes
- * the answer only, so the asking seat learns of it at its next turn.
- */
-export function inboxDecisionWakeDisclosure(request: InboxDecisionRequest) {
-  return `Answering here publishes the ruling but does not wake the asker (${truncatePubkey(request.askerPubkey)}). To wake it now: bee sessions decide answer --channel ${request.channelRef} --session-ref ${request.sessionRef} --genesis ${request.genesisRef} --request ${request.requestId} --choice-index <n>`;
-}
