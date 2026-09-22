@@ -290,3 +290,11 @@ Lane 233 tested the claim that a plan committed out from under a live declaratio
 2. **Surfaces:** `bee sessions work status` and the desktop work row print declared vs current commit when they differ, with the re-adopt command; the completion result carries the same fact. Completion is not refused for drift. The lead's work brief line is a follow-on after lane 229 lands (provider crate ownership).
 3. The note to Andy of 2026-09-21 overstated this ("our completion gate refuses a stale declaration"); a correction is owed and drafted.
 
+### A11 — the control run is a measurement, not a safety claim (2026-09-21)
+
+Four review rounds on R2/R4 (211→218→227→229) each closed the named case and opened its neighbour, and each paid for a landing Astra did not need to review. The "control run waits on …" rulings in A5.6, A7.6, A8.3 and A9.3 were Fable's and are lifted **for the control run only**. The disruption run (Wave 4) still waits on R2/R4 closed.
+
+1. `kettle-control` runs on the installed build (`d209432aa` plus lanes 231/232 landed tonight). Its report lists R2/R4 as known-open and makes no safety claim; a known-open defect that fires ends the run — stop, record, no repairs — and that is a result, not a wasted run.
+2. Review before landing: the refuter and Astra review branches; custody (229/230) and drift (234/235) land only after they pass, in one finalizer pass.
+3. Two baselines: this run, and one after Wave 4, show the custody work's effect.
+
