@@ -50,7 +50,7 @@
 #   - **Two machines.** P_A and P_B are two processes on one host, sharing a
 #     filesystem, a clock and a network stack. The cross-machine claims this
 #     step makes are exercised by the human runbook in
-#     `docs/COLLABORATION_TWO_MACHINE_ACCEPTANCE.md` §6, not here.
+#     `plans/archive/COLLABORATION_TWO_MACHINE_ACCEPTANCE.md` §6, not here.
 #   - **Seated (agent-actor) restore and re-staging.** Every session here is
 #     operator-created, so `seat-requests.json` never lists one of them and the
 #     `fenced`/retired seat-request behaviour is proven only by the provider's

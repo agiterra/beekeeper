@@ -83,7 +83,7 @@ fn note_indeterminate(error: &str) -> String {
 /// checkout is on.
 ///
 /// Serialised in kebab-case, the wire spelling the renderer switches on
-/// (`docs/ROLE_ADOPTION_EVIDENCE.md` § 3a).
+/// (`plans/archive/ROLE_ADOPTION_EVIDENCE.md` § 3a).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum PackRevisionKind {
