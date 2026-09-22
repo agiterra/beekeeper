@@ -400,6 +400,11 @@ test("initProjectRepositories runs the host command and adds forward refs for th
         pushRecordEventId: null,
         sourceEventId: "f".repeat(64),
         sourceExisted: false,
+        migratedFrom: null,
+        migratedRoles: [],
+        migrationNotes: [],
+        sourceConflict: false,
+        codeRepoAdopted: false,
         publicationError: null,
         commitIdentityName: "Owner",
         commitIdentityEmail: "aaaaaaaa@beekeeper.local",
@@ -442,8 +447,9 @@ test("initProjectRepositories runs the host command and adds forward refs for th
     assert.equal(result.complete, true);
     // No folder chosen: the host's default root, passed as `null`, never
     // an invented path.
+    // Not a migration: the host is told so explicitly, never left to guess.
     assert.deepEqual(calls, [
-      { projectRef: project.address, checkoutParent: null },
+      { projectRef: project.address, checkoutParent: null, migrate: null },
     ]);
     // The create dialog's folder row hands the PARENT through unchanged.
     const chosen = await initProjectRepositories(project, {
@@ -453,6 +459,7 @@ test("initProjectRepositories runs the host command and adds forward refs for th
     assert.deepEqual(calls.at(-1), {
       projectRef: project.address,
       checkoutParent: "/Users/x/Code",
+      migrate: null,
     });
     const republished = stubs.signedEvents.at(-1);
     assert.equal(republished.kind, 30621);
