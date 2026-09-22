@@ -476,15 +476,15 @@ fn rollback_absent_file_treats_already_absent_as_success() {
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn snapshot_read_error_on_unreadable_file_is_surfaced() {
-    use std::os::unix::fs::PermissionsExt;
-
     let dir = tempfile::tempdir().unwrap();
+    // The store path is a directory, not a file: `std::fs::read` then fails
+    // with "Is a directory" for every uid, including root. A `0o000` file
+    // does not carry that guarantee — root's CAP_DAC_OVERRIDE ignores it,
+    // which is how CI runs (ledger 212(h)).
     let agents_path = dir.path().join("managed-agents.json");
-    std::fs::write(&agents_path, b"content").unwrap();
-    std::fs::set_permissions(&agents_path, std::fs::Permissions::from_mode(0o000)).unwrap();
+    std::fs::create_dir(&agents_path).unwrap();
 
     // A non-NotFound read error must be surfaced, not collapsed to None.
     let result = match std::fs::read(&agents_path) {
@@ -492,9 +492,6 @@ fn snapshot_read_error_on_unreadable_file_is_surfaced() {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(format!("failed to snapshot agent store: {e}")),
     };
-
-    // Restore permissions for cleanup.
-    std::fs::set_permissions(&agents_path, std::fs::Permissions::from_mode(0o644)).unwrap();
 
     assert!(
         result.is_err(),
@@ -539,11 +536,8 @@ fn rollback_aggregates_multiple_errors() {
 /// which blocks on authorization prompts in headless/CI environments.
 /// The `try_delete_agent_key` function itself is integration-tested through
 /// the `#[ignore]` keychain tests in `secret_store.rs`.
-#[cfg(unix)]
 #[test]
 fn full_rollback_at_teams_boundary_existing_agents_store() {
-    use std::os::unix::fs::PermissionsExt;
-
     let dir = tempfile::tempdir().unwrap();
     let agents_path = dir.path().join("managed-agents.json");
     let teams_path = dir.path().join("teams.json");
@@ -578,12 +572,22 @@ fn full_rollback_at_teams_boundary_existing_agents_store() {
         "agents store must be changed by phase-3 write"
     );
 
-    // Phase-3 write 2: teams write FAILS (read-only dir injection).
-    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o555)).unwrap();
+    // Phase-3 write 2: teams write FAILS by construction. teams_path is
+    // pre-created as a directory, so atomic_write_json's rename onto it
+    // fails with EISDIR for every uid, including root's CAP_DAC_OVERRIDE —
+    // unlike a 0o555 parent directory, which root ignores (how CI runs;
+    // ledger 212(h)). Remove the obstruction immediately after so the rest
+    // of the test sees the same "teams store absent" disk state a real
+    // failed write would have left.
+    std::fs::create_dir(&teams_path).unwrap();
     let teams_err =
         crate::managed_agents::storage::atomic_write_json(&teams_path, b"[{\"id\":\"team-1\"}]");
-    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
-    assert!(teams_err.is_err(), "teams write must fail in read-only dir");
+    std::fs::remove_dir(&teams_path).unwrap();
+    let _ = std::fs::remove_file(dir.path().join("teams.json.tmp"));
+    assert!(
+        teams_err.is_err(),
+        "teams write must fail when the path is a directory"
+    );
 
     // Full rollback (mirrors production rollback_agents + teams restore).
     // Keyring cleanup: use a test-safe closure returning Ok(()) — the same
@@ -645,11 +649,8 @@ fn full_rollback_at_teams_boundary_existing_agents_store() {
 /// `load_teams()` was secretly a writer on absent files — a failure inside
 /// that hidden write would `?`-return without calling `rollback_agents`.
 /// With `load_teams_readonly` pre-commit, that path no longer exists.
-#[cfg(unix)]
 #[test]
 fn full_rollback_at_teams_boundary_absent_agents_store() {
-    use std::os::unix::fs::PermissionsExt;
-
     let dir = tempfile::tempdir().unwrap();
     let agents_path = dir.path().join("managed-agents.json");
     let teams_path = dir.path().join("teams.json");
@@ -701,9 +702,14 @@ fn full_rollback_at_teams_boundary_absent_agents_store() {
         updated_at: "now".to_string(),
     });
     let payload = serde_json::to_vec_pretty(&teams_to_save).unwrap();
-    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o555)).unwrap();
+    // Block the write by construction, not permission — see the sibling
+    // `full_rollback_at_teams_boundary_existing_agents_store` test above for
+    // why a read-only parent directory (root ignores it in CI; ledger
+    // 212(h)) doesn't prove anything a directory-as-target does.
+    std::fs::create_dir(&teams_path).unwrap();
     let teams_err = crate::managed_agents::storage::atomic_write_json(&teams_path, &payload);
-    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::remove_dir(&teams_path).unwrap();
+    let _ = std::fs::remove_file(dir.path().join("teams.json.tmp"));
     assert!(teams_err.is_err());
 
     // Full rollback: keyring cleanup (test-safe) + delete created agents file

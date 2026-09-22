@@ -19599,6 +19599,58 @@ removed from here.
        the control run closing with `acknowledgement_only_turns: 0` (210).
        Not landed, not installed, no seat has run 1.2.0.
 
+232. **The five desktop tests ledger 212(h) named as sharing its root-bypass
+     flaw are fixed, by construction, not by chmod (2026-09-21, lane 232,
+     branch `work/lane-232-root-proof-desktop-tests`, base `2ec147f73`).**
+     Each forced a write or read failure with `set_permissions`/`readonly`,
+     which root (CI's uid, via `CAP_DAC_OVERRIDE`) ignores — green locally,
+     meaningless in CI, for tests that exist to prove a failure path.
+     - `migration_team_dir_tests.rs` `detach_retries_after_teams_write_failure`
+       — chmod 0o555 on `agents/` replaced with a directory pre-created at
+       the exact tmp-write sibling name (`teams.json.tmp`); the final rename
+       fails with `EISDIR` for any uid, removed right after so the retry
+       boot sees the same disk state a real failure would leave.
+     - `app_state_tests.rs`
+       `present_keyring_with_mismatched_file_adopts_file_key_marker_failure_keeps_file`
+       — chmod on the data dir replaced with the marker path itself
+       pre-created as a directory, so `write_migration_marker`'s commit-time
+       rename fails with `EISDIR` unconditionally. This turned an assertion
+       that used to be a no-op (`if let Ok(resolved) = resolved { ... }`,
+       passing silently either way) into an unconditional one: `resolve_
+       identity_with_store` always returns `Ok` here — the keyring write
+       itself succeeded, only the marker failed, and
+       `persist_identity_to_keyring` keeps `identity.key` as the fallback
+       rather than downgrading the reported storage — so `resolved.storage`
+       is asserted `== SystemKeyring`, not the `LocalFile` this lane first
+       (wrongly) assumed and caught via `cargo test` before landing.
+     - `managed_agents/teams_tests.rs` `load_teams_readonly_surfaces_read_error`
+       and `commands/team_snapshot/tests.rs`
+       `snapshot_read_error_on_unreadable_file_is_surfaced` — `0o000` on a
+       file replaced with making the store path a directory; `read_to_string`
+       / `std::fs::read` fail with "Is a directory" for any uid, no
+       `#[cfg(unix)]` needed since the mechanism isn't permission-based.
+     - `commands/team_snapshot/tests.rs`
+       `full_rollback_at_teams_boundary_existing_agents_store` and
+       `full_rollback_at_teams_boundary_absent_agents_store` — chmod on the
+       parent dir replaced with pre-creating `teams_path` itself as a
+       directory before the write, removed immediately after capturing the
+       error so the rest of each test (which asserts `teams_path` stays
+       absent) sees accurate disk state.
+     - No product code touched — every fix is test-only construction.
+     - **Not this lane's to fix:** no additional forced-permission tests
+       found beyond ledger 212(h)'s five; a repo-wide grep for
+       `set_permissions`/`readonly(true)`/`0o4`/`0o5`/`0o0`/`0o7` turned up
+       only mode *assertions* (e.g. `key_backup_tests.rs`, `app_state_tests.rs:140`),
+       a fixture-script `0o755`, and one product-code use
+       (`managed_agents/backend.rs:480`, staged-provider `0o500` lockdown —
+       not a test).
+     - **Gates** bare from the worktree: `cargo fmt --manifest-path
+       desktop/src-tauri/Cargo.toml -- --check`; `cargo clippy --manifest-path
+       desktop/src-tauri/Cargo.toml --all-targets -- -D warnings`; `cargo test
+       --manifest-path desktop/src-tauri/Cargo.toml` 3,489 passed (first run
+       caught the `SystemKeyring`/`LocalFile` mistake above, 3,488 passed / 1
+       failed; fixed, reran clean); `just file-size-check`; Python NUL scan.
+
 ## 3a. Environment facts that cost real time (do not rediscover)
 
 - **pnpm 11's answer to a stale workspace state is to DELETE `node_modules`,

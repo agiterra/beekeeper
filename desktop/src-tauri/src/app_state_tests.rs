@@ -681,11 +681,6 @@ fn present_keyring_mismatched_file_adoption_store_failure_boots_with_file_key() 
     );
 }
 
-// read-only-dir marker-failure injection is Unix-only: on Windows,
-// FILE_ATTRIBUTE_READONLY on a directory does not prevent creating new
-// files inside it (it only guards the directory entry itself), so the
-// marker write succeeds and the fault cannot be injected this way.
-#[cfg(unix)]
 #[test]
 fn present_keyring_with_mismatched_file_adopts_file_key_marker_failure_keeps_file() {
     // (b-fault) Present + mismatched identity.key + marker write fails →
@@ -701,40 +696,36 @@ fn present_keyring_with_mismatched_file_adopts_file_key_marker_failure_keeps_fil
     let file_keys = Keys::generate();
     save_key_file(&legacy_path, &file_keys).unwrap();
 
-    // Force marker write failure by making the data directory read-only.
-    // AtomicWriteFile writes a temp file in the same dir then renames it,
-    // so removing write permission on the dir blocks the write entirely.
-    let dir_perms_orig = std::fs::metadata(dir.path()).unwrap().permissions();
-    let mut dir_perms_ro = dir_perms_orig.clone();
-    // unknown_lints: the clippy lint below doesn't exist yet in the pinned
-    // 1.95 toolchain but does in CI's newer clippy — allow both worlds.
-    #[allow(unknown_lints)]
-    #[allow(clippy::permissions_set_readonly_value)]
-    dir_perms_ro.set_readonly(true);
-    std::fs::set_permissions(dir.path(), dir_perms_ro).unwrap();
+    // Force marker write failure by construction, not permission:
+    // pre-create the marker path itself as a directory. write_migration_marker
+    // commits by renaming its temp file onto marker_path; renaming a file
+    // onto an existing directory fails with EISDIR unconditionally — no
+    // uid, including root's CAP_DAC_OVERRIDE (how CI runs; ledger 212(h)),
+    // can make that rename succeed. A read-only parent directory can't make
+    // that guarantee, since root ignores it.
+    let marker_path = migration_marker_path(dir.path());
+    std::fs::create_dir(&marker_path).unwrap();
 
     let store = FakeIdentityStore::present_with(&keyring_nsec);
-    // Resolve with the read-only dir; marker write will fail.
-    let resolved = resolve_identity_with_store(&store, &legacy_path, dir.path());
+    let resolved = resolve_identity_with_store(&store, &legacy_path, dir.path())
+        .expect("adoption must not fail boot when only the marker write fails");
 
-    // Restore perms before any assertions that might panic mid-cleanup.
-    std::fs::set_permissions(dir.path(), dir_perms_orig).unwrap();
-
-    // On a read-only fs the file write also fails; we can't even check
-    // legacy_path reliably there. What matters is that if resolve succeeded
-    // it returned the file's key, and did NOT delete the file.
-    if let Ok(resolved) = resolved {
-        assert_key_eq(&file_keys, &resolved.keys);
-        assert_eq!(resolved.recovery, RecoveryState::None);
-        // identity.key must NOT have been deleted — it is the only
-        // fallback when the marker could not be written.
-        assert!(
-            legacy_path.exists(),
-            "identity.key must be kept when marker write fails after adoption"
-        );
-    }
-    // If resolve Err'd (e.g. file write also failed) the test still passes —
-    // we've verified the code doesn't delete the file without a marker.
+    assert_key_eq(&file_keys, &resolved.keys);
+    assert_eq!(resolved.recovery, RecoveryState::None);
+    // The keyring write itself succeeded — only the marker failed — and
+    // `persist_identity_to_keyring` keeps the existing `identity.key` as
+    // the fallback discriminator rather than downgrading the reported
+    // storage, so this still reports `SystemKeyring`.
+    assert_eq!(resolved.storage, IdentityStorage::SystemKeyring);
+    // identity.key must NOT have been deleted — it is the only
+    // fallback when the marker could not be written.
+    assert!(
+        legacy_path.exists(),
+        "identity.key must be kept when marker write fails after adoption"
+    );
+    // The obstruction is still a directory, never replaced by a file —
+    // proving the marker write really failed rather than silently landing.
+    assert!(marker_path.is_dir());
 }
 
 #[test]

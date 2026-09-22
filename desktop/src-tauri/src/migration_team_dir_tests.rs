@@ -235,16 +235,11 @@ fn detach_skips_non_directory_backed_teams() {
     assert_eq!(teams[0]["instructions"], "Existing instructions.");
 }
 
-#[cfg(unix)]
 #[test]
 fn detach_retries_after_teams_write_failure() {
-    // Write-seam interruption: make the agents/ directory read-only so the
-    // teams.json atomic write fails mid-detach. The agents.json write uses
-    // atomic_write_json_restricted (tmp+rename in the same dir), which also
-    // fails under a read-only parent. On retry (directory made writable),
-    // the still-open source_dir gate lets the migration complete.
-    use std::os::unix::fs::PermissionsExt;
-
+    // Write-seam interruption: block the teams.json atomic write mid-detach
+    // by construction, not permission. On retry (obstruction cleared), the
+    // still-open source_dir gate lets the migration complete.
     let tmp = tempfile::tempdir().unwrap();
     let base = tmp.path();
 
@@ -288,20 +283,29 @@ fn detach_retries_after_teams_write_failure() {
         }]),
     );
 
-    // Make agents/ read-only so the atomic write (tmp file creation) fails.
+    // Block the final teams.json write by construction: pre-create its tmp
+    // sibling ("teams.json.tmp" — the exact name atomic_write_json's
+    // tmp+rename uses) as a directory. The rename onto that name then fails
+    // with EISDIR for every uid, including root's CAP_DAC_OVERRIDE — unlike
+    // a 0o555 parent directory, which root ignores (this is how CI runs;
+    // ledger 212(h) found the same flaw in an equivalent test elsewhere).
     let agents_dir = base.join("agents");
-    std::fs::set_permissions(&agents_dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let obstruction = agents_dir.join("teams.json.tmp");
+    std::fs::create_dir(&obstruction).unwrap();
 
-    // Boot 1: detach fails because neither file can be written.
+    // Boot 1: the teams.json write fails, so detach fails overall (the
+    // managed-agents.json write is independent and unaffected by this
+    // obstruction, but the still-open source_dir gate below is what proves
+    // the migration did not commit).
     let result = super::detach::detach_directory_backed_teams_in_dir(&agents_dir);
     assert!(
         result.is_err(),
-        "detach must fail when directory is read-only"
+        "detach must fail when the teams.json write cannot land"
     );
 
     // source_dir gate is still open — teams.json is unchanged.
-    // Restore permissions to read the file.
-    std::fs::set_permissions(&agents_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+    // Clear the injected obstruction before reading/retrying.
+    std::fs::remove_dir(&obstruction).unwrap();
 
     let teams_after_fail = read_teams_json(base);
     assert!(

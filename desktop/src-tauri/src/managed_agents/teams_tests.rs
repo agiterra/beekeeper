@@ -423,19 +423,17 @@ fn load_teams_readonly_surfaces_parse_error() {
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn load_teams_readonly_surfaces_read_error() {
-    use std::os::unix::fs::PermissionsExt;
-
     let dir = tempfile::tempdir().unwrap();
+    // The store path is a directory, not a file: `read_to_string` then fails
+    // with "Is a directory" for every uid, including root. A `0o000` file
+    // does not carry that guarantee — root's CAP_DAC_OVERRIDE ignores it,
+    // which is how CI runs (ledger 212(h)).
     let path = dir.path().join("teams.json");
-    std::fs::write(&path, b"[]").unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+    std::fs::create_dir(&path).unwrap();
 
     let result = load_teams_readonly(&path);
-
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
 
     assert!(result.is_err());
     assert!(
