@@ -213,18 +213,49 @@ pub(crate) async fn publish_relay_event(
     Ok(event_id_hex)
 }
 
+/// The project creator a `project-owner:<coord>` spec names, lowercased.
+///
+/// The coordinate is `<kind>:<creator hex>:<d>`, and `approver_admitted`
+/// (`handlers/command_executor.rs`) admits that creator by comparing this
+/// exact field — so it is the one approver derivable here with no lookup.
+fn project_owner_spec_creator(approver_spec: &str) -> Option<String> {
+    let project = approver_spec.trim().strip_prefix("project-owner:")?;
+    let creator = project.split(':').nth(1)?;
+    (creator.len() == 64 && creator.chars().all(|c| c.is_ascii_hexdigit()))
+        .then(|| creator.to_ascii_lowercase())
+}
+
 /// Tags and content of the kind:46010 that announces a parked approval.
 ///
 /// `d` is the approval ref (the stored token hash, hex) so a kind:46030 grant
-/// names it directly; `p` attributes the request to the workflow owner;
-/// `buzz:workflow` keeps the event out of trigger matching.
+/// names it directly; `buzz:workflow` keeps the event out of trigger matching.
+///
+/// `p` addresses the request. There is one per person this event is *for*:
+/// the workflow owner, and — when the spec is the § 5.4
+/// `project-owner:<coord>` form — the project's creator, who is very often
+/// not the owner. A run a lead seat owns inside a founder's project is
+/// exactly that split, and until ledger 238 only the owner was named, so the
+/// founder who was the only person entitled to answer was never told: the
+/// desktop Inbox admits an approval solely on `#p == me`
+/// (`desktop/src-tauri/src/commands/messages.rs`), and `query_needs_action`
+/// joins the same `p`-derived mention index. The request sat unanswered for
+/// 49 minutes, visible only to someone who thought to open the Actions tab.
+///
+/// A roster Owner who is neither the workflow owner nor the creator is still
+/// not addressed here — that set needs a per-approver roster read this pure
+/// builder cannot do, and it is a narrower gap than the one this closes.
 pub(crate) fn approval_request_wire(request: &ApprovalRequest) -> (Vec<Vec<String>>, String) {
-    let tags = vec![
+    let mut tags = vec![
         vec!["d".into(), request.approval_ref.clone()],
         vec!["h".into(), request.channel_id.clone()],
         vec!["p".into(), request.owner_pubkey_hex.clone()],
-        vec!["buzz:workflow".into(), "true".into()],
     ];
+    if let Some(creator) = project_owner_spec_creator(&request.approver_spec) {
+        if !creator.eq_ignore_ascii_case(&request.owner_pubkey_hex) {
+            tags.push(vec!["p".into(), creator]);
+        }
+    }
+    tags.push(vec!["buzz:workflow".into(), "true".into()]);
     let content = serde_json::json!({
         "schema": APPROVAL_REQUEST_SCHEMA,
         "runId": request.run_id.to_string(),
@@ -585,6 +616,86 @@ mod tests {
             content.get("token").is_none(),
             "the raw token never leaves the relay"
         );
+    }
+
+    fn project_owner_request(owner: &str, creator: &str) -> ApprovalRequest {
+        ApprovalRequest {
+            approval_ref: "ab".repeat(32),
+            run_id: Uuid::from_u128(1),
+            workflow_id: Uuid::from_u128(2),
+            workflow_name: "kettle-control".into(),
+            step_id: "run-gate".into(),
+            step_index: 0,
+            approver_spec: format!("project-owner:30621:{creator}:kettle-control"),
+            message: "Approve the host step?".into(),
+            expires_at: 1_800_000_000,
+            channel_id: Uuid::from_u128(9).to_string(),
+            owner_pubkey_hex: owner.to_string(),
+            synthetic: true,
+        }
+    }
+
+    /// Ledger 238(e): the live 13:41:56Z request for run 59e52df0 named only
+    /// its workflow owner, so the founder who was the only person entitled to
+    /// answer it never saw it in his Inbox.
+    #[test]
+    fn a_project_owner_approval_addresses_the_creator_as_well_as_the_owner() {
+        let owner = pk('c');
+        let creator = pk('e');
+        let (tags, content) = approval_request_wire(&project_owner_request(&owner, &creator));
+        let addressed: Vec<&String> = tags
+            .iter()
+            .filter(|tag| tag[0] == "p")
+            .map(|tag| &tag[1])
+            .collect();
+        assert_eq!(
+            addressed,
+            vec![&owner, &creator],
+            "every approver the spec admits without a roster read must be addressed"
+        );
+        // The marker tag stays last, whatever the approver count.
+        assert_eq!(
+            tags.last().expect("tags"),
+            &vec!["buzz:workflow".to_string(), "true".to_string()]
+        );
+        let content: serde_json::Value = serde_json::from_str(&content).expect("json");
+        assert_eq!(
+            content["approverSpec"],
+            format!("project-owner:30621:{creator}:kettle-control")
+        );
+    }
+
+    /// The founder who owns the workflow *and* the project is one person, and
+    /// a duplicate `p` would address him twice in the mention index.
+    #[test]
+    fn a_creator_who_is_also_the_owner_is_addressed_once() {
+        let owner = pk('e');
+        let (tags, _) = approval_request_wire(&project_owner_request(&owner, &owner));
+        assert_eq!(tags.iter().filter(|tag| tag[0] == "p").count(), 1);
+    }
+
+    /// A malformed coordinate is not a second approver: `approver_admitted`
+    /// would not admit it either, and inventing a `p` tag from it would
+    /// address a pubkey nobody can answer with.
+    #[test]
+    fn a_malformed_project_owner_spec_adds_no_approver() {
+        let owner = pk('c');
+        for spec in [
+            "project-owner:30621:not-hex:kettle",
+            "project-owner:30621",
+            "project-owner:",
+            "any",
+            "",
+        ] {
+            let mut request = project_owner_request(&owner, &pk('e'));
+            request.approver_spec = spec.to_string();
+            let (tags, _) = approval_request_wire(&request);
+            assert_eq!(
+                tags.iter().filter(|tag| tag[0] == "p").count(),
+                1,
+                "spec {spec:?} must not add an approver"
+            );
+        }
     }
 
     #[test]

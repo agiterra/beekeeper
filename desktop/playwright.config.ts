@@ -204,6 +204,8 @@ export default defineConfig({
         "**/agent-access-warning.spec.ts",
         "**/edit-agent-run-on.spec.ts",
         "**/inbox-live-update.spec.ts",
+        // Ledger 238(e): the approval card the founder was never shown.
+        "**/inbox-approval-request.spec.ts",
         "**/mesh-compute.spec.ts",
         "**/observer-archive-policy.spec.ts",
         "**/harness-management.spec.ts",
@@ -254,7 +256,10 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: `python3 -m http.server ${PREVIEW_PORT} -d dist`,
+    // Not `python3 -m http.server`: its five-deep listen backlog resets the
+    // surplus of a ~530-chunk cold load, and the route under test never
+    // mounts. See `scripts/e2e-preview-server.py`.
+    command: `python3 scripts/e2e-preview-server.py --port ${PREVIEW_PORT} --directory dist`,
     cwd: ".",
     reuseExistingServer: !process.env.CI,
     url: PREVIEW_URL,

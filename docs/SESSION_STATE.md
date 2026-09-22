@@ -19837,6 +19837,84 @@ removed from here.
        0 failed; `just conformance-check` 77/77; `just file-size-check`;
        Python NUL scan of every changed file, none.
 
+238. **Two defects from the 2026-09-22 `kettle-control` control run
+   (ledger 236(b),(e)), and the harness flake that was hiding both from
+   every E2E that could have caught them.**
+   - **(a) The desktop's mission-authority reader repeated ledger 204 key for
+     key, on the surface Brian reads.** `codingSessionMissionAuthority.ts`
+     knew seven transition types and not the two ledger 186 added, so a
+     `grant-project-actions` receipt carrying the `projectRef` the relay adds
+     on purpose (`crates/buzz-relay/src/handlers/side_effects.rs:1501`) failed
+     `hasExactFields` on its seventh key and the *whole projection* returned
+     `authority receipt does not match the strict CSAT receipt shape`. The
+     desktop signs that delegation at launch for every team session a project
+     owner founds with "Use roles" on, so Mission, Decisions and Settlement
+     read "unknown" for **every** owner-founded team session — which is how a
+     founder decision request stayed invisible for 49 minutes.
+   - **The root cause is not the missing key, it is a strict reader that did
+     not load the shared fixtures.** `conformance/authority-chain` has held a
+     `grant-project-actions-carries-project-ref` vector since ledger 204, and
+     its README named four readers that run it. This projection was a
+     *fifth*, and nobody noticed: the one desktop test that loads the vectors
+     (`codingSessionAuthorityConformance.test.mjs`) exercises
+     `codingSessionAuthorityTimeline.ts`, a different decoder that was fixed
+     at the time. Wired now —
+     `codingSessionMissionAuthorityConformance.test.mjs`. Proven red against
+     `main`'s decoder with the control run's exact error string, green after.
+   - **(b) The same test found a second disagreement nobody was looking
+     for.** This reader accepted a `takeover`/`transfer` receipt that dropped
+     `bodyPubkey`, "present-or-absent, deliberately". The shared vectors say
+     `receiptValid: false`, and the CLI, the provider and the timeline
+     decoder have always refused it; the relay cannot emit one, because a
+     claim link cannot be signed without a body. Tightened to required, and
+     the two tests that asserted the tolerance were changed with the reason
+     recorded in place.
+   - **Vectors added (19 → 21):**
+     `grant-project-actions-receipt-dropping-its-project-ref` and
+     `revoke-project-actions-receipt-dropping-its-project-ref` — the twins of
+     `seat-receipt-dropping-its-role` and `takeover-receipt-dropping-its-body`
+     that the delegation type never had. All four Rust readers already
+     refused them (`operations_authority.rs:130`,
+     `buzz-session-provider/src/authority.rs:296`), so the gap was in the
+     corpus, not the code.
+   - **(c) The kind-46010 approval request was addressed to the one person
+     who could not answer it.** Not a consequence of (a): the Inbox never
+     touches the authority fold. `approval_request_wire`
+     (`crates/buzz-relay/src/workflow_sink.rs`) wrote a single `p` tag — the
+     **workflow owner** — while `approverSpec` was
+     `project-owner:<coord>`, which `approver_admitted`
+     (`handlers/command_executor.rs:1326`) admits for the project's *creator*
+     or a roster Owner. The desktop Inbox admits an approval on exactly one
+     test, `"#p": [my_pubkey]`
+     (`desktop/src-tauri/src/commands/messages.rs:89-93`), and
+     `query_needs_action` joins the same `p`-derived mention index, so a
+     founder who is not the workflow owner is never told. The Actions tab
+     showed it because it reads the DB approval rows by channel, not the
+     event by mention. Fixed: the request now carries a second `p` for the
+     coordinate's creator when it differs from the owner. **A roster Owner
+     who is neither is still not addressed** — that needs a per-approver
+     roster read the pure builder cannot do, and it is recorded here rather
+     than papered over.
+   - **(d) `python3 -m http.server` has a five-deep listen backlog, and the
+     desktop bundle is ~530 chunks.** The Playwright preview server reset the
+     surplus sockets on a cold load: Chromium reported `ERR_CONNECTION_RESET`
+     and `Failed to fetch dynamically imported module .../HomeScreen-*.js`,
+     the route never mounted, and every locator failed "element(s) not
+     found" — reproducible across retries, and indistinguishable from the
+     feature under test being broken. Measured before the fix in this
+     worktree: `inbox-approval-request`, `project-inbox` and three
+     `inbox-live-update` tests failed; after pointing the webServer at
+     `desktop/scripts/e2e-preview-server.py` (backlog 512) the same nine
+     tests passed. This is a strong candidate for ledger 111's "six smoke
+     specs fail on `main` regardless".
+   - **Gates** bare from the worktree: `just desktop-check`; `cd desktop &&
+     pnpm test` 9,857 passed / 0 failed; `playwright test --project=smoke
+     inbox-approval-request inbox-live-update project-inbox` 9 passed; `just
+     conformance-check` 77 passed; `cargo test -p buzz-core -p buzz-cli -p
+     buzz-session-provider -p buzz-relay --lib` 1340 + 1258 + 1116 + 981
+     passed / 0 failed; `cargo fmt --all -- --check`; `cargo clippy -p
+     buzz-relay --all-targets -- -D warnings`; `just file-size-check`; Python
+     NUL scan clean.
 
 ## 3a. Environment facts that cost real time (do not rediscover)
 

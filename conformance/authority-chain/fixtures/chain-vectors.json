@@ -457,6 +457,52 @@
       },
       "receiptValid": false,
       "binds": false
+    },
+    {
+      "name": "grant-project-actions-receipt-dropping-its-project-ref",
+      "why": "The twin of seat-receipt-dropping-its-role and takeover-receipt-dropping-its-body, which the delegation type never had. The relay cannot emit this - a delegation link cannot be signed without a scope - so a receipt that drops it must be refused rather than folded as an accepted delegation with no scope at all.",
+      "transition": {
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "prevAccepted": null,
+        "seq": 1,
+        "type": "grant-project-actions",
+        "granteePubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+        "projectRef": "30621:efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef:kettle-smoke"
+      },
+      "transitionValid": true,
+      "receipt": {
+        "type": "coding_session_authority_transition_accepted",
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "acceptedEventId": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "seq": 1,
+        "transitionType": "grant-project-actions",
+        "granteePubkey": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      "receiptValid": false,
+      "binds": false
+    },
+    {
+      "name": "revoke-project-actions-receipt-dropping-its-project-ref",
+      "why": "The withdrawal has the same presence rule as the grant: an unscoped revoke receipt would say a delegation was withdrawn without saying which one, and a reader could apply it to the wrong project.",
+      "transition": {
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "prevAccepted": null,
+        "seq": 1,
+        "type": "revoke-project-actions",
+        "granteePubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+        "projectRef": "30621:efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef:kettle-smoke"
+      },
+      "transitionValid": true,
+      "receipt": {
+        "type": "coding_session_authority_transition_accepted",
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "acceptedEventId": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "seq": 1,
+        "transitionType": "revoke-project-actions",
+        "granteePubkey": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      "receiptValid": false,
+      "binds": false
     }
   ]
 }

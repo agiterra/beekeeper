@@ -13,6 +13,8 @@ const RECEIPT_TYPE = "coding_session_authority_transition_accepted";
 const HEX64 = /^[0-9a-f]{64}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const ROLE = /^[a-z0-9-]{1,64}$/;
+/** Mirrors core's `MAX_PROJECT_REF_BYTES`. */
+const MAX_PROJECT_REF_BYTES = 256;
 const encoder = new TextEncoder();
 
 export type CodingSessionAuthorityTransitionType =
@@ -22,7 +24,14 @@ export type CodingSessionAuthorityTransitionType =
   | "grant-seat"
   | "revoke-seat"
   | "takeover"
-  | "transfer";
+  | "transfer"
+  // The project-action delegation and its withdrawal (ledger 186). This
+  // decoder fails closed on an unknown type, so leaving them out did not
+  // make the chain narrower — it made every chain that carries one
+  // undecodable, which is what blanked Mission, Decisions and Settlement for
+  // every owner-founded team session (ledger 238).
+  | "grant-project-actions"
+  | "revoke-project-actions";
 
 type AuthorityTransition = {
   genesisRef: string;
@@ -32,6 +41,7 @@ type AuthorityTransition = {
   granteePubkey: string;
   role?: string;
   bodyPubkey?: string;
+  projectRef?: string;
 };
 
 type AuthorityReceipt = {
@@ -43,6 +53,7 @@ type AuthorityReceipt = {
   granteePubkey: string;
   role?: string;
   bodyPubkey?: string;
+  projectRef?: string;
 };
 
 /**
@@ -207,13 +218,47 @@ function isTransitionType(
     value === "grant-seat" ||
     value === "revoke-seat" ||
     value === "takeover" ||
-    value === "transfer"
+    value === "transfer" ||
+    value === "grant-project-actions" ||
+    value === "revoke-project-actions"
   );
 }
 
 /** The two links that move the claim. Both carry `bodyPubkey`, never `role`. */
 function isClaimTransitionType(value: unknown): boolean {
   return value === "takeover" || value === "transfer";
+}
+
+/** The two links that delegate a project's actions. Both carry `projectRef`. */
+function isProjectActionsTransitionType(value: unknown): boolean {
+  return (
+    value === "grant-project-actions" || value === "revoke-project-actions"
+  );
+}
+
+/**
+ * Whether `value` is a project coordinate a delegation may name:
+ * `30621:<64-hex owner>:<non-empty d>`, within `MAX_PROJECT_REF_BYTES`.
+ *
+ * Kind 30621 is the project record. A coordinate of any other kind is refused
+ * rather than normalized (core's `validate_project_ref`), so a delegation can
+ * never be read as filed against a repository or a pack coordinate instead.
+ */
+function isProjectRefCoordinate(value: unknown): value is string {
+  if (
+    typeof value !== "string" ||
+    encoder.encode(value).length > MAX_PROJECT_REF_BYTES
+  ) {
+    return false;
+  }
+  const first = value.indexOf(":");
+  const second = value.indexOf(":", first + 1);
+  if (first === -1 || second === -1) return false;
+  return (
+    value.slice(0, first) === "30621" &&
+    HEX64.test(value.slice(first + 1, second)) &&
+    value.slice(second + 1).trim().length > 0
+  );
 }
 
 const BASE_TRANSITION_FIELDS = [
@@ -234,13 +279,16 @@ function decodeTransitionContent(
       : null;
   const isSeat = type === "grant-seat" || type === "revoke-seat";
   const isClaim = isClaimTransitionType(type);
+  const isProjectActions = isProjectActionsTransitionType(type);
   if (
     !hasExactFields(value, [
       isSeat
         ? [...BASE_TRANSITION_FIELDS, "role"]
         : isClaim
           ? [...BASE_TRANSITION_FIELDS, "bodyPubkey"]
-          : [...BASE_TRANSITION_FIELDS],
+          : isProjectActions
+            ? [...BASE_TRANSITION_FIELDS, "projectRef"]
+            : [...BASE_TRANSITION_FIELDS],
     ]) ||
     // Required 64-hex for a claim, and absent for everything else: a grant
     // that named a body would be claiming an execution the relay never
@@ -248,6 +296,10 @@ function decodeTransitionContent(
     (isClaim &&
       (typeof value.bodyPubkey !== "string" ||
         !HEX64.test(value.bodyPubkey))) ||
+    // Required on the link, and the exact-field set above is what refuses a
+    // `projectRef` on any other type. An unscoped delegation is not a
+    // narrower grant; it is one that reaches every project the grantee sees.
+    (isProjectActions && !isProjectRefCoordinate(value.projectRef)) ||
     typeof value.genesisRef !== "string" ||
     !HEX64.test(value.genesisRef) ||
     !(
@@ -277,6 +329,7 @@ function decodeReceiptContent(
   const isSeat =
     transitionType === "grant-seat" || transitionType === "revoke-seat";
   const isClaim = isClaimTransitionType(transitionType);
+  const isProjectActions = isProjectActionsTransitionType(transitionType);
   const baseReceiptFields = [
     "type",
     "genesisRef",
@@ -291,17 +344,29 @@ function decodeReceiptContent(
       isSeat
         ? [[...baseReceiptFields, "role"]]
         : isClaim
-          ? // Present-or-absent, deliberately: the relay carries `bodyPubkey`
-            // "when present", and a receipt written before it did is still a
-            // receipt for an accepted link whose own signed transition names
-            // the body. Either form binds; a mismatch below does not.
-            [[...baseReceiptFields], [...baseReceiptFields, "bodyPubkey"]]
-          : [[...baseReceiptFields]],
+          ? // Required, not present-or-absent. A claim link cannot be signed
+            // without a body, so the relay cannot emit a claim receipt that
+            // drops one; a receipt that did would name a claim no fence could
+            // check against its own key. The CLI, the provider and the
+            // timeline decoder have always refused it, and the shared vectors
+            // in `conformance/authority-chain` are what proved this reader
+            // disagreed — the same way they proved it about `projectRef`
+            // (ledger 204, ledger 238).
+            [[...baseReceiptFields, "bodyPubkey"]]
+          : isProjectActions
+            ? // Required, not present-or-absent: a delegation link cannot be
+              // signed without a scope, so the relay cannot emit a delegation
+              // receipt that drops one (`side_effects.rs`, ledger 186), and a
+              // receipt that did would say a delegation was accepted without
+              // saying what it reaches.
+              [[...baseReceiptFields, "projectRef"]]
+            : [[...baseReceiptFields]],
     ) ||
     (isClaim &&
       Object.hasOwn(value, "bodyPubkey") &&
       (typeof value.bodyPubkey !== "string" ||
         !HEX64.test(value.bodyPubkey))) ||
+    (isProjectActions && !isProjectRefCoordinate(value.projectRef)) ||
     value.type !== RECEIPT_TYPE ||
     typeof value.genesisRef !== "string" ||
     !HEX64.test(value.genesisRef) ||
@@ -473,7 +538,11 @@ export function projectCodingSessionMissionAuthority(input: {
       // to have accepted is not evidence of anything; an absent one leaves the
       // signed transition as the only statement, which is where it came from.
       (receipt.value.bodyPubkey !== undefined &&
-        receipt.value.bodyPubkey !== payload.bodyPubkey)
+        receipt.value.bodyPubkey !== payload.bodyPubkey) ||
+      // And the same rule for the delegation's scope: a receipt naming a
+      // different project than the link it claims to have accepted would
+      // fold a delegation of a project the signer never named.
+      receipt.value.projectRef !== payload.projectRef
     ) {
       return fail(
         "authority receipt facts do not match its accepted transition",

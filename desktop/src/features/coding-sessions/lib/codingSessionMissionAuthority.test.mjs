@@ -285,7 +285,10 @@ test("a takeover without a body, or a grant carrying one, is not this shape", ()
     { type: "takeover", granteePubkey: B, secret: B_SECRET },
   ]);
   assert.equal(noBody.ok, false);
-  assert.match(noBody.error, /strict CSAT shape/);
+  // Refused on both sides of the pair since ledger 238 required `bodyPubkey`
+  // on a claim receipt too; the receipt shape is checked first, so that is
+  // the refusal a reader sees.
+  assert.match(noBody.error, /strict CSAT/);
 
   // A grant that carried a body is refused on both sides of the pair: the
   // receipt shape is checked first, so that is the refusal a reader sees.
@@ -318,7 +321,16 @@ test("a receipt naming a different body than its transition is refused", () => {
   assert.match(result.error, /do not match its accepted transition/);
 });
 
-test("a receipt that omits bodyPubkey still binds its signed transition", () => {
+/**
+ * Changed by ledger 238. This reader used to accept a claim receipt with no
+ * `bodyPubkey` on the reasoning that the signed transition still named the
+ * body. The shared vectors say otherwise — `takeover-receipt-dropping-its-body`
+ * is `receiptValid: false`, and the CLI, the provider and the desktop timeline
+ * decoder have always refused it. The relay cannot emit one (a claim link
+ * cannot be signed without a body), so accepting it only meant this reader
+ * folded a claim the others would not.
+ */
+test("a receipt that omits bodyPubkey is refused, as every other reader refuses it", () => {
   const payload = {
     prevAccepted: null,
     seq: 1,
@@ -349,10 +361,8 @@ test("a receipt that omits bodyPubkey still binds its signed transition", () => 
     transitions: [event],
     receipts: [older],
   });
-  assert.equal(result.ok, true);
-  assert.equal(result.value.claim.state, "active");
-  assert.equal(result.value.claim.bodyPubkey, BODY_A);
-  assert.equal(result.value.claimSince, 42);
+  assert.equal(result.ok, false);
+  assert.match(result.error, /strict CSAT receipt shape/);
 });
 
 test("the relay's own takeover receipt, from Lane K's fixture, folds to its claim", () => {
