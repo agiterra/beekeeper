@@ -500,3 +500,46 @@ fn a_name_differing_only_in_case_is_the_same_name() {
         .expect("builder installed");
     assert_eq!(fresh.agent_name, "Builder 2");
 }
+
+/// Two roles of one project asked for the same name in the same run.
+///
+/// The record minted a moment ago has no `project_ref` yet —
+/// `associate_installation` writes it after the installer returns — so without
+/// `minted_here` the second role would read the first as belonging to no
+/// project, find its name free, and both would be installed as "Twin".
+#[test]
+fn two_roles_of_one_project_named_alike_in_one_run_do_not_collide() {
+    let root = tempfile::tempdir().expect("temp dir");
+    write_pack(root.path(), "builder", "builder", Some("builder"));
+    write_pack(root.path(), "runner", "runner", Some("runner"));
+    let scan = scan_role_packs(root.path()).expect("scan succeeds");
+
+    let mut minted = 0usize;
+    let mut mint = counting_mint(&mut minted);
+    let install = install_role_packs_in_named_team(
+        &scan,
+        Vec::new(),
+        Vec::new(),
+        &[],
+        NOW,
+        &names(&[("builder", "Twin"), ("runner", "Twin")]),
+        &mut mint,
+        "team-alpha".to_string(),
+        &format!("Project team {}", project("alpha")),
+        NameScope::Project(project("alpha")),
+    )
+    .expect("install succeeds");
+    drop(mint);
+
+    let mut given: Vec<&str> = install
+        .installed
+        .iter()
+        .map(|row| row.agent_name.as_str())
+        .collect();
+    given.sort_unstable();
+    assert_eq!(
+        given,
+        vec!["Twin", "Twin 2"],
+        "the second identity of the same project has to be told apart from the first"
+    );
+}
