@@ -298,3 +298,13 @@ Four review rounds on R2/R4 (211→218→227→229) each closed the named case a
 2. Review before landing: the refuter and Astra review branches; custody (229/230) and drift (234/235) land only after they pass, in one finalizer pass.
 3. Two baselines: this run, and one after Wave 4, show the custody work's effect.
 
+### A12 — what the control run taught (2026-09-22)
+
+Run record: `docs/history/2026-09-22-kettle-control-runbook.md`; findings ledger 236(a)–(h); fixes lanes 237–240.
+
+1. **A closed record is not landed until one live publish against hive has been accepted.** Lane 201's work records were landed on stub-wire and fixture evidence; the first live `work adopt` on record was refused (236(f): the NIP-OA `auth` tag decorates every seat-signed event). Every lane that adds or changes a writer of a closed kind ends with one publish against hive from a seated key, its event id in the ledger item.
+2. **Strict readers are enumerated, not assumed.** Lanes 216 and 223 said "all readers agree"; the desktop had a fifth strict decoder that loaded no shared vector (236(b), lane 238). A conformance suite's README lists every decoder in the tree by file path, and the checker fails when a decoder is added without a loader. "All readers" means the list.
+3. **Anything a seat waits on wakes it by mechanism.** Decision answers already did; host results did not (236(g), lane 240). The rule is general: an approval, a host result, a verdict, a hire's readiness — each has a wake, recorded by receipt, and no role text may ask an agent to poll or a person to relay.
+4. **Prose that governs seats lives in the template catalog.** The "stop and ask" rule that cost 49 minutes lived in `buzz-acp/src/base_prompt.md`, outside every template version (lane 239). Base prompts are versioned and hash-pinned like templates, or their sentences move into `working-contract`.
+5. **The next run is the same run.** `kettle-control` again on the landed batch, same plan, same measurement; the number to beat is 12 minutes of team work and zero hidden asks. Astra's read of this run: `docs/history/2026-09-22-astra-control-run-read.md` when filed.
+
