@@ -107,6 +107,12 @@ export type ProjectAgentsInitResult = {
   rosterAdded: string[];
   /** Why the roster op did not land, in the host's words. */
   rosterError: string | null;
+  /**
+   * The `actions.yml` this run seeded and pushed, byte for byte — what
+   * `project_verify_setup` publishes (ledger 248). Absent from older hosts
+   * and stored rows; `null` when nothing was seeded here.
+   */
+  seededActionsYml?: string | null;
 };
 
 /** One default agent the create installed. */
@@ -187,7 +193,9 @@ function isProjectAgentsInitResult(
     isOptionalString(record.checkoutError) &&
     Array.isArray(record.rosterAdded) &&
     record.rosterAdded.every((pubkey) => typeof pubkey === "string") &&
-    isOptionalString(record.rosterError)
+    isOptionalString(record.rosterError) &&
+    (record.seededActionsYml === undefined ||
+      isOptionalString(record.seededActionsYml))
   );
 }
 
@@ -225,12 +233,18 @@ export async function projectAgentsInit(input: {
    * moved is a refusal rather than a silent overwrite.
    */
   migrate?: { expectedSourceId: string; convert: boolean } | null;
+  /**
+   * The argv the seeded `verify` action runs (ledger 248). Omitted or
+   * `null`, the host seeds `python3 -m unittest discover -s tests`.
+   */
+  verifyCommand?: string[] | null;
 }): Promise<ProjectAgentsInitResult> {
   return decodeProjectAgentsInitResult(
     await invokeTauri(PROJECT_AGENTS_INIT_COMMAND, {
       projectRef: input.projectRef,
       checkoutParent: input.checkoutParent ?? null,
       migrate: input.migrate ?? null,
+      verifyCommand: input.verifyCommand ?? null,
     }),
   );
 }

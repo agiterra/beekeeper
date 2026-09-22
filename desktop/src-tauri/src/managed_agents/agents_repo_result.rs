@@ -60,6 +60,10 @@ pub struct ProjectAgentsInit {
     pub seed_commit_sha: Option<String>,
     /// The seed step's own words when it failed before there was a commit.
     pub seed_error: Option<String>,
+    /// The `actions.yml` this run seeded and pushed, byte for byte — what
+    /// `project_verify_setup` publishes (ledger 248). `null` when nothing
+    /// was seeded here or the push did not land.
+    pub seeded_actions_yml: Option<String>,
     /// The relay already held a push record, so nothing was seeded or pushed.
     pub seed_skipped: bool,
     /// Whether the agents repository holds the seed on the relay — pushed
@@ -142,6 +146,7 @@ impl ProjectAgentsInit {
             code_repo_adopted: false,
             code_seed_commit_sha: None,
             code_seed_skipped: false,
+            seeded_actions_yml: None,
             code_seed_error: None,
             agents_repo_ref: format!("30617:{viewer}:{agents_repo_id}"),
             agents_repo_id: agents_repo_id.to_string(),

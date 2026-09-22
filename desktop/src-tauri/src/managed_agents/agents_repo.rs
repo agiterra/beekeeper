@@ -121,6 +121,8 @@ enum SeedOutcome {
         /// empty for an ordinary seed.
         notes: Vec<String>,
         push_error: Option<String>,
+        /// The `actions.yml` bytes this seed committed.
+        actions_yml: Option<String>,
     },
     SeedFailed {
         seed_error: String,
@@ -142,6 +144,31 @@ pub(crate) struct ProjectAgentsInitOptions {
     /// Set when the caller asked to move a project off a source that names
     /// another repository. Absent, such a project refuses.
     pub migrate: Option<MigrateFromSource>,
+    /// The argv the seeded `verify` action runs (ledger 248); the creation
+    /// form's field, [`buzz_persona_pkg::seed::DEFAULT_VERIFY_COMMAND`] when
+    /// the caller names none.
+    pub verify_command: Vec<String>,
+}
+
+/// The creation form's verify command, checked: absent or empty means the
+/// default; an empty argument is refused rather than written into a file the
+/// parser would accept and the host would fail to run.
+pub(crate) fn resolve_verify_command(command: Option<Vec<String>>) -> Result<Vec<String>, String> {
+    let command: Vec<String> = command
+        .unwrap_or_default()
+        .into_iter()
+        .map(|arg| arg.trim().to_string())
+        .collect();
+    if command.is_empty() {
+        return Ok(buzz_persona_pkg::seed::default_verify_command());
+    }
+    if command.iter().any(String::is_empty) {
+        return Err("the verify command has an empty argument".to_string());
+    }
+    if command.iter().any(|arg| arg.contains('\n')) {
+        return Err("a verify command argument cannot span lines".to_string());
+    }
+    Ok(command)
 }
 
 /// Where a checkout was recorded — the command writes `by_project`; tests
@@ -163,9 +190,11 @@ pub async fn project_agents_init(
     project_ref: String,
     checkout_parent: Option<String>,
     migrate: Option<MigrateRequest>,
+    verify_command: Option<Vec<String>>,
 ) -> Result<ProjectAgentsInit, String> {
     let project = project_ref.trim().to_string();
     parse_project_coordinate(&project)?;
+    let verify_command = resolve_verify_command(verify_command)?;
     let checkout_parent = match checkout_parent
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
@@ -191,6 +220,7 @@ pub async fn project_agents_init(
         recorded_checkout,
         git_auth: crate::commands::project_git_exec::build_git_auth_config_for_keys,
         migrate: migrate.map(MigrateFromSource::try_from).transpose()?,
+        verify_command,
     };
     let record_app = app.clone();
     let record_project = project.clone();
@@ -639,6 +669,7 @@ pub(crate) async fn project_agents_init_with_paths(
         let seed_url = agents_clone_url.clone();
         let seed_slug = slug.clone();
         let git_auth = options.git_auth;
+        let verify_command = options.verify_command.clone();
         // A migration fills the new repository from the roles the project
         // already has; an ordinary run seeds it from the shipped templates.
         let legacy = migrating
@@ -669,9 +700,18 @@ pub(crate) async fn project_agents_init_with_paths(
                         &seed_slug,
                         &auth,
                     ),
-                    None => seed_agents_checkout(&checkout, &catalog, &seed_slug, &auth)
-                        .map(|(commit, roles)| (commit, roles, Vec::new())),
+                    None => seed_agents_checkout(
+                        &checkout,
+                        &catalog,
+                        &seed_slug,
+                        &verify_command,
+                        &auth,
+                    )
+                    .map(|(commit, roles)| (commit, roles, Vec::new())),
                 };
+                let actions_yml = written.as_ref().ok().and_then(|_| {
+                    std::fs::read_to_string(checkout.join(buzz_persona_pkg::seed::ACTIONS_YML)).ok()
+                });
                 match written {
                     Err(seed_error) => Ok(SeedOutcome::SeedFailed { seed_error }),
                     Ok((commit, roles, notes)) => {
@@ -692,6 +732,7 @@ pub(crate) async fn project_agents_init_with_paths(
                             roles,
                             notes,
                             push_error,
+                            actions_yml,
                         })
                     }
                 }
@@ -705,8 +746,12 @@ pub(crate) async fn project_agents_init_with_paths(
                 roles,
                 notes,
                 push_error,
+                actions_yml,
             } => {
                 result.seed_commit_sha = Some(commit);
+                if push_error.is_none() {
+                    result.seeded_actions_yml = actions_yml;
+                }
                 result.roles = roles.clone();
                 if migrating.as_ref().is_some_and(|source| source.convert) {
                     result.migrated_roles = roles;
@@ -829,6 +874,7 @@ pub(crate) fn seed_agents_checkout(
     checkout: &Path,
     catalog: &TemplateCatalog,
     slug: &str,
+    verify_command: &[String],
     auth: &GitAuthConfig,
 ) -> Result<(String, Vec<String>), String> {
     if checkout.exists() {
@@ -837,8 +883,13 @@ pub(crate) fn seed_agents_checkout(
     }
     std::fs::create_dir_all(checkout)
         .map_err(|error| format!("create {}: {error}", checkout.display()))?;
-    let report = buzz_persona_pkg::seed::write_agents_repo_seed(checkout, catalog, slug)
-        .map_err(|error| error.to_string())?;
+    let report = buzz_persona_pkg::seed::write_agents_repo_seed_with_verify(
+        checkout,
+        catalog,
+        slug,
+        verify_command,
+    )
+    .map_err(|error| error.to_string())?;
     let commit = commit_seed(checkout, SEED_COMMIT_MESSAGE, auth)?;
     Ok((commit, report.roles))
 }

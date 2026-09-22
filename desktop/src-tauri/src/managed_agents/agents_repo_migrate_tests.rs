@@ -153,6 +153,7 @@ async fn a_migration_naming_a_source_that_moved_refuses_before_anything_is_signe
         catalog,
         root.join("cache"),
         ProjectAgentsInitOptions {
+            verify_command: buzz_persona_pkg::seed::default_verify_command(),
             checkout_parent: root.join("repos"),
             recorded_checkout: None,
             git_auth: |_: &Keys| build_test_git_auth_config(),

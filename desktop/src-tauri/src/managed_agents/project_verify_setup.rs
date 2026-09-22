@@ -1,0 +1,228 @@
+//! Project setup's one standing consent (ledger 248; plan "Approval" ruling).
+//!
+//! A new project's agents repository seeds an **active** manual `verify`
+//! action (`buzz_persona::seed::seeded_actions_yml_with_verify`). Before any
+//! team starts, setup publishes that definition (kind 30620) so its
+//! `definition_hash` exists, and starts one run of it at the code
+//! repository's seed commit. The relay parks that run on its synthetic
+//! approval gate and publishes the existing kind:46010; the creation result
+//! renders it with the existing approval card, whose "allow future runs of
+//! this exact definition" answer is the existing hash-bound grant (46030,
+//! `scope: action`). Nothing new is stored.
+//!
+//! What this consent is and is not: it is the person whose computer runs the
+//! command agreeing to *this definition* running there — resource consent,
+//! not supervision (spec § 5.4). A routine run of the unchanged definition,
+//! from any seat, asks nobody; an edited definition hashes differently and
+//! asks again. The publication lands on the same workflow id
+//! `bee actions publish` uses (`action_workflow_id`), because the grant binds
+//! `(workflow id, hash)`.
+
+use serde::Serialize;
+use tauri::State;
+
+use crate::app_state::AppState;
+
+/// The action setup publishes and asks consent for.
+pub(crate) const VERIFY_ACTION: &str = "verify";
+
+/// What setup will publish for the seeded `verify`, derived from the file's
+/// own bytes.
+#[derive(Debug)]
+pub(crate) struct VerifyPublication {
+    /// `action_workflow_id(project, "verify")`.
+    pub workflow_id: uuid::Uuid,
+    /// The definition with `project` bound, as the relay receives it.
+    pub yaml: String,
+    /// Lowercase hex hash of the definition — what the grant binds.
+    pub definition_hash: String,
+    /// The `run_on_host` argv, for the result to show.
+    pub command: Vec<String>,
+}
+
+/// Parse `actions_yml` for `project` and plan the `verify` publication.
+///
+/// # Errors
+/// The file does not parse, names no `verify`, or its `verify` runs nothing
+/// on a host (so no host-step grant could cover it).
+pub(crate) fn plan_verify_publication(
+    project: &str,
+    actions_yml: &str,
+) -> Result<VerifyPublication, String> {
+    let entries = buzz_workflow_pkg::actions_file::parse_actions_yml(actions_yml, project)
+        .map_err(|error| format!("the seeded actions.yml does not parse: {error}"))?;
+    let entry = entries
+        .iter()
+        .find(|entry| entry.name == VERIFY_ACTION)
+        .ok_or_else(|| "the seeded actions.yml has no `verify` action".to_string())?;
+    let command = entry
+        .def
+        .steps
+        .iter()
+        .find_map(|step| match &step.action {
+            buzz_workflow_pkg::ActionDef::RunOnHost { command, .. } => Some(command.clone()),
+            _ => None,
+        })
+        .ok_or_else(|| "the seeded `verify` action runs nothing on a host".to_string())?;
+    let yaml = buzz_workflow_pkg::actions_file::bound_definition_yaml(entry)
+        .map_err(|error| format!("the `verify` action could not be serialized: {error}"))?;
+    Ok(VerifyPublication {
+        workflow_id: buzz_workflow_pkg::actions_file::action_workflow_id(project, VERIFY_ACTION),
+        yaml,
+        definition_hash: entry.hash.clone(),
+        command,
+    })
+}
+
+/// The `run_id` a kind:46020's acceptance message names, if any.
+pub(crate) fn run_id_from_trigger_message(message: &str) -> Option<String> {
+    crate::relay::parse_command_response::<serde_json::Value>(message)
+        .ok()?
+        .get("run_id")?
+        .as_str()
+        .map(str::to_owned)
+}
+
+/// What `project_verify_setup` did, step by step; each field is `null` when
+/// its step did not happen, and `error` names the step that stopped.
+#[derive(Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectVerifySetup {
+    pub workflow_id: Option<String>,
+    pub channel_id: Option<String>,
+    pub definition_hash: Option<String>,
+    pub command: Vec<String>,
+    pub publish_event_id: Option<String>,
+    /// The definition was already published by this key into `channel_id`.
+    pub channel_reused: bool,
+    pub checkout: Option<String>,
+    pub run_id: Option<String>,
+    pub trigger_event_id: Option<String>,
+    pub error: Option<String>,
+}
+
+/// Publish the seeded `verify` and start the one run whose approval request
+/// carries setup's consent question.
+///
+/// `actions_yml` is `ProjectAgentsInit.seededActionsYml`, the bytes this
+/// computer seeded and pushed; `checkout` is the code repository's seed
+/// commit. The definition lives in a private stream channel naming the
+/// project, reused when this key already published it.
+#[tauri::command]
+pub async fn project_verify_setup(
+    state: State<'_, AppState>,
+    project_ref: String,
+    actions_yml: String,
+    checkout: String,
+) -> Result<ProjectVerifySetup, String> {
+    let project = project_ref.trim().to_string();
+    let (_, slug) = super::packs_repo::parse_project_coordinate(&project)?;
+    let plan = plan_verify_publication(&project, &actions_yml)?;
+    let mut result = ProjectVerifySetup {
+        workflow_id: Some(plan.workflow_id.to_string()),
+        definition_hash: Some(plan.definition_hash.clone()),
+        command: plan.command.clone(),
+        checkout: Some(checkout.trim().to_ascii_lowercase()),
+        ..ProjectVerifySetup::default()
+    };
+    let keys = state.signing_keys()?;
+    let me = keys.public_key().to_hex();
+
+    // A retry must land in the channel the first attempt used: the relay
+    // refuses an update of a workflow from a different channel.
+    let existing = crate::relay::query_relay(
+        &state,
+        &[serde_json::json!({
+            "kinds": [30620],
+            "authors": [me],
+            "#d": [plan.workflow_id.to_string()],
+            "limit": 1,
+        })],
+    )
+    .await
+    .unwrap_or_default();
+    let reused = existing.first().and_then(|event| {
+        event
+            .tags
+            .iter()
+            .find(|tag| tag.as_slice().first().map(String::as_str) == Some("h"))
+            .and_then(|tag| tag.as_slice().get(1).cloned())
+    });
+    let channel_id = match reused {
+        Some(channel) => {
+            result.channel_reused = true;
+            channel
+        }
+        None => {
+            let channel_uuid = uuid::Uuid::new_v4();
+            let builder = crate::events::build_create_channel(
+                channel_uuid,
+                &format!("{slug}-actions"),
+                "private",
+                "stream",
+                Some("Where this project's actions are published and approved."),
+                None,
+                Some(&project),
+            )?;
+            if let Err(error) = crate::relay::submit_event(builder, &state).await {
+                result.error = Some(format!("the actions channel was not created: {error}"));
+                return Ok(result);
+            }
+            state.mark_pending_owned_channel(&me, &channel_uuid.to_string());
+            channel_uuid.to_string()
+        }
+    };
+    result.channel_id = Some(channel_id.clone());
+    let channel_uuid = uuid::Uuid::parse_str(&channel_id)
+        .map_err(|_| format!("the actions channel id {channel_id:?} is not a uuid"))?;
+
+    // Membership of a fresh channel can trail its creation by a moment.
+    let mut last_error = String::new();
+    for attempt in 0..4u64 {
+        if attempt > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(400 * attempt)).await;
+        }
+        let builder = buzz_sdk_pkg::build_project_workflow_def(
+            channel_uuid,
+            plan.workflow_id,
+            &project,
+            &plan.yaml,
+        )
+        .map_err(|error| error.to_string())?;
+        match crate::relay::submit_event(builder, &state).await {
+            Ok(response) if response.accepted => {
+                result.publish_event_id = Some(response.event_id);
+                last_error.clear();
+                break;
+            }
+            Ok(response) => last_error = response.message,
+            Err(error) => last_error = error,
+        }
+        if !last_error.contains("not a member") {
+            break;
+        }
+    }
+    if result.publish_event_id.is_none() {
+        result.error = Some(format!("the verify action was not published: {last_error}"));
+        return Ok(result);
+    }
+
+    let builder = crate::events::build_workflow_trigger(
+        &plan.workflow_id.to_string(),
+        result.checkout.as_deref(),
+    )?;
+    match crate::relay::submit_event(builder, &state).await {
+        Ok(response) if response.accepted => {
+            result.run_id = run_id_from_trigger_message(&response.message);
+            result.trigger_event_id = Some(response.event_id);
+        }
+        Ok(response) => {
+            result.error = Some(format!(
+                "the verify run was not started: {}",
+                response.message
+            ))
+        }
+        Err(error) => result.error = Some(format!("the verify run was not started: {error}")),
+    }
+    Ok(result)
+}

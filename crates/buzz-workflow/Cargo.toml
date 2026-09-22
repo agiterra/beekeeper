@@ -23,7 +23,7 @@ cron        = "0.16"
 chrono-tz   = "0.10"
 globset     = "0.4"
 nostr       = { workspace = true }
-uuid        = { workspace = true }
+uuid        = { workspace = true, features = ["v5"] }
 chrono      = { workspace = true }
 tokio       = { workspace = true }
 tracing     = { workspace = true }

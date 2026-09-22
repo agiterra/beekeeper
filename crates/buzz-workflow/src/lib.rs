@@ -2651,6 +2651,87 @@ steps:
         ));
     }
 
+    /// Ledger 248, plan item 2: setup collects one grant for the seeded
+    /// `verify`; after that a run of the unchanged definition started by
+    /// **any** seat — whoever the trigger names — goes straight to a host
+    /// request (46013) and asks nobody: no approval row, no 46010. The gate
+    /// is decided on `(workflow, definition hash)` alone
+    /// (`executor.rs`, `find_active_autorun_grant`), never on the starter.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn a_granted_definition_asks_nobody_whichever_seat_starts_it() {
+        let db = setup_db().await;
+        let owner = nostr::Keys::generate().public_key().to_bytes().to_vec();
+        let member = nostr::Keys::generate().public_key().to_bytes().to_vec();
+        let (community, channel_id) = setup_channel(&db, &owner, &member).await;
+        let project = format!("30621:{}:kettle", "1".repeat(64));
+        let yaml = format!(
+            "name: verify\nproject: '{project}'\ntrigger:\n  on: manual\nsteps:\n  - id: verify\n    action: run_on_host\n    command: [\"python3\", \"-m\", \"unittest\", \"discover\", \"-s\", \"tests\"]\n    checkout: required\n"
+        );
+        let (def, canonical) = WorkflowEngine::parse_yaml(&yaml).expect("parse");
+        let hash = crate::hash::definition_hash(&def).expect("hash");
+        let workflow_id = db
+            .create_workflow(
+                community,
+                Some(channel_id),
+                &owner,
+                "verify",
+                &canonical,
+                &hash,
+                Some(&project),
+            )
+            .await
+            .expect("create workflow");
+        db.create_autorun_grant(community, workflow_id, &hash, &owner, &[0x48; 32])
+            .await
+            .expect("grant");
+
+        let sink = Arc::new(RecordingSink::default());
+        let engine = WorkflowEngine::new(db.clone(), WorkflowConfig::default());
+        engine.set_action_sink(sink.clone());
+        for seat in ["lead", "builder", "verifier"] {
+            let ctx = executor::TriggerContext {
+                author: hex::encode(nostr::Keys::generate().public_key().to_bytes()),
+                channel_id: channel_id.to_string(),
+                text: seat.to_owned(),
+                ..Default::default()
+            };
+            let run_id = match db
+                .create_workflow_run(community, workflow_id, None, None, &hash)
+                .await
+                .expect("run")
+            {
+                buzz_db::workflow::CreateRunOutcome::Created(id) => id,
+                other => panic!("expected a run, got {other:?}"),
+            };
+            let result = executor::execute_run(&engine, community, run_id, &def, &ctx)
+                .await
+                .expect("segment");
+            match &result.suspension {
+                Some(Suspension::HostStep { approval, .. }) => assert_eq!(
+                    approval.as_ref().map(|a| a.approval_ref.clone()),
+                    Some(hex::encode([0x48; 32])),
+                    "{seat}: released by setup's grant"
+                ),
+                other => panic!("{seat}: expected a host step, got {other:?}"),
+            }
+            assert!(db
+                .get_run_approvals(community, workflow_id, run_id)
+                .await
+                .expect("approvals")
+                .is_empty());
+        }
+        assert!(
+            sink.approvals.lock().expect("lock").is_empty(),
+            "no 46010 for any seat"
+        );
+        assert_eq!(
+            sink.host_steps.lock().expect("lock").len(),
+            3,
+            "one 46013 per run"
+        );
+    }
+
     // -- C1: suspensions are durable before they are announced (requires Postgres)
 
     /// Records what the engine asked the relay to publish, and answers with a

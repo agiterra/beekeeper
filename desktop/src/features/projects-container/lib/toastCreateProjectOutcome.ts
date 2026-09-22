@@ -25,6 +25,8 @@ export function toastCreateProjectOutcome(
     at: new Date().toISOString(),
     result: outcome.repositories,
     error: outcome.repositoriesError,
+    verify: outcome.verify,
+    verifyError: outcome.verifyError,
   });
   // Dismissed by the person, never by a timer.
   const persist = { duration: Number.POSITIVE_INFINITY } as const;

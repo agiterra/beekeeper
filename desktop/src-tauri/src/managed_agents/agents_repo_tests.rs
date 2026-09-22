@@ -77,8 +77,14 @@ fn the_seed_commit_holds_the_layout_by_reference() {
     let checkout = root.join("checkout");
     let mut auth = crate::commands::project_git_exec::build_test_git_auth_config().expect("auth");
     auth.set_commit_identity("Test".to_string(), "test@beekeeper.local".to_string());
-    let (commit, roles) =
-        seed_agents_checkout(&checkout, &catalog, "demo", &auth).expect("seed commits");
+    let (commit, roles) = seed_agents_checkout(
+        &checkout,
+        &catalog,
+        "demo",
+        &buzz_persona_pkg::seed::default_verify_command(),
+        &auth,
+    )
+    .expect("seed commits");
     assert_eq!(commit.len(), 40);
     assert_eq!(roles, vec!["builder", "lead"]);
     for rel in [
@@ -103,7 +109,14 @@ fn the_seed_commit_holds_the_layout_by_reference() {
     assert!(lead.contains("![[beekeeper/lead@^1.0.0]]"));
     assert!(!lead.contains("You are the lead"), "referenced, not copied");
     // A retry clears and reseeds rather than layering a second copy.
-    let (again, _) = seed_agents_checkout(&checkout, &catalog, "demo", &auth).expect("reseed");
+    let (again, _) = seed_agents_checkout(
+        &checkout,
+        &catalog,
+        "demo",
+        &buzz_persona_pkg::seed::default_verify_command(),
+        &auth,
+    )
+    .expect("reseed");
     assert_eq!(again.len(), 40);
     std::fs::remove_dir_all(&root).ok();
 }
@@ -213,6 +226,10 @@ mod against_a_stub_relay {
         assert_eq!(result.roles, vec!["builder", "lead"]);
         assert!(!result.pushed);
         assert!(result.push_error.is_some());
+        assert_eq!(
+            result.seeded_actions_yml, None,
+            "an unpushed seed offers nothing to publish"
+        );
         assert!(result.agents_announcement_withdrawn_event_id.is_some());
         assert!(
             result.agents_announcement_event_id.is_some(),
@@ -276,6 +293,12 @@ mod against_a_stub_relay {
         assert!(result.pushed, "{result:?}");
         assert!(result.push_record_event_id.is_some());
         assert!(result.source_event_id.is_some());
+        // Ledger 248: the pushed seed's actions.yml comes back byte for byte,
+        // an active verify that setup publishes next.
+        assert_eq!(
+            result.seeded_actions_yml.as_deref(),
+            Some(buzz_persona_pkg::seed::seeded_actions_yml().as_str())
+        );
         let expected = root.join("repos").join("demo");
         assert_eq!(
             result.checkout_path.as_deref(),
@@ -559,6 +582,7 @@ mod against_a_stub_relay {
             catalog,
             root.join("cache"),
             ProjectAgentsInitOptions {
+                verify_command: buzz_persona_pkg::seed::default_verify_command(),
                 checkout_parent: root.join("repos"),
                 recorded_checkout: None,
                 git_auth: |_: &Keys| build_test_git_auth_config(),
@@ -800,6 +824,7 @@ mod against_a_stub_relay {
             catalog,
             root.join("cache"),
             ProjectAgentsInitOptions {
+                verify_command: buzz_persona_pkg::seed::default_verify_command(),
                 checkout_parent: root.join("repos"),
                 recorded_checkout: None,
                 git_auth: |_: &Keys| build_test_git_auth_config(),

@@ -14,6 +14,10 @@ import { Textarea } from "@/shared/ui/textarea";
 
 import { PersonaShareRecipients } from "@/features/agents/ui/PersonaShareRecipients";
 import {
+  DEFAULT_VERIFY_COMMAND_TEXT,
+  parseVerifyCommand,
+} from "../lib/projectVerifySetup";
+import {
   type CreateProjectContainerInput,
   slugFromName,
 } from "../useCreateProjectContainer";
@@ -46,6 +50,11 @@ export function CreateProjectContainerDialog({
   const [icon, setIcon] = React.useState("");
   const [color, setColor] = React.useState<string | null>(null);
   const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
+  // The seeded `verify` action's command (ledger 248): project-specific, so
+  // asked for here, and the one command setup asks consent to run.
+  const [verifyCommand, setVerifyCommand] = React.useState(
+    DEFAULT_VERIFY_COMMAND_TEXT,
+  );
   // The parent folder the code repository is cloned under; `null` hands the
   // host its default root. The row is keyed on `open` so a folder chosen
   // for one project never leaks into the next.
@@ -67,6 +76,7 @@ export function CreateProjectContainerDialog({
     setColor(null);
     setErrorMessage(null);
     setCheckoutParent(null);
+    setVerifyCommand(DEFAULT_VERIFY_COMMAND_TEXT);
   }, [open]);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -88,6 +98,7 @@ export function CreateProjectContainerDialog({
         icon: icon.trim() || null,
         color,
         checkoutParent,
+        verifyCommand: parseVerifyCommand(verifyCommand),
       });
       onOpenChange(false);
     } catch (error) {
@@ -135,6 +146,22 @@ export function CreateProjectContainerDialog({
               onChange={handleCheckoutChange}
               slug={slugFromName(name)}
             />
+            <div className="flex flex-col gap-1 text-xs text-muted-foreground">
+              <span id="create-project-verify-command-hint">
+                Verify command — what agents run to test a commit, on your
+                computer once you allow it
+              </span>
+              <Input
+                aria-describedby="create-project-verify-command-hint"
+                aria-label="Verify command"
+                className="font-mono"
+                data-testid="create-project-container-verify-command"
+                disabled={isCreating}
+                onChange={(event) => setVerifyCommand(event.target.value)}
+                placeholder={DEFAULT_VERIFY_COMMAND_TEXT}
+                value={verifyCommand}
+              />
+            </div>
             <ProjectColorPickerField
               color={color}
               onColorChange={setColor}

@@ -26,6 +26,30 @@ pub const ACTIONS_YML: &str = "actions.yml";
 /// Ceiling on entries in one file.
 pub const MAX_ACTIONS: usize = 64;
 
+/// UUID v5 namespace for action workflow ids: `uuid5(ACTIONS_NAMESPACE,
+/// "<project coordinate>\n<action name>")`.
+pub const ACTIONS_NAMESPACE: uuid::Uuid =
+    uuid::Uuid::from_u128(0x6b3a1c2e_9d4f_4e7a_8b1c_2f5d9e0a7c31);
+
+/// The workflow id one action of one project always publishes under.
+///
+/// Shared by `bee actions publish` and project setup (ledger 248): an
+/// autorun grant binds `(workflow id, definition hash)`, so setup's
+/// publication and any later one of the same entry must land on the same id
+/// or the grant setup collected would bind a workflow nobody runs.
+pub fn action_workflow_id(project: &str, name: &str) -> uuid::Uuid {
+    uuid::Uuid::new_v5(&ACTIONS_NAMESPACE, format!("{project}\n{name}").as_bytes())
+}
+
+/// The YAML the relay receives for one entry: its definition with `project`
+/// bound, so the relay's `parse_yaml` hashes exactly what the host recompiles.
+///
+/// # Errors
+/// The definition could not be serialized.
+pub fn bound_definition_yaml(entry: &ActionEntry) -> Result<String, serde_yaml::Error> {
+    serde_yaml::to_string(&entry.def)
+}
+
 /// The file as authored.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

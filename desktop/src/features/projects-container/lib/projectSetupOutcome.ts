@@ -24,6 +24,10 @@ import {
   decodeProjectAgentsInitResult,
   type ProjectAgentsInitResult,
 } from "./projectAgentsInit";
+import {
+  decodeProjectVerifySetup,
+  type ProjectVerifySetupResult,
+} from "./projectVerifySetup";
 
 const STORAGE_KEY = "beekeeper.project-setup-outcome.v1";
 
@@ -48,6 +52,13 @@ export type ProjectSetupOutcome = {
   result: ProjectAgentsInitResult | null;
   /** The command's own words when it threw. */
   error: string | null;
+  /**
+   * The seeded verify's publication and consent run (ledger 248). Absent in
+   * rows written before it existed; `null` when nothing was published.
+   */
+  verify?: ProjectVerifySetupResult | null;
+  /** `project_verify_setup`'s own words when it threw. */
+  verifyError?: string | null;
 };
 
 /**
@@ -215,7 +226,19 @@ export function readProjectSetupOutcome(
     at: record.at,
     result,
     error: typeof record.error === "string" ? record.error : null,
+    verify: readStoredVerify(record.verify),
+    verifyError:
+      typeof record.verifyError === "string" ? record.verifyError : null,
   };
+}
+
+function readStoredVerify(value: unknown): ProjectVerifySetupResult | null {
+  if (value === null || value === undefined) return null;
+  try {
+    return decodeProjectVerifySetup(value);
+  } catch {
+    return null;
+  }
 }
 
 /** Forget one project's creation outcome — the card's Dismiss. */

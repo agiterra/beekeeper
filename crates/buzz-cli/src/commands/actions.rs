@@ -13,7 +13,6 @@
 //! kind:30620 in place instead of minting a new workflow every time.
 
 use buzz_workflow::{parse_actions_yml, ActionEntry, ACTIONS_YML};
-use uuid::Uuid;
 
 use crate::client::BuzzClient;
 use crate::commands::actions_authority::{
@@ -23,19 +22,12 @@ use crate::commands::actions_example::explain_actions_error;
 use crate::error::CliError;
 use crate::validate::{parse_uuid, read_file_or_stdin, sdk_err};
 
-/// UUID v5 namespace for action workflow ids: `uuid5(ACTIONS_NAMESPACE,
-/// "<project coordinate>\n<action name>")`.
-pub const ACTIONS_NAMESPACE: Uuid = Uuid::from_u128(0x6b3a1c2e_9d4f_4e7a_8b1c_2f5d9e0a7c31);
-
-/// The workflow id one action of one project always publishes under.
-pub fn action_workflow_id(project: &str, name: &str) -> Uuid {
-    Uuid::new_v5(&ACTIONS_NAMESPACE, format!("{project}\n{name}").as_bytes())
-}
+pub use buzz_workflow::actions_file::action_workflow_id;
 
 /// The YAML the relay receives for one entry: its definition with `project`
 /// bound, so the relay's `parse_yaml` hashes exactly what the host recompiles.
 pub fn bound_definition_yaml(entry: &ActionEntry) -> Result<String, CliError> {
-    serde_yaml::to_string(&entry.def)
+    buzz_workflow::actions_file::bound_definition_yaml(entry)
         .map_err(|error| CliError::Other(format!("serialize action {:?}: {error}", entry.name)))
 }
 

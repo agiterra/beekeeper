@@ -7,7 +7,7 @@
 //! ```text
 //! README.md              the layout and the archive rule, for people and agents
 //! team.yml               beekeeper-team/v1: every seeded role, `lead: lead`
-//! actions.yml            buzz-project-actions/v1, no actions yet
+//! actions.yml            buzz-project-actions/v1, one active manual `verify`
 //! model-registry.yaml    the routing registry, so hires route per project
 //! roles/<role>.md        one per shipped `kind: role` template — an include, not a copy
 //! roles/archive/         retired roles; never hireable, never included
@@ -44,94 +44,75 @@ pub const ACTIONS_YML: &str = "actions.yml";
 /// The schema `actions.yml` must name — `buzz_workflow::actions_file::ACTIONS_SCHEMA`.
 pub const ACTIONS_SCHEMA: &str = "buzz-project-actions/v1";
 
-/// The `actions.yml` a new agents repository starts with: the schema line, an
-/// empty list, and a **commented-out** manual verify action with
-/// `checkout: required`.
-///
-/// A new project's first encounter with this file used to be four lines that
-/// showed nothing, so its shape had to be learned from parser errors (ledger
-/// 206 A). The commented example is the shape, in place, at the moment an
-/// author opens the file — and
-/// [`uncomment_seeded_actions_example`] plus a test in `buzz-cli` (the crate
-/// that can call the real parser) keep it from becoming a lie.
-///
-/// The empty list is deliberate: `bee actions publish` refuses a file that
-/// lists no action, so a project that has not written one publishes nothing
-/// rather than publishing a placeholder.
+/// The command the seeded `verify` action runs when the person creating the
+/// project names none: the standard-library test runner over `tests/`, the
+/// Kettle projects' gate. It is project-specific, so project creation asks
+/// for it (defaulting to this) rather than fixing it here.
+pub const DEFAULT_VERIFY_COMMAND: [&str; 6] =
+    ["python3", "-m", "unittest", "discover", "-s", "tests"];
+
+/// [`DEFAULT_VERIFY_COMMAND`] as owned strings.
+pub fn default_verify_command() -> Vec<String> {
+    DEFAULT_VERIFY_COMMAND.map(str::to_owned).to_vec()
+}
+
+/// The `actions.yml` a new agents repository starts with: the schema line and
+/// one **active** manual `verify` action — one `run_on_host` step with
+/// `checkout: required` — running [`DEFAULT_VERIFY_COMMAND`].
 pub fn seeded_actions_yml() -> String {
+    seeded_actions_yml_with_verify(&default_verify_command())
+}
+
+/// [`seeded_actions_yml`] with the verify step running `command` (argv, no
+/// shell).
+///
+/// The action is live from the first commit (ledger 248, superseding the
+/// commented example of 206 A): project setup publishes it and collects the
+/// one hash-bound "allow future runs of this exact definition" grant from the
+/// person whose computer runs it, so no seat has to author, publish and wait
+/// on approval for the gate every run needs. Editing it changes its
+/// definition hash, and a changed definition asks for that consent again.
+///
+/// Each argument is written as a double-quoted YAML scalar, so no argument
+/// can be read as a boolean, a number or a second key. `buzz-cli` holds the
+/// test that runs the real parser over this text.
+pub fn seeded_actions_yml_with_verify(command: &[String]) -> String {
+    let argv = command
+        .iter()
+        .map(|arg| yaml_string(arg))
+        .collect::<Vec<_>>()
+        .join(", ");
     format!(
         "\
 # This project's actions (spec § 5). Each entry is a workflow definition;
 # `bee actions publish` reads this file from the agents repository root, and
 # `bee actions example` prints a complete, valid file with every trigger kind.
 #
-# There are no actions yet. To add the verify action below, delete the
-# `actions: []` line and remove the leading `# ` from every line between the
-# two `{SCISSORS}` lines.
+# `verify` was published when the project was set up, and whoever's computer
+# runs it agreed there to future runs of this exact definition. Editing it
+# changes its definition hash, so the edited action asks for that consent
+# again before it runs anywhere; running it unchanged asks nobody.
 #
 # `checkout: required` makes the relay refuse a run that names no commit, so
-# that action can only be started as
+# it can only be started as
 #   bee workflows trigger --workflow <id> --checkout <40-hex sha>
 # and the host runs it in a fresh detached worktree at that commit, never in
 # the project folder as it happens to be checked out.
-#
-# {SCISSORS}
-# actions:
-#   - name: verify
-#     description: Run the gate against one named commit.
-#     trigger:
-#       on: manual
-#     steps:
-#       - id: verify
-#         action: run_on_host
-#         command: [\"just\", \"ci\"]
-#         working_directory: \".\"
-#         checkout: required
-#         timeout: 30m
-# {SCISSORS}
 schema: {ACTIONS_SCHEMA}
-actions: []
+actions:
+  - name: verify
+    description: Run the project's tests against one named commit.
+    trigger:
+      on: manual
+    steps:
+      - id: verify
+        action: run_on_host
+        command: [{argv}]
+        working_directory: \".\"
+        checkout: required
+        timeout: 30m
 "
     )
-}
-
-/// The mark that brackets the commented example in [`seeded_actions_yml`].
-pub const SCISSORS: &str = "---8<---";
-
-/// The whole marker line, matched exactly so prose that *mentions* the mark
-/// (the instruction above the example does) never toggles the block.
-const MARKER_LINE: &str = "# ---8<---";
-
-/// Apply the instruction [`seeded_actions_yml`] gives its reader: drop the
-/// `actions: []` line and remove the leading `# ` from every line between the
-/// two [`SCISSORS`] marks.
-///
-/// Prose outside the marks keeps its `#` and stays a comment. This exists so
-/// a test can prove the seeded example really parses, rather than asserting
-/// that some bytes are present in a file nobody ever ran through the parser.
-pub fn uncomment_seeded_actions_example(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut inside = false;
-    for line in text.lines() {
-        if line.trim() == MARKER_LINE {
-            inside = !inside;
-            continue;
-        }
-        if line.trim() == "actions: []" {
-            continue;
-        }
-        if inside {
-            let stripped = line
-                .strip_prefix("# ")
-                .or_else(|| line.strip_prefix('#'))
-                .unwrap_or(line);
-            out.push_str(stripped);
-        } else {
-            out.push_str(line);
-        }
-        out.push('\n');
-    }
-    out
 }
 
 /// The README the seed writes.
@@ -217,6 +198,20 @@ pub fn write_agents_repo_seed(
     catalog: &TemplateCatalog,
     name: &str,
 ) -> Result<SeedReport, SeedError> {
+    write_agents_repo_seed_with_verify(root, catalog, name, &default_verify_command())
+}
+
+/// [`write_agents_repo_seed`] with the seeded `verify` action running
+/// `verify_command` (see [`seeded_actions_yml_with_verify`]).
+///
+/// # Errors
+/// As [`write_agents_repo_seed`].
+pub fn write_agents_repo_seed_with_verify(
+    root: &Path,
+    catalog: &TemplateCatalog,
+    name: &str,
+    verify_command: &[String],
+) -> Result<SeedReport, SeedError> {
     refuse_non_empty(root)?;
     let roles = catalog.role_templates();
     if roles.is_empty() {
@@ -261,7 +256,7 @@ pub fn write_agents_repo_seed(
 
     write(README_MD, &readme(name))?;
     write(TEAM_YML, &team_yml(name, &lead, &roles))?;
-    write(ACTIONS_YML, &seeded_actions_yml())?;
+    write(ACTIONS_YML, &seeded_actions_yml_with_verify(verify_command))?;
     // The registry travels with the project (ledger 178(a)): without it here
     // a routed hire is refused on every project but Beekeeper's own, and the
     // unrouted retry runs the identity's pin — the most expensive target.
@@ -547,40 +542,8 @@ mod tests {
 
         let actions = std::fs::read_to_string(root.join("actions.yml")).unwrap();
         assert!(actions.contains(&format!("schema: {ACTIONS_SCHEMA}")));
-        assert!(actions.contains("actions: []"));
+        assert!(actions.contains("        checkout: required"));
         assert_eq!(actions, seeded_actions_yml());
-    }
-
-    /// The commented verify action is what an author finds in the file, so
-    /// the instruction printed above it has to work: stripping the marked
-    /// `#`s and dropping `actions: []` must yield a document with one action
-    /// that still declares `checkout: required`.
-    ///
-    /// This asserts the *shape* only — this crate has no workflow parser.
-    /// `the_seeded_actions_file_example_parses_when_uncommented` in
-    /// `buzz-cli` runs the real `parse_actions_yml` over the same two
-    /// functions.
-    #[test]
-    fn the_seeded_example_uncomments_into_one_action() {
-        let uncommented = uncomment_seeded_actions_example(&seeded_actions_yml());
-        assert!(
-            !uncommented.lines().any(|line| line.trim() == "actions: []"),
-            "the empty list is gone (the prose above it still names it):\n{uncommented}"
-        );
-        assert!(uncommented.contains(&format!("schema: {ACTIONS_SCHEMA}")));
-        for line in [
-            "actions:",
-            "  - name: verify",
-            "      on: manual",
-            "        checkout: required",
-        ] {
-            assert!(
-                uncommented.lines().any(|candidate| candidate == line),
-                "expected {line:?} in\n{uncommented}"
-            );
-        }
-        // Prose keeps its `# `, so the result is still readable as guidance.
-        assert!(uncommented.contains("# This project's actions"));
     }
 
     /// Ledger 178(a): the registry a project routes against must be this

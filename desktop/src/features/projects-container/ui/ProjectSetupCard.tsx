@@ -12,6 +12,7 @@ import {
 } from "../lib/projectSetupOutcome";
 import type { ProjectContainer } from "../hooks";
 import { ProjectAgentsInitAction } from "./ProjectAgentsInitAction";
+import { ProjectVerifyConsent } from "./ProjectVerifyConsent";
 import { SectionCard } from "./SectionCard";
 
 /**
@@ -86,6 +87,12 @@ export function ProjectSetupCard({ project }: { project: ProjectContainer }) {
           </li>
         ))}
       </ul>
+      {outcome.result?.seededActionsYml ? (
+        <ProjectVerifyConsent
+          verify={outcome.verify ?? null}
+          verifyError={outcome.verifyError ?? null}
+        />
+      ) : null}
       {finishing ? (
         <div className="mt-2">
           <ProjectAgentsInitAction

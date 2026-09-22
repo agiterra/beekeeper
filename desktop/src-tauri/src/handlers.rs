@@ -216,6 +216,7 @@ pub(crate) fn invoke_handler(
         managed_agents::actor_seats::preview_coding_session_seat_pack,
         managed_agents::packs_repo::project_packs_init,
         managed_agents::agents_repo::project_agents_init,
+        managed_agents::project_verify_setup::project_verify_setup,
         managed_agents::agents_repo::record_project_agents_repo,
         commands::agents_repo::agents_repo_ls,
         commands::agents_repo::agents_repo_read,

@@ -449,7 +449,12 @@ test("initProjectRepositories runs the host command and adds forward refs for th
     // an invented path.
     // Not a migration: the host is told so explicitly, never left to guess.
     assert.deepEqual(calls, [
-      { projectRef: project.address, checkoutParent: null, migrate: null },
+      {
+        projectRef: project.address,
+        checkoutParent: null,
+        migrate: null,
+        verifyCommand: null,
+      },
     ]);
     // The create dialog's folder row hands the PARENT through unchanged.
     const chosen = await initProjectRepositories(project, {
@@ -460,6 +465,7 @@ test("initProjectRepositories runs the host command and adds forward refs for th
       projectRef: project.address,
       checkoutParent: "/Users/x/Code",
       migrate: null,
+      verifyCommand: null,
     });
     const republished = stubs.signedEvents.at(-1);
     assert.equal(republished.kind, 30621);

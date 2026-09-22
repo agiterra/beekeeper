@@ -475,22 +475,34 @@ mod tests {
         }
     }
 
-    /// The seeded agents repository ships a commented verify action; it must
-    /// parse once uncommented, or the example a new project finds is a lie.
-    /// The text and the uncommenting rule live in `buzz_persona::seed`; this
-    /// is the crate that can call the real parser on the result.
+    /// Ledger 248 (plan item 2, 206 A): a new project's `actions.yml` holds
+    /// one **active** manual `verify` — one `run_on_host` step, `checkout:
+    /// required`, the kettle command by default — so setup can publish it and
+    /// collect its one hash-bound grant before any seat starts. It must parse
+    /// as written; the text lives in `buzz_persona::seed`, this is the crate
+    /// that can call the real parser.
     #[test]
-    fn the_seeded_actions_file_example_parses_when_uncommented() {
+    fn the_seeded_actions_file_is_one_active_verify_action() {
         let seeded = buzz_persona::seed::seeded_actions_yml();
-        let uncommented = buzz_persona::seed::uncomment_seeded_actions_example(&seeded);
-        let entries = parse_actions_yml(&uncommented, PROJECT)
-            .expect("the seeded commented example parses once uncommented");
+        let entries =
+            parse_actions_yml(&seeded, PROJECT).expect("the seeded actions file parses as written");
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].name, "verify");
+        assert_eq!(entries[0].def.steps.len(), 1);
+        assert_eq!(entries[0].def.steps[0].id, "verify");
         assert_eq!(
             entries[0].def.step_requiring_bound_checkout(),
             Some("verify"),
-            "the seeded example keeps `checkout: required`"
+            "the seeded verify keeps `checkout: required`"
         );
+        match &entries[0].def.steps[0].action {
+            buzz_workflow::ActionDef::RunOnHost { command, .. } => assert_eq!(
+                command,
+                &["python3", "-m", "unittest", "discover", "-s", "tests"]
+                    .map(str::to_owned)
+                    .to_vec()
+            ),
+            other => panic!("expected run_on_host, got {other:?}"),
+        }
     }
 }

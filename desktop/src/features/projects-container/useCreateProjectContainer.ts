@@ -19,6 +19,10 @@ import {
   type ProjectAgentsInitResult,
 } from "./lib/projectAgentsInit";
 import {
+  projectVerifySetup,
+  type ProjectVerifySetupResult,
+} from "./lib/projectVerifySetup";
+import {
   eventToProjectContainer,
   GENERAL_PROJECT_DTAG,
   isProjectContainerDeleted,
@@ -44,6 +48,11 @@ export type CreateProjectContainerInput = {
    * absent means the host's default repos root. Never published.
    */
   checkoutParent?: string | null;
+  /**
+   * The seeded `verify` action's argv, from the form (ledger 248); `null`
+   * or absent seeds the default. Project-specific, so it is asked for.
+   */
+  verifyCommand?: string[] | null;
 };
 
 /** The project's `d` tag, as the create derives it from the typed name. */
@@ -260,11 +269,15 @@ export async function createProjectContainer(
  */
 export async function initProjectRepositories(
   project: ProjectContainer,
-  options: { checkoutParent?: string | null } = {},
+  options: {
+    checkoutParent?: string | null;
+    verifyCommand?: string[] | null;
+  } = {},
 ): Promise<ProjectAgentsInitResult> {
   const result = await projectAgentsInit({
     projectRef: project.address,
     checkoutParent: options.checkoutParent ?? null,
+    verifyCommand: options.verifyCommand ?? null,
   });
   const identity = await getIdentity();
   if (project.owner === identity.pubkey.toLowerCase()) {
@@ -297,7 +310,53 @@ export type CreateProjectContainerOutcome = {
   repositories: ProjectAgentsInitResult | null;
   /** The command's own words when it threw (a refusal, no host, …). */
   repositoriesError: string | null;
+  /**
+   * The seeded verify's publication and consent run (ledger 248), or `null`
+   * when this computer seeded nothing to publish.
+   */
+  verify: ProjectVerifySetupResult | null;
+  /** `project_verify_setup`'s own words when it threw. */
+  verifyError: string | null;
 };
+
+/**
+ * Publish the seeded `verify` and start the run its one consent question
+ * rides on — only when this run pushed both seeds, so the definition and the
+ * commit the run names are both on the relay.
+ */
+export async function setupSeededVerify(
+  project: ProjectContainer,
+  repositories: ProjectAgentsInitResult,
+): Promise<{
+  verify: ProjectVerifySetupResult | null;
+  verifyError: string | null;
+}> {
+  const actionsYml = repositories.seededActionsYml ?? null;
+  const checkout = repositories.codeSeedCommitSha;
+  if (
+    actionsYml === null ||
+    !repositories.pushed ||
+    checkout === null ||
+    repositories.codeSeedError !== null
+  ) {
+    return { verify: null, verifyError: null };
+  }
+  try {
+    return {
+      verify: await projectVerifySetup({
+        projectRef: project.address,
+        actionsYml,
+        checkout,
+      }),
+      verifyError: null,
+    };
+  } catch (thrown) {
+    return {
+      verify: null,
+      verifyError: thrown instanceof Error ? thrown.message : String(thrown),
+    };
+  }
+}
 
 /**
  * Republish a project the current identity owns with additional member
@@ -372,22 +431,28 @@ export function useCreateProjectContainerMutation() {
       // The project exists once its head is published; the repositories
       // are a second step whose failure is disclosed, not a failed create
       // (Finish setup in Project settings re-runs it).
+      let repositories: ProjectAgentsInitResult;
       try {
-        return {
-          project,
-          repositories: await initProjectRepositories(project, {
-            checkoutParent: input.checkoutParent ?? null,
-          }),
-          repositoriesError: null,
-        };
+        repositories = await initProjectRepositories(project, {
+          checkoutParent: input.checkoutParent ?? null,
+          verifyCommand: input.verifyCommand ?? null,
+        });
       } catch (thrown) {
         return {
           project,
           repositories: null,
           repositoriesError:
             thrown instanceof Error ? thrown.message : String(thrown),
+          verify: null,
+          verifyError: null,
         };
       }
+      return {
+        project,
+        repositories,
+        repositoriesError: null,
+        ...(await setupSeededVerify(project, repositories)),
+      };
     },
     onSuccess: ({ project, repositories }) => {
       // The create installed the project's default agents on this computer;
