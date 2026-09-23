@@ -246,6 +246,20 @@ export function DeleteProjectDialog({
             </p>
           ) : null}
 
+          {localPlan !== null && localPlan.retained.length > 0 ? (
+            <div
+              className="flex flex-col gap-1"
+              data-testid="delete-project-retained"
+            >
+              {localPlan.retained.map((entry) => (
+                <p className="text-xs text-muted-foreground" key={entry.path}>
+                  <span className="font-medium">Left on disk:</span>{" "}
+                  {entry.path} — {entry.reason}
+                </p>
+              ))}
+            </div>
+          ) : null}
+
           {exclusions.map((note) => (
             <p
               className="text-xs text-muted-foreground"
