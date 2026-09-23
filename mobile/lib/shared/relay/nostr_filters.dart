@@ -368,6 +368,21 @@ abstract final class NostrFilters {
   static NostrFilter projectTombstones({int limit = 500}) =>
       NostrFilter(kinds: const [EventKind.deletion], limit: limit);
 
+  /// Live twin of [projectTombstones], scoped to the project addresses this
+  /// client already knows.
+  ///
+  /// Scoped, where the one-shot read above is not, and deliberately: a live
+  /// kind:5 subscription with no `#a` would carry every *message* deletion in
+  /// the community, and the relay's global fan-out is ungated — so it would
+  /// also carry tombstones for private projects the reader cannot see. Naming
+  /// only addresses already on screen leaks nothing new.
+  ///
+  /// A project head has no `h` tag, so its tombstone rides the relay's global
+  /// topic and is never delivered on a channel-scoped subscription. This is
+  /// the only filter that can see one arrive.
+  static NostrFilter projectTombstonesLive(List<String> addresses) =>
+      NostrFilter(kinds: const [EventKind.deletion], tags: {'#a': addresses});
+
   /// The relay-signed roster projection (kind:39010) for one project address.
   static NostrFilter projectRoster(String projectAddress) => NostrFilter(
     kinds: const [EventKind.projectRoster],

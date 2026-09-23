@@ -81,9 +81,17 @@ void main() {
       await _settle();
 
       // Heads and tombstones leave in one coalesced query; the metadata of
-      // the channels they name is a second, dependent one.
-      expect(relay.operations, ['subscribe', 'query1', 'query1']);
-      expect(relay.liveFilters.single.kinds, [30621]);
+      // the channels they name is a second, dependent one. The trailing
+      // subscribe is the tombstone watch, which can only be armed once the
+      // heads are known — it names their addresses.
+      expect(relay.operations, ['subscribe', 'query1', 'query1', 'subscribe']);
+      expect(relay.liveFilters.first.kinds, [30621]);
+      // Scoped by `#a` to the project just read, never an unscoped kind:5:
+      // that would carry every message deletion in the community, and
+      // tombstones for private projects this reader cannot see.
+      final tombstoneWatch = relay.liveFilters.last;
+      expect(tombstoneWatch.kinds, [5]);
+      expect(tombstoneWatch.tags['#a'], ['30621:$owner:beekeeper']);
       final [first, second] = relay.coalescedQueryGroups;
       expect(first.map((filter) => filter.kinds), [
         [30621],
@@ -117,7 +125,8 @@ void main() {
     addTearDown(container.dispose);
     container.read(projectsProvider);
     await _settle();
-    expect(relay.operations, ['subscribe', 'query1']);
+    // The trailing subscribe is the tombstone watch over the one head read.
+    expect(relay.operations, ['subscribe', 'query1', 'subscribe']);
     final read = container.read(projectsProvider);
     expect(read.connection, ProjectsConnection.open);
     expect(read.referencedChannels, isEmpty);

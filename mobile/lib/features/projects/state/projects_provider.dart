@@ -65,6 +65,15 @@ const projectsPollInterval = Duration(seconds: 30);
 /// and resolves the channel metadata each head names.
 class ProjectsNotifier extends Notifier<ProjectsRead> {
   final List<void Function()> _unsubscribes = [];
+
+  /// The live tombstone subscription, kept apart from [_unsubscribes] because
+  /// it is replaced whenever the watched address set changes rather than only
+  /// on teardown.
+  void Function()? _tombstoneUnsubscribe;
+
+  /// The addresses [_tombstoneUnsubscribe] currently names, so an unchanged
+  /// set does not churn the REQ on every poll.
+  List<String> _watchedAddresses = const [];
   Timer? _poll;
   int _epoch = 0;
   bool _disposed = false;
@@ -185,6 +194,12 @@ class ProjectsNotifier extends Notifier<ProjectsRead> {
         lastError: null,
         hasRead: true,
       );
+      // The heads just read are the addresses worth watching for a tombstone.
+      // Without this a deleted project waits for the 30 s poll; the live head
+      // filter cannot see the delete, because a tombstone is a kind:5.
+      await _watchTombstones(epoch, [
+        for (final project in projects) project.address,
+      ]);
     } catch (error) {
       if (_stale(epoch)) return;
       debugPrint('[Projects] read failed: $error');
@@ -195,11 +210,54 @@ class ProjectsNotifier extends Notifier<ProjectsRead> {
     }
   }
 
+  /// Follow tombstones for exactly [addresses], replacing any earlier watch.
+  ///
+  /// Re-subscribing is the cost of scoping by `#a`, and it is the right
+  /// trade: the alternative is an unscoped kind:5 REQ carrying every message
+  /// deletion in the community, and tombstones for private projects this
+  /// reader cannot see.
+  Future<void> _watchTombstones(int epoch, List<String> addresses) async {
+    if (_stale(epoch)) return;
+    final wanted = addresses.toSet().toList()..sort();
+    if (_listEquals(wanted, _watchedAddresses)) return;
+    _tombstoneUnsubscribe?.call();
+    _tombstoneUnsubscribe = null;
+    _watchedAddresses = const [];
+    if (wanted.isEmpty) return;
+    final session = ref.read(relaySessionProvider.notifier);
+    try {
+      final unsubscribe = await session.subscribe(
+        NostrFilters.projectTombstonesLive(wanted),
+        (_) => _scheduleRefetch(epoch),
+      );
+      if (_stale(epoch)) {
+        unsubscribe();
+        return;
+      }
+      _tombstoneUnsubscribe = unsubscribe;
+      _watchedAddresses = wanted;
+    } catch (error) {
+      // The poll still catches it, one tick later.
+      debugPrint('[Projects] tombstone subscribe failed: \$error');
+    }
+  }
+
+  static bool _listEquals(List<String> a, List<String> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
   bool _stale(int epoch) => _disposed || epoch != _epoch;
 
   void _teardown() {
     _poll?.cancel();
     _poll = null;
+    _tombstoneUnsubscribe?.call();
+    _tombstoneUnsubscribe = null;
+    _watchedAddresses = const [];
     for (final unsubscribe in _unsubscribes) {
       unsubscribe();
     }

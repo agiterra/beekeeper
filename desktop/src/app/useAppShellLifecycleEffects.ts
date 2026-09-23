@@ -1,5 +1,6 @@
 import * as React from "react";
 
+import { useLiveProjectUpdates } from "@/app/useLiveProjectUpdates";
 import { setDesktopAppBadge } from "@/features/notifications/lib/desktop";
 import { useForegroundQueryRefresh } from "@/features/workflows/hooks";
 import { relayClient } from "@/shared/api/relayClient";
@@ -22,6 +23,11 @@ export function useAppShellLifecycleEffects({
   // the backoff timer when the relay session is degraded (CMD+R gap G1).
   useRelayResumeTriggers();
   useForegroundQueryRefresh();
+  // A project deleted, created or renamed on another client reaches this one
+  // without waiting for a reconnect. Mounted here rather than in `AppShell`
+  // for the ordinary reason: that file sits at the size ceiling, and this is
+  // already where app-wide lifecycle hooks are gathered.
+  useLiveProjectUpdates();
 
   // Prevent webview file:/// navigation on file drop outside the composer.
   // Scoped to file drags only (text drag-and-drop into inputs still works).
