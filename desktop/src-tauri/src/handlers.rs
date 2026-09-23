@@ -251,6 +251,8 @@ pub(crate) fn invoke_handler(
         set_managed_agent_auto_restart,
         give_agent_its_own_nest,
         delete_managed_agent,
+        plan_project_agent_teardown,
+        run_project_agent_teardown,
         get_managed_agent_log,
         get_agent_models,
         discover_agent_models,

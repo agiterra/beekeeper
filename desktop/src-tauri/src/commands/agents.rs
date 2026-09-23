@@ -914,24 +914,18 @@ pub async fn delete_managed_agent(
             if let Some(record) = records.iter_mut().find(|record| record.pubkey == pubkey) {
                 stop_managed_agent_process(&app, record, &mut runtimes)?;
             }
-            state.clear_agent_session_caches(&pubkey);
             let initial_len = records.len();
             records.retain(|record| record.pubkey != pubkey);
             if records.len() == initial_len {
                 return Err(format!("agent {pubkey} not found"));
             }
             save_managed_agents(&app, &records)?;
-            // Remove the agent's nsec from the keyring after the record is gone.
-            crate::managed_agents::delete_agent_key(&pubkey);
             // Tombstone-after-validation: only reached past the deployed-remote
             // guard above and a confirmed removal — never orphan a live remote
-            // deployment's relay record. Inside the lock, before the block closes
-            // (no .await here). Every agent published, so every delete tombstones.
-            tombstone_managed_agent_pending(&app, &state, &pubkey);
-            // NIP-IA: archive the deleted agent's identity on the relay so it
-            // stops appearing in member pickers and autocomplete. Same
-            // best-effort, inside-the-lock contract as the tombstone above.
-            archive_managed_agent_pending(&app, &state, &pubkey, persona_id.as_deref());
+            // deployment's relay record. Inside the lock, before the block
+            // closes (no .await here). Shared with the project teardown so the
+            // two delete paths cannot drift; see `agents_purge`.
+            purge::purge_managed_agent_side_effects(&app, &state, &pubkey, persona_id.as_deref());
         }
         try_regenerate_nest(&app);
         Ok(())
@@ -948,6 +942,10 @@ pub async fn delete_managed_agent(
 #[path = "agents_start_local.rs"]
 mod start_local;
 pub(crate) use start_local::*;
+
+#[path = "agents_purge.rs"]
+mod purge;
+pub(crate) use purge::purge_managed_agent_side_effects;
 
 #[path = "agents_deploy.rs"]
 mod deploy;
