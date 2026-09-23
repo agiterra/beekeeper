@@ -74,6 +74,45 @@ pub(crate) fn plan_verify_publication(
     })
 }
 
+/// The channel setup creates to file `verify` in, when this key has not
+/// already published it somewhere.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct ActionsChannelSpec {
+    pub name: String,
+    pub visibility: &'static str,
+    pub channel_type: &'static str,
+    pub about: String,
+}
+
+/// Where setup files the project's actions (ledger 252).
+///
+/// A workflow's relay-signed events (kind:46010, kind:46013, kind:46014) are
+/// `h`-scoped to the channel the workflow is filed in, and a host claims a
+/// step only as a reader of that channel. So `verify` goes in the project's
+/// sessions transport — the channel every host serving the project and every
+/// seat already reads through the project ACL — named and described exactly
+/// as `desktop/src/features/projects-container/lib/projectSessionsChannel.ts`
+/// names it, so a later session create resolves this channel (rule 0) instead
+/// of minting a second transport. A private owner-only channel here hid every
+/// host-step request from every host (control run 3).
+pub(crate) fn actions_channel_spec(project_name: &str, slug: &str) -> ActionsChannelSpec {
+    let collapsed = project_name
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let base = if collapsed.is_empty() {
+        slug.trim().to_owned()
+    } else {
+        collapsed
+    };
+    ActionsChannelSpec {
+        name: format!("{base} sessions"),
+        visibility: "private",
+        channel_type: "transport",
+        about: format!("Coding sessions for {base}."),
+    }
+}
+
 /// The `run_id` a kind:46020's acceptance message names, if any.
 pub(crate) fn run_id_from_trigger_message(message: &str) -> Option<String> {
     crate::relay::parse_command_response::<serde_json::Value>(message)
@@ -106,12 +145,14 @@ pub struct ProjectVerifySetup {
 ///
 /// `actions_yml` is `ProjectAgentsInit.seededActionsYml`, the bytes this
 /// computer seeded and pushed; `checkout` is the code repository's seed
-/// commit. The definition lives in a private stream channel naming the
-/// project, reused when this key already published it.
+/// commit; `project_name` names the sessions channel. The definition lives in
+/// the project's sessions transport ([`actions_channel_spec`]), reused when
+/// this key already published it.
 #[tauri::command]
 pub async fn project_verify_setup(
     state: State<'_, AppState>,
     project_ref: String,
+    project_name: String,
     actions_yml: String,
     checkout: String,
 ) -> Result<ProjectVerifySetup, String> {
@@ -155,17 +196,33 @@ pub async fn project_verify_setup(
         }
         None => {
             let channel_uuid = uuid::Uuid::new_v4();
-            let builder = crate::events::build_create_channel(
-                channel_uuid,
-                &format!("{slug}-actions"),
-                "private",
-                "stream",
-                Some("Where this project's actions are published and approved."),
-                None,
-                Some(&project),
-            )?;
-            if let Err(error) = crate::relay::submit_event(builder, &state).await {
-                result.error = Some(format!("the actions channel was not created: {error}"));
+            let spec = actions_channel_spec(&project_name, &slug);
+            let create = |channel_type: &str| {
+                crate::events::build_create_channel(
+                    channel_uuid,
+                    &spec.name,
+                    spec.visibility,
+                    channel_type,
+                    Some(&spec.about),
+                    None,
+                    Some(&project),
+                )
+            };
+            let submit = |builder| async {
+                match crate::relay::submit_event(builder, &state).await {
+                    Ok(response) if response.accepted => Ok(()),
+                    Ok(response) => Err(response.message),
+                    Err(error) => Err(error),
+                }
+            };
+            let mut created = submit(create(spec.channel_type)?).await;
+            // A relay that predates the transport type: the same legacy
+            // fallback the session founder takes.
+            if matches!(&created, Err(error) if error.contains("invalid channel_type")) {
+                created = submit(create("stream")?).await;
+            }
+            if let Err(error) = created {
+                result.error = Some(format!("the sessions channel was not created: {error}"));
                 return Ok(result);
             }
             state.mark_pending_owned_channel(&me, &channel_uuid.to_string());

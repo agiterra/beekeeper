@@ -1,6 +1,8 @@
 //! Ledger 248: what project setup publishes for the seeded `verify` action.
 
-use super::project_verify_setup::{plan_verify_publication, run_id_from_trigger_message};
+use super::project_verify_setup::{
+    actions_channel_spec, plan_verify_publication, run_id_from_trigger_message,
+};
 
 const PROJECT: &str =
     "30621:1111111111111111111111111111111111111111111111111111111111111111:kettle";
@@ -44,4 +46,24 @@ fn the_run_id_is_read_from_the_trigger_response() {
         Some(id.to_string())
     );
     assert_eq!(run_id_from_trigger_message("accepted"), None);
+}
+
+/// Ledger 252 (control run 3): setup filed `verify` in a private
+/// `<slug>-actions` stream only the owner held, so the relay hid every
+/// kind:46013 it published there from the project's host and every seat —
+/// the run sat "requested on host" forever, and the lead that triggered it
+/// was refused its status. Setup files it in the project's sessions
+/// transport instead: the channel the host and the seats already read, named
+/// exactly as `projectSessionsChannel.ts` names it so a later session create
+/// resolves this channel rather than minting a second one.
+#[test]
+fn setup_files_verify_in_the_project_sessions_transport_not_a_private_stream() {
+    let spec = actions_channel_spec("  Kettle   Control 3 ", "kettle-control-3");
+    assert_eq!(spec.channel_type, "transport");
+    assert_eq!(spec.visibility, "private");
+    assert_eq!(spec.name, "Kettle Control 3 sessions");
+    assert_eq!(spec.about, "Coding sessions for Kettle Control 3.");
+    assert!(!spec.name.ends_with("-actions"));
+    // No display name: the slug stands in, never a bare "sessions".
+    assert_eq!(actions_channel_spec(" ", "kettle").name, "kettle sessions");
 }

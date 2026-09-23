@@ -76,6 +76,8 @@ export function decodeProjectVerifySetup(
 /** Publish the seeded verify and start the run that carries the question. */
 export async function projectVerifySetup(input: {
   projectRef: string;
+  /** Names the project's sessions channel, where `verify` is filed. */
+  projectName: string;
   actionsYml: string;
   checkout: string;
 }): Promise<ProjectVerifySetupResult> {

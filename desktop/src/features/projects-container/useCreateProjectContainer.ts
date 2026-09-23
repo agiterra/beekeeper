@@ -345,6 +345,7 @@ export async function setupSeededVerify(
     return {
       verify: await projectVerifySetup({
         projectRef: project.address,
+        projectName: project.name,
         actionsYml,
         checkout,
       }),
