@@ -62,23 +62,33 @@ export function DeleteProjectDialog({
   onOpenChange: (open: boolean) => void;
   onDeleted?: () => void;
 }) {
-  const [cascade, setCascade] = React.useState(false);
+  // Ticked by default: the button this dialog answers for is "Delete
+  // project", and Andy's call (2026-09-22) is that it should mean what it
+  // says. Unticking still gives NIP-MP's contract — the kind:30621 alone —
+  // and `bee projects delete` keeps the safe default on its side.
+  const [cascade, setCascade] = React.useState(true);
   const deleteMutation = useDeleteProjectContainerMutation();
   const cascadeMutation = useDeleteProjectContainerCascadeMutation();
   const { targets, counts, summary, exclusions, isLoading } =
     useProjectCascadeTargets(project);
 
-  // Every open starts from the safe default; a previous tick must never carry
-  // into the next project.
+  // Every open starts from the same default; a previous *untick* must never
+  // carry into the next project any more than a previous tick could.
   React.useEffect(() => {
-    if (project === null) setCascade(false);
+    if (project === null) setCascade(true);
   }, [project]);
 
   const isPending = deleteMutation.isPending || cascadeMutation.isPending;
   const hasChildren = counts.total > 0;
+  // What the confirm will *actually* do. With the box ticked by default,
+  // a project with no children would otherwise arm the cascade path and
+  // report "Project and its channels deleted" having deleted no channel —
+  // the same class of lie this dialog already refuses to tell about foreign
+  // workflows. Ticked-but-nothing-to-cascade is a plain delete, and says so.
+  const cascading = cascade && hasChildren;
 
   const close = () => {
-    setCascade(false);
+    setCascade(true);
     onOpenChange(false);
   };
 
@@ -89,10 +99,8 @@ export function DeleteProjectDialog({
           <AlertDialogTitle>Delete this project?</AlertDialogTitle>
           <AlertDialogDescription>
             {project
-              ? cascade
-                ? `"${project.name}" will be removed for everyone, along with ${
-                    summary || "its channels and workflows"
-                  }. Messages in those channels go with them. Its repositories are not deleted — they move to General.`
+              ? cascading
+                ? `"${project.name}" will be removed for everyone, along with ${summary}. Messages in those channels go with them. Its repositories are not deleted — they move to General.`
                 : `"${project.name}" will be removed for everyone. Its repositories, channels, and forums are not deleted — they move to General.`
               : ""}
           </AlertDialogDescription>
@@ -169,7 +177,7 @@ export function DeleteProjectDialog({
               event.preventDefault();
               if (!project) return;
               const onSuccess = () => {
-                if (!cascade) {
+                if (!cascading) {
                   toast.success("Project deleted.");
                 } else if (counts.foreignWorkflows > 0) {
                   // The receipt names the survivors; a plain "deleted" here
@@ -194,7 +202,7 @@ export function DeleteProjectDialog({
                 );
                 close();
               };
-              if (cascade) {
+              if (cascading) {
                 cascadeMutation.mutate(
                   { project, targets },
                   { onSuccess, onError },
@@ -204,7 +212,11 @@ export function DeleteProjectDialog({
               deleteMutation.mutate(project, { onSuccess, onError });
             }}
           >
-            {cascade ? "Delete everything" : "Delete project"}
+            {isLoading
+              ? "Counting…"
+              : cascading
+                ? "Delete everything"
+                : "Delete project"}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

@@ -526,6 +526,9 @@ export function ProjectsManagePanel() {
         onOpenChange={(open) => {
           if (!open) setEditTarget(null);
         }}
+        // Hand the project to the delete confirmation this panel already
+        // mounts below, rather than letting settings mount a second one.
+        onRequestDelete={() => setDeleteTarget(editTarget)}
         onSave={async (input) => {
           if (!editTarget) return;
           await updateMutation.mutateAsync({ project: editTarget, ...input });

@@ -24,7 +24,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/shared/ui/tabs";
 import { Textarea } from "@/shared/ui/textarea";
 
 import type { ProjectContainer } from "../hooks";
-import { GENERAL_PROJECT_DTAG } from "../lib/projectContainerModel";
+import {
+  GENERAL_PROJECT_DTAG,
+  LOCAL_GENERAL_ID,
+} from "../lib/projectContainerModel";
 import { useProjectCapabilities } from "../lib/projectPermissions";
 import { ProjectColorPickerField } from "./ProjectColorPickerField";
 import { ProjectIconPickerField } from "./ProjectIconPickerField";
@@ -56,11 +59,26 @@ export function ProjectSettingsDialog({
   isSaving,
   onSave,
   onOpenChange,
+  onRequestDelete,
 }: {
   project: ProjectContainer | null;
   isSaving: boolean;
   onSave: (input: ProjectSettingsSaveInput) => Promise<void>;
   onOpenChange: (open: boolean) => void;
+  /**
+   * Hand this project to the caller's own delete confirmation.
+   *
+   * Deliberately a callback rather than a `DeleteProjectDialog` mounted
+   * here: both callers already render one beside this dialog with their own
+   * open-state, so mounting a second would put two confirmations for the
+   * same project in the tree, each running its own cascade inventory. This
+   * closes settings and lets the caller open the dialog it already owns —
+   * which is also the mount `onDeleted` navigation and the e2e drive.
+   *
+   * Omitted by a caller that has no delete affordance; the danger zone is
+   * then not rendered at all.
+   */
+  onRequestDelete?: () => void;
 }) {
   const [name, setName] = React.useState("");
   const [description, setDescription] = React.useState("");
@@ -83,6 +101,19 @@ export function ProjectSettingsDialog({
   const canEditProject = capabilities.canEditHead;
 
   const isGeneral = project?.dtag === GENERAL_PROJECT_DTAG;
+  // The unpublished local placeholder has no kind:30621 to tombstone, so
+  // there is nothing to delete. Both `⋮` call sites already gate on this;
+  // this dialog did not compute it until the danger zone needed it.
+  const isFallback = project?.id === LOCAL_GENERAL_ID;
+  // Deliberately NOT `canEditProject`. A roster Owner who did not create the
+  // head cannot republish it but can delete it, which is exactly what the
+  // read-only note above promises — gating this on edit rights would make
+  // that note lie.
+  const canDelete =
+    onRequestDelete !== undefined &&
+    capabilities.canDeleteProject &&
+    !isGeneral &&
+    !isFallback;
 
   React.useEffect(() => {
     if (!project) return;
@@ -235,6 +266,41 @@ export function ProjectSettingsDialog({
                 ) : null}
                 {errorMessage ? (
                   <p className="text-sm text-destructive">{errorMessage}</p>
+                ) : null}
+                {canDelete ? (
+                  <div
+                    className="mt-2 flex flex-col gap-2 rounded-xl border border-destructive/40 p-3"
+                    data-testid="project-settings-danger-zone"
+                  >
+                    <p className="text-sm font-medium">Delete this project</p>
+                    <p className="text-xs text-muted-foreground">
+                      Removes the project for everyone, and offers to take its
+                      channels, repositories and the agents it created on this
+                      computer with it. You choose what goes on the next screen.
+                    </p>
+                    <div>
+                      <Button
+                        data-testid="project-settings-delete"
+                        // `capabilities.isLoading` too: the roster decides
+                        // who may delete, and mid-load it has collapsed
+                        // toward empty. The affordance is already hidden for
+                        // a non-owner; this stops the one case where the
+                        // roster has not said yet.
+                        disabled={isSaving || capabilities.isLoading}
+                        onClick={() => {
+                          // Close settings first, so the confirmation the
+                          // caller opens is not stacked on top of a dialog
+                          // describing a project that is about to be gone.
+                          onOpenChange(false);
+                          onRequestDelete?.();
+                        }}
+                        type="button"
+                        variant="destructive"
+                      >
+                        Delete project…
+                      </Button>
+                    </div>
+                  </div>
                 ) : null}
               </div>
               <DialogFooter className="mt-4">

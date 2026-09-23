@@ -694,6 +694,9 @@ export function ProjectContainerScreen({
         onOpenChange={(open) => {
           if (!open) setEditOpen(false);
         }}
+        // Reuses the confirmation mounted below, so `onDeleted` still
+        // navigates off this route once the project is gone.
+        onRequestDelete={() => setDeleteOpen(true)}
         onSave={async (input) => {
           await updateMutation.mutateAsync({ project, ...input });
           toast.success("Project updated.");
