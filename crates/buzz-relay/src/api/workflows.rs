@@ -172,6 +172,32 @@ pub async fn workflow_runs(
     })))
 }
 
+/// Whether `caller` may read one run of a workflow (ledger 252).
+///
+/// A member of the workflow's channel always may. Beyond the channel, the
+/// run's own trigger author may (a seat that started a run must be able to
+/// follow it — control run 3's lead got `403 workflow is not accessible` for
+/// the run it had just triggered, because setup filed `verify` in a channel
+/// only the owner held), and so may anyone on the roster of the project the
+/// workflow is bound to (`roster` = the owner and every invited member,
+/// lowercase hex). Nothing wider: a workflow bound to no project admits only
+/// its channel and its trigger author.
+fn run_read_admitted(
+    channel_accessible: bool,
+    caller_hex: &str,
+    trigger_author: Option<&str>,
+    roster: &[String],
+) -> bool {
+    if channel_accessible {
+        return true;
+    }
+    let caller = caller_hex.to_ascii_lowercase();
+    trigger_author.is_some_and(|author| author.eq_ignore_ascii_case(&caller))
+        || roster
+            .iter()
+            .any(|member| member.eq_ignore_ascii_case(&caller))
+}
+
 /// Authorize a read keyed by `run_id` alone: resolve the run's owning
 /// workflow, then apply the same channel-accessibility check
 /// [`authorize_workflow_read`] applies when the caller already knows the
@@ -244,8 +270,36 @@ async fn authorize_run_read(
     let accessible = state
         .get_accessible_channel_ids_cached(tenant.community(), &pubkey_bytes)
         .await
-        .map_err(|error| internal_error(&format!("workflow channel access lookup: {error}")))?;
-    if !accessible.contains(&channel_id) {
+        .map_err(|error| internal_error(&format!("workflow channel access lookup: {error}")))?
+        .contains(&channel_id);
+    let caller_hex = hex::encode(&pubkey_bytes);
+    let trigger_author = run
+        .trigger_context
+        .as_ref()
+        .and_then(|context| context.get("author"))
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    // The roster is read only when neither the channel nor the trigger
+    // author already decided the read.
+    let roster = match workflow.project_ref.as_deref() {
+        Some(project)
+            if !run_read_admitted(accessible, &caller_hex, trigger_author.as_deref(), &[]) =>
+        {
+            match state
+                .db
+                .get_project_roster(tenant.community(), project)
+                .await
+                .map_err(|error| internal_error(&format!("workflow project roster: {error}")))?
+            {
+                Some(roster) => std::iter::once(hex::encode(&roster.owner))
+                    .chain(roster.members.iter().map(|(member, _)| hex::encode(member)))
+                    .collect(),
+                None => Vec::new(),
+            }
+        }
+        _ => Vec::new(),
+    };
+    if !run_read_admitted(accessible, &caller_hex, trigger_author.as_deref(), &roster) {
         return Err(api_error(
             StatusCode::FORBIDDEN,
             "workflow is not accessible",
@@ -533,6 +587,38 @@ fn host_step_json(step: &buzz_db::workflow::HostStepRecord) -> Value {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_run_is_readable_by_its_trigger_author_and_its_project_roster_only() {
+        let author = "1650fa10".repeat(8);
+        let owner = "3d3b7169".repeat(8);
+        let stranger = "deadbeef".repeat(8);
+        let roster = vec![owner.clone()];
+        // The channel still admits its members.
+        assert!(super::run_read_admitted(true, &stranger, None, &[]));
+        // The seat that triggered the run, outside the workflow's channel.
+        assert!(super::run_read_admitted(false, &author, Some(&author), &[]));
+        assert!(super::run_read_admitted(
+            false,
+            &author.to_uppercase(),
+            Some(&author),
+            &[]
+        ));
+        // A project roster member, outside the channel.
+        assert!(super::run_read_admitted(
+            false,
+            &owner,
+            Some(&author),
+            &roster
+        ));
+        // Nobody else.
+        assert!(!super::run_read_admitted(
+            false,
+            &stranger,
+            Some(&author),
+            &roster
+        ));
+        assert!(!super::run_read_admitted(false, &stranger, None, &[]));
+    }
     use super::*;
 
     #[test]
