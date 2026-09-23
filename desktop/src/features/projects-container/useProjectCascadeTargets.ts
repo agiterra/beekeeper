@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import * as React from "react";
 
 import { useChannelsQuery } from "@/features/channels/hooks";
+import { useProjectsQuery } from "@/features/projects/hooks";
 import { allWorkflowsQueryKey } from "@/features/workflows/hooks";
 import { useIdentityQuery } from "@/shared/api/hooks";
 import { relayClient } from "@/shared/api/relayClient";
@@ -10,12 +11,15 @@ import { getChannelsWorkflows } from "@/shared/api/tauriWorkflows";
 import { useFeatureEnabled } from "@/shared/features";
 
 import type { ProjectContainer } from "./hooks";
+import { useProjectCapabilities } from "./lib/projectPermissions";
 import {
   cascadeTerminalsFromEvents,
   describeProjectCascade,
+  describeProjectCascadeRepos,
   projectCascadeCounts,
   projectCascadeChannels,
   projectCascadeExclusionNotes,
+  projectCascadeRepos,
   projectCascadeWorkflows,
   type ProjectCascadeCounts,
   type ProjectCascadeTargets,
@@ -26,6 +30,8 @@ const EMPTY_TARGETS: ProjectCascadeTargets = {
   workflows: [],
   foreignWorkflows: [],
   terminals: [],
+  repos: [],
+  foreignRepos: [],
 };
 
 export type ProjectCascadeTargetsResult = {
@@ -33,6 +39,8 @@ export type ProjectCascadeTargetsResult = {
   counts: ProjectCascadeCounts;
   /** Human summary for the dialog, `""` when there is nothing to delete. */
   summary: string;
+  /** The repositories the repo tick would delete, by name; `""` when none. */
+  repoSummary: string;
   /** Sentences naming what the cascade will *not* do (foreign workflows,
    * un-enumerable workflows). Empty when it will do everything it claims. */
   exclusions: string[];
@@ -64,6 +72,21 @@ export function useProjectCascadeTargets(
   const workflowsEnabled = useFeatureEnabled("workflows");
   const identityQuery = useIdentityQuery();
   const selfPubkey = identityQuery.data?.pubkey ?? null;
+  // Owner-ness decides whether a teammate's repository is deletable at all
+  // (see `projectCascadeRepos`), so the repo tick cannot be classified
+  // without it.
+  const capabilities = useProjectCapabilities(project);
+  // Every repository in the community, not just this project's forward refs:
+  // a repository carries its project link in a multi-letter `project` tag,
+  // which Nostr does not index, so there is no relay filter for "repos of
+  // this project" and the back-referenced side can only be found by
+  // filtering the full set here. This is the same enumeration the sidebar
+  // already runs, so it is served from cache rather than fetched again.
+  const projectsQuery = useProjectsQuery();
+  const repositories = React.useMemo(
+    () => (projectsQuery.data ?? []).flatMap((entry) => entry.repositories),
+    [projectsQuery.data],
+  );
 
   const channels = React.useMemo(
     () =>
@@ -102,8 +125,21 @@ export function useProjectCascadeTargets(
   const targets = React.useMemo<ProjectCascadeTargets>(() => {
     if (!project) return EMPTY_TARGETS;
     const terminals = terminalsQuery.data ?? [];
+    const repos = projectCascadeRepos(
+      project,
+      repositories,
+      selfPubkey,
+      capabilities.isOwner,
+    );
     if (!workflowsEnabled) {
-      return { channels, workflows: [], foreignWorkflows: [], terminals };
+      return {
+        channels,
+        workflows: [],
+        foreignWorkflows: [],
+        terminals,
+        repos: repos.mine,
+        foreignRepos: repos.foreign,
+      };
     }
     const { mine, foreign } = projectCascadeWorkflows(
       channelIds,
@@ -115,6 +151,8 @@ export function useProjectCascadeTargets(
       workflows: mine,
       foreignWorkflows: foreign,
       terminals,
+      repos: repos.mine,
+      foreignRepos: repos.foreign,
     };
   }, [
     project,
@@ -123,6 +161,8 @@ export function useProjectCascadeTargets(
     workflowsEnabled,
     workflowsQuery.data,
     terminalsQuery.data,
+    repositories,
+    capabilities.isOwner,
     selfPubkey,
   ]);
 
@@ -143,12 +183,19 @@ export function useProjectCascadeTargets(
     (channelsQuery.isLoading ||
       identityQuery.isLoading ||
       terminalsQuery.isLoading ||
+      // The repository classification depends on both of these: an
+      // unresolved roster reads as "not an owner" and would silently demote
+      // every teammate repository to a survivor while the copy claimed a
+      // complete inventory.
+      projectsQuery.isLoading ||
+      capabilities.isLoading ||
       (workflowsEnabled && workflowsQuery.isLoading && channelIds.length > 0));
 
   return {
     targets,
     counts,
     summary: describeProjectCascade(counts),
+    repoSummary: describeProjectCascadeRepos(targets.repos),
     exclusions: projectCascadeExclusionNotes(counts, workflowsUnknown),
     isLoading,
   };

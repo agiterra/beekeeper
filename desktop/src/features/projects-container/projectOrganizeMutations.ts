@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { deleteShellAnnounce } from "@/features/builtin-shell/observe/deleteShellAnnounce";
+import { deleteRepository } from "@/features/projects/deleteRepository";
 import { channelsQueryKey } from "@/features/channels/hooks";
 import {
   projectsQueryKey,
@@ -352,6 +353,14 @@ export type DeleteProjectContainerCascadeInput = {
   /** Everything to delete alongside the project, from
    * `useProjectCascadeTargets`. */
   targets: ProjectCascadeTargets;
+  /**
+   * Delete the project's repositories too.
+   *
+   * Its own flag rather than something folded into `targets`, because it is
+   * its own checkbox and deliberately unticked: a repository is the one
+   * child here whose loss is measured in somebody's commits.
+   */
+  deleteRepos?: boolean;
 };
 
 /**
@@ -383,6 +392,7 @@ export type DeleteProjectContainerCascadeInput = {
 export async function deleteProjectContainerCascade({
   project,
   targets,
+  deleteRepos = false,
 }: DeleteProjectContainerCascadeInput): Promise<void> {
   const self = await assertViewerMayDeleteProject(project);
 
@@ -415,6 +425,28 @@ export async function deleteProjectContainerCascade({
       });
     } catch {
       failures.push(`terminal "${terminal.title || terminal.sessionId}"`);
+    }
+  }
+
+  // Repositories last among the children, and only when their own checkbox
+  // armed them. Last because they are the most consequential thing here: if
+  // any earlier child fails, this aborts before touching anybody's code and
+  // the whole operation is still retryable with the head in place.
+  //
+  // `targets.repos` is already classified by `projectCascadeRepos` into the
+  // ones this identity can actually delete — a repository the relay would
+  // accept a tombstone for while matching no live row is never issued one.
+  if (deleteRepos) {
+    for (const repo of targets.repos) {
+      try {
+        await deleteRepository({
+          ownerPubkey: repo.ownerPubkey,
+          repoId: repo.repoId,
+          name: repo.name,
+        });
+      } catch {
+        failures.push(`repository "${repo.name}"`);
+      }
     }
   }
 

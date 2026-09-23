@@ -67,15 +67,22 @@ export function DeleteProjectDialog({
   // says. Unticking still gives NIP-MP's contract — the kind:30621 alone —
   // and `bee projects delete` keeps the safe default on its side.
   const [cascade, setCascade] = React.useState(true);
+  // Unticked, always. Andy's call (2026-09-22): deleting code is a bigger
+  // act than deleting the grouping, so it is armed on its own and never by
+  // the checkbox above.
+  const [withRepos, setWithRepos] = React.useState(false);
   const deleteMutation = useDeleteProjectContainerMutation();
   const cascadeMutation = useDeleteProjectContainerCascadeMutation();
-  const { targets, counts, summary, exclusions, isLoading } =
+  const { targets, counts, summary, repoSummary, exclusions, isLoading } =
     useProjectCascadeTargets(project);
 
   // Every open starts from the same default; a previous *untick* must never
   // carry into the next project any more than a previous tick could.
   React.useEffect(() => {
-    if (project === null) setCascade(true);
+    if (project === null) {
+      setCascade(true);
+      setWithRepos(false);
+    }
   }, [project]);
 
   const isPending = deleteMutation.isPending || cascadeMutation.isPending;
@@ -86,9 +93,14 @@ export function DeleteProjectDialog({
   // the same class of lie this dialog already refuses to tell about foreign
   // workflows. Ticked-but-nothing-to-cascade is a plain delete, and says so.
   const cascading = cascade && hasChildren;
+  const hasRepos = counts.repos > 0;
+  // Same rule as `cascading`: a ticked box over nothing must not make the
+  // receipt claim repositories were deleted.
+  const deletingRepos = withRepos && hasRepos;
 
   const close = () => {
     setCascade(true);
+    setWithRepos(false);
     onOpenChange(false);
   };
 
@@ -99,9 +111,18 @@ export function DeleteProjectDialog({
           <AlertDialogTitle>Delete this project?</AlertDialogTitle>
           <AlertDialogDescription>
             {project
-              ? cascading
-                ? `"${project.name}" will be removed for everyone, along with ${summary}. Messages in those channels go with them. Its repositories are not deleted — they move to General.`
-                : `"${project.name}" will be removed for everyone. Its repositories, channels, and forums are not deleted — they move to General.`
+              ? [
+                  cascading
+                    ? `"${project.name}" will be removed for everyone, along with ${summary}. Messages in those channels go with them.`
+                    : `"${project.name}" will be removed for everyone. Its channels and forums are not deleted — they move to General.`,
+                  // Said here rather than only under the tick, because this
+                  // sentence is the one a person reads before deciding, and
+                  // "repositories are not deleted" was true of every delete
+                  // until the repository checkbox existed.
+                  deletingRepos
+                    ? `Its repositories (${repoSummary}) will be deleted too.`
+                    : "Its repositories are not deleted — they move to General.",
+                ].join(" ")
               : ""}
           </AlertDialogDescription>
         </AlertDialogHeader>
@@ -129,6 +150,42 @@ export function DeleteProjectDialog({
                   : " (nothing to delete)"}
             </span>
           </label>
+
+          <label
+            className="flex cursor-pointer items-start gap-2.5 text-sm has-[button:disabled]:cursor-not-allowed has-[button:disabled]:opacity-60"
+            htmlFor="delete-project-repos"
+          >
+            <Checkbox
+              checked={withRepos}
+              className="mt-0.5"
+              data-testid="delete-project-repos"
+              disabled={isPending || isLoading || !hasRepos}
+              id="delete-project-repos"
+              onCheckedChange={(checked) => setWithRepos(checked === true)}
+            />
+            <span>
+              Also delete this project&apos;s repositories
+              {isLoading
+                ? " (counting…)"
+                : hasRepos
+                  ? ` (${repoSummary})`
+                  : " (none you can delete)"}
+            </span>
+          </label>
+
+          {deletingRepos ? (
+            <p
+              className="text-xs text-muted-foreground"
+              data-testid="delete-project-repos-note"
+            >
+              The repository stops being cloneable and its branches stop being
+              readable. Its <em>name</em> stays reserved to you — deleting a
+              repository never frees its name for somebody else to take — and
+              the packed objects are left alone, because they are shared with
+              any fork and reclaiming them could destroy a neighbour&apos;s
+              history. No clone on anybody&apos;s disk is touched.
+            </p>
+          ) : null}
 
           {exclusions.map((note) => (
             <p
@@ -177,20 +234,35 @@ export function DeleteProjectDialog({
               event.preventDefault();
               if (!project) return;
               const onSuccess = () => {
-                if (!cascading) {
-                  toast.success("Project deleted.");
-                } else if (counts.foreignWorkflows > 0) {
-                  // The receipt names the survivors; a plain "deleted" here
-                  // would be the same lie the dialog just avoided telling.
-                  toast.success("Project and its channels deleted.", {
-                    description:
-                      counts.foreignWorkflows === 1
-                        ? "1 workflow created by someone else was left in place."
-                        : `${counts.foreignWorkflows} workflows created by someone else were left in place.`,
-                  });
-                } else {
-                  toast.success("Project and its channels deleted.");
+                // The receipt says what actually went and names every
+                // survivor. A plain "deleted" over a partial result is the
+                // same lie this dialog spent its copy avoiding.
+                const went = ["Project"];
+                if (cascading) went.push("its channels");
+                if (deletingRepos) went.push("its repositories");
+                const left: string[] = [];
+                if (cascading && counts.foreignWorkflows > 0) {
+                  left.push(
+                    counts.foreignWorkflows === 1
+                      ? "1 workflow created by someone else"
+                      : `${counts.foreignWorkflows} workflows created by someone else`,
+                  );
                 }
+                if (deletingRepos && counts.foreignRepos > 0) {
+                  left.push(
+                    counts.foreignRepos === 1
+                      ? "1 repository you cannot delete"
+                      : `${counts.foreignRepos} repositories you cannot delete`,
+                  );
+                }
+                toast.success(
+                  `${went.length === 1 ? "Project" : went.join(" and ")} deleted.`,
+                  left.length > 0
+                    ? {
+                        description: `Left in place: ${left.join(", ")}.`,
+                      }
+                    : undefined,
+                );
                 close();
                 onDeleted?.();
               };
@@ -202,9 +274,9 @@ export function DeleteProjectDialog({
                 );
                 close();
               };
-              if (cascading) {
+              if (cascading || deletingRepos) {
                 cascadeMutation.mutate(
-                  { project, targets },
+                  { project, targets, deleteRepos: deletingRepos },
                   { onSuccess, onError },
                 );
                 return;

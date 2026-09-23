@@ -8,6 +8,7 @@ import {
   projectCascadeChannels,
   projectCascadeCounts,
   projectCascadeExclusionNotes,
+  projectCascadeRepos,
   projectCascadeWorkflows,
 } from "./projectCascade.ts";
 
@@ -18,6 +19,16 @@ const ADDRESS = `30621:${OWNER}:platform`;
 const project = (overrides = {}) => ({
   address: ADDRESS,
   channelIds: [],
+  repoAddrs: [],
+  ...overrides,
+});
+
+const repo = (overrides = {}) => ({
+  repoAddress: `30617:${OWNER}:platform`,
+  dtag: "platform",
+  name: "platform",
+  owner: OWNER,
+  projectRef: null,
   ...overrides,
 });
 
@@ -137,6 +148,8 @@ test("counts break transports out from ordinary channels", () => {
     workflows: [workflow()],
     foreignWorkflows: [],
     terminals: [],
+    repos: [],
+    foreignRepos: [],
   });
 
   assert.deepEqual(counts, {
@@ -145,6 +158,8 @@ test("counts break transports out from ordinary channels", () => {
     transports: 1,
     workflows: 1,
     foreignWorkflows: 0,
+    repos: 0,
+    foreignRepos: 0,
     terminals: 0,
     total: 4,
   });
@@ -159,6 +174,8 @@ test("foreign workflows are counted but excluded from the delete total", () => {
       workflow({ id: "w-3", ownerPubkey: OTHER }),
     ],
     terminals: [],
+    repos: [],
+    foreignRepos: [],
   });
 
   assert.equal(counts.workflows, 1);
@@ -176,6 +193,8 @@ test("the summary counts only the workflows that get deleted", () => {
     workflows: [workflow({ id: "w-1" })],
     foreignWorkflows: [workflow({ id: "w-2", ownerPubkey: OTHER })],
     terminals: [],
+    repos: [],
+    foreignRepos: [],
   });
   assert.equal(describeProjectCascade(counts), "1 channel, 1 workflow");
 });
@@ -188,6 +207,8 @@ test("shared terminals are counted and named in the summary", () => {
     channels: [channel({ id: "c-1" })],
     workflows: [],
     foreignWorkflows: [],
+    repos: [],
+    foreignRepos: [],
     terminals: [
       { sessionId: "t-1", ownerPubkey: "a".repeat(64), title: "build" },
       { sessionId: "t-2", ownerPubkey: "a".repeat(64), title: "" },
@@ -205,6 +226,8 @@ test("a project whose only children are terminals still has children", () => {
     channels: [],
     workflows: [],
     foreignWorkflows: [],
+    repos: [],
+    foreignRepos: [],
     terminals: [
       { sessionId: "t-1", ownerPubkey: "a".repeat(64), title: "build" },
     ],
@@ -348,4 +371,137 @@ test("an announce with no session id is skipped", () => {
     },
   ];
   assert.deepEqual(cascadeTerminalsFromEvents(events), []);
+});
+
+// ── Repositories ────────────────────────────────────────────────────────────
+//
+// The rule these pin is not "events I signed". The relay's
+// `project_owner_admits_deletion` lets a project Owner delete a kind:30617
+// they did not sign — but it resolves the governing project through the
+// repo's *back-reference*, so a forward-ref-only repo falls back to the
+// authorship arm. A delete issued there is accepted, matches no live row,
+// and reports success having changed nothing.
+
+test("a repository is claimed by its forward ref or its back-reference", () => {
+  const forwardOnly = repo({
+    repoAddress: `30617:${OTHER}:fwd`,
+    dtag: "fwd",
+    owner: OTHER,
+  });
+  const backOnly = repo({
+    repoAddress: `30617:${OTHER}:back`,
+    dtag: "back",
+    owner: OTHER,
+    projectRef: ADDRESS,
+  });
+  const unrelated = repo({
+    repoAddress: `30617:${OTHER}:other`,
+    dtag: "other",
+    owner: OTHER,
+  });
+  const { mine, foreign } = projectCascadeRepos(
+    project({ repoAddrs: [forwardOnly.repoAddress] }),
+    [forwardOnly, backOnly, unrelated],
+    OWNER,
+    true,
+  );
+  const claimed = [...mine, ...foreign].map((entry) => entry.repoId).sort();
+  assert.deepEqual(claimed, ["back", "fwd"]);
+});
+
+test("an owner may delete a teammate's repository only when it carries the back-reference", () => {
+  const backReferenced = repo({
+    repoAddress: `30617:${OTHER}:back`,
+    dtag: "back",
+    owner: OTHER,
+    projectRef: ADDRESS,
+  });
+  const forwardOnly = repo({
+    repoAddress: `30617:${OTHER}:fwd`,
+    dtag: "fwd",
+    owner: OTHER,
+  });
+  const { mine, foreign } = projectCascadeRepos(
+    project({ repoAddrs: [forwardOnly.repoAddress] }),
+    [backReferenced, forwardOnly],
+    OWNER,
+    true,
+  );
+  assert.deepEqual(
+    mine.map((entry) => entry.repoId),
+    ["back"],
+  );
+  // The one a naive "owners may delete anything in their project" rule gets
+  // wrong: the relay would accept this tombstone and change nothing.
+  assert.deepEqual(
+    foreign.map((entry) => entry.repoId),
+    ["fwd"],
+  );
+});
+
+test("a non-owner deletes only what they signed, back-reference or not", () => {
+  const ownRepo = repo({ projectRef: ADDRESS });
+  const theirs = repo({
+    repoAddress: `30617:${OTHER}:theirs`,
+    dtag: "theirs",
+    owner: OTHER,
+    projectRef: ADDRESS,
+  });
+  const { mine, foreign } = projectCascadeRepos(
+    project(),
+    [ownRepo, theirs],
+    OWNER,
+    false,
+  );
+  assert.deepEqual(
+    mine.map((entry) => entry.repoId),
+    ["platform"],
+  );
+  assert.deepEqual(
+    foreign.map((entry) => entry.repoId),
+    ["theirs"],
+  );
+});
+
+test("an unresolved identity classifies every repository as foreign", () => {
+  const { mine, foreign } = projectCascadeRepos(
+    project(),
+    [repo({ projectRef: ADDRESS })],
+    null,
+    false,
+  );
+  assert.deepEqual(mine, []);
+  assert.equal(foreign.length, 1);
+});
+
+test("repositories stay out of the main cascade total", () => {
+  const counts = projectCascadeCounts({
+    channels: [],
+    workflows: [],
+    foreignWorkflows: [],
+    terminals: [],
+    repos: [repo()],
+    foreignRepos: [],
+  });
+  assert.equal(counts.repos, 1);
+  // A project whose only child is a repository must still read as "nothing
+  // to delete" under the first checkbox, or that box arms itself over work
+  // it does not do.
+  assert.equal(counts.total, 0);
+});
+
+test("a repository somebody else owns is named as a survivor", () => {
+  const notes = projectCascadeExclusionNotes(
+    projectCascadeCounts({
+      channels: [],
+      workflows: [],
+      foreignWorkflows: [],
+      terminals: [],
+      repos: [],
+      foreignRepos: [repo({ owner: OTHER })],
+    }),
+    false,
+  );
+  assert.equal(notes.length, 1);
+  assert.match(notes[0], /1 repository in this project cannot be deleted/);
 });
