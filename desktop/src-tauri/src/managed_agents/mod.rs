@@ -43,6 +43,7 @@ pub(crate) mod project_association_authority;
 pub(crate) mod project_association_carry;
 pub(crate) mod project_roster;
 pub(crate) mod project_team_setup;
+pub(crate) mod project_teardown;
 pub(crate) mod project_verify_setup;
 #[cfg(test)]
 mod project_verify_setup_tests;
