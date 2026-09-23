@@ -5,6 +5,10 @@ import { useChannelsQuery } from "@/features/channels/hooks";
 import { useProjectsQuery } from "@/features/projects/hooks";
 import { allWorkflowsQueryKey } from "@/features/workflows/hooks";
 import { useIdentityQuery } from "@/shared/api/hooks";
+import {
+  planProjectAgentTeardown,
+  type ProjectAgentTeardownPlan,
+} from "@/shared/api/projectAgentTeardown";
 import { relayClient } from "@/shared/api/relayClient";
 import { KIND_SHELL_SESSION } from "@/shared/constants/kinds";
 import { getChannelsWorkflows } from "@/shared/api/tauriWorkflows";
@@ -41,6 +45,12 @@ export type ProjectCascadeTargetsResult = {
   summary: string;
   /** The repositories the repo tick would delete, by name; `""` when none. */
   repoSummary: string;
+  /**
+   * What this project created on this computer, or `null` when the host
+   * could not enumerate it. `null` is a real answer and the dialog says so
+   * rather than rendering "0 agents" over an unanswered question.
+   */
+  localPlan: ProjectAgentTeardownPlan | null;
   /** Sentences naming what the cascade will *not* do (foreign workflows,
    * un-enumerable workflows). Empty when it will do everything it claims. */
   exclusions: string[];
@@ -166,6 +176,16 @@ export function useProjectCascadeTargets(
     selfPubkey,
   ]);
 
+  // The local side: agents, their keys, the project team and its definitions.
+  // Read-only, and keyed on the project so it is re-read per project rather
+  // than per render.
+  const localQuery = useQuery({
+    enabled: project !== null,
+    queryKey: ["project-agent-teardown-plan", project?.address ?? "none"],
+    queryFn: () => planProjectAgentTeardown(project?.address ?? ""),
+    staleTime: 30_000,
+  });
+
   const counts = React.useMemo(() => projectCascadeCounts(targets), [targets]);
 
   // Workflows exist in these channels but this session cannot enumerate them:
@@ -189,6 +209,7 @@ export function useProjectCascadeTargets(
       // complete inventory.
       projectsQuery.isLoading ||
       capabilities.isLoading ||
+      localQuery.isLoading ||
       (workflowsEnabled && workflowsQuery.isLoading && channelIds.length > 0));
 
   return {
@@ -196,6 +217,7 @@ export function useProjectCascadeTargets(
     counts,
     summary: describeProjectCascade(counts),
     repoSummary: describeProjectCascadeRepos(targets.repos),
+    localPlan: localQuery.data ?? null,
     exclusions: projectCascadeExclusionNotes(counts, workflowsUnknown),
     isLoading,
   };

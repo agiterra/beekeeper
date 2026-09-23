@@ -2,6 +2,10 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { deleteShellAnnounce } from "@/features/builtin-shell/observe/deleteShellAnnounce";
 import { deleteRepository } from "@/features/projects/deleteRepository";
+import {
+  runProjectAgentTeardown,
+  type ProjectAgentTeardownPlan,
+} from "@/shared/api/projectAgentTeardown";
 import { channelsQueryKey } from "@/features/channels/hooks";
 import {
   projectsQueryKey,
@@ -361,6 +365,16 @@ export type DeleteProjectContainerCascadeInput = {
    * child here whose loss is measured in somebody's commits.
    */
   deleteRepos?: boolean;
+  /**
+   * Also remove what the project created on this computer — its managed
+   * agent identities and their signing keys, the project team, and the
+   * `crew-role:` definitions.
+   *
+   * The plan from `useProjectCascadeTargets`, passed whole because its agent
+   * list is the drift guard: the host re-enumerates and refuses if the set
+   * moved since this plan was shown.
+   */
+  localPlan?: ProjectAgentTeardownPlan | null;
 };
 
 /**
@@ -393,8 +407,28 @@ export async function deleteProjectContainerCascade({
   project,
   targets,
   deleteRepos = false,
+  localPlan = null,
 }: DeleteProjectContainerCascadeInput): Promise<void> {
   const self = await assertViewerMayDeleteProject(project);
+
+  // Local teardown FIRST, and a refusal aborts before anything is published.
+  // Two reasons it goes first rather than last: its refusals (a remotely
+  // deployed agent, a set that moved) are the ones a person can act on, and
+  // they are worth hitting while the project is still intact; and after the
+  // tombstone the roster cannot be read at all, so anything needing the live
+  // head has already missed its window.
+  if (localPlan !== null && localPlan.agents.length > 0) {
+    const receipt = await runProjectAgentTeardown(
+      localPlan.projectRef,
+      localPlan.agents.map((agent) => agent.pubkey),
+    );
+    if (!receipt.complete) {
+      throw new Error(
+        `The project was NOT deleted: its agents could not be fully removed ` +
+          `(${receipt.skipped.join(", ")}). Fix those and try again.`,
+      );
+    }
+  }
 
   const failures: string[] = [];
   for (const channel of targets.channels) {

@@ -73,8 +73,15 @@ export function DeleteProjectDialog({
   const [withRepos, setWithRepos] = React.useState(false);
   const deleteMutation = useDeleteProjectContainerMutation();
   const cascadeMutation = useDeleteProjectContainerCascadeMutation();
-  const { targets, counts, summary, repoSummary, exclusions, isLoading } =
-    useProjectCascadeTargets(project);
+  const {
+    targets,
+    counts,
+    summary,
+    repoSummary,
+    exclusions,
+    isLoading,
+    localPlan,
+  } = useProjectCascadeTargets(project);
 
   // Every open starts from the same default; a previous *untick* must never
   // carry into the next project any more than a previous tick could.
@@ -97,6 +104,11 @@ export function DeleteProjectDialog({
   // Same rule as `cascading`: a ticked box over nothing must not make the
   // receipt claim repositories were deleted.
   const deletingRepos = withRepos && hasRepos;
+  // The local identities go with the project whenever anything else does.
+  // They are not their own checkbox: an agent minted for a project that no
+  // longer exists is not a thing anybody keeps on purpose, and leaving its
+  // signing key in the keyring is worse than removing it.
+  const localAgents = localPlan?.agents.length ?? 0;
 
   const close = () => {
     setCascade(true);
@@ -187,6 +199,53 @@ export function DeleteProjectDialog({
             </p>
           ) : null}
 
+          {localAgents > 0 ? (
+            <p
+              className="text-xs text-muted-foreground"
+              data-testid="delete-project-local-agents"
+            >
+              {localAgents === 1
+                ? "1 agent this project created on this computer"
+                : `${localAgents} agents this project created on this computer`}{" "}
+              will be deleted, along with their signing keys, this
+              project&apos;s team and its role definitions. That cannot be
+              undone — the keys are destroyed, not archived. Only this computer
+              is cleaned: anyone else who has this project keeps their own
+              copies.
+            </p>
+          ) : null}
+
+          {localPlan !== null && localPlan.remoteDeployed.length > 0 ? (
+            <p
+              className="text-xs text-destructive"
+              data-testid="delete-project-remote-deployed"
+            >
+              {localPlan.remoteDeployed.map((agent) => agent.name).join(", ")}{" "}
+              {localPlan.remoteDeployed.length === 1 ? "is" : "are"} deployed to
+              a remote provider. Deleting the local record would orphan the
+              deployment, so this will refuse — delete{" "}
+              {localPlan.remoteDeployed.length === 1 ? "it" : "them"} from the
+              Agents list first.
+            </p>
+          ) : null}
+
+          {localPlan !== null && localPlan.liveSessions.length > 0 ? (
+            <p
+              className="text-xs text-muted-foreground"
+              data-testid="delete-project-live-sessions"
+            >
+              {localPlan.liveSessions.length === 1
+                ? "1 coding session is still open"
+                : `${localPlan.liveSessions.length} coding sessions are still open`}{" "}
+              for this project ({localPlan.liveSessions.join(", ")}). Deleting
+              the project does not close{" "}
+              {localPlan.liveSessions.length === 1 ? "it" : "them"} — close{" "}
+              {localPlan.liveSessions.length === 1 ? "it" : "them"} from{" "}
+              {localPlan.liveSessions.length === 1 ? "its" : "their"} own row
+              first if you want that.
+            </p>
+          ) : null}
+
           {exclusions.map((note) => (
             <p
               className="text-xs text-muted-foreground"
@@ -240,6 +299,7 @@ export function DeleteProjectDialog({
                 const went = ["Project"];
                 if (cascading) went.push("its channels");
                 if (deletingRepos) went.push("its repositories");
+                if (localAgents > 0) went.push("its agents");
                 const left: string[] = [];
                 if (cascading && counts.foreignWorkflows > 0) {
                   left.push(
@@ -274,9 +334,14 @@ export function DeleteProjectDialog({
                 );
                 close();
               };
-              if (cascading || deletingRepos) {
+              if (cascading || deletingRepos || localAgents > 0) {
                 cascadeMutation.mutate(
-                  { project, targets, deleteRepos: deletingRepos },
+                  {
+                    project,
+                    targets,
+                    deleteRepos: deletingRepos,
+                    localPlan,
+                  },
                   { onSuccess, onError },
                 );
                 return;

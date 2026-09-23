@@ -14460,6 +14460,29 @@ export function maybeInstallE2eTauriMocks() {
           payload as Parameters<typeof handleUnarchiveChannel>[0],
           activeConfig,
         );
+      // The project teardown: nothing local exists in a mock run, so the
+      // plan is empty and the dialog renders no local-agent disclosure.
+      // `run_` is still answered rather than left to throw, so a spec that
+      // reaches it fails on its assertion and not on an unmocked command.
+      case "plan_project_agent_teardown":
+        return {
+          projectRef: (payload as { projectRef?: string })?.projectRef ?? "",
+          team: null,
+          agents: [],
+          definitions: [],
+          remoteDeployed: [],
+          liveSessions: [],
+          retained: [],
+        };
+      case "run_project_agent_teardown":
+        return {
+          agentsDeleted: [],
+          definitionsRemoved: [],
+          teamDeleted: null,
+          backups: [],
+          skipped: [],
+          complete: true,
+        };
       case "delete_channel":
         return handleDeleteChannel(
           payload as Parameters<typeof handleDeleteChannel>[0],
