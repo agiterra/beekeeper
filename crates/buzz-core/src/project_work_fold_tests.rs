@@ -48,7 +48,7 @@ struct Sequence {
 const KETTLE_PLAN: &str =
     include_str!("../../../conformance/project-work/fixtures/plans/valid/kettle.md");
 
-const SEQUENCES: [Sequence; 35] = [
+const SEQUENCES: [Sequence; 37] = [
     sequence!("happy-path"),
     sequence!("amendment"),
     sequence!("fork"),
@@ -84,6 +84,8 @@ const SEQUENCES: [Sequence; 35] = [
     sequence!("plan-drift-superseded"),
     sequence!("plan-drift-unknown"),
     sequence!("plan-drift-on-completed"),
+    sequence!("ref-observation-rebound"),
+    sequence!("ref-observation-wrong-ref"),
 ];
 
 impl Sequence {

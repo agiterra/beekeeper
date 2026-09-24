@@ -1,0 +1,106 @@
+{
+  "relaySelfKey": "4e1a000000000000000000000000000000000000000000000000000000000000",
+  "authority": {
+    "founderPubkey": "1ead000000000000000000000000000000000000000000000000000000000000",
+    "activeSeats": [
+      {
+        "actorPubkey": "1ead000000000000000000000000000000000000000000000000000000000000",
+        "role": "lead"
+      }
+    ],
+    "activeGrants": [
+      {
+        "actorPubkey": "57ee000000000000000000000000000000000000000000000000000000000000",
+        "grantEventRef": "47a1000000000000000000000000000000000000000000000000000000000000",
+        "maySteer": true
+      }
+    ]
+  },
+  "currentGoalRef": "90a1000000000000000000000000000000000000000000000000000000000000",
+  "goalEvents": [
+    "90a1000000000000000000000000000000000000000000000000000000000000",
+    "90a2000000000000000000000000000000000000000000000000000000000000"
+  ],
+  "planBlobs": {
+    "30617:1ead000000000000000000000000000000000000000000000000000000000000:pivot-test-beekeeper-agents@abababababababababababababababababababab:plans/kettle.md": "../../plans/valid/kettle.md"
+  },
+  "actionDefinitions": {
+    "30617:1ead000000000000000000000000000000000000000000000000000000000000:pivot-test-beekeeper-agents@abababababababababababababababababababab#verify": {
+      "definitionHash": "d1f0000000000000000000000000000000000000000000000000000000000000",
+      "steps": [
+        "verify"
+      ]
+    }
+  },
+  "teamProjection": {
+    "includedEventIds": [],
+    "assignments": {
+      "a551000000000000000000000000000000000000000000000000000000000000": {
+        "assigneeActor": "b011000000000000000000000000000000000000000000000000000000000000",
+        "assigneeRole": "builder"
+      },
+      "a552000000000000000000000000000000000000000000000000000000000000": {
+        "assigneeActor": "b011000000000000000000000000000000000000000000000000000000000000",
+        "assigneeRole": "builder"
+      },
+      "a553000000000000000000000000000000000000000000000000000000000000": {
+        "assigneeActor": "b011000000000000000000000000000000000000000000000000000000000000",
+        "assigneeRole": "builder"
+      }
+    }
+  },
+  "evidence": {},
+  "refStates": [
+    {
+      "id": "0b51000000000000000000000000000000000000000000000000000000000000",
+      "pubkey": "4e1a000000000000000000000000000000000000000000000000000000000000",
+      "created_at": 1789000050,
+      "kind": 30618,
+      "tags": [
+        [
+          "d",
+          "pivot-test"
+        ],
+        [
+          "refs/heads/main",
+          "e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7"
+        ],
+        [
+          "HEAD",
+          "ref: refs/heads/main"
+        ],
+        [
+          "p",
+          "1ead000000000000000000000000000000000000000000000000000000000000"
+        ]
+      ],
+      "content": ""
+    },
+    {
+      "id": "0b52000000000000000000000000000000000000000000000000000000000000",
+      "pubkey": "4e1a000000000000000000000000000000000000000000000000000000000000",
+      "created_at": 1789000095,
+      "kind": 30618,
+      "tags": [
+        [
+          "d",
+          "pivot-test"
+        ],
+        [
+          "refs/heads/main",
+          "3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a"
+        ],
+        [
+          "HEAD",
+          "ref: refs/heads/main"
+        ],
+        [
+          "p",
+          "1ead000000000000000000000000000000000000000000000000000000000000"
+        ]
+      ],
+      "content": ""
+    }
+  ],
+  "note": "delivered-main is bound twice: first at e7e7\u2026 against the 30618 that named it, then, after main moved, at 3a3a\u2026 against the newer relay-signed 30618. The first binding is immutable and stays on the wire; the fold unions both bindings' refs and judges the newest binding's commit against the newest ref state, so the criterion is covered at 3a3a\u2026."
+}

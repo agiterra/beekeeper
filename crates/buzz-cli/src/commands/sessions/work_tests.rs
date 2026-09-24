@@ -71,7 +71,7 @@ const TEAM_RECORD_SEQUENCES: [&str; 6] = [
     "superseded-disposition",
 ];
 
-const SEQUENCES: [Sequence; 18] = [
+const SEQUENCES: [Sequence; 20] = [
     sequence!("happy-path"),
     sequence!("amendment"),
     sequence!("fork"),
@@ -90,6 +90,8 @@ const SEQUENCES: [Sequence; 18] = [
     sequence!("same-action-two-commits"),
     sequence!("same-action-two-commits-reversed"),
     sequence!("plan-unavailable-before-bindings"),
+    sequence!("ref-observation-rebound"),
+    sequence!("ref-observation-wrong-ref"),
 ];
 
 const FIXTURE_CHANNEL: &str = "22222222-3333-4444-8555-666666666666";
@@ -710,7 +712,7 @@ async fn adopt_retried_with_the_same_arguments_republishes_nothing() {
 /// build, not a live mission.
 #[test]
 fn every_example_is_a_valid_record() {
-    for verb in ["adopt", "bind assignment", "bind evidence"] {
+    for verb in ["adopt", "bind assignment", "bind evidence", "bind ref"] {
         let body = example_body(verb).expect("an example");
         let payload = project_work_payload(&example_envelope(), body);
         buzz_core::project_work::validate_project_work_payload(&payload)
@@ -1340,3 +1342,6 @@ fn no_line_is_printed_for_none_superseded_or_unknown() {
         }
     }
 }
+
+#[path = "work_bind_ref_tests.rs"]
+mod bind_ref_tests;

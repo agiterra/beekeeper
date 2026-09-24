@@ -1,0 +1,111 @@
+{
+  "schema": "buzz-project-work-coverage/v1",
+  "sessionRef": "11111111-2222-4333-8444-555555555555",
+  "projectRef": "30621:1ead000000000000000000000000000000000000000000000000000000000000:kettle",
+  "declarations": [
+    {
+      "workId": "9d0f0f0f-1111-4222-8333-444444444444",
+      "declarationRef": "dec1000000000000000000000000000000000000000000000000000000000000",
+      "planRef": {
+        "repository": "30617:1ead000000000000000000000000000000000000000000000000000000000000:pivot-test-beekeeper-agents",
+        "commit": "abababababababababababababababababababab",
+        "path": "plans/kettle.md"
+      },
+      "state": "head",
+      "supersedes": [],
+      "supersededBy": [],
+      "stateReasonCode": null,
+      "stateReason": null,
+      "planResolved": true,
+      "planDrift": {
+        "declaredCommit": "abababababababababababababababababababab",
+        "currentCommit": null,
+        "state": "unknown"
+      },
+      "candidateArtifact": "3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a",
+      "artifactCommits": [
+        "3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a"
+      ],
+      "criteria": [
+        {
+          "criterionId": "cli-behaviour",
+          "proof": {
+            "kind": "review"
+          },
+          "status": "open",
+          "assignmentRefs": [],
+          "evidence": [],
+          "artifactCommit": null,
+          "reasonCode": null,
+          "reason": null
+        },
+        {
+          "criterionId": "shared-storage-and-parser",
+          "proof": {
+            "kind": "review"
+          },
+          "status": "open",
+          "assignmentRefs": [],
+          "evidence": [],
+          "artifactCommit": null,
+          "reasonCode": null,
+          "reason": null
+        },
+        {
+          "criterionId": "verified-landed-revision",
+          "proof": {
+            "kind": "action",
+            "name": "verify",
+            "step": "verify"
+          },
+          "status": "open",
+          "assignmentRefs": [],
+          "evidence": [],
+          "artifactCommit": null,
+          "reasonCode": null,
+          "reason": null
+        },
+        {
+          "criterionId": "usage-documentation",
+          "proof": {
+            "kind": "review"
+          },
+          "status": "open",
+          "assignmentRefs": [],
+          "evidence": [],
+          "artifactCommit": null,
+          "reasonCode": null,
+          "reason": null
+        },
+        {
+          "criterionId": "delivered-main",
+          "proof": {
+            "kind": "git-ref"
+          },
+          "status": "covered",
+          "assignmentRefs": [
+            "a553000000000000000000000000000000000000000000000000000000000000"
+          ],
+          "evidence": [
+            {
+              "kind": "ref_observation",
+              "eventId": "0b51000000000000000000000000000000000000000000000000000000000000"
+            },
+            {
+              "kind": "ref_observation",
+              "eventId": "0b52000000000000000000000000000000000000000000000000000000000000"
+            }
+          ],
+          "artifactCommit": "3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a",
+          "reasonCode": null,
+          "reason": null
+        }
+      ],
+      "coverageComplete": false,
+      "coverageReasonCode": "criteria_not_covered",
+      "coverageReason": "1 of 5 criteria is covered under this declaration: the other four are open"
+    }
+  ],
+  "excluded": [],
+  "conflicts": []
+}

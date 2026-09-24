@@ -237,6 +237,13 @@ pub enum WorkBindCmd {
     Assignment(WorkBindAssignmentArgs),
     /// Bind evidence to criteria at one artifact commit: what proves them
     Evidence(WorkBindEvidenceArgs),
+    /// Bind a `git-ref` criterion to the relay's own observation of the
+    /// plan's delivery ref: looks up the newest relay-signed kind:30618 and
+    /// binds it as `ref_observation` evidence
+    #[command(
+        after_help = "Example:\n  bee sessions work bind ref --channel <uuid> --session-ref <uuid> --declaration <id> --criteria delivered-main --commit <sha> --observed-by <46023 id> --agents-repo <dir>"
+    )]
+    Ref(WorkBindRefArgs),
 }
 
 /// Flags every bind verb shares.
@@ -256,7 +263,12 @@ pub struct WorkBindEnvelopeArgs {
     #[arg(long, required_unless_present = "example")]
     pub declaration: Option<String>,
     /// Criterion ids, comma-separated. Repeatable
-    #[arg(long, value_delimiter = ',', required_unless_present = "example")]
+    #[arg(
+        long,
+        alias = "criterion",
+        value_delimiter = ',',
+        required_unless_present = "example"
+    )]
     pub criteria: Vec<String>,
     /// Agents repository checkout the declaration's plan is read from
     #[arg(long = "agents-repo")]
@@ -290,6 +302,28 @@ pub struct WorkBindEvidenceArgs {
     /// `<kind>:<event id>` pairs, comma-separated. Repeatable
     #[arg(long, value_delimiter = ',', required_unless_present = "example")]
     pub evidence: Vec<String>,
+    /// The kind:44244 `mission.completed` this coverage was computed for
+    #[arg(long)]
+    pub completion: Option<String>,
+}
+
+/// Flags of `bee sessions work bind ref`.
+#[derive(Args)]
+pub struct WorkBindRefArgs {
+    #[command(flatten)]
+    pub envelope: WorkBindEnvelopeArgs,
+    /// The code commit expected at the delivery ref, 40 or 64 hex. Omit to
+    /// bind whatever the relay's newest ref state names there
+    #[arg(long)]
+    pub commit: Option<String>,
+    /// The ref expected to be the plan's `delivery_ref`, e.g.
+    /// `refs/heads/main`. A mismatch is refused: the plan names the ref
+    #[arg(long = "ref")]
+    pub git_ref: Option<String>,
+    /// A kind:46023 host result whose `headSha` must equal the commit: a
+    /// corroboration checked before signing, not part of the record
+    #[arg(long = "observed-by")]
+    pub observed_by: Option<String>,
     /// The kind:44244 `mission.completed` this coverage was computed for
     #[arg(long)]
     pub completion: Option<String>,
@@ -332,6 +366,11 @@ pub fn example_request(command: &SessionWorkCmd) -> Option<(&'static str, String
             .example
             .clone()
             .map(|label| ("bind evidence", label)),
+        SessionWorkCmd::Bind(WorkBindCmd::Ref(args)) => args
+            .envelope
+            .example
+            .clone()
+            .map(|label| ("bind ref", label)),
         _ => None,
     }
 }
@@ -384,6 +423,16 @@ fn example_body(verb: &str) -> Option<ProjectWorkBody> {
             artifact_commit: PLACEHOLDER_SHA.to_owned(),
             evidence_refs: vec![ProjectWorkEvidenceRef {
                 kind: ProjectWorkEvidenceKind::Verdict,
+                event_id: PLACEHOLDER_EVENT_ID_2.to_owned(),
+            }],
+            completion_ref: None,
+        })),
+        "bind ref" => Some(ProjectWorkBody::EvidenceBound(ProjectWorkEvidenceBound {
+            declaration_ref: PLACEHOLDER_EVENT_ID.to_owned(),
+            criterion_ids: vec!["delivered-main".to_owned()],
+            artifact_commit: PLACEHOLDER_SHA.to_owned(),
+            evidence_refs: vec![ProjectWorkEvidenceRef {
+                kind: ProjectWorkEvidenceKind::RefObservation,
                 event_id: PLACEHOLDER_EVENT_ID_2.to_owned(),
             }],
             completion_ref: None,
@@ -1324,6 +1373,8 @@ struct BoundDeclaration {
     session: SessionContext,
     declaration_ref: String,
     records: Vec<ProjectWorkEvent>,
+    /// The declaration's plan, read at its pinned commit.
+    plan: Plan,
 }
 
 impl BoundDeclaration {
@@ -1391,6 +1442,7 @@ impl BoundDeclaration {
             session,
             declaration_ref: declaration.to_ascii_lowercase(),
             records,
+            plan,
         })
     }
 
@@ -1892,10 +1944,16 @@ fn print_table(coverage: &WorkProjection, mission: &Value, channel: &str, sessio
             }
         );
         for criterion in &declaration.criteria {
+            // The commit the evidence is about, so a covered `git-ref` row
+            // says which commit the relay observed at the delivery ref.
             println!(
-                "  {:<28} {:<8} {:<24} {}",
+                "  {:<28} {:<8} {:<12} {:<24} {}",
                 criterion.criterion_id,
                 criterion.status.as_str(),
+                criterion
+                    .artifact_commit
+                    .as_deref()
+                    .map_or("-".to_owned(), |sha| sha[..sha.len().min(12)].to_owned()),
                 criterion
                     .reason_code
                     .map_or("-".to_owned(), |code| code.as_str().to_owned()),
@@ -1926,9 +1984,13 @@ pub async fn dispatch(
             cmd_bind_assignment(client, &args).await
         }
         SessionWorkCmd::Bind(WorkBindCmd::Evidence(args)) => cmd_bind_evidence(client, &args).await,
+        SessionWorkCmd::Bind(WorkBindCmd::Ref(args)) => bind_ref::cmd_bind_ref(client, &args).await,
         SessionWorkCmd::Status(args) => cmd_status(client, &args, format).await,
     }
 }
+
+#[path = "work_bind_ref.rs"]
+mod bind_ref;
 
 #[cfg(test)]
 #[path = "work_tests.rs"]

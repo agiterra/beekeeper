@@ -263,7 +263,7 @@ pub(super) async fn refuse_incomplete_coverage(
         return Ok(());
     }
     Err(CliError::Usage(format!(
-        "coverage-incomplete: work {} ({}) is not covered — {}{}. Bind the evidence that answers          them (`bee sessions work bind evidence`), read the whole picture with `bee sessions          work status --channel {channel} --session-ref {session_ref}`, or publish anyway with          --without-coverage \"<reason>\" and record the reason in Pulse.",
+        "coverage-incomplete: work {} ({}) is not covered — {}{}. Bind the evidence that answers          them (`bee sessions work bind evidence`; a git-ref criterion: `bee sessions work bind ref`), read the whole picture with `bee sessions          work status --channel {channel} --session-ref {session_ref}`, or publish anyway with          --without-coverage \"<reason>\" and record the reason in Pulse.",
         &open.work_id,
         open.coverage_reason,
         open.message,

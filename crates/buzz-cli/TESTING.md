@@ -3091,9 +3091,21 @@ bee sessions work bind assignment --declaration <id> --criteria cli-behaviour \
   --assignment <44244 assignment id> --channel <uuid> --session-ref <uuid>
 bee sessions work bind evidence --declaration <id> --criteria cli-behaviour \
   --artifact <40-hex> --evidence verdict:<id> --channel <uuid> --session-ref <uuid>
+bee sessions work bind ref --declaration <id> --criteria delivered-main \
+  --commit <40-hex> --ref refs/heads/main --observed-by <46023 id> \
+  --agents-repo <dir> --channel <uuid> --session-ref <uuid>
 bee --format compact sessions work status --channel <uuid> --session-ref <uuid> \
   --agents-repo <dir>
 ```
+
+`bind ref` (ledger 255) answers a `git-ref` criterion: it reads the newest
+**relay-signed** kind:30618 for the plan's `code_repository`, refuses unless
+it names the plan's `delivery_ref` at `--commit` (`ref-observation-mismatch`,
+`ref-not-delivery-ref`, `no-ref-observation`), checks that the
+`--observed-by` host result's `headSha` is that commit
+(`observed-by-mismatch`), and binds the 30618 as `ref_observation` evidence.
+The same binding again publishes nothing. `status` then reads the criterion
+`covered` with that commit in its row.
 
 **What to check by hand:**
 

@@ -1092,6 +1092,8 @@ The sequences:
 | `amendment` | P adopted, P2 supersedes it, then a **late** `work.evidence_bound` arrives naming P. It must not cover P2: that criterion is `stale`, `coverageComplete` is `false` |
 | `fork` | two successors of P, neither superseded. Both are `conflict`, `conflicts` names both heads, coverage is refused for both |
 | `superseded-observation` | a `git-ref` criterion bound to a 30618 that named the artifact commit, then superseded by a newer relay-signed 30618 naming a different commit: the criterion is `stale`, not `covered` |
+| `ref-observation-rebound` | `delivered-main` bound twice, the second after main moved: the first binding is immutable and stays, both refs are projected, and the criterion is `covered` at the newest binding's commit because the newest relay-signed 30618 names it (ledger 255) |
+| `ref-observation-wrong-ref` | the bound relay-signed 30618 names the artifact commit on another branch, never on the plan's `delivery_ref`: `unknown`, `evidence_unavailable/ref-state-names-no-branch`. A binding cannot choose the ref it is judged against |
 | `goal-changed` | the session's current goal differs from the declaration's `goalRef`: the declaration reads `state: "stale"` and stays pinned |
 | `goal-ref-not-a-goal` | `goalRef` names the authorizing decision: the envelope accepts it and the fold excludes it `goal_ref_not_a_goal` |
 | `evidence-refusals` | four review-side failures in one declaration: `wrong_signer`, `not_approving`, `revision_mismatch`, `evidence_unavailable` |

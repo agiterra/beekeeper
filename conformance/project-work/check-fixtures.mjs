@@ -738,6 +738,19 @@ function checkSequences(planCriteria) {
     }
     checkFold(fold, where, planCriteria, { ids, inputs, mayLead, events });
 
+    // A covered git-ref criterion is covered by a relay-signed ref state
+    // naming its commit, never by one somebody else signed.
+    for (const d of fold.declarations) {
+      for (const c of d.criteria) {
+        if (c.proof?.kind !== "git-ref" || c.status !== "covered") continue;
+        const relaySigned = (inputs.refStates ?? []).some((rs) =>
+          inputs.relaySelfKey !== null && rs.pubkey === inputs.relaySelfKey
+          && (rs.tags ?? []).some((t) => t[0].startsWith("refs/heads/") && t[1] === c.artifactCommit));
+        check(relaySigned, where,
+          `git-ref criterion "${c.criterionId}" is covered at ${c.artifactCommit}, which no relay-signed ref state names`);
+      }
+    }
+
     // Derived from the events, not from the expected file: `supersedes` must
     // be what the record carries, and `assignmentRefs` must list every valid
     // assignment binding for that criterion under that declaration — with or
