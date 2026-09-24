@@ -483,7 +483,7 @@ async fn read_ref_state(
                 verified: answer.states.len(),
                 read_at,
                 attempts: attempt,
-                interval_secs: (attempt > 1).then(|| input.retry.interval.as_secs()),
+                interval_secs: (attempt > 1).then_some(input.retry.interval.as_secs()),
                 project_served,
             };
             return Ok((read, observed));
