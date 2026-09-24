@@ -1860,9 +1860,16 @@ impl Provider {
             }
             KIND_WORKFLOW_HOST_STEP_EXITED => {
                 // Bind what a green delivered result proves before the wake,
-                // so the wake can say so (ledger 257(d)).
-                let auto_evidence = self.auto_bind_host_result(event).await;
-                self.on_host_step_exited(event, auto_evidence);
+                // so the wake can say so (ledger 257(d)). A decision that
+                // needs a relay read for ref state runs off this loop
+                // (ledger 257): `Pending` means `AutoEvidenceReady` sends the
+                // wake once that task reports back, not this tick.
+                match self.auto_bind_host_result(event).await {
+                    auto_evidence::AutoBindOutcome::Ready => {
+                        self.on_host_step_exited(event, None);
+                    }
+                    auto_evidence::AutoBindOutcome::Pending => {}
+                }
             }
             other => {
                 tracing::debug!(target: "csp", kind = other, "ignoring unrelated event");
@@ -9636,6 +9643,9 @@ impl Provider {
                 {
                     self.publish_metadata(channel_id, &target, status)?;
                 }
+            }
+            SessionEvent::AutoEvidenceReady { event, prepared } => {
+                self.finalize_auto_evidence(&event, prepared);
             }
         }
         Ok(())

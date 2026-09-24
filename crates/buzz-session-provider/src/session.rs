@@ -832,6 +832,22 @@ pub enum SessionEvent {
         /// `Provider::handle_session_event`).
         reachability: Option<crate::reachability::ReachabilityFact>,
     },
+    /// A host result's auto-evidence decision finished off the provider loop.
+    ///
+    /// Produced by a task the provider spawned from
+    /// [`crate::Provider::auto_bind_host_result`]: a bounded re-read of the
+    /// relay's kind:30618 ref state can take several seconds (up to
+    /// [`crate::auto_evidence::RefReadRetry::attempts`] reads,
+    /// [`crate::auto_evidence::RefReadRetry::interval`] apart), and awaiting
+    /// that inline on the loop would delay the wake for every *other*
+    /// session's host results and turns for as long as the re-read runs.
+    /// Nothing is signed or published until this event is folded in.
+    AutoEvidenceReady {
+        /// The kind:46014 host-step-exited echo this decision was made from.
+        event: Box<nostr::Event>,
+        /// What was decided and what was signed, unpublished.
+        prepared: crate::auto_evidence::Prepared,
+    },
 }
 
 /// Handle to one live session actor.

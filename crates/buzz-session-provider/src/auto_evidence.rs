@@ -226,17 +226,21 @@ pub(crate) trait AutoEvidenceReads {
 }
 
 /// Everything one decision is made from, handed over by the caller.
-pub(crate) struct AutoEvidenceInput<'a> {
-    pub keys: &'a Keys,
-    pub relay_self: &'a str,
+///
+/// Owned, not borrowed: this is exactly the shape a spawned, `'static` task
+/// needs (ledger 257 — the ref-state re-read must not block the provider
+/// loop), and a decision costs one clone of a keypair either way.
+pub(crate) struct AutoEvidenceInput {
+    pub keys: Keys,
+    pub relay_self: String,
     pub envelope: ProjectWorkEnvelope,
     pub result: HostResultFacts,
     pub retry: RefReadRetry,
 }
 
 /// A decision: the summary for the wake and the signed records to queue.
-#[derive(Debug)]
-pub(crate) struct Prepared {
+#[derive(Debug, Clone)]
+pub struct Prepared {
     pub summary: AutoEvidenceSummary,
     pub events: Vec<Event>,
 }
@@ -286,10 +290,7 @@ fn evidence_words(body: &ProjectWorkEvidenceBound) -> String {
 ///
 /// Never fails: every refusal is the summary's `skipped` sentence and an
 /// empty `events`. Reads are ordered cheapest-refusal first.
-pub(crate) async fn prepare(
-    reads: &impl AutoEvidenceReads,
-    input: &AutoEvidenceInput<'_>,
-) -> Prepared {
+pub(crate) async fn prepare(reads: &impl AutoEvidenceReads, input: &AutoEvidenceInput) -> Prepared {
     let signer = input.keys.public_key().to_hex();
     let mut summary = AutoEvidenceSummary {
         host_result: input.result.result_event_id.clone(),
@@ -424,7 +425,7 @@ pub(crate) async fn prepare(
             });
             continue;
         }
-        match sign_evidence(input.keys, &input.envelope, binding.body) {
+        match sign_evidence(&input.keys, &input.envelope, binding.body) {
             Ok(event) => {
                 summary.bound.push(AutoEvidenceBinding {
                     event_id: event.id.to_hex(),
@@ -443,14 +444,19 @@ pub(crate) async fn prepare(
     Prepared { summary, events }
 }
 
-/// Read the relay's ref state for `repository`, again while it serves none.
+/// Read the relay's ref state for `repository`, again while it names no
+/// state at all, or while the newest state it does serve does not yet name
+/// `delivery_ref` — the realistic lag shape, a push whose ref-state record
+/// has not caught up with the commit the verify ran at.
 ///
-/// Stops early once any relay-signed state for the repository is served, or
+/// Stops early once a relay-signed state naming `delivery_ref` is served, or
 /// when the relay does not serve this key the project's kind:30621 either:
-/// that is the private-project gate, and waiting does not open it.
+/// that is the private-project gate, and waiting does not open it. The gate
+/// check only ever runs against a bare `NoState` — once any state exists the
+/// project is plainly served, so there is nothing to check.
 async fn read_ref_state(
     reads: &impl AutoEvidenceReads,
-    input: &AutoEvidenceInput<'_>,
+    input: &AutoEvidenceInput,
     repository: &str,
     delivery_ref: &str,
 ) -> Result<
@@ -468,12 +474,14 @@ async fn read_ref_state(
         let read_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
         let answer = reads.ref_states(repository).await?;
         let observed =
-            newest_ref_observation(&answer.states, input.relay_self, repository, delivery_ref);
-        let empty = matches!(observed, Err(RefObservationMissing::NoState));
-        if empty && attempt == 1 {
+            newest_ref_observation(&answer.states, &input.relay_self, repository, delivery_ref);
+        let no_state = matches!(observed, Err(RefObservationMissing::NoState));
+        let unresolved =
+            no_state || matches!(observed, Err(RefObservationMissing::NoDeliveryRef { .. }));
+        if no_state && attempt == 1 {
             project_served = reads.project_served(&input.envelope.project_ref).await.ok();
         }
-        let done = !empty || attempt >= attempts || project_served == Some(false);
+        let done = !unresolved || attempt >= attempts || project_served == Some(false);
         if done {
             let read = RefStateRead {
                 kinds: vec![KIND_GIT_REPO_STATE],
@@ -494,17 +502,17 @@ async fn read_ref_state(
 
 /// The production reads: the relay for records, authority and ref state;
 /// this host's agents clone (or the seat's sibling clone) for the plan.
-struct RelayReads<'a> {
-    rest: &'a buzz_acp::relay::RestClient,
-    relay_self: &'a str,
+struct RelayReads {
+    rest: buzz_acp::relay::RestClient,
+    relay_self: String,
     scope: crate::team_wake::WakeScope,
     clones: Vec<crate::agents_checkout::AgentsRepoRecord>,
 }
 
-impl AutoEvidenceReads for RelayReads<'_> {
+impl AutoEvidenceReads for RelayReads {
     async fn provider_may_bind(&self, provider: &str) -> Result<bool, String> {
         let snapshot =
-            crate::team_wake::fetch_verified_snapshot(self.rest, self.relay_self, &self.scope)
+            crate::team_wake::fetch_verified_snapshot(&self.rest, &self.relay_self, &self.scope)
                 .await
                 .map_err(|error| error.to_string())?;
         Ok(crate::team_wake::provider_may_wake(
@@ -516,7 +524,7 @@ impl AutoEvidenceReads for RelayReads<'_> {
 
     async fn work_records(&self) -> Result<Vec<ProjectWorkEvent>, String> {
         let events = crate::context_projector::query_complete_kind_partition(
-            self.rest,
+            &self.rest,
             self.scope.channel_ref,
             KIND_PROJECT_WORK_RECORD,
         )
@@ -551,7 +559,7 @@ impl AutoEvidenceReads for RelayReads<'_> {
 
     async fn ref_states(&self, repository: &str) -> Result<RefStateRows, String> {
         use nostr::{Alphabet, Filter, Kind, PublicKey, SingleLetterTag};
-        let author = PublicKey::from_hex(self.relay_self).map_err(|error| error.to_string())?;
+        let author = PublicKey::from_hex(&self.relay_self).map_err(|error| error.to_string())?;
         let filter = Filter::new()
             .kind(Kind::Custom(KIND_GIT_REPO_STATE as u16))
             .author(author)
@@ -604,35 +612,57 @@ impl AutoEvidenceReads for RelayReads<'_> {
     }
 }
 
+/// What [`crate::Provider::auto_bind_host_result`] decided about one result.
+pub(crate) enum AutoBindOutcome {
+    /// Nothing to add: wake now, with no evidence. Every case settled
+    /// without a relay read for ref state lands here — the common case, and
+    /// the fast one, unchanged since before ledger 257.
+    Ready,
+    /// A decision was handed to a task spawned off the provider loop;
+    /// nothing is bound or woken yet. The loop's own
+    /// [`crate::session::SessionEvent::AutoEvidenceReady`] arm finishes the
+    /// job — publishing what was signed and sending the wake, carrying the
+    /// summary — once that task reports back.
+    Pending,
+}
+
 impl crate::Provider {
     /// Bind what a relay-echoed host result proves, before its wake is sent.
     ///
-    /// `None` when there is nothing to say: no witnessed relay, a replay of a
-    /// result already answered, a run no seat on this host triggered, or a
-    /// result that is not green. Otherwise the summary the wake carries.
+    /// [`AutoBindOutcome::Ready`] when there is nothing to say: no
+    /// witnessed relay, a replay of a result already answered, a run no seat
+    /// on this host triggered, or a result that is not green. Otherwise the
+    /// relay reads a decision needs — cheap, but potentially several seconds
+    /// under a bounded ref-state re-read (ledger 257) — run off this loop, and
+    /// [`AutoBindOutcome::Pending`] says so.
     ///
     /// Infallible, like the wake it precedes: nothing here may stop this
     /// provider from serving turns, and every refusal is a logged sentence.
-    pub(crate) async fn auto_bind_host_result(
-        &mut self,
-        event: &Event,
-    ) -> Option<AutoEvidenceSummary> {
-        let relay_self = self.relay_self.clone()?;
-        let exited = crate::host_result_wake::verify_exited(event, &relay_self).ok()?;
+    pub(crate) async fn auto_bind_host_result(&mut self, event: &Event) -> AutoBindOutcome {
+        let Some(relay_self) = self.relay_self.clone() else {
+            return AutoBindOutcome::Ready;
+        };
+        let Ok(exited) = crate::host_result_wake::verify_exited(event, &relay_self) else {
+            return AutoBindOutcome::Ready;
+        };
         let result_id = exited.result_event_id.to_ascii_lowercase();
         if self.host_result_wakes.already_waked(&result_id)
             || self.host_result_wakes.evidence_checked(&result_id)
         {
-            return None;
+            return AutoBindOutcome::Ready;
         }
         let run_key =
             buzz_core::host_step::host_step_d_tag(&exited.result.run_id, &exited.result.step_id);
-        let trigger = self.host_result_wakes.trigger(&run_key)?.clone();
+        let Some(trigger) = self.host_result_wakes.trigger(&run_key).cloned() else {
+            return AutoBindOutcome::Ready;
+        };
         let facts = host_result_facts(&exited, &trigger.workflow_name);
         // A red result is the seat's to read; there is nothing to bind and
         // the wake already carries the exit.
-        green_head(&facts).ok()?;
-        let record = self
+        if green_head(&facts).is_err() {
+            return AutoBindOutcome::Ready;
+        }
+        let Some(record) = self
             .state
             .sessions()
             .filter(|candidate| {
@@ -642,13 +672,16 @@ impl crate::Provider {
                         .as_deref()
                         .is_some_and(|actor| actor.eq_ignore_ascii_case(&trigger.author))
             })
-            .max_by_key(|candidate| (candidate.created_at_ms, candidate.generation))?;
+            .max_by_key(|candidate| (candidate.created_at_ms, candidate.generation))
+        else {
+            return AutoBindOutcome::Ready;
+        };
         let (Some(session_ref), Some(genesis_ref), Some(project_ref)) = (
             record.session_ref.clone(),
             record.genesis_ref.clone(),
             record.project_ref.clone(),
         ) else {
-            return None;
+            return AutoBindOutcome::Ready;
         };
         if project_ref != trigger.project {
             tracing::info!(
@@ -656,7 +689,7 @@ impl crate::Provider {
                 %result_id,
                 "the run's project is not the triggering seat's project; nothing is bound"
             );
-            return None;
+            return AutoBindOutcome::Ready;
         }
         let channel_ref = record.channel_id;
         let seat_clone = crate::gate_cwd::resolve(
@@ -666,17 +699,19 @@ impl crate::Provider {
         )
         .present()
         .map(sibling_agents_clone);
-        let rest = self.rest_client.clone()?;
+        let Some(rest) = self.rest_client.clone() else {
+            return AutoBindOutcome::Ready;
+        };
         match self.host_result_wakes.claim_evidence(&result_id) {
             Ok(true) => {}
-            Ok(false) => return None,
+            Ok(false) => return AutoBindOutcome::Ready,
             Err(error) => {
                 tracing::error!(
                     target: "csp::auto_evidence",
                     %result_id,
                     "could not take custody of this result; nothing is bound: {error}"
                 );
-                return None;
+                return AutoBindOutcome::Ready;
             }
         }
         let mut clones: Vec<crate::agents_checkout::AgentsRepoRecord> =
@@ -688,8 +723,8 @@ impl crate::Provider {
                 .collect();
         clones.extend(seat_clone);
         let reads = RelayReads {
-            rest: &rest,
-            relay_self: &relay_self,
+            rest,
+            relay_self: relay_self.clone(),
             scope: crate::team_wake::WakeScope {
                 channel_ref,
                 session_ref: session_ref.clone(),
@@ -697,10 +732,9 @@ impl crate::Provider {
             },
             clones,
         };
-        let keys = self.config.keys.clone();
         let input = AutoEvidenceInput {
-            keys: &keys,
-            relay_self: &relay_self,
+            keys: self.config.keys.clone(),
+            relay_self,
             envelope: ProjectWorkEnvelope {
                 channel_ref: channel_ref.to_string(),
                 session_ref,
@@ -710,17 +744,45 @@ impl crate::Provider {
             result: facts,
             retry: RefReadRetry::default(),
         };
+        // Off the loop from here: `prepare` can send several ref-state
+        // reads, seconds apart under a re-read (ledger 257), and awaiting
+        // that inline would delay every other session's turns and host
+        // results for as long as it runs. Nothing is signed or queued until
+        // `AutoEvidenceReady` reaches `handle_session_event`; custody of
+        // `result_id` is already claimed above, so no other path can act on
+        // this result while this task runs.
+        let events_tx = self.session_events_tx.clone();
+        let boxed_event = Box::new(event.clone());
+        tokio::spawn(async move {
+            let prepared = prepare(&reads, &input).await;
+            let _ = events_tx
+                .send(crate::session::SessionEvent::AutoEvidenceReady {
+                    event: boxed_event,
+                    prepared,
+                })
+                .await;
+        });
+        AutoBindOutcome::Pending
+    }
+
+    /// Finish an auto-evidence decision the loop deferred to a spawned task:
+    /// queue what it signed, log the decision, and wake the seat.
+    ///
+    /// Called only from [`crate::session::SessionEvent::AutoEvidenceReady`],
+    /// exactly where the inline tail of [`Self::auto_bind_host_result`] used
+    /// to run before ledger 257 moved the ref-state read off the loop.
+    pub(crate) fn finalize_auto_evidence(&mut self, event: &Event, prepared: Prepared) {
         let Prepared {
             mut summary,
             events,
-        } = prepare(&reads, &input).await;
-        for event in events {
-            let event_id = event.id.to_hex();
+        } = prepared;
+        for signed in events {
+            let event_id = signed.id.to_hex();
             if let Err(error) = self.outbox.enqueue(
                 KIND_PROJECT_WORK_RECORD,
                 &format!("auto-evidence:{event_id}"),
                 crate::publish::Priority::High,
-                event,
+                signed,
             ) {
                 summary.bound.retain(|binding| binding.event_id != event_id);
                 let note = format!("{event_id} was signed but could not be queued: {error}");
@@ -732,13 +794,13 @@ impl crate::Provider {
         }
         tracing::info!(
             target: "csp::auto_evidence",
-            %result_id,
+            result_id = %summary.host_result,
             ref_state = ?summary.ref_state,
             bound = ?summary.bound,
             skipped = ?summary.skipped,
             "decided the evidence this host result proves"
         );
-        Some(summary)
+        self.on_host_step_exited(event, Some(summary));
     }
 }
 

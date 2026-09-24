@@ -893,3 +893,68 @@ async fn a_refusal_before_any_claim_wakes_the_seat_with_the_refusal() {
     );
     assert!(object.get("exitCode").is_none());
 }
+
+/// Ledger 257: a green result whose evidence decision needs a relay read
+/// (this fixture's session names a project, so `auto_bind_host_result`
+/// reaches that decision) is handed to a spawned task — `deliver` returns
+/// with **no** wake queued yet, proving the loop was not held open — and the
+/// wake is only queued once the task's `AutoEvidenceReady` is folded in.
+#[tokio::test]
+async fn a_result_needing_a_ref_read_defers_the_wake_off_the_loop() {
+    let mut fixture = Fixture::new();
+    let host = Keys::generate();
+    let project = format!("30621:{}:kettle-control", "11".repeat(32));
+    fixture
+        .provider
+        .state
+        .update_session(&fixture.target.session_id, |record| {
+            record.project_ref = Some(project);
+        })
+        .expect("set the project ref");
+    // Unroutable: the spawned task's reads fail fast rather than hang, so
+    // this test does not depend on a live relay to prove the deferral.
+    fixture
+        .provider
+        .set_rest_client(buzz_acp::relay::RestClient {
+            http: reqwest::Client::new(),
+            base_url: "http://127.0.0.1:1".into(),
+            keys: fixture.provider_keys.clone(),
+            auth_tag_json: None,
+        });
+
+    fixture
+        .deliver(fixture.workflow_channel, &fixture.requested())
+        .await;
+    let result = fixture.result_event(&host, RUN_ID);
+    let exited = fixture.exited_for(&result, &host);
+    fixture.deliver(fixture.workflow_channel, &exited).await;
+
+    assert_eq!(
+        fixture.queued_commands(),
+        0,
+        "the decision is still running on its spawned task; the loop must not block on it"
+    );
+
+    let event = fixture
+        .provider
+        .next_session_event()
+        .await
+        .expect("the spawned task reports back");
+    assert!(
+        matches!(
+            event,
+            crate::session::SessionEvent::AutoEvidenceReady { .. }
+        ),
+        "{event:?}"
+    );
+    fixture
+        .provider
+        .handle_session_event(event)
+        .expect("fold in the deferred decision");
+
+    assert!(
+        fixture.wake_queued(&result.id.to_hex()),
+        "the deferred decision still wakes the seat that triggered the run"
+    );
+    assert_eq!(fixture.queued_commands(), 1);
+}

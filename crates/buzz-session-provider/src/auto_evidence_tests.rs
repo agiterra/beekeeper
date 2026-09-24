@@ -62,6 +62,10 @@ struct Fixture {
     ref_reads: Cell<u32>,
     /// Reads answered with no rows before the record is served.
     empty_reads: u32,
+    /// Reads answered with a ref state that exists but names no
+    /// `refs/heads/main`, before the record naming it is served — the lag
+    /// shape a push's own ref-state write has not caught up with yet.
+    no_delivery_ref_reads: u32,
     /// Whether the project's kind:30621 is served to this key.
     project_served: bool,
     pauses: Cell<u32>,
@@ -95,15 +99,16 @@ impl Fixture {
             relay: Keys::generate(),
             ref_reads: Cell::new(0),
             empty_reads: 0,
+            no_delivery_ref_reads: 0,
             project_served: true,
             pauses: Cell::new(0),
         }
     }
 
-    fn input<'a>(&'a self, keys: &'a Keys, relay_self: &'a str) -> AutoEvidenceInput<'a> {
+    fn input(&self, keys: &Keys, relay_self: &str) -> AutoEvidenceInput {
         AutoEvidenceInput {
-            keys,
-            relay_self,
+            keys: keys.clone(),
+            relay_self: relay_self.to_string(),
             envelope: envelope(),
             result: HostResultFacts {
                 result_event_id: RESULT.into(),
@@ -139,6 +144,17 @@ impl AutoEvidenceReads for Fixture {
         self.ref_reads.set(self.ref_reads.get() + 1);
         if self.ref_reads.get() <= self.empty_reads {
             return Ok(RefStateRows::default());
+        }
+        if self.ref_reads.get() <= self.no_delivery_ref_reads {
+            let states = vec![ProjectWorkEvent {
+                id: REF_STATE.into(),
+                pubkey: self.relay.public_key().to_hex(),
+                created_at: 100,
+                kind: KIND_GIT_REPO_STATE,
+                tags: vec![vec!["d".into(), repository.into()]],
+                content: String::new(),
+            }];
+            return Ok(RefStateRows { rows: 1, states });
         }
         let states = vec![ProjectWorkEvent {
             id: REF_STATE.into(),
@@ -425,6 +441,50 @@ async fn an_empty_ref_read_is_read_again_and_binds_once_the_state_is_served() {
         .all(|binding| !binding.published));
 }
 
+/// The realistic lag shape: a push landed and the relay signed *a* ref
+/// state, but that write has not caught up with `refs/heads/main` yet. Ledger
+/// 257 extends the same bounded re-read `NoState` already got.
+#[tokio::test]
+async fn a_ref_state_missing_the_delivery_ref_is_read_again_and_binds_once_it_is_named() {
+    let lead = Keys::generate();
+    let provider = Keys::generate();
+    let mut fixture = Fixture::new(&lead);
+    fixture.no_delivery_ref_reads = 1;
+    let relay_self = fixture.relay.public_key().to_hex();
+    let prepared = prepare(&fixture, &fixture.input(&provider, &relay_self)).await;
+
+    assert_eq!(prepared.summary.skipped, None, "{:?}", prepared.summary);
+    assert_eq!(
+        fixture.ref_reads.get(),
+        2,
+        "one retry after the unnamed state"
+    );
+    assert_eq!(fixture.pauses.get(), 1);
+    assert_eq!(prepared.events.len(), 2, "both bindings, after the re-read");
+}
+
+/// Bounded like every other re-read: three attempts, then a skip in words
+/// rather than a silent wait forever.
+#[tokio::test]
+async fn a_ref_state_never_naming_the_delivery_ref_is_read_three_times_then_skipped() {
+    let lead = Keys::generate();
+    let provider = Keys::generate();
+    let mut fixture = Fixture::new(&lead);
+    fixture.no_delivery_ref_reads = u32::MAX;
+    let relay_self = fixture.relay.public_key().to_hex();
+    let prepared = prepare(&fixture, &fixture.input(&provider, &relay_self)).await;
+
+    assert!(prepared.events.is_empty());
+    assert_eq!(fixture.ref_reads.get(), 3);
+    assert_eq!(fixture.pauses.get(), 2);
+    let skipped = prepared.summary.skipped.expect("says why");
+    assert!(skipped.contains("names no refs/heads/main"), "{skipped}");
+    assert!(
+        skipped.contains(", the last of 3 reads 2s apart"),
+        "{skipped}"
+    );
+}
+
 #[tokio::test]
 async fn a_ref_state_never_served_is_read_three_times_and_the_wake_says_what_was_read() {
     let lead = Keys::generate();
@@ -575,13 +635,10 @@ mod over_http {
         }
     }
 
-    fn reads_as<'a>(
-        client: &'a buzz_acp::relay::RestClient,
-        relay_self: &'a str,
-    ) -> RelayReads<'a> {
+    fn reads_as(client: &buzz_acp::relay::RestClient, relay_self: &str) -> RelayReads {
         RelayReads {
-            rest: client,
-            relay_self,
+            rest: client.clone(),
+            relay_self: relay_self.to_string(),
             scope: crate::team_wake::WakeScope {
                 channel_ref: uuid::Uuid::new_v4(),
                 session_ref: "s".into(),
