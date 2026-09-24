@@ -98,6 +98,32 @@ pub fn build_approval_grant(
     Ok(EventBuilder::new(Kind::Custom(46030), content).tags(tags))
 }
 
+/// Kind 46030 — a **standing** grant, naming a workflow and its published
+/// definition hash directly instead of an approval token. No run and no
+/// kind:46010 request need exist first (spec § 5.4 extension; ledger 252's
+/// control run 6 finding: the prior path parked a synthetic run at the
+/// project's seed commit purely to manufacture something for setup's
+/// "Approve and allow future runs" click to answer). The content is always
+/// `scope: action` — a standing grant only ever means every later run of
+/// this exact definition; the relay refuses any other scope on this shape.
+pub fn build_standing_approval_grant(
+    workflow_id: &str,
+    definition_hash: &str,
+    note: Option<&str>,
+) -> Result<EventBuilder, String> {
+    let raw_tags =
+        buzz_core_pkg::workflow_autorun::build_standing_grant_tags(workflow_id, definition_hash)?;
+    let tags = raw_tags
+        .into_iter()
+        .map(|parts| tag(parts.iter().map(String::as_str).collect()))
+        .collect::<Result<Vec<_>, _>>()?;
+    let content = buzz_core_pkg::workflow_autorun::encode_approval_grant_content(
+        note,
+        buzz_core_pkg::workflow_autorun::ApprovalScope::Action,
+    );
+    Ok(EventBuilder::new(Kind::Custom(46030), content).tags(tags))
+}
+
 /// Kind 46032 — revoke every autorun grant of a workflow.
 pub fn build_autorun_revoke(workflow_id: &str, channel_id: &str) -> Result<EventBuilder, String> {
     let revoke = buzz_core_pkg::workflow_autorun::AutorunRevoke {

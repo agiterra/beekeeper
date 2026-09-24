@@ -1,14 +1,24 @@
-//! Project setup's one standing consent (ledger 248; plan "Approval" ruling).
+//! Project setup's one standing consent (ledger 248, 252; plan "Approval"
+//! ruling).
 //!
 //! A new project's agents repository seeds an **active** manual `verify`
 //! action (`buzz_persona::seed::seeded_actions_yml_with_verify`). Before any
 //! team starts, setup publishes that definition (kind 30620) so its
-//! `definition_hash` exists, and starts one run of it at the code
-//! repository's seed commit. The relay parks that run on its synthetic
-//! approval gate and publishes the existing kind:46010; the creation result
-//! renders it with the existing approval card, whose "allow future runs of
-//! this exact definition" answer is the existing hash-bound grant (46030,
-//! `scope: action`). Nothing new is stored.
+//! `definition_hash` exists, and the "Approve and allow future runs" click
+//! answers it with a standing grant (kind:46030, `scope: action`,
+//! `handle_standing_approval_grant` in
+//! `crates/buzz-relay/src/handlers/command_executor.rs`) bound to
+//! `(workflow id, definition_hash)` directly — the existing hash-bound
+//! autorun grant a per-run approval would also record.
+//!
+//! Control run 6 (2026-09-24) found the prior shape started a real run at
+//! the code repository's **empty seed commit** purely to park it on a
+//! synthetic approval gate and manufacture a kind:46010 for the click to
+//! answer — a run nothing had asked for, gated on a host provider that setup
+//! never starts (`session_provider::supervisor::ensure_running` is only
+//! called from session launch), so it sat unclaimed and then ran red on a
+//! commit with no tests. Setup now asks for consent directly: no trigger, no
+//! run, no host-step ceremony.
 //!
 //! What this consent is and is not: it is the person whose computer runs the
 //! command agreeing to *this definition* running there — resource consent,
@@ -113,15 +123,6 @@ pub(crate) fn actions_channel_spec(project_name: &str, slug: &str) -> ActionsCha
     }
 }
 
-/// The `run_id` a kind:46020's acceptance message names, if any.
-pub(crate) fn run_id_from_trigger_message(message: &str) -> Option<String> {
-    crate::relay::parse_command_response::<serde_json::Value>(message)
-        .ok()?
-        .get("run_id")?
-        .as_str()
-        .map(str::to_owned)
-}
-
 /// What `project_verify_setup` did, step by step; each field is `null` when
 /// its step did not happen, and `error` names the step that stopped.
 #[derive(Debug, Default, Serialize)]
@@ -134,14 +135,16 @@ pub struct ProjectVerifySetup {
     pub publish_event_id: Option<String>,
     /// The definition was already published by this key into `channel_id`.
     pub channel_reused: bool,
+    /// The code repository's seed commit, informational only — no run is
+    /// bound to it. Reported so the consent question can name it.
     pub checkout: Option<String>,
-    pub run_id: Option<String>,
-    pub trigger_event_id: Option<String>,
     pub error: Option<String>,
 }
 
-/// Publish the seeded `verify` and start the one run whose approval request
-/// carries setup's consent question.
+/// Publish the seeded `verify` definition. The consent question itself — a
+/// standing grant against `workflow_id`/`definition_hash` — is a separate
+/// call ([`grant_standing_approval`](crate::commands::grant_standing_approval))
+/// made once the person answers it; publishing here starts no run.
 ///
 /// `actions_yml` is `ProjectAgentsInit.seededActionsYml`, the bytes this
 /// computer seeded and pushed; `checkout` is the code repository's seed
@@ -261,25 +264,6 @@ pub async fn project_verify_setup(
     }
     if result.publish_event_id.is_none() {
         result.error = Some(format!("the verify action was not published: {last_error}"));
-        return Ok(result);
-    }
-
-    let builder = crate::events::build_workflow_trigger(
-        &plan.workflow_id.to_string(),
-        result.checkout.as_deref(),
-    )?;
-    match crate::relay::submit_event(builder, &state).await {
-        Ok(response) if response.accepted => {
-            result.run_id = run_id_from_trigger_message(&response.message);
-            result.trigger_event_id = Some(response.event_id);
-        }
-        Ok(response) => {
-            result.error = Some(format!(
-                "the verify run was not started: {}",
-                response.message
-            ))
-        }
-        Err(error) => result.error = Some(format!("the verify run was not started: {error}")),
     }
     Ok(result)
 }

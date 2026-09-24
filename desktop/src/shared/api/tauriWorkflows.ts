@@ -633,6 +633,25 @@ export async function getWorkflowAutorun(
   };
 }
 
+/**
+ * Grant a **standing** approval: consent for `workflowId`'s exact published
+ * definition (`definitionHash`) to run on this operator's host from now on
+ * — no run, no approval token, no kind:46010 in between (spec § 5.4
+ * extension; ledger 252's control run 6 finding). The relay records the
+ * same autorun grant an in-run `scope: action` answer would.
+ */
+export async function grantStandingApproval(
+  workflowId: string,
+  definitionHash: string,
+  note?: string,
+): Promise<{ eventId: string }> {
+  const raw = await invokeTauri<{ event_id: string }>(
+    "grant_standing_approval",
+    { workflowId, definitionHash, note: note ?? null },
+  );
+  return { eventId: raw.event_id };
+}
+
 /** Revoke every autorun grant of a workflow (kind 46032). */
 export async function revokeAutorun(
   workflowId: string,

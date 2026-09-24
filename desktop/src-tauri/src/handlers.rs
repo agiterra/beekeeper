@@ -341,6 +341,7 @@ pub(crate) fn invoke_handler(
         get_workflow_autorun,
         trigger_workflow,
         grant_approval,
+        grant_standing_approval,
         deny_approval,
         publish_note,
         get_contact_list,

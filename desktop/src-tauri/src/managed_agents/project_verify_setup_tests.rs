@@ -1,7 +1,7 @@
 //! Ledger 248: what project setup publishes for the seeded `verify` action.
 
 use super::project_verify_setup::{
-    actions_channel_spec, plan_verify_publication, run_id_from_trigger_message,
+    actions_channel_spec, plan_verify_publication, ProjectVerifySetup,
 };
 
 const PROJECT: &str =
@@ -38,14 +38,27 @@ fn setup_refuses_a_file_without_a_host_verify() {
     assert!(error.contains("verify"), "{error}");
 }
 
+/// Ledger 252, control run 6: the prior setup started a real run at the code
+/// repository's empty seed commit purely to park it on a synthetic approval
+/// gate and manufacture a kind:46010 for the "Approve and allow future runs"
+/// click to answer — a run nothing had asked for, on a provider setup never
+/// starts, that sat unclaimed and then ran red on a commit with no tests.
+/// `ProjectVerifySetup` now carries no `run_id`/`trigger_event_id` at all:
+/// the type itself proves setup can publish only the definition, never a
+/// run.
 #[test]
-fn the_run_id_is_read_from_the_trigger_response() {
-    let id = "5d6f1f7e-1c1b-4a53-9a8e-3a6f2d2b7c10";
-    assert_eq!(
-        run_id_from_trigger_message(&format!("response:{{\"run_id\":\"{id}\"}}")),
-        Some(id.to_string())
+fn project_verify_setup_result_carries_no_run_or_trigger_fields() {
+    let result = ProjectVerifySetup::default();
+    let value = serde_json::to_value(&result).expect("serialize");
+    let object = value.as_object().expect("object");
+    assert!(
+        !object.contains_key("runId"),
+        "setup must not report a run id — it starts no run"
     );
-    assert_eq!(run_id_from_trigger_message("accepted"), None);
+    assert!(
+        !object.contains_key("triggerEventId"),
+        "setup must not report a trigger event id — it publishes no trigger"
+    );
 }
 
 /// Ledger 252 (control run 3): setup filed `verify` in a private

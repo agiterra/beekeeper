@@ -1,27 +1,30 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
 
-import { relayClient } from "@/shared/api/relayClient";
+import { grantStandingApproval } from "@/shared/api/tauriWorkflows";
+import { Button } from "@/shared/ui/button";
 
-import { HostStepApprovalInboxCard } from "@/features/project-actions/ui/HostStepApprovalInboxCard";
 import {
-  findApprovalRequestForRun,
   verifyConsentUnavailable,
   type ProjectVerifySetupResult,
 } from "../lib/projectVerifySetup";
 
-const KIND_APPROVAL_REQUESTED = 46010;
-const POLL_MS = 2_000;
+function errorSentence(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
 
 /**
- * Setup's one consent question (ledger 248): may this computer run the
- * project's `verify` definition, this exact one, from now on?
+ * Setup's one consent question (ledger 248, 252; spec § 5.4): may this
+ * computer run the project's `verify` definition, this exact one, from now
+ * on?
  *
- * The question is the existing kind:46010 of the one run setup started, and
- * the answer is the existing approval card — argv one row per argument, the
- * definition hash, the bound commit, and Approve disabled unless all of them
- * and the approver resolve (lane 218). Its "allow future runs of this exact
- * definition" is the standing grant; a changed definition hashes differently
- * and asks again, and a routine run of this one asks nobody.
+ * Control run 6 (2026-09-24) found the prior card answered a kind:46010 that
+ * setup manufactured by starting a real run at the code repository's empty
+ * seed commit — a run on a provider setup never starts, so it sat unclaimed
+ * and then ran red on a commit with no tests. The click now publishes a
+ * standing grant directly (`grantStandingApproval`), bound to
+ * `(workflowId, definitionHash)`. No run happens here; a routine run of this
+ * exact definition, from any seat, is what the grant later covers — and asks
+ * nobody. An edited definition hashes differently and asks again.
  */
 export function ProjectVerifyConsent({
   verify,
@@ -31,23 +34,18 @@ export function ProjectVerifyConsent({
   verifyError: string | null;
 }) {
   const unavailable = verifyConsentUnavailable(verify, verifyError);
-  const runId = verify?.runId ?? null;
-  const channelId = verify?.channelId ?? null;
-  const request = useQuery({
-    queryKey: ["project-verify-consent", channelId, runId],
-    enabled: unavailable === null,
-    queryFn: async () => {
-      const events = await relayClient.fetchEventsBatch([
-        {
-          kinds: [KIND_APPROVAL_REQUESTED],
-          "#h": [channelId ?? ""],
-          limit: 20,
-        },
-      ]);
-      return findApprovalRequestForRun(events, runId);
+  const workflowId = verify?.workflowId ?? null;
+  const definitionHash = verify?.definitionHash ?? null;
+
+  const grant = useMutation({
+    mutationFn: () => {
+      if (workflowId === null || definitionHash === null) {
+        throw new Error("no definition to grant yet");
+      }
+      return grantStandingApproval(workflowId, definitionHash);
     },
-    refetchInterval: (query) => (query.state.data ? false : POLL_MS),
   });
+  const { mutate: grantMutate, isPending, isSuccess, error, data } = grant;
 
   return (
     <div
@@ -67,29 +65,40 @@ export function ProjectVerifyConsent({
           <p className="text-xs text-muted-foreground">
             Agents run this project&apos;s verify action on your computer. The
             one answer below covers every future run of exactly this definition;
-            an edited definition asks again. Allowing it also releases the run
-            that asked, which tests the code seed commit{" "}
-            <span className="font-mono">
-              {(verify?.checkout ?? "").slice(0, 8)}
-            </span>{" "}
-            — a README and no tests yet — so that first result says nothing
-            about your code.
+            an edited definition asks again. No run happens as part of answering
+            — the first run of it is whatever a session starts next.
           </p>
-          {request.data ? (
-            <HostStepApprovalInboxCard event={request.data} />
-          ) : (
+          {isSuccess ? (
             <p
               className="text-xs text-muted-foreground"
-              data-testid="project-verify-consent-waiting"
+              data-testid="project-verify-consent-granted"
             >
-              {request.error
-                ? `The approval request could not be read: ${
-                    request.error instanceof Error
-                      ? request.error.message
-                      : String(request.error)
-                  }`
-                : "Waiting for the relay's approval request…"}
+              Standing grant published (event{" "}
+              <span className="font-mono">{data.eventId.slice(0, 8)}</span>
+              ). No run has happened yet.
             </p>
+          ) : (
+            <>
+              <Button
+                data-testid="project-verify-consent-approve"
+                disabled={
+                  isPending || workflowId === null || definitionHash === null
+                }
+                onClick={() => grantMutate()}
+                size="sm"
+                type="button"
+              >
+                Approve and allow future runs
+              </Button>
+              {error ? (
+                <p
+                  className="text-xs text-destructive"
+                  data-testid="project-verify-consent-error"
+                >
+                  {`The grant was not published: ${errorSentence(error)}`}
+                </p>
+              ) : null}
+            </>
           )}
         </>
       )}

@@ -4,7 +4,6 @@ import test from "node:test";
 import {
   DEFAULT_VERIFY_COMMAND_TEXT,
   decodeProjectVerifySetup,
-  findApprovalRequestForRun,
   parseVerifyCommand,
   verifyConsentUnavailable,
 } from "./projectVerifySetup.ts";
@@ -34,32 +33,6 @@ test("the verify command field parses to argv, defaulting to the kettle gate", (
   ]);
 });
 
-const RUN = "5d6f1f7e-1c1b-4a53-9a8e-3a6f2d2b7c10";
-function request(runId, ref) {
-  return {
-    kind: 46010,
-    tags: [
-      ["d", ref],
-      ["h", "chan"],
-    ],
-    content: JSON.stringify({
-      schema: "buzz-approval-request/v1",
-      runId,
-      workflowId: "wf",
-      stepId: "verify",
-      synthetic: true,
-    }),
-  };
-}
-
-test("the consent card is the 46010 of setup's own run, never another run's", () => {
-  const other = request("00000000-0000-4000-8000-000000000000", "a".repeat(64));
-  const mine = request(RUN, "b".repeat(64));
-  assert.equal(findApprovalRequestForRun([other, mine], RUN), mine);
-  assert.equal(findApprovalRequestForRun([other], RUN), null);
-  assert.equal(findApprovalRequestForRun([mine], null), null);
-});
-
 test("consent is offered only when every setup step resolved, and says which did not", () => {
   const done = decodeProjectVerifySetup({
     workflowId: "wf",
@@ -69,21 +42,42 @@ test("consent is offered only when every setup step resolved, and says which did
     publishEventId: "e1",
     channelReused: false,
     checkout: "d".repeat(40),
-    runId: RUN,
-    triggerEventId: "e2",
     error: null,
   });
   assert.equal(verifyConsentUnavailable(done, null), null);
   assert.match(
     verifyConsentUnavailable(
-      { ...done, runId: null, error: "the verify run was not started: x" },
+      {
+        ...done,
+        workflowId: null,
+        error: "the verify action was not published: x",
+      },
       null,
     ),
-    /not started: x/,
+    /not published: x/,
   );
   assert.match(verifyConsentUnavailable(null, "no host"), /no host/);
   assert.match(verifyConsentUnavailable(null, null), /not published/);
   assert.throws(() => decodeProjectVerifySetup({ workflowId: 1 }));
+});
+
+test("setup no longer reports a run or trigger — a response naming neither still decodes", () => {
+  // Before ledger 252's control-run-6 fix, decodeProjectVerifySetup required
+  // `runId` and `triggerEventId` to be present (even as `null`) or it threw.
+  // Setup now starts no run and publishes no trigger, so the host response
+  // never carries either field at all.
+  const decoded = decodeProjectVerifySetup({
+    workflowId: "wf",
+    channelId: "chan",
+    definitionHash: "c".repeat(64),
+    command: [],
+    publishEventId: "e1",
+    channelReused: false,
+    checkout: "d".repeat(40),
+    error: null,
+  });
+  assert.equal(decoded.workflowId, "wf");
+  assert.equal(decoded.definitionHash, "c".repeat(64));
 });
 
 test("setup publishes nothing unless both seeds reached the relay", async () => {

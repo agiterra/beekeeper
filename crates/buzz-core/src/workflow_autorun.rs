@@ -18,6 +18,20 @@ pub const AUTORUN_SCHEMA: &str = "buzz-workflow-autorun/v1";
 /// Maximum UTF-8 byte length of a grant note.
 pub const MAX_APPROVAL_NOTE_BYTES: usize = 2048;
 
+/// Tag name of a **standing** kind:46030's workflow reference.
+///
+/// A standing grant cites no run and no approval token — it is consent for a
+/// workflow's *published* definition to run on this operator's host from now
+/// on, the same `(workflow id, definition hash)` binding an in-run
+/// `scope: action` grant already records (spec § 5.4), minted without first
+/// parking a synthetic run just to manufacture something to answer. Its
+/// presence (instead of the per-run grant's `d`/`e` tag) is what the relay
+/// uses to choose the standing path; see
+/// `crates/buzz-relay/src/handlers/command_executor.rs` `handle_approval_grant`.
+pub const STANDING_GRANT_WORKFLOW_TAG: &str = "workflow";
+/// Tag name of a standing kind:46030's definition-hash reference.
+pub const STANDING_GRANT_DEFINITION_HASH_TAG: &str = "definitionHash";
+
 /// What an approval grant releases.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -103,6 +117,34 @@ pub fn encode_approval_grant_content(note: Option<&str>, scope: ApprovalScope) -
         "scope": scope,
     })
     .to_string()
+}
+
+/// Build the tags of a **standing** kind:46030 — a grant with no run and no
+/// approval token, naming the workflow and the exact published definition
+/// hash it covers instead. The content stays the ordinary `{note, scope}`
+/// form (`encode_approval_grant_content`); a standing grant must be signed
+/// with `scope: Action`, since no run exists for `scope: Run` to mean
+/// anything, and the relay refuses one that is not.
+///
+/// # Errors
+/// `workflow_id` is not a canonical lowercase UUID, or `definition_hash` is
+/// not lowercase 64-hex.
+pub fn build_standing_grant_tags(
+    workflow_id: &str,
+    definition_hash: &str,
+) -> Result<Vec<Vec<String>>, String> {
+    canonical_uuid("workflow id", workflow_id)?;
+    hex64("standing grant definition hash", definition_hash)?;
+    Ok(vec![
+        vec![
+            STANDING_GRANT_WORKFLOW_TAG.to_string(),
+            workflow_id.to_owned(),
+        ],
+        vec![
+            STANDING_GRANT_DEFINITION_HASH_TAG.to_string(),
+            definition_hash.to_owned(),
+        ],
+    ])
 }
 
 /// Whether a 46015 records a grant or a revocation.
@@ -334,5 +376,32 @@ mod tests {
         let (tags, content) = build_autorun_revoke(&revoke).expect("build");
         let event = signed(KIND_WORKFLOW_AUTORUN_REVOKE, tags, content);
         assert_eq!(decode_autorun_revoke(&event).expect("decode"), revoke);
+    }
+
+    #[test]
+    fn standing_grant_tags_carry_workflow_and_definition_hash() {
+        let workflow_id = Uuid::from_u128(11).to_string();
+        let definition_hash = "d".repeat(64);
+        let tags =
+            build_standing_grant_tags(&workflow_id, &definition_hash).expect("standing tags");
+        assert_eq!(
+            tags,
+            vec![
+                vec![STANDING_GRANT_WORKFLOW_TAG.to_string(), workflow_id.clone()],
+                vec![
+                    STANDING_GRANT_DEFINITION_HASH_TAG.to_string(),
+                    definition_hash.clone()
+                ],
+            ]
+        );
+    }
+
+    #[test]
+    fn standing_grant_tags_refuse_bad_workflow_id_or_hash() {
+        let definition_hash = "e".repeat(64);
+        assert!(build_standing_grant_tags("not-a-uuid", &definition_hash).is_err());
+        let workflow_id = Uuid::from_u128(12).to_string();
+        assert!(build_standing_grant_tags(&workflow_id, "not-hex").is_err());
+        assert!(build_standing_grant_tags(&workflow_id, &"f".repeat(63)).is_err());
     }
 }

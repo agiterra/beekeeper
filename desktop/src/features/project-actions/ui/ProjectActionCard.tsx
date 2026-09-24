@@ -12,6 +12,7 @@ import {
   requiredCheckoutStepIds,
   runOnHostStepIds,
 } from "../lib/actionDefinition";
+import { autorunGrantState, standingGrantNote } from "../lib/autorunState";
 import type { ProjectCodeRefTip } from "../lib/useProjectCodeRefTip";
 import type { ProjectAction } from "../lib/useProjectActions";
 import { ProjectActionRunControl } from "./ProjectActionRunControl";
@@ -37,16 +38,10 @@ export function ProjectActionCard({
   onChanged: () => void;
 }) {
   const { workflow, runs, autorun, autorunError } = action;
-  const activeGrant =
-    autorun?.grants.find(
-      (grant) => grant.revokedAt === null && grant.matchesCurrent,
-    ) ?? null;
-  const staleGrant =
-    !activeGrant &&
-    (autorun?.grants.some(
-      (grant) => grant.revokedAt === null && !grant.matchesCurrent,
-    ) ??
-      false);
+  const grantState = autorunGrantState(autorun?.grants);
+  const activeGrant = grantState.kind === "active" ? grantState : null;
+  const staleGrant = grantState.kind === "stale";
+  const grantNote = standingGrantNote(grantState, runs.length);
   const trigger = actionTriggerSummary(workflow.definition);
   const description = actionDescription(workflow.definition);
   const hostSteps = runOnHostStepIds(workflow.definition);
@@ -97,6 +92,14 @@ export function ProjectActionCard({
                 <Badge variant="outline">
                   autorun · granted by {truncatePubkey(activeGrant.grantedBy)}
                 </Badge>
+                {grantNote ? (
+                  <span
+                    className="text-2xs text-muted-foreground"
+                    data-testid="project-action-autorun-no-run-yet"
+                  >
+                    {grantNote}
+                  </span>
+                ) : null}
                 <Button
                   data-testid="project-action-autorun-revoke"
                   disabled={revoking}

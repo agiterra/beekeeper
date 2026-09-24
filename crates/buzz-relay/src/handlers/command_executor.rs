@@ -1382,6 +1382,17 @@ async fn handle_approval_grant(
     event: &Event,
     auth: &IngestAuth,
 ) -> Result<IngestResult, IngestError> {
+    // A standing grant (spec § 5.4 extension) names its workflow directly
+    // instead of an approval token — no run, no kind:46013/46020 needed to
+    // manufacture something for it to answer. Its presence is the whole
+    // dispatch: a per-run grant never carries a `workflow` tag.
+    if let Some(workflow_id_hex) = extract_tag(
+        event,
+        buzz_core::workflow_autorun::STANDING_GRANT_WORKFLOW_TAG,
+    ) {
+        return handle_standing_approval_grant(tenant, state, event, auth, &workflow_id_hex).await;
+    }
+
     let self_bytes = auth.pubkey().to_bytes().to_vec();
     let self_hex = hex::encode(&self_bytes);
 
@@ -1561,6 +1572,130 @@ async fn handle_approval_grant(
             serde_json::json!({
                 "status": "granted",
                 "run_id": run_id.to_string(),
+            })
+        ),
+    })
+}
+
+/// Grant a **standing** kind:46030 — one naming a workflow and a definition
+/// hash directly, with no run and no approval token behind it (spec § 5.4
+/// extension; ledger 252's control run 6 finding). It records exactly the
+/// autorun grant an in-run `scope: action` grant would, without parking a
+/// synthetic run and its kind:46013 first just to manufacture something for
+/// the click to answer.
+///
+/// Authorization mirrors the per-run path's `project-owner:` spec: a project
+/// action admits its project's owner or a collaborator with the write role;
+/// a workflow with no `project_ref` admits only its own `owner_pubkey`. There
+/// is no per-run `approver_spec` to consult, because there is no run.
+async fn handle_standing_approval_grant(
+    tenant: &TenantContext,
+    state: &Arc<AppState>,
+    event: &Event,
+    auth: &IngestAuth,
+    workflow_id_hex: &str,
+) -> Result<IngestResult, IngestError> {
+    let self_bytes = auth.pubkey().to_bytes().to_vec();
+    let self_hex = hex::encode(&self_bytes);
+
+    let workflow_id = Uuid::parse_str(workflow_id_hex)
+        .map_err(|_| IngestError::Rejected("invalid: bad workflow id".into()))?;
+
+    let definition_hash_hex = extract_tag(
+        event,
+        buzz_core::workflow_autorun::STANDING_GRANT_DEFINITION_HASH_TAG,
+    )
+    .ok_or_else(|| IngestError::Rejected("invalid: missing definitionHash tag".into()))?;
+    let definition_hash = hex::decode(&definition_hash_hex)
+        .map_err(|_| IngestError::Rejected("invalid: bad definitionHash hex".into()))?;
+
+    // A standing grant only ever means "every later run of this exact
+    // definition" — there is no single run for `scope: run` to bind.
+    let grant_content = buzz_core::workflow_autorun::decode_approval_grant_content(&event.content)
+        .map_err(|e| IngestError::Rejected(format!("invalid: {e}")))?;
+    if grant_content.scope != buzz_core::workflow_autorun::ApprovalScope::Action {
+        return Err(IngestError::Rejected(
+            "invalid: a standing grant must carry scope: action".into(),
+        ));
+    }
+
+    let workflow = match state.db.get_workflow(tenant.community(), workflow_id).await {
+        Ok(workflow) => workflow,
+        Err(DbError::NotFound(_)) => {
+            return Err(IngestError::Rejected("invalid: workflow not found".into()));
+        }
+        Err(e) => {
+            return Err(IngestError::Internal(format!(
+                "error: db get_workflow: {e}"
+            )));
+        }
+    };
+
+    if workflow.definition_hash != definition_hash {
+        return Err(IngestError::Rejected(
+            "invalid: definitionHash does not match the workflow's published definition".into(),
+        ));
+    }
+
+    let approver_spec = match &workflow.project_ref {
+        Some(project) => format!("project-owner:{project}"),
+        None => hex::encode(&workflow.owner_pubkey),
+    };
+    approver_admitted(
+        state,
+        tenant.community(),
+        &approver_spec,
+        &self_hex,
+        &self_bytes,
+    )
+    .await?;
+
+    let tx = match persist_command_event(&state.db, tenant, event, None).await? {
+        PersistResult::Duplicate => {
+            return Ok(IngestResult {
+                event_id: event.id.to_hex(),
+                accepted: true,
+                message: "duplicate: already processed".into(),
+            });
+        }
+        PersistResult::Inserted(tx) => tx,
+    };
+
+    state
+        .db
+        .create_autorun_grant(
+            tenant.community(),
+            workflow_id,
+            &definition_hash,
+            &self_bytes,
+            event.id.as_bytes(),
+        )
+        .await
+        .map_err(|e| IngestError::Internal(format!("error: db create_autorun_grant: {e}")))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| IngestError::Internal(format!("error: commit transaction: {e}")))?;
+
+    publish_autorun_changed(
+        state,
+        tenant.community(),
+        &workflow,
+        &definition_hash,
+        buzz_core::workflow_autorun::AutorunChange::Granted,
+        &self_hex,
+        &event.id.to_hex(),
+    )
+    .await;
+
+    Ok(IngestResult {
+        event_id: event.id.to_hex(),
+        accepted: true,
+        message: format!(
+            "response:{}",
+            serde_json::json!({
+                "status": "granted",
+                "standing": true,
             })
         ),
     })

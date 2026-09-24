@@ -529,6 +529,25 @@ pub async fn grant_approval(
     Ok(serde_json::json!({ "event_id": result.event_id }))
 }
 
+/// Grant a **standing** approval: consent for `workflow_id`'s exact
+/// published definition (`definition_hash`) to run on this operator's host
+/// from now on, with no run and no approval token to grant against (spec §
+/// 5.4 extension; ledger 252's control run 6 finding). The relay admits the
+/// same authority a per-run grant would — the workflow's project owner, or
+/// its own owner pubkey when it names no project.
+#[tauri::command]
+pub async fn grant_standing_approval(
+    workflow_id: String,
+    definition_hash: String,
+    note: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Value, String> {
+    let builder =
+        events::build_standing_approval_grant(&workflow_id, &definition_hash, note.as_deref())?;
+    let result = submit_event(builder, &state).await?;
+    Ok(serde_json::json!({ "event_id": result.event_id }))
+}
+
 /// Revoke every autorun grant of a workflow (kind 46032). The relay admits
 /// the workflow owner and, for a project action, anyone the project's
 /// writer rule admits.

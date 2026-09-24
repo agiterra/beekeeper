@@ -722,8 +722,8 @@ pub fn build_dm_hide(channel_id: &str) -> Result<EventBuilder, String> {
 mod workflows;
 
 pub use workflows::{
-    build_approval_deny, build_approval_grant, build_autorun_revoke, build_workflow_definition,
-    build_workflow_delete, build_workflow_trigger,
+    build_approval_deny, build_approval_grant, build_autorun_revoke, build_standing_approval_grant,
+    build_workflow_definition, build_workflow_delete, build_workflow_trigger,
 };
 
 // ── Transport ────────────────────────────────────────────────────────────────

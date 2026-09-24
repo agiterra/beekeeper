@@ -1,21 +1,23 @@
 /**
- * Project setup's one standing consent (ledger 248; the plan's "Approval"
- * ruling, spec § 5.4).
+ * Project setup's one standing consent (ledger 248, 252; the plan's
+ * "Approval" ruling, spec § 5.4).
  *
  * Creation seeds an active `verify` action, and the host command
  * `project_verify_setup`
  * (`desktop/src-tauri/src/managed_agents/project_verify_setup.rs`) publishes
- * it and starts one run at the code repository's seed commit. The relay
- * parks that run on its synthetic approval gate and publishes the existing
- * kind:46010; the Setup card renders it with the existing approval card, and
- * its "allow future runs of this exact definition" answer is the existing
- * hash-bound grant. Nothing new is stored, and nothing here decides what the
- * card may offer: the card itself keeps Approve disabled until the run, its
- * bound definition and the approver all resolve.
+ * it — nothing more. The "Approve and allow future runs" click answers
+ * directly with a standing grant (`grantStandingApproval`,
+ * `desktop/src-tauri/src/commands/workflows.rs` `grant_standing_approval`)
+ * bound to `(workflowId, definitionHash)`, with no run and no kind:46010 in
+ * between.
+ *
+ * Control run 6 (2026-09-24) found the prior shape started a real run at the
+ * code repository's empty seed commit purely to park it on a synthetic
+ * approval gate and manufacture something for the click to answer — a run
+ * on a provider setup never starts, so it sat unclaimed and then ran red on
+ * a commit with no tests.
  */
 import { invokeTauri } from "@/shared/api/tauri";
-
-import { readHostStepApprovalRequest } from "@/features/project-actions/lib/hostStepApproval";
 
 /** The host command this module calls. */
 export const PROJECT_VERIFY_SETUP_COMMAND = "project_verify_setup";
@@ -35,9 +37,8 @@ export type ProjectVerifySetupResult = {
   command: string[];
   publishEventId: string | null;
   channelReused: boolean;
+  /** The code repository's seed commit — informational; no run is bound to it. */
   checkout: string | null;
-  runId: string | null;
-  triggerEventId: string | null;
   /** The step that stopped setup, in the host's words. */
   error: string | null;
 };
@@ -62,8 +63,6 @@ export function decodeProjectVerifySetup(
     optionalString(record.publishEventId) &&
     typeof record.channelReused === "boolean" &&
     optionalString(record.checkout) &&
-    optionalString(record.runId) &&
-    optionalString(record.triggerEventId) &&
     optionalString(record.error);
   if (!ok) {
     throw new Error(
@@ -118,28 +117,9 @@ export function parseVerifyCommand(text: string): string[] | null {
   return args.length > 0 ? args : null;
 }
 
-type RelayEventLike = {
-  kind: number;
-  tags: readonly (readonly string[])[];
-  content: string;
-};
-
-/** The kind:46010 that parks setup's own run, or `null`. */
-export function findApprovalRequestForRun<T extends RelayEventLike>(
-  events: readonly T[],
-  runId: string | null,
-): T | null {
-  if (runId === null) return null;
-  return (
-    events.find(
-      (event) => readHostStepApprovalRequest(event)?.runId === runId,
-    ) ?? null
-  );
-}
-
 /**
  * Why the consent question cannot be asked, or `null` when setup published
- * the definition and started the run it rides on.
+ * the definition and a standing grant may be requested for it.
  */
 export function verifyConsentUnavailable(
   verify: ProjectVerifySetupResult | null,
@@ -149,7 +129,7 @@ export function verifyConsentUnavailable(
   if (verify === null)
     return "The verify action was not published, because this computer did not seed and push the agents repository.";
   if (verify.error !== null) return verify.error;
-  if (verify.runId === null || verify.channelId === null)
-    return "The verify run was accepted but the relay named no run to approve.";
+  if (verify.workflowId === null || verify.definitionHash === null)
+    return "The verify action was accepted but the relay named no definition to approve.";
   return null;
 }
