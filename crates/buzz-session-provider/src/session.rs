@@ -479,6 +479,14 @@ pub struct TurnFraming {
     /// assignment turn, which is what keeps ordinary turns byte-for-byte what
     /// they were.
     pub work_brief: Option<String>,
+    /// The provider's situation card for a team lead's goal turn
+    /// ([`crate::situation_card`]), rendered above everything else. `None`
+    /// for every other turn.
+    pub situation_card: Option<String>,
+    /// `true` when this frame exists only to carry a host-assembled preface
+    /// on a founder-sent turn: no `[Context]` block is rendered, so the
+    /// founder's words reach the agent exactly as an unframed turn's would.
+    pub unaddressed: bool,
 }
 
 impl TurnFraming {
@@ -506,14 +514,22 @@ impl TurnFraming {
                     .to_owned()
             }
         };
-        let framed = format!(
-            "[Context]\nScope: coding-session\nFrom: {} ({who})\nDelivery: {}\n{reply}\n\n{text}",
-            self.sender_pubkey,
-            self.delivery.as_str(),
-        );
-        match &self.work_brief {
+        let framed = if self.unaddressed {
+            text.to_owned()
+        } else {
+            format!(
+                "[Context]\nScope: coding-session\nFrom: {} ({who})\nDelivery: {}\n{reply}\n\n{text}",
+                self.sender_pubkey,
+                self.delivery.as_str(),
+            )
+        };
+        let briefed = match &self.work_brief {
             Some(brief) => format!("{brief}\n\n---\n\n{framed}"),
             None => framed,
+        };
+        match &self.situation_card {
+            Some(card) => format!("{card}\n\n---\n\n{briefed}"),
+            None => briefed,
         }
     }
 }
@@ -6430,6 +6446,8 @@ done
         let sender = "a".repeat(64);
         let framing = TurnFraming {
             work_brief: None,
+            situation_card: None,
+            unaddressed: false,
             channel_id,
             sender_pubkey: sender.clone(),
             sender_role: Some("lead".into()),
@@ -6485,6 +6503,8 @@ done
     fn a_seatless_sender_is_framed_as_an_operator_with_no_reply_address() {
         let rendered = TurnFraming {
             work_brief: None,
+            situation_card: None,
+            unaddressed: false,
             channel_id: Uuid::nil(),
             sender_pubkey: "b".repeat(64),
             sender_role: None,

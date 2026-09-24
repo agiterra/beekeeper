@@ -76,6 +76,7 @@ pub mod retirement;
 pub mod seat_bee;
 pub mod seat_requests;
 pub mod session;
+pub mod situation_card;
 pub mod state;
 mod team_wake;
 pub mod transcript;
@@ -3403,6 +3404,21 @@ impl Provider {
             .as_ref()
             .map(|framing| framing.sender_pubkey.clone())
             .unwrap_or_else(|| plan.founder_pubkey.clone());
+        // A seat's first turn carries its situation card.
+        let initial_card = match &plan.initial_turn {
+            Some(text) => {
+                self.seat_situation_card(&target.session_id, text, plan.hire_ref.as_deref())
+                    .await
+            }
+            None => None,
+        };
+        let initial_framing = situation_card::attach_situation_card(
+            initial_framing,
+            initial_card,
+            plan.channel_id,
+            &initial_operator,
+            CodingSessionDelivery::Boundary,
+        );
 
         if let Some((status, reason)) = create_disclosure(&startup.continuity, unavailable_reason) {
             self.enqueue_transcript(
@@ -5031,6 +5047,17 @@ impl Provider {
                         framing.work_brief = work_brief;
                         framing
                     });
+                // A seat's first turn carries its situation card.
+                let card = self
+                    .seat_situation_card(&target.session_id, &text, None)
+                    .await;
+                let framing = situation_card::attach_situation_card(
+                    framing,
+                    card,
+                    channel_id,
+                    operator_pubkey,
+                    deliver,
+                );
                 // The capability gate. A runtime that never advertised image
                 // prompts does not merely ignore an image block — `buzz-agent`
                 // fails the whole turn on one — so the attachments are dropped
@@ -9796,6 +9823,8 @@ impl Provider {
             // Attached by the one caller that has one: an assignment turn.
             // Every other frame has no brief and is byte-for-byte what it was.
             work_brief: None,
+            situation_card: None,
+            unaddressed: false,
         })
     }
 

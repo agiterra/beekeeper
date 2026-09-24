@@ -39,10 +39,23 @@ const LEAD_COMMAND_SHAPES: [&str; 6] = [
      \"followUps\":[],\"summary\":\"<one sentence>\"}'`",
 ];
 
-const LEAD_PACE_RULES: [&str; 2] = [
+const LEAD_PACE_RULES: [&str; 3] = [
     "Run the verify action only on a delivered commit, after the delivery ref has moved to it, \
      never on the seed commit or a branch.",
     "On a host-result wake for a result you have already used, do nothing.",
+    "Hire the verifier seat when you hire the builder, so it is warm; bind its assignment with \
+     `--verifies <report id>` when the builder's report lands.",
+];
+
+/// Lead 1.2.4: the facts the lead once spent 42% of its tool calls finding
+/// are named by the provider's situation card, and the role text says so
+/// instead of telling the lead to look them up.
+const LEAD_SITUATION_CARD_RULES: [&str; 2] = [
+    "The situation card in your first turn names `<ch>` (the channel), `<ref>` (the session \
+     ref), the genesis id, `<dir>` (the agents-repository checkout), the plan path and agents \
+     commit, each criterion's proof and the roster;",
+    "The situation card in the session's first message names this project's\nroster; choose \
+     whom the work needs from it.",
 ];
 
 #[test]
@@ -67,7 +80,7 @@ fn the_composed_lead_carries_every_work_command_shape_in_order() {
         .iter()
         .find(|include| include.reference.starts_with("beekeeper/lead@"))
         .expect("the lead includes its role template");
-    assert_eq!(lead_include.resolved.as_deref(), Some("1.2.3"));
+    assert_eq!(lead_include.resolved.as_deref(), Some("1.2.4"));
 
     let prompt = &composed.persona.prompt;
     let mut last = 0;
@@ -81,4 +94,25 @@ fn the_composed_lead_carries_every_work_command_shape_in_order() {
     for rule in LEAD_PACE_RULES {
         assert!(prompt.contains(rule), "the composed lead lacks {rule:?}");
     }
+    assert!(
+        prompt.contains(LEAD_SITUATION_CARD_RULES[0]),
+        "the composed lead lacks {:?}",
+        LEAD_SITUATION_CARD_RULES[0]
+    );
+    let hire = composed
+        .skills
+        .iter()
+        .find(|skill| skill.name == "hire")
+        .expect("the composed lead carries its hire skill");
+    let hire_body =
+        std::fs::read_to_string(hire.dir.join("SKILL.md")).expect("the hire skill reads");
+    assert!(
+        hire_body.contains(LEAD_SITUATION_CARD_RULES[1]),
+        "the hire skill lacks {:?}",
+        LEAD_SITUATION_CARD_RULES[1]
+    );
+    assert!(
+        !hire_body.contains("Discover this project's agents"),
+        "1.2.4's hire skill must not tell the lead to look up what the card names"
+    );
 }
