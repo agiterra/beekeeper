@@ -39,10 +39,12 @@ const LEAD_COMMAND_SHAPES: [&str; 6] = [
      \"followUps\":[],\"summary\":\"<one sentence>\"}'`",
 ];
 
-const LEAD_PACE_RULES: [&str; 3] = [
+const LEAD_PACE_RULES: [&str; 4] = [
     "Run the verify action only on a delivered commit, after the delivery ref has moved to it, \
      never on the seed commit or a branch.",
     "On a host-result wake for a result you have already used, do nothing.",
+    "If a host-result wake carries `autoEvidence`, the criteria it lists are already bound; do \
+     not bind them again.",
     "Hire the verifier seat when you hire the builder, so it is warm; bind its assignment with \
      `--verifies <report id>` when the builder's report lands.",
 ];
