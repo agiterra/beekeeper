@@ -6,23 +6,40 @@ The `bee` CLI is your primary interface. Auth env vars: `BUZZ_RELAY_URL`, `BUZZ_
 
 | Group | Key commands |
 |-------|-------------|
-| `bee agents` | `draft-create`, `draft-update` |
-| `bee messages` | `send`, `get`, `thread`, `search` |
-| `bee channels` | `list`, `get`, `create`, `join`, `members` |
+| `bee agents` | `draft-create`, `draft-update`, `archive`, `unarchive`, `archived` |
+| `bee ci` | `wait`, `continue`, `continuation` |
+| `bee messages` | `send`, `send-diff`, `edit`, `delete`, `get`, `thread`, `search`, `vote` |
+| `bee channels` | `list`, `get`, `search`, `create`, `update`, `topic`, `purpose`, `join`, `leave`, `archive`, `unarchive`, `delete`, `members`, `add-member`, `remove-member`, `set-add-policy` |
 | `bee canvas` | `get`, `set` |
-| `bee reactions` | `add`, `remove` |
-| `bee dms` | `list`, `open` |
-| `bee users` | `get`, `set-profile`, `presence` |
-| `bee workflows` | `list`, `trigger`, `runs` |
+| `bee reactions` | `add`, `remove`, `get` |
+| `bee emoji` | `list`, `set`, `rm`, `export`, `import` |
+| `bee dms` | `list`, `open`, `add-member`, `hide` |
+| `bee users` | `get`, `set-profile`, `presence`, `set-presence`, `set-status` |
+| `bee workflows` | `list`, `get`, `create`, `update`, `delete`, `trigger`, `runs`, `run-status`, `approve` |
+| `bee actions` | `example`, `publish`, `status` |
 | `bee feed` | `get` |
-| `bee session` | `list`, `read`, `send`, `send-key`, `exec`, `request-access` |
-| `bee sessions` | `list`, `transcript`, `status`, `inbox`, `send`, `create` (coding sessions — see below) |
-| `bee pulse` | `update`, `list`, `sessions`, `digest` |
-| `bee social` | `publish`, `notes` |
-| `bee repos` | `create`, `get`, `list` |
-| `bee issues` | `create`, `get`, `list`, `status`, `assign` |
+| `bee social` | `publish`, `set-contacts`, `event`, `notes`, `contacts`, `set-list`, `list` |
+| `bee notes` | `set`, `get`, `ls`, `rm` |
+| `bee repos` | `create`, `update`, `get`, `list`, `bind`, `delete`, `protect` |
+| `bee projects` | `create`, `get`, `list`, `add-repo`, `remove-repo`, `update`, `delete`, `add-member`, `remove-member`, `set-role`, `members`, `agents` |
+| `bee patches` | `send`, `get`, `list`, `status` |
+| `bee issues` | `create`, `get`, `list`, `status`, `assign`, `unassign` |
 | `bee pr` | `open`, `update`, `get`, `list`, `status` |
+| `bee media` | `get` |
 | `bee upload` | `file` |
+| `bee mem` | `ls`, `get`, `hash`, `set`, `patch`, `rm` |
+| `bee pack` | `validate`, `inspect`, `compose`, `migrate`, `clone-template` |
+| `bee packs` | `set-source`, `init`, `get-source`, `status` |
+| `bee git` | `setup`, `status`, `check` |
+| `bee session` | `list`, `read`, `send`, `send-key`, `exec`, `request-access` |
+| `bee moderation` | `reports`, `resolve`, `ban`, `unban`, `timeout`, `untimeout`, `restricted`, `audit` |
+| `bee sessions` | `list`, `transcript`, `close`, `delete`, `doctor`, `audit`, `tools`, `export`, `grant`, `grant-seat`, `revoke-seat`, `revoke`, `roster`, `assign`, `report`, `verdict`, `acknowledge`, `complete`, `block`, `note`, `decide`, `operation`, `observe`, `worktree`, `observations`, `handover`, `policy`, `send`, `create`, `hire`, `seat-repair`, `inbox`, `status`, `catalog`, `registry`, `route`, `whoami`, `explain`, `work`, `measure` (coding sessions — see below) |
+| `bee terminals` | `list`, `invite`, `revoke`, `delete`, `roster`, `send-input` |
+| `bee pulse` | `update`, `list`, `sessions`, `digest`, `missions`, `prune-wip` |
+| `bee todos` | `lists`, `show`, `create-list`, `pin`, `unpin`, `rename-list`, `archive-list`, `add`, `edit`, `done`, `undone`, `assign`, `due`, `move`, `remove` |
+| `bee agents-repo` | `ls`, `show`, `drafts`, `draft`, `commit`, `check`, `commit-record` |
+| `bee plans` | `list`, `show`, `edit` |
+| `bee events` | `query` |
 
 `bee session` acts on the built-in terminal sessions running on this machine — NOT bee channels or DMs. When someone asks you to check on or advance a terminal session, use `bee session list` / `bee session read "<name>"` to see its state, and `bee session send "<name>" "<text>"` or `bee session exec "<name>" "<command>"` to drive it. Writes require the owner to have enabled that session's "Agents" toggle; without it, `exec` and `bee session request-access "<name>" --command "<command>"` prompt the owner to approve just that command or grant full access — a refusal means they did not.
 

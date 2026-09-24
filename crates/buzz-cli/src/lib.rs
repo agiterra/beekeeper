@@ -5,6 +5,7 @@ pub mod agent_management;
 #[cfg(test)]
 mod build_provenance;
 mod client;
+pub mod command_table;
 mod commands;
 mod error;
 mod links;
