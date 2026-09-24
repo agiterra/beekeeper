@@ -1,6 +1,7 @@
 import * as React from "react";
 
 import { useCodingSessionAssignmentInputs } from "@/features/coding-sessions/hooks/useCodingSessionAssignmentInputs";
+import { useCodingSessionSeatWorktreeActors } from "@/features/coding-sessions/hooks/useCodingSessionSeatWorktreeActors";
 import type { CodingSessionLaneMessage } from "@/features/coding-sessions/lib/codingSessionConversationLane";
 import { buildCodingSessionTargetKey } from "@/features/coding-sessions/lib/codingSessionCommand";
 import {
@@ -200,13 +201,19 @@ export function CodingSessionUmbrellaTimelineView({
         })),
     [missionTransactions],
   );
-  // The seat label a worktree was recorded under is the seated agent's own
-  // name, which is exactly what this resolver answers (`identity.name` in
-  // `codingSessionHireSeat.ts`). No name, no recorded tree to name — and the
-  // trigger discloses that rather than calling the host.
+  // The seat label a worktree was recorded under is the label the store
+  // itself carries against the seat's actor pubkey — never a relay profile
+  // name. A hired seat (`bee sessions hire`) has no profile in general, so a
+  // resolver built from `actorNames` answered null for exactly the seats this
+  // query most needs to find, and the card showed `unrecorded_tree` over a
+  // record the host already held (2026-09-24). `actorNames` stays for
+  // display elsewhere in this view; it must never decide this query.
+  const seatWorktreeActors = useCodingSessionSeatWorktreeActors(
+    umbrella.sessionRef,
+  );
   const resolveSeatLabel = React.useCallback(
-    (actor: string) => actorNames?.(actor) ?? null,
-    [actorNames],
+    (actor: string) => seatWorktreeActors.labelForActor(actor),
+    [seatWorktreeActors],
   );
   // Reported whatever the density: handing the host an observation is how it
   // learns the work exists, and gating that on which panel is open is the
@@ -215,6 +222,12 @@ export function CodingSessionUmbrellaTimelineView({
   const verificationInputs = useCodingSessionAssignmentInputs({
     assignments: assignmentInputTargets,
     resolveSeatLabel,
+    isUnattributedActor: React.useCallback(
+      (actor: string) =>
+        seatWorktreeActors.labelForActor(actor) === null &&
+        seatWorktreeActors.hasUnattributedSeat,
+      [seatWorktreeActors],
+    ),
     sessionRef: umbrella.sessionRef,
   });
   const entries = React.useMemo(() => {

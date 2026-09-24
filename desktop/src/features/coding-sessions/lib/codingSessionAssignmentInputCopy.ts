@@ -119,6 +119,21 @@ export type CodingSessionAssignmentInputState =
       readonly commit: string;
       readonly message: string;
       readonly detail: string | null;
+    }
+  /**
+   * This computer cannot tell whether it cut this seat's tree.
+   *
+   * Distinct from `refused` with `unrecorded_tree`: that code means this
+   * host looked at its own record and found nothing for this seat.
+   * `unknown-attribution` means this host holds a worktree recorded before
+   * it began naming which actor a seat belonged to, so a seat it truly did
+   * cut a tree for can still read as a miss. Calling that `off_host` states
+   * a fact this computer does not have — the exact shape of the defect
+   * this state exists to stop repeating.
+   */
+  | {
+      readonly kind: "unknown-attribution";
+      readonly commit: string;
     };
 
 /** Build the row's state from one attempt's outcome. */
@@ -346,6 +361,18 @@ export function codingSessionAssignmentInputCopy(
       retryable: true,
     };
   }
+  if (state.kind === "unknown-attribution") {
+    return {
+      badge: "unknown",
+      sentence:
+        "This computer cannot tell whether it cut that seat's worktree: it recorded a tree for this session before it began naming which actor a seat belonged to.",
+      detail: null,
+      // Retrying re-asks the same question of the same record and gets the
+      // same answer — nothing changes until this session's worktrees are
+      // re-cut, which a click here cannot do.
+      retryable: false,
+    };
+  }
   const reason =
     state.code === "dirty_tree"
       ? codingSessionDirtyTreeSentence(state.changes)
@@ -355,6 +382,10 @@ export function codingSessionAssignmentInputCopy(
     badge: state.code.replaceAll("_", " "),
     sentence: `Verification input not established: ${reason}`,
     detail: state.detail ?? state.message,
-    retryable: true,
+    // `unrecorded_tree` (`off_host`) means this host looked at its own
+    // record and found nothing for this seat at all — retrying re-runs the
+    // identical check against the identical record and can only repeat the
+    // same answer, so the affordance would promise a change it cannot make.
+    retryable: state.code !== "unrecorded_tree",
   };
 }

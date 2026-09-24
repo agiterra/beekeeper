@@ -515,6 +515,7 @@ pub(crate) fn invoke_handler(
         coding_sessions::worktree_prune::reclaim_coding_session_seat_worktree,
         coding_sessions::assignment_input::coding_session_establish_assignment_input,
         coding_sessions::assignment_input::coding_session_assignment_input_record,
+        coding_sessions::assignment_input::coding_session_seat_worktree_actors,
         coding_sessions::assignment_establishment::coding_session_observe_assignment_inputs,
         coding_sessions::assignment_establishment::coding_session_resume_assignment_inputs,
         coding_sessions::assignment_establishment::coding_session_requeue_assignment_input,

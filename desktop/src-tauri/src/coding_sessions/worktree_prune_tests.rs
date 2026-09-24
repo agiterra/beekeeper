@@ -83,6 +83,7 @@ fn seat_record(repo: &Path, path: &Path, branch: &str) -> CodingSessionSeatWorkt
         session_id: None,
         agents_clone: None,
         commit_identity: None,
+        actor_pubkey: None,
     }
 }
 

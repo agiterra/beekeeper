@@ -484,6 +484,7 @@ fn seat_worktree_record(
         session_id: session_id.map(str::to_owned),
         agents_clone: None,
         commit_identity: None,
+        actor_pubkey: None,
     }
 }
 

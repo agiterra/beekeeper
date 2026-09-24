@@ -75,6 +75,72 @@ impl CodingSessionWorkdirStore {
     }
 }
 
+/// The seat label a worktree was recorded under, keyed by the seat's own
+/// actor pubkey — never by a profile name, which a hired seat may not have.
+///
+/// `unattributed` is true when this session holds at least one worktree
+/// record with no `actorPubkey` at all: a tree cut before this field existed.
+/// A caller that finds no entry for an actor it is asking about, while this is
+/// true, cannot tell "this host never cut that seat's tree" from "this host
+/// cut it before it could say whose it was" — those are different facts and
+/// must not both read as `off_host`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingSessionSeatWorktreeActors {
+    /// Actor pubkey (lowercase hex) → the seat label this host cut the tree
+    /// under, for every worktree in this session that named one.
+    pub labels: std::collections::BTreeMap<String, String>,
+    /// Whether this session holds a worktree recorded before actor pubkeys
+    /// were tracked, so a miss above is not necessarily off-host.
+    pub unattributed: bool,
+}
+
+/// Read-only: every seat label this host cut a tree under for `session_ref`,
+/// keyed by the seat's actor pubkey where one was recorded.
+pub(crate) fn seat_worktree_actors(
+    store: &CodingSessionWorkdirStore,
+    session_ref: &str,
+) -> CodingSessionSeatWorktreeActors {
+    let session_ref = session_ref.trim();
+    let mut labels = std::collections::BTreeMap::new();
+    let mut unattributed = false;
+    for (key, entry) in &store.worktrees {
+        let Some((entry_session, seat_label)) = key.split_once('/') else {
+            continue;
+        };
+        if entry_session != session_ref {
+            continue;
+        }
+        match &entry.actor_pubkey {
+            Some(pubkey) => {
+                labels.insert(pubkey.clone(), seat_label.to_string());
+            }
+            None => unattributed = true,
+        }
+    }
+    CodingSessionSeatWorktreeActors {
+        labels,
+        unattributed,
+    }
+}
+
+/// Read-only: every seat label this host cut a tree under for one session,
+/// keyed by the seat's own actor pubkey.
+///
+/// Used to resolve which seat a signed assignment's `assigneeActor` belongs
+/// to when establishing its input — a hired seat has no relay profile name in
+/// general, so a resolver built from profile lookups (`useCodingSessionActorNames`)
+/// cannot answer this; the store, keyed by the actor the hire itself signed
+/// as, can.
+#[tauri::command]
+pub async fn coding_session_seat_worktree_actors(
+    app: AppHandle,
+    session_ref: String,
+) -> Result<CodingSessionSeatWorktreeActors, String> {
+    let store = load_workdir_store_readonly(&app)?;
+    Ok(seat_worktree_actors(&store, &session_ref))
+}
+
 /// Run one attempt against this host's store, resolving the tree from it.
 ///
 /// Split from the command so the behaviour is testable without a Tauri app

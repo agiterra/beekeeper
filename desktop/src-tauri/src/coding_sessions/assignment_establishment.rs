@@ -122,6 +122,21 @@ fn queue_one(
     if !role_requires_verification_input(role) {
         return AssignmentInputDisposition::NotRequired;
     }
+    let assignment_id = assignment.assignment_id.trim();
+    let commit = assignment.base_sha.as_deref().unwrap_or("").trim();
+    // Read-only fast path: a record already naming this exact commit answers
+    // the question, so a mere observation — which can arrive on every status
+    // read, whether or not this host holds a checkout for the seat — must not
+    // reach the queue at all. `queue_intent` would answer the same way, but
+    // going by way of it still costs a mutation attempt and a save; this
+    // keeps "observing" from being able to write in the first place.
+    if !commit.is_empty()
+        && store
+            .assignment_input(assignment_id)
+            .is_some_and(|record| record.commit.as_deref() == Some(commit))
+    {
+        return AssignmentInputDisposition::Recorded;
+    }
     let session_ref = assignment.session_ref.trim().to_string();
     let seat_label = assignment
         .seat_label

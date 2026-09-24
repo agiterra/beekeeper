@@ -133,6 +133,7 @@ impl Fixture {
                     session_id: None,
                     agents_clone: None,
                     commit_identity: None,
+                    actor_pubkey: None,
                 },
             )
             .expect("recorded seat worktree");
@@ -288,5 +289,78 @@ fn the_shared_record_round_trips_through_this_stores_json() {
     assert!(
         raw["assignmentInputs"][ASSIGNMENT]["recordedAt"].is_string(),
         "recordedAt is a string, as the host has always written it"
+    );
+}
+
+#[test]
+fn a_cut_worktrees_actor_pubkey_is_recorded_and_the_read_returns_it() {
+    let actor = "a".repeat(64);
+    let mut fixture = Fixture::new("actor-pubkey");
+    // Overwrite the fixture's record with one naming the seat's actor, the
+    // way `create_coding_session_worktree` does when a hire cuts the tree —
+    // the fixture itself pins `actor_pubkey: None` to prove the pre-existing
+    // (legacy) shape still loads.
+    fixture
+        .store
+        .record_seat_worktree(
+            SESSION,
+            SEAT,
+            CodingSessionSeatWorktree {
+                path: fixture.seat.clone(),
+                branch: SEAT_BRANCH.to_string(),
+                repo_root: fixture.main.clone(),
+                created_at: now_iso(),
+                session_id: None,
+                agents_clone: None,
+                commit_identity: None,
+                actor_pubkey: Some(actor.clone()),
+            },
+        )
+        .expect("recorded seat worktree with an actor");
+
+    let actors = seat_worktree_actors(&fixture.store, SESSION);
+    assert_eq!(
+        actors.labels.get(&actor).map(String::as_str),
+        Some(SEAT),
+        "the read answers the seat label this host cut the tree under, keyed by actor"
+    );
+    assert!(
+        !actors.unattributed,
+        "every worktree in this session named an actor, so nothing is ambiguous"
+    );
+
+    // A record cut before this host tracked actor pubkeys is unattributed,
+    // not absent, and a miss for a genuine stranger to this session stays a
+    // miss.
+    let mut legacy_present = fixture.store.clone();
+    legacy_present
+        .record_seat_worktree(
+            SESSION,
+            "builder",
+            CodingSessionSeatWorktree {
+                path: fixture
+                    .seat
+                    .parent()
+                    .expect("seat has a parent holder")
+                    .join("builder"),
+                branch: "lane/builder".to_string(),
+                repo_root: fixture.main.clone(),
+                created_at: now_iso(),
+                session_id: None,
+                agents_clone: None,
+                commit_identity: None,
+                actor_pubkey: None,
+            },
+        )
+        .expect("recorded a legacy seat worktree");
+    let with_legacy = seat_worktree_actors(&legacy_present, SESSION);
+    assert!(
+        with_legacy.unattributed,
+        "a worktree with no actor pubkey makes this session's attribution ambiguous"
+    );
+    assert_eq!(
+        with_legacy.labels.get(&"b".repeat(64)),
+        None,
+        "an actor this session never cut a tree for is still a genuine miss"
     );
 }

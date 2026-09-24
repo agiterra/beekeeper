@@ -94,7 +94,7 @@ test("a tree that already held the commit says so, with the same ordering clause
   assert.match(markup, /not ordered against the seat&#x27;s wake/);
 });
 
-test("every refusal code produces its own plain sentence and a Try again", () => {
+test("every refusal code produces its own plain sentence, and Try again only where a retry could change it", () => {
   const expected = {
     unrecorded_tree: /did not cut that seat&#x27;s worktree/,
     missing_tree: /no longer on disk/,
@@ -121,7 +121,13 @@ test("every refusal code produces its own plain sentence and a Try again", () =>
     );
     assert.match(markup, /Verification input not established:/, code);
     assert.match(markup, expected[code], code);
-    assert.match(
+    // `unrecorded_tree` (off-host) is the one code where this computer looked
+    // at its own record and found nothing for this seat at all: a retry
+    // re-asks the identical question of the identical record and can only
+    // repeat the same answer, so the card offers no "Try again" for it.
+    const retryAssertion =
+      code === "unrecorded_tree" ? assert.doesNotMatch : assert.match;
+    retryAssertion(
       markup,
       /data-testid="coding-session-verification-input-retry"/,
       code,

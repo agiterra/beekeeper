@@ -645,6 +645,7 @@ pub async fn create_coding_session_worktree(
     // a founder's own tree names none and keeps the person's own identity.
     // Off the async executor like the cut itself: these are `git config`
     // invocations on a real repository, not futures.
+    let recorded_seat_pubkey = seat_pubkey.clone();
     let identity = {
         let created = created.clone();
         tauri::async_runtime::spawn_blocking(move || {
@@ -666,7 +667,14 @@ pub async fn create_coding_session_worktree(
             &seat_label,
             session_id.as_deref(),
             &created,
-            identity,
+            CreatedWorktreeSeatIdentity {
+                commit_identity: identity,
+                actor_pubkey: recorded_seat_pubkey
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|key| !key.is_empty())
+                    .map(str::to_lowercase),
+            },
         ) {
             eprintln!("buzz-desktop: failed to record a seat worktree: {error}");
         }
@@ -710,6 +718,16 @@ fn configure_created_worktree_identity(
     }
 }
 
+/// What the create path learned about the seat this tree was cut for, beyond
+/// its path and branch. Bundled into one parameter rather than two so
+/// [`record_created_worktree`] stays under clippy's argument ceiling — both
+/// are "what this host configured or learned about the seat," not
+/// independent facts about the tree itself.
+struct CreatedWorktreeSeatIdentity {
+    commit_identity: Option<CodingSessionSeatCommitIdentity>,
+    actor_pubkey: Option<String>,
+}
+
 /// Write one created worktree into the host's durable record.
 fn record_created_worktree(
     app: &AppHandle,
@@ -718,7 +736,7 @@ fn record_created_worktree(
     seat_label: &str,
     session_id: Option<&str>,
     created: &CodingSessionWorktreeCreated,
-    commit_identity: Option<CodingSessionSeatCommitIdentity>,
+    seat_identity: CreatedWorktreeSeatIdentity,
 ) -> Result<(), String> {
     let _lock = super::workdir_store::lock_workdir_store(app)?;
     let mut store = load_workdir_store(app)?;
@@ -732,7 +750,8 @@ fn record_created_worktree(
             created_at: now_iso(),
             session_id: session_id.map(str::to_owned),
             agents_clone: None,
-            commit_identity,
+            commit_identity: seat_identity.commit_identity,
+            actor_pubkey: seat_identity.actor_pubkey,
         },
     )?;
     store.version = WORKDIR_STORE_VERSION;
@@ -804,8 +823,10 @@ pub async fn record_coding_session_worktree(
             session_id,
             agents_clone: None,
             // An observation, not a cut: this records a tree that already
-            // exists, so it says nothing about an identity it did not write.
+            // exists, so it says nothing about an identity it did not write,
+            // and it names no actor for the same reason.
             commit_identity: None,
+            actor_pubkey: None,
         },
     )?;
     store.version = WORKDIR_STORE_VERSION;

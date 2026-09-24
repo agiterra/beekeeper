@@ -61,6 +61,15 @@ pub(crate) struct CodingSessionSeatWorktree {
     /// own tree, or a pre-239 record — not that the identity failed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub commit_identity: Option<CodingSessionSeatCommitIdentity>,
+    /// The seat's own actor pubkey, lowercase hex, when the caller named one.
+    ///
+    /// Recorded so a later read can go **actor → seat label** without
+    /// guessing from `commit_identity.email` (`<pubkey8>@beekeeper.local`,
+    /// which is a truncated prefix and must never be prefix-matched back to a
+    /// full key). Absent on a record cut before this field existed, or on a
+    /// founder's own tree, which names no seat at all.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor_pubkey: Option<String>,
 }
 
 /// The `user.name`/`user.email` one seat worktree was configured with.
@@ -218,6 +227,7 @@ pub(crate) fn migrate_pending_worktrees(store: &mut CodingSessionWorkdirStore) -
                 session_id: None,
                 agents_clone: None,
                 commit_identity: None,
+                actor_pubkey: None,
             },
         );
         migrated += 1;

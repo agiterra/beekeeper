@@ -58,6 +58,14 @@ export const CODING_SESSION_REQUEUE_ASSIGNMENT_INPUT_COMMAND =
   "coding_session_requeue_assignment_input";
 
 /**
+ * Read-only: the seat labels this host cut worktrees under for one session,
+ * keyed by the seat's own actor pubkey rather than a relay profile name —
+ * the fact a hired seat may never have one.
+ */
+export const CODING_SESSION_SEAT_WORKTREE_ACTORS_COMMAND =
+  "coding_session_seat_worktree_actors";
+
+/**
  * The outcome words the host writes that are not an attempt's result.
  *
  * `intended` is queued and untried, `establishing` is an attempt the host
@@ -523,5 +531,52 @@ export async function requeueCodingSessionAssignmentInput(input: {
     return { kind: "status", status: decodeStatus(answer, input.assignmentId) };
   } catch (error) {
     return { kind: "unavailable", message: messageOf(error) };
+  }
+}
+
+/** The seat labels this host cut worktrees under for one session. */
+export type CodingSessionSeatWorktreeActors = {
+  /** Actor pubkey (lowercase hex) → the seat label recorded for it. */
+  labels: ReadonlyMap<string, string>;
+  /**
+   * True when this session holds a worktree recorded before this host began
+   * tracking actor pubkeys, so a miss in `labels` is not necessarily
+   * off-host — it may be a seat this host cannot yet identify.
+   */
+  unattributed: boolean;
+};
+
+/**
+ * Read-only: ask the host which seat labels it cut this session's worktrees
+ * under, keyed by each seat's own actor pubkey.
+ *
+ * Never throws. A build without the command registered, or a host that went
+ * away, answers empty labels with `unattributed: false` — the conservative
+ * reading, since this call states a fact about a store it could not reach
+ * rather than a claim about what the store holds.
+ */
+export async function getCodingSessionSeatWorktreeActors(
+  sessionRef: string,
+): Promise<CodingSessionSeatWorktreeActors> {
+  try {
+    const answer = await invokeTauri<unknown>(
+      CODING_SESSION_SEAT_WORKTREE_ACTORS_COMMAND,
+      { sessionRef },
+    );
+    const shaped = asRecord(answer);
+    const rawLabels = shaped ? asRecord(shaped.labels) : null;
+    const labels = new Map<string, string>();
+    if (rawLabels) {
+      for (const [pubkey, label] of Object.entries(rawLabels)) {
+        const decoded = asString(label);
+        if (decoded !== null) labels.set(pubkey.toLowerCase(), decoded);
+      }
+    }
+    return {
+      labels,
+      unattributed: shaped?.unattributed === true,
+    };
+  } catch {
+    return { labels: new Map(), unattributed: false };
   }
 }

@@ -510,13 +510,17 @@ pub fn queue_intent(
     if !is_object_id(commit) {
         return AssignmentInputDisposition::Invalid;
     }
-    if intent.session_ref.trim().is_empty() || checkout.is_none() {
-        return AssignmentInputDisposition::OffHost;
-    }
     let already = assignment_input(records, assignment_id)
         .is_some_and(|record| record.commit.as_deref() == Some(commit));
     if already {
+        // A record naming this exact commit answers the question regardless
+        // of whether this host holds a checkout for it — it is dispositive
+        // first, so a read on a host that never cut the tree does not
+        // overwrite a real answer with `OffHost`.
         return AssignmentInputDisposition::Recorded;
+    }
+    if intent.session_ref.trim().is_empty() || checkout.is_none() {
+        return AssignmentInputDisposition::OffHost;
     }
     let mut intent = intent.clone();
     intent.assignment_id = assignment_id.to_owned();

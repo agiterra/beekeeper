@@ -154,11 +154,24 @@ const HOST_UNREADABLE =
  */
 export function codingSessionAssignmentInputStateFromStatus(
   status: CodingSessionAssignmentInputStatus,
+  options?: {
+    /**
+     * True when this assignment's actor could not be resolved to a seat
+     * label *and* this session holds a worktree cut before this host began
+     * naming which actor a seat belonged to — so an `off_host` answer here
+     * cannot be told apart from a seat this host really did cut a tree for.
+     * See `useCodingSessionSeatWorktreeActors`.
+     */
+    unattributed?: boolean;
+  },
 ): CodingSessionAssignmentInputState | null {
   if (status.disposition === "not_required") return null;
   if (status.disposition === "unnamed") return { kind: "unnamed" };
   const commit = status.record?.commit ?? "";
   if (status.disposition === "off_host") {
+    if (options?.unattributed) {
+      return { kind: "unknown-attribution", commit };
+    }
     return {
       kind: "refused",
       commit,
@@ -196,10 +209,17 @@ export function useCodingSessionAssignmentInputs(input: {
   assignments: readonly CodingSessionAssignmentInputTarget[];
   /** Actor pubkey → the seat label this host cut the tree under. */
   resolveSeatLabel: (actor: string) => string | null;
+  /**
+   * True when an actor that {@link resolveSeatLabel} could not name might
+   * still have a seat this host cut a tree for — see
+   * `useCodingSessionSeatWorktreeActors`. Absent (or always false) keeps the
+   * old reading: an unresolved actor is off-host.
+   */
+  isUnattributedActor?: (actor: string) => boolean;
   /** Injected only by tests. */
   deps?: CodingSessionAssignmentInputDeps;
 }): CodingSessionAssignmentInputs {
-  const { resolveSeatLabel, sessionRef } = input;
+  const { resolveSeatLabel, sessionRef, isUnattributedActor } = input;
   const deps = input.deps ?? HOST_DEPS;
   const [states, setStates] = React.useState<
     ReadonlyMap<string, CodingSessionAssignmentInputState>
@@ -211,18 +231,36 @@ export function useCodingSessionAssignmentInputs(input: {
   depsRef.current = deps;
   const resolveRef = React.useRef(resolveSeatLabel);
   resolveRef.current = resolveSeatLabel;
+  const unattributedRef = React.useRef(isUnattributedActor);
+  unattributedRef.current = isUnattributedActor;
+  // assignment id → whether that assignment's actor is unresolved *and*
+  // ambiguously so. Filled alongside `observations`, so `applyStatuses` can
+  // read it without adding a render dependency of its own.
+  const unattributedByAssignmentRef = React.useRef<
+    ReadonlyMap<string, boolean>
+  >(new Map());
 
-  const observations = React.useMemo(
-    () =>
-      sessionRef === null
-        ? []
-        : codingSessionAssignmentInputObservations(
-            sessionRef,
-            input.assignments,
-            (actor) => resolveRef.current(actor),
-          ),
-    [input.assignments, sessionRef],
-  );
+  const observations = React.useMemo(() => {
+    if (sessionRef === null) {
+      unattributedByAssignmentRef.current = new Map();
+      return [];
+    }
+    const built = codingSessionAssignmentInputObservations(
+      sessionRef,
+      input.assignments,
+      (actor) => resolveRef.current(actor),
+    );
+    const unattributed = new Map<string, boolean>();
+    for (const assignment of input.assignments) {
+      if (assignment.assigneeActor === null) continue;
+      unattributed.set(
+        assignment.assignmentId,
+        unattributedRef.current?.(assignment.assigneeActor) ?? false,
+      );
+    }
+    unattributedByAssignmentRef.current = unattributed;
+    return built;
+  }, [input.assignments, sessionRef]);
 
   React.useEffect(() => {
     mountedRef.current = true;
@@ -246,7 +284,11 @@ export function useCodingSessionAssignmentInputs(input: {
       setStates((previous) => {
         const next = new Map(previous);
         for (const status of statuses) {
-          const state = codingSessionAssignmentInputStateFromStatus(status);
+          const state = codingSessionAssignmentInputStateFromStatus(status, {
+            unattributed:
+              unattributedByAssignmentRef.current.get(status.assignmentId) ??
+              false,
+          });
           if (state === null) next.delete(status.assignmentId);
           else next.set(status.assignmentId, state);
         }

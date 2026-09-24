@@ -351,6 +351,31 @@ fn a_record_for_another_commit_is_replaced_and_the_same_one_is_dispositive() {
 }
 
 #[test]
+fn a_dispositive_record_answers_even_without_a_tree_on_this_host() {
+    let mut records = AssignmentInputRecords::new();
+    let id = assignment_id("5c");
+    let commit = "c".repeat(40);
+    let checkout = SeatCheckout {
+        path: PathBuf::from("/nowhere"),
+        branch: "seat/verifier".to_owned(),
+    };
+    queue_intent(&mut records, &intent(&id, &commit), Some(&checkout));
+    let mut settled = assignment_input(&records, &id).expect("record").clone();
+    settled.outcome = ASSIGNMENT_INPUT_ESTABLISHED.to_owned();
+    record_assignment_input(&mut records, settled);
+    let before = records.clone();
+
+    // This host did not cut the tree (checkout: None), but a record already
+    // names this exact commit — that record is dispositive and answers the
+    // question; it is not `OffHost`, and nothing is requeued or touched.
+    assert_eq!(
+        queue_intent(&mut records, &intent(&id, &commit), None),
+        AssignmentInputDisposition::Recorded
+    );
+    assert_eq!(records, before, "a dispositive record is left untouched");
+}
+
+#[test]
 fn a_requeue_zeroes_the_count_and_forgets_the_published_blocker() {
     let mut records = AssignmentInputRecords::new();
     let id = assignment_id("3a");

@@ -423,3 +423,41 @@ test("each disposition reads as exactly one row, and none as silence", () => {
     "unavailable",
   );
 });
+
+test("an off-host answer for an ambiguously-attributed actor reads as unknown, not off-host", () => {
+  const plain = codingSessionAssignmentInputStateFromStatus(
+    status({ disposition: "off_host", record: null }),
+    { unattributed: false },
+  );
+  assert.equal(plain.kind, "refused");
+  assert.equal(plain.code, "unrecorded_tree");
+
+  const ambiguous = codingSessionAssignmentInputStateFromStatus(
+    status({ disposition: "off_host", record: null }),
+    { unattributed: true },
+  );
+  assert.equal(ambiguous.kind, "unknown-attribution");
+});
+
+test("a lead-hired seat with no profile name still reads from the store, not off-host", async () => {
+  // The real-world shape of the 2026-09-24 defect: `resolveSeatLabel` (built
+  // from a relay profile lookup upstream) cannot name this actor, but the
+  // caller can still say the session holds an unattributed legacy worktree —
+  // so the row must not claim this host never cut the tree.
+  const recording = recordingDeps({
+    observe: async () => ({
+      kind: "statuses",
+      statuses: [status({ disposition: "off_host", record: null })],
+    }),
+  });
+  const { mounted } = await mount([assignment()], recording.deps, {
+    resolveSeatLabel: () => null,
+    isUnattributedActor: () => true,
+  });
+
+  assert.equal(
+    mounted.result.current.states.get(ASSIGNMENT).kind,
+    "unknown-attribution",
+  );
+  mounted.unmount();
+});

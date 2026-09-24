@@ -456,6 +456,7 @@ fn migration_is_idempotent_and_never_overwrites_a_real_record() {
             session_id: Some("s-1".into()),
             agents_clone: None,
             commit_identity: None,
+            actor_pubkey: None,
         },
     );
     assert_eq!(migrate_pending_worktrees(&mut store), 0);
@@ -486,6 +487,7 @@ fn a_record_without_a_session_id_serializes_exactly_as_it_did_before() {
         session_id: None,
         agents_clone: None,
         commit_identity: None,
+        actor_pubkey: None,
     };
     let encoded = serde_json::to_string(&entry).expect("serialize");
     assert!(!encoded.contains("sessionId"), "{encoded}");
@@ -507,6 +509,7 @@ fn a_prune_is_recorded_with_the_sentence_that_admitted_it() {
         session_id: None,
         agents_clone: None,
         commit_identity: None,
+        actor_pubkey: None,
     };
     store.record_prune(
         "s/builder-1",

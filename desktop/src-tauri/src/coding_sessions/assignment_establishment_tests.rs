@@ -14,8 +14,8 @@ use crate::coding_sessions::workdir_store::CodingSessionSeatWorktree;
 use crate::util::now_iso;
 use buzz_session_provider_pkg::assignment_inputs::{
     outcome_is_pending as assignment_input_is_pending, record_assignment_input,
-    ASSIGNMENT_INPUT_ABANDONED, ASSIGNMENT_INPUT_ESTABLISHING, ASSIGNMENT_INPUT_INTENDED,
-    MAX_ESTABLISH_ATTEMPTS,
+    ASSIGNMENT_INPUT_ABANDONED, ASSIGNMENT_INPUT_ESTABLISHED, ASSIGNMENT_INPUT_ESTABLISHING,
+    ASSIGNMENT_INPUT_INTENDED, MAX_ESTABLISH_ATTEMPTS,
 };
 
 const ASSIGNMENT: &str = "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0";
@@ -46,6 +46,7 @@ fn store_with_recorded_seat() -> CodingSessionWorkdirStore {
                 session_id: None,
                 agents_clone: None,
                 commit_identity: None,
+                actor_pubkey: None,
             },
         )
         .expect("recorded seat worktree");
@@ -191,6 +192,48 @@ fn a_settled_record_for_the_same_commit_is_dispositive_and_a_new_commit_is_not()
     assert_eq!(record.outcome, ASSIGNMENT_INPUT_INTENDED);
     assert_eq!(record.attempts, 0);
     assert_eq!(record.commit.as_deref(), Some(OTHER_COMMIT));
+}
+
+#[test]
+fn observing_an_established_assignment_twice_is_read_only() {
+    let mut store = store_with_recorded_seat();
+    queue_observed_assignments(
+        &mut store,
+        &[observed(ASSIGNMENT, "verifier", Some(SEAT), Some(COMMIT))],
+    );
+    let mut settled = store.assignment_input(ASSIGNMENT).expect("record").clone();
+    settled.outcome = ASSIGNMENT_INPUT_ESTABLISHED.to_string();
+    record_assignment_input(&mut store.assignment_inputs, settled);
+    let before = store.clone();
+
+    // No seat label this time — the real-world shape of the defect, where
+    // the caller could not resolve a profile name for the actor. A record
+    // that already answers this exact commit must be read-only: it neither
+    // rewrites the record nor reports `off_host` just because this call
+    // could not resolve a checkout.
+    let dispositions = queue_observed_assignments(
+        &mut store,
+        &[observed(ASSIGNMENT, "verifier", None, Some(COMMIT))],
+    );
+    assert_eq!(
+        dispositions,
+        vec![CodingSessionAssignmentInputDisposition::Recorded]
+    );
+    assert_eq!(
+        store, before,
+        "observing an already-answered assignment must not write"
+    );
+
+    // Observing it again changes nothing further either.
+    let dispositions = queue_observed_assignments(
+        &mut store,
+        &[observed(ASSIGNMENT, "verifier", None, Some(COMMIT))],
+    );
+    assert_eq!(
+        dispositions,
+        vec![CodingSessionAssignmentInputDisposition::Recorded]
+    );
+    assert_eq!(store, before);
 }
 
 #[test]
