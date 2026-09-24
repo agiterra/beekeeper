@@ -45,6 +45,7 @@ pub mod assignment_custody;
 pub mod assignment_inputs;
 pub mod attachments;
 pub mod authority;
+mod auto_evidence;
 pub mod catalog;
 pub mod ci_continuation;
 pub mod ci_continuation_store;
@@ -1858,7 +1859,10 @@ impl Provider {
                 self.offer_channel_host_step_request(event);
             }
             KIND_WORKFLOW_HOST_STEP_EXITED => {
-                self.on_host_step_exited(event);
+                // Bind what a green delivered result proves before the wake,
+                // so the wake can say so (ledger 257(d)).
+                let auto_evidence = self.auto_bind_host_result(event).await;
+                self.on_host_step_exited(event, auto_evidence);
             }
             other => {
                 tracing::debug!(target: "csp", kind = other, "ignoring unrelated event");

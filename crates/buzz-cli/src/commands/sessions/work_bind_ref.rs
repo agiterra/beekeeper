@@ -34,6 +34,9 @@ use buzz_core::project_plan::{Plan, PlanProof};
 use buzz_core::project_work::{
     ProjectWorkEvent, ProjectWorkEvidenceBound, ProjectWorkEvidenceKind, ProjectWorkEvidenceRef,
 };
+use buzz_core::project_work_autobind::{
+    already_bound, newest_ref_observation, RefObservationMissing,
+};
 use buzz_sdk::project_work::build_project_work_evidence_bound;
 use serde_json::{json, Value};
 
@@ -122,20 +125,6 @@ pub(super) async fn bind_ref_with(
     };
 
     let criteria = &args.envelope.criteria;
-    if let Some(event_id) = bound.existing(|existing: &ProjectWorkEvidenceBound| {
-        existing.declaration_ref == bound.declaration_ref
-            && existing.artifact_commit == observed
-            && criteria
-                .iter()
-                .all(|id| existing.criterion_ids.contains(id))
-            && existing
-                .evidence_refs
-                .iter()
-                .any(|reference| reference.kind == ProjectWorkEvidenceKind::RefObservation)
-    }) {
-        return report_existing(&event_id, "ref binding");
-    }
-
     let body = ProjectWorkEvidenceBound {
         declaration_ref: bound.declaration_ref.clone(),
         criterion_ids: criteria.clone(),
@@ -146,6 +135,11 @@ pub(super) async fn bind_ref_with(
         }],
         completion_ref: args.completion.clone(),
     };
+    // The same predicate the host's automatic binding applies: a binding of
+    // these criteria at this commit by ref observation, whoever signed it.
+    if let Some(event_id) = already_bound(&bound.records, &body) {
+        return report_existing(&event_id, "ref binding");
+    }
     let builder = build_project_work_evidence_bound(&bound.session.envelope(), body)
         .map_err(|error| CliError::Usage(error.to_string()))?;
     let event_id = wire.publish(builder, "a ref binding").await?;
@@ -220,28 +214,20 @@ async fn newest_observation(
         .await
         .map_err(|error| read_failed(&format!("kind:30618 ref state for {repository}"), error))?;
     let states = decode_rows(rows, "kind:30618 ref state")?;
-    let newest = states
-        .iter()
-        .filter(|state| {
-            state.kind == KIND_GIT_REPO_STATE
-                && state.pubkey == relay_self
-                && state.tag_value("d") == Some(repository)
-        })
-        .max_by(|a, b| a.order_key().cmp(&b.order_key()));
-    let Some(newest) = newest else {
-        return Err(CliError::NotFound(format!(
+    // The one lookup the host's automatic binding uses too, so the two can
+    // never disagree about which ref state is the observation.
+    match newest_ref_observation(&states, relay_self, repository, delivery_ref) {
+        Ok(observed) => Ok((observed.event_id, observed.commit)),
+        Err(RefObservationMissing::NoState) => Err(CliError::NotFound(format!(
             "no-ref-observation: the relay has signed no ref state for {repository}; nothing \
              observed {delivery_ref} there"
-        )));
-    };
-    let Some(observed) = newest.tag_value(delivery_ref) else {
-        return Err(CliError::NotFound(format!(
+        ))),
+        Err(RefObservationMissing::NoDeliveryRef { state_id }) => Err(CliError::NotFound(format!(
             "no-ref-observation: the newest relay-signed ref state for {repository} ({}) names \
              no {delivery_ref}",
-            head12(&newest.id)
-        )));
-    };
-    Ok((newest.id.clone(), observed.to_ascii_lowercase()))
+            head12(&state_id)
+        ))),
+    }
 }
 
 /// Check that a kind:46023 host result ran at `commit`; returns its id.

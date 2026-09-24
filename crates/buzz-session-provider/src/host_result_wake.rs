@@ -210,6 +210,11 @@ pub struct HostResultPointer {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refusal_message: Option<String>,
     pub result_event_id: String,
+    /// What this host bound from the result before waking the seat
+    /// (`crate::auto_evidence`, ledger 257(d)); absent when it decided
+    /// nothing — a red result, a replay, or a run it did not route.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_evidence: Option<crate::auto_evidence::AutoEvidenceSummary>,
 }
 
 /// Longest refusal message a wake carries; the rest is on the kind:46023.
@@ -246,6 +251,7 @@ impl HostResultPointer {
                 .as_ref()
                 .map(|r| capped(&r.message, REFUSAL_MESSAGE_MAX_BYTES)),
             result_event_id: exited.result_event_id.clone(),
+            auto_evidence: None,
         }
     }
 }
@@ -264,7 +270,17 @@ fn disposition_slug(disposition: buzz_core::host_step::HostStepDisposition) -> &
 
 /// The text one host-result wake delivers.
 pub fn wake_text(exited: &HostStepExited) -> Result<String, String> {
-    serde_json::to_string(&HostResultPointer::of(exited))
+    wake_text_with(exited, None)
+}
+
+/// [`wake_text`], carrying what the host bound from the result, if anything.
+pub fn wake_text_with(
+    exited: &HostStepExited,
+    auto_evidence: Option<crate::auto_evidence::AutoEvidenceSummary>,
+) -> Result<String, String> {
+    let mut pointer = HostResultPointer::of(exited);
+    pointer.auto_evidence = auto_evidence;
+    serde_json::to_string(&pointer)
         .map_err(|error| format!("host result wake pointer could not be encoded: {error}"))
 }
 
@@ -284,12 +300,13 @@ pub fn is_host_result_pointer(object: &serde_json::Map<String, serde_json::Value
         "disposition",
         "resultEventId",
     ];
-    const OPTIONAL: [&str; 5] = [
+    const OPTIONAL: [&str; 6] = [
         "exitCode",
         "checkoutSha",
         "durationMs",
         "refusalCode",
         "refusalMessage",
+        "autoEvidence",
     ];
     if object.get("schema").and_then(serde_json::Value::as_str) != Some(HOST_RESULT_WAKE_SCHEMA)
         || object.get("type").and_then(serde_json::Value::as_str) != Some(HOST_RESULT_WAKE_TYPE)
@@ -321,6 +338,9 @@ pub fn is_host_result_pointer(object: &serde_json::Map<String, serde_json::Value
         && object
             .get("refusalMessage")
             .is_none_or(serde_json::Value::is_string)
+        && object
+            .get("autoEvidence")
+            .is_none_or(serde_json::Value::is_object)
 }
 
 /// The command id one host-result wake is minted under.
@@ -461,7 +481,11 @@ impl crate::Provider {
     /// wake after the at-most-once claim is already on disk loses that wake
     /// permanently. That is the trade [`HostResultWakeStore`] documents, and
     /// it is logged at `error` so the loss is visible rather than silent.
-    pub(crate) fn on_host_step_exited(&mut self, event: &nostr::Event) {
+    pub(crate) fn on_host_step_exited(
+        &mut self,
+        event: &nostr::Event,
+        auto_evidence: Option<crate::auto_evidence::AutoEvidenceSummary>,
+    ) {
         let event_id = event.id.to_hex();
         let Some(relay_self) = self.relay_self.clone() else {
             tracing::debug!(
@@ -514,7 +538,7 @@ impl crate::Provider {
             );
             return;
         };
-        let text = match wake_text(&exited) {
+        let text = match wake_text_with(&exited, auto_evidence) {
             Ok(text) => text,
             Err(error) => {
                 tracing::error!(

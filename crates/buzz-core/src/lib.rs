@@ -131,6 +131,9 @@ pub mod project_todo_fold;
 /// NIP-PW: the closed kind:44249 work-record envelope — a lead's adoption of
 /// a plan, and the assignments and evidence bound to its criteria.
 pub mod project_work;
+/// NIP-PW: which evidence bindings follow mechanically from relay-signed
+/// facts, so the host that ran a step can bind them itself.
+pub mod project_work_autobind;
 /// NIP-PW: the pure, order-independent coverage fold over a session's work
 /// records — what remains, who owes it and what proves it.
 pub mod project_work_fold;

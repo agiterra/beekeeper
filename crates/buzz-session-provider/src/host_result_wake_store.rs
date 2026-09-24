@@ -53,6 +53,13 @@ const MAX_TRIGGERS: usize = 512;
 /// any plausible replay window.
 const MAX_WAKED: usize = 4_096;
 
+/// How many results the automatic evidence binder remembers deciding.
+///
+/// The same bound as the waked ledger, for the same reason: forgetting one
+/// costs at most a second decision, which finds its own records on the wire
+/// and publishes nothing.
+const MAX_EVIDENCE_CHECKED: usize = MAX_WAKED;
+
 /// What the kind:46013 said about who started a run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -82,6 +89,11 @@ struct Snapshot {
     triggers: Vec<TriggerFact>,
     #[serde(default)]
     waked: Vec<String>,
+    /// Results the automatic evidence binder has taken custody of
+    /// (`crate::auto_evidence`). Defaulted: a store written before it existed
+    /// has decided nothing.
+    #[serde(default)]
+    evidence_checked: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -90,6 +102,7 @@ struct SnapshotRef<'a> {
     schema: &'static str,
     triggers: &'a [TriggerFact],
     waked: &'a [String],
+    evidence_checked: &'a [String],
 }
 
 /// Atomic crash-safe store for host-result wake routing and at-most-once.
@@ -98,6 +111,7 @@ pub struct HostResultWakeStore {
     path: PathBuf,
     triggers: Vec<TriggerFact>,
     waked: Vec<String>,
+    evidence_checked: Vec<String>,
 }
 
 impl HostResultWakeStore {
@@ -131,6 +145,7 @@ impl HostResultWakeStore {
             path,
             triggers: snapshot.triggers,
             waked: snapshot.waked,
+            evidence_checked: snapshot.evidence_checked,
         })
     }
 
@@ -139,6 +154,7 @@ impl HostResultWakeStore {
             schema: STORE_SCHEMA.to_owned(),
             triggers: Vec::new(),
             waked: Vec::new(),
+            evidence_checked: Vec::new(),
         }
     }
 
@@ -146,6 +162,7 @@ impl HostResultWakeStore {
         if snapshot.schema != STORE_SCHEMA
             || snapshot.triggers.len() > MAX_TRIGGERS
             || snapshot.waked.len() > MAX_WAKED
+            || snapshot.evidence_checked.len() > MAX_EVIDENCE_CHECKED
         {
             return false;
         }
@@ -178,6 +195,7 @@ impl HostResultWakeStore {
             schema: STORE_SCHEMA,
             triggers: &self.triggers,
             waked: &self.waked,
+            evidence_checked: &self.evidence_checked,
         })
         .map_err(io::Error::other)?;
         atomic_write(&self.path, &body)
@@ -229,6 +247,28 @@ impl HostResultWakeStore {
         self.waked.push(result_event_id.to_owned());
         while self.waked.len() > MAX_WAKED {
             self.waked.remove(0);
+        }
+        self.persist()?;
+        Ok(true)
+    }
+
+    /// Whether the automatic evidence binder already decided this result.
+    pub fn evidence_checked(&self, result_event_id: &str) -> bool {
+        self.evidence_checked
+            .iter()
+            .any(|known| known == result_event_id)
+    }
+
+    /// Take at-most-once custody of one result for the automatic evidence
+    /// binder, on disk before any read or publish — the same order, and the
+    /// same stated cost, as [`Self::claim_result`].
+    pub fn claim_evidence(&mut self, result_event_id: &str) -> io::Result<bool> {
+        if self.evidence_checked(result_event_id) {
+            return Ok(false);
+        }
+        self.evidence_checked.push(result_event_id.to_owned());
+        while self.evidence_checked.len() > MAX_EVIDENCE_CHECKED {
+            self.evidence_checked.remove(0);
         }
         self.persist()?;
         Ok(true)
