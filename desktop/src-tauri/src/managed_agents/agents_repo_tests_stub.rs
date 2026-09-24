@@ -432,6 +432,20 @@ pub(super) fn project_head_json(keys: &Keys, slug: &str, name: &str) -> serde_js
     event_json(&event)
 }
 
+/// The project's kind:30621 head by `keys`, named, marked
+/// `["buzz-access","private"]`.
+pub(super) fn private_project_head_json(keys: &Keys, slug: &str, name: &str) -> serde_json::Value {
+    let event = EventBuilder::new(Kind::Custom(KIND_PROJECT as u16), "")
+        .tags(vec![
+            Tag::parse(vec!["d".to_string(), slug.to_string()]).unwrap(),
+            Tag::parse(vec!["name".to_string(), name.to_string()]).unwrap(),
+            Tag::parse(vec!["buzz-access".to_string(), "private".to_string()]).unwrap(),
+        ])
+        .sign_with_keys(keys)
+        .expect("sign");
+    event_json(&event)
+}
+
 /// A project head naming `repo_id` as one of its repositories, the shape a
 /// project created before the pivot has.
 pub(super) fn project_head_with_repo_json(

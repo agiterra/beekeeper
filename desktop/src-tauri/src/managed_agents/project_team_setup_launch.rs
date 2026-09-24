@@ -300,6 +300,39 @@ pub async fn project_team_setup_start_authoring(
     if !supervisor::ensure_running(&app, &provider, &draft.relay_url).map_err(external)? {
         return Err(external("The local provider is not provisioned."));
     }
+    // Ledger 257: a private project's roster must name this host's own key
+    // (the one `saved.choice.provider_pubkey` signs with) or the relay's
+    // read gate withholds every repository event, ref state included, from
+    // it — proven live in kettle-control-6, 2026-09-24. Repaired here, once
+    // per project this host has ever been missing from, rather than only at
+    // creation: an existing private project launched for the first time on
+    // this host reaches this line too. Never fails the launch: a refusal is
+    // logged, not propagated, and the CLI/roster-editor path is unchanged.
+    match crate::managed_agents::project_roster::ensure_host_on_private_roster(
+        &state,
+        &keys,
+        &draft.project_ref,
+        &saved.choice.provider_pubkey,
+    )
+    .await
+    {
+        None => {}
+        Some(outcome) if outcome.added.is_empty() && outcome.error.is_none() => {}
+        Some(outcome) if outcome.error.is_none() => tracing::info!(
+            target: "managed_agents::project_team_setup_launch",
+            project = %draft.project_ref,
+            provider_pubkey = %saved.choice.provider_pubkey,
+            event_id = ?outcome.event_id,
+            "repaired a private project's roster: the host was missing and is now a collaborator"
+        ),
+        Some(outcome) => tracing::warn!(
+            target: "managed_agents::project_team_setup_launch",
+            project = %draft.project_ref,
+            provider_pubkey = %saved.choice.provider_pubkey,
+            "could not repair the private project's roster with the host's key: {}",
+            outcome.error.unwrap_or_default()
+        ),
+    }
     wire::ensure_membership(
         &state,
         &draft,

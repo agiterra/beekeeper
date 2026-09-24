@@ -23,8 +23,9 @@ use nostr::{Event, EventBuilder, Keys, Kind, Tag};
 use crate::app_state::AppState;
 use crate::managed_agents::project_agent_association::normalize_project_ref;
 use buzz_core_pkg::kind::{
-    is_valid_project_role, KIND_PROJECT, KIND_PROJECT_MEMBERS, KIND_PROJECT_PUT_MEMBER,
-    KIND_PROJECT_REMOVE_MEMBER, PROJECT_ROLE_COLLABORATOR, PROJECT_ROLE_OWNER,
+    is_private_project_event, is_valid_project_role, KIND_PROJECT, KIND_PROJECT_MEMBERS,
+    KIND_PROJECT_PUT_MEMBER, KIND_PROJECT_REMOVE_MEMBER, PROJECT_ROLE_COLLABORATOR,
+    PROJECT_ROLE_OWNER,
 };
 
 /// One roster row: `(pubkey, role)`, the pubkey lowercase hex.
@@ -283,6 +284,40 @@ pub(crate) fn roster_write_refusal(
         role.map(|role| format!("a {role}"))
             .unwrap_or_else(|| "not a member".to_string())
     ))
+}
+
+/// Put `provider_pubkey` on `project_ref`'s roster as a collaborator, but
+/// only when the project is private.
+///
+/// The host does the project's work — host steps, worktrees, verify results
+/// — under this key, never the seat's, so a private project's roster must
+/// name it or the relay's read gate withholds every repository event
+/// (relay-signed ref state included) from it
+/// (`crates/buzz-db/src/git_repo.rs::hidden_repos_for_reader`,
+/// `crates/buzz-core/src/kind.rs::repo_event_hidden_from`; proven live in
+/// kettle-control-6, 2026-09-24). A public project's repositories are not
+/// gated on roster membership, so this is skipped there — adding the host
+/// would be roster noise the relay never checks.
+///
+/// `None` when the project's head could not be read or is public: nothing
+/// was attempted. `Some` otherwise, carrying the same report
+/// [`ensure_project_agents_on_roster`] would (idempotent, infallible for the
+/// caller).
+pub(crate) async fn ensure_host_on_private_roster(
+    state: &AppState,
+    keys: &Keys,
+    project_ref: &str,
+    provider_pubkey: &str,
+) -> Option<RosterOutcome> {
+    let (owner, dtag) = split_coordinate(project_ref).ok()?;
+    let head = read_project_head(state, &owner, &dtag).await.ok()??;
+    if !is_private_project_event(&head) {
+        return None;
+    }
+    Some(
+        ensure_project_agents_on_roster(state, keys, project_ref, &[provider_pubkey.to_string()])
+            .await,
+    )
 }
 
 /// What [`ensure_project_agents_on_roster`] did.
