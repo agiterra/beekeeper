@@ -15,3 +15,6 @@ pub mod validate;
 
 #[cfg(test)]
 mod role_work_contract_tests;
+
+#[cfg(test)]
+mod role_lead_pace_tests;

@@ -420,3 +420,108 @@ fn an_expired_replayed_request_is_rejected_as_expired_not_as_invalid() {
         .expect_err("expired");
     assert!(matches!(rejection, RequestRejection::Expired(_)));
 }
+
+/// Control run 5's 57 s: the relay's live frame reached the provider's channel
+/// subscription but never this listener's `#a` one, so the request waited for
+/// the next probe. Offered from the channel, it reaches the run loop at once —
+/// here with the probe a minute away and the relay sending nothing live.
+#[tokio::test]
+async fn a_request_offered_from_the_channel_is_queued_without_waiting_for_a_probe() {
+    let relay_keys = Keys::generate();
+    let relay_self = relay_keys.public_key().to_hex();
+    let (url, _relay) = spawn_relay(Vec::new(), vec![Behaviour::Normal]).await;
+    let mut config = listener_config(&url, &relay_self);
+    config.probe_interval = Duration::from_secs(60);
+    let (listener, mut events) = ActionStepListener::spawn(config);
+    listener.watch(BTreeSet::from([project()]));
+
+    let live = signed(&relay_keys, &a_request("verify", far_future()));
+    let live_id = live.id.to_hex();
+    assert_eq!(listener.offer(&live, &relay_self), RequestOffer::Queued);
+    let delivered = tokio::time::timeout(Duration::from_secs(1), events.recv())
+        .await
+        .expect("queued at once, not at the next probe")
+        .expect("the queue is open");
+    match delivered {
+        ActionStepEvent::Requested { event_id, .. } => assert_eq!(event_id, live_id),
+        other => panic!("expected the request, got {other:?}"),
+    }
+
+    // The channel path verifies exactly as the listener does.
+    let forged = signed(&Keys::generate(), &a_request("verify", far_future()));
+    assert!(matches!(
+        listener.offer(&forged, &relay_self),
+        RequestOffer::Rejected(_)
+    ));
+    let mut foreign = a_request("verify", far_future());
+    foreign.project = format!("30621:{}:someone-else", "22".repeat(32));
+    assert!(matches!(
+        listener.offer(&signed(&relay_keys, &foreign), &relay_self),
+        RequestOffer::NotServed(_)
+    ));
+    assert!(matches!(
+        listener.offer(
+            &signed(&relay_keys, &a_request("verify", 1_000)),
+            &relay_self
+        ),
+        RequestOffer::Expired(_)
+    ));
+    listener.shutdown();
+}
+
+/// The channel offer and the listener's probe replay both queue the same
+/// request, and the replay can land while the first is still claimed and
+/// running. The durable store refuses the second record, which is the run
+/// loop's first act, so it is never claimed or run twice.
+#[test]
+fn a_request_delivered_by_both_the_channel_and_the_probe_is_claimed_once() {
+    let relay_keys = Keys::generate();
+    let relay_self = relay_keys.public_key().to_hex();
+    let event = signed(&relay_keys, &a_request("verify", far_future()));
+    let served = BTreeSet::from([project()]);
+    let (tx, mut rx) = mpsc::channel(4);
+    assert_eq!(
+        offer_request(&event, &relay_self, &served, &tx, now_secs()),
+        RequestOffer::Queued
+    );
+    assert_eq!(
+        offer_request(&event, &relay_self, &served, &tx, now_secs()),
+        RequestOffer::Queued
+    );
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut store = crate::action_step_store::ActionStepStore::open(dir.path()).expect("open");
+    let mut inserted = 0;
+    while let Ok(ActionStepEvent::Requested { event_id, request }) = rx.try_recv() {
+        let record = crate::action_step_store::ActionStepRecord {
+            run_id: request.run_id.clone(),
+            step_id: request.step_id.clone(),
+            requested_event_id: event_id.clone(),
+            project: request.project.clone(),
+            workflow_name: request.workflow_name.clone(),
+            channel_id: request.channel_id.clone(),
+            created_at: now_secs(),
+            state: crate::action_step_store::StepState::Requested,
+            agents_commit: None,
+        };
+        if store.insert(record).expect("insert") {
+            inserted += 1;
+            // The first delivery claims before the second is handled.
+            store
+                .mark_claimed(&event_id, &"ef".repeat(32))
+                .expect("claim");
+        }
+    }
+    assert_eq!(
+        inserted, 1,
+        "two deliveries must make one record, one claim"
+    );
+    assert_eq!(
+        store
+            .record(&event.id.to_hex())
+            .map(|found| found.state.clone()),
+        Some(crate::action_step_store::StepState::Claimed {
+            claim_event_id: "ef".repeat(32),
+        }),
+    );
+}

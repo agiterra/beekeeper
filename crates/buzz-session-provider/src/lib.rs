@@ -1854,6 +1854,7 @@ impl Provider {
             }
             KIND_WORKFLOW_HOST_STEP_REQUESTED => {
                 self.on_host_step_requested(event);
+                self.offer_channel_host_step_request(event);
             }
             KIND_WORKFLOW_HOST_STEP_EXITED => {
                 self.on_host_step_exited(event);

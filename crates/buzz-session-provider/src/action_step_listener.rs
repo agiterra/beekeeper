@@ -15,6 +15,11 @@
 //! provider's durable [`crate::action_step_store`] is what keeps a replay
 //! from running anything twice; this task only decides whether an event is a *verifiable* request.
 //!
+//! The provider's channel subscription offers the same kind:46013 the moment
+//! it arrives ([`ActionStepListener::offer`]), because on 2026-09-24 the relay
+//! fanned requests out live to that `#h` subscription and not to this `#a`
+//! one; the probe is then the backstop, not the pickup.
+//!
 //! # What it verifies
 //!
 //! Schnorr signature, signer equals the witnessed relay `self` (the trust
@@ -178,6 +183,21 @@ impl ActionStepListener {
         let _ = self.served.send(Arc::new(projects));
     }
 
+    /// Offer a kind:46013 that arrived on the provider's **channel**
+    /// subscription, so it is claimed now rather than at the next probe.
+    ///
+    /// Control run 5 (2026-09-24) measured why this exists: the relay fanned
+    /// both of its requests out live to the provider's `#h` channel
+    /// subscription (the host-result wake indexed each within a second), but
+    /// never to this listener's `#a` subscription, which found each one only
+    /// on the next [`LISTENER_PROBE_INTERVAL`] replay — 57 s after the
+    /// trigger for the verify that closed the run. The probe stays as the
+    /// backstop for a request whose channel this provider does not hold.
+    pub(crate) fn offer(&self, event: &Event, relay_self: &str) -> RequestOffer {
+        let served = self.served.borrow().clone();
+        offer_request(event, relay_self, &served, &self.events, now_secs())
+    }
+
     /// A sender a spawned command task reports its completion through.
     pub fn reporter(&self) -> mpsc::Sender<ActionStepEvent> {
         self.events.clone()
@@ -249,6 +269,58 @@ pub(crate) fn verify_request_event(
         )));
     }
     Ok(request)
+}
+
+/// What became of one kind:46013 offered to the host-step queue.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum RequestOffer {
+    /// Verified, for a served project, and queued for the run loop.
+    Queued,
+    /// Its claim window has closed; nothing an honest host can do with it.
+    Expired(String),
+    /// Failed signature, signer or schema verification.
+    Rejected(String),
+    /// Verified, but for a project this host does not serve (the project).
+    NotServed(String),
+    /// The queue is full; this delivery is dropped and the next probe replays it.
+    QueueFull,
+    /// The run loop dropped its receiver.
+    Closed,
+}
+
+/// Verify one candidate kind:46013 and, when it is a live request for a
+/// project this host serves, queue it for the run loop.
+///
+/// Both deliveries use this: the listener's own `#a` subscription, and the
+/// provider's channel subscription (see [`ActionStepListener::offer`]).
+/// Queuing the same request twice is safe by construction: the run loop's
+/// first act is [`crate::action_step_store::ActionStepStore::insert`], which
+/// refuses a request id it already holds, so nothing is claimed or run twice.
+/// Never `send().await`: the run loop can be inside a long turn, and a
+/// blocked caller stops answering the relay altogether.
+pub(crate) fn offer_request(
+    event: &Event,
+    relay_self: &str,
+    served: &BTreeSet<String>,
+    events: &mpsc::Sender<ActionStepEvent>,
+    now: u64,
+) -> RequestOffer {
+    let request = match verify_request_event(event, relay_self, now) {
+        Ok(request) => request,
+        Err(RequestRejection::Expired(reason)) => return RequestOffer::Expired(reason),
+        Err(rejection) => return RequestOffer::Rejected(rejection.to_string()),
+    };
+    if !served.contains(&request.project) {
+        return RequestOffer::NotServed(request.project);
+    }
+    match events.try_send(ActionStepEvent::Requested {
+        event_id: event.id.to_hex(),
+        request: Box::new(request),
+    }) {
+        Ok(()) => RequestOffer::Queued,
+        Err(mpsc::error::TrySendError::Full(_)) => RequestOffer::QueueFull,
+        Err(mpsc::error::TrySendError::Closed(_)) => RequestOffer::Closed,
+    }
 }
 
 /// Why one connection ended.
@@ -426,57 +498,34 @@ async fn serve_one_connection(
                     run = %requested_d_tag(&event),
                     "host step request received"
                 );
-                let request = match verify_request_event(&event, &config.relay_self, now_secs()) {
-                    Ok(request) => request,
-                    Err(RequestRejection::Expired(reason)) => {
-                        // Routine on every replay: the stored request outlives
-                        // its own claim window and there is nothing to do.
-                        tracing::debug!(
-                            target: "csp::actions",
-                            %event_id,
-                            "skipped a replayed host step request: {reason}"
-                        );
-                        continue;
-                    }
-                    Err(rejection) => {
-                        tracing::warn!(
-                            target: "csp::actions",
-                            %event_id,
-                            "skipped a candidate host step request: {rejection}"
-                        );
-                        continue;
-                    }
-                };
-                if !wanted.contains(&request.project) {
-                    tracing::debug!(
+                match offer_request(&event, &config.relay_self, wanted, events, now_secs()) {
+                    RequestOffer::Queued => {}
+                    // Routine on every replay: the stored request outlives its
+                    // own claim window and there is nothing to do.
+                    RequestOffer::Expired(reason) => tracing::debug!(
                         target: "csp::actions",
                         %event_id,
-                        project = %request.project,
+                        "skipped a replayed host step request: {reason}"
+                    ),
+                    RequestOffer::Rejected(reason) => tracing::warn!(
+                        target: "csp::actions",
+                        %event_id,
+                        "skipped a candidate host step request: {reason}"
+                    ),
+                    RequestOffer::NotServed(project) => tracing::debug!(
+                        target: "csp::actions",
+                        %event_id,
+                        %project,
                         "host step request for a project this host does not serve ignored"
-                    );
-                    continue;
-                }
-                // Never `send().await`: the run loop can be inside a long
-                // turn, and a blocked read loop stops answering the relay
-                // altogether. A full queue drops *this* delivery only — the
-                // next probe replays the stored request.
-                match events.try_send(ActionStepEvent::Requested {
-                    event_id: event_id.clone(),
-                    request: Box::new(request),
-                }) {
-                    Ok(()) => {}
-                    Err(mpsc::error::TrySendError::Full(_)) => {
-                        tracing::warn!(
-                            target: "csp::actions",
-                            %event_id,
-                            capacity = LISTENER_EVENT_CAPACITY,
-                            "the host step queue is full; this delivery is dropped and will be \
-                             replayed by the next subscription probe"
-                        );
-                    }
-                    Err(mpsc::error::TrySendError::Closed(_)) => {
-                        return Ok(ConnectionEnd::Shutdown);
-                    }
+                    ),
+                    RequestOffer::QueueFull => tracing::warn!(
+                        target: "csp::actions",
+                        %event_id,
+                        capacity = LISTENER_EVENT_CAPACITY,
+                        "the host step queue is full; this delivery is dropped and will be \
+                         replayed by the next subscription probe"
+                    ),
+                    RequestOffer::Closed => return Ok(ConnectionEnd::Shutdown),
                 }
             }
             Ok(RelayMessage::Eose { subscription_id }) if subscription_id == current => {

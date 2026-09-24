@@ -105,7 +105,9 @@ use buzz_workflow::{parse_actions_yml, ACTIONS_YML};
 use nostr::{EventBuilder, Kind, Tag};
 use tokio::sync::mpsc;
 
-use crate::action_step_listener::{ActionStepEvent, ActionStepListener, ListenerConfig};
+use crate::action_step_listener::{
+    ActionStepEvent, ActionStepListener, ListenerConfig, RequestOffer,
+};
 use crate::action_step_store::{ActionStepRecord, StepState};
 use crate::commands::ProjectsFile;
 use crate::host_command::{self, HostCommandOutcome, PreparedCommand};
@@ -609,6 +611,37 @@ impl Provider {
         self.action_step_listener = Some(listener);
         self.action_step_events = Some(events);
         self.sync_action_step_listener();
+    }
+
+    /// Hand a kind:46013 from the channel subscription to the host-step
+    /// queue (see [`ActionStepListener::offer`]). The listener's own probe
+    /// still replays it; the durable store keeps the two deliveries to one
+    /// claim and one run.
+    pub(crate) fn offer_channel_host_step_request(&self, event: &nostr::Event) {
+        let (Some(listener), Some(relay_self)) =
+            (&self.action_step_listener, self.relay_self.as_deref())
+        else {
+            return;
+        };
+        let event_id = event.id.to_hex();
+        match listener.offer(event, relay_self) {
+            RequestOffer::Queued => tracing::info!(
+                target: "csp::actions",
+                %event_id,
+                "host step request received on the channel subscription"
+            ),
+            RequestOffer::QueueFull => tracing::warn!(
+                target: "csp::actions",
+                %event_id,
+                "the host step queue is full; the listener's next probe replays this request"
+            ),
+            RequestOffer::Rejected(reason) => tracing::warn!(
+                target: "csp::actions",
+                %event_id,
+                "skipped a candidate host step request from the channel: {reason}"
+            ),
+            RequestOffer::Expired(_) | RequestOffer::NotServed(_) | RequestOffer::Closed => {}
+        }
     }
 
     /// Hand the listener's queue to the run loop.

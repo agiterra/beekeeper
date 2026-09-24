@@ -69,7 +69,7 @@ const CURRENT: [(&str, &str); 11] = [
     ("architect", "1.1.0"),
     ("builder", "1.2.0"),
     ("designer", "1.1.0"),
-    ("lead", "1.2.2"),
+    ("lead", "1.2.3"),
     ("memory", "1.0.0"),
     ("poker", "1.1.0"),
     ("project-pulse", "1.1.0"),
@@ -102,6 +102,11 @@ const LEAD_1_2_1_CARETS: [&str; 3] = ["^1.0.0", "^1.1.0", "^1.2.0"];
 /// criterion from the relay's observation (`bee sessions work bind ref`)
 /// before it publishes `mission.completed`. Every earlier caret takes it.
 const LEAD_1_2_2_CARETS: [&str; 4] = ["^1.0.0", "^1.1.0", "^1.2.0", "^1.2.1"];
+
+/// Lead 1.2.3 (control run 5): the exact work-command shapes in order, the
+/// verify-only-on-a-delivered-commit rule and the stale host-result wake rule.
+/// Every earlier caret takes it.
+const LEAD_1_2_3_CARETS: [&str; 5] = ["^1.0.0", "^1.1.0", "^1.2.0", "^1.2.1", "^1.2.2"];
 
 /// Every file under `<name>/<version>/`, relative path to bytes.
 fn version_files(name: &str, version: &str) -> BTreeMap<String, Vec<u8>> {
@@ -412,6 +417,17 @@ fn the_lead_1_2_1_template_is_byte_for_byte_what_it_shipped_as() {
     );
 }
 
+/// Lead 1.2.2 shipped to run 5's seats (ledger 256), so its bytes are frozen;
+/// 1.2.3 is a new directory beside it.
+#[test]
+fn the_lead_1_2_2_template_is_byte_for_byte_what_it_shipped_as() {
+    assert_eq!(
+        digest("lead", "1.2.2"),
+        "0bc1fb657351393aa072edc983e9c728cedf05aacbac5c7ea2bc2f587ae68a12",
+        "lead/1.2.2 changed; a published version is immutable — add a new version instead"
+    );
+}
+
 /// 1.2.2 is worth shipping only if projects already on the wire take it
 /// without editing a file. Every caret a seeded project can be carrying for
 /// the working contract — `@^1.0.0`, `@^1.1.0`, `@^1.2.0` and `@^1.2.1` — must
@@ -443,19 +459,23 @@ fn a_1_2_2_template_is_picked_up_by_every_earlier_caret_include() {
             );
         }
     }
-    // The lead's 1.2.2 rides every earlier caret; 1.2.0 and 1.2.1 stay pins.
-    for range in LEAD_1_2_1_CARETS.iter().chain(LEAD_1_2_2_CARETS.iter()) {
+    // The lead's 1.2.3 rides every earlier caret; 1.2.0 to 1.2.2 stay pins.
+    for range in LEAD_1_2_1_CARETS
+        .iter()
+        .chain(LEAD_1_2_2_CARETS.iter())
+        .chain(LEAD_1_2_3_CARETS.iter())
+    {
         let resolved = catalog
             .resolve("lead", &TemplateRange::parse("lead", range).expect("range"))
             .unwrap_or_else(|e| panic!("lead@{range}: {e}"));
         assert!(resolved.warning.is_none(), "lead@{range}: {resolved:?}");
         assert_eq!(
             resolved.template.version.to_string(),
-            "1.2.2",
-            "lead@{range} must take 1.2.2 without anyone editing a role file"
+            "1.2.3",
+            "lead@{range} must take 1.2.3 without anyone editing a role file"
         );
     }
-    for exact in ["1.0.0", "1.1.0", "1.2.0", "1.2.1"] {
+    for exact in ["1.0.0", "1.1.0", "1.2.0", "1.2.1", "1.2.2"] {
         let resolved = catalog
             .resolve("lead", &TemplateRange::parse("lead", exact).expect("range"))
             .expect("lead pin resolves");
@@ -674,7 +694,7 @@ fn a_new_project_seeds_the_current_versions_and_an_existing_projects_caret_resol
 
     let lead = std::fs::read_to_string(root.join("roles/lead.md")).expect("seeded lead");
     for expected in [
-        "![[beekeeper/lead@^1.2.2]]",
+        "![[beekeeper/lead@^1.2.3]]",
         "![[beekeeper/working-contract@^1.2.2]]",
         "![[beekeeper/memory@^1.0.0]]",
         "![[beekeeper/project-pulse@^1.1.0]]",
@@ -724,7 +744,7 @@ fn a_new_project_seeds_the_current_versions_and_an_existing_projects_caret_resol
     assert_eq!(
         resolved,
         vec![
-            ("beekeeper/lead@^1.0.0", "1.2.2"),
+            ("beekeeper/lead@^1.0.0", "1.2.3"),
             ("beekeeper/working-contract@^1.0.0", "1.2.2"),
             ("beekeeper/memory@^1.0.0", "1.0.0"),
             ("beekeeper/project-pulse@^1.0.0", "1.1.0"),
@@ -823,7 +843,7 @@ fn a_1_2_0_role_is_picked_up_by_both_the_caret_1_0_0_and_the_caret_1_1_0_include
     assert_eq!(
         resolved,
         vec![
-            ("beekeeper/lead@^1.1.0", "1.2.2"),
+            ("beekeeper/lead@^1.1.0", "1.2.3"),
             ("beekeeper/working-contract@^1.1.0", "1.2.2"),
             ("beekeeper/memory@^1.0.0", "1.0.0"),
             ("beekeeper/project-pulse@^1.1.0", "1.1.0"),
