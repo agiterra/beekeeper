@@ -2794,7 +2794,9 @@ pub enum ModerationCmd {
 /// direct-SQL equivalents for questions this surface does not answer.
 #[derive(Subcommand)]
 pub enum SessionsCmd {
-    /// List the coding-session generations recorded in a channel
+    /// List the coding-session generations recorded in a channel. Each row's
+    /// `sessionRef` is the umbrella id `--session-ref` takes elsewhere; the
+    /// uuid inside `target` is the execution's sessionId, a different id
     #[command(
         after_help = "Examples:\n  bee sessions list --channel <uuid>\n  bee --format compact sessions list --channel <uuid>\n\nRecipe:\n  bee sessions list --channel <uuid>"
     )]
@@ -3760,7 +3762,9 @@ pub enum SessionsCmd {
         /// Channel UUID the session was published into
         #[arg(long)]
         channel: String,
-        /// Restrict every number to one umbrella's executions
+        /// Restrict every number to one umbrella's executions. Takes the
+        /// umbrella `sessionRef` that `sessions list` prints — not the
+        /// sessionId inside a target; a ref no session records is refused
         #[arg(long = "session-ref")]
         session_ref: Option<String>,
         /// Lower time bound: RFC 3339 or Unix seconds. The goal, genesis and

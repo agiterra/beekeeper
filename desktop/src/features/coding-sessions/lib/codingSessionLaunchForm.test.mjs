@@ -605,3 +605,41 @@ test("the Team lead and an unnamed worktree are surfaced on press, not inline", 
     false,
   );
 });
+
+// Ledger 255(e): the runtime does not offer the identity's opus[1m], so the
+// picker preselected opus under a notice naming both. The lead runs on the
+// stand-in without an override reason; re-picking it by hand is still no
+// override, and picking something else is one.
+test("a disclosed stand-in for an unoffered identity model runs without an override", () => {
+  const lead = { ...AGENT, model: "opus[1m]" };
+  assert.deepEqual(
+    resolveCodingSessionLeadModel({
+      lead,
+      pickedModel: null,
+      pickedExplicitly: false,
+      providerModel: "opus",
+      seatSubstitute: "opus",
+    }),
+    { model: "opus", overridden: false },
+  );
+  assert.deepEqual(
+    resolveCodingSessionLeadModel({
+      lead,
+      pickedModel: "opus",
+      pickedExplicitly: true,
+      providerModel: "opus",
+      seatSubstitute: "opus",
+    }),
+    { model: "opus", overridden: false },
+  );
+  assert.deepEqual(
+    resolveCodingSessionLeadModel({
+      lead,
+      pickedModel: "sonnet",
+      pickedExplicitly: true,
+      providerModel: "sonnet",
+      seatSubstitute: "opus",
+    }),
+    { model: "sonnet", overridden: true },
+  );
+});

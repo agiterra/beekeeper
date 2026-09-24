@@ -142,10 +142,76 @@ export type CodingSessionSeatIdentityModel = {
   note: string | null;
   /**
    * The create has no model it can honestly write and must wait for a pick.
-   * True only when the record names an id this runtime does not publish.
+   * True only when the record names an id this runtime does not publish *and*
+   * the runtime offers neither a same-family model nor a default.
    */
   mustPick: boolean;
+  /**
+   * The record's own id when {@link model} is a disclosed stand-in for it, or
+   * `null` when `model` is the record's id (or nothing). Never set without a
+   * {@link note} that names both ids.
+   */
+  substitutedFor: string | null;
 };
+
+/** Model families whose ids share a word across catalogs and versions. */
+const CODING_SESSION_MODEL_FAMILIES = ["opus", "sonnet", "haiku", "fable"];
+
+/** `opus[1m]` → `opus`: the id without any trailing `[...]` option groups. */
+function codingSessionModelBase(id: string): string {
+  let rest = id.trim();
+  while (rest.endsWith("]")) {
+    const open = rest.lastIndexOf("[");
+    if (open <= 0) break;
+    rest = rest.slice(0, open);
+  }
+  return rest.toLowerCase();
+}
+
+/** The family word an id carries (`claude-opus-4` → `opus`), else its base. */
+function codingSessionModelFamily(id: string): string {
+  const base = codingSessionModelBase(id);
+  const tokens = base.split(/[-_.\s]+/);
+  return (
+    CODING_SESSION_MODEL_FAMILIES.find((family) => tokens.includes(family)) ??
+    base
+  );
+}
+
+/**
+ * The offered id nearest to one the catalog does not publish, and why.
+ *
+ * Nearest means, in order: the same id with different `[...]` options
+ * (`opus[1m]` → `opus`, preferring the bare one), then the same model family
+ * (`claude-opus-4` → `opus`), then the runtime's own default when the catalog
+ * publishes it. `null` when none of the three exists. Catalog order breaks
+ * ties. This is a *preselection* for a person to see and change — never a
+ * silent rewrite; the hire host does not call it (see the module doc).
+ */
+export function nearestOfferedCodingSessionModel(input: {
+  recorded: string;
+  allowedModels: readonly string[];
+  defaultModel?: string | null;
+}): { model: string; basis: "family" | "default" } | null {
+  const base = codingSessionModelBase(input.recorded);
+  const family = codingSessionModelFamily(input.recorded);
+  const offered = input.allowedModels.filter(
+    (id) => id.trim().length > 0 && id !== input.recorded,
+  );
+  const bare = offered.find((id) => id.toLowerCase() === base);
+  if (bare) return { model: bare, basis: "family" };
+  const sameBase = offered.find((id) => codingSessionModelBase(id) === base);
+  if (sameBase) return { model: sameBase, basis: "family" };
+  const sameFamily = offered.find(
+    (id) => codingSessionModelFamily(id) === family,
+  );
+  if (sameFamily) return { model: sameFamily, basis: "family" };
+  const fallback = input.defaultModel?.trim() ?? "";
+  if (fallback.length > 0 && offered.includes(fallback)) {
+    return { model: fallback, basis: "default" };
+  }
+  return null;
+}
 
 /**
  * The model a seated identity asks a *create* to run on — the create path's
@@ -158,47 +224,106 @@ export type CodingSessionSeatIdentityModel = {
  * miss and the fallback were wrong in the same direction: the session ran on
  * weights the record did not name and no screen said so.
  *
- * Three answers, and none of them substitutes one id for another:
+ * Then the fix overcorrected: a record naming `opus[1m]` on a runtime that
+ * offers `opus` preselected nothing and held Start behind a red refusal, and
+ * control run 4 (ledger 255(e), 2026-09-23) spent most of its 22 setup
+ * minutes there. So the not-offered case now *preselects* the nearest offered
+ * id and says so, naming both ids — a visible, changeable stand-in, which is
+ * not the silent substitution the 2026-08-29 ruling forbids.
  *
  * - the catalog offers the record's id → it is preselected, nothing to say;
  * - the person has picked a model by hand, or the record names none, or the
  *   catalog was never read → this decides nothing;
- * - the catalog does not offer the record's id → **nothing is preselected**,
- *   the record's id is named out loud, and `mustPick` holds the create until
- *   a real model is chosen. The record is not edited here — a create dialog
- *   is the wrong place to rewrite an identity — so the copy says where it is
- *   edited instead.
+ * - the catalog does not offer the record's id → the same-family id, else the
+ *   runtime default, is preselected with a one-line notice naming the
+ *   record's id and the stand-in;
+ * - and only when there is neither → nothing is preselected and `mustPick`
+ *   holds the create until a real model is chosen.
+ *
+ * The record is not edited here; the surface offers that as its own action.
  */
 export function resolveCodingSessionSeatIdentityModel(input: {
   /** The seated identity's own model id, or null when it names none. */
   agentModel: string | null;
   /** Model ids the selected runtime actually publishes. */
   allowedModels: readonly string[];
+  /** The runtime's own default id, when it reports one. */
+  defaultModel?: string | null;
   /** This computer's name for the runtime, used in the disclosure. */
   providerInstanceRef: string;
   /** Whether the person has picked a model by hand. */
   selectionExplicit: boolean;
 }): CodingSessionSeatIdentityModel {
+  const nothing: CodingSessionSeatIdentityModel = {
+    model: null,
+    note: null,
+    mustPick: false,
+    substitutedFor: null,
+  };
   const agentModel = input.agentModel?.trim() ?? "";
-  if (input.selectionExplicit || agentModel.length === 0) {
-    return { model: null, note: null, mustPick: false };
-  }
+  if (input.selectionExplicit || agentModel.length === 0) return nothing;
   const resolution = resolveCodingSessionHireModel(
     agentModel,
     input.allowedModels,
   );
-  if (resolution === null || resolution.kind === "unknown") {
-    return { model: null, note: null, mustPick: false };
-  }
+  if (resolution === null || resolution.kind === "unknown") return nothing;
   if (resolution.kind === "offered") {
-    return { model: resolution.model, note: null, mustPick: false };
+    return { ...nothing, model: resolution.model };
   }
+  const nearest = nearestOfferedCodingSessionModel({
+    recorded: agentModel,
+    allowedModels: input.allowedModels,
+    defaultModel: input.defaultModel ?? null,
+  });
+  if (nearest === null) {
+    return {
+      ...nothing,
+      mustPick: true,
+      note:
+        `This identity's record names ${agentModel}, which ` +
+        `${input.providerInstanceRef} does not offer. Pick a model; the record ` +
+        `keeps ${agentModel} until you change it on the Agents screen.`,
+    };
+  }
+  const why =
+    nearest.basis === "family"
+      ? `${nearest.model}, the nearest model it offers,`
+      : `${nearest.model}, its default (it offers nothing of the same family),`;
   return {
-    model: null,
-    mustPick: true,
+    model: nearest.model,
+    mustPick: false,
+    substitutedFor: agentModel,
     note:
       `This identity's record names ${agentModel}, which ` +
-      `${input.providerInstanceRef} does not offer. Pick a model; the record ` +
-      `keeps ${agentModel} until you change it on the Agents screen.`,
+      `${input.providerInstanceRef} does not offer, so ${why} is preselected ` +
+      "instead. You can pick another.",
   };
+}
+
+/**
+ * Whether a create may offer to write its model back onto the seated
+ * identity's record, and what that write would say.
+ *
+ * Only when the record names an id this runtime does not publish, the model
+ * the create will run is one it does, and the two differ — so a record that
+ * already names a runnable model, an unread catalog, or a create with no model
+ * yet never offers a write. `null` means offer nothing.
+ */
+export function codingSessionSeatRecordModelUpdate(input: {
+  /** The id the identity's record names today, or null. */
+  recordedModel: string | null;
+  /** The id this create will run the identity on, or null. */
+  nextModel: string | null;
+  /** Model ids the selected runtime actually publishes. */
+  allowedModels: readonly string[];
+}): { recordedModel: string; nextModel: string } | null {
+  const recorded = input.recordedModel?.trim() ?? "";
+  const next = input.nextModel?.trim() ?? "";
+  if (recorded.length === 0 || next.length === 0 || recorded === next) {
+    return null;
+  }
+  if (input.allowedModels.length === 0) return null;
+  if (input.allowedModels.includes(recorded)) return null;
+  if (!input.allowedModels.includes(next)) return null;
+  return { recordedModel: recorded, nextModel: next };
 }

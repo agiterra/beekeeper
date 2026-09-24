@@ -446,6 +446,13 @@ pub struct SessionRow {
     pub confirmed: bool,
     /// Distinct metadata payloads that shared the newest second.
     pub metadata_conflicts: usize,
+    /// The umbrella `sessionRef` this execution's newest 44223 that names one
+    /// records — the id `sessions measure`, `sessions work status`,
+    /// `sessions operation list` and `sessions decide answer` take. `None`
+    /// when no metadata for the row names one (a solo create, or metadata not
+    /// yet landed). Never the `sessionId` inside `target_key`, which is a
+    /// different id (ledger 255(d)).
+    pub session_ref: Option<String>,
 }
 
 fn status_string(metadata: &SessionMetadata) -> String {
@@ -580,6 +587,7 @@ pub fn resolve_sessions(
                 transcript_items: own_transcripts.len(),
                 confirmed: confirmed.contains(&(signer, target_key)),
                 metadata_conflicts: conflicts,
+                session_ref: newest_session_ref(&own_metadata),
             }
         })
         .collect();
@@ -592,6 +600,23 @@ pub fn resolve_sessions(
             .then(left.signer.cmp(&right.signer))
     });
     rows
+}
+
+/// The umbrella `sessionRef` the newest metadata naming one records.
+///
+/// Newest-first rather than newest-only, because a later metadata write that
+/// omits the field (it is emitted only when the create carried one) does not
+/// unclaim the umbrella.
+fn newest_session_ref(records: &[&MetadataRecord]) -> Option<String> {
+    records
+        .iter()
+        .filter(|record| record.metadata.session_ref.is_some())
+        .max_by(|left, right| {
+            left.created_at
+                .cmp(&right.created_at)
+                .then(left.id.cmp(&right.id))
+        })
+        .and_then(|record| record.metadata.session_ref.clone())
 }
 
 /// Pick the metadata a reader should believe, and report the ambiguity.
@@ -1453,6 +1478,7 @@ async fn cmd_list(
             let founding = founders.of(&row.target);
             match format {
                 crate::OutputFormat::Compact => json!({
+                    "sessionRef": row.session_ref,
                     "target": row.target_key,
                     "title": row.title,
                     "status": row.status,
@@ -1461,6 +1487,7 @@ async fn cmd_list(
                     "createdAt": rfc3339(row.created_at),
                 }),
                 crate::OutputFormat::Json => json!({
+                    "sessionRef": row.session_ref,
                     "target": row.target_key,
                     "driver": row.target.driver,
                     "instanceId": row.target.instance_id,
@@ -4045,6 +4072,36 @@ mod tests {
         assert_eq!(rows[0].created_at, 100);
         assert_eq!(rows[0].last_event_at, 200);
         assert!(!rows[0].confirmed);
+    }
+
+    // Ledger 255(d): `sessions list` printed only the cs-target key, whose
+    // embedded sessionId is not the umbrella id `measure` selects on, so the
+    // only id a reader could copy returned an empty report.
+    #[test]
+    fn a_listed_row_carries_the_umbrella_session_ref_its_metadata_names() {
+        let umbrella = "6ada43d3-9dda-424d-9205-e5fad39c14d4";
+        let session = target("0f8a2a3e-1b7c-4c55-9a51-3f0d6f6b2c11", 1);
+        let signer = "a".repeat(64);
+        let mut named = metadata_payload(&session, SessionStatus::Idle, None, None);
+        named.session_ref = Some(umbrella.to_owned());
+        // A later write that omits the field does not unclaim the umbrella.
+        let silent = metadata_payload(&session, SessionStatus::Running, None, None);
+        let events = vec![
+            metadata_event(&format!("{:064}", 1), &signer, 100, &named),
+            metadata_event(&format!("{:064}", 2), &signer, 200, &silent),
+        ];
+        let (metadata, _) = decode_metadata(&events);
+        let rows = resolve_sessions(&metadata, &[], &[]);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].session_ref.as_deref(), Some(umbrella));
+        assert_ne!(rows[0].target.session_id, umbrella);
+
+        // A row whose metadata names no umbrella says so as null, never as
+        // the target's sessionId.
+        let bare = vec![metadata_event(&format!("{:064}", 3), &signer, 100, &silent)];
+        let (metadata, _) = decode_metadata(&bare);
+        let rows = resolve_sessions(&metadata, &[], &[]);
+        assert_eq!(rows[0].session_ref, None);
     }
 
     #[test]

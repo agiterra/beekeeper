@@ -245,6 +245,24 @@ export function NewCodingSessionProviderPicker({
 }
 
 /**
+ * The action that writes the model this create will run back onto the seated
+ * identity's record — the same host-owned `model` field the Agents screen's
+ * edit dialog saves, and like that dialog it writes only on an explicit click.
+ */
+export type NewCodingSessionSeatRecordUpdate = {
+  /** The identity's name, as the lead picker shows it. */
+  identityLabel: string;
+  /** The id the record names today. */
+  recordedModel: string;
+  /** The id the click would write — the model this create will run. */
+  nextModel: string;
+  state: "idle" | "saving" | "error";
+  /** Why the last write failed, when `state` is `error`. */
+  error: string | null;
+  onUpdate: () => void;
+};
+
+/**
  * What this surface still owes the person about the model, under the picker.
  *
  * Until 2026-09-10 this also printed "Runs the runtime's default model — the
@@ -253,13 +271,17 @@ export function NewCodingSessionProviderPicker({
  * — `resolveCodingSessionCreateModel` still writes `default` only when that is
  * all the runtime knows — and `codingSessionCreateModelDisclosure` remains for
  * any surface that wants the sentence. What stays here is the seat note: a
- * seated identity whose record names a model the runtime cannot run.
+ * seated identity whose record names a model the runtime cannot run, and the
+ * one-click way to stop the next session repeating it (ledger 255(e)).
  */
 export function NewCodingSessionModelDisclosure({
+  disabled = false,
   note = null,
+  recordUpdate = null,
 }: {
   /** Kept for callers; no longer read. */
   catalog?: CodingSessionCreateModelCatalog | null;
+  disabled?: boolean;
   /** Kept for callers; no longer read. */
   model?: string | null;
   /**
@@ -267,15 +289,45 @@ export function NewCodingSessionModelDisclosure({
    * seated identity whose record names one the runtime cannot run.
    */
   note?: string | null;
+  /** Offered only when the record names an id this runtime does not run. */
+  recordUpdate?: NewCodingSessionSeatRecordUpdate | null;
 }) {
-  if (note === null) return null;
+  if (note === null && recordUpdate === null) return null;
   return (
-    <p
-      className="text-2xs text-muted-foreground"
-      data-testid="new-coding-session-seat-model-note"
-    >
-      {note}
-    </p>
+    <div className="flex flex-col gap-1">
+      {note !== null ? (
+        <p
+          className="text-2xs text-muted-foreground"
+          data-testid="new-coding-session-seat-model-note"
+        >
+          {note}
+        </p>
+      ) : null}
+      {recordUpdate !== null ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            className="text-2xs font-medium text-primary underline-offset-2 hover:underline disabled:opacity-50"
+            data-testid="new-coding-session-seat-model-update-record"
+            disabled={disabled || recordUpdate.state === "saving"}
+            onClick={recordUpdate.onUpdate}
+            type="button"
+          >
+            {recordUpdate.state === "saving"
+              ? `Updating ${recordUpdate.identityLabel}'s record…`
+              : `Update ${recordUpdate.identityLabel}'s record from ${recordUpdate.recordedModel} to ${recordUpdate.nextModel}`}
+          </button>
+          {recordUpdate.state === "error" ? (
+            <span
+              className="text-2xs text-destructive"
+              data-testid="new-coding-session-seat-model-update-error"
+            >
+              The record still names {recordUpdate.recordedModel}:{" "}
+              {recordUpdate.error ?? "the update failed"}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -290,13 +342,14 @@ export function NewCodingSessionModelDisclosure({
  *
  * Brian's ruling, 2026-08-29: the provider's published `allowedModels` — the
  * same list this picker renders — is the only model list, and a record naming
- * something else is disclosed and refused, never mapped. So there are three
- * answers and none of them is a substitution: the record's model when this
- * runtime publishes it exactly; nothing when the person has chosen a model by
- * hand (their pick outranks the record) or the record names none; and nothing
- * *plus a disclosure and a held Create button* when the record names a model
- * this runtime does not publish. A silent fall to the runtime default is the
- * same class of lie as the id it would replace.
+ * something else is never *silently* mapped. The record's model is preselected
+ * when this runtime publishes it exactly; nothing when the person has chosen a
+ * model by hand (their pick outranks the record) or the record names none.
+ * When the record names a model this runtime does not publish, the nearest
+ * offered one (same family, else the runtime default) is preselected under a
+ * notice naming both ids (ledger 255(e)); only when there is neither is Create
+ * held for a pick. A silent fall to the runtime default is the same class of
+ * lie as the id it would replace — the notice is what keeps this from being one.
  *
  * The matching itself is {@link resolveCodingSessionSeatIdentityModel}, the
  * same exact-match check the hire host reads an identity's model through.
@@ -306,6 +359,8 @@ export function resolveNewCodingSessionSeatModel(input: {
   agentModel: string | null;
   /** Model ids the selected runtime actually publishes. */
   allowedModels: readonly string[];
+  /** The runtime's own default id, when it reports one. */
+  defaultModel?: string | null;
   /** This computer's name for the runtime, used in the disclosure. */
   providerInstanceRef: string;
   /** Whether the person has picked a model by hand. */

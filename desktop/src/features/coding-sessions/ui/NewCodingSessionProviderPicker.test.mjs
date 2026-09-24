@@ -185,7 +185,7 @@ test("seating an identity preselects the model its record names", () => {
       providerInstanceRef: "claude-primary",
       selectionExplicit: false,
     }),
-    { model: "opus[1m]", note: null, mustPick: false },
+    { model: "opus[1m]", note: null, mustPick: false, substitutedFor: null },
   );
 });
 
@@ -197,13 +197,14 @@ test("a model the person picked outranks the identity's record", () => {
       providerInstanceRef: "claude-primary",
       selectionExplicit: true,
     }),
-    { model: null, note: null, mustPick: false },
+    { model: null, note: null, mustPick: false, substitutedFor: null },
   );
 });
 
 // Brian's ruling, 2026-08-29: falling silently to the runtime default here was
-// the create half of the fake match. Nothing is preselected, the record's id is
-// named, and the create waits for a real pick.
+// the create half of the fake match. With no same-family id and no default to
+// disclose, nothing is preselected, the record's id is named, and the create
+// waits for a real pick.
 test("an identity whose model this runtime cannot run blocks the create and says why", () => {
   const resolved = resolveNewCodingSessionSeatModel({
     agentModel: "gpt-5.6-terra",
@@ -229,7 +230,7 @@ test("an identity with no model on its record asks for nothing", () => {
       providerInstanceRef: "claude-primary",
       selectionExplicit: false,
     }),
-    { model: null, note: null, mustPick: false },
+    { model: null, note: null, mustPick: false, substitutedFor: null },
   );
 });
 
@@ -278,4 +279,72 @@ test("a record naming a model this runtime lacks is said, not swallowed", () => 
   assert.match(html, /data-testid="new-coding-session-seat-model-note"/);
   assert.match(html, /gpt-5\.6-terra/);
   assert.doesNotMatch(html, /new-coding-session-model-disclosure/);
+});
+
+// Ledger 255(e): the stand-in is preselected, so the create has a model to
+// write and Start is not held; the notice names both ids.
+test("a record naming opus[1m] on a runtime offering opus creates on opus, disclosed", () => {
+  const seat = resolveNewCodingSessionSeatModel({
+    agentModel: "opus[1m]",
+    allowedModels: ["default", "opus", "sonnet"],
+    defaultModel: "default",
+    providerInstanceRef: "claude-primary",
+    selectionExplicit: false,
+  });
+  assert.equal(
+    newCodingSessionEffectiveModel({
+      seatModel: seat,
+      providerModel: "default",
+    }),
+    "opus",
+  );
+  assert.equal(newCodingSessionSeatModelBlocksCreate(seat), false);
+  const html = renderToStaticMarkup(
+    React.createElement(NewCodingSessionModelDisclosure, { note: seat.note }),
+  );
+  assert.match(html, /names opus\[1m\], which claude-primary does not offer/);
+  assert.match(html, /so opus, the nearest model it offers, is preselected/);
+});
+
+test("the record-update action names both ids and writes only on click", () => {
+  let clicks = 0;
+  const recordUpdate = {
+    identityLabel: "Kiln",
+    recordedModel: "opus[1m]",
+    nextModel: "opus",
+    state: "idle",
+    error: null,
+    onUpdate: () => {
+      clicks += 1;
+    },
+  };
+  const html = renderToStaticMarkup(
+    React.createElement(NewCodingSessionModelDisclosure, {
+      note: "note",
+      recordUpdate,
+    }),
+  );
+  assert.match(
+    html,
+    /data-testid="new-coding-session-seat-model-update-record"/,
+  );
+  assert.match(html, /Update Kiln&#x27;s record from opus\[1m\] to opus/);
+  // Rendering is not a write.
+  assert.equal(clicks, 0);
+  const failed = renderToStaticMarkup(
+    React.createElement(NewCodingSessionModelDisclosure, {
+      note: null,
+      recordUpdate: { ...recordUpdate, state: "error", error: "disk full" },
+    }),
+  );
+  assert.match(failed, /The record still names opus\[1m\]: disk full/);
+  assert.equal(
+    renderToStaticMarkup(
+      React.createElement(NewCodingSessionModelDisclosure, {
+        note: null,
+        recordUpdate: null,
+      }),
+    ),
+    "",
+  );
 });

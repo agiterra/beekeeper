@@ -295,8 +295,10 @@ export function CodingSessionFoundedSetupCard({
         />
         <NewCodingSessionModelDisclosure
           catalog={setup.modelCatalog}
+          disabled={locked}
           model={setup.effectiveModel}
           note={setup.seatedModelNote}
+          recordUpdate={setup.seatRecordUpdate}
         />
         {team && setup.modelOverridden && setup.lead.kind === "agent" ? (
           <div className="flex flex-col gap-1">

@@ -112,6 +112,12 @@ export function resolveCodingSessionLeadModel(input: {
   pickedExplicitly: boolean;
   /** What the provider picker resolved — only ever used when you lead. */
   providerModel: string | null;
+  /**
+   * The disclosed stand-in the picker preselected because the runtime does
+   * not offer the identity's own id (ledger 255(e)), or null. Running it is
+   * not an override: the notice under the picker already names both ids.
+   */
+  seatSubstitute?: string | null;
 }): { model: string | null; overridden: boolean } {
   const clean = (value: string | null | undefined) => {
     const trimmed = value?.trim() ?? "";
@@ -121,11 +127,15 @@ export function resolveCodingSessionLeadModel(input: {
     return { model: clean(input.providerModel), overridden: false };
   }
   const identityModel = clean(input.lead.model);
+  const substitute = clean(input.seatSubstitute);
   if (!input.pickedExplicitly) {
-    return { model: identityModel, overridden: false };
+    return { model: substitute ?? identityModel, overridden: false };
   }
   const picked = clean(input.pickedModel);
-  return { model: picked, overridden: picked !== identityModel };
+  return {
+    model: picked,
+    overridden: picked !== identityModel && picked !== substitute,
+  };
 }
 
 /** Something the person can act on right now. Rendered inline, never hidden. */

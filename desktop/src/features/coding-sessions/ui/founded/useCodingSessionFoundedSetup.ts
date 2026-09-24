@@ -50,6 +50,7 @@ import {
   codingSessionFoundedReadiness,
 } from "./codingSessionFoundedReadiness";
 import { useCodingSessionFoundedCandidates } from "./useCodingSessionFoundedCandidates";
+import { useCodingSessionSeatRecordModel } from "./useCodingSessionSeatRecordModel";
 import {
   type CodingSessionFoundedTextDeps,
   useCodingSessionFoundedText,
@@ -247,13 +248,19 @@ export function useCodingSessionFoundedSetup(input: {
         allowedModels: selectedTarget.provider.allowedModels,
       })
     : null;
-  const seatedModel = resolveNewCodingSessionSeatModel({
+  // What the record asks for against this catalog, ignoring any hand pick —
+  // its stand-in (if any) is what a pick of the same id does not override.
+  const recordModel = resolveNewCodingSessionSeatModel({
     agentModel: lead.kind === "agent" ? lead.model : null,
     allowedModels: modelCatalog?.allowedModels ?? [],
+    defaultModel: modelCatalog?.defaultModel ?? null,
     providerInstanceRef:
       selectedTarget?.provider.providerInstanceRef ?? "this runtime",
-    selectionExplicit: modelSelection.explicit,
+    selectionExplicit: false,
   });
+  const seatedModel = modelSelection.explicit
+    ? { model: null, note: null, mustPick: false, substitutedFor: null }
+    : recordModel;
   // What the picker shows — about the runtime's catalog, not what is published.
   const effectiveModel = newCodingSessionEffectiveModel({
     seatModel: seatedModel,
@@ -267,7 +274,14 @@ export function useCodingSessionFoundedSetup(input: {
       pickedModel: modelSelection.value,
       pickedExplicitly: modelSelection.explicit,
       providerModel: effectiveModel,
+      seatSubstitute:
+        recordModel.substitutedFor !== null ? recordModel.model : null,
     });
+  const seatRecordUpdate = useCodingSessionSeatRecordModel({
+    lead,
+    leadModel,
+    allowedModels: modelCatalog?.allowedModels ?? [],
+  });
   const [overrideReason, setOverrideReason] = React.useState("");
 
   // Null until the person touches a box: "use the team" means the team, so an
@@ -578,6 +592,7 @@ export function useCodingSessionFoundedSetup(input: {
     modelCatalog,
     effectiveModel,
     seatedModelNote: seatedModel.note,
+    seatRecordUpdate,
     selectModel: (value: string) =>
       setModelSelection({ value, explicit: true }),
     leadModel,

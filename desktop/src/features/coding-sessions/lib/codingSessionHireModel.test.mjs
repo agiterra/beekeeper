@@ -5,6 +5,8 @@ import {
   describeCodingSessionHireIdentityModelRefusal,
   describeCodingSessionHireModelRefusal,
   resolveCodingSessionHireModel,
+  codingSessionSeatRecordModelUpdate,
+  nearestOfferedCodingSessionModel,
   resolveCodingSessionSeatIdentityModel,
 } from "./codingSessionHireModel.ts";
 
@@ -167,11 +169,11 @@ test("seating an identity the runtime offers preselects that exact id", () => {
       providerInstanceRef: "claude-primary",
       selectionExplicit: false,
     }),
-    { model: "opus[1m]", note: null, mustPick: false },
+    { model: "opus[1m]", note: null, mustPick: false, substitutedFor: null },
   );
 });
 
-test("an identity whose record names an unoffered id preselects nothing and says why", () => {
+test("an unoffered id with no family match and no default preselects nothing and says why", () => {
   const resolved = resolveCodingSessionSeatIdentityModel({
     agentModel: "gpt-5.6-sol",
     allowedModels: CATALOG,
@@ -188,18 +190,115 @@ test("an identity whose record names an unoffered id preselects nothing and says
   );
 });
 
-// The old table made this record runnable by stripping the window suffix. It
-// is a different id, so now it is disclosed and the person picks.
-test("a record naming an id the catalog only publishes with a suffix must be picked", () => {
+// Control run 4 (ledger 255(e)): the lead's record named opus[1m], the runtime
+// offered opus, and Start sat behind a red refusal for 22 minutes. The nearest
+// offered id is now preselected, and the notice names both ids.
+test("a record naming opus[1m] on a runtime offering opus preselects opus and says so", () => {
+  const resolved = resolveCodingSessionSeatIdentityModel({
+    agentModel: "opus[1m]",
+    allowedModels: ["default", "claude-fable-5[1m]", "haiku", "opus", "sonnet"],
+    defaultModel: "default",
+    providerInstanceRef: "claude-primary",
+    selectionExplicit: false,
+  });
+  assert.equal(resolved.model, "opus");
+  assert.equal(resolved.mustPick, false);
+  assert.equal(resolved.substitutedFor, "opus[1m]");
+  assert.equal(
+    resolved.note,
+    "This identity's record names opus[1m], which claude-primary does not " +
+      "offer, so opus, the nearest model it offers, is preselected instead. " +
+      "You can pick another.",
+  );
+});
+
+test("a record naming an id the catalog only publishes with a suffix preselects that one", () => {
   const resolved = resolveCodingSessionSeatIdentityModel({
     agentModel: "claude-fable-5",
     allowedModels: CATALOG,
     providerInstanceRef: "claude-primary",
     selectionExplicit: false,
   });
-  assert.equal(resolved.model, null);
-  assert.equal(resolved.mustPick, true);
-  assert.match(resolved.note ?? "", /claude-fable-5/);
+  assert.equal(resolved.model, "claude-fable-5[1m]");
+  assert.equal(resolved.substitutedFor, "claude-fable-5");
+  assert.match(resolved.note ?? "", /claude-fable-5,/);
+  assert.match(resolved.note ?? "", /claude-fable-5\[1m\]/);
+});
+
+test("with no family match the runtime default is preselected and named", () => {
+  const resolved = resolveCodingSessionSeatIdentityModel({
+    agentModel: "gpt-5.6-terra",
+    allowedModels: CATALOG,
+    defaultModel: "sonnet",
+    providerInstanceRef: "claude-primary",
+    selectionExplicit: false,
+  });
+  assert.equal(resolved.model, "sonnet");
+  assert.equal(resolved.substitutedFor, "gpt-5.6-terra");
+  assert.equal(resolved.mustPick, false);
+  assert.match(resolved.note ?? "", /names gpt-5\.6-terra/);
+  assert.match(resolved.note ?? "", /sonnet, its default/);
+});
+
+test("the nearest offered model prefers the bare id, then the family, then the default", () => {
+  const offered = ["default", "opus[1m][high]", "opus", "claude-sonnet-5"];
+  assert.deepEqual(
+    nearestOfferedCodingSessionModel({
+      recorded: "opus[1m]",
+      allowedModels: offered,
+    }),
+    { model: "opus", basis: "family" },
+  );
+  assert.deepEqual(
+    nearestOfferedCodingSessionModel({
+      recorded: "sonnet",
+      allowedModels: offered,
+    }),
+    { model: "claude-sonnet-5", basis: "family" },
+  );
+  assert.deepEqual(
+    nearestOfferedCodingSessionModel({
+      recorded: "gpt-5.6-terra",
+      allowedModels: offered,
+      defaultModel: "default",
+    }),
+    { model: "default", basis: "default" },
+  );
+  // A default the catalog does not publish is not a model to preselect.
+  assert.equal(
+    nearestOfferedCodingSessionModel({
+      recorded: "gpt-5.6-terra",
+      allowedModels: offered,
+      defaultModel: "gpt-9",
+    }),
+    null,
+  );
+});
+
+test("the record write is offered only when the record names an unrunnable id and the create differs", () => {
+  const offered = ["default", "opus", "sonnet"];
+  assert.deepEqual(
+    codingSessionSeatRecordModelUpdate({
+      recordedModel: "opus[1m]",
+      nextModel: "opus",
+      allowedModels: offered,
+    }),
+    { recordedModel: "opus[1m]", nextModel: "opus" },
+  );
+  for (const input of [
+    // Nothing changed: the record already names what the create runs.
+    { recordedModel: "opus", nextModel: "opus", allowedModels: offered },
+    // The record is runnable; a different pick is an override, not a fix.
+    { recordedModel: "sonnet", nextModel: "opus", allowedModels: offered },
+    // An unread catalog proves nothing about the record.
+    { recordedModel: "opus[1m]", nextModel: "opus", allowedModels: [] },
+    // No model yet, or one the runtime does not offer either.
+    { recordedModel: "opus[1m]", nextModel: null, allowedModels: offered },
+    { recordedModel: "opus[1m]", nextModel: "gpt-9", allowedModels: offered },
+    { recordedModel: null, nextModel: "opus", allowedModels: offered },
+  ]) {
+    assert.equal(codingSessionSeatRecordModelUpdate(input), null);
+  }
 });
 
 test("the person's pick, an empty record and an unread catalog block nothing", () => {
@@ -227,6 +326,7 @@ test("the person's pick, an empty record and an unread catalog block nothing", (
       model: null,
       note: null,
       mustPick: false,
+      substitutedFor: null,
     });
   }
 });

@@ -774,3 +774,44 @@ fn hire_codes_are_read_off_the_text_without_inventing_one() {
     );
     assert!(hire_refusal_codes("hired a builder").is_empty());
 }
+
+// Ledger 255(d): a `--session-ref` no metadata claims used to return an empty
+// report silently. It is refused now, and a sessionId gets pointed at its
+// umbrella.
+#[test]
+fn an_unclaimed_session_ref_is_refused_naming_the_accepted_id() {
+    let umbrella = "6ada43d3-9dda-424d-9205-e5fad39c14d4";
+    let execution = "0f8a2a3e-1b7c-4c55-9a51-3f0d6f6b2c11";
+    let metadata = json!({
+        "id": "1".repeat(64),
+        "pubkey": "a".repeat(64),
+        "kind": KIND_CODING_SESSION_METADATA,
+        "created_at": 100,
+        "tags": [],
+        "content": json!({
+            "session": { "sessionId": execution, "generation": 1 },
+            "sessionRef": umbrella,
+        })
+        .to_string(),
+    });
+    let events = vec![metadata];
+    assert!(check_session_ref_known(&events, "chan", umbrella).is_ok());
+
+    let refused = check_session_ref_known(&events, "chan", execution).unwrap_err();
+    assert!(matches!(refused, CliError::Usage(_)), "exit 1: {refused:?}");
+    let message = refused.to_string();
+    assert!(message.contains("umbrella sessionRef"), "{message}");
+    assert!(
+        message.contains("`sessionRef` field `bee sessions list` prints"),
+        "{message}"
+    );
+    assert!(
+        message.contains(&format!("its umbrella sessionRef is {umbrella}")),
+        "{message}"
+    );
+
+    let unknown = "11111111-2222-4333-8444-555555555555";
+    let refused = check_session_ref_known(&events, "chan", unknown).unwrap_err();
+    assert!(matches!(refused, CliError::Usage(_)));
+    assert!(!refused.to_string().contains("is an execution's sessionId"));
+}

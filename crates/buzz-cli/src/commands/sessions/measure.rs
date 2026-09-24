@@ -197,6 +197,9 @@ pub async fn cmd_measure(
         None => true,
     });
 
+    if let Some(wanted) = session_ref {
+        check_session_ref_known(&events, channel_id, wanted)?;
+    }
     let report = measure_report(&events, session_ref, since, until);
     match format {
         crate::OutputFormat::Compact => {
@@ -401,6 +404,61 @@ struct SeatAgg {
     generation: Option<i64>,
     session_ref: Option<String>,
     metadata_at: i64,
+}
+
+/// Refuse a `--session-ref` no 44223 in the fetched window claims.
+///
+/// `measure_report` selects seats by the umbrella `sessionRef` their metadata
+/// records, so a ref nothing records yields a report with no seats and zero
+/// turns — indistinguishable from an idle session. Control run 4 (ledger
+/// 255(d)) lost time to exactly that, passing the `sessionId` embedded in a
+/// `sessions list` target. The refusal names the id kind accepted and, when
+/// the value is an execution's `sessionId`, the umbrella that execution
+/// actually belongs to.
+pub fn check_session_ref_known(
+    events: &[Value],
+    channel_id: &str,
+    wanted: &str,
+) -> Result<(), CliError> {
+    let metadata = || {
+        events.iter().filter(|event| {
+            event.get("kind").and_then(Value::as_u64)
+                == Some(u64::from(KIND_CODING_SESSION_METADATA))
+        })
+    };
+    let content = |event: &Value| -> Option<Value> {
+        event
+            .get("content")
+            .and_then(Value::as_str)
+            .and_then(|raw| serde_json::from_str(raw).ok())
+    };
+    if metadata()
+        .filter_map(content)
+        .any(|payload| str_at(&payload, "sessionRef").as_deref() == Some(wanted))
+    {
+        return Ok(());
+    }
+    let owner = metadata().filter_map(content).find_map(|payload| {
+        let session_id = payload.pointer("/session/sessionId")?.as_str()?;
+        (session_id == wanted).then(|| str_at(&payload, "sessionRef"))
+    });
+    let hint = match owner {
+        Some(Some(umbrella)) => format!(
+            " {wanted} is an execution's sessionId (the uuid inside a `sessions list` target); \
+             its umbrella sessionRef is {umbrella}."
+        ),
+        Some(None) => format!(
+            " {wanted} is an execution's sessionId whose metadata names no umbrella \
+             sessionRef; omit --session-ref and scope by --since/--until instead."
+        ),
+        None => String::new(),
+    };
+    Err(CliError::Usage(format!(
+        "no coding session in channel {channel_id} records sessionRef {wanted} in the measured \
+         window, so the report would be empty. --session-ref takes an umbrella sessionRef — \
+         the `sessionRef` field `bee sessions list` prints, the id `sessions work status`, \
+         `sessions operation list` and `sessions decide answer` take.{hint}"
+    )))
 }
 
 /// Build the report. Pure: every number below comes from `events` alone.
