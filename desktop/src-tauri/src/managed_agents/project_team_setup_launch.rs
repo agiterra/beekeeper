@@ -5,7 +5,7 @@ use super::{
     actor, authoring, context, read_draft, verify_context, ProjectTeamSetupDraft, SetupError,
 };
 use crate::app_state::AppState;
-use crate::session_provider::{commands, store, supervisor, CodingSessionProviderState};
+use crate::session_provider::{commands, store, CodingSessionProviderState};
 use buzz_core_pkg::coding_session_command::CodingSessionTarget;
 use buzz_core_pkg::coding_session_identity::ProviderInstanceAlias;
 use buzz_core_pkg::coding_session_lifecycle_command::{
@@ -297,9 +297,6 @@ pub async fn project_team_setup_start_authoring(
     verify_context(&state, &scope)?;
     wire::verify_project_channel(&state, &draft, &saved.reservation.channel_id, &keys).await?;
     verify_context(&state, &scope)?;
-    if !supervisor::ensure_running(&app, &provider, &draft.relay_url).map_err(external)? {
-        return Err(external("The local provider is not provisioned."));
-    }
     // Ledger 257: a private project's roster must name this host's own key
     // (the one `saved.choice.provider_pubkey` signs with) or the relay's
     // read gate withholds every repository event, ref state included, from
@@ -308,30 +305,22 @@ pub async fn project_team_setup_start_authoring(
     // creation: an existing private project launched for the first time on
     // this host reaches this line too. Never fails the launch: a refusal is
     // logged, not propagated, and the CLI/roster-editor path is unchanged.
-    match crate::managed_agents::project_roster::ensure_host_on_private_roster(
+    // This is one of two call sites that start the provider; both route
+    // through `ensure_host_serving_project` so the roster repair can never
+    // be wired into one and missed on the other again (run 7, 2026-09-24).
+    if !crate::managed_agents::project_roster::ensure_host_serving_project(
+        &app,
         &state,
+        &provider,
         &keys,
         &draft.project_ref,
         &saved.choice.provider_pubkey,
+        &draft.relay_url,
     )
     .await
+    .map_err(external)?
     {
-        None => {}
-        Some(outcome) if outcome.added.is_empty() && outcome.error.is_none() => {}
-        Some(outcome) if outcome.error.is_none() => tracing::info!(
-            target: "managed_agents::project_team_setup_launch",
-            project = %draft.project_ref,
-            provider_pubkey = %saved.choice.provider_pubkey,
-            event_id = ?outcome.event_id,
-            "repaired a private project's roster: the host was missing and is now a collaborator"
-        ),
-        Some(outcome) => tracing::warn!(
-            target: "managed_agents::project_team_setup_launch",
-            project = %draft.project_ref,
-            provider_pubkey = %saved.choice.provider_pubkey,
-            "could not repair the private project's roster with the host's key: {}",
-            outcome.error.unwrap_or_default()
-        ),
+        return Err(external("The local provider is not provisioned."));
     }
     wire::ensure_membership(
         &state,

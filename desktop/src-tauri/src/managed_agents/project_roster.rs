@@ -19,9 +19,11 @@
 //! than as a relay error.
 
 use nostr::{Event, EventBuilder, Keys, Kind, Tag};
+use tauri::AppHandle;
 
 use crate::app_state::AppState;
 use crate::managed_agents::project_agent_association::normalize_project_ref;
+use crate::session_provider::{supervisor, CodingSessionProviderState};
 use buzz_core_pkg::kind::{
     is_private_project_event, is_valid_project_role, KIND_PROJECT, KIND_PROJECT_MEMBERS,
     KIND_PROJECT_PUT_MEMBER, KIND_PROJECT_REMOVE_MEMBER, PROJECT_ROLE_COLLABORATOR,
@@ -318,6 +320,57 @@ pub(crate) async fn ensure_host_on_private_roster(
         ensure_project_agents_on_roster(state, keys, project_ref, &[provider_pubkey.to_string()])
             .await,
     )
+}
+
+/// Start this host's local session provider for `relay_url` if it is not
+/// already running, then repair `project_ref`'s roster so the host's key
+/// (`provider_pubkey`) can read a private project's repository events.
+///
+/// This is the single choke point every path that starts a project's
+/// provider must call through instead of
+/// [`supervisor::ensure_running`] directly: a private project's roster
+/// must name the host's key or the relay's read gate withholds every
+/// repository event from it (see [`ensure_host_on_private_roster`]).
+/// Run 7 (2026-09-24, kettle-control-6) landed the repair on only one of
+/// the two call sites that start a provider — `project_team_setup_launch`
+/// — and missed `project_team_setup_activation`'s `start_lead`, so a
+/// project whose provider was first started from the lead-handoff path
+/// stayed off the roster. Routing both through this helper keeps the two
+/// from diverging again.
+///
+/// Returns what `ensure_running` returns. The roster repair is
+/// best-effort and never turns into an error here: a refusal is logged
+/// at `warn`, a repair at `info`, and either way the caller proceeds with
+/// whatever `ensure_running` reported.
+pub(crate) async fn ensure_host_serving_project(
+    app: &AppHandle,
+    state: &AppState,
+    provider: &CodingSessionProviderState,
+    keys: &Keys,
+    project_ref: &str,
+    provider_pubkey: &str,
+    relay_url: &str,
+) -> Result<bool, String> {
+    let running = supervisor::ensure_running(app, provider, relay_url)?;
+    match ensure_host_on_private_roster(state, keys, project_ref, provider_pubkey).await {
+        None => {}
+        Some(outcome) if outcome.added.is_empty() && outcome.error.is_none() => {}
+        Some(outcome) if outcome.error.is_none() => tracing::info!(
+            target: "managed_agents::project_roster",
+            project = %project_ref,
+            provider_pubkey = %provider_pubkey,
+            event_id = ?outcome.event_id,
+            "repaired a private project's roster: the host was missing and is now a collaborator"
+        ),
+        Some(outcome) => tracing::warn!(
+            target: "managed_agents::project_roster",
+            project = %project_ref,
+            provider_pubkey = %provider_pubkey,
+            "could not repair the private project's roster with the host's key: {}",
+            outcome.error.unwrap_or_default()
+        ),
+    }
+    Ok(running)
 }
 
 /// What [`ensure_project_agents_on_roster`] did.

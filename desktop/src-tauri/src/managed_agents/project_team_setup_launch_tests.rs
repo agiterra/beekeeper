@@ -521,3 +521,66 @@ fn transition_cannot_replace_a_validly_signed_create_or_change_the_fixed_brief()
         f.saved.create_event
     );
 }
+
+/// Every production path that starts a project's local session provider
+/// must repair its private roster in the same call, or the host's key
+/// stays off it and the relay's read gate withholds every repository
+/// event from the host — see
+/// `project_roster::ensure_host_on_private_roster`'s doc. Run 7
+/// (2026-09-24, kettle-control-6) wired that repair into
+/// `project_team_setup_launch`'s call to `supervisor::ensure_running` but
+/// missed the second call site, `project_team_setup_activation`'s
+/// `start_lead`, which stayed bare — so a project whose provider was
+/// first started from the lead-handoff path never got repaired.
+///
+/// RED before the fix: `project_team_setup_activation.rs` called
+/// `supervisor::ensure_running(` directly (one occurrence), so this
+/// assertion failed with `direct_calls = ["desktop/.../project_team_setup_activation.rs"]`.
+/// GREEN after: both call sites route through
+/// `project_roster::ensure_host_serving_project`, which is the sole
+/// caller of `supervisor::ensure_running` outside `supervisor` itself, so
+/// no production file other than `project_roster.rs` names it.
+#[test]
+fn every_provider_start_routes_through_the_roster_repair_helper() {
+    let launch_source = include_str!("project_team_setup_launch.rs");
+    let activation_source = include_str!("project_team_setup_activation.rs");
+    let roster_source = include_str!("project_roster.rs");
+
+    // The helper itself is the one place allowed to call `ensure_running`.
+    assert_eq!(
+        roster_source.matches("supervisor::ensure_running(").count(),
+        1,
+        "ensure_host_serving_project is the sole choke point that starts the provider"
+    );
+
+    let mut direct_calls = Vec::new();
+    if launch_source.contains("supervisor::ensure_running(") {
+        direct_calls.push("project_team_setup_launch.rs");
+    }
+    if activation_source.contains("supervisor::ensure_running(") {
+        direct_calls.push("project_team_setup_activation.rs");
+    }
+    assert!(
+        direct_calls.is_empty(),
+        "these files must not call supervisor::ensure_running directly, only \
+         project_roster::ensure_host_serving_project, or the private-project \
+         roster repair can be wired into one call site and missed on the \
+         other again (as it was in run 7): {direct_calls:?}"
+    );
+
+    // Both call sites do start the provider — through the helper.
+    assert_eq!(
+        launch_source
+            .matches("project_roster::ensure_host_serving_project(")
+            .count(),
+        1,
+        "project_team_setup_launch must route through the helper"
+    );
+    assert_eq!(
+        activation_source
+            .matches("project_roster::ensure_host_serving_project(")
+            .count(),
+        1,
+        "project_team_setup_activation's start_lead must route through the helper"
+    );
+}

@@ -825,7 +825,23 @@ pub async fn project_team_setup_start_lead(
         .create_event
         .as_ref()
         .ok_or_else(|| invalid("The saved lead request has no create event."))?;
-    if !supervisor::ensure_running(&app, &provider, &draft.relay_url).map_err(external)? {
+    // Both provider-starting paths route through this helper so a private
+    // project's roster repair (the host's key must be a member or the
+    // relay's read gate withholds every repository event from it) cannot be
+    // wired into one call site and missed on the other again — that gap is
+    // exactly what left run 7's host off the roster (2026-09-24).
+    if !crate::managed_agents::project_roster::ensure_host_serving_project(
+        &app,
+        &state,
+        &provider,
+        &keys,
+        &draft.project_ref,
+        provider_pubkey,
+        &draft.relay_url,
+    )
+    .await
+    .map_err(external)?
+    {
         return Err(external("The local session provider is not provisioned."));
     }
     crate::managed_agents::project_team_setup::launch::wire::ensure_membership(

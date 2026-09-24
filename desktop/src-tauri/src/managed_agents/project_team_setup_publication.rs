@@ -25,7 +25,7 @@ use crate::managed_agents::{
     save_teams,
 };
 use crate::session_provider::{
-    commands as provider_commands, store as provider_store, supervisor, CodingSessionProviderState,
+    commands as provider_commands, store as provider_store, CodingSessionProviderState,
 };
 use buzz_core_pkg::coding_session_genesis::CodingSessionGenesisPayload;
 use buzz_core_pkg::coding_session_identity::ProviderInstanceAlias;
