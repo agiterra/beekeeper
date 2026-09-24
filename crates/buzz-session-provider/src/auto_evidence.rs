@@ -46,9 +46,20 @@
 //!   `project_action_grant.rs`). This provider is none of those, and the
 //!   host-result wake routes to the run's trigger author, so a run it
 //!   started would wake nobody. Nothing here widens either rule.
-//! - **It binds only at echo time.** If the relay's ref state has not yet
-//!   caught up with the commit the verify ran at, nothing is bound and the
-//!   wake says why; the lead binds with the CLI as before.
+//! - **It binds only at echo time, with a bounded re-read.** When the relay
+//!   serves this key no ref state at all for the repository, it reads again
+//!   up to [`RefReadRetry::attempts`] times, [`RefReadRetry::interval`]
+//!   apart, before the wake — unless the relay serves this key no kind:30621
+//!   for the project either, which is the private-project gate rather than
+//!   lag, and no re-read changes it. If the ref state has not caught up with
+//!   the commit the verify ran at, nothing is bound and the wake says why;
+//!   the lead binds with the CLI as before.
+//! - **It reports the read, not a conclusion.** Control run 6
+//!   (kettle-control-6, 2026-09-24) reported "the relay has observed no
+//!   refs/heads/main" while three relay-signed kind:30618 for the repository
+//!   existed: the relay withholds a private project's repository events from
+//!   keys off its roster, and this host's key was not on it. The wake now
+//!   carries the query it ran, the rows it got and when ([`RefStateRead`]).
 //! - **At most once per result.** Custody of a result id is written to disk
 //!   before any read, exactly as the wake ledger does it; a crash between the
 //!   claim and the publish costs this one automatic binding, and the lead's
@@ -56,16 +67,17 @@
 //!   is never republished.
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use buzz_core::host_step::{HostStepDisposition, HostStepExited};
-use buzz_core::kind::{KIND_GIT_REPO_STATE, KIND_PROJECT_WORK_RECORD};
+use buzz_core::kind::{KIND_GIT_REPO_STATE, KIND_PROJECT, KIND_PROJECT_WORK_RECORD};
 use buzz_core::project_plan::parse_plan;
 use buzz_core::project_work::{
     validate_project_work_envelope, ProjectWorkEvent, ProjectWorkEvidenceBound, ProjectWorkPlanRef,
 };
 use buzz_core::project_work_autobind::{
     action_criteria, auto_bindings, current_declaration, green_head, newest_ref_observation,
-    HostResultFacts,
+    HostResultFacts, RefObservationMissing,
 };
 use buzz_sdk::project_work::{build_project_work_evidence_bound, ProjectWorkEnvelope};
 use nostr::{Event, Keys};
@@ -88,6 +100,95 @@ pub struct AutoEvidenceSummary {
     /// Why nothing (more) was bound, when that is the answer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skipped: Option<String>,
+    /// The kind:30618 read this decision made, as run: filter, rows, time.
+    /// Absent when the decision stopped before reading ref state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ref_read: Option<RefStateRead>,
+}
+
+/// The facts of one kind:30618 read: the filter as sent, what came back and
+/// when. What `skipped` says about ref state is rendered from this, so the
+/// wake states what was read rather than what it was taken to mean.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RefStateRead {
+    /// The filter's `kinds`.
+    pub kinds: Vec<u32>,
+    /// The filter's `#d`: the repository.
+    pub d: String,
+    /// The filter's single `authors` entry: the witnessed relay identity.
+    pub author: String,
+    /// Rows the relay answered on the last read.
+    pub rows: usize,
+    /// Of those, rows that decoded as events with a valid signature.
+    pub verified: usize,
+    /// When the last read was sent, RFC 3339 UTC.
+    pub read_at: String,
+    /// Reads made, the last included.
+    pub attempts: u32,
+    /// Seconds between reads, when there was more than one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interval_secs: Option<u64>,
+    /// Whether the relay served this key the project's kind:30621 — read
+    /// only after an empty ref-state read; `None` when not read or unreadable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_served: Option<bool>,
+}
+
+impl RefStateRead {
+    /// `0 rows for kinds=[30618] d=<repo> author=<12 hex>… at <time>`.
+    pub fn sentence(&self) -> String {
+        let kinds = self
+            .kinds
+            .iter()
+            .map(u32::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        let mut text = format!(
+            "{} rows for kinds=[{kinds}] d={} author={}… at {}",
+            self.rows,
+            self.d,
+            self.author.get(..8).unwrap_or(&self.author),
+            self.read_at
+        );
+        if self.verified != self.rows {
+            text.push_str(&format!(" ({} with a valid signature)", self.verified));
+        }
+        if self.attempts > 1 {
+            text.push_str(&format!(", the last of {} reads", self.attempts));
+            if let Some(secs) = self.interval_secs {
+                text.push_str(&format!(" {secs}s apart"));
+            }
+        }
+        text
+    }
+}
+
+/// How often an empty ref-state read is repeated before the wake.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RefReadRetry {
+    /// Reads in total, the first included; at least one is always made.
+    pub attempts: u32,
+    /// The pause between reads.
+    pub interval: Duration,
+}
+
+impl Default for RefReadRetry {
+    fn default() -> Self {
+        Self {
+            attempts: 3,
+            interval: Duration::from_secs(2),
+        }
+    }
+}
+
+/// One kind:30618 read as the relay answered it.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct RefStateRows {
+    /// Rows in the relay's answer, before any check.
+    pub rows: usize,
+    /// The signature-valid rows.
+    pub states: Vec<ProjectWorkEvent>,
 }
 
 /// One `work.evidence_bound` the host queued or found.
@@ -116,7 +217,12 @@ pub(crate) trait AutoEvidenceReads {
     /// The plan blob at the declaration's own pinned commit.
     async fn plan_blob(&self, plan_ref: &ProjectWorkPlanRef) -> Result<String, String>;
     /// Relay-signed kind:30618 ref states for `repository`.
-    async fn ref_states(&self, repository: &str) -> Result<Vec<ProjectWorkEvent>, String>;
+    async fn ref_states(&self, repository: &str) -> Result<RefStateRows, String>;
+    /// Whether the relay serves this key the project's kind:30621 at
+    /// `project_ref` (`30621:<owner>:<d>`).
+    async fn project_served(&self, project_ref: &str) -> Result<bool, String>;
+    /// Wait between two ref-state reads.
+    async fn pause(&self, interval: Duration);
 }
 
 /// Everything one decision is made from, handed over by the caller.
@@ -125,6 +231,7 @@ pub(crate) struct AutoEvidenceInput<'a> {
     pub relay_self: &'a str,
     pub envelope: ProjectWorkEnvelope,
     pub result: HostResultFacts,
+    pub retry: RefReadRetry,
 }
 
 /// A decision: the summary for the wake and the signed records to queue.
@@ -190,6 +297,7 @@ pub(crate) async fn prepare(
         signed_by: signer.clone(),
         bound: Vec::new(),
         skipped: None,
+        ref_read: None,
     };
     let skip = |mut summary: AutoEvidenceSummary, why: String| {
         summary.skipped = Some(why);
@@ -255,23 +363,38 @@ pub(crate) async fn prepare(
             ),
         );
     }
-    let states = match reads.ref_states(&plan.code_repository).await {
-        Ok(states) => states,
-        Err(error) => return skip(summary, format!("ref state unreadable: {error}")),
-    };
-    let observation = match newest_ref_observation(
-        &states,
-        input.relay_self,
-        &plan.code_repository,
-        &plan.delivery_ref,
-    ) {
+    let (read, observed) =
+        match read_ref_state(reads, input, &plan.code_repository, &plan.delivery_ref).await {
+            Ok(outcome) => outcome,
+            Err(error) => return skip(summary, format!("ref state unreadable: {error}")),
+        };
+    let sentence = read.sentence();
+    let project_served = read.project_served;
+    summary.ref_read = Some(read);
+    let observation = match observed {
         Ok(observation) => observation,
-        Err(missing) => {
+        Err(RefObservationMissing::NoState) => {
+            let mut why = sentence;
+            if project_served == Some(false) {
+                why.push_str(&format!(
+                    "; the relay also serves this key ({}…) no kind:{KIND_PROJECT} for {} (a \
+                     private project withholds its repositories' ref state from keys off its \
+                     roster)",
+                    signer.get(..8).unwrap_or(&signer),
+                    input.envelope.project_ref
+                ));
+            }
+            why.push_str("; bind with the CLI");
+            return skip(summary, why);
+        }
+        Err(RefObservationMissing::NoDeliveryRef { state_id }) => {
             return skip(
                 summary,
                 format!(
-                    "the relay has observed no {} for {}: {missing:?}",
-                    plan.delivery_ref, plan.code_repository
+                    "{sentence}; the newest relay-signed ref state ({}) names no {}; bind with \
+                     the CLI",
+                    state_id.get(..12).unwrap_or(&state_id),
+                    plan.delivery_ref
                 ),
             )
         }
@@ -318,6 +441,55 @@ pub(crate) async fn prepare(
         summary.skipped = Some(failures.join("; "));
     }
     Prepared { summary, events }
+}
+
+/// Read the relay's ref state for `repository`, again while it serves none.
+///
+/// Stops early once any relay-signed state for the repository is served, or
+/// when the relay does not serve this key the project's kind:30621 either:
+/// that is the private-project gate, and waiting does not open it.
+async fn read_ref_state(
+    reads: &impl AutoEvidenceReads,
+    input: &AutoEvidenceInput<'_>,
+    repository: &str,
+    delivery_ref: &str,
+) -> Result<
+    (
+        RefStateRead,
+        Result<buzz_core::project_work_autobind::RefObservation, RefObservationMissing>,
+    ),
+    String,
+> {
+    let attempts = input.retry.attempts.max(1);
+    let mut project_served = None;
+    let mut attempt = 0;
+    loop {
+        attempt += 1;
+        let read_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        let answer = reads.ref_states(repository).await?;
+        let observed =
+            newest_ref_observation(&answer.states, input.relay_self, repository, delivery_ref);
+        let empty = matches!(observed, Err(RefObservationMissing::NoState));
+        if empty && attempt == 1 {
+            project_served = reads.project_served(&input.envelope.project_ref).await.ok();
+        }
+        let done = !empty || attempt >= attempts || project_served == Some(false);
+        if done {
+            let read = RefStateRead {
+                kinds: vec![KIND_GIT_REPO_STATE],
+                d: repository.to_owned(),
+                author: input.relay_self.to_ascii_lowercase(),
+                rows: answer.rows,
+                verified: answer.states.len(),
+                read_at,
+                attempts: attempt,
+                interval_secs: (attempt > 1).then(|| input.retry.interval.as_secs()),
+                project_served,
+            };
+            return Ok((read, observed));
+        }
+        reads.pause(input.retry.interval).await;
+    }
 }
 
 /// The production reads: the relay for records, authority and ref state;
@@ -377,7 +549,7 @@ impl AutoEvidenceReads for RelayReads<'_> {
         Err(reasons.join("; "))
     }
 
-    async fn ref_states(&self, repository: &str) -> Result<Vec<ProjectWorkEvent>, String> {
+    async fn ref_states(&self, repository: &str) -> Result<RefStateRows, String> {
         use nostr::{Alphabet, Filter, Kind, PublicKey, SingleLetterTag};
         let author = PublicKey::from_hex(self.relay_self).map_err(|error| error.to_string())?;
         let filter = Filter::new()
@@ -394,12 +566,41 @@ impl AutoEvidenceReads for RelayReads<'_> {
             .ok_or_else(|| "the relay did not answer a JSON array".to_owned())?;
         // Signature-checked here: the author filter is the relay's promise,
         // the signature is the proof.
-        Ok(rows
-            .iter()
-            .filter_map(|row| serde_json::from_value::<Event>(row.clone()).ok())
-            .filter(|event| event.verify().is_ok())
-            .map(|event| ProjectWorkEvent::from(&event))
-            .collect())
+        Ok(RefStateRows {
+            rows: rows.len(),
+            states: rows
+                .iter()
+                .filter_map(|row| serde_json::from_value::<Event>(row.clone()).ok())
+                .filter(|event| event.verify().is_ok())
+                .map(|event| ProjectWorkEvent::from(&event))
+                .collect(),
+        })
+    }
+
+    async fn project_served(&self, project_ref: &str) -> Result<bool, String> {
+        use nostr::{Alphabet, Filter, Kind, PublicKey, SingleLetterTag};
+        let mut parts = project_ref.splitn(3, ':');
+        let (Some(kind), Some(owner), Some(d)) = (parts.next(), parts.next(), parts.next()) else {
+            return Err(format!("{project_ref} is not a project coordinate"));
+        };
+        if kind != KIND_PROJECT.to_string() {
+            return Err(format!("{project_ref} is not a project coordinate"));
+        }
+        let owner = PublicKey::from_hex(owner).map_err(|error| error.to_string())?;
+        let filter = Filter::new()
+            .kind(Kind::Custom(KIND_PROJECT as u16))
+            .author(owner)
+            .custom_tags(SingleLetterTag::lowercase(Alphabet::D), [d]);
+        let rows = self
+            .rest
+            .query(&[filter])
+            .await
+            .map_err(|error| error.to_string())?;
+        Ok(rows.as_array().is_some_and(|rows| !rows.is_empty()))
+    }
+
+    async fn pause(&self, interval: Duration) {
+        tokio::time::sleep(interval).await;
     }
 }
 
@@ -507,6 +708,7 @@ impl crate::Provider {
                 project_ref,
             },
             result: facts,
+            retry: RefReadRetry::default(),
         };
         let Prepared {
             mut summary,

@@ -300,3 +300,61 @@ fn only_the_relays_newest_ref_state_is_an_observation() {
         Err(RefObservationMissing::NoState)
     );
 }
+
+/// Control run 6 (kettle-control-6, 2026-09-24): the host's read answered
+/// `NoState` while three relay-signed kind:30618 for the repository existed,
+/// the newest nine seconds old. The project is private, and the relay's
+/// NIP-MP read gate withholds a private project's repository events — its
+/// relay-signed ref state included, since the gate exempts only the event's
+/// own author — from every key off the project's roster. The host's key held
+/// the session's operator grant (kind:44228 seq 1) but was not on the roster
+/// (kind:9010), while the lead's key was. The same filter therefore served
+/// the lead the record and the host nothing, and nothing is `NoState`.
+#[test]
+fn a_private_projects_ref_state_the_relay_withholds_reads_as_no_state() {
+    use crate::kind::repo_event_hidden_from;
+    use nostr::{EventBuilder, Keys, Kind, Tag};
+    use std::collections::HashSet;
+
+    let relay = Keys::generate();
+    let tags = [["d", "kettle-control-6"], ["refs/heads/main", DELIVERED]]
+        .into_iter()
+        .map(|parts| Tag::parse(parts).expect("tag"))
+        .collect::<Vec<_>>();
+    let state = EventBuilder::new(Kind::Custom(KIND_GIT_REPO_STATE as u16), "")
+        .tags(tags)
+        .sign_with_keys(&relay)
+        .expect("sign");
+    let relay_self = relay.public_key().to_hex();
+    let host = Keys::generate().public_key().to_hex();
+    let lead = Keys::generate().public_key().to_hex();
+    // `hidden_repos_for_reader`: the host is off the roster, so the private
+    // project's repository names are in its hidden set; the lead's is empty.
+    let host_hidden: HashSet<String> = ["kettle-control-6".to_owned()].into();
+    let none: HashSet<String> = HashSet::new();
+    let served = |reader: &str, hidden: &HashSet<String>| -> Vec<ProjectWorkEvent> {
+        if repo_event_hidden_from(&state, reader, hidden, &none) {
+            Vec::new()
+        } else {
+            vec![ProjectWorkEvent::from(&state)]
+        }
+    };
+
+    assert_eq!(
+        newest_ref_observation(
+            &served(&host, &host_hidden),
+            &relay_self,
+            "kettle-control-6",
+            "refs/heads/main"
+        ),
+        Err(RefObservationMissing::NoState)
+    );
+    let observed = newest_ref_observation(
+        &served(&lead, &none),
+        &relay_self,
+        "kettle-control-6",
+        "refs/heads/main",
+    )
+    .expect("the roster member reads the observation");
+    assert_eq!(observed.commit, DELIVERED);
+}

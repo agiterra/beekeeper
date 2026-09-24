@@ -3,6 +3,7 @@
 //! which it binds nothing.
 
 use std::cell::Cell;
+use std::time::Duration;
 
 use buzz_core::kind::KIND_GIT_REPO_STATE;
 use buzz_core::project_work::{
@@ -59,6 +60,11 @@ struct Fixture {
     delivered: &'static str,
     relay: Keys,
     ref_reads: Cell<u32>,
+    /// Reads answered with no rows before the record is served.
+    empty_reads: u32,
+    /// Whether the project's kind:30621 is served to this key.
+    project_served: bool,
+    pauses: Cell<u32>,
 }
 
 impl Fixture {
@@ -88,6 +94,9 @@ impl Fixture {
             delivered: DELIVERED,
             relay: Keys::generate(),
             ref_reads: Cell::new(0),
+            empty_reads: 0,
+            project_served: true,
+            pauses: Cell::new(0),
         }
     }
 
@@ -104,6 +113,10 @@ impl Fixture {
                 exit_code: Some(0),
                 dirty: Some(false),
                 head_sha: Some(DELIVERED.into()),
+            },
+            retry: RefReadRetry {
+                attempts: 3,
+                interval: Duration::from_secs(2),
             },
         }
     }
@@ -122,9 +135,12 @@ impl AutoEvidenceReads for Fixture {
         Ok(self.plan.to_owned())
     }
 
-    async fn ref_states(&self, repository: &str) -> Result<Vec<ProjectWorkEvent>, String> {
+    async fn ref_states(&self, repository: &str) -> Result<RefStateRows, String> {
         self.ref_reads.set(self.ref_reads.get() + 1);
-        Ok(vec![ProjectWorkEvent {
+        if self.ref_reads.get() <= self.empty_reads {
+            return Ok(RefStateRows::default());
+        }
+        let states = vec![ProjectWorkEvent {
             id: REF_STATE.into(),
             pubkey: self.relay.public_key().to_hex(),
             created_at: 100,
@@ -134,7 +150,17 @@ impl AutoEvidenceReads for Fixture {
                 vec!["refs/heads/main".into(), self.delivered.into()],
             ],
             content: String::new(),
-        }])
+        }];
+        Ok(RefStateRows { rows: 1, states })
+    }
+
+    async fn project_served(&self, _project_ref: &str) -> Result<bool, String> {
+        Ok(self.project_served)
+    }
+
+    async fn pause(&self, interval: Duration) {
+        assert_eq!(interval, Duration::from_secs(2));
+        self.pauses.set(self.pauses.get() + 1);
     }
 }
 
@@ -312,6 +338,17 @@ fn a_wake_carrying_what_the_host_bound_is_still_a_host_result_pointer() {
             published: true,
         }],
         skipped: None,
+        ref_read: Some(RefStateRead {
+            kinds: vec![KIND_GIT_REPO_STATE],
+            d: "pivot-test".into(),
+            author: "1f".repeat(32),
+            rows: 1,
+            verified: 1,
+            read_at: "2026-09-24T13:02:22Z".into(),
+            attempts: 1,
+            interval_secs: None,
+            project_served: None,
+        }),
     };
     let pointer = serde_json::json!({
         "schema": crate::host_result_wake::HOST_RESULT_WAKE_SCHEMA,
@@ -324,7 +361,309 @@ fn a_wake_carrying_what_the_host_bound_is_still_a_host_result_pointer() {
         "autoEvidence": summary,
     });
     assert!(is_host_result_pointer(pointer.as_object().expect("object")));
+    assert_eq!(
+        pointer["autoEvidence"]["refRead"],
+        serde_json::json!({
+            "kinds": [30618],
+            "d": "pivot-test",
+            "author": "1f".repeat(32),
+            "rows": 1,
+            "verified": 1,
+            "readAt": "2026-09-24T13:02:22Z",
+            "attempts": 1,
+        }),
+        "the read is machine-readable in the wake"
+    );
     let mut wrong = pointer;
     wrong["autoEvidence"] = serde_json::json!("bound everything");
     assert!(!is_host_result_pointer(wrong.as_object().expect("object")));
+}
+
+#[tokio::test]
+async fn an_empty_ref_read_is_read_again_and_binds_once_the_state_is_served() {
+    let lead = Keys::generate();
+    let provider = Keys::generate();
+    let mut fixture = Fixture::new(&lead);
+    fixture.empty_reads = 1;
+    let relay_self = fixture.relay.public_key().to_hex();
+    let first = prepare(&fixture, &fixture.input(&provider, &relay_self)).await;
+
+    assert_eq!(first.summary.skipped, None, "{:?}", first.summary);
+    assert_eq!(fixture.ref_reads.get(), 2);
+    assert_eq!(fixture.pauses.get(), 1);
+    assert_eq!(first.events.len(), 2, "both bindings, after the re-read");
+    assert_eq!(first.summary.signed_by, provider.public_key().to_hex());
+    assert_eq!(first.summary.ref_state.as_deref(), Some(REF_STATE));
+    let read = first.summary.ref_read.clone().expect("the read is carried");
+    assert_eq!((read.attempts, read.rows, read.verified), (2, 1, 1));
+    assert_eq!(read.project_served, Some(true));
+    let evidence: Vec<&str> = first
+        .summary
+        .bound
+        .iter()
+        .map(|binding| binding.evidence.as_str())
+        .collect();
+    assert_eq!(
+        evidence,
+        vec![
+            format!("action_result:{RESULT}"),
+            format!("ref_observation:{REF_STATE}")
+        ]
+    );
+
+    // The same result again: the records are found, nothing is signed twice.
+    fixture
+        .records
+        .extend(first.events.iter().map(ProjectWorkEvent::from));
+    fixture.ref_reads.set(0);
+    let second = prepare(&fixture, &fixture.input(&provider, &relay_self)).await;
+    assert!(second.events.is_empty(), "{:?}", second.summary);
+    assert!(second
+        .summary
+        .bound
+        .iter()
+        .all(|binding| !binding.published));
+}
+
+#[tokio::test]
+async fn a_ref_state_never_served_is_read_three_times_and_the_wake_says_what_was_read() {
+    let lead = Keys::generate();
+    let provider = Keys::generate();
+    let mut fixture = Fixture::new(&lead);
+    fixture.empty_reads = u32::MAX;
+    let relay_self = fixture.relay.public_key().to_hex();
+    let prepared = prepare(&fixture, &fixture.input(&provider, &relay_self)).await;
+
+    assert!(prepared.events.is_empty());
+    assert_eq!(fixture.ref_reads.get(), 3);
+    assert_eq!(fixture.pauses.get(), 2);
+    let skipped = prepared.summary.skipped.expect("says what was read");
+    let expected = format!(
+        "0 rows for kinds=[30618] d=pivot-test author={}… at ",
+        &relay_self[..8]
+    );
+    assert!(skipped.starts_with(&expected), "{skipped}");
+    assert!(
+        skipped.contains(", the last of 3 reads 2s apart"),
+        "{skipped}"
+    );
+    assert!(
+        !skipped.contains("has observed no"),
+        "no inference: {skipped}"
+    );
+    let read = prepared.summary.ref_read.expect("machine-readable read");
+    assert_eq!((read.rows, read.verified, read.attempts), (0, 0, 3));
+    assert_eq!(read.author, relay_self);
+    assert!(
+        chrono::DateTime::parse_from_rfc3339(&read.read_at).is_ok(),
+        "{}",
+        read.read_at
+    );
+}
+
+#[tokio::test]
+async fn a_project_the_relay_withholds_from_this_key_is_not_waited_on() {
+    let lead = Keys::generate();
+    let provider = Keys::generate();
+    let mut fixture = Fixture::new(&lead);
+    fixture.empty_reads = u32::MAX;
+    fixture.project_served = false;
+    let relay_self = fixture.relay.public_key().to_hex();
+    let prepared = prepare(&fixture, &fixture.input(&provider, &relay_self)).await;
+
+    assert!(prepared.events.is_empty());
+    assert_eq!(fixture.ref_reads.get(), 1, "the gate is not lag");
+    assert_eq!(fixture.pauses.get(), 0);
+    let skipped = prepared.summary.skipped.expect("says why");
+    assert!(
+        skipped.contains(&format!(
+            "the relay also serves this key ({}…) no kind:30621 for {}",
+            &provider.public_key().to_hex()[..8],
+            envelope().project_ref
+        )),
+        "{skipped}"
+    );
+    assert_eq!(
+        prepared
+            .summary
+            .ref_read
+            .and_then(|read| read.project_served),
+        Some(false)
+    );
+}
+
+/// The production read, [`RelayReads`], through the real
+/// [`buzz_acp::relay::RestClient`] against an HTTP server answering
+/// `POST /query` the way the relay's NIP-MP gate does in control run 6:
+/// a private project's repository events and its kind:30621 are served to a
+/// key on its roster, and to any other key the answer is an empty array.
+mod over_http {
+    use std::net::SocketAddr;
+    use std::sync::{Arc, Mutex};
+
+    use axum::extract::State;
+    use axum::http::HeaderMap;
+    use axum::routing::post;
+    use axum::{Json, Router};
+    use base64::Engine as _;
+    use nostr::{EventBuilder, Kind, Tag};
+
+    use super::*;
+
+    #[derive(Clone)]
+    struct Gate {
+        roster: Vec<String>,
+        served: Vec<Event>,
+        filters: Arc<Mutex<Vec<serde_json::Value>>>,
+    }
+
+    async fn query(
+        State(gate): State<Gate>,
+        headers: HeaderMap,
+        Json(filters): Json<serde_json::Value>,
+    ) -> Json<serde_json::Value> {
+        gate.filters.lock().expect("filters").push(filters.clone());
+        let reader = headers
+            .get("authorization")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.strip_prefix("Nostr "))
+            .and_then(|token| base64::engine::general_purpose::STANDARD.decode(token).ok())
+            .and_then(|json| serde_json::from_slice::<Event>(&json).ok())
+            .map(|auth| auth.pubkey.to_hex())
+            .unwrap_or_default();
+        if !gate.roster.contains(&reader) {
+            return Json(serde_json::json!([]));
+        }
+        let filter = &filters[0];
+        let kind = filter["kinds"][0].as_u64().unwrap_or_default();
+        let rows: Vec<&Event> = gate
+            .served
+            .iter()
+            .filter(|event| u64::from(event.kind.as_u16()) == kind)
+            .collect();
+        Json(serde_json::to_value(rows).expect("rows"))
+    }
+
+    async fn serve(gate: Gate) -> SocketAddr {
+        let app = Router::new().route("/query", post(query)).with_state(gate);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let address = listener.local_addr().expect("address");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve");
+        });
+        address
+    }
+
+    fn signed(keys: &Keys, kind: u32, tags: &[&[&str]]) -> Event {
+        EventBuilder::new(Kind::Custom(kind as u16), "")
+            .tags(
+                tags.iter()
+                    .map(|parts| Tag::parse(parts.iter().copied()).expect("tag")),
+            )
+            .sign_with_keys(keys)
+            .expect("sign")
+    }
+
+    fn rest(address: SocketAddr, keys: &Keys) -> buzz_acp::relay::RestClient {
+        buzz_acp::relay::RestClient {
+            http: reqwest::Client::new(),
+            base_url: format!("http://{address}"),
+            keys: keys.clone(),
+            auth_tag_json: None,
+        }
+    }
+
+    fn reads_as<'a>(
+        client: &'a buzz_acp::relay::RestClient,
+        relay_self: &'a str,
+    ) -> RelayReads<'a> {
+        RelayReads {
+            rest: client,
+            relay_self,
+            scope: crate::team_wake::WakeScope {
+                channel_ref: uuid::Uuid::new_v4(),
+                session_ref: "s".into(),
+                genesis_ref: "g".into(),
+            },
+            clones: Vec::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn the_relays_gate_answers_a_key_off_the_roster_nothing_and_the_read_says_so() {
+        let relay = Keys::generate();
+        let owner = Keys::generate();
+        let lead = Keys::generate();
+        let host = Keys::generate();
+        let relay_self = relay.public_key().to_hex();
+        let project_ref = format!("30621:{}:kettle-control-6", owner.public_key().to_hex());
+        let state = signed(
+            &relay,
+            KIND_GIT_REPO_STATE,
+            &[&["d", "kettle-control-6"], &["refs/heads/main", DELIVERED]],
+        );
+        let project = signed(
+            &owner,
+            KIND_PROJECT,
+            &[&["d", "kettle-control-6"], &["buzz-access", "private"]],
+        );
+        let gate = Gate {
+            roster: vec![lead.public_key().to_hex()],
+            served: vec![state.clone(), project],
+            filters: Arc::default(),
+        };
+        let address = serve(gate.clone()).await;
+        let lead_rest = rest(address, &lead);
+        let host_rest = rest(address, &host);
+
+        // The lead, on the roster: one signature-valid relay-signed state.
+        let lead_reads = reads_as(&lead_rest, &relay_self);
+        let answer = lead_reads
+            .ref_states("kettle-control-6")
+            .await
+            .expect("lead read");
+        assert_eq!((answer.rows, answer.states.len()), (1, 1));
+        assert_eq!(answer.states[0].id, state.id.to_hex());
+        assert!(lead_reads
+            .project_served(&project_ref)
+            .await
+            .expect("lead project read"));
+
+        // The host, off the roster: the identical filter, zero rows.
+        let host_reads = reads_as(&host_rest, &relay_self);
+        let answer = host_reads
+            .ref_states("kettle-control-6")
+            .await
+            .expect("host read");
+        assert_eq!((answer.rows, answer.states.len()), (0, 0));
+        assert!(!host_reads
+            .project_served(&project_ref)
+            .await
+            .expect("host project read"));
+
+        // Both reads sent the same filter: kinds, author, #d.
+        let filters = gate.filters.lock().expect("filters").clone();
+        assert_eq!(filters[0], filters[2], "{filters:?}");
+        assert_eq!(filters[0][0]["kinds"], serde_json::json!([30618]));
+        assert_eq!(filters[0][0]["authors"], serde_json::json!([relay_self]));
+        assert_eq!(filters[0][0]["#d"], serde_json::json!(["kettle-control-6"]));
+
+        // And through `prepare`'s ref read: one read, no waiting, the facts.
+        let fixture = Fixture::new(&lead);
+        let mut input = fixture.input(&host, &relay_self);
+        input.envelope.project_ref = project_ref.clone();
+        let (read, observed) =
+            read_ref_state(&host_reads, &input, "kettle-control-6", "refs/heads/main")
+                .await
+                .expect("read");
+        assert_eq!(observed, Err(RefObservationMissing::NoState));
+        assert_eq!((read.rows, read.attempts), (0, 1));
+        assert_eq!(read.project_served, Some(false));
+        assert!(read.sentence().starts_with(&format!(
+            "0 rows for kinds=[30618] d=kettle-control-6 author={}… at ",
+            &relay_self[..8]
+        )));
+    }
 }
