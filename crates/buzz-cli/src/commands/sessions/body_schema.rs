@@ -116,23 +116,31 @@ pub fn team_body_examples(
         CodingSessionTeamTransactionType::Verdict => vec![
             (
                 "refutation",
-                "an active verifier's attempt to refute one report",
+                "an active verifier's attempt to refute one report. `assignmentRef` is the \
+                 assignmentRef of the report you are judging (its `reportRef`), NOT your own \
+                 assignment as verifier — publishing your own assignment id here silently \
+                 excludes the verdict from the fold. The relay is asked for `reportRef` before \
+                 publishing and the write is refused if `assignmentRef` disagrees with what it \
+                 reports",
                 to_value(refutation_example())?,
             ),
             (
                 "disposition",
-                "a founder's or active lead's ruling that governs one report. An APPROVING \
-                 disposition with `requiredAction: null` SETTLES the assignment on its own — \
-                 no acknowledgement is owed and none will be asked for. Anything the assignee \
-                 must still do goes in `requiredAction`, or into a new assignment; prose in \
-                 `summary` or `findings` is never read as an ask",
+                "a founder's or active lead's ruling that governs one report. `assignmentRef` \
+                 is the assignmentRef of the report you are judging (its `reportRef`), NOT the \
+                 assignmentRef of any assignment of your own. An APPROVING disposition with \
+                 `requiredAction: null` SETTLES the assignment on its own — no acknowledgement \
+                 is owed and none will be asked for. Anything the assignee must still do goes \
+                 in `requiredAction`, or into a new assignment; prose in `summary` or \
+                 `findings` is never read as an ask",
                 to_value(disposition_example())?,
             ),
             (
                 "disposition-requiring-an-action",
                 "the same ruling when the assignee still owes something: `requiredAction` is \
                  the only field that asks, and its presence is what keeps the assignment \
-                 awaiting the assignee's acknowledgement",
+                 awaiting the assignee's acknowledgement. `assignmentRef` is the assignmentRef \
+                 of the report you are judging, not your own",
                 to_value(disposition_requiring_an_action_example())?,
             ),
         ],
@@ -409,13 +417,16 @@ fn merge_base_sha(body: &mut Value, head_sha: &str, report_ref: &str) -> Result<
     Ok(())
 }
 
-/// The `headSha` of one stored report, by event id, inside this session.
-async fn fetch_report_head_sha(
+/// One stored report, by event id, inside this session.
+///
+/// Shared by `--verifies` (reads `headSha`) and the verdict `assignmentRef`
+/// check (reads `assignmentRef`), so both read the same record the same way.
+async fn fetch_report(
     client: &BuzzClient,
     channel: &str,
     session_ref: &str,
     report_ref: &str,
-) -> Result<Option<String>, CliError> {
+) -> Result<CodingSessionTeamReport, CliError> {
     let rows = client
         .query_all(serde_json::json!({
             "ids": [report_ref],
@@ -442,13 +453,89 @@ async fn fetch_report_head_sha(
     match payload.body {
         buzz_core::coding_session_team_transaction::CodingSessionTeamTransactionBody::Report(
             report,
-        ) => Ok(report.head_sha),
+        ) => Ok(report),
         other => Err(CliError::Usage(format!(
-            "--verifies names a {} record; it must name the report whose revision is being \
-             verified",
+            "{report_ref} names a {} record; it must name the report being judged or verified",
             other.transaction_type().as_str()
         ))),
     }
+}
+
+/// The `headSha` of one stored report, by event id, inside this session.
+async fn fetch_report_head_sha(
+    client: &BuzzClient,
+    channel: &str,
+    session_ref: &str,
+    report_ref: &str,
+) -> Result<Option<String>, CliError> {
+    Ok(fetch_report(client, channel, session_ref, report_ref)
+        .await?
+        .head_sha)
+}
+
+/// Refuse a verdict body whose `assignmentRef` disagrees with the
+/// `assignmentRef` of the report it judges (`reportRef`).
+///
+/// A verdict names two events: the report under judgment and the assignment
+/// that report was written against. They must be the SAME assignment the
+/// report names — a verdict's own author has an assignment too (the verifier
+/// is itself assigned to verify), and confusing the two silently excludes the
+/// verdict from `validate_causal_types`
+/// (`coding_session_team_transaction_fold_defects.rs`) as a
+/// `WrongTypeReference`, so the verdict is folded out and never counted. This
+/// is a pure comparison over already-fetched strings so it is testable
+/// without a relay; [`verify_verdict_assignment_ref`] is the network-reaching
+/// call site that fetches the report and hands its `assignmentRef` in.
+///
+/// # Errors
+/// [`CliError::Usage`] naming the report's `assignmentRef` so the fix is one
+/// copy-paste, when `verdict_assignment_ref` disagrees.
+pub fn check_verdict_assignment_ref(
+    verdict_assignment_ref: &str,
+    report_ref: &str,
+    report_assignment_ref: &str,
+) -> Result<(), CliError> {
+    if verdict_assignment_ref == report_assignment_ref {
+        return Ok(());
+    }
+    Err(CliError::Usage(format!(
+        "--body assignmentRef is {verdict_assignment_ref} but report {report_ref} (named by \
+         --body reportRef) reports assignmentRef {report_assignment_ref}: a verdict's \
+         assignmentRef must name the assignment the report you are judging was written \
+         against, not your own assignment. Set --body assignmentRef to \
+         {report_assignment_ref}."
+    )))
+}
+
+/// Fetch the report a verdict body names and refuse a disagreeing
+/// `assignmentRef` before publishing.
+///
+/// # Errors
+/// Whatever [`fetch_report`] returns, or [`check_verdict_assignment_ref`]'s
+/// refusal.
+async fn verify_verdict_assignment_ref(
+    client: &BuzzClient,
+    args: &TeamTransactionWriteArgs,
+    body: &Value,
+) -> Result<(), CliError> {
+    let assignment_ref = body_string(body, "assignmentRef")?;
+    let report_ref = body_string(body, "reportRef")?;
+    validate_lower_hex64("body reportRef", &report_ref)?;
+    let report = fetch_report(client, &args.channel, &args.session_ref, &report_ref).await?;
+    check_verdict_assignment_ref(&assignment_ref, &report_ref, &report.assignment_ref)
+}
+
+/// Read one required string field out of a checked `--body`.
+///
+/// Called only after [`check_body`] decoded the same value into its typed
+/// shape, so the field is guaranteed present as a string; this stays a
+/// `Result` rather than an `expect()` because that guarantee lives in another
+/// function, not the type here.
+fn body_string(body: &Value, key: &str) -> Result<String, CliError> {
+    body.get(key)
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .ok_or_else(|| CliError::Other(format!("checked --body is missing string field {key}")))
 }
 
 /// Whether this `bee sessions` invocation is a `--example` request.
@@ -522,6 +609,9 @@ pub async fn dispatch_write(
         apply_verifies(client, &args, &report_ref, &mut body).await?;
     }
     check_body(command, transaction_type, body.clone())?;
+    if transaction_type == CodingSessionTeamTransactionType::Verdict {
+        verify_verdict_assignment_ref(client, &args, &body).await?;
+    }
     args.body = serde_json::to_string(&body)
         .map_err(|error| CliError::Other(format!("checked body did not render: {error}")))?;
     super::operations::cmd_write(client, args, transaction_type).await

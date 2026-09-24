@@ -322,7 +322,9 @@ pub enum CodingSessionTeamVerdict {
     /// An active verifier's attempt to refute a report.
     #[serde(rename = "refutation")]
     Refutation {
-        /// Event id of the assignment under review.
+        /// The `assignmentRef` of the report you are judging (its
+        /// `reportRef`), not your own assignment as verifier — the CLI
+        /// refuses a disagreement before publishing (ledger control run 6).
         assignment_ref: String,
         /// Event id of the report under review.
         report_ref: String,
@@ -338,7 +340,9 @@ pub enum CodingSessionTeamVerdict {
     /// A founder/lead ruling that governs one report.
     #[serde(rename = "disposition")]
     Disposition {
-        /// Event id of the assignment under review.
+        /// The `assignmentRef` of the report you are judging (its
+        /// `reportRef`), not any assignment of your own — the CLI refuses a
+        /// disagreement before publishing (ledger control run 6).
         assignment_ref: String,
         /// Event id of the report governed by this disposition.
         report_ref: String,

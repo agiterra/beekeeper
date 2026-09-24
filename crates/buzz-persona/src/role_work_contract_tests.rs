@@ -69,13 +69,13 @@ const CURRENT: [(&str, &str); 11] = [
     ("architect", "1.1.0"),
     ("builder", "1.2.0"),
     ("designer", "1.1.0"),
-    ("lead", "1.2.4"),
+    ("lead", "1.2.5"),
     ("memory", "1.0.0"),
     ("poker", "1.1.0"),
     ("project-pulse", "1.1.0"),
     ("project-setup", "1.1.0"),
     ("runner", "1.2.0"),
-    ("verifier", "1.2.0"),
+    ("verifier", "1.2.1"),
     ("working-contract", "1.2.2"),
 ];
 
@@ -112,6 +112,19 @@ const LEAD_1_2_3_CARETS: [&str; 5] = ["^1.0.0", "^1.1.0", "^1.2.0", "^1.2.1", "^
 /// card names the ids, paths, plan and roster the lead once looked up, and the
 /// verifier is hired alongside the builder. Every earlier caret takes it.
 const LEAD_1_2_4_CARETS: [&str; 6] = ["^1.0.0", "^1.1.0", "^1.2.0", "^1.2.1", "^1.2.2", "^1.2.3"];
+
+/// Lead 1.2.5 (control run 6): the lead binds a hired verifier's assignment
+/// to the criteria it judges immediately after publishing it, rather than
+/// only after the verdict lands. Every earlier caret takes it.
+const LEAD_1_2_5_CARETS: [&str; 7] = [
+    "^1.0.0", "^1.1.0", "^1.2.0", "^1.2.1", "^1.2.2", "^1.2.3", "^1.2.4",
+];
+
+/// Verifier 1.2.1 (control run 6): `refuter-pass` states the assignmentRef
+/// rule the CLI now enforces — a verdict names the assignmentRef of the
+/// report it judges, never the verifier's own assignment. Every earlier
+/// caret takes it.
+const VERIFIER_1_2_1_CARETS: [&str; 3] = ["^1.0.0", "^1.1.0", "^1.2.0"];
 
 /// Every file under `<name>/<version>/`, relative path to bytes.
 fn version_files(name: &str, version: &str) -> BTreeMap<String, Vec<u8>> {
@@ -475,12 +488,13 @@ fn a_1_2_2_template_is_picked_up_by_every_earlier_caret_include() {
             );
         }
     }
-    // The lead's 1.2.4 rides every earlier caret; 1.2.0 to 1.2.3 stay pins.
+    // The lead's 1.2.5 rides every earlier caret; 1.2.0 to 1.2.4 stay pins.
     for range in LEAD_1_2_1_CARETS
         .iter()
         .chain(LEAD_1_2_2_CARETS.iter())
         .chain(LEAD_1_2_3_CARETS.iter())
         .chain(LEAD_1_2_4_CARETS.iter())
+        .chain(LEAD_1_2_5_CARETS.iter())
     {
         let resolved = catalog
             .resolve("lead", &TemplateRange::parse("lead", range).expect("range"))
@@ -488,14 +502,41 @@ fn a_1_2_2_template_is_picked_up_by_every_earlier_caret_include() {
         assert!(resolved.warning.is_none(), "lead@{range}: {resolved:?}");
         assert_eq!(
             resolved.template.version.to_string(),
-            "1.2.4",
-            "lead@{range} must take 1.2.4 without anyone editing a role file"
+            "1.2.5",
+            "lead@{range} must take 1.2.5 without anyone editing a role file"
         );
     }
-    for exact in ["1.0.0", "1.1.0", "1.2.0", "1.2.1", "1.2.2", "1.2.3"] {
+    for exact in [
+        "1.0.0", "1.1.0", "1.2.0", "1.2.1", "1.2.2", "1.2.3", "1.2.4",
+    ] {
         let resolved = catalog
             .resolve("lead", &TemplateRange::parse("lead", exact).expect("range"))
             .expect("lead pin resolves");
+        assert_eq!(resolved.template.version.to_string(), exact);
+    }
+
+    // The verifier's 1.2.1 rides every earlier caret; 1.0.0 to 1.2.0 stay pins.
+    for range in VERIFIER_1_2_1_CARETS {
+        let resolved = catalog
+            .resolve(
+                "verifier",
+                &TemplateRange::parse("verifier", range).expect("range"),
+            )
+            .unwrap_or_else(|e| panic!("verifier@{range}: {e}"));
+        assert!(resolved.warning.is_none(), "verifier@{range}: {resolved:?}");
+        assert_eq!(
+            resolved.template.version.to_string(),
+            "1.2.1",
+            "verifier@{range} must take 1.2.1 without anyone editing a role file"
+        );
+    }
+    for exact in ["1.0.0", "1.1.0", "1.2.0"] {
+        let resolved = catalog
+            .resolve(
+                "verifier",
+                &TemplateRange::parse("verifier", exact).expect("range"),
+            )
+            .expect("verifier pin resolves");
         assert_eq!(resolved.template.version.to_string(), exact);
     }
 
@@ -711,7 +752,7 @@ fn a_new_project_seeds_the_current_versions_and_an_existing_projects_caret_resol
 
     let lead = std::fs::read_to_string(root.join("roles/lead.md")).expect("seeded lead");
     for expected in [
-        "![[beekeeper/lead@^1.2.4]]",
+        "![[beekeeper/lead@^1.2.5]]",
         "![[beekeeper/working-contract@^1.2.2]]",
         "![[beekeeper/memory@^1.0.0]]",
         "![[beekeeper/project-pulse@^1.1.0]]",
@@ -761,7 +802,7 @@ fn a_new_project_seeds_the_current_versions_and_an_existing_projects_caret_resol
     assert_eq!(
         resolved,
         vec![
-            ("beekeeper/lead@^1.0.0", "1.2.4"),
+            ("beekeeper/lead@^1.0.0", "1.2.5"),
             ("beekeeper/working-contract@^1.0.0", "1.2.2"),
             ("beekeeper/memory@^1.0.0", "1.0.0"),
             ("beekeeper/project-pulse@^1.0.0", "1.1.0"),
@@ -860,7 +901,7 @@ fn a_1_2_0_role_is_picked_up_by_both_the_caret_1_0_0_and_the_caret_1_1_0_include
     assert_eq!(
         resolved,
         vec![
-            ("beekeeper/lead@^1.1.0", "1.2.4"),
+            ("beekeeper/lead@^1.1.0", "1.2.5"),
             ("beekeeper/working-contract@^1.1.0", "1.2.2"),
             ("beekeeper/memory@^1.0.0", "1.0.0"),
             ("beekeeper/project-pulse@^1.1.0", "1.1.0"),
@@ -917,6 +958,25 @@ fn the_verifier_teaches_all_three_refutation_decisions() {
             "the verifier never says {decision}"
         );
     }
+}
+
+/// Control run 6 (2026-09-24): a verdict's `assignmentRef` named the
+/// verifier's own assignment instead of the assignment the report it judged
+/// was written against, and the fold's `validate_causal_types` excluded it as
+/// a `WrongTypeReference` — the independent verdict was silently lost. 1.2.1
+/// of `refuter-pass` states the rule in one sentence and shows the exact
+/// publish command shape.
+#[test]
+fn the_verifier_states_the_assignment_ref_rule_and_the_verdict_command_shape() {
+    let text = current_lower("verifier");
+    assert!(
+        text.contains("names the report's assignment, never your own"),
+        "the verifier's refuter-pass skill lacks the assignmentRef rule"
+    );
+    assert!(
+        text.contains("\"assignmentref\":\"<report's assignmentref>\""),
+        "the verifier's refuter-pass skill lacks the exact publish command shape"
+    );
 }
 
 /// Collecting acknowledgements cost Andy's run six wakes and a reported

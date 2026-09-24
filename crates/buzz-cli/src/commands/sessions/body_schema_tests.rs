@@ -326,3 +326,39 @@ fn verifies_refuses_a_base_sha_that_disagrees_with_the_report() {
     // The body is left exactly as the caller wrote it.
     assert_eq!(body.get("baseSha").and_then(Value::as_str), Some("e682191"));
 }
+
+#[test]
+fn verdict_assignment_ref_agreeing_with_the_report_is_accepted() {
+    check_verdict_assignment_ref(
+        PLACEHOLDER_EVENT_ID,
+        PLACEHOLDER_EVENT_ID_2,
+        PLACEHOLDER_EVENT_ID,
+    )
+    .expect("the verdict names the same assignment the report names");
+}
+
+#[test]
+fn verdict_assignment_ref_naming_the_verifiers_own_assignment_is_refused() {
+    // Control run 6 (2026-09-24): verdict 3489665f72bc... set assignmentRef
+    // to the VERIFIER's own assignment (3fb377a6...) while its reportRef
+    // (08247d54...) named the builder's report, whose own assignmentRef was
+    // e8047f31... (the builder's assignment). That mismatch silently excluded
+    // the verdict from `validate_causal_types` as a WrongTypeReference
+    // (coding_session_team_transaction_fold_defects.rs), so the independent
+    // verdict was lost and the lead signed both approvals itself.
+    let verifiers_own_assignment = "3fb377a6".repeat(8);
+    let report_ref = "08247d54".repeat(8);
+    let builders_assignment = "e8047f31".repeat(8);
+    let error =
+        check_verdict_assignment_ref(&verifiers_own_assignment, &report_ref, &builders_assignment)
+            .expect_err(
+            "a verdict naming its own author's assignment instead of the report's must be refused",
+        );
+    let message = error.to_string();
+    assert!(
+        message.contains(&builders_assignment),
+        "refusal must name the report's assignmentRef so the fix is one copy-paste: {message}"
+    );
+    assert!(message.contains(&report_ref), "{message}");
+    assert!(message.contains("assignmentRef"), "{message}");
+}

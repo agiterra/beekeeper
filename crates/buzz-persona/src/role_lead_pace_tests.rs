@@ -1,4 +1,5 @@
-//! Lead 1.2.3: what control run 5 (2026-09-24) showed the lead fumbling.
+//! Lead 1.2.3/1.2.5: what control run 5 and control run 6 (2026-09-24)
+//! showed the lead fumbling.
 //!
 //! The lead's seat recorded four CLI usage errors while binding evidence and
 //! completing (3m10s from the green host result to `mission.completed`), and
@@ -60,6 +61,23 @@ const LEAD_SITUATION_CARD_RULES: [&str; 2] = [
      whom the work needs from it.",
 ];
 
+/// Lead 1.2.5 (control run 6, ledger control run 6): a verdict wrongly named
+/// its author's own assignment instead of the assignmentRef of the report it
+/// judged, and the criteria the verifier was meant to settle stayed open
+/// until the lead bound them by hand after the fact. 1.2.5 has the lead bind
+/// the verifier's assignment to its criteria right after publishing it, and
+/// states the assignmentRef rule the CLI now enforces.
+const LEAD_1_2_5_RULES: [&str; 2] = [
+    "`sessions assign` carries no criteria field, so name what the verifier judges right then, \
+     not after its verdict lands: `$BEE sessions work bind assignment --channel <ch> \
+     --session-ref <ref> --declaration <decl> --criteria <id>[,<id>] --assignment <verifier \
+     assignment id> --agents-repo <dir>`, immediately after publishing the verifier's \
+     assignment.",
+    "A verdict's `assignmentRef` must be the assignment named by the report it judges (the \
+     report's own `assignmentRef`), never the verifier's own assignment — `$BEE sessions \
+     verdict` fetches the report and refuses a mismatch.",
+];
+
 #[test]
 fn the_composed_lead_carries_every_work_command_shape_in_order() {
     let catalog = TemplateCatalog::load(&templates_dir(), "test").expect("the shipped catalog");
@@ -82,7 +100,7 @@ fn the_composed_lead_carries_every_work_command_shape_in_order() {
         .iter()
         .find(|include| include.reference.starts_with("beekeeper/lead@"))
         .expect("the lead includes its role template");
-    assert_eq!(lead_include.resolved.as_deref(), Some("1.2.4"));
+    assert_eq!(lead_include.resolved.as_deref(), Some("1.2.5"));
 
     let prompt = &composed.persona.prompt;
     let mut last = 0;
@@ -101,6 +119,9 @@ fn the_composed_lead_carries_every_work_command_shape_in_order() {
         "the composed lead lacks {:?}",
         LEAD_SITUATION_CARD_RULES[0]
     );
+    for rule in LEAD_1_2_5_RULES {
+        assert!(prompt.contains(rule), "the composed lead lacks {rule:?}");
+    }
     let hire = composed
         .skills
         .iter()
@@ -115,6 +136,6 @@ fn the_composed_lead_carries_every_work_command_shape_in_order() {
     );
     assert!(
         !hire_body.contains("Discover this project's agents"),
-        "1.2.4's hire skill must not tell the lead to look up what the card names"
+        "the hire skill must not tell the lead to look up what the card names"
     );
 }
