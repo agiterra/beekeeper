@@ -612,9 +612,9 @@ fn create(
 /// name it and will never remove it. That is the whole gap this record closes,
 /// so a hire path that omits them is a bug, not a style.
 ///
-/// Recording is best-effort *after* the tree exists. A failed record leaves an
-/// unrecorded worktree, which is the conservative outcome; failing the create
-/// instead would leave a directory on disk and tell the caller it has none.
+/// A seat's tree that cannot be recorded is removed and the create fails:
+/// the hire stages its seat from the record and prunes by it, so an
+/// unrecorded seat tree could only ever be orphaned (control run 7).
 #[tauri::command]
 // Each parameter is an IPC field the frontend names, so grouping them into a
 // struct would move the shape into the wire rather than remove it. The
@@ -676,7 +676,19 @@ pub async fn create_coding_session_worktree(
                     .map(str::to_lowercase),
             },
         ) {
-            eprintln!("buzz-desktop: failed to record a seat worktree: {error}");
+            // A seat's tree nobody recorded can be neither staged into
+            // (`stage_coding_session_seat_create_hint` refuses it) nor removed
+            // by the hire's refusal, which prunes by record — so it would be
+            // orphaned. Remove it now; a fresh tree is clean, and the
+            // non-forced removal keeps any tree somebody already wrote into.
+            let removal = remove_worktree(Path::new(&created.repo_root), Path::new(&created.path))
+                .err()
+                .map(|removal| format!("; the tree could not be removed either: {removal}"))
+                .unwrap_or_default();
+            return Err(format!(
+                "failed to record the seat worktree {}: {error}{removal}",
+                created.path
+            ));
         }
     }
     Ok(created)

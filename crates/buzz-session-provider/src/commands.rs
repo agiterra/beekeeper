@@ -787,6 +787,24 @@ pub fn decide_lifecycle(
             message,
         };
     }
+    // A hired seat starts in the tree cut for it or not at all. Falling
+    // through to the project's checkout is how control run 7's builder landed
+    // in the operator's main tree: its hint was evicted, the default answered,
+    // and the verifier after it was refused for sharing that tree.
+    if hire_ref.is_some() {
+        if let Some(failure) = hired_seat_cwd_refusal(
+            context.projects,
+            &payload.command_id,
+            project_ref.as_deref(),
+            channel_id,
+        ) {
+            return LifecycleDecision::Fail {
+                command_id: payload.command_id.clone(),
+                code: failure.code,
+                message: failure.message,
+            };
+        }
+    }
     let Some(cwd) =
         context
             .projects
@@ -2026,6 +2044,28 @@ impl ProjectsFile {
         project_ref: Option<&str>,
         channel_id: Uuid,
     ) -> Option<PathBuf> {
+        if let Some(path) = self.resolve_hinted(command_id) {
+            return Some(path);
+        }
+        // A spent hint that no longer names a usable directory resolves to
+        // nothing rather than to a default (see `resolve_hinted`).
+        if self
+            .hints_dir
+            .as_deref()
+            .is_some_and(|hints_dir| read_consumed_hint(hints_dir, command_id).is_some())
+        {
+            return None;
+        }
+        self.resolve_default(project_ref, channel_id)
+    }
+
+    /// The directory staged for this one command, from any hint source, and
+    /// never a project or channel default.
+    ///
+    /// A hired seat resolves through this alone: its directory is the
+    /// worktree the host cut for it, and a missing hint means that fact was
+    /// lost, not that the project's checkout will do (control run 7).
+    pub fn resolve_hinted(&self, command_id: &str) -> Option<PathBuf> {
         if let Some(path) = self
             .pending
             .get(command_id)
@@ -2050,6 +2090,11 @@ impl ProjectsFile {
                 return usable_directory(&consumed.path).then_some(consumed.path);
             }
         }
+        None
+    }
+
+    /// The project's, then the channel's, remembered directory.
+    pub fn resolve_default(&self, project_ref: Option<&str>, channel_id: Uuid) -> Option<PathBuf> {
         [
             project_ref.and_then(|project_ref| self.projects.get(project_ref)),
             self.channels.get(&channel_id),
@@ -2064,6 +2109,44 @@ impl ProjectsFile {
     pub fn project_refs(&self) -> impl Iterator<Item = &str> {
         self.projects.keys().map(String::as_str)
     }
+}
+
+/// Why a hired seat's create may not run where this provider would put it.
+///
+/// `SEAT_CWD_UNRECORDED` when no hint names a directory for this command —
+/// the desktop stages every hire's worktree, so a missing one is lost, and
+/// the project default is exactly the wrong answer. `SEAT_CWD_PROJECT_ROOT`
+/// when the hint names the project's or channel's own checkout.
+pub fn hired_seat_cwd_refusal(
+    projects: &ProjectsFile,
+    command_id: &str,
+    project_ref: Option<&str>,
+    channel_id: Uuid,
+) -> Option<crate::session::CreateFailure> {
+    let Some(cwd) = projects.resolve_hinted(command_id) else {
+        return Some(crate::session::CreateFailure {
+            code: crate::session::SEAT_CWD_UNRECORDED,
+            message: format!(
+                "no worktree was staged for hired seat create {command_id}; refusing rather than \
+                 starting the seat in the project's checkout"
+            ),
+        });
+    };
+    let is_checkout = [
+        project_ref.and_then(|project_ref| projects.projects.get(project_ref)),
+        projects.channels.get(&channel_id),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|root| crate::session::same_directory(&cwd, root));
+    is_checkout.then(|| crate::session::CreateFailure {
+        code: crate::session::SEAT_CWD_PROJECT_ROOT,
+        message: format!(
+            "refusing to seat a hired agent in {} — that is the project's own checkout, not a \
+             worktree cut for the seat",
+            cwd.display()
+        ),
+    })
 }
 
 /// The refusal a create earns when its hint was already spent but this
@@ -3910,6 +3993,100 @@ mod tests {
                 assert!(plan.role.is_none());
             }
             other => panic!("expected a create: {other:?}"),
+        }
+    }
+
+    /// A hired seat's create: seated, attributed to a hire, project-scoped.
+    fn hired_create_content(command_id: &str, actor: &str, project_ref: &str) -> String {
+        let hire = "ee".repeat(32);
+        format!(
+            r#"{{"schema":"buzz-coding-session-lifecycle-command/v1","commandId":"{command_id}","action":{{"type":"session.create","projectRef":"{project_ref}","repoRef":null,"providerInstanceRef":"claude-primary","providerAuthorityPubkey":"{AUTHORITY}","actor":"{actor}","role":"builder","model":null,"title":null,"initialTurn":null,"hireRef":"{hire}"}}}}"#
+        )
+    }
+
+    /// Control run 7: a hired builder whose hint was lost ran in the project's
+    /// checkout. A hire resolves through its own staged hint or is refused;
+    /// the project default never answers for it, and a hint naming the
+    /// project's checkout is refused too.
+    #[test]
+    fn a_hired_seat_starts_in_its_staged_worktree_or_is_refused() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state = store(dir.path());
+        let channel = Uuid::new_v4();
+        let root = dir.path().join("kettle");
+        let tree = dir.path().join("kettle-wt-coding-session-builder-1");
+        std::fs::create_dir_all(&root).expect("root");
+        std::fs::create_dir_all(&tree).expect("tree");
+        let project_ref = format!("30621:{AUTHORITY}:kettle");
+        let actor = "cd".repeat(32);
+        let seats_path = dir.path().join("actor-seats.json");
+        std::fs::write(
+            &seats_path,
+            format!(
+                r#"{{"version":1,"pending":{{"create-1":{{"pubkey":"{actor}","nsec":"nsec1x","authTag":null,"relayUrl":"wss://relay.example"}}}}}}"#
+            ),
+        )
+        .expect("write seats");
+        let seats = crate::actor_seats::ActorSeatsFile::load(Some(&seats_path));
+        let decide = |projects: &ProjectsFile| {
+            let context = ctx_seated(&state, projects, &seats, 1_000, AUTHORITY);
+            decide_lifecycle(
+                &context,
+                channel,
+                1_000,
+                &hired_create_content("create-1", &actor, &project_ref),
+            )
+        };
+        let base = ProjectsFile {
+            version: 1,
+            projects: [(project_ref.clone(), root.clone())].into_iter().collect(),
+            ..ProjectsFile::default()
+        };
+
+        // Staged: the seat runs in the tree cut for it.
+        let staged = ProjectsFile {
+            pending: [("create-1".to_owned(), tree.clone())]
+                .into_iter()
+                .collect(),
+            ..base.clone()
+        };
+        match decide(&staged) {
+            LifecycleDecision::Create(plan) => assert_eq!(plan.cwd, tree),
+            other => panic!("a staged hire must plan its worktree: {other:?}"),
+        }
+
+        // No hint: refused, never the project's checkout.
+        match decide(&base) {
+            LifecycleDecision::Fail { code, .. } => {
+                assert_eq!(code, crate::session::SEAT_CWD_UNRECORDED)
+            }
+            other => panic!("an unstaged hire must be refused: {other:?}"),
+        }
+
+        // A hint that names the project's checkout: refused by name.
+        let at_root = ProjectsFile {
+            pending: [("create-1".to_owned(), root.clone())]
+                .into_iter()
+                .collect(),
+            ..base.clone()
+        };
+        match decide(&at_root) {
+            LifecycleDecision::Fail { code, .. } => {
+                assert_eq!(code, crate::session::SEAT_CWD_PROJECT_ROOT)
+            }
+            other => panic!("a hire staged at the project root must be refused: {other:?}"),
+        }
+
+        // An unhired create keeps the project default, unchanged.
+        let context = ctx(&state, &base, 1_000);
+        match decide_lifecycle(
+            &context,
+            channel,
+            1_000,
+            &create_content("create-2", &format!("\"{project_ref}\""), AUTHORITY),
+        ) {
+            LifecycleDecision::Create(plan) => assert_eq!(plan.cwd, root),
+            other => panic!("an unhired create resolves as before: {other:?}"),
         }
     }
 

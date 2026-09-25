@@ -1557,7 +1557,7 @@ fn shared_workdir_match<'a>(
 /// Canonicalized when the path exists, compared verbatim when it does not —
 /// a directory that is not there yet cannot be the one a live execution is
 /// working in.
-fn same_directory(left: &Path, right: &Path) -> bool {
+pub(crate) fn same_directory(left: &Path, right: &Path) -> bool {
     let resolve = |path: &Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     resolve(left) == resolve(right)
 }
@@ -1573,6 +1573,14 @@ fn same_directory(left: &Path, right: &Path) -> bool {
 /// here because this crate is the only thing that can raise it; a consumer
 /// renders the message, which names the seat that was already there.
 pub const SEAT_CWD_SHARED: &str = "SEAT_CWD_SHARED";
+
+/// A hired seat's create has no staged worktree to start in. Refused rather
+/// than resolved through the project or channel default (control run 7).
+pub const SEAT_CWD_UNRECORDED: &str = "SEAT_CWD_UNRECORDED";
+
+/// A hired seat's staged directory is the project's (or channel's) own
+/// checkout rather than a worktree cut for the seat.
+pub const SEAT_CWD_PROJECT_ROOT: &str = "SEAT_CWD_PROJECT_ROOT";
 
 /// One live execution's claim on a working directory.
 ///

@@ -361,6 +361,12 @@ const SESSION_PROVIDER_DIR: &str = "session-provider";
 pub(crate) struct WriteFenceLayout {
     /// The seat's working directory. Never denied, in whole or in part.
     pub cwd: PathBuf,
+    /// The git worktree the cwd sits in — the nearest ancestor holding a
+    /// `.git` entry, below the home — when that is not the cwd itself. Never
+    /// denied either: a seat started in a subdirectory of its own tree was
+    /// otherwise fenced *around* that subdirectory, which denies every other
+    /// entry of the seat's own worktree (control run 7).
+    pub seat_tree: Option<PathBuf>,
     /// The operator's home.
     pub home: PathBuf,
     /// `<app data dir>`, when `BUZZ_CSP_STATE_DIR` had the shape the desktop
@@ -408,6 +414,7 @@ impl WriteFenceLayout {
         });
         Self {
             cwd: cwd.to_path_buf(),
+            seat_tree: enclosing_git_tree(cwd, home),
             home: home.to_path_buf(),
             app_data_dir,
             nest,
@@ -417,11 +424,29 @@ impl WriteFenceLayout {
     /// The directories no rule may cover: the seat's own.
     fn protected(&self) -> Vec<&Path> {
         let mut protected = vec![self.cwd.as_path()];
+        if let Some(tree) = &self.seat_tree {
+            protected.push(tree.as_path());
+        }
         if let Some(nest) = &self.nest {
             protected.push(nest.as_path());
         }
         protected
     }
+}
+
+/// The nearest strict ancestor of `cwd` holding a `.git` entry (a directory
+/// for a checkout, a file for a linked worktree), searched no higher than
+/// below `home` — the home itself is never a seat's tree. `None` when `cwd`
+/// is itself the tree's root, or sits in no tree.
+fn enclosing_git_tree(cwd: &Path, home: &Path) -> Option<PathBuf> {
+    if cwd.join(".git").exists() {
+        return None;
+    }
+    cwd.ancestors()
+        .skip(1)
+        .take_while(|ancestor| *ancestor != home && ancestor.starts_with(home))
+        .find(|ancestor| ancestor.join(".git").exists())
+        .map(Path::to_path_buf)
 }
 
 /// `<app data dir>` from `BUZZ_CSP_STATE_DIR`, or `None` when the directory
@@ -1310,6 +1335,46 @@ mod tests {
         assert_eq!(layout.app_data_dir, None);
         assert_eq!(layout.nest, None);
         assert!(rules.iter().any(|rule| rule.contains("io.agiterra.*/**")));
+    }
+
+    /// Control run 7: a seat under `~/.beekeeper-dev/REPOS/<x>-wt-*` must get
+    /// no rule over its own tree — not when it runs at the tree's root, and
+    /// not when it runs in a subdirectory of it, where fencing "around" the
+    /// cwd used to deny the rest of the seat's own worktree.
+    #[test]
+    fn a_seat_under_a_repos_worktree_is_never_fenced_out_of_its_own_tree() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let home = dir.path().join("home");
+        let repos = home.join(".beekeeper-dev/REPOS");
+        let root = repos.join("kettle");
+        let tree = repos.join("kettle-wt-coding-session-builder-1");
+        std::fs::create_dir_all(root.join(".git")).expect("root");
+        std::fs::create_dir_all(tree.join("src")).expect("tree");
+        std::fs::write(tree.join(".git"), "gitdir: ../kettle/.git/worktrees/b\n").expect("gitfile");
+        std::fs::write(tree.join("Cargo.toml"), "").expect("file");
+        std::fs::create_dir_all(repos.join("kettle-wt-coding-session-verifier-1")).expect("peer");
+
+        for cwd in [tree.clone(), tree.join("src")] {
+            let layout = WriteFenceLayout::new(&cwd, &home, None, &seat_pubkey());
+            let rules = write_fence_rules(&layout).expect("rules");
+            for own in [&tree, &tree.join("Cargo.toml"), &tree.join("src/main.rs")] {
+                assert!(
+                    !rules.iter().any(|rule| rule_covers(rule, own)),
+                    "cwd {} is fenced out of {}: {rules:#?}",
+                    cwd.display(),
+                    own.display()
+                );
+            }
+            // Around it, not open: the project's checkout and a peer seat's
+            // tree stay denied to this seat's file tools.
+            assert!(rules.contains(&dir_rule(&root)), "{rules:#?}");
+            assert!(
+                rules.contains(&dir_rule(
+                    &repos.join("kettle-wt-coding-session-verifier-1")
+                )),
+                "{rules:#?}"
+            );
+        }
     }
 
     /// The layout's derivation from what the desktop hands the provider.

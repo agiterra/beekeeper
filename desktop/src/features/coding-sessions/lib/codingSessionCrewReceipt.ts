@@ -22,6 +22,35 @@ import {
   type CodingSessionLifecycleResolution,
 } from "./codingSessionTrustedIngress";
 
+/**
+ * The provider answered a create with a refusal receipt — as opposed to not
+ * answering in time, or two receipts disagreeing.
+ *
+ * Distinct because only this case proves no execution exists: the provider
+ * refused before it spawned anything, so whatever the caller cut for the seat
+ * is unused and may be removed.
+ */
+export class CodingSessionCreateRefusedError extends Error {
+  /** The provider's failure code, e.g. `SEAT_CWD_SHARED`. */
+  readonly code: string;
+
+  constructor(code: string, message: string) {
+    super(`${code}: ${message}`.trim());
+    this.name = "CodingSessionCreateRefusedError";
+    this.code = code;
+  }
+}
+
+/** Whether `error` is a provider's refusal receipt for a create. */
+export function isCodingSessionCreateRefusal(
+  error: unknown,
+): error is CodingSessionCreateRefusedError {
+  return (
+    error instanceof CodingSessionCreateRefusedError ||
+    (error instanceof Error && error.name === "CodingSessionCreateRefusedError")
+  );
+}
+
 /** How long a seat's receipt may take before the launch calls it stuck. */
 export const CODING_SESSION_CREW_RECEIPT_TIMEOUT_MS = 120_000;
 
@@ -118,8 +147,9 @@ export async function awaitCodingSessionCreateReceipt(
       if (lifecycle.state === "failed") {
         finish(() =>
           reject(
-            new Error(
-              `${lifecycle.error.code}: ${lifecycle.error.message}`.trim(),
+            new CodingSessionCreateRefusedError(
+              lifecycle.error.code,
+              lifecycle.error.message,
             ),
           ),
         );

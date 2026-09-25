@@ -2,7 +2,7 @@ import * as React from "react";
 
 import { relayClient } from "@/shared/api/relayClient";
 import { signRelayEvent } from "@/shared/api/tauri";
-import { stageCodingSessionCreateHint } from "@/shared/api/tauriCodingSessionWorkdirs";
+import { stageCodingSessionSeatCreateHint } from "@/shared/api/tauriCodingSessionWorkdirs";
 import {
   createCodingSessionWorktree,
   pruneCodingSessionSeatWorktree,
@@ -64,6 +64,7 @@ import {
   resetCodingSessionHireOutcomes,
 } from "../lib/codingSessionHireOutcomeStore";
 import { grantSeat } from "../lib/codingSessionHireGrant";
+import { stageHiredSeatWorkdirOrRefuse } from "../lib/codingSessionHireSeatCwd";
 import {
   discloseCodingSessionHire,
   outcomeOf,
@@ -216,7 +217,7 @@ export type CodingSessionHireDeps = {
   subscribe: (listener: (events: readonly RelayEvent[]) => void) => () => void;
   fetchRosterFold: typeof fetchCodingSessionRosterFold;
   createWorktree: typeof createCodingSessionWorktree;
-  stageCreateHint: typeof stageCodingSessionCreateHint;
+  stageSeatCreateHint: typeof stageCodingSessionSeatCreateHint;
   /**
    * Remove the worktree this host cut for a seat that was never created.
    *
@@ -278,7 +279,7 @@ export const DEFAULT_CODING_SESSION_HIRE_DEPS: CodingSessionHireDeps = {
   subscribe: subscribeToObservedCodingSessionEvents,
   fetchRosterFold: fetchCodingSessionRosterFold,
   createWorktree: createCodingSessionWorktree,
-  stageCreateHint: stageCodingSessionCreateHint,
+  stageSeatCreateHint: stageCodingSessionSeatCreateHint,
   disposeSeatWorktree: pruneCodingSessionSeatWorktree,
   seatDeps: {
     ensureMembership: ensureActorChannelMembership,
@@ -813,10 +814,15 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
         seatRole: plan.role,
         project: plan.title,
       });
-      await hireDeps.stageCreateHint({
-        commandId: plan.commandId,
-        path: created.path,
-      });
+      const cwdRefusal = await stageHiredSeatWorkdirOrRefuse(
+        request,
+        plan,
+        created.path,
+        current.input,
+        hireDeps,
+      );
+      if (cwdRefusal !== null)
+        return report(outcomeOf(request, "refused", cwdRefusal));
       // Its commits reach Pulse from a hook in its own worktree, never from
       // the seat being asked to report. Best-effort — an install that fails
       // must not cost the hire the seat it just cut — but never silent.

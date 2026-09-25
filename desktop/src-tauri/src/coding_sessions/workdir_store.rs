@@ -58,6 +58,10 @@ pub(crate) use worktrees::{
 };
 #[path = "workdir_store_agents.rs"]
 mod agents;
+// A hired seat's create hint, staged from its own worktree record or refused.
+#[path = "workdir_store_seat_hint.rs"]
+mod seat_hint;
+pub(crate) use seat_hint::SEAT_CWD_UNRECORDED;
 #[rustfmt::skip]
 pub(crate) use agents::{agents_repo_path_for_project, attach_agents_clone, record_agents_repo, CodingSessionAgentsRepo, CodingSessionAgentsRepoView};
 pub(crate) mod project;
@@ -299,17 +303,29 @@ impl CodingSessionWorkdirStore {
 
     /// Stage the one-shot hint a create command will resolve against.
     ///
-    /// Over the cap the oldest key is dropped. `BTreeMap` order is by
-    /// `commandId`, which is not insertion order — acceptable precisely
-    /// because reaching the cap already means receipts stopped arriving, and
-    /// the alternative is unbounded growth.
+    /// Over the cap a hint is dropped — never the one just staged. Control run
+    /// 7 (2026-09-24) lost a hired builder's hint exactly that way: the map
+    /// was full, `BTreeMap` order is by `commandId` rather than insertion, the
+    /// fresh id sorted first, and the provider fell through to the project's
+    /// checkout. A hint whose directory is gone goes first (its create can no
+    /// longer use it), then the lowest other key.
     pub(crate) fn stage_hint(&mut self, command_id: &str, path: PathBuf) {
         self.pending.insert(command_id.to_string(), path);
         while self.pending.len() > MAX_PENDING_HINTS {
-            let Some(oldest) = self.pending.keys().next().cloned() else {
+            let stale = self
+                .pending
+                .iter()
+                .find(|(key, path)| key.as_str() != command_id && !path.is_dir())
+                .map(|(key, _)| key.clone());
+            let Some(victim) = stale.or_else(|| {
+                self.pending
+                    .keys()
+                    .find(|key| key.as_str() != command_id)
+                    .cloned()
+            }) else {
                 break;
             };
-            self.pending.remove(&oldest);
+            self.pending.remove(&victim);
         }
     }
 
@@ -782,6 +798,54 @@ pub fn stage_coding_session_create_hint(
     mutate(&app, &state, |store| {
         store.stage_hint_for_project(&command_id, project_ref.as_deref(), path, remember_path)
     })
+}
+
+/// Stage a hired seat's create hint at its own recorded worktree, or refuse.
+///
+/// The hire path's only way to stage a hint. The path is read from
+/// `worktrees/<session_ref>/<seat_label>` — the record the cut just wrote —
+/// never taken from the caller, and the write is read back before answering,
+/// so a hint that did not survive is a refusal here rather than a silent
+/// fall-through to the project's checkout at the provider (control run 7).
+/// Errors are `"<CODE>: <reason>"` with one of
+/// [`SEAT_CWD_UNRECORDED`], `SEAT_CWD_PROJECT_ROOT` or `SEAT_CWD_SHARED`.
+#[tauri::command]
+pub fn stage_coding_session_seat_create_hint(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    command_id: String,
+    session_ref: String,
+    seat_label: String,
+    project_ref: Option<String>,
+) -> Result<String, String> {
+    let command_id = command_id.trim().to_string();
+    if command_id.is_empty() {
+        return Err("a coding-session command id is required".to_string());
+    }
+    let _lock = lock_workdir_store(&app)?;
+    let mut store = load_workdir_store(&app)?;
+    let path = store.stage_seat_hint_from_record(
+        &command_id,
+        &session_ref,
+        &seat_label,
+        project_ref.as_deref(),
+    )?;
+    if !path.is_dir() {
+        return Err(format!(
+            "{SEAT_CWD_UNRECORDED}: the worktree recorded for {} is {}, which does not exist",
+            seat_worktree_key(&session_ref, &seat_label),
+            path.display()
+        ));
+    }
+    store.version = WORKDIR_STORE_VERSION;
+    save_workdir_store(&app, &state, &store)?;
+    let saved = load_workdir_store(&app)?;
+    if saved.pending.get(&command_id) != Some(&path) {
+        return Err(format!(
+            "{SEAT_CWD_UNRECORDED}: the hint for {command_id} did not survive the write"
+        ));
+    }
+    Ok(path.to_string_lossy().into_owned())
 }
 
 /// Drop a staged hint once its receipt has settled the create.

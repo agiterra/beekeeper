@@ -12,6 +12,8 @@ import {
   codingSessionGrantFailureReason,
   ensureCodingSessionGrantWithBackoff,
 } from "./codingSessionGrantRetry";
+import { isCodingSessionCreateRefusal } from "./codingSessionCrewReceipt";
+import { disposeRefusedSeatWorktree } from "./codingSessionHireSeatCwd";
 import type { CodingSessionHireSeatPlan } from "./codingSessionHireSeat";
 
 /**
@@ -19,7 +21,8 @@ import type { CodingSessionHireSeatPlan } from "./codingSessionHireSeat";
  *
  * Returns null when both landed, or the reason the seat is ungranted. Never
  * throws: a failure here does not un-create the seat, and swallowing it would
- * be the exact silence this exists to end.
+ * be the exact silence this exists to end. A create the provider *refused*
+ * also removes the worktree cut for it, and the reason says what happened.
  */
 export async function grantSeat(
   plan: CodingSessionHireSeatPlan,
@@ -32,7 +35,12 @@ export async function grantSeat(
       providerAuthorityPubkey: plan.providerAuthorityPubkey,
     });
   } catch (error) {
-    return codingSessionGrantFailureReason(error);
+    const reason = codingSessionGrantFailureReason(error);
+    // A refusal receipt proves no execution exists, so the tree cut for it
+    // is unused: remove it rather than leave it for the next hire of the same
+    // seat to orphan (control run 7's `…-verifier-1`).
+    if (!isCodingSessionCreateRefusal(error)) return reason;
+    return `${reason} — ${await disposeRefusedSeatWorktree(plan, deps)}`;
   }
   const providerFailure = await ensureCodingSessionGrantWithBackoff({
     grant: () =>

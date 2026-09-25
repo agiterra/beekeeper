@@ -501,6 +501,7 @@ pub(crate) fn invoke_handler(
         coding_sessions::workdir_store::clear_coding_session_workdir,
         coding_sessions::workdir_store::record_coding_session_workdir_use,
         coding_sessions::workdir_store::stage_coding_session_create_hint,
+        coding_sessions::workdir_store::stage_coding_session_seat_create_hint,
         coding_sessions::workdir_store::clear_coding_session_create_hint,
         coding_sessions::workdir_store::validate_coding_session_workdir,
         coding_sessions::workdir_store::pick_coding_session_workdir,

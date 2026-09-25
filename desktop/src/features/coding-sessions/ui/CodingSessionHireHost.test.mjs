@@ -238,7 +238,7 @@ async function harness({
       steps.push("worktree");
       return { path: `/tmp/trees/${input.name}` };
     },
-    stageCreateHint: async () => {
+    stageSeatCreateHint: async () => {
       steps.push("hint");
     },
     disposeSeatWorktree: async (input) => {

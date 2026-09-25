@@ -204,7 +204,7 @@ async function harness({
         branch: `session/${input.name}`,
       };
     },
-    stageCreateHint: async () => {},
+    stageSeatCreateHint: async () => "/tmp/trees/seat",
     seatDeps: {
       ensureMembership: async () => {},
       stageSeat: async (input) => {

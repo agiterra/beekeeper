@@ -129,6 +129,29 @@ export async function stageCodingSessionCreateHint(input: {
   );
 }
 
+/**
+ * Stage a hired seat's create hint at the seat's own recorded worktree.
+ *
+ * The host reads the path from `worktrees/<sessionRef>/<seatLabel>` — never
+ * from the caller — and rejects with `"<CODE>: <reason>"`
+ * (`SEAT_CWD_UNRECORDED`, `SEAT_CWD_PROJECT_ROOT`, `SEAT_CWD_SHARED`) rather
+ * than let the provider fall back to the project's checkout. Resolves to the
+ * staged path.
+ */
+export async function stageCodingSessionSeatCreateHint(input: {
+  commandId: string;
+  sessionRef: string;
+  seatLabel: string;
+  projectRef: string | null;
+}): Promise<string> {
+  return invokeTauri<string>("stage_coding_session_seat_create_hint", {
+    commandId: input.commandId,
+    sessionRef: input.sessionRef,
+    seatLabel: input.seatLabel,
+    projectRef: input.projectRef,
+  });
+}
+
 /** Drop a staged hint once its 44224 receipt has settled the create. */
 export async function clearCodingSessionCreateHint(
   commandId: string,
