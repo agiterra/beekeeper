@@ -413,3 +413,86 @@ test("a registry that cannot be parsed says so rather than routing on a guess", 
   assert.match(parseModelRegistry("version: 2\ntargets: []\n").why, /version/);
   assert.equal(parseModelRegistry(": : :").ok, false);
 });
+
+// Ledger 267 (control run 8): the lead's routed verifier hire was refused
+// `HIRE_NO_ROUTE` three times although an override named an eligible target,
+// because the empty-registry-pool refusal ran before the override was even
+// considered. These three tests pin the ruling: override first; then, absent
+// an override, a catalog offer no registry row covers is a fallback for an
+// ordinary session; a genuine hard requirement still refuses it, named.
+
+const UNREGISTERED_CATALOG = [
+  // `team/model-registry.yaml` has no row for either provider/model pair —
+  // the run-8 shape, where the live catalog outruns the seeded registry.
+  { providerInstanceRef: "claude-primary", model: "claude-nova-9" },
+];
+
+test("an empty registry pool still honours a valid override (run 8's shape)", () => {
+  const decision = routeCodingSession({
+    registry: registry(),
+    catalog: UNREGISTERED_CATALOG,
+    catalogRevision: null,
+    className: "builder",
+    risk: { impact: 3, uncertainty: 3, irreversibility: 2 },
+    override: {
+      model: "claude-nova-9",
+      because: "run 8: the registry has no row for it yet",
+    },
+  });
+  assert.equal(decision.ok, true);
+  assert.deepEqual(decision.record.chosen, {
+    provider: "claude-primary",
+    model: "claude-nova-9",
+    effort: "medium",
+  });
+  assert.match(decision.record.reason, /override/);
+  // No registry-ranked candidate existed to name as a runner-up.
+  assert.equal(decision.record.runnerUp, null);
+});
+
+test("an empty pool with no hard requirement falls back to the catalog's own offer", () => {
+  const decision = routeCodingSession({
+    registry: registry(),
+    catalog: UNREGISTERED_CATALOG,
+    catalogRevision: null,
+    // `builder` carries no `requires` at all — an ordinary, neutral class.
+    className: "builder",
+    risk: { impact: 3, uncertainty: 3, irreversibility: 2 },
+  });
+  assert.equal(decision.ok, true);
+  assert.deepEqual(decision.record.chosen, {
+    provider: "claude-primary",
+    model: "claude-nova-9",
+    effort: "medium",
+  });
+  assert.match(decision.record.reason, /catalog fallback/);
+  assert.equal(decision.record.override, null);
+});
+
+test("a hard policy still refuses every unregistered catalog offer, named", () => {
+  const decision = routeCodingSession({
+    registry: registry(),
+    catalog: UNREGISTERED_CATALOG,
+    catalogRevision: null,
+    // `ui_designer` hard-requires multimodal (spec §4) — an unregistered
+    // catalog offer carries no recorded modality to clear that with.
+    className: "ui_designer",
+    risk: { impact: 3, uncertainty: 3, irreversibility: 2 },
+  });
+  assert.equal(decision.ok, false);
+  assert.equal(decision.code, "HIRE_NO_ROUTE");
+  assert.match(decision.reason, /multimodal/);
+});
+
+test("a non-empty ranked pool is unaffected by the fallback path", () => {
+  // Same shape as the pre-existing override test, but pinned here to name the
+  // control-run-8 fix directly: an override with a real ranked pool behind it
+  // still records that pool's own choice as the runner-up.
+  const decision = route({
+    override: { model: "gpt-5.6-sol[xhigh]", because: "Brian asked for it" },
+  });
+  assert.equal(decision.ok, true);
+  assert.ok(decision.record.runnerUp);
+  assert.notEqual(decision.record.runnerUp.model, null);
+  assert.match(decision.record.reason, /the router would have chosen/);
+});

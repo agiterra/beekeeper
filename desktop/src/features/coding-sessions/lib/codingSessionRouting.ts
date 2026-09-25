@@ -399,50 +399,85 @@ export function routeCodingSession(
     }
   }
 
-  if (pool.length === 0) {
-    return {
-      ok: false,
-      code: HIRE_NO_ROUTE,
-      reason: describeNoRoute(className, tier, excluded),
-      excluded,
-    };
-  }
-
   const ranked = [...pool].sort(compareCandidates);
-  const first = ranked[0];
+  const first = ranked[0] ?? null;
   const second = ranked[1] ?? null;
-  if (first === undefined) {
-    return {
-      ok: false,
-      code: HIRE_NO_ROUTE,
-      reason: describeNoRoute(className, tier, excluded),
-      excluded,
-    };
-  }
 
+  // Ledger 267 (control run 8): the override is considered *before* an empty
+  // ranked pool is rejected. A registry with no row for a live catalog offer
+  // is a fact about the registry's coverage, not a veto over an operator who
+  // named a target by hand and said why — the override still has to survive
+  // `applyOverride`'s own checks (the catalog actually offers it, and offers
+  // it unambiguously).
   const override = input.override ?? null;
-  let chosen = first.target;
-  let runnerUp = second?.target ?? null;
-  let reason = describeChoice({
-    className,
-    tier,
-    classGate,
-    chosen: first,
-    runnerUp: second,
-    sampling,
-  });
+  let chosen: RoutedExecutionTarget;
+  let runnerUp: RoutedExecutionTarget | null;
+  let reason: string;
   if (override !== null) {
     const applied = applyOverride(override, input.catalog, effort);
     if (!applied.ok) {
       return { ok: false, code: HIRE_NO_ROUTE, reason: applied.why, excluded };
     }
-    // The router's own answer is kept as the runner-up, so a reader can see
-    // what was overridden rather than only what was asked for.
-    runnerUp = chosen;
+    // The router's own answer (when it found one) is kept as the runner-up,
+    // so a reader can see what was overridden rather than only what was asked
+    // for.
+    runnerUp = first?.target ?? null;
     chosen = applied.target;
     reason =
-      `human override: ${override.because.trim()} — the router would have ` +
-      `chosen ${first.target.provider}/${first.target.model}.`;
+      `human override: ${override.because.trim()} — ` +
+      (first === null
+        ? "no registry-ranked candidate cleared the gates to compare it to."
+        : `the router would have chosen ${first.target.provider}/${first.target.model}.`);
+  } else if (first === null) {
+    // No override, and nothing the registry ranks clears the gates. Spec §7's
+    // "never quietly weakened" is about class minimums and requirements, not
+    // about whether a row exists at all: a live catalog offer with no
+    // registry row is DORMANT knowledge, not an unauthorized target (finding
+    // ledger 266 — the registry's own comment says so of the other
+    // direction, STALE). For an ordinary session with no hard requirement
+    // this host cannot vouch for, fall back to the catalog's own order among
+    // targets no registry row covers at all; a hard requirement (this class's
+    // `requires`, or the task's `requirements`) still refuses, named.
+    const fallback = fallbackCatalogTarget({
+      registry,
+      catalog: input.catalog,
+      classGate,
+      requirements: input.requirements,
+      effort,
+      excluded,
+    });
+    if (!fallback.ok) {
+      return {
+        ok: false,
+        code: HIRE_NO_ROUTE,
+        reason:
+          fallback.why !== null
+            ? `no execution target clears the ${className} gates at the ` +
+              `${tier} tier: ${fallback.why}. No registry-ranked or catalog ` +
+              "fallback target is eligible."
+            : describeNoRoute(className, tier, excluded),
+        excluded,
+      };
+    }
+    chosen = fallback.target;
+    runnerUp = null;
+    reason =
+      `catalog fallback: no registry row ranks a target for ${className} at ` +
+      `the ${tier} tier, so the least-preferred but authorized, available ` +
+      `catalog offer ${fallback.target.provider}/${fallback.target.model} ` +
+      "was used; registry ranking is a preference here, not a gate, and no " +
+      "hard requirement was recorded against it.";
+  } else {
+    chosen = first.target;
+    runnerUp = second?.target ?? null;
+    reason = describeChoice({
+      className,
+      tier,
+      classGate,
+      chosen: first,
+      runnerUp: second,
+      sampling,
+    });
   }
   if (crossProviderOf !== undefined && peerProvider !== null) {
     reason +=
@@ -895,6 +930,124 @@ function applyOverride(
     ok: true,
     target: { provider, model, effort: override.effort ?? effort },
   };
+}
+
+/** The bare catalog id, stripping a trailing `[effort]` variant if present. */
+function bareModelId(model: string): string {
+  const bracket = model.indexOf("[");
+  return bracket === -1 ? model : model.slice(0, bracket);
+}
+
+/**
+ * The first catalog offer, in the catalog's own order, that no registry row
+ * covers at all and that no hard requirement rules out.
+ *
+ * Only reached when the registry-ranked pool is empty and no override was
+ * given (spec's minimums and cost ranking never run here — there is nothing
+ * to rank a target the registry says nothing about against). What still
+ * applies, because it does not depend on a registry row to check: the
+ * class's own `requires` and the task's own `requirements` — modality, tool
+ * support, minimum context window, intolerable failure modes. Any of those
+ * refuses every fallback candidate uniformly, since none of them is
+ * something an unregistered catalog offer can be vouched for; that is the
+ * "explicitly chosen hard policy" the ruling preserves. An ordinary session
+ * with none of those set is not blocked by class trait minimums here — the
+ * ruling's "registry ranking is a preference, not a gate" for exactly this
+ * path.
+ */
+function fallbackCatalogTarget(input: {
+  registry: ModelRegistry;
+  catalog: readonly RoutingCatalogEntry[];
+  classGate: RegistryClass;
+  requirements: RoutingRequirements | undefined;
+  effort: RoutingEffort;
+  excluded: RoutingExclusion[];
+}):
+  | { ok: true; target: RoutedExecutionTarget }
+  | { ok: false; why: string | null } {
+  const { registry, catalog, classGate, requirements, effort, excluded } =
+    input;
+  const registered = new Set(
+    registry.targets.map((target) => `${target.provider}\u0000${target.model}`),
+  );
+  const block = fallbackHardBlock(classGate, requirements);
+  let anyUnregistered = false;
+  for (const entry of catalog) {
+    const key = `${entry.providerInstanceRef}\u0000${bareModelId(entry.model)}`;
+    if (registered.has(key)) continue; // already considered with real facts
+    anyUnregistered = true;
+    if (block !== null) {
+      excluded.push({
+        provider: entry.providerInstanceRef,
+        model: entry.model,
+        why: `no registry row, and ${block}`,
+      });
+      continue;
+    }
+    if (requirements?.minContextWindow !== undefined) {
+      const window = entry.contextWindow ?? null;
+      if (window === null || window < requirements.minContextWindow) {
+        excluded.push({
+          provider: entry.providerInstanceRef,
+          model: entry.model,
+          why:
+            window === null
+              ? `no registry row and no recorded context window, so ${requirements.minContextWindow} tokens is not established for it`
+              : `no registry row; holds ${window} tokens, and the task needs ${requirements.minContextWindow}`,
+        });
+        continue;
+      }
+    }
+    return {
+      ok: true,
+      target: {
+        provider: entry.providerInstanceRef,
+        model: entry.model,
+        effort,
+      },
+    };
+  }
+  return { ok: false, why: anyUnregistered ? block : null };
+}
+
+/**
+ * Why every unregistered catalog offer is blocked, or null when none is.
+ *
+ * Only the requirements an unknown target can never be vouched for: the class
+ * or task's `requires`/`requirements`. `minContextWindow` is checked per
+ * catalog entry instead (the live catalog publishes its own context window
+ * per model, so that one fact does not need a registry row).
+ */
+function fallbackHardBlock(
+  classGate: RegistryClass,
+  requirements: RoutingRequirements | undefined,
+): string | null {
+  const multimodalRequired =
+    requirements?.multimodal === true ||
+    classGate.requires?.multimodal === true;
+  if (multimodalRequired) {
+    return (
+      "this class requires multimodal, and an unregistered catalog offer " +
+      "carries no recorded modality to vouch for it"
+    );
+  }
+  const tools = [
+    ...(classGate.requires?.tools ?? []),
+    ...(requirements?.tools ?? []),
+  ];
+  if (tools.length > 0) {
+    return (
+      `this class requires the ${tools.join(", ")} tool(s), and an ` +
+      "unregistered catalog offer carries no recorded tool support"
+    );
+  }
+  if ((requirements?.incompatibleFailureModes ?? []).length > 0) {
+    return (
+      "this task cannot tolerate a known failure mode, and an unregistered " +
+      "catalog offer carries no recorded failure-mode history to clear it"
+    );
+  }
+  return null;
 }
 
 /**
