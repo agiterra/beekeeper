@@ -1,8 +1,8 @@
 //! Canonical report extraction and fail-closed turn ordering.
 
 use buzz_core::coding_session_team_transaction::{
-    fold_coding_session_team_transactions, CodingSessionTeamFoldContext,
-    CodingSessionTeamTransactionBody,
+    fold_coding_session_team_transactions, CodingSessionTeamDispositionDecision,
+    CodingSessionTeamFoldContext, CodingSessionTeamTransactionBody, CodingSessionTeamVerdict,
 };
 use nostr::Event;
 
@@ -40,6 +40,60 @@ pub fn included_reports(
         }
     }
     Ok(reports)
+}
+
+/// One canonical included disposition verdict.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IncludedDisposition {
+    pub event_id: String,
+    pub assignment_ref: String,
+    pub report_ref: String,
+    pub decision: CodingSessionTeamDispositionDecision,
+    pub required_action: Option<String>,
+    pub author_pubkey: String,
+    pub created_at: u64,
+}
+
+/// Validate the complete transaction graph and return included dispositions.
+///
+/// Mirrors [`included_reports`]: a disposition wakes the lead the same way a
+/// report wakes the verifier, so the caller needs the same
+/// canonical-inclusion proof before minting a durable push (ledger control
+/// run 7).
+pub fn included_dispositions(
+    events: &[Event],
+    context: &CodingSessionTeamFoldContext,
+) -> Result<Vec<IncludedDisposition>, String> {
+    let fold = fold_coding_session_team_transactions(events, context)?;
+    let included: std::collections::HashSet<&str> =
+        fold.included_event_ids.iter().map(String::as_str).collect();
+    let mut dispositions = Vec::new();
+    for event in events {
+        let id = event.id.to_hex();
+        if !included.contains(id.as_str()) {
+            continue;
+        }
+        let payload = buzz_core::coding_session_team_transaction::validate_coding_session_team_transaction_envelope(event)?;
+        if let CodingSessionTeamTransactionBody::Verdict(CodingSessionTeamVerdict::Disposition {
+            assignment_ref,
+            report_ref,
+            decision,
+            required_action,
+            ..
+        }) = payload.body
+        {
+            dispositions.push(IncludedDisposition {
+                event_id: id,
+                assignment_ref,
+                report_ref,
+                decision,
+                required_action,
+                author_pubkey: event.pubkey.to_hex(),
+                created_at: event.created_at.as_secs(),
+            });
+        }
+    }
+    Ok(dispositions)
 }
 
 /// Suppress a missing-report diagnostic only when signed-second report time

@@ -158,7 +158,10 @@ impl WakeIntentStore {
                 && channel.resolved.len() <= MAX_RESOLVED_PER_CHANNEL
                 && channel.admitted.iter().all(|source| {
                     source.scope.channel_ref == channel.channel_ref
-                        && matches!(source.source, WakeSource::Report { .. })
+                        && matches!(
+                            source.source,
+                            WakeSource::Report { .. } | WakeSource::Disposition { .. }
+                        )
                 })
                 && channel.in_flight.as_ref().is_none_or(|intent| {
                     intent.scope.channel_ref == channel.channel_ref
@@ -286,12 +289,12 @@ impl WakeIntentStore {
     fn report_count(channel: &ChannelState) -> usize {
         channel.resolved.len()
             + channel.admitted.len()
-            + usize::from(
-                channel
-                    .in_flight
-                    .as_ref()
-                    .is_some_and(|intent| matches!(intent.source, WakeSource::Report { .. })),
-            )
+            + usize::from(channel.in_flight.as_ref().is_some_and(|intent| {
+                matches!(
+                    intent.source,
+                    WakeSource::Report { .. } | WakeSource::Disposition { .. }
+                )
+            }))
     }
 
     fn report_capacity_available(channel: &ChannelState) -> bool {
@@ -304,7 +307,10 @@ impl WakeIntentStore {
         source: WakeSource,
         live: bool,
     ) -> io::Result<DiscoveryCapture> {
-        debug_assert!(matches!(source, WakeSource::Report { .. }));
+        debug_assert!(matches!(
+            source,
+            WakeSource::Report { .. } | WakeSource::Disposition { .. }
+        ));
         let index = self.channel_index_or_insert(scope.channel_ref)?;
         if let Some(code) = self.channels[index]
             .refusal
@@ -567,7 +573,10 @@ impl WakeIntentStore {
         let Some(intent) = self.channels[index].in_flight.take() else {
             return Ok(());
         };
-        if matches!(intent.source, WakeSource::Report { .. }) {
+        if matches!(
+            intent.source,
+            WakeSource::Report { .. } | WakeSource::Disposition { .. }
+        ) {
             let id = intent.source.event_id().to_owned();
             if !self.channels[index].resolved.iter().any(|item| item == &id) {
                 self.channels[index].resolved.push(id);
@@ -673,7 +682,7 @@ fn terminal_key(source: &WakeSource) -> Option<(&str, &CodingSessionTarget)> {
             source_target,
             ..
         } => Some((caused_by_command_id, source_target)),
-        WakeSource::Report { .. } => None,
+        WakeSource::Report { .. } | WakeSource::Disposition { .. } => None,
     }
 }
 

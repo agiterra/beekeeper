@@ -1974,24 +1974,83 @@ impl Provider {
         )))
     }
 
+    /// Persist a structurally valid disposition as an untrusted wake
+    /// candidate addressed to the assignment's author (the lead).
+    ///
+    /// A disposition is the assigner's cue that a report it opened has been
+    /// ruled on. Both decisions in `CodingSessionTeamDispositionDecision`
+    /// reach here — approve, approve-with-notes, changes-requested, reject,
+    /// blocked — because every one of them is a ruling the lead has not yet
+    /// seen; only a **refutation** is excluded (it is a verifier's own next
+    /// step, classified as a silent [`pending_completion::SettlementFact`]
+    /// instead). Authorization and canonical-inclusion are deferred to
+    /// [`Provider::process_one_team_wake`], exactly as for a report.
+    fn team_disposition_candidate(
+        channel_id: Uuid,
+        event: &Event,
+    ) -> anyhow::Result<Option<(team_wake::WakeScope, team_wake::WakeSource)>> {
+        let payload =
+            buzz_core::coding_session_team_transaction::validate_coding_session_team_transaction_envelope(event)
+                .map_err(anyhow::Error::msg)?;
+        let buzz_core::coding_session_team_transaction::CodingSessionTeamTransactionBody::Verdict(
+            buzz_core::coding_session_team_transaction::CodingSessionTeamVerdict::Disposition {
+                assignment_ref,
+                report_ref,
+                decision,
+                required_action,
+                ..
+            },
+        ) = payload.body
+        else {
+            return Ok(None);
+        };
+        Ok(Some((
+            team_wake::WakeScope {
+                channel_ref: channel_id,
+                session_ref: payload.session_ref,
+                genesis_ref: payload.genesis_ref,
+            },
+            team_wake::WakeSource::Disposition {
+                operation_id: event.id.to_hex(),
+                report_ref,
+                assignment_ref,
+                decision,
+                required_action,
+                author_pubkey: event.pubkey.to_hex(),
+                created_at: event.created_at.as_secs(),
+            },
+        )))
+    }
+
     /// One arriving kind-44244 record, routed by what it can change.
     ///
-    /// A report becomes an untrusted wake candidate exactly as before. A
-    /// **settlement fact** — an acknowledgement, a decision answer or a
-    /// verifier's refutation — wakes nobody and mints no intent; it asks the
+    /// A report becomes an untrusted wake candidate exactly as before, and a
+    /// **disposition** now becomes one too, addressed to the lead who owns
+    /// the assignment it settles ([`Self::team_disposition_candidate`]). A
+    /// **settlement fact** — an acknowledgement, a decision answer, a
+    /// verifier's refutation, or an approving disposition that asks the
+    /// assignee for nothing — mints no wake intent of its own; it asks the
     /// complete-discovery pass to read this channel's signed set again, so a
     /// `mission.completed` the fold is holding back is re-evaluated by
     /// software the moment its last prerequisite is on the wire (ledger 183).
-    /// Until this existed those three classes arrived and caused nothing, and
-    /// a lead woke six seats to watch the same facts land (ledger 179(a)).
+    /// The two are independent: an approving, ask-nothing disposition both
+    /// wakes the lead once (below) and requests that re-evaluation, since one
+    /// signed record can be both a fact the lead needs to see and a fact the
+    /// fold needs to reconsider. Before either path existed these classes
+    /// arrived and caused nothing, and a lead woke six seats to watch the same
+    /// facts land (ledger 179(a)), or a verifier published a disposition and
+    /// had to message the lead by hand (ledger control run 7).
     fn on_team_transaction(&mut self, channel_id: Uuid, event: &Event) -> anyhow::Result<()> {
-        let Some((scope, source)) = Self::team_report_candidate(channel_id, event)? else {
-            if let Some(fact) = pending_completion::settlement_fact(event) {
-                self.request_pending_completion_reevaluation(channel_id, fact);
-            }
-            return Ok(());
-        };
-        self.capture_live_team_wake(scope, source)
+        if let Some(fact) = pending_completion::settlement_fact(event) {
+            self.request_pending_completion_reevaluation(channel_id, fact);
+        }
+        if let Some((scope, source)) = Self::team_report_candidate(channel_id, event)? {
+            return self.capture_live_team_wake(scope, source);
+        }
+        if let Some((scope, source)) = Self::team_disposition_candidate(channel_id, event)? {
+            return self.capture_live_team_wake(scope, source);
+        }
+        Ok(())
     }
 
     /// Ask the next complete-discovery pass to re-read one channel.
@@ -2179,7 +2238,12 @@ impl Provider {
                 .then_with(|| left.id.cmp(&right.id))
         });
         for event in events {
-            let capture = match Self::team_report_candidate(channel_id, &event) {
+            let candidate = match Self::team_report_candidate(channel_id, &event) {
+                Ok(Some(candidate)) => Ok(Some(candidate)),
+                Ok(None) => Self::team_disposition_candidate(channel_id, &event),
+                Err(error) => Err(error),
+            };
+            let capture = match candidate {
                 Ok(Some((scope, source))) => match self.team_wakes.capture_report(scope, source) {
                     Ok(capture) => capture,
                     Err(error) => {
@@ -2481,6 +2545,64 @@ impl Provider {
                 if !locally_owned {
                     // Every provider can see the channel report. Only the
                     // provider that owns the reporting generation may mint its
+                    // durable push; the exact remote lead remains a valid
+                    // target after this ownership check.
+                    self.retire_team_wake(channel_ref)?;
+                    return Ok(());
+                }
+            }
+            team_wake::WakeSource::Disposition {
+                operation_id,
+                author_pubkey,
+                ..
+            } => {
+                // Same shape as the report arm above, over the disposition's
+                // own canonical-inclusion set: a verifier's or lead's signed
+                // ruling must be part of the umbrella's fold before this
+                // provider trusts it enough to mint a durable push, and only
+                // the provider that owns that author's reporting generation
+                // may mint it.
+                if !snapshot
+                    .included_dispositions
+                    .iter()
+                    .any(|disposition| disposition.event_id == *operation_id)
+                {
+                    if snapshot
+                        .team_events
+                        .iter()
+                        .any(|event| event.id.to_hex() == *operation_id)
+                    {
+                        tracing::info!(target: "csp::team_wake", %operation_id, "discarding excluded team disposition wake candidate");
+                        self.retire_team_wake(channel_ref)?;
+                    } else {
+                        intent.last_reason = Some("disposition_not_query_visible".into());
+                        self.defer_team_wake(intent)?;
+                    }
+                    return Ok(());
+                }
+                let source_target = match team_wake::resolve_actor_target(
+                    &snapshot.package,
+                    author_pubkey,
+                ) {
+                    Ok(target) => target,
+                    Err(error) => {
+                        tracing::info!(target: "csp::team_wake", %error, "team disposition source has no exact active provider target");
+                        intent.last_reason = Some("disposition_source_target_not_exact".into());
+                        self.defer_team_wake(intent)?;
+                        return Ok(());
+                    }
+                };
+                let locally_owned = source_target.instance_id == self.config.instance_id
+                    && self
+                        .state
+                        .session(&source_target.session_id)
+                        .is_some_and(|record| {
+                            record.actor.as_deref() == Some(author_pubkey.as_str())
+                                && self.target_for(record) == source_target
+                        });
+                if !locally_owned {
+                    // Every provider can see the channel disposition. Only the
+                    // provider that owns the disposing generation may mint its
                     // durable push; the exact remote lead remains a valid
                     // target after this ownership check.
                     self.retire_team_wake(channel_ref)?;
@@ -10742,6 +10864,8 @@ mod tests {
     mod operation_fence_tests;
     #[path = "session_policy_budget_tests.rs"]
     mod session_policy_budget_tests;
+    #[path = "team_wake_disposition_tests.rs"]
+    mod team_wake_disposition_tests;
     #[path = "team_wake_driver_tests.rs"]
     mod team_wake_driver_tests;
     #[path = "team_wake_pressure_tests.rs"]

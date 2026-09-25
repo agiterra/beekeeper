@@ -14,7 +14,8 @@ use buzz_core::coding_session_genesis::decode_coding_session_genesis;
 use buzz_core::coding_session_payload::ReceiptStatus;
 use buzz_core::coding_session_team_transaction::{
     fold_coding_session_team_transactions, CodingSessionTeamActiveGrant,
-    CodingSessionTeamActiveSeat, CodingSessionTeamFoldContext, CodingSessionTeamTransactionBody,
+    CodingSessionTeamActiveSeat, CodingSessionTeamDispositionDecision,
+    CodingSessionTeamFoldContext, CodingSessionTeamTransactionBody,
     CodingSessionTeamTransactionType,
 };
 use nostr::{Event, Keys};
@@ -30,7 +31,10 @@ use crate::context_projector::{
 
 #[path = "team_wake_report_order.rs"]
 mod report_order;
-pub use report_order::{included_reports, report_suppresses_terminal, IncludedReport};
+pub use report_order::{
+    included_dispositions, included_reports, report_suppresses_terminal, IncludedDisposition,
+    IncludedReport,
+};
 
 #[path = "team_wake_store.rs"]
 mod store;
@@ -55,6 +59,21 @@ pub enum WakeSource {
         author_pubkey: String,
         created_at: u64,
     },
+    /// A verifier's or lead's ruling on one report — the assigner's cue that
+    /// a report it is holding open has been settled. Wakes the assignment's
+    /// author (the lead) exactly once per disposition id, whether the
+    /// decision approves or requires further action; a refutation is a
+    /// separate, silent [`crate::pending_completion::SettlementFact`] and
+    /// never reaches this variant (ledger control run 7).
+    Disposition {
+        operation_id: String,
+        report_ref: String,
+        assignment_ref: String,
+        decision: CodingSessionTeamDispositionDecision,
+        required_action: Option<String>,
+        author_pubkey: String,
+        created_at: u64,
+    },
     Terminal {
         terminal_event_id: String,
         actor_pubkey: String,
@@ -75,6 +94,7 @@ impl WakeSource {
     pub fn author_pubkey(&self) -> Option<&str> {
         match self {
             Self::Report { author_pubkey, .. } => Some(author_pubkey),
+            Self::Disposition { author_pubkey, .. } => Some(author_pubkey),
             Self::Terminal { actor_pubkey, .. } => Some(actor_pubkey),
         }
     }
@@ -82,6 +102,7 @@ impl WakeSource {
     pub fn event_id(&self) -> &str {
         match self {
             Self::Report { operation_id, .. } => operation_id,
+            Self::Disposition { operation_id, .. } => operation_id,
             Self::Terminal {
                 terminal_event_id, ..
             } => terminal_event_id,
@@ -340,6 +361,22 @@ pub fn wake_text(source: &WakeSource) -> Result<String, String> {
             operation_type,
             ..
         } => serde_json::json!({"operationId": operation_id, "type": operation_type}),
+        WakeSource::Disposition {
+            operation_id,
+            report_ref,
+            assignment_ref,
+            decision,
+            required_action,
+            ..
+        } => serde_json::json!({
+            "schema": TEAM_WAKE_POINTER_SCHEMA,
+            "type": "disposition",
+            "operationId": operation_id,
+            "reportRef": report_ref,
+            "assignmentRef": assignment_ref,
+            "decision": decision,
+            "requiredAction": required_action,
+        }),
         WakeSource::Terminal {
             terminal_event_id,
             role,
@@ -400,6 +437,40 @@ fn is_terminal_pointer(object: &serde_json::Map<String, serde_json::Value>) -> b
             == Some(TEAM_WAKE_POINTER_SCHEMA)
 }
 
+/// Whether a JSON object is the *disposition* pointer [`wake_text`] mints.
+///
+/// Exactly the seven keys that arm emits: five strings plus `decision`
+/// (always a non-empty string) and `requiredAction`, which is a string when
+/// the ruling names a next action and JSON `null` otherwise — the one field
+/// in any wake pointer shape that is not required to be a string.
+fn is_disposition_pointer(object: &serde_json::Map<String, serde_json::Value>) -> bool {
+    const STRING_KEYS: [&str; 5] = [
+        "schema",
+        "type",
+        "operationId",
+        "reportRef",
+        "assignmentRef",
+    ];
+    object.len() == 7
+        && STRING_KEYS
+            .iter()
+            .all(|key| object.get(*key).is_some_and(serde_json::Value::is_string))
+        && object.get("schema").and_then(serde_json::Value::as_str)
+            == Some(TEAM_WAKE_POINTER_SCHEMA)
+        && object.get("type").and_then(serde_json::Value::as_str) == Some("disposition")
+        && object
+            .get("operationId")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|id| id.len() == 64 && id.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        && object
+            .get("decision")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|value| !value.is_empty())
+        && object
+            .get("requiredAction")
+            .is_some_and(|value| value.is_string() || value.is_null())
+}
+
 /// Whether a parsed JSON value is one of the pointer shapes this provider
 /// mints for a wake.
 ///
@@ -407,17 +478,21 @@ fn is_terminal_pointer(object: &serde_json::Map<String, serde_json::Value>) -> b
 /// [`is_team_wake_pointer`]: a second one would be a second opinion about what
 /// a wake is, and the fence and the framing must never disagree about that.
 ///
-/// Three shapes, not two, since lane 240: a host-result summary
+/// Four shapes, not two, since lane 240 and lane R7-G: a host-result summary
 /// ([`crate::host_result_wake::is_host_result_pointer`]) is provider-minted
-/// JSON delivered to a seat exactly as the other two are, so it needs the
-/// same two things they need — the `[Context]` framing that tells its
-/// recipient what scope it is in and where to answer, and the operation fence
-/// that stops two producers spending two turns on one fact. Leaving it out
-/// would reproduce COMMS-MAP finding 3, where one pointer arrived framed and
-/// an identical one arrived naked depending on whose key started the host.
+/// JSON delivered to a seat exactly as the others are, so it needs the same
+/// two things they need — the `[Context]` framing that tells its recipient
+/// what scope it is in and where to answer, and the operation fence that
+/// stops two producers spending two turns on one fact. Leaving it out would
+/// reproduce COMMS-MAP finding 3, where one pointer arrived framed and an
+/// identical one arrived naked depending on whose key started the host. The
+/// disposition pointer ([`is_disposition_pointer`]) exists for the same
+/// reason: a lead's wake about a verifier's ruling is provider-minted text
+/// like any other, not prose.
 fn is_wake_pointer_value(value: &serde_json::Value) -> bool {
     value.as_object().is_some_and(|object| {
         is_report_pointer(object)
+            || is_disposition_pointer(object)
             || is_terminal_pointer(object)
             || crate::host_result_wake::is_host_result_pointer(object)
     })
@@ -596,6 +671,7 @@ pub struct VerifiedWakeSnapshot {
     pub package: CodingSessionContextPackage,
     pub team_events: Vec<Event>,
     pub included_reports: Vec<IncludedReport>,
+    pub included_dispositions: Vec<IncludedDisposition>,
 }
 
 /// Typed wake verification failure. Structural projection bounds must remain
@@ -731,12 +807,14 @@ pub async fn fetch_verified_snapshot(
     .collect::<Vec<_>>();
     let context = fold_context(scope, &founder_pubkey, &authority);
     let included_reports = included_reports(&team_events, &context)?;
+    let included_dispositions = included_dispositions(&team_events, &context)?;
     Ok(VerifiedWakeSnapshot {
         founder_pubkey,
         authority,
         package,
         team_events,
         included_reports,
+        included_dispositions,
     })
 }
 

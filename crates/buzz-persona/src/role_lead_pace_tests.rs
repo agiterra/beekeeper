@@ -78,6 +78,21 @@ const LEAD_1_2_5_RULES: [&str; 2] = [
      verdict` fetches the report and refuses a mismatch.",
 ];
 
+/// Lead 1.2.6 (control run 7): a verifier published an approving disposition
+/// on the builder's report and it woke nobody, so the verifier messaged the
+/// lead by hand to say so. 1.2.6 tells the lead the disposition itself is the
+/// wake, and separately that a verdict never settles the verifier's own
+/// assignment — run 7 left one unsettled at terminal.
+const LEAD_1_2_6_RULES: [&str; 2] = [
+    "A verifier's disposition arrives as a wake; do not poll for it and do not ask the \
+     verifier to message you.",
+    "A verdict alone never settles the verifier's own assignment: before you complete, the \
+     verifier settles it with `$BEE sessions report --channel <ch> --session-ref <ref> \
+     --genesis <genesis id> --body @report.json` naming its own assignment id as \
+     `assignmentRef` — the same command any assignee uses to close its own assignment, run \
+     against the verifier's assignment rather than the builder's.",
+];
+
 #[test]
 fn the_composed_lead_carries_every_work_command_shape_in_order() {
     let catalog = TemplateCatalog::load(&templates_dir(), "test").expect("the shipped catalog");
@@ -100,7 +115,7 @@ fn the_composed_lead_carries_every_work_command_shape_in_order() {
         .iter()
         .find(|include| include.reference.starts_with("beekeeper/lead@"))
         .expect("the lead includes its role template");
-    assert_eq!(lead_include.resolved.as_deref(), Some("1.2.5"));
+    assert_eq!(lead_include.resolved.as_deref(), Some("1.2.6"));
 
     let prompt = &composed.persona.prompt;
     let mut last = 0;
@@ -120,6 +135,9 @@ fn the_composed_lead_carries_every_work_command_shape_in_order() {
         LEAD_SITUATION_CARD_RULES[0]
     );
     for rule in LEAD_1_2_5_RULES {
+        assert!(prompt.contains(rule), "the composed lead lacks {rule:?}");
+    }
+    for rule in LEAD_1_2_6_RULES {
         assert!(prompt.contains(rule), "the composed lead lacks {rule:?}");
     }
     let hire = composed
