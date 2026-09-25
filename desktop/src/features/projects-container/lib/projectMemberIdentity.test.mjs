@@ -70,3 +70,28 @@ test("a blank managed-agent name falls back to the key, never to a guess", () =>
   assert.equal(row.role, null);
   assert.equal(row.kind, "agent");
 });
+
+// Ledger 266: a private project's roster names this computer's
+// session-provider key so the host can read the project; the row says so.
+test("this computer's provider key reads as This computer, with its key", () => {
+  const row = projectMemberIdentity({
+    pubkey: KEY,
+    hostPubkey: KEY.toUpperCase(),
+    managedAgent: { pubkey: KEY, name: "Verifier 2", homeRole: "verifier" },
+    truncate,
+  });
+  assert.equal(row.name, "This computer");
+  assert.equal(row.kind, "host");
+  assert.equal(row.role, null);
+  assert.equal(row.showKey, true);
+});
+
+test("another computer's provider key is not this computer", () => {
+  const row = projectMemberIdentity({
+    pubkey: KEY,
+    hostPubkey: "f".repeat(64),
+    truncate,
+  });
+  assert.equal(row.kind, "unknown");
+  assert.notEqual(row.name, "This computer");
+});

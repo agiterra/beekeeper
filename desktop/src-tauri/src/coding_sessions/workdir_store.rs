@@ -579,6 +579,26 @@ pub(crate) fn load_workdir_store_readonly(
     load_workdir_store_readonly_from(&workdir_store_path_readonly(app)?)
 }
 
+/// The projects this computer has a saved association with: the keys of the
+/// store's `byProject` and `agentsRepos` maps, normalized and deduplicated
+/// (ledger 266's host-admission reconcile reads exactly these — never every
+/// private project on the relay). Only project coordinates leave this module,
+/// never a path.
+pub(crate) fn saved_association_project_refs(app: &AppHandle) -> Result<Vec<String>, String> {
+    let store = load_workdir_store_readonly(app)?;
+    let mut projects: Vec<String> = store
+        .by_project
+        .keys()
+        .chain(store.agents_repos.keys())
+        .filter_map(|key| {
+            crate::managed_agents::project_agent_association::normalize_project_ref(key)
+        })
+        .collect();
+    projects.sort();
+    projects.dedup();
+    Ok(projects)
+}
+
 /// Read the record, treating a missing file as the empty steady state.
 pub(crate) fn load_workdir_store(app: &AppHandle) -> Result<CodingSessionWorkdirStore, String> {
     let path = workdir_store_path(app)?;

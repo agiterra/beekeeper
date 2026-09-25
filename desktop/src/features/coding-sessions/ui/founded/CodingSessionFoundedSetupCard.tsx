@@ -32,6 +32,7 @@ import {
 import { NewCodingSessionReadiness } from "../NewCodingSessionReadiness";
 import { NewCodingSessionRolesField } from "../NewCodingSessionRolesField";
 import { TEAM_READINESS_QUERY_KEY } from "../../lib/useProjectTeamReadiness";
+import { CodingSessionHostAdmissionLine } from "../CodingSessionHostAdmissionLine";
 import { CodingSessionFoundedModeSwitch } from "./CodingSessionFoundedModeSwitch";
 import { CodingSessionFoundedWhereField } from "./CodingSessionFoundedWhereField";
 import type { CodingSessionFoundedGoal } from "./CodingSessionFoundedWorkspace";
@@ -419,6 +420,8 @@ export function CodingSessionFoundedSetupCard({
           {setup.status.message}
         </p>
       ) : null}
+
+      <CodingSessionHostAdmissionLine admission={setup.hostAdmission} />
 
       {isCodingSessionAuthFailure(setup.failureCode) ? (
         <ProviderLoginNeeded

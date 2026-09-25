@@ -161,6 +161,9 @@ pub struct ProjectVerifySetup {
     /// before a definition even exists to grant.
     pub grant_error: Option<String>,
     pub error: Option<String>,
+    /// This computer's admission to the new project (ledger 266): creation
+    /// pre-provisions it, so a session founded next finds the host admitted.
+    pub host_admission: Option<crate::managed_agents::project_admission::HostAdmission>,
 }
 
 /// Publish the seeded `verify` definition and, right after, the standing
@@ -174,6 +177,7 @@ pub struct ProjectVerifySetup {
 /// this key already published it.
 #[tauri::command]
 pub async fn project_verify_setup(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     project_ref: String,
     project_name: String,
@@ -206,6 +210,17 @@ pub(crate) async fn project_verify_setup_with_state(
     };
     let keys = state.signing_keys()?;
     let me = keys.public_key().to_hex();
+    result.host_admission = Some(
+        crate::managed_agents::project_admission::admit_host_for_session(
+            &app,
+            &state,
+            &keys,
+            &project,
+            &crate::relay::relay_ws_url_with_override(&state),
+            None,
+        )
+        .await,
+    );
 
     // A retry must land in the channel the first attempt used: the relay
     // refuses an update of a workflow from a different channel.

@@ -293,11 +293,17 @@ pub async fn provision_coding_session_provider(
         eprintln!("buzz-desktop: failed to materialize coding-session projects view: {error}");
     }
 
-    ensure_running(&app, &provider, &relay_url)?;
+    if ensure_running(&app, &provider, &relay_url)? {
+        crate::managed_agents::project_admission::reconcile_saved_project_admissions(
+            &app, &relay_url,
+        );
+    }
     provider_status(&app, &provider, &relay_url)
 }
 
-/// Start the provisioned provider if it is not already supervised.
+/// Start the provisioned provider if it is not already supervised, then
+/// reconcile this host's admission to every project it has a saved
+/// association with (ledger 266).
 #[tauri::command]
 pub async fn ensure_coding_session_provider_running(
     app: AppHandle,
@@ -306,7 +312,11 @@ pub async fn ensure_coding_session_provider_running(
     expected_relay_url: Option<String>,
 ) -> Result<CodingSessionProviderStatus, String> {
     let relay_url = provider_command_relay(&state, expected_relay_url.as_deref())?;
-    ensure_running(&app, &provider, &relay_url)?;
+    if ensure_running(&app, &provider, &relay_url)? {
+        crate::managed_agents::project_admission::reconcile_saved_project_admissions(
+            &app, &relay_url,
+        );
+    }
     provider_status(&app, &provider, &relay_url)
 }
 

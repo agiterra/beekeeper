@@ -25,16 +25,15 @@ use crate::app_state::AppState;
 use crate::managed_agents::project_agent_association::normalize_project_ref;
 use crate::session_provider::{supervisor, CodingSessionProviderState};
 use buzz_core_pkg::kind::{
-    is_private_project_event, is_valid_project_role, KIND_PROJECT, KIND_PROJECT_MEMBERS,
-    KIND_PROJECT_PUT_MEMBER, KIND_PROJECT_REMOVE_MEMBER, PROJECT_ROLE_COLLABORATOR,
-    PROJECT_ROLE_OWNER,
+    is_valid_project_role, KIND_PROJECT, KIND_PROJECT_MEMBERS, KIND_PROJECT_PUT_MEMBER,
+    KIND_PROJECT_REMOVE_MEMBER, PROJECT_ROLE_COLLABORATOR, PROJECT_ROLE_OWNER,
 };
 
 /// One roster row: `(pubkey, role)`, the pubkey lowercase hex.
 pub(crate) type RosterRow = (String, String);
 
 /// `(owner-hex, dtag)` of a normalized coordinate.
-fn split_coordinate(coordinate: &str) -> Result<(String, String), String> {
+pub(crate) fn split_coordinate(coordinate: &str) -> Result<(String, String), String> {
     let normalized = normalize_project_ref(coordinate)
         .ok_or_else(|| format!("{coordinate:?} is not a project coordinate"))?;
     let mut parts = normalized.splitn(3, ':');
@@ -45,7 +44,7 @@ fn split_coordinate(coordinate: &str) -> Result<(String, String), String> {
     }
 }
 
-fn lower_hex64(value: &str) -> Result<String, String> {
+pub(crate) fn lower_hex64(value: &str) -> Result<String, String> {
     let lower = value.trim().to_ascii_lowercase();
     if lower.len() == 64 && lower.bytes().all(|b| b.is_ascii_hexdigit()) {
         Ok(lower)
@@ -288,60 +287,21 @@ pub(crate) fn roster_write_refusal(
     ))
 }
 
-/// Put `provider_pubkey` on `project_ref`'s roster as a collaborator, but
-/// only when the project is private.
-///
-/// The host does the project's work — host steps, worktrees, verify results
-/// — under this key, never the seat's, so a private project's roster must
-/// name it or the relay's read gate withholds every repository event
-/// (relay-signed ref state included) from it
-/// (`crates/buzz-db/src/git_repo.rs::hidden_repos_for_reader`,
-/// `crates/buzz-core/src/kind.rs::repo_event_hidden_from`; proven live in
-/// kettle-control-6, 2026-09-24). A public project's repositories are not
-/// gated on roster membership, so this is skipped there — adding the host
-/// would be roster noise the relay never checks.
-///
-/// `None` when the project's head could not be read or is public: nothing
-/// was attempted. `Some` otherwise, carrying the same report
-/// [`ensure_project_agents_on_roster`] would (idempotent, infallible for the
-/// caller).
-pub(crate) async fn ensure_host_on_private_roster(
-    state: &AppState,
-    keys: &Keys,
-    project_ref: &str,
-    provider_pubkey: &str,
-) -> Option<RosterOutcome> {
-    let (owner, dtag) = split_coordinate(project_ref).ok()?;
-    let head = read_project_head(state, &owner, &dtag).await.ok()??;
-    if !is_private_project_event(&head) {
-        return None;
-    }
-    Some(
-        ensure_project_agents_on_roster(state, keys, project_ref, &[provider_pubkey.to_string()])
-            .await,
-    )
-}
-
 /// Start this host's local session provider for `relay_url` if it is not
-/// already running, then repair `project_ref`'s roster so the host's key
-/// (`provider_pubkey`) can read a private project's repository events.
+/// already running, then admit the host to `project_ref`.
 ///
-/// This is the single choke point every path that starts a project's
-/// provider must call through instead of
-/// [`supervisor::ensure_running`] directly: a private project's roster
-/// must name the host's key or the relay's read gate withholds every
-/// repository event from it (see [`ensure_host_on_private_roster`]).
-/// Run 7 (2026-09-24, kettle-control-6) landed the repair on only one of
-/// the two call sites that start a provider — `project_team_setup_launch`
-/// — and missed `project_team_setup_activation`'s `start_lead`, so a
-/// project whose provider was first started from the lead-handoff path
-/// stayed off the roster. Routing both through this helper keeps the two
-/// from diverging again.
+/// A thin wrapper: the admission itself is
+/// [`admit_host_for_session`](super::project_admission::admit_host_for_session),
+/// the one seam every founding and resume path runs (ledger 266). Both
+/// team-setup paths that start a provider — `project_team_setup_launch` and
+/// `project_team_setup_activation`'s `start_lead` — call through here so
+/// neither can start a provider without admitting the host (run 7 wired the
+/// repair into one and missed the other).
 ///
-/// Returns what `ensure_running` returns. The roster repair is
-/// best-effort and never turns into an error here: a refusal is logged
-/// at `warn`, a repair at `info`, and either way the caller proceeds with
-/// whatever `ensure_running` reported.
+/// Returns what `ensure_running` returns. The admission's result is one of
+/// four named states, always logged; a host that is not admitted is not an
+/// error here, because the launch's own verification says what the seat
+/// could not read.
 pub(crate) async fn ensure_host_serving_project(
     app: &AppHandle,
     state: &AppState,
@@ -352,23 +312,16 @@ pub(crate) async fn ensure_host_serving_project(
     relay_url: &str,
 ) -> Result<bool, String> {
     let running = supervisor::ensure_running(app, provider, relay_url)?;
-    match ensure_host_on_private_roster(state, keys, project_ref, provider_pubkey).await {
-        None => {}
-        Some(outcome) if outcome.added.is_empty() && outcome.error.is_none() => {}
-        Some(outcome) if outcome.error.is_none() => tracing::info!(
-            target: "managed_agents::project_roster",
-            project = %project_ref,
-            provider_pubkey = %provider_pubkey,
-            event_id = ?outcome.event_id,
-            "repaired a private project's roster: the host was missing and is now a collaborator"
-        ),
-        Some(outcome) => tracing::warn!(
-            target: "managed_agents::project_roster",
-            project = %project_ref,
-            provider_pubkey = %provider_pubkey,
-            "could not repair the private project's roster with the host's key: {}",
-            outcome.error.unwrap_or_default()
-        ),
+    if running {
+        crate::managed_agents::project_admission::admit_host_for_session(
+            app,
+            state,
+            keys,
+            project_ref,
+            relay_url,
+            Some(provider_pubkey),
+        )
+        .await;
     }
     Ok(running)
 }

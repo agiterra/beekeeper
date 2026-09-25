@@ -26,8 +26,9 @@ import {
   recordCodingSessionWorkdirUse,
   stageCodingSessionCreateHint,
 } from "@/shared/api/tauriCodingSessionWorkdirs";
+import { ensureLocalProvider } from "./codingSessionLocalProvider";
 import {
-  ensureCodingSessionProviderRunning,
+  admitThisComputerToProject,
   getCodingSessionProviderModels,
   getCodingSessionProviderRuntimes,
   getCodingSessionProviderStatus,
@@ -35,6 +36,7 @@ import {
   type CodingSessionProviderModels,
   type CodingSessionProviderRuntime,
   type CodingSessionProviderStatus,
+  type HostAdmission,
 } from "@/shared/api/tauriSessionProvider";
 import { useCodingSessionCatalog } from "../useCodingSessionCatalog";
 import {
@@ -140,6 +142,10 @@ export function useNewCodingSessionCreate({
     React.useState<CodingSessionSeatPackRef | null>(null);
   const [hostPhase, setHostPhase] =
     React.useState<NewCodingSessionHostPhase>("idle");
+  // This computer's admission to the session's project (ledger 266); null
+  // when none was asked for (no project, or another computer's host).
+  const [hostAdmission, setHostAdmission] =
+    React.useState<HostAdmission | null>(null);
   const [providerStatus, setProviderStatus] =
     React.useState<CodingSessionProviderStatus | null>(null);
   const [providerRuntimes, setProviderRuntimes] = React.useState<
@@ -515,6 +521,14 @@ export function useNewCodingSessionCreate({
           onTrustMutated,
         });
         if (status) setProviderStatus(status);
+        // Admission is part of acquiring this host, whatever state the
+        // provider was already in (ledger 266): founding and joining both.
+        setHostAdmission(
+          input.projectRef &&
+            status?.providerPubkey === input.target.signerPubkey
+            ? await admitThisComputerToProject(input.projectRef)
+            : null,
+        );
 
         if (input.workdir) {
           await stageCodingSessionCreateHint({
@@ -728,6 +742,7 @@ export function useNewCodingSessionCreate({
   return {
     beginLoginWatch,
     durabilityError,
+    hostAdmission,
     hostPhase,
     isPublishing,
     lifecycle,
@@ -950,38 +965,4 @@ export async function loadOrProvisionCodingSessionProvider({
   const provisioned = await provision();
   onTrustMutated();
   return provisioned;
-}
-
-/**
- * Make sure this computer's provider exists and is running.
- *
- * Only for the local provider. A target signed by some other machine's
- * provider is that machine's business — provisioning here would mint a second
- * identity for no reason.
- */
-async function ensureLocalProvider(input: {
-  isLocalProvider: (pubkey: string) => boolean;
-  signerPubkey: string;
-  setHostPhase: (phase: NewCodingSessionHostPhase) => void;
-  onTrustMutated: () => void;
-}): Promise<CodingSessionProviderStatus | null> {
-  const status = await getCodingSessionProviderStatus().catch(() => null);
-  if (status && !status.provisioned) {
-    input.setHostPhase("provisioning");
-    const provisioned = await provisionCodingSessionProvider();
-    input.onTrustMutated();
-    return provisioned;
-  }
-  if (!status || !input.isLocalProvider(input.signerPubkey)) {
-    return status;
-  }
-  if (!status.running) {
-    input.setHostPhase("starting");
-    // Starting also re-seeds trust (`supervisor.rs` re-asserts the entry on
-    // every start), so readers must refetch here too.
-    const running = await ensureCodingSessionProviderRunning();
-    input.onTrustMutated();
-    return running;
-  }
-  return status;
 }

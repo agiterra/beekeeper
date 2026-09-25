@@ -51,6 +51,7 @@ import { NewCodingSessionAgentSeatField } from "./NewCodingSessionAgentSeatField
 import { NewCodingSessionWorkdirField } from "./NewCodingSessionWorkdirField";
 import { NewCodingSessionWorktreeField } from "./NewCodingSessionWorktreeField";
 import { useNewCodingSessionCreate } from "./useNewCodingSessionCreate";
+import { CodingSessionHostAdmissionLine } from "./CodingSessionHostAdmissionLine";
 
 /**
  * Attach a second (third, …) provider execution to a session already running.
@@ -158,6 +159,7 @@ export function AddCodingSessionProviderForm({
   const {
     beginLoginWatch,
     durabilityError,
+    hostAdmission,
     hostPhase,
     isPublishing,
     lifecycle,
@@ -473,6 +475,8 @@ export function AddCodingSessionProviderForm({
           {worktreeError}
         </p>
       ) : null}
+
+      <CodingSessionHostAdmissionLine admission={hostAdmission} />
 
       {stagedSeatLabel ? (
         <p

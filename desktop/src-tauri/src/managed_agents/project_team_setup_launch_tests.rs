@@ -522,65 +522,153 @@ fn transition_cannot_replace_a_validly_signed_create_or_change_the_fixed_brief()
     );
 }
 
-/// Every production path that starts a project's local session provider
-/// must repair its private roster in the same call, or the host's key
-/// stays off it and the relay's read gate withholds every repository
-/// event from the host — see
-/// `project_roster::ensure_host_on_private_roster`'s doc. Run 7
-/// (2026-09-24, kettle-control-6) wired that repair into
-/// `project_team_setup_launch`'s call to `supervisor::ensure_running` but
-/// missed the second call site, `project_team_setup_activation`'s
-/// `start_lead`, which stayed bare — so a project whose provider was
-/// first started from the lead-handoff path never got repaired.
+/// Every production path that starts a provider or hands a session to one
+/// admits the host through the one seam,
+/// `project_admission::admit_host_for_session` (ledger 266).
 ///
-/// RED before the fix: `project_team_setup_activation.rs` called
-/// `supervisor::ensure_running(` directly (one occurrence), so this
-/// assertion failed with `direct_calls = ["desktop/.../project_team_setup_activation.rs"]`.
-/// GREEN after: both call sites route through
-/// `project_roster::ensure_host_serving_project`, which is the sole
-/// caller of `supervisor::ensure_running` outside `supervisor` itself, so
-/// no production file other than `project_roster.rs` names it.
+/// Run 7 (2026-09-24) wired the roster repair into one of two
+/// provider-starting call sites; run 8 (2026-09-25) had both, but the
+/// provider had been running since app launch, the founding never passed
+/// through a start path, and the host stayed off the roster. So:
+///
+/// - every production `ensure_running(` call outside `supervisor` is either
+///   `ensure_host_serving_project` (which admits the named project) or is
+///   followed by `reconcile_saved_project_admissions` (which admits every
+///   project this computer has a saved association with);
+/// - `supervisor::start_provider_if_provisioned` (app launch, community
+///   switch) reconciles too;
+/// - the create flow admits before it publishes, whatever the provider's
+///   state, and project creation pre-provisions;
+/// - there is one implementation: the pre-266 `ensure_host_on_private_roster`
+///   is gone.
+///
+/// RED on the base (bbb4adc1c): `session_provider/commands.rs` called
+/// `ensure_running(` twice with no admission after it, `supervisor.rs`'s
+/// launch start admitted nothing, and the create flow never named the
+/// project to the host at all.
 #[test]
 fn every_provider_start_routes_through_the_roster_repair_helper() {
-    let launch_source = include_str!("project_team_setup_launch.rs");
-    let activation_source = include_str!("project_team_setup_activation.rs");
-    let roster_source = include_str!("project_roster.rs");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut sources: Vec<(String, String)> = Vec::new();
+    let mut stack = vec![root.clone()];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).expect("read src").flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if !name.ends_with(".rs") || name.contains("test") {
+                continue;
+            }
+            let rel = path
+                .strip_prefix(&root)
+                .map(|p| p.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_default();
+            sources.push((rel, std::fs::read_to_string(&path).expect("read")));
+        }
+    }
+    let source = |rel: &str| {
+        sources
+            .iter()
+            .find(|(path, _)| path == rel)
+            .map(|(_, text)| text.as_str())
+            .unwrap_or_else(|| panic!("{rel} is missing"))
+    };
+    // Production code only: stop at the first `#[cfg(test)]`.
+    let production = |text: &str| text.split("#[cfg(test)]").next().unwrap_or("").to_string();
 
-    // The helper itself is the one place allowed to call `ensure_running`.
+    // Who calls `ensure_running(` in production, and how often.
+    let mut callers: Vec<(String, usize)> = sources
+        .iter()
+        .map(|(path, text)| {
+            let body = production(text);
+            let calls = body.matches("ensure_running(").count()
+                - body.matches("fn ensure_running(").count();
+            (path.clone(), calls)
+        })
+        .filter(|(_, calls)| *calls > 0)
+        .collect();
+    callers.sort();
     assert_eq!(
-        roster_source.matches("supervisor::ensure_running(").count(),
-        1,
-        "ensure_host_serving_project is the sole choke point that starts the provider"
+        callers,
+        vec![
+            ("managed_agents/project_roster.rs".to_string(), 1),
+            ("session_provider/commands.rs".to_string(), 2),
+            ("session_provider/supervisor.rs".to_string(), 1),
+        ],
+        "a new provider start must admit the host: route it through \
+         project_roster::ensure_host_serving_project or follow it with \
+         project_admission::reconcile_saved_project_admissions"
     );
-
-    let mut direct_calls = Vec::new();
-    if launch_source.contains("supervisor::ensure_running(") {
-        direct_calls.push("project_team_setup_launch.rs");
-    }
-    if activation_source.contains("supervisor::ensure_running(") {
-        direct_calls.push("project_team_setup_activation.rs");
-    }
+    let commands = production(source("session_provider/commands.rs"));
+    assert_eq!(
+        commands
+            .matches("project_admission::reconcile_saved_project_admissions(")
+            .count(),
+        2,
+        "both provider commands reconcile saved associations after a start"
+    );
+    let supervisor = production(source("session_provider/supervisor.rs"));
+    let launch_start = supervisor
+        .split("fn start_provider_if_provisioned(")
+        .nth(1)
+        .expect("start_provider_if_provisioned exists");
     assert!(
-        direct_calls.is_empty(),
-        "these files must not call supervisor::ensure_running directly, only \
-         project_roster::ensure_host_serving_project, or the private-project \
-         roster repair can be wired into one call site and missed on the \
-         other again (as it was in run 7): {direct_calls:?}"
+        launch_start
+            .split("\n}\n")
+            .next()
+            .unwrap_or("")
+            .contains("project_admission::reconcile_saved_project_admissions("),
+        "a provider started at app launch reconciles its saved projects"
     );
+    let roster = production(source("managed_agents/project_roster.rs"));
+    assert!(
+        roster.contains("project_admission::admit_host_for_session("),
+        "ensure_host_serving_project is a thin wrapper of the seam"
+    );
+    assert!(
+        production(source("managed_agents/project_verify_setup.rs"))
+            .contains("project_admission::admit_host_for_session("),
+        "project creation pre-provisions admission"
+    );
+    for (path, text) in &sources {
+        assert!(
+            !text.contains("ensure_host_on_private_roster"),
+            "{path}: the pre-266 repair is gone; there is one implementation"
+        );
+        if path != "managed_agents/project_admission.rs" {
+            assert!(
+                !text.contains("fn admit_host_to_project"),
+                "{path}: admission has one implementation"
+            );
+        }
+    }
 
-    // Both call sites do start the provider — through the helper.
-    assert_eq!(
-        launch_source
-            .matches("project_roster::ensure_host_serving_project(")
-            .count(),
-        1,
-        "project_team_setup_launch must route through the helper"
-    );
-    assert_eq!(
-        activation_source
-            .matches("project_roster::ensure_host_serving_project(")
-            .count(),
-        1,
-        "project_team_setup_activation's start_lead must route through the helper"
-    );
+    // Both team-setup provider starts route through the wrapper.
+    for rel in [
+        "managed_agents/project_team_setup_launch.rs",
+        "managed_agents/project_team_setup_activation.rs",
+    ] {
+        assert_eq!(
+            source(rel)
+                .matches("project_roster::ensure_host_serving_project(")
+                .count(),
+            1,
+            "{rel} must route through the helper"
+        );
+    }
+
+    // The create flow admits this computer before it publishes, whatever
+    // the provider's state (founding and joining share `submit`).
+    let create =
+        include_str!("../../../src/features/coding-sessions/ui/useNewCodingSessionCreate.ts");
+    let admit_at = create
+        .find("admitThisComputerToProject(")
+        .expect("the create flow admits the host");
+    let publish_at = create
+        .find("await publishSeatedCodingSessionCreate(")
+        .expect("the create flow publishes");
+    assert!(admit_at < publish_at, "admission comes before the publish");
 }

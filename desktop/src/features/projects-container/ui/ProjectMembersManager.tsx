@@ -1,3 +1,4 @@
+import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, UserPlus } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
@@ -15,6 +16,7 @@ import {
   type EntityRole,
 } from "@/shared/lib/entityRoles";
 import { truncatePubkey } from "@/shared/lib/pubkey";
+import { getCodingSessionProviderStatus } from "@/shared/api/tauriSessionProvider";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -142,6 +144,15 @@ export function ProjectMembersManager({
     [managedAgentsQuery.data],
   );
 
+  // This computer's session-provider key: a private project's roster names
+  // it so the host can read the project (ledger 266), and a bare hex row
+  // would hide which member that is.
+  const providerStatusQuery = useQuery({
+    queryKey: ["coding-session-provider-status"],
+    queryFn: getCodingSessionProviderStatus,
+  });
+  const hostPubkey = providerStatusQuery.data?.providerPubkey ?? null;
+
   const identityFor = React.useCallback(
     (pubkey: string) =>
       projectMemberIdentity({
@@ -149,9 +160,10 @@ export function ProjectMembersManager({
         profileName: profiles?.[pubkey]?.displayName ?? null,
         profileIsAgent: profiles?.[pubkey]?.isAgent ?? null,
         managedAgent: managedAgentsByPubkey.get(pubkey.toLowerCase()) ?? null,
+        hostPubkey,
         truncate: truncatePubkey,
       }),
-    [managedAgentsByPubkey, profiles],
+    [hostPubkey, managedAgentsByPubkey, profiles],
   );
   const displayName = React.useCallback(
     (pubkey: string) => identityFor(pubkey).name,
@@ -277,6 +289,14 @@ export function ProjectMembersManager({
                 </span>
                 {identity.kind === "agent" ? (
                   <Badge variant="outline">Agent</Badge>
+                ) : null}
+                {identity.kind === "host" ? (
+                  <Badge
+                    data-testid={`project-member-host-${entry.pubkey}`}
+                    variant="outline"
+                  >
+                    Session host
+                  </Badge>
                 ) : null}
                 {entry.isCreator ? (
                   <Badge variant="secondary">{ENTITY_ROLE_LABELS.owner}</Badge>

@@ -12,7 +12,8 @@
  *
  * The rule this file keeps, from an earlier slice's memory: **never call a
  * missing profile a human.** A key with no profile and no local record is
- * rendered as a key, unlabelled — not as a person.
+ * rendered as a key, unlabelled — not as a person. This computer's own
+ * session-provider key is named for what it is: "This computer".
  */
 
 /** The local evidence: one managed agent record on this computer. */
@@ -31,9 +32,11 @@ export type ProjectMemberIdentity = {
   /**
    * `"agent"` — a managed agent on this computer, or a profile that declares
    * itself one. `"profile"` — a published profile that does not. `"unknown"`
-   * — nothing on this computer knows this key; it is NOT a human.
+   * — nothing on this computer knows this key; it is NOT a human. `"host"`
+   * — this computer's own session provider, which a private project's
+   * roster must name for the host to read it (ledger 266).
    */
-  kind: "agent" | "profile" | "unknown";
+  kind: "agent" | "profile" | "unknown" | "host";
   /** Whether the hex key should be shown underneath as secondary text. */
   showKey: boolean;
 };
@@ -52,9 +55,17 @@ export function projectMemberIdentity(input: {
   profileIsAgent?: boolean | null;
   /** This computer's managed agent for the key, if any. */
   managedAgent?: ProjectMemberManagedAgent | null;
+  /** This computer's session-provider key, when it has one. */
+  hostPubkey?: string | null;
   /** How this app truncates a key for display. */
   truncate: (pubkey: string) => string;
 }): ProjectMemberIdentity {
+  const host = input.hostPubkey?.trim().toLowerCase() || null;
+  if (host !== null && host === input.pubkey.trim().toLowerCase()) {
+    // The key is this computer's: say so, and keep the key visible, since
+    // it is the one fact a person can check against the relay.
+    return { name: "This computer", role: null, kind: "host", showKey: true };
+  }
   const profileName = input.profileName?.trim() || null;
   const managed = input.managedAgent ?? null;
   const managedName = managed?.name?.trim() || null;

@@ -38,6 +38,7 @@ pub(crate) mod persona_events;
 mod personas;
 #[cfg(windows)]
 mod process_lifecycle;
+pub(crate) mod project_admission;
 pub(crate) mod project_agent_association;
 pub(crate) mod project_association_authority;
 pub(crate) mod project_association_carry;

@@ -872,7 +872,12 @@ pub(crate) fn start_provider_if_provisioned(app: &AppHandle, relay_url: &str) {
         return;
     };
     match ensure_running(app, &state, relay_url) {
-        Ok(true) => {}
+        // A provider running from app launch never passes through a
+        // session's start path, so its saved projects are admitted here
+        // (ledger 266).
+        Ok(true) => crate::managed_agents::project_admission::reconcile_saved_project_admissions(
+            app, relay_url,
+        ),
         Ok(false) => stop_provider(&state),
         Err(error) => eprintln!("buzz-desktop: session-provider: failed to start: {error}"),
     }

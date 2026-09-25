@@ -211,6 +211,41 @@ export async function provisionCodingSessionProvider(
   );
 }
 
+/**
+ * Whether this computer's session provider may serve a project, as proven
+ * against the relay (ledger 266). Mirrors the Rust `HostAdmission` in
+ * `desktop/src-tauri/src/managed_agents/project_admission.rs`: `admitted`
+ * is only ever returned after a read of the project made as the host.
+ */
+export type HostAdmission =
+  | { state: "public" }
+  | { state: "admitted"; already: boolean }
+  | { state: "unauthorized"; reason: string }
+  | { state: "unreadable"; reason: string };
+
+/**
+ * Admit this computer's provider to `projectRef` before a session is founded
+ * or joined there. Never throws: a failed call is itself `unreadable`, with
+ * its words, because a host that could not be checked is not a host that is
+ * known to be admitted.
+ */
+export async function admitThisComputerToProject(
+  projectRef: string,
+  expectedRelayUrl?: string,
+): Promise<HostAdmission> {
+  try {
+    return await invokeTauri<HostAdmission>("admit_this_computer_to_project", {
+      projectRef,
+      ...(expectedRelayUrl === undefined ? {} : { expectedRelayUrl }),
+    });
+  } catch (error) {
+    return {
+      state: "unreadable",
+      reason: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 /** Start the provisioned provider if it is not already supervised. */
 export async function ensureCodingSessionProviderRunning(
   expectedRelayUrl?: string,

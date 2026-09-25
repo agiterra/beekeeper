@@ -675,6 +675,8 @@ export function useCodingSessionFoundedSetup(input: {
     lifecycleState: create.lifecycle?.state ?? null,
     failureCode,
     status,
+    /** This computer's admission to the project, as the create found it. */
+    hostAdmission: create.hostAdmission,
     launch: crew.launch,
     isLaunching: crew.isLaunching,
     isPublishing: create.isPublishing,

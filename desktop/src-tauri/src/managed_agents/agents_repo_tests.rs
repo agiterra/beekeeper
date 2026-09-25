@@ -176,6 +176,12 @@ mod stub;
 #[path = "agents_repo_migrate_tests.rs"]
 mod migrating;
 
+// Project-service admission of this computer's host key (ledger 266),
+// against the same stub relay; its own file for the size gate.
+#[cfg(not(target_os = "windows"))]
+#[path = "project_admission_tests.rs"]
+mod admission;
+
 /// The stub relay's submit route. The literal stays in this file rather
 /// than the stub because `egress_guard_tests::EVENTS_INVENTORY` counts
 /// `/events` URL sites per file and pins this test file's one site.
@@ -449,78 +455,6 @@ mod against_a_stub_relay {
             stored.lock().unwrap().len(),
             stored_after_first + 1,
             "the rerun published nothing but the projection this test added"
-        );
-        std::fs::remove_dir_all(&root).ok();
-    }
-
-    /// Ledger 257: a private project's roster must name the host's own key
-    /// or the relay withholds its repositories' ref state from it. A public
-    /// project is not gated on roster membership, so nothing is published
-    /// for one.
-    #[tokio::test]
-    async fn a_private_projects_roster_gets_the_host_key_a_public_ones_does_not() {
-        use crate::managed_agents::project_roster::ensure_host_on_private_roster;
-
-        let root = scratch_root();
-        let owner = Keys::generate();
-        let viewer = owner.public_key().to_hex();
-        let host = "c".repeat(64);
-        let project = format!("30621:{viewer}:demo");
-        let (relay_url, stored) = spawn_stub_relay(
-            vec![private_project_head_json(&owner, "demo", "Demo Project")],
-            None,
-            None,
-        )
-        .await;
-        let state = stubbed_state(relay_url, owner.clone()).await;
-
-        // RED (before ensure_host_on_private_roster existed): setup put every
-        // installed agent on the roster but never this host, so the host's
-        // own reads stayed gated even after a clean setup.
-        let outcome = ensure_host_on_private_roster(&state, &owner, &project, &host)
-            .await
-            .expect("a private project is checked");
-        assert_eq!(outcome.error, None);
-        assert_eq!(outcome.added, vec![host.clone()]);
-        assert!(outcome.event_id.is_some());
-        let puts = stored_of_kind(&stored, 9010);
-        assert_eq!(puts.len(), 1, "exactly one 9010");
-        assert_eq!(
-            p_tags(&puts[0]),
-            vec![vec![
-                "p".to_string(),
-                host.clone(),
-                String::new(),
-                "collaborator".to_string(),
-            ]]
-        );
-
-        // Idempotent: already on the roster (the relay's projection says so
-        // now), a second check publishes nothing more.
-        stored
-            .lock()
-            .unwrap()
-            .push(roster_projection_json(&project, &[(&host, "collaborator")]));
-        let again = ensure_host_on_private_roster(&state, &owner, &project, &host)
-            .await
-            .expect("still private");
-        assert_eq!(again.added, Vec::<String>::new());
-        assert_eq!(stored_of_kind(&stored, 9010).len(), 1, "no second 9010");
-
-        // A public project's repositories are not gated on roster membership:
-        // nothing is even attempted.
-        let public_project = format!("30621:{viewer}:open");
-        stored
-            .lock()
-            .unwrap()
-            .push(project_head_json(&owner, "open", "Open Project"));
-        let public_outcome =
-            ensure_host_on_private_roster(&state, &owner, &public_project, &host).await;
-        assert!(public_outcome.is_none(), "{public_outcome:?}");
-        assert_eq!(
-            stored_of_kind(&stored, 9010).len(),
-            1,
-            "still just one 9010"
         );
         std::fs::remove_dir_all(&root).ok();
     }
