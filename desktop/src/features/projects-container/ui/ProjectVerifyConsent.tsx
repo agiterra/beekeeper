@@ -4,6 +4,8 @@ import { grantStandingApproval } from "@/shared/api/tauriWorkflows";
 import { Button } from "@/shared/ui/button";
 
 import {
+  verifyConsentCase,
+  verifyConsentCaseSentence,
   verifyConsentUnavailable,
   type ProjectVerifySetupResult,
 } from "../lib/projectVerifySetup";
@@ -13,18 +15,23 @@ function errorSentence(error: unknown): string {
 }
 
 /**
- * Setup's one consent question (ledger 248, 252; spec § 5.4): may this
- * computer run the project's `verify` definition, this exact one, from now
- * on?
+ * The consent question `project_verify_setup` did not already answer
+ * (Brian's 2026-09-25 ruling: **creation is consent**). Creating this
+ * project, on this computer, with the owner's key, already published the
+ * standing grant right after the definition itself — so this card renders
+ * `null` the moment `verify.grantEventId` is set. It appears only in the two
+ * cases that survive that: this host did not create the project (no grant
+ * exists for this key against the current hash), or the definition's hash
+ * changed since the grant this host holds. [`verifyConsentCase`] decides
+ * which; [`verifyConsentCaseSentence`] names it.
  *
  * Control run 6 (2026-09-24) found the prior card answered a kind:46010 that
  * setup manufactured by starting a real run at the code repository's empty
  * seed commit — a run on a provider setup never starts, so it sat unclaimed
- * and then ran red on a commit with no tests. The click now publishes a
- * standing grant directly (`grantStandingApproval`), bound to
- * `(workflowId, definitionHash)`. No run happens here; a routine run of this
- * exact definition, from any seat, is what the grant later covers — and asks
- * nobody. An edited definition hashes differently and asks again.
+ * and then ran red on a commit with no tests. Run 7 (2026-09-25) then found
+ * that asking a second time for consent creation itself already gives was
+ * its own kind of dishonesty; setup now grants automatically, and this card
+ * is the fallback for the two cases it cannot answer for itself.
  */
 export function ProjectVerifyConsent({
   verify,
@@ -34,6 +41,7 @@ export function ProjectVerifyConsent({
   verifyError: string | null;
 }) {
   const unavailable = verifyConsentUnavailable(verify, verifyError);
+  const consentCase = verifyConsentCase(verify);
   const workflowId = verify?.workflowId ?? null;
   const definitionHash = verify?.definitionHash ?? null;
 
@@ -46,6 +54,8 @@ export function ProjectVerifyConsent({
     },
   });
   const { mutate: grantMutate, isPending, isSuccess, error, data } = grant;
+
+  if (unavailable === null && consentCase === null) return null;
 
   return (
     <div
@@ -62,11 +72,11 @@ export function ProjectVerifyConsent({
         </p>
       ) : (
         <>
-          <p className="text-xs text-muted-foreground">
-            Agents run this project&apos;s verify action on your computer. The
-            one answer below covers every future run of exactly this definition;
-            an edited definition asks again. No run happens as part of answering
-            — the first run of it is whatever a session starts next.
+          <p
+            className="text-xs text-muted-foreground"
+            data-testid="project-verify-consent-case"
+          >
+            {consentCase !== null ? verifyConsentCaseSentence(consentCase) : ""}
           </p>
           {isSuccess ? (
             <p

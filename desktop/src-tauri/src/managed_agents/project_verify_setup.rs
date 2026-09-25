@@ -1,32 +1,44 @@
 //! Project setup's one standing consent (ledger 248, 252; plan "Approval"
-//! ruling).
+//! ruling; Brian's 2026-09-25 ruling: **creation is consent**).
 //!
 //! A new project's agents repository seeds an **active** manual `verify`
 //! action (`buzz_persona::seed::seeded_actions_yml_with_verify`). Before any
 //! team starts, setup publishes that definition (kind 30620) so its
-//! `definition_hash` exists, and the "Approve and allow future runs" click
-//! answers it with a standing grant (kind:46030, `scope: action`,
+//! `definition_hash` exists, and — right after — publishes the standing
+//! grant for it directly (kind:46030, `scope: action`,
 //! `handle_standing_approval_grant` in
 //! `crates/buzz-relay/src/handlers/command_executor.rs`) bound to
-//! `(workflow id, definition_hash)` directly — the existing hash-bound
-//! autorun grant a per-run approval would also record.
+//! `(workflow id, definition_hash)`, with this same owner key. Creating a
+//! project on this computer, with the owner's key, already says "this
+//! computer may run this project's actions"; there is no separate click to
+//! wait for. [`ensure_standing_grant`] is idempotent: it reads
+//! `GET /workflows/{id}/autorun` first and publishes nothing when an active
+//! grant for the exact hash already exists, reporting that grant's id
+//! instead.
 //!
 //! Control run 6 (2026-09-24) found the prior shape started a real run at
 //! the code repository's **empty seed commit** purely to park it on a
-//! synthetic approval gate and manufacture a kind:46010 for the click to
+//! synthetic approval gate and manufacture a kind:46010 for a click to
 //! answer — a run nothing had asked for, gated on a host provider that setup
 //! never starts (`session_provider::supervisor::ensure_running` is only
 //! called from session launch), so it sat unclaimed and then ran red on a
-//! commit with no tests. Setup now asks for consent directly: no trigger, no
-//! run, no host-step ceremony.
+//! commit with no tests. Run 7 (2026-09-25) then found that asking a second
+//! time for consent creation itself already gives was its own kind of
+//! dishonesty. Setup now asks nobody: no trigger, no run, no host-step
+//! ceremony, and no consent card either — the two remaining places it can
+//! still appear (`ProjectVerifyConsent`, `ProjectActionCard`) show only when
+//! this host holds no active grant for the workflow's current hash: a
+//! foreign host that did not create the project, or a definition edited
+//! after the grant.
 //!
 //! What this consent is and is not: it is the person whose computer runs the
 //! command agreeing to *this definition* running there — resource consent,
 //! not supervision (spec § 5.4). A routine run of the unchanged definition,
 //! from any seat, asks nobody; an edited definition hashes differently and
-//! asks again. The publication lands on the same workflow id
-//! `bee actions publish` uses (`action_workflow_id`), because the grant binds
-//! `(workflow id, hash)`.
+//! asks again (from whichever host publishes the edit, since that host's key
+//! holds no grant for the new hash). The publication lands on the same
+//! workflow id `bee actions publish` uses (`action_workflow_id`), because
+//! the grant binds `(workflow id, hash)`.
 
 use serde::Serialize;
 use tauri::State;
@@ -138,13 +150,22 @@ pub struct ProjectVerifySetup {
     /// The code repository's seed commit, informational only — no run is
     /// bound to it. Reported so the consent question can name it.
     pub checkout: Option<String>,
+    /// The standing grant's event id — this run's own publish, or an
+    /// existing active grant [`ensure_standing_grant`] found instead of
+    /// publishing a second one. `None` when [`Self::error`] or
+    /// [`Self::grant_error`] explains why no grant exists.
+    pub grant_event_id: Option<String>,
+    /// The step that stopped the grant, in the host's words, when
+    /// `definition_hash` published but no grant could be confirmed or
+    /// published for it. Distinct from [`Self::error`], which stops setup
+    /// before a definition even exists to grant.
+    pub grant_error: Option<String>,
     pub error: Option<String>,
 }
 
-/// Publish the seeded `verify` definition. The consent question itself — a
-/// standing grant against `workflow_id`/`definition_hash` — is a separate
-/// call ([`grant_standing_approval`](crate::commands::grant_standing_approval))
-/// made once the person answers it; publishing here starts no run.
+/// Publish the seeded `verify` definition and, right after, the standing
+/// grant that answers it (creation is consent — see the module docs). No run
+/// happens here.
 ///
 /// `actions_yml` is `ProjectAgentsInit.seededActionsYml`, the bytes this
 /// computer seeded and pushed; `checkout` is the code repository's seed
@@ -154,6 +175,20 @@ pub struct ProjectVerifySetup {
 #[tauri::command]
 pub async fn project_verify_setup(
     state: State<'_, AppState>,
+    project_ref: String,
+    project_name: String,
+    actions_yml: String,
+    checkout: String,
+) -> Result<ProjectVerifySetup, String> {
+    project_verify_setup_with_state(&state, project_ref, project_name, actions_yml, checkout).await
+}
+
+/// [`project_verify_setup`]'s body, taking `&AppState` directly instead of a
+/// [`State`] Tauri cannot construct outside a real app. Tests drive this
+/// against a stub relay (`build_app_state()` plus `relay_url_override`), the
+/// same split [`super::packs_repo::project_packs_init`] documents.
+pub(crate) async fn project_verify_setup_with_state(
+    state: &AppState,
     project_ref: String,
     project_name: String,
     actions_yml: String,
@@ -175,7 +210,7 @@ pub async fn project_verify_setup(
     // A retry must land in the channel the first attempt used: the relay
     // refuses an update of a workflow from a different channel.
     let existing = crate::relay::query_relay(
-        &state,
+        state,
         &[serde_json::json!({
             "kinds": [30620],
             "authors": [me],
@@ -212,7 +247,7 @@ pub async fn project_verify_setup(
                 )
             };
             let submit = |builder| async {
-                match crate::relay::submit_event(builder, &state).await {
+                match crate::relay::submit_event(builder, state).await {
                     Ok(response) if response.accepted => Ok(()),
                     Ok(response) => Err(response.message),
                     Err(error) => Err(error),
@@ -249,7 +284,7 @@ pub async fn project_verify_setup(
             &plan.yaml,
         )
         .map_err(|error| error.to_string())?;
-        match crate::relay::submit_event(builder, &state).await {
+        match crate::relay::submit_event(builder, state).await {
             Ok(response) if response.accepted => {
                 result.publish_event_id = Some(response.event_id);
                 last_error.clear();
@@ -264,6 +299,66 @@ pub async fn project_verify_setup(
     }
     if result.publish_event_id.is_none() {
         result.error = Some(format!("the verify action was not published: {last_error}"));
+        return Ok(result);
+    }
+
+    // Creation is consent (Brian's 2026-09-25 ruling): publish the standing
+    // grant for exactly the hash just published, with the same owner key,
+    // right after — not a second click to wait for.
+    match ensure_standing_grant(state, &plan.workflow_id.to_string(), &plan.definition_hash).await {
+        Ok(event_id) => result.grant_event_id = Some(event_id),
+        Err(error) => result.grant_error = Some(error),
     }
     Ok(result)
+}
+
+/// The definition hash of an active, unrevoked grant this relay already
+/// records — decoded from `GET /workflows/{id}/autorun`'s minimal shape,
+/// ignoring every field [`ensure_standing_grant`] does not need.
+#[derive(serde::Deserialize)]
+struct AutorunGrantRead {
+    matches_current: bool,
+    revoked_at: Option<String>,
+    grant_event_id: String,
+}
+
+/// Publish the standing grant for `(workflow_id, definition_hash)`, unless
+/// an active, unrevoked grant for that exact hash already exists — in which
+/// case nothing is published and that grant's event id is returned instead.
+///
+/// A read failure (the relay's eventual-consistency window right after the
+/// definition above just published, or a genuine network error) is not
+/// distinguished from "no grant yet": consent was already given by creating
+/// the project, so this fails open toward granting rather than open toward
+/// asking again. The relay itself still refuses a grant from anyone but the
+/// workflow's project owner (or its own owner pubkey), so failing open here
+/// grants nothing a foreign host's key could not have asked for directly.
+async fn ensure_standing_grant(
+    state: &AppState,
+    workflow_id: &str,
+    definition_hash: &str,
+) -> Result<String, String> {
+    let existing: Result<serde_json::Value, String> =
+        crate::relay::get_relay_json(state, &format!("/workflows/{workflow_id}/autorun")).await;
+    if let Ok(read) = existing {
+        let grants: Vec<AutorunGrantRead> = read
+            .get("grants")
+            .cloned()
+            .map(serde_json::from_value)
+            .transpose()
+            .unwrap_or(None)
+            .unwrap_or_default();
+        if let Some(grant) = grants
+            .into_iter()
+            .find(|grant| grant.matches_current && grant.revoked_at.is_none())
+        {
+            return Ok(grant.grant_event_id);
+        }
+    }
+    let builder = crate::events::build_standing_approval_grant(workflow_id, definition_hash, None)?;
+    let response = crate::relay::submit_event(builder, state).await?;
+    if !response.accepted {
+        return Err(response.message);
+    }
+    Ok(response.event_id)
 }

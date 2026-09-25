@@ -5,6 +5,8 @@ import {
   DEFAULT_VERIFY_COMMAND_TEXT,
   decodeProjectVerifySetup,
   parseVerifyCommand,
+  verifyConsentCase,
+  verifyConsentCaseSentence,
   verifyConsentUnavailable,
 } from "./projectVerifySetup.ts";
 
@@ -42,6 +44,8 @@ test("consent is offered only when every setup step resolved, and says which did
     publishEventId: "e1",
     channelReused: false,
     checkout: "d".repeat(40),
+    grantEventId: "g1",
+    grantError: null,
     error: null,
   });
   assert.equal(verifyConsentUnavailable(done, null), null);
@@ -74,10 +78,55 @@ test("setup no longer reports a run or trigger — a response naming neither sti
     publishEventId: "e1",
     channelReused: false,
     checkout: "d".repeat(40),
+    grantEventId: null,
+    grantError: null,
     error: null,
   });
   assert.equal(decoded.workflowId, "wf");
   assert.equal(decoded.definitionHash, "c".repeat(64));
+});
+
+/**
+ * Brian's 2026-09-25 ruling: creation is consent, so setup's own grant
+ * hides the card the instant it exists — the card is left only for a host
+ * that holds none (`"not-created"`), or one whose grant no longer matches
+ * the workflow's current hash (`"changed"`).
+ */
+test("verifyConsentCase hides once setup's own grant exists, and names the surviving case otherwise", () => {
+  const granted = {
+    workflowId: "wf",
+    channelId: "chan",
+    definitionHash: "c".repeat(64),
+    command: [],
+    publishEventId: "e1",
+    channelReused: false,
+    checkout: "d".repeat(40),
+    grantEventId: "g1",
+    grantError: null,
+    error: null,
+  };
+  assert.equal(verifyConsentCase(granted), null);
+
+  const ungranted = { ...granted, grantEventId: null };
+  assert.equal(verifyConsentCase(ungranted), "not-created");
+  assert.equal(verifyConsentCase(null), "not-created");
+
+  // A live hash independent of what setup itself recorded — e.g. the
+  // Actions tab's own autorun read — can tell "changed" apart from
+  // "not-created" even though setup's own result looks identical either way.
+  assert.equal(
+    verifyConsentCase(ungranted, "d".repeat(64)),
+    "changed",
+    "a live hash different from verify.definitionHash is the changed case",
+  );
+  assert.equal(
+    verifyConsentCase(ungranted, "c".repeat(64)),
+    "not-created",
+    "a live hash equal to verify.definitionHash is still not-created",
+  );
+
+  assert.match(verifyConsentCaseSentence("changed"), /changed/);
+  assert.match(verifyConsentCaseSentence("not-created"), /no standing grant/);
 });
 
 test("setup publishes nothing unless both seeds reached the relay", async () => {

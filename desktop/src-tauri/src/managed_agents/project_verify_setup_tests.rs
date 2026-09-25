@@ -1,7 +1,10 @@
-//! Ledger 248: what project setup publishes for the seeded `verify` action.
+//! Ledger 248, 252: what project setup publishes for the seeded `verify`
+//! action, and (Brian's 2026-09-25 ruling) the standing grant creation itself
+//! now publishes right after it.
 
 use super::project_verify_setup::{
-    actions_channel_spec, plan_verify_publication, ProjectVerifySetup,
+    actions_channel_spec, plan_verify_publication, project_verify_setup_with_state,
+    ProjectVerifySetup,
 };
 
 const PROJECT: &str =
@@ -79,4 +82,259 @@ fn setup_files_verify_in_the_project_sessions_transport_not_a_private_stream() {
     assert!(!spec.name.ends_with("-actions"));
     // No display name: the slug stands in, never a bare "sessions".
     assert_eq!(actions_channel_spec(" ", "kettle").name, "kettle sessions");
+}
+
+// ── Creation is consent: setup publishes the standing grant itself ─────────
+//
+// Run 7 (2026-09-25) found the control run 6 shape — setup publishes only
+// the kind:30620, and a person must find and click a separate card before
+// anything may run on their own computer — asked a question creation had
+// already answered: this computer, with the owner's key, created the
+// project. These tests flip that: setup must publish the grant too, in the
+// same call, and must never publish it twice for the same hash.
+#[cfg(not(target_os = "windows"))]
+mod publishes_its_own_standing_grant {
+    use std::sync::{Arc, Mutex};
+
+    use axum::{
+        extract::{Path, State},
+        http::StatusCode,
+        routing::{get, post},
+        Router,
+    };
+    use nostr::{Event, JsonUtil, Keys};
+
+    use super::project_verify_setup_with_state;
+
+    const PROJECT: &str =
+        "30621:2222222222222222222222222222222222222222222222222222222222222222:garden";
+
+    fn tag_value(event: &Event, name: &str) -> Option<String> {
+        event.tags.iter().find_map(|tag| {
+            let parts = tag.as_slice();
+            (parts.first().map(String::as_str) == Some(name))
+                .then(|| parts.get(1).cloned())
+                .flatten()
+        })
+    }
+
+    /// A relay stand-in that stores every submitted event and answers
+    /// `GET /workflows/{id}/autorun` the way the real relay's handler does:
+    /// a grant is `active` only when its `definitionHash` tag matches the
+    /// hash the relay would compute today from the latest stored kind:30620
+    /// for that workflow id — never from a cached hash setup already moved
+    /// past.
+    #[derive(Default)]
+    struct RelayStub {
+        events: Mutex<Vec<Event>>,
+    }
+
+    async fn publish(State(stub): State<Arc<RelayStub>>, body: String) -> (StatusCode, String) {
+        let event = Event::from_json(&body).expect("signed event");
+        event.verify().expect("signature");
+        stub.events.lock().expect("events").push(event.clone());
+        (
+            StatusCode::OK,
+            serde_json::json!({
+                "event_id": event.id.to_hex(),
+                "accepted": true,
+                "message": "stored",
+            })
+            .to_string(),
+        )
+    }
+
+    async fn query(State(stub): State<Arc<RelayStub>>, body: String) -> (StatusCode, String) {
+        let filters: Vec<serde_json::Value> = serde_json::from_str(&body).expect("filters");
+        let filter = &filters[0];
+        let kinds: Vec<u64> = filter["kinds"]
+            .as_array()
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(serde_json::Value::as_u64)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let d_tag = filter["#d"][0].as_str().map(str::to_owned);
+        let events = stub.events.lock().expect("events");
+        let matches: Vec<Event> = events
+            .iter()
+            .filter(|event| kinds.is_empty() || kinds.contains(&(event.kind.as_u16() as u64)))
+            .filter(|event| {
+                d_tag
+                    .as_deref()
+                    .is_none_or(|wanted| tag_value(event, "d").as_deref() == Some(wanted))
+            })
+            .cloned()
+            .collect();
+        (
+            StatusCode::OK,
+            serde_json::to_string(&matches).expect("json"),
+        )
+    }
+
+    async fn autorun(
+        State(stub): State<Arc<RelayStub>>,
+        Path(workflow_id): Path<String>,
+    ) -> (StatusCode, String) {
+        let events = stub.events.lock().expect("events");
+        let current_hash = events
+            .iter()
+            .rev()
+            .find(|event| {
+                event.kind.as_u16() == 30620
+                    && tag_value(event, "d").as_deref() == Some(&workflow_id)
+            })
+            .and_then(|event| {
+                let (def, _) =
+                    buzz_workflow_pkg::WorkflowEngine::parse_yaml(&event.content).ok()?;
+                buzz_workflow_pkg::hash::definition_hash_hex(&def).ok()
+            });
+        let grants: Vec<serde_json::Value> = events
+            .iter()
+            .filter(|event| event.kind.as_u16() == 46030)
+            .filter(|event| tag_value(event, "workflow").as_deref() == Some(&workflow_id))
+            .filter_map(|event| {
+                let hash = tag_value(event, "definitionHash")?;
+                let matches_current = current_hash.as_deref() == Some(hash.as_str());
+                Some(serde_json::json!({
+                    "grant_event_id": event.id.to_hex(),
+                    "definition_hash": hash,
+                    "matches_current": matches_current,
+                    "revoked_at": null,
+                }))
+            })
+            .collect();
+        let active = grants
+            .iter()
+            .any(|grant| grant["matches_current"] == serde_json::Value::Bool(true));
+        (
+            StatusCode::OK,
+            serde_json::json!({
+                "definition_hash": current_hash,
+                "active": active,
+                "grants": grants,
+            })
+            .to_string(),
+        )
+    }
+
+    async fn relay_stub(stub: Arc<RelayStub>) -> (String, tokio::task::JoinHandle<()>) {
+        let router = Router::new()
+            .route("/events", post(publish))
+            .route("/query", post(query))
+            .route("/workflows/{workflow_id}/autorun", get(autorun))
+            .with_state(stub);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let url = format!("http://{}", listener.local_addr().expect("address"));
+        let task = tokio::spawn(async move {
+            axum::serve(listener, router).await.expect("serve");
+        });
+        (url, task)
+    }
+
+    fn events_of_kind(events: &[Event], kind: u16) -> usize {
+        events
+            .iter()
+            .filter(|event| event.kind.as_u16() == kind)
+            .count()
+    }
+
+    /// The flip of the control-run-6/run-7 shape: creating the project must
+    /// itself carry the standing grant — not a run, not a kind:46010, and
+    /// not a second click. Both events land in the same call.
+    #[tokio::test]
+    async fn creating_a_project_publishes_the_verify_definition_and_its_standing_grant() {
+        let stub = Arc::new(RelayStub::default());
+        let (url, server) = relay_stub(stub.clone()).await;
+        let state = crate::app_state::build_app_state();
+        *state.keys.lock().expect("keys") = Keys::generate();
+        *state.relay_url_override.lock().expect("relay") = Some(url);
+
+        let command: Vec<String> = ["true"].map(str::to_owned).to_vec();
+        let yml = buzz_persona_pkg::seed::seeded_actions_yml_with_verify(&command);
+        let result = project_verify_setup_with_state(
+            &state,
+            PROJECT.to_string(),
+            "Garden".to_string(),
+            yml,
+            "0".repeat(40),
+        )
+        .await
+        .expect("setup");
+
+        assert!(result.error.is_none(), "{:?}", result.error);
+        assert!(result.publish_event_id.is_some());
+        assert!(
+            result.grant_error.is_none(),
+            "grant should not fail: {:?}",
+            result.grant_error
+        );
+        assert!(
+            result.grant_event_id.is_some(),
+            "setup must publish the standing grant itself — creation is consent"
+        );
+
+        let events = stub.events.lock().expect("events").clone();
+        assert_eq!(events_of_kind(&events, 30620), 1);
+        assert_eq!(events_of_kind(&events, 46030), 1);
+        assert_eq!(
+            events_of_kind(&events, 46013),
+            0,
+            "no host-step request — setup starts no run"
+        );
+        assert_eq!(
+            events_of_kind(&events, 46020),
+            0,
+            "no trigger — setup starts no run"
+        );
+        server.abort();
+    }
+
+    /// A second creation-shaped call (e.g. "Finish repository setup" run
+    /// again against an unchanged definition) must find the grant it already
+    /// holds and publish nothing a second time.
+    #[tokio::test]
+    async fn a_second_call_with_the_same_hash_grants_nothing_twice() {
+        let stub = Arc::new(RelayStub::default());
+        let (url, server) = relay_stub(stub.clone()).await;
+        let state = crate::app_state::build_app_state();
+        *state.keys.lock().expect("keys") = Keys::generate();
+        *state.relay_url_override.lock().expect("relay") = Some(url);
+
+        let command: Vec<String> = ["true"].map(str::to_owned).to_vec();
+        let yml = buzz_persona_pkg::seed::seeded_actions_yml_with_verify(&command);
+
+        let first = project_verify_setup_with_state(
+            &state,
+            PROJECT.to_string(),
+            "Garden".to_string(),
+            yml.clone(),
+            "0".repeat(40),
+        )
+        .await
+        .expect("first setup");
+        let second = project_verify_setup_with_state(
+            &state,
+            PROJECT.to_string(),
+            "Garden".to_string(),
+            yml,
+            "1".repeat(40),
+        )
+        .await
+        .expect("second setup");
+
+        assert_eq!(first.grant_event_id, second.grant_event_id);
+        assert!(second.channel_reused, "the second call reuses the channel");
+        let events = stub.events.lock().expect("events").clone();
+        assert_eq!(
+            events_of_kind(&events, 46030),
+            1,
+            "an unchanged hash must never be granted twice"
+        );
+        server.abort();
+    }
 }

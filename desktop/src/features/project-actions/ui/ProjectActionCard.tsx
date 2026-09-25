@@ -1,7 +1,10 @@
 import { useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
 
-import { revokeAutorun } from "@/shared/api/tauriWorkflows";
+import {
+  grantStandingApproval,
+  revokeAutorun,
+} from "@/shared/api/tauriWorkflows";
 import { truncatePubkey } from "@/shared/lib/pubkey";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
@@ -12,7 +15,12 @@ import {
   requiredCheckoutStepIds,
   runOnHostStepIds,
 } from "../lib/actionDefinition";
-import { autorunGrantState, standingGrantNote } from "../lib/autorunState";
+import {
+  autorunConsentCase,
+  autorunConsentSentence,
+  autorunGrantState,
+  standingGrantNote,
+} from "../lib/autorunState";
 import type { ProjectCodeRefTip } from "../lib/useProjectCodeRefTip";
 import type { ProjectAction } from "../lib/useProjectActions";
 import { ProjectActionRunControl } from "./ProjectActionRunControl";
@@ -37,11 +45,12 @@ export function ProjectActionCard({
   tip: ProjectCodeRefTip | null;
   onChanged: () => void;
 }) {
-  const { workflow, runs, autorun, autorunError } = action;
+  const { workflow, runs, autorun, autorunError, boundDefinition } = action;
   const grantState = autorunGrantState(autorun?.grants);
   const activeGrant = grantState.kind === "active" ? grantState : null;
   const staleGrant = grantState.kind === "stale";
   const grantNote = standingGrantNote(grantState, runs.length);
+  const consentCase = autorunConsentCase(grantState);
   const trigger = actionTriggerSummary(workflow.definition);
   const description = actionDescription(workflow.definition);
   const hostSteps = runOnHostStepIds(workflow.definition);
@@ -64,6 +73,30 @@ export function ProjectActionCard({
     },
   });
   const { mutate: revokeMutate, isPending: revoking } = revoke;
+
+  // The same "Allow runs on this computer" grant setup publishes at
+  // creation, offered here so a person is never required to find the
+  // Overview card to answer it (run 7, 2026-09-25). Authorized against the
+  // hash this same read (R1) proves the workflow carries now — never a
+  // cached one.
+  const boundDefinitionHash = boundDefinition.read?.definitionHash ?? null;
+  const grantStanding = useMutation({
+    mutationFn: () => {
+      if (boundDefinitionHash === null) {
+        throw new Error("no definition hash to grant against yet");
+      }
+      return grantStandingApproval(workflow.id, boundDefinitionHash);
+    },
+    onSuccess: () => {
+      toast.success(`Runs allowed on this computer for ${workflow.name}`);
+      onChanged();
+    },
+    onError: (error: unknown) => {
+      toast.error(`Grant failed: ${errorSentence(error)}`);
+    },
+  });
+  const { mutate: grantStandingMutate, isPending: grantingStanding } =
+    grantStanding;
 
   return (
     <section
@@ -118,6 +151,29 @@ export function ProjectActionCard({
             ) : null}
             {autorunError ? (
               <span>autorun state unreadable: {autorunError}</span>
+            ) : null}
+            {consentCase !== null ? (
+              <span
+                className="flex items-center gap-1.5"
+                data-testid="project-action-allow-runs"
+              >
+                <Button
+                  data-testid="project-action-allow-runs-approve"
+                  disabled={grantingStanding || boundDefinitionHash === null}
+                  onClick={() => grantStandingMutate()}
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                >
+                  Allow runs on this computer
+                </Button>
+                <span
+                  className="text-2xs text-muted-foreground"
+                  data-testid="project-action-allow-runs-case"
+                >
+                  {autorunConsentSentence(consentCase)}
+                </span>
+              </span>
             ) : null}
           </p>
           {description ? (

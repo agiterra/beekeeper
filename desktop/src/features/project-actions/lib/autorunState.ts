@@ -55,3 +55,29 @@ export function standingGrantNote(
   if (state.kind !== "active") return null;
   return runCount === 0 ? "standing grant · no run yet" : null;
 }
+
+/**
+ * Whether the tab must still offer "Allow runs on this computer" for this
+ * workflow (Brian's 2026-09-25 ruling: creation is consent, so an active
+ * grant asks nobody — this control exists only for the two cases that
+ * survive it, mirroring `projectVerifySetup.ts`'s `verifyConsentCase`):
+ * `"none"` — no active grant for the current hash (a foreign host created
+ * the project, or the grant publish failed); `"stale"` — an unrevoked grant
+ * exists, but for an earlier hash. `null` (an active grant) means hidden.
+ */
+export function autorunConsentCase(
+  state: AutorunGrantState,
+): "not-created" | "changed" | null {
+  if (state.kind === "active") return null;
+  return state.kind === "stale" ? "changed" : "not-created";
+}
+
+/** The one sentence each case above names, worded to match the Overview
+ * card's `verifyConsentCaseSentence` for the same two cases. */
+export function autorunConsentSentence(
+  kind: "not-created" | "changed",
+): string {
+  return kind === "changed"
+    ? "The definition changed since this computer last granted it, so it asks again."
+    : "This computer holds no standing grant for this workflow's current definition.";
+}

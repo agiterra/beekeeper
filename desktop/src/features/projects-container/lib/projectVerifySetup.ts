@@ -39,6 +39,16 @@ export type ProjectVerifySetupResult = {
   channelReused: boolean;
   /** The code repository's seed commit — informational; no run is bound to it. */
   checkout: string | null;
+  /**
+   * The standing grant's event id — this call's own publish, or an existing
+   * active grant setup found instead of publishing a second one (creation
+   * is consent; Brian's 2026-09-25 ruling). `null` exactly when
+   * {@link grantError} or {@link error} explains why no grant exists.
+   */
+  grantEventId: string | null;
+  /** The step that stopped the grant, in the host's words. Distinct from
+   * `error`, which stops setup before a definition even exists to grant. */
+  grantError: string | null;
   /** The step that stopped setup, in the host's words. */
   error: string | null;
 };
@@ -63,6 +73,8 @@ export function decodeProjectVerifySetup(
     optionalString(record.publishEventId) &&
     typeof record.channelReused === "boolean" &&
     optionalString(record.checkout) &&
+    optionalString(record.grantEventId) &&
+    optionalString(record.grantError) &&
     optionalString(record.error);
   if (!ok) {
     throw new Error(
@@ -132,4 +144,52 @@ export function verifyConsentUnavailable(
   if (verify.workflowId === null || verify.definitionHash === null)
     return "The verify action was accepted but the relay named no definition to approve.";
   return null;
+}
+
+/**
+ * The two — and only two — cases a consent question may still be asked in
+ * (Brian's 2026-09-25 ruling: creation is consent, so an active grant asks
+ * nobody):
+ *
+ * - `"not-created"`: no active grant exists for this workflow's current
+ *   hash under this host's key — either this host did not create the
+ *   project (a foreign host's key holds the grant, or none exists at all),
+ *   or setup ran here but its own grant publish failed.
+ * - `"changed"`: an active grant exists, but for an earlier hash — the
+ *   definition was edited since, so it re-arms.
+ *
+ * `null` means the question is answered: hide the control.
+ */
+export type VerifyConsentCase = "not-created" | "changed";
+
+/**
+ * Decide the case above from what `project_verify_setup` reported, and
+ * optionally a live definition hash read independently of it (e.g. the
+ * Actions tab's own autorun read, which knows the workflow's hash *today*
+ * rather than whatever setup saw at creation time). Without a live hash,
+ * only `verify.grantEventId` decides: present means answered, absent means
+ * `"not-created"` — the shape setup itself is in right after it runs.
+ */
+export function verifyConsentCase(
+  verify: ProjectVerifySetupResult | null,
+  liveDefinitionHash?: string | null,
+): VerifyConsentCase | null {
+  if (verify === null) return "not-created";
+  if (verify.grantEventId !== null) return null;
+  if (
+    liveDefinitionHash !== undefined &&
+    liveDefinitionHash !== null &&
+    verify.definitionHash !== null &&
+    liveDefinitionHash !== verify.definitionHash
+  ) {
+    return "changed";
+  }
+  return "not-created";
+}
+
+/** The one sentence each case above shows, naming which it is. */
+export function verifyConsentCaseSentence(kind: VerifyConsentCase): string {
+  return kind === "changed"
+    ? "The verify definition changed since this computer last granted it, so it asks again."
+    : "This computer holds no standing grant for this project's verify definition yet.";
 }

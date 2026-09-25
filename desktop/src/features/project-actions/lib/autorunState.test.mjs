@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { autorunGrantState, standingGrantNote } from "./autorunState.ts";
+import {
+  autorunConsentCase,
+  autorunConsentSentence,
+  autorunGrantState,
+  standingGrantNote,
+} from "./autorunState.ts";
 
 const PUBKEY = "3d".repeat(32);
 
@@ -46,4 +51,15 @@ test("standingGrantNote says nothing once any run exists, or without an active g
   assert.equal(standingGrantNote(active, 1), null);
   assert.equal(standingGrantNote({ kind: "stale" }, 0), null);
   assert.equal(standingGrantNote({ kind: "none" }, 0), null);
+});
+
+test("autorunConsentCase hides the control when the grant is active, and names the surviving case otherwise", () => {
+  assert.equal(autorunConsentCase({ kind: "active", grantedBy: PUBKEY }), null);
+  assert.equal(autorunConsentCase({ kind: "none" }), "not-created");
+  assert.equal(autorunConsentCase({ kind: "stale" }), "changed");
+});
+
+test("autorunConsentSentence names each case", () => {
+  assert.match(autorunConsentSentence("changed"), /changed/);
+  assert.match(autorunConsentSentence("not-created"), /no standing grant/);
 });
