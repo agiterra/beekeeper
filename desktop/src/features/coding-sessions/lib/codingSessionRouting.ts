@@ -79,6 +79,8 @@ import {
   type RoutingReviewFlagTrigger,
 } from "./codingSessionRoutingRecord";
 
+import { fallbackCatalogTarget } from "./codingSessionRoutingFallback";
+
 // Re-exported so the router stays the one import a caller needs: the registry
 // module is a reader and the record module is a shape; neither is a second
 // public surface.
@@ -930,124 +932,6 @@ function applyOverride(
     ok: true,
     target: { provider, model, effort: override.effort ?? effort },
   };
-}
-
-/** The bare catalog id, stripping a trailing `[effort]` variant if present. */
-function bareModelId(model: string): string {
-  const bracket = model.indexOf("[");
-  return bracket === -1 ? model : model.slice(0, bracket);
-}
-
-/**
- * The first catalog offer, in the catalog's own order, that no registry row
- * covers at all and that no hard requirement rules out.
- *
- * Only reached when the registry-ranked pool is empty and no override was
- * given (spec's minimums and cost ranking never run here — there is nothing
- * to rank a target the registry says nothing about against). What still
- * applies, because it does not depend on a registry row to check: the
- * class's own `requires` and the task's own `requirements` — modality, tool
- * support, minimum context window, intolerable failure modes. Any of those
- * refuses every fallback candidate uniformly, since none of them is
- * something an unregistered catalog offer can be vouched for; that is the
- * "explicitly chosen hard policy" the ruling preserves. An ordinary session
- * with none of those set is not blocked by class trait minimums here — the
- * ruling's "registry ranking is a preference, not a gate" for exactly this
- * path.
- */
-function fallbackCatalogTarget(input: {
-  registry: ModelRegistry;
-  catalog: readonly RoutingCatalogEntry[];
-  classGate: RegistryClass;
-  requirements: RoutingRequirements | undefined;
-  effort: RoutingEffort;
-  excluded: RoutingExclusion[];
-}):
-  | { ok: true; target: RoutedExecutionTarget }
-  | { ok: false; why: string | null } {
-  const { registry, catalog, classGate, requirements, effort, excluded } =
-    input;
-  const registered = new Set(
-    registry.targets.map((target) => `${target.provider}\u0000${target.model}`),
-  );
-  const block = fallbackHardBlock(classGate, requirements);
-  let anyUnregistered = false;
-  for (const entry of catalog) {
-    const key = `${entry.providerInstanceRef}\u0000${bareModelId(entry.model)}`;
-    if (registered.has(key)) continue; // already considered with real facts
-    anyUnregistered = true;
-    if (block !== null) {
-      excluded.push({
-        provider: entry.providerInstanceRef,
-        model: entry.model,
-        why: `no registry row, and ${block}`,
-      });
-      continue;
-    }
-    if (requirements?.minContextWindow !== undefined) {
-      const window = entry.contextWindow ?? null;
-      if (window === null || window < requirements.minContextWindow) {
-        excluded.push({
-          provider: entry.providerInstanceRef,
-          model: entry.model,
-          why:
-            window === null
-              ? `no registry row and no recorded context window, so ${requirements.minContextWindow} tokens is not established for it`
-              : `no registry row; holds ${window} tokens, and the task needs ${requirements.minContextWindow}`,
-        });
-        continue;
-      }
-    }
-    return {
-      ok: true,
-      target: {
-        provider: entry.providerInstanceRef,
-        model: entry.model,
-        effort,
-      },
-    };
-  }
-  return { ok: false, why: anyUnregistered ? block : null };
-}
-
-/**
- * Why every unregistered catalog offer is blocked, or null when none is.
- *
- * Only the requirements an unknown target can never be vouched for: the class
- * or task's `requires`/`requirements`. `minContextWindow` is checked per
- * catalog entry instead (the live catalog publishes its own context window
- * per model, so that one fact does not need a registry row).
- */
-function fallbackHardBlock(
-  classGate: RegistryClass,
-  requirements: RoutingRequirements | undefined,
-): string | null {
-  const multimodalRequired =
-    requirements?.multimodal === true ||
-    classGate.requires?.multimodal === true;
-  if (multimodalRequired) {
-    return (
-      "this class requires multimodal, and an unregistered catalog offer " +
-      "carries no recorded modality to vouch for it"
-    );
-  }
-  const tools = [
-    ...(classGate.requires?.tools ?? []),
-    ...(requirements?.tools ?? []),
-  ];
-  if (tools.length > 0) {
-    return (
-      `this class requires the ${tools.join(", ")} tool(s), and an ` +
-      "unregistered catalog offer carries no recorded tool support"
-    );
-  }
-  if ((requirements?.incompatibleFailureModes ?? []).length > 0) {
-    return (
-      "this task cannot tolerate a known failure mode, and an unregistered " +
-      "catalog offer carries no recorded failure-mode history to clear it"
-    );
-  }
-  return null;
 }
 
 /**
