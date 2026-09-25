@@ -184,7 +184,24 @@ pub async fn project_verify_setup(
     actions_yml: String,
     checkout: String,
 ) -> Result<ProjectVerifySetup, String> {
-    project_verify_setup_with_state(&state, project_ref, project_name, actions_yml, checkout).await
+    // Admission needs the app handle (the provider store), which the
+    // state-only body cannot take; run it first so the host is admitted
+    // before anything is published, exactly as the body would have.
+    let keys = state.signing_keys()?;
+    let host_admission = crate::managed_agents::project_admission::admit_host_for_session(
+        &app,
+        &state,
+        &keys,
+        project_ref.trim(),
+        &crate::relay::relay_ws_url_with_override(&state),
+        None,
+    )
+    .await;
+    let mut result =
+        project_verify_setup_with_state(&state, project_ref, project_name, actions_yml, checkout)
+            .await?;
+    result.host_admission = Some(host_admission);
+    Ok(result)
 }
 
 /// [`project_verify_setup`]'s body, taking `&AppState` directly instead of a
@@ -210,17 +227,6 @@ pub(crate) async fn project_verify_setup_with_state(
     };
     let keys = state.signing_keys()?;
     let me = keys.public_key().to_hex();
-    result.host_admission = Some(
-        crate::managed_agents::project_admission::admit_host_for_session(
-            &app,
-            &state,
-            &keys,
-            &project,
-            &crate::relay::relay_ws_url_with_override(&state),
-            None,
-        )
-        .await,
-    );
 
     // A retry must land in the channel the first attempt used: the relay
     // refuses an update of a workflow from a different channel.
