@@ -22,6 +22,31 @@ const UMBRELLA: &str = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
 
 /// A signed kind:44221 `session.hire`, with whatever `requestedBy` the caller
 /// wants to put on the wire beside whichever key actually signs it.
+/// The channel's checkout, plus the worktree the host staged for one hired
+/// create. A hired seat resolves only through its staged hint (control run 7);
+/// the channel default never answers for it.
+fn write_projects_with_seat_tree(
+    dir: &Path,
+    channel_id: Uuid,
+    cwd: &Path,
+    hired_command_id: &str,
+) -> std::path::PathBuf {
+    let tree = dir.join("checkout-wt-hired-seat");
+    std::fs::create_dir_all(&tree).expect("seat tree");
+    let path = dir.join("projects.json");
+    std::fs::write(
+        &path,
+        serde_json::json!({
+            "version": 1,
+            "channels": { channel_id.to_string(): cwd },
+            "pending": { hired_command_id: tree },
+        })
+        .to_string(),
+    )
+    .expect("write projects");
+    path
+}
+
 fn hire_event(
     channel_id: Uuid,
     genesis_ref: &str,
@@ -154,7 +179,7 @@ async fn a_hired_seats_brief_is_attributed_to_the_seat_that_asked_for_it() {
     let cwd = dir.path().join("checkout");
     std::fs::create_dir_all(&cwd).expect("mkdir");
     let channel_id = Uuid::new_v4();
-    let projects = write_projects(dir.path(), channel_id, &cwd);
+    let projects = write_projects_with_seat_tree(dir.path(), channel_id, &cwd, "create-hired");
     let mut provider = provider(&dir.path().join("state"), Some(&projects));
 
     let genesis = genesis_event(channel_id, UMBRELLA);
@@ -220,7 +245,7 @@ async fn a_disputed_requester_is_disclosed_and_never_rendered_as_attribution() {
     let cwd = dir.path().join("checkout");
     std::fs::create_dir_all(&cwd).expect("mkdir");
     let channel_id = Uuid::new_v4();
-    let projects = write_projects(dir.path(), channel_id, &cwd);
+    let projects = write_projects_with_seat_tree(dir.path(), channel_id, &cwd, "create-disputed");
     let mut provider = provider(&dir.path().join("state"), Some(&projects));
 
     let genesis = genesis_event(channel_id, UMBRELLA);
