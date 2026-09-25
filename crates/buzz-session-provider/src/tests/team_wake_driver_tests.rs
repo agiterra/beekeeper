@@ -25,8 +25,8 @@ use buzz_sdk::coding_session_team_transaction::{
     build_coding_session_team_transaction, coding_session_team_transaction_payload,
 };
 
-const BUILDER_ROLE: &str = "builder";
-const LEAD_ROLE: &str = "lead";
+pub(super) const BUILDER_ROLE: &str = "builder";
+pub(super) const LEAD_ROLE: &str = "lead";
 
 fn routing_record(role: &str, provider: &str) -> RoutingRecord {
     serde_json::from_value(serde_json::json!({
@@ -47,17 +47,17 @@ fn routing_record(role: &str, provider: &str) -> RoutingRecord {
     .expect("routing fixture")
 }
 
-struct DriverChannelFixture {
-    channel: Uuid,
-    scope: team_wake::WakeScope,
-    builder: Keys,
-    lead: Keys,
-    builder_target: CodingSessionTarget,
-    lead_target: CodingSessionTarget,
-    events: Vec<Event>,
-    assignments: Vec<Event>,
-    reports: Vec<Event>,
-    builder_record: SessionRecord,
+pub(super) struct DriverChannelFixture {
+    pub(super) channel: Uuid,
+    pub(super) scope: team_wake::WakeScope,
+    pub(super) builder: Keys,
+    pub(super) lead: Keys,
+    pub(super) builder_target: CodingSessionTarget,
+    pub(super) lead_target: CodingSessionTarget,
+    pub(super) events: Vec<Event>,
+    pub(super) assignments: Vec<Event>,
+    pub(super) reports: Vec<Event>,
+    pub(super) builder_record: SessionRecord,
 }
 
 fn seat_transition(
@@ -112,7 +112,7 @@ fn seat_receipt(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn execution_events(
+pub(super) fn execution_events(
     founder: &Keys,
     provider_authority: &Keys,
     channel: Uuid,
@@ -325,7 +325,7 @@ fn assignment_and_report(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn driver_channel_fixture(
+pub(super) fn driver_channel_fixture(
     provider: &Provider,
     relay: &Keys,
     cwd: &Path,
@@ -450,7 +450,7 @@ fn driver_channel_fixture(
     fixture
 }
 
-fn published_wakes(control: &RecordingTestRelay) -> Vec<Event> {
+pub(super) fn published_wakes(control: &RecordingTestRelay) -> Vec<Event> {
     control
         .published
         .lock()
@@ -497,7 +497,7 @@ fn add_turn_outcome(control: &RecordingTestRelay, provider_authority: &Keys, eve
     control.events.lock().expect("events lock").push(receipt);
 }
 
-fn expire_backoffs(provider: &mut Provider) {
+pub(super) fn expire_backoffs(provider: &mut Provider) {
     provider.team_wake_backoff.clear();
     provider.team_wake_discovery_backoff.clear();
 }

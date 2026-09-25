@@ -316,7 +316,19 @@ pub(super) async fn send_team_operation_wake(
     .await
 }
 
-fn team_operation_wake_text(operation_id: &str, operation_type: &str) -> Result<String, CliError> {
+/// The identifier-only pointer a CLI operation wake carries.
+///
+/// Its `operationId` is the stored fact's own event id, and that is a
+/// contract, not a convenience (ledger 266): the receiving provider fences a
+/// wake by the **fact id** it names, not by the pointer's bytes, so this
+/// pointer and the provider's own wake for the same record — a disposition's
+/// seven-key pointer, say — are one operation on one target and spend one
+/// turn. That is why the CLI keeps publishing its own wake rather than
+/// relying on the provider having observed the record.
+pub(super) fn team_operation_wake_text(
+    operation_id: &str,
+    operation_type: &str,
+) -> Result<String, CliError> {
     serde_json::to_string(&json!({
         "operationId": operation_id,
         "type": operation_type,

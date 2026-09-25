@@ -520,22 +520,42 @@ pub fn is_team_wake_pointer(text: &str) -> bool {
 /// fenced: an operator who sends the same sentence twice meant to, and
 /// swallowing the second one would be a control lying about what it does.
 ///
-/// The key is `coding_session_target_key(target)`, a NUL, then the pointer
-/// re-serialised through [`serde_json::Value`] — whose object is a `BTreeMap`
-/// in this build, so key order and whitespace are canonicalised away while
-/// two different pointers can never collide. The NUL cannot occur in either
-/// half's JSON or in the length-prefixed target key, so the two components
-/// cannot be confused for one another.
+/// The key is `coding_session_target_key(target)`, a NUL, `fact:`, then the
+/// **fact id** the pointer is about ([`pointer_fact_id`]) — never the pointer
+/// bytes. Since ledger 266 identity is the fact, not its wording: the CLI's
+/// `--wake-to` pointer for a disposition (`{"operationId","type":"verdict"}`)
+/// and the provider's seven-key disposition pointer name one signed record,
+/// and keying on the bytes let one fact wake a lead twice. Whitespace, key
+/// order and producer-specific decoration therefore all fall away. The NUL
+/// cannot occur in a hex id or in the length-prefixed target key, so the two
+/// components cannot be confused for one another.
 pub fn operation_fence_key(target: &CodingSessionTarget, text: &str) -> Option<String> {
     let value: serde_json::Value = serde_json::from_str(text).ok()?;
     if !is_wake_pointer_value(&value) {
         return None;
     }
-    let canonical = serde_json::to_string(&value).ok()?;
+    let fact_id = pointer_fact_id(&value)?;
     Some(format!(
-        "{}\u{0}{canonical}",
+        "{}\u{0}fact:{fact_id}",
         coding_session_target_key(target)
     ))
+}
+
+/// The id of the signed fact a recognised wake pointer is about.
+///
+/// `operationId` for an operation or disposition pointer (and a CI result's
+/// correlation id, which rides the same key), `terminalEventId` for a terminal
+/// diagnostic, `resultEventId` for a host result. `None` for anything that is
+/// not one of the provider's pointer shapes.
+pub fn pointer_fact_id(value: &serde_json::Value) -> Option<String> {
+    if !is_wake_pointer_value(value) {
+        return None;
+    }
+    let object = value.as_object()?;
+    ["operationId", "terminalEventId", "resultEventId"]
+        .iter()
+        .find_map(|key| object.get(*key).and_then(serde_json::Value::as_str))
+        .map(str::to_owned)
 }
 
 pub fn build_wake_event(
@@ -672,6 +692,24 @@ pub struct VerifiedWakeSnapshot {
     pub team_events: Vec<Event>,
     pub included_reports: Vec<IncludedReport>,
     pub included_dispositions: Vec<IncludedDisposition>,
+    /// The umbrella's canonical terminal (`mission.completed` or
+    /// `mission.blocked`) when the fold has one, with its signed second.
+    ///
+    /// Retained so every routing decision made from this snapshot can ask
+    /// whether a wake still delivers new responsibility
+    /// ([`crate::wake_relevance::still_owed`]): after a canonical terminal the
+    /// only legitimate model work is a new request or evidence that contests
+    /// it (ledger 266).
+    pub canonical_terminal: Option<crate::wake_relevance::TerminalMark>,
+}
+
+/// The authority-verified team transaction facts of one umbrella: what both
+/// the sending provider's routing decision and the receiving provider's
+/// last-moment relevance check fold over.
+pub struct VerifiedTeamFacts {
+    pub founder_pubkey: String,
+    pub authority: CurrentAuthority,
+    pub team_events: Vec<Event>,
 }
 
 /// Typed wake verification failure. Structural projection bounds must remain
@@ -703,6 +741,49 @@ pub async fn fetch_verified_snapshot(
     relay_self_pubkey: &str,
     scope: &WakeScope,
 ) -> Result<VerifiedWakeSnapshot, WakeSnapshotError> {
+    let VerifiedTeamFacts {
+        founder_pubkey,
+        authority,
+        team_events,
+    } = fetch_verified_team_facts(rest, relay_self_pubkey, scope).await?;
+
+    let package = fetch_and_project_session_context(
+        rest,
+        &ContextProjectionRequest {
+            channel_id: scope.channel_ref,
+            session_ref: scope.session_ref.clone(),
+            genesis_ref: scope.genesis_ref.clone(),
+            relay_self_pubkey: Some(relay_self_pubkey.to_owned()),
+            allow_no_executions: false,
+            generated_at: crate::state::now_ms(),
+            limits: ContextProjectionLimits::default(),
+        },
+    )
+    .await?;
+
+    let context = fold_context(scope, &founder_pubkey, &authority);
+    let included_reports = included_reports(&team_events, &context)?;
+    let included_dispositions = included_dispositions(&team_events, &context)?;
+    let canonical_terminal = crate::wake_relevance::terminal_mark(&team_events, &context)?;
+    Ok(VerifiedWakeSnapshot {
+        founder_pubkey,
+        authority,
+        package,
+        team_events,
+        included_reports,
+        included_dispositions,
+        canonical_terminal,
+    })
+}
+
+/// Fetch the genesis, the accepted authority chain and the umbrella's
+/// complete kind-44244 set — everything a team fold needs and nothing about
+/// provider routing. Every query is exact-channel and complete-or-error.
+pub async fn fetch_verified_team_facts(
+    rest: &buzz_acp::relay::RestClient,
+    relay_self_pubkey: &str,
+    scope: &WakeScope,
+) -> Result<VerifiedTeamFacts, WakeSnapshotError> {
     use buzz_core::kind::{
         KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_GENESIS,
         KIND_CODING_SESSION_TEAM_TRANSACTION, KIND_SYSTEM_MESSAGE,
@@ -779,20 +860,6 @@ pub async fn fetch_verified_snapshot(
     }
     let authority = crate::authority::fold_current_authority(&links)?;
 
-    let package = fetch_and_project_session_context(
-        rest,
-        &ContextProjectionRequest {
-            channel_id: scope.channel_ref,
-            session_ref: scope.session_ref.clone(),
-            genesis_ref: scope.genesis_ref.clone(),
-            relay_self_pubkey: Some(relay_self_pubkey.to_owned()),
-            allow_no_executions: false,
-            generated_at: crate::state::now_ms(),
-            limits: ContextProjectionLimits::default(),
-        },
-    )
-    .await?;
-
     let team_events = query_complete_kind_partition(
         rest,
         scope.channel_ref,
@@ -805,17 +872,25 @@ pub async fn fetch_verified_snapshot(
             && tag_value(event, "cstx-genesis").as_deref() == Some(scope.genesis_ref.as_str())
     })
     .collect::<Vec<_>>();
-    let context = fold_context(scope, &founder_pubkey, &authority);
-    let included_reports = included_reports(&team_events, &context)?;
-    let included_dispositions = included_dispositions(&team_events, &context)?;
-    Ok(VerifiedWakeSnapshot {
+    Ok(VerifiedTeamFacts {
         founder_pubkey,
         authority,
-        package,
         team_events,
-        included_reports,
-        included_dispositions,
     })
+}
+
+/// The one accepted lead actor of this umbrella, when there is exactly one.
+///
+/// The actor a report, disposition or terminal diagnostic wake is addressed
+/// to, and so the one whose own records decide whether the wake is still
+/// owed ([`crate::wake_relevance::still_owed`]).
+pub fn lead_actor(authority: &CurrentAuthority) -> Option<String> {
+    let mut leads = authority
+        .seats
+        .iter()
+        .filter_map(|(actor, (role, _))| (role == "lead").then_some(actor.clone()));
+    let lead = leads.next()?;
+    leads.next().is_none().then_some(lead)
 }
 
 fn tag_value(event: &Event, name: &str) -> Option<String> {

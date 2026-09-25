@@ -83,6 +83,7 @@ pub mod state;
 mod team_wake;
 pub mod transcript;
 pub mod verification_input;
+pub mod wake_relevance;
 pub mod work_brief;
 mod work_brief_collect;
 
@@ -240,6 +241,9 @@ const REPLAY_REORDER_WINDOW: Duration = Duration::from_millis(1_500);
 /// Give an agent-authored report one normal relay round trip to arrive before
 /// a provider terminal becomes a diagnostic wake.
 const TEAM_WAKE_REPORT_GRACE_MS: i64 = 4_000;
+/// How long a queued wake's last-moment relevance check may take before the
+/// turn is admitted anyway: an unprovable drop is never taken (ledger 266).
+const WAKE_RELEVANCE_TIMEOUT: Duration = Duration::from_secs(15);
 /// Longest infrastructure-only retry delay for one blocked team channel.
 const TEAM_WAKE_BACKOFF_CAP: Duration = Duration::from_secs(600);
 
@@ -2686,6 +2690,36 @@ impl Provider {
                     self.defer_team_wake(intent)?;
                     return Ok(());
                 }
+            }
+        }
+
+        // Relevance at enqueue (ledger 266): a wake must deliver new
+        // responsibility to the lead, not announce a record. The lead's own
+        // report, disposition or completion never wakes it; a fact the lead
+        // already cited is used; after a canonical terminal only a new
+        // request or contesting evidence is owed a turn. Retired, not
+        // deferred — every one of those answers only hardens with time — and
+        // the retirement goes through the durable resolved ledger, so a
+        // restart or a replay cannot resurrect it.
+        if let Some(lead) = team_wake::lead_actor(&snapshot.authority) {
+            let fact = wake_relevance::fact_of_source(&intent.source, &snapshot.team_events);
+            let view = wake_relevance::view_for(
+                &lead,
+                snapshot.canonical_terminal.clone(),
+                &[&snapshot.team_events],
+            );
+            if let Err(reason) = wake_relevance::still_owed(&fact, &view) {
+                tracing::info!(
+                    target: "csp::team_wake",
+                    channel_ref = %channel_ref,
+                    code = "team_wake_dropped",
+                    stage = "enqueue",
+                    reason = reason.as_str(),
+                    fact_id = %fact.fact_id,
+                    "team wake dropped before minting: it delivers no new responsibility"
+                );
+                self.retire_team_wake(channel_ref)?;
+                return Ok(());
             }
         }
 
@@ -9291,6 +9325,121 @@ impl Provider {
         }
     }
 
+    /// Answer an actor asking whether a queued wake pointer is still owed
+    /// (ledger 266), immediately before its prompt would reach the adapter.
+    ///
+    /// A fact another command already delivered to this exact target is a
+    /// `duplicate`, answered from the durable operation ledger at once.
+    /// Everything else needs fresh relay facts, so it is answered from a
+    /// spawned task: the run loop never waits on the relay. Anything that
+    /// cannot be proven — no relay, no scope, a failed query, the timeout —
+    /// admits the turn.
+    fn admit_wake_turn(
+        &self,
+        session_id: &str,
+        command_id: &str,
+        text: &str,
+        decision: tokio::sync::watch::Sender<wake_relevance::WakeAdmission>,
+    ) {
+        use wake_relevance::{WakeAdmission, WakeDropReason};
+        let Some(record) = self.state.session(session_id) else {
+            let _ = decision.send(WakeAdmission::Admit);
+            return;
+        };
+        let target = self.target_for(record);
+        let fact_id = serde_json::from_str::<serde_json::Value>(text)
+            .ok()
+            .and_then(|value| team_wake::pointer_fact_id(&value));
+        if let (Some(key), Some(fact_id)) = (team_wake::operation_fence_key(&target, text), fact_id)
+        {
+            if self
+                .state
+                .operation_owner(&key)
+                .is_some_and(|owner| owner != command_id)
+            {
+                tracing::info!(
+                    target: "csp::team_wake",
+                    %session_id,
+                    %command_id,
+                    code = "team_wake_dropped",
+                    stage = "dequeue",
+                    reason = WakeDropReason::Duplicate.as_str(),
+                    %fact_id,
+                    "queued wake dropped: this fact was already delivered to this execution"
+                );
+                let _ = decision.send(WakeAdmission::Drop {
+                    reason: WakeDropReason::Duplicate,
+                    fact_id,
+                });
+                return;
+            }
+        }
+        let (Some(rest), Some(relay_self)) = (self.rest_client.clone(), self.relay_self.clone())
+        else {
+            let _ = decision.send(WakeAdmission::Admit);
+            return;
+        };
+        let (Some(session_ref), Some(genesis_ref), Some(recipient)) = (
+            record.session_ref.clone(),
+            record.genesis_ref.clone(),
+            record.actor.clone(),
+        ) else {
+            let _ = decision.send(WakeAdmission::Admit);
+            return;
+        };
+        let scope = team_wake::WakeScope {
+            channel_ref: record.channel_id,
+            session_ref,
+            genesis_ref,
+        };
+        let session_id = session_id.to_owned();
+        let command_id = command_id.to_owned();
+        let text = text.to_owned();
+        tokio::spawn(async move {
+            let verdict = tokio::time::timeout(
+                WAKE_RELEVANCE_TIMEOUT,
+                wake_relevance::evaluate_at_dequeue(&rest, &relay_self, &scope, &recipient, &text),
+            )
+            .await;
+            let answer = match verdict {
+                Ok(Ok(Some((reason, fact_id)))) => {
+                    tracing::info!(
+                        target: "csp::team_wake",
+                        %session_id,
+                        %command_id,
+                        code = "team_wake_dropped",
+                        stage = "dequeue",
+                        reason = reason.as_str(),
+                        %fact_id,
+                        "queued wake dropped: it no longer delivers new responsibility"
+                    );
+                    WakeAdmission::Drop { reason, fact_id }
+                }
+                Ok(Ok(None)) => WakeAdmission::Admit,
+                Ok(Err(error)) => {
+                    tracing::info!(
+                        target: "csp::team_wake",
+                        %session_id,
+                        %command_id,
+                        %error,
+                        "queued wake relevance is not provable; admitting it"
+                    );
+                    WakeAdmission::Admit
+                }
+                Err(_) => {
+                    tracing::warn!(
+                        target: "csp::team_wake",
+                        %session_id,
+                        %command_id,
+                        "queued wake relevance check timed out; admitting it"
+                    );
+                    WakeAdmission::Admit
+                }
+            };
+            let _ = decision.send(answer);
+        });
+    }
+
     /// Turn one report from the session inbox into durable state and queued
     /// events.
     ///
@@ -9301,6 +9450,14 @@ impl Provider {
     /// [`SessionEvent::WorktreeObserved`].
     pub(crate) fn handle_session_event(&mut self, event: SessionEvent) -> anyhow::Result<()> {
         match event {
+            SessionEvent::WakeTurnAdmissionRequested {
+                session_id,
+                command_id,
+                text,
+                decision,
+            } => {
+                self.admit_wake_turn(&session_id, &command_id, &text, decision);
+            }
             SessionEvent::CiTurnAdmissionRequested {
                 session_id,
                 command_id,
@@ -9578,7 +9735,10 @@ impl Provider {
                 command_id,
                 reason,
             } => {
-                self.in_flight.remove(&command_id);
+                let operation_key = self
+                    .in_flight
+                    .remove(&command_id)
+                    .and_then(|turn| turn.operation_key);
                 let Some((channel_id, target)) = self.locate(&session_id) else {
                     return Ok(());
                 };
@@ -9610,6 +9770,15 @@ impl Provider {
                         ),
                         "turn_dropped:input_moved",
                     ),
+                    session::TurnDropReason::NotOwed { reason, fact_id } => (
+                        wake_relevance::WAKE_NOT_OWED,
+                        format!(
+                            "this wake no longer delivered new responsibility ({}) for fact \
+                             {fact_id}; no turn was spent",
+                            reason.as_str()
+                        ),
+                        "turn_dropped:wake_not_owed",
+                    ),
                 };
                 tracing::warn!(
                     target: "csp",
@@ -9636,6 +9805,17 @@ impl Provider {
                     // remedy the message names is a new assignment.
                     self.state.record_refusal(&command_id, now_secs())?;
                     assignment_custody::forget_requirement(&session_id, &command_id);
+                    self.forget_deferred_turn(&command_id);
+                }
+                if matches!(reason, session::TurnDropReason::NotOwed { .. }) {
+                    // A wake that is no longer owed never becomes owed again:
+                    // the drop is answered durably, and the fact is fenced so
+                    // a second producer's pointer for it is refused rather
+                    // than queued behind the same answer.
+                    self.state.record_refusal(&command_id, now_secs())?;
+                    if let Some(key) = &operation_key {
+                        self.state.consume_operation(key, &command_id, now_secs())?;
+                    }
                     self.forget_deferred_turn(&command_id);
                 }
                 self.enqueue_transcript(
@@ -11067,6 +11247,8 @@ mod tests {
     mod team_wake_driver_tests;
     #[path = "team_wake_pressure_tests.rs"]
     mod team_wake_pressure_tests;
+    #[path = "team_wake_relevance_tests.rs"]
+    mod team_wake_relevance_tests;
     #[path = "verification_input_tests.rs"]
     mod verification_input_tests;
     // Custody through the real actor path (lane 219, re-check R2/R3).

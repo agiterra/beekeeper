@@ -69,7 +69,7 @@ const CURRENT: [(&str, &str); 11] = [
     ("architect", "1.1.0"),
     ("builder", "1.2.0"),
     ("designer", "1.1.0"),
-    ("lead", "1.2.6"),
+    ("lead", "1.2.7"),
     ("memory", "1.0.0"),
     ("poker", "1.1.0"),
     ("project-pulse", "1.1.0"),
@@ -126,6 +126,13 @@ const LEAD_1_2_5_CARETS: [&str; 7] = [
 /// earlier caret takes it.
 const LEAD_1_2_6_CARETS: [&str; 8] = [
     "^1.0.0", "^1.1.0", "^1.2.0", "^1.2.1", "^1.2.2", "^1.2.3", "^1.2.4", "^1.2.5",
+];
+
+/// Lead 1.2.7 (control run 8, ledger 266): the "do nothing on a used
+/// host-result wake" sentence is gone because the machinery drops that turn,
+/// and hiring the verifier early is a judgment. Every earlier caret takes it.
+const LEAD_1_2_7_CARETS: [&str; 9] = [
+    "^1.0.0", "^1.1.0", "^1.2.0", "^1.2.1", "^1.2.2", "^1.2.3", "^1.2.4", "^1.2.5", "^1.2.6",
 ];
 
 /// Verifier 1.2.1 (control run 6): `refuter-pass` states the assignmentRef
@@ -496,7 +503,7 @@ fn a_1_2_2_template_is_picked_up_by_every_earlier_caret_include() {
             );
         }
     }
-    // The lead's 1.2.6 rides every earlier caret; 1.2.0 to 1.2.5 stay pins.
+    // The lead's 1.2.7 rides every earlier caret; 1.2.0 to 1.2.6 stay pins.
     for range in LEAD_1_2_1_CARETS
         .iter()
         .chain(LEAD_1_2_2_CARETS.iter())
@@ -504,6 +511,7 @@ fn a_1_2_2_template_is_picked_up_by_every_earlier_caret_include() {
         .chain(LEAD_1_2_4_CARETS.iter())
         .chain(LEAD_1_2_5_CARETS.iter())
         .chain(LEAD_1_2_6_CARETS.iter())
+        .chain(LEAD_1_2_7_CARETS.iter())
     {
         let resolved = catalog
             .resolve("lead", &TemplateRange::parse("lead", range).expect("range"))
@@ -511,12 +519,12 @@ fn a_1_2_2_template_is_picked_up_by_every_earlier_caret_include() {
         assert!(resolved.warning.is_none(), "lead@{range}: {resolved:?}");
         assert_eq!(
             resolved.template.version.to_string(),
-            "1.2.6",
-            "lead@{range} must take 1.2.6 without anyone editing a role file"
+            "1.2.7",
+            "lead@{range} must take 1.2.7 without anyone editing a role file"
         );
     }
     for exact in [
-        "1.0.0", "1.1.0", "1.2.0", "1.2.1", "1.2.2", "1.2.3", "1.2.4", "1.2.5",
+        "1.0.0", "1.1.0", "1.2.0", "1.2.1", "1.2.2", "1.2.3", "1.2.4", "1.2.5", "1.2.6",
     ] {
         let resolved = catalog
             .resolve("lead", &TemplateRange::parse("lead", exact).expect("range"))
@@ -761,7 +769,7 @@ fn a_new_project_seeds_the_current_versions_and_an_existing_projects_caret_resol
 
     let lead = std::fs::read_to_string(root.join("roles/lead.md")).expect("seeded lead");
     for expected in [
-        "![[beekeeper/lead@^1.2.6]]",
+        "![[beekeeper/lead@^1.2.7]]",
         "![[beekeeper/working-contract@^1.2.2]]",
         "![[beekeeper/memory@^1.0.0]]",
         "![[beekeeper/project-pulse@^1.1.0]]",
@@ -811,7 +819,7 @@ fn a_new_project_seeds_the_current_versions_and_an_existing_projects_caret_resol
     assert_eq!(
         resolved,
         vec![
-            ("beekeeper/lead@^1.0.0", "1.2.6"),
+            ("beekeeper/lead@^1.0.0", "1.2.7"),
             ("beekeeper/working-contract@^1.0.0", "1.2.2"),
             ("beekeeper/memory@^1.0.0", "1.0.0"),
             ("beekeeper/project-pulse@^1.0.0", "1.1.0"),
@@ -910,7 +918,7 @@ fn a_1_2_0_role_is_picked_up_by_both_the_caret_1_0_0_and_the_caret_1_1_0_include
     assert_eq!(
         resolved,
         vec![
-            ("beekeeper/lead@^1.1.0", "1.2.6"),
+            ("beekeeper/lead@^1.1.0", "1.2.7"),
             ("beekeeper/working-contract@^1.1.0", "1.2.2"),
             ("beekeeper/memory@^1.0.0", "1.0.0"),
             ("beekeeper/project-pulse@^1.1.0", "1.1.0"),

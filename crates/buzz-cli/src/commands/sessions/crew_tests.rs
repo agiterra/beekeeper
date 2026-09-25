@@ -3488,7 +3488,9 @@ fn no_hire_copy_claims_the_typed_fold_excludes_an_ungranted_report() {
 
 // ── Derived team-operation wake command ids (batch 2, A1.1) ──────────────────
 
-use super::crew_cmds::{team_operation_wake_command_id, CLI_TEAM_WAKE_COMMAND_ID_PREFIX};
+use super::crew_cmds::{
+    team_operation_wake_command_id, team_operation_wake_text, CLI_TEAM_WAKE_COMMAND_ID_PREFIX,
+};
 use super::operations::{resolve_delivery_command_id, wake_shares_delivery_command_id};
 use buzz_core::coding_session_team_transaction::CodingSessionTeamTransactionType;
 
@@ -4998,4 +5000,21 @@ async fn one_candidate_still_reports_its_own_evidence_error() {
         sentence.contains("The last hire evidence check refused the host's answer"),
         "{sentence}"
     );
+}
+
+/// Ledger 266: the CLI's operation wake names exactly the stored fact's id as
+/// `operationId`, for every operation type — the key the provider's
+/// fact-id fence dedups on, so a CLI wake and the provider's own wake for the
+/// same report, verdict, disposition or refutation spend one turn.
+#[test]
+fn a_cli_operation_wake_names_the_fact_id_the_provider_fences_on() {
+    let fact = "d1".repeat(32);
+    for operation_type in ["report", "verdict", "assignment", "mission.completed"] {
+        let text = team_operation_wake_text(&fact, operation_type).expect("pointer");
+        let value: serde_json::Value = serde_json::from_str(&text).expect("json");
+        let object = value.as_object().expect("object");
+        assert_eq!(object.len(), 2, "{text}");
+        assert_eq!(object["operationId"], fact.as_str(), "{text}");
+        assert_eq!(object["type"], operation_type, "{text}");
+    }
 }

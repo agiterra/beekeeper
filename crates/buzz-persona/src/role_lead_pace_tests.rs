@@ -40,14 +40,27 @@ const LEAD_COMMAND_SHAPES: [&str; 6] = [
      \"followUps\":[],\"summary\":\"<one sentence>\"}'`",
 ];
 
-const LEAD_PACE_RULES: [&str; 4] = [
+const LEAD_PACE_RULES: [&str; 2] = [
     "Run the verify action only on a delivered commit, after the delivery ref has moved to it, \
      never on the seed commit or a branch.",
-    "On a host-result wake for a result you have already used, do nothing.",
     "If a host-result wake carries `autoEvidence`, the criteria it lists are already bound; do \
      not bind them again.",
-    "Hire the verifier seat when you hire the builder, so it is warm; bind its assignment with \
-     `--verifies <report id>` when the builder's report lands.",
+];
+
+/// Lead 1.2.7 (control run 8, ledger 266): the machinery now drops a wake
+/// that delivers no new responsibility before the turn starts, so the lead is
+/// no longer told to spend a turn doing nothing on one; and hiring the
+/// verifier early is a judgment, not a mandate, because an idle seat costs.
+const LEAD_1_2_7_RULES: [&str; 1] = [
+    "You may hire the verifier early when the review will be on the critical path; an idle seat \
+     is not free. Bind its assignment with `--verifies <report id>` when the builder's report \
+     lands.",
+];
+
+/// What 1.2.7 removed, and must never come back.
+const LEAD_1_2_7_REMOVED: [&str; 2] = [
+    "On a host-result wake for a result you have already used, do nothing.",
+    "Hire the verifier seat when you hire the builder, so it is warm",
 ];
 
 /// Lead 1.2.4: the facts the lead once spent 42% of its tool calls finding
@@ -115,7 +128,7 @@ fn the_composed_lead_carries_every_work_command_shape_in_order() {
         .iter()
         .find(|include| include.reference.starts_with("beekeeper/lead@"))
         .expect("the lead includes its role template");
-    assert_eq!(lead_include.resolved.as_deref(), Some("1.2.6"));
+    assert_eq!(lead_include.resolved.as_deref(), Some("1.2.7"));
 
     let prompt = &composed.persona.prompt;
     let mut last = 0;
@@ -139,6 +152,15 @@ fn the_composed_lead_carries_every_work_command_shape_in_order() {
     }
     for rule in LEAD_1_2_6_RULES {
         assert!(prompt.contains(rule), "the composed lead lacks {rule:?}");
+    }
+    for rule in LEAD_1_2_7_RULES {
+        assert!(prompt.contains(rule), "the composed lead lacks {rule:?}");
+    }
+    for removed in LEAD_1_2_7_REMOVED {
+        assert!(
+            !prompt.contains(removed),
+            "the composed lead still carries {removed:?}"
+        );
     }
     let hire = composed
         .skills

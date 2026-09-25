@@ -158,15 +158,14 @@ fn the_operation_fence_still_keys_on_the_bare_pointer() {
         )
         .expect("framed")
         .render(&pointer);
-    assert!(
-        bare.ends_with(
-            &serde_json::to_string(
-                &serde_json::from_str::<serde_json::Value>(&pointer).expect("pointer json")
-            )
-            .expect("canonical")
-        ),
-        "{bare}"
-    );
+    // Keyed on the fact the bare pointer names (ledger 266), which only the
+    // bare pointer carries in a parseable form.
+    let fact_id = serde_json::from_str::<serde_json::Value>(&pointer).expect("pointer json")
+        ["operationId"]
+        .as_str()
+        .expect("operation id")
+        .to_owned();
+    assert!(bare.ends_with(&format!("fact:{fact_id}")), "{bare}");
     assert_eq!(
         team_wake::operation_fence_key(&target, &framed),
         None,

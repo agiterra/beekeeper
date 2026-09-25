@@ -20,14 +20,18 @@ fn report_pointer(operation_id: &str) -> String {
 }
 
 /// The fence key computed from the *specification* rather than from the
-/// implementation under test: the target key, a NUL, and the pointer JSON
-/// re-serialised through `serde_json::Value` (BTreeMap key order).
+/// implementation under test: the target key, a NUL, `fact:`, and the id of
+/// the fact the pointer names (ledger 266 — identity is the fact, not the
+/// pointer's wording).
 fn expected_fence_key(target: &CodingSessionTarget, pointer: &str) -> String {
     let value: serde_json::Value = serde_json::from_str(pointer).expect("pointer json");
+    let fact_id = ["operationId", "terminalEventId", "resultEventId"]
+        .iter()
+        .find_map(|key| value[*key].as_str())
+        .expect("a pointer names its fact");
     format!(
-        "{}\u{0}{}",
+        "{}\u{0}fact:{fact_id}",
         buzz_core::coding_session_command::coding_session_target_key(target),
-        serde_json::to_string(&value).expect("canonical pointer"),
     )
 }
 
@@ -711,6 +715,94 @@ fn only_the_two_wake_pointer_shapes_fence_an_operation() {
         team_wake::operation_fence_key(&target, &report),
         team_wake::operation_fence_key(&target, &terminal),
     );
+}
+
+/// Ledger 266 — the CLI's `--wake-to` pointer and the provider's own
+/// disposition pointer name one fact, so they are one operation: whichever
+/// arrives second is refused `DUPLICATE_OPERATION` and spends no turn.
+#[tokio::test]
+async fn a_cli_and_a_provider_wake_for_one_fact_deliver_once() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let cwd = dir.path().join("checkout");
+    std::fs::create_dir_all(&cwd).expect("mkdir");
+    let channel_id = Uuid::new_v4();
+    let projects = write_projects(dir.path(), channel_id, &cwd);
+    let state_dir = dir.path().join("state");
+    let mut provider = provider(&state_dir, Some(&projects));
+    provider
+        .handle_command_event(channel_id, &create_event(&provider, channel_id, "create-1"))
+        .await
+        .expect("handle");
+    let target = provider
+        .state()
+        .sessions()
+        .next()
+        .expect("session")
+        .target("instance-1");
+
+    let disposition_id = "d1".repeat(32);
+    let provider_pointer = team_wake::wake_text(&team_wake::WakeSource::Disposition {
+        operation_id: disposition_id.clone(),
+        report_ref: "22".repeat(32),
+        assignment_ref: "33".repeat(32),
+        decision:
+            buzz_core::coding_session_team_transaction::CodingSessionTeamDispositionDecision::ChangesRequested,
+        required_action: Some("Fix it".into()),
+        author_pubkey: "44".repeat(32),
+        created_at: 1,
+    })
+    .expect("provider pointer");
+    // Byte-for-byte what `bee sessions verdict --wake-to` sends.
+    let cli_pointer =
+        serde_json::json!({"operationId": disposition_id, "type": "verdict"}).to_string();
+    assert_ne!(provider_pointer, cli_pointer, "two producers, two wordings");
+    assert_eq!(
+        team_wake::operation_fence_key(&target, &provider_pointer),
+        team_wake::operation_fence_key(&target, &cli_pointer),
+        "one fact, one fence"
+    );
+
+    let base = now_secs();
+    provider
+        .handle_command_event(
+            channel_id,
+            &turn_event_at(
+                channel_id,
+                "wake-provider",
+                &target,
+                &provider_pointer,
+                base,
+            ),
+        )
+        .await
+        .expect("handle");
+    provider
+        .handle_command_event(
+            channel_id,
+            &turn_event_at(
+                channel_id,
+                "cli-wake-v1:dup",
+                &target,
+                &cli_pointer,
+                base + 1,
+            ),
+        )
+        .await
+        .expect("handle");
+    pump_until_turn_finished(&mut provider).await;
+    let sink = CollectingSink::new();
+    provider.flush(&sink).await.expect("flush");
+
+    assert_eq!(
+        receipt_stages(&sink, "wake-provider"),
+        vec!["turn_queued".to_owned(), "turn_started".to_owned()]
+    );
+    assert_duplicate_refusal(&sink, "cli-wake-v1:dup", "wake-provider");
+    let started = turn_receipts_in_order(&sink)
+        .into_iter()
+        .filter(|(_, status)| status == "turn_started")
+        .count();
+    assert_eq!(started, 1, "one fact spends exactly one lead turn");
 }
 
 /// P2 — the exact target generation is inside the key.

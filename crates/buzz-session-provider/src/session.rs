@@ -673,6 +673,14 @@ pub enum TurnDropReason {
         /// The commit the assignment named.
         required: String,
     },
+    /// A queued wake no longer delivered new responsibility when the actor
+    /// reached it, so the prompt was never sent (ledger 266).
+    NotOwed {
+        /// Which relevance rule held.
+        reason: crate::wake_relevance::WakeDropReason,
+        /// The fact the wake was about.
+        fact_id: String,
+    },
 }
 
 /// Something the provider loop must fold into state and publish.
@@ -683,6 +691,20 @@ pub enum TurnDropReason {
 /// single ordered inbox with a single shutdown rule.
 #[derive(Debug, Clone)]
 pub enum SessionEvent {
+    /// A queued team-wake pointer reached its execution boundary. The actor
+    /// waits for the provider's relevance answer before sending any prompt
+    /// to the adapter: a queued wake is already billable, and the fact it
+    /// announces may have been used while it waited (ledger 266).
+    WakeTurnAdmissionRequested {
+        /// The exact actor requesting admission.
+        session_id: String,
+        /// The command whose turn is about to start.
+        command_id: String,
+        /// The raw pointer text the turn would deliver.
+        text: String,
+        /// The provider's answer; a closed channel admits.
+        decision: watch::Sender<crate::wake_relevance::WakeAdmission>,
+    },
     /// A queued CI turn reached its execution boundary. The actor waits for
     /// this provider decision before sending any prompt to the adapter.
     CiTurnAdmissionRequested {
@@ -2829,6 +2851,41 @@ impl SessionActor {
                         );
                         continue;
                     }
+                    // Relevance, re-asked immediately before model execution
+                    // (ledger 266). Only provider-minted wake pointers are
+                    // asked about; prose is never second-guessed.
+                    if crate::team_wake::is_team_wake_pointer(&text) {
+                        match self
+                            .await_wake_admission(&command_id, &text, &mut shutdown)
+                            .await
+                        {
+                            None => break 'actor,
+                            Some(crate::wake_relevance::WakeAdmission::Drop {
+                                reason,
+                                fact_id,
+                            }) => {
+                                release_dequeue(&self.fenced, &command_id);
+                                tracing::info!(
+                                    target: "csp::session",
+                                    session_id = %self.session_id,
+                                    %command_id,
+                                    reason = reason.as_str(),
+                                    %fact_id,
+                                    "not prompting: the wake no longer delivers new responsibility"
+                                );
+                                let _ = self
+                                    .events
+                                    .send(SessionEvent::TurnDropped {
+                                        session_id: self.session_id.clone(),
+                                        command_id,
+                                        reason: TurnDropReason::NotOwed { reason, fact_id },
+                                    })
+                                    .await;
+                                continue;
+                            }
+                            Some(_) => {}
+                        }
+                    }
                     // Custody of this seat's checkout, taken before the
                     // prompt and held for as long as the turn runs.
                     //
@@ -2934,6 +2991,48 @@ impl SessionActor {
             session_id = %self.session_id,
             "session actor stopped: {reason:?}"
         );
+    }
+
+    /// Ask the provider whether a queued wake is still owed, and wait for the
+    /// answer. `None` means the actor is shutting down; a provider that went
+    /// away without answering admits, because an unprovable drop is never
+    /// taken.
+    async fn await_wake_admission(
+        &self,
+        command_id: &str,
+        text: &str,
+        shutdown: &mut watch::Receiver<bool>,
+    ) -> Option<crate::wake_relevance::WakeAdmission> {
+        use crate::wake_relevance::WakeAdmission;
+        let (decision, mut admission) = watch::channel(WakeAdmission::Pending);
+        if self
+            .events
+            .send(SessionEvent::WakeTurnAdmissionRequested {
+                session_id: self.session_id.clone(),
+                command_id: command_id.to_owned(),
+                text: text.to_owned(),
+                decision,
+            })
+            .await
+            .is_err()
+        {
+            return None;
+        }
+        loop {
+            tokio::select! {
+                biased;
+                _ = shutdown.changed() => return None,
+                changed = admission.changed() => {
+                    if changed.is_err() {
+                        return Some(WakeAdmission::Admit);
+                    }
+                    let answer = admission.borrow().clone();
+                    if answer != WakeAdmission::Pending {
+                        return Some(answer);
+                    }
+                }
+            }
+        }
     }
 
     /// Run one turn. Returns an exit reason when the actor must retire.
