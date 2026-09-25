@@ -739,13 +739,16 @@ async fn two_command_ids_for_one_run_start_exactly_one_turn() {
         "the second command id is refused and spends no turn"
     );
 
-    // The durable half: one operation row, keyed by the compact pointer.
+    // The durable half: one operation row, keyed by the fact the compact
+    // pointer names (ledger 266: the fence keys on the fact id).
     let operations = ledger_lines(&state_dir, "operations.jsonl");
     assert_eq!(operations.len(), 1);
+    let pointer: serde_json::Value =
+        serde_json::from_str(&ci_continuation_pointer(&digest_of(&identity))).expect("pointer");
     let expected_key = format!(
-        "{}\u{0}{}",
+        "{}\u{0}fact:{}",
         buzz_core::coding_session_command::coding_session_target_key(&target),
-        ci_continuation_pointer(&digest_of(&identity)),
+        pointer["operationId"].as_str().expect("operation id"),
     );
     assert_eq!(operations[0]["key"], expected_key);
 }

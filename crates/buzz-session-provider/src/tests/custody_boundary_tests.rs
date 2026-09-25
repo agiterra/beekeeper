@@ -338,6 +338,19 @@ async fn a_turn_refused_at_the_dequeue_is_discharged_with_a_visible_answer() {
         .handle_command_event(channel_id, &wake)
         .await
         .expect("handle");
+    // The actor first asks whether the wake is still owed (ledger 266); the
+    // provider answers, and only then does the custody check run.
+    let admission = tokio::time::timeout(Duration::from_secs(10), provider.next_session_event())
+        .await
+        .expect("the actor asks for wake admission")
+        .expect("event");
+    assert!(
+        matches!(&admission, SessionEvent::WakeTurnAdmissionRequested { .. }),
+        "{admission:?}"
+    );
+    provider
+        .handle_session_event(admission)
+        .expect("admission answered");
     // The actor dequeues, refuses, and tells the provider.
     let dropped = tokio::time::timeout(Duration::from_secs(10), provider.next_session_event())
         .await
