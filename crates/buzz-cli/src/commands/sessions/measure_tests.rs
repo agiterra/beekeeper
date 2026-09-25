@@ -1001,3 +1001,95 @@ fn measure_labels_a_fully_priced_seat_complete() {
         "{honesty:?}"
     );
 }
+
+/// Ledger 268(e), RED-first: a seat row names the model the hire requested
+/// and the model the adapter reported answering, and discloses the stand-in.
+/// A seat whose results predate the fields says so rather than guessing.
+#[test]
+fn measure_seat_row_shows_requested_and_effective_model() {
+    let umbrella = "11111111-2222-3333-4444-555555555555";
+    let metadata = |id: &str, execution: &str, role: &str| {
+        json!({
+            "id": id,
+            "pubkey": "p",
+            "kind": KIND_CODING_SESSION_METADATA,
+            "created_at": 100,
+            "tags": [],
+            "content": json!({
+                "session": { "sessionId": execution, "generation": 1 },
+                "sessionRef": umbrella,
+                "role": role,
+                "model": "default",
+            })
+            .to_string(),
+        })
+    };
+    let result_item = |id: &str, execution: &str, at: i64, extra: Value| {
+        let mut item = json!({
+            "kind": "result",
+            "subtype": "success",
+            "isError": false,
+            "durationMs": 10,
+            "result": "ok",
+            "costUsd": 1.0,
+            "costBasis": "estimated",
+        });
+        for (key, value) in extra.as_object().expect("extra is an object") {
+            item[key] = value.clone();
+        }
+        json!({
+            "id": id,
+            "pubkey": "p",
+            "kind": KIND_CODING_SESSION_TRANSCRIPT,
+            "created_at": at,
+            "tags": [],
+            "content": json!({
+                "session": { "sessionId": execution },
+                "timestamp": at * 1_000,
+                "item": item,
+            })
+            .to_string(),
+        })
+    };
+    let verifier = "22222222-3333-4444-5555-666666666666";
+    let builder = "33333333-4444-4555-8666-777777777777";
+    let events = vec![
+        metadata("meta-v", verifier, "verifier"),
+        metadata("meta-b", builder, "builder"),
+        result_item(
+            "r-v",
+            verifier,
+            101,
+            json!({
+                "modelRequested": "default",
+                "modelEffective": "claude-opus-4-6",
+                "modelOverridden": true,
+            }),
+        ),
+        result_item("r-b", builder, 102, json!({})),
+    ];
+
+    let report = measure_report(&events, Some(umbrella), None, None);
+    let row = seat(&report, "verifier");
+    assert_eq!(
+        row.get("model_requested").and_then(Value::as_str),
+        Some("default")
+    );
+    assert_eq!(
+        row.get("model_effective").and_then(Value::as_str),
+        Some("claude-opus-4-6")
+    );
+    assert_eq!(
+        row.get("model_overridden").and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(row.get("model_effective_reason"), Some(&Value::Null));
+
+    let row = seat(&report, "builder");
+    assert_eq!(row.get("model_effective"), Some(&Value::Null));
+    assert_eq!(
+        row.get("model_effective_reason").and_then(Value::as_str),
+        Some("not_on_wire")
+    );
+    assert_eq!(row.get("model_overridden"), Some(&Value::Null));
+}

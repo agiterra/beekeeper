@@ -272,6 +272,17 @@ pub struct SessionRecord {
     pub authority_seq: u32,
     /// Requested model, or `None` to let the adapter decide.
     pub model: Option<String>,
+    /// The model label the create asked for, verbatim (`default`,
+    /// `opus[1m]`, …), or `None` when it named none. Kept apart from
+    /// [`Self::model`], which startup overwrites with what the adapter
+    /// applied, so a turn result can name both sides (ledger 268(e)).
+    #[serde(default)]
+    pub model_requested: Option<String>,
+    /// The latest model id the adapter itself reported answering — a turn's
+    /// own report, or the adapter's session-level report when it is a model
+    /// rather than the `default` picker label. `None` until the adapter says.
+    #[serde(default)]
+    pub model_effective: Option<String>,
     /// The host's routing decision from the create, or `None` for an
     /// unrouted or pre-field session.
     #[serde(default)]
@@ -1629,6 +1640,8 @@ mod tests {
             granted_viewers: BTreeSet::new(),
             authority_seq: 0,
             model: None,
+            model_requested: None,
+            model_effective: None,
             routing: None,
             resume_cursor: None,
             title: None,

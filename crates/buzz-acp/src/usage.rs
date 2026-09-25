@@ -276,6 +276,9 @@ pub(crate) struct StandardUsageTracker {
     in_flight_session: Option<String>,
     pending_cost: Option<(String, f64)>,
     pending_prompt: Option<(String, PromptResponseUsage, StandardAdapterKind)>,
+    /// The model the adapter reported answered the in-flight turn (ledger
+    /// 268(e)), from claude-agent-acp's raw SDK `result` frame.
+    pending_model: Option<(String, String)>,
 }
 
 impl StandardUsageTracker {
@@ -293,6 +296,16 @@ impl StandardUsageTracker {
         self.in_flight_session = Some(session_id.to_string());
         self.pending_cost = None;
         self.pending_prompt = None;
+        self.pending_model = None;
+    }
+
+    /// Record the model id the adapter itself reported answering the
+    /// in-flight turn. Ignored for any other session, like [`Self::record_cost`].
+    pub(crate) fn record_model(&mut self, session_id: &str, model: &str) {
+        let model = model.trim();
+        if !model.is_empty() && self.in_flight_session.as_deref() == Some(session_id) {
+            self.pending_model = Some((session_id.to_string(), model.to_owned()));
+        }
     }
 
     /// Claude's `usage_update.cost.amount` is a raw session-cumulative total.
@@ -318,6 +331,7 @@ impl StandardUsageTracker {
         self.in_flight_session = None;
         let prompt = self.pending_prompt.take();
         let cost = self.pending_cost.take();
+        let reported_model = self.pending_model.take();
         let session_id = prompt
             .as_ref()
             .map(|(session_id, _, _)| session_id.clone())
@@ -370,6 +384,9 @@ impl StandardUsageTracker {
             return None;
         }
 
+        let model = reported_model
+            .filter(|(model_session, _)| *model_session == session_id)
+            .map(|(_, model)| model);
         state.published_seq += 1;
         Some(TurnUsage {
             session_id,
@@ -390,10 +407,43 @@ impl StandardUsageTracker {
             cumulative_cost_usd: cumulative_cost,
             cumulative_cache_read_tokens: None,
             cumulative_cache_write_tokens: None,
-            model: None,
+            model,
             pricing_identity: None,
         })
     }
+}
+
+/// The model that did most of a turn's work, from a Claude SDK `result`
+/// message's `modelUsage` map (keyed by the resolved model id the SDK called,
+/// e.g. `claude-opus-4-6` or `claude-sonnet-5[1m]`).
+///
+/// A turn can call more than one model (a subagent, a compaction), so the
+/// entry with the largest `costUSD` wins, ties and missing costs broken by
+/// output tokens. `None` when the map is absent or empty — never a guess.
+pub(crate) fn dominant_model_from_sdk_result(message: &serde_json::Value) -> Option<String> {
+    let usage = message.get("modelUsage")?.as_object()?;
+    let weight = |entry: &serde_json::Value| {
+        (
+            entry
+                .get("costUSD")
+                .and_then(serde_json::Value::as_f64)
+                .filter(|cost| cost.is_finite())
+                .unwrap_or(0.0),
+            entry
+                .get("outputTokens")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0),
+        )
+    };
+    usage
+        .iter()
+        .filter(|(model, _)| !model.trim().is_empty())
+        .max_by(|(_, a), (_, b)| {
+            let (cost_a, out_a) = weight(a);
+            let (cost_b, out_b) = weight(b);
+            cost_a.total_cmp(&cost_b).then(out_a.cmp(&out_b))
+        })
+        .map(|(model, _)| model.trim().to_owned())
 }
 
 /// Tracks per-session cumulative usage state across turns.
@@ -924,6 +974,43 @@ impl UsageTracker {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn the_standard_tracker_carries_the_adapter_reported_model() {
+        let mut tracker = StandardUsageTracker::default();
+        tracker.seed_zero_baseline("s");
+        tracker.begin_turn("s");
+        tracker.record_model("s", "claude-opus-4-6");
+        tracker.record_model("other", "claude-haiku-4-5");
+        tracker.record_cost("s", 0.25);
+        let usage = tracker.take().expect("usage");
+        assert_eq!(usage.model.as_deref(), Some("claude-opus-4-6"));
+
+        tracker.begin_turn("s");
+        tracker.record_cost("s", 0.5);
+        let usage = tracker.take().expect("usage");
+        assert_eq!(usage.model, None, "a turn with no report names no model");
+    }
+
+    #[test]
+    fn the_dominant_model_is_the_costliest_model_usage_entry() {
+        let message = serde_json::json!({
+            "type": "result",
+            "modelUsage": {
+                "claude-haiku-4-5": { "costUSD": 0.001, "outputTokens": 900 },
+                "claude-opus-4-6": { "costUSD": 0.4, "outputTokens": 300 }
+            }
+        });
+        assert_eq!(
+            dominant_model_from_sdk_result(&message).as_deref(),
+            Some("claude-opus-4-6")
+        );
+        assert_eq!(
+            dominant_model_from_sdk_result(&serde_json::json!({ "modelUsage": {} })),
+            None
+        );
+        assert_eq!(dominant_model_from_sdk_result(&serde_json::json!({})), None);
+    }
     use super::*;
 
     /// The camelCase key buzz-agent actually puts on the wire must land on the

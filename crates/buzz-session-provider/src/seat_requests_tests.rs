@@ -37,6 +37,8 @@ fn record(session_id: &str, command_id: &str) -> SessionRecord {
         granted_viewers: BTreeSet::new(),
         authority_seq: 0,
         model: None,
+        model_requested: None,
+        model_effective: None,
         routing: None,
         resume_cursor: Some("saved-acp-session".into()),
         title: None,

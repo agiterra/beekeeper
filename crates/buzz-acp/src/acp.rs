@@ -1789,14 +1789,7 @@ impl AcpClient {
             // Merge — _meta may already carry systemPrompt from ClaudeMeta above.
             params["_meta"]["sessionTitle"] = serde_json::Value::String(title.to_owned());
         }
-        if self.emit_raw_sdk_frames {
-            // claude-agent-acp reads this once, here, and forwards every SDK
-            // message as a `_claude/sdkMessage` ext-notification thereafter.
-            // `true` means unfiltered; the adapter also accepts a filter list,
-            // which is not exposed because the reason to turn this on is not
-            // knowing yet which frames matter.
-            params["_meta"]["claudeCode"]["emitRawSDKMessages"] = serde_json::Value::Bool(true);
-        }
+        self.apply_raw_sdk_frames_meta(&mut params);
         self.apply_disallowed_tools_meta(&mut params);
         let result = self.send_request("session/new", params).await?;
         let session_id = result["sessionId"]
@@ -1830,6 +1823,7 @@ impl AcpClient {
             "cwd": cwd,
             "mcpServers": mcp_servers,
         });
+        self.apply_raw_sdk_frames_meta(&mut params);
         self.apply_disallowed_tools_meta(&mut params);
         let result = self.send_request("session/resume", params).await?;
         tracing::info!(target: "acp::session", "session resumed");
@@ -1857,6 +1851,7 @@ impl AcpClient {
             "cwd": cwd,
             "mcpServers": mcp_servers,
         });
+        self.apply_raw_sdk_frames_meta(&mut params);
         self.apply_disallowed_tools_meta(&mut params);
         let result = self.send_request("session/load", params).await?;
         tracing::info!(target: "acp::session", "session loaded");
@@ -2172,6 +2167,61 @@ impl AcpClient {
     /// An empty list omits the key.
     pub fn set_disallowed_tools(&mut self, tools: &[&str]) {
         self.disallowed_tools = tools.iter().map(|tool| (*tool).to_owned()).collect();
+    }
+
+    /// Ask claude-agent-acp for the raw SDK frames this client reads.
+    ///
+    /// With the diagnostic flag on, every frame (`true`, unfiltered — the
+    /// reason to turn it on is not knowing yet which frames matter). Otherwise
+    /// a Claude adapter is asked for its `result` frames only: their
+    /// `modelUsage` map is the one place the adapter reports the resolved
+    /// model id that actually answered a turn, rather than the picker label
+    /// (`default`) the session was opened on (ledger 268(e)). The adapter
+    /// reads the key once, off the request that opens the session, so it is
+    /// written on `session/new`, `session/resume` and `session/load` alike.
+    /// Any other adapter's request is unchanged.
+    fn apply_raw_sdk_frames_meta(&self, params: &mut serde_json::Value) {
+        if self.emit_raw_sdk_frames {
+            params["_meta"]["claudeCode"]["emitRawSDKMessages"] = serde_json::Value::Bool(true);
+        } else if self.standard_adapter == Some(StandardAdapterKind::Claude) {
+            params["_meta"]["claudeCode"]["emitRawSDKMessages"] =
+                serde_json::json!([{ "type": "result" }]);
+        }
+    }
+
+    /// Handle one `_claude/sdkMessage` frame: record the model a `result`
+    /// reports, and log the frame only when the diagnostic flag asked for it.
+    ///
+    /// Only user-turn results count: an autonomous result (a followup or peer
+    /// cycle, stamped with a non-user `origin`) did not answer the turn in
+    /// flight.
+    fn handle_raw_sdk_frame(&mut self, msg: &serde_json::Value) {
+        if self.emit_raw_sdk_frames {
+            self.log_raw_sdk_frame(msg);
+        }
+        if self.standard_adapter != Some(StandardAdapterKind::Claude) {
+            return;
+        }
+        let message = &msg["params"]["message"];
+        if message.get("type").and_then(serde_json::Value::as_str) != Some("result") {
+            return;
+        }
+        let autonomous = message
+            .pointer("/origin/kind")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|kind| kind != "user");
+        if autonomous {
+            return;
+        }
+        let Some(session_id) = msg
+            .pointer("/params/sessionId")
+            .and_then(serde_json::Value::as_str)
+        else {
+            return;
+        };
+        if let Some(model) = crate::usage::dominant_model_from_sdk_result(message) {
+            self.standard_usage.record_model(session_id, &model);
+        }
     }
 
     /// Write the denied-tool list into a request's `_meta`, if there is one.
@@ -2705,7 +2755,7 @@ impl AcpClient {
                     "_goose/unstable/session/update" => {
                         self.handle_goose_usage_update(&msg);
                     }
-                    RAW_SDK_FRAME_METHOD => self.log_raw_sdk_frame(&msg),
+                    RAW_SDK_FRAME_METHOD => self.handle_raw_sdk_frame(&msg),
                     "session/request_permission" => {
                         self.handle_permission_request(&msg).await?;
                     }
@@ -3050,7 +3100,7 @@ impl AcpClient {
                             "_goose/unstable/session/update" => {
                                 self.handle_goose_usage_update(&msg);
                             }
-                            RAW_SDK_FRAME_METHOD => self.log_raw_sdk_frame(&msg),
+                            RAW_SDK_FRAME_METHOD => self.handle_raw_sdk_frame(&msg),
                             "session/request_permission" => {
                                 if let Err(error) = self.handle_permission_request(&msg).await {
                                     return self
@@ -3243,7 +3293,7 @@ impl AcpClient {
                     "_goose/unstable/session/update" => {
                         self.handle_goose_usage_update(&msg);
                     }
-                    RAW_SDK_FRAME_METHOD => self.log_raw_sdk_frame(&msg),
+                    RAW_SDK_FRAME_METHOD => self.handle_raw_sdk_frame(&msg),
                     "session/request_permission" => {
                         if let Err(e) = self.handle_permission_request(&msg).await {
                             tracing::warn!("permission reply failed during steer drain: {e}");
@@ -7136,6 +7186,65 @@ sleep 5
             client.take_turn_usage().is_none(),
             "overflow without another valid signal must not emit all-null usage"
         );
+    }
+
+    /// Ledger 268(e): a Claude adapter's `result` frame names the model that
+    /// actually answered; the turn's usage carries it, not the picker label.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn claude_named_adapter_records_the_model_its_result_frame_reports() {
+        let script = r#"
+            read -r REQ
+            ID=$(printf '%s' "$REQ" | sed -E 's/.*"id":([0-9]+).*/\1/')
+            echo '{"jsonrpc":"2.0","method":"_claude/sdkMessage","params":{"sessionId":"model-session","message":{"type":"result","origin":{"kind":"followup"},"modelUsage":{"claude-haiku-4-5":{"costUSD":9.0}}}}}'
+            echo '{"jsonrpc":"2.0","method":"_claude/sdkMessage","params":{"sessionId":"model-session","message":{"type":"result","modelUsage":{"claude-haiku-4-5":{"costUSD":0.001},"claude-opus-4-6":{"costUSD":0.4}}}}}'
+            echo '{"jsonrpc":"2.0","id":'"$ID"',"result":{"stopReason":"end_turn","usage":{"inputTokens":7,"outputTokens":3,"totalTokens":10}}}'
+            sleep 1
+        "#;
+        let (mut client, dir) = spawn_named_script("claude-code", script).await;
+        client.set_turn_clock(idle_clock::ManualTurnClock::frozen());
+        client.notify_session_spawned("model-session");
+        client
+            .session_prompt_with_idle_timeout(
+                "model-session",
+                "hello",
+                std::time::Duration::from_secs(2),
+                std::time::Duration::from_secs(5),
+            )
+            .await
+            .expect("prompt");
+        let usage = client.take_turn_usage().expect("usage");
+        assert_eq!(usage.model.as_deref(), Some("claude-opus-4-6"));
+        drop(client);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A Claude adapter is asked for its `result` frames on `session/new`
+    /// even with the diagnostic flag off — that is where the model id lives.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn claude_named_adapter_requests_result_frames_on_session_new() {
+        let script = r#"
+            read -t 2 _init
+            echo '{"jsonrpc":"2.0","id":0,"result":{"protocolVersion":1,"agentCapabilities":{}}}'
+            read -t 2 REQ
+            echo '{"jsonrpc":"2.0","id":1,"result":{"sessionId":"ses_test","_receivedRequest":'"$REQ"'}}'
+            sleep 1
+        "#;
+        let (mut client, dir) = spawn_named_script("claude-code", script).await;
+        client.initialize().await.expect("initialize");
+        let response = client
+            .session_new_full("/tmp", vec![], None, None)
+            .await
+            .expect("session/new");
+        let sent = &response.raw["_receivedRequest"]["params"];
+        assert_eq!(
+            sent.pointer("/_meta/claudeCode/emitRawSDKMessages"),
+            Some(&serde_json::json!([{ "type": "result" }])),
+            "{sent}"
+        );
+        drop(client);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     /// The Claude adapter's wire lifecycle: one `usage_update` before the

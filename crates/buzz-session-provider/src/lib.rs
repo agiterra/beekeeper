@@ -1353,10 +1353,7 @@ impl Provider {
                             u64::try_from(terminal_at_ms.saturating_sub(open_turn.started_at_ms))
                                 .unwrap_or_default(),
                             "provider terminated mid-turn",
-                            payload::TurnCost {
-                                cost_reason: Some(payload::CostReason::NoUsageReported),
-                                ..Default::default()
-                            },
+                            record_identity_cost(&record),
                             payload::TurnUsageReport::default(),
                         ),
                         Priority::High,
@@ -3460,6 +3457,8 @@ impl Provider {
             granted_viewers: std::collections::BTreeSet::new(),
             authority_seq: 0,
             model: startup.model.clone().or_else(|| plan.model.clone()),
+            model_requested: plan.model.clone(),
+            model_effective: session_reported_model(startup.model.as_deref()),
             routing: plan.routing.clone(),
             resume_cursor: Some(startup.acp_session_id.clone()),
             title: plan.title.clone(),
@@ -4480,6 +4479,11 @@ impl Provider {
             record.compose_ref = seat_compose_ref.clone();
             if startup.model.is_some() {
                 record.model = startup.model.clone();
+            }
+            // A turn's own report is more specific than the session-level one
+            // (a resolved id, not an alias), so the latter only fills a gap.
+            if record.model_effective.is_none() {
+                record.model_effective = session_reported_model(startup.model.as_deref());
             }
         }) {
             self.sessions.shutdown(&record.session_id);
@@ -6875,10 +6879,7 @@ impl Provider {
                             payload::ResultSubtype::Error,
                             elapsed,
                             Self::HANDOVER_INTERRUPT_REASON,
-                            payload::TurnCost {
-                                cost_reason: Some(payload::CostReason::NoUsageReported),
-                                ..Default::default()
-                            },
+                            record_identity_cost(&record),
                             payload::TurnUsageReport::default(),
                         ),
                         Priority::High,
@@ -9583,6 +9584,33 @@ impl Provider {
                     .state
                     .session(&session_id)
                     .and_then(|record| record.model.clone());
+                // Ledger 268(e): what the hire asked for, and what the adapter
+                // last said it runs. This turn's own report (on `usage`)
+                // outranks the latter and is remembered for later turns.
+                let (model_requested, session_model) = self
+                    .state
+                    .session(&session_id)
+                    .map(|record| {
+                        (
+                            record.model_requested.clone(),
+                            record.model_effective.clone(),
+                        )
+                    })
+                    .unwrap_or_default();
+                let turn_model = usage.as_deref().and_then(|usage| usage.model.clone());
+                if let Some(reported) = turn_model.as_ref() {
+                    if session_model.as_ref() != Some(reported) {
+                        let reported = reported.clone();
+                        self.state.update_session(&session_id, |record| {
+                            record.model_effective = Some(reported);
+                        })?;
+                    }
+                }
+                let identity = ModelIdentity {
+                    requested: model_requested.as_deref(),
+                    session_reported: session_model.as_deref(),
+                    window_fallback: model.as_deref(),
+                };
                 let team_terminal = self.state.session(&session_id).and_then(|record| {
                     let actor = record.actor.clone()?;
                     let role = record.role.clone()?;
@@ -9613,7 +9641,7 @@ impl Provider {
                     duration_ms,
                     usage.as_deref(),
                     tool_calls,
-                    model.as_deref(),
+                    identity,
                 );
                 let terminal_at_ms = now_ms();
                 let terminal = self.enqueue_transcript_with_id(
@@ -10522,6 +10550,75 @@ fn turn_failure_sentence(message: &str) -> Option<&'static str> {
     claude_login.then_some(CLAUDE_LOGIN_EXPIRED)
 }
 
+/// A session's model as the adapter reported it at startup, or `None` when
+/// what it reported is the `default` picker label — a choice, not a model
+/// (ledger 268(e)).
+fn session_reported_model(model: Option<&str>) -> Option<String> {
+    model
+        .map(str::trim)
+        .filter(|model| !model.is_empty() && *model != "default")
+        .map(str::to_owned)
+}
+
+/// The cost block for a result this provider closes on the adapter's
+/// behalf: no usage, but still naming the model the record says was asked
+/// for and last reported answering (ledger 268(e)).
+fn record_identity_cost(record: &SessionRecord) -> payload::TurnCost {
+    let identity = ModelIdentity {
+        requested: record.model_requested.as_deref(),
+        session_reported: record.model_effective.as_deref(),
+        window_fallback: None,
+    };
+    let mut cost = payload::TurnCost {
+        cost_reason: Some(payload::CostReason::NoUsageReported),
+        ..Default::default()
+    };
+    identity.stamp(&mut cost, identity.effective(None));
+    cost
+}
+
+/// What a turn's result is told about the model behind it (ledger 268(e)).
+#[derive(Debug, Clone, Copy, Default)]
+struct ModelIdentity<'a> {
+    /// The label the create or hire asked for, verbatim.
+    requested: Option<&'a str>,
+    /// The model the adapter last reported for this session, used when the
+    /// turn itself reported none.
+    session_reported: Option<&'a str>,
+    /// The session's recorded model, used only to look up a context window
+    /// when no adapter report names one.
+    window_fallback: Option<&'a str>,
+}
+
+impl<'a> ModelIdentity<'a> {
+    /// The model that answered: the turn's own report, else the session's.
+    fn effective(&self, usage: Option<&'a TurnUsage>) -> Option<&'a str> {
+        usage
+            .and_then(|usage| usage.model.as_deref())
+            .map(str::trim)
+            .filter(|model| !model.is_empty())
+            .or(self.session_reported)
+    }
+
+    /// Stamp requested/effective/reason/overridden onto a cost block.
+    fn stamp(&self, cost: &mut payload::TurnCost, effective: Option<&str>) {
+        cost.model_requested = self.requested.map(str::to_owned);
+        cost.model_effective = effective.map(str::to_owned);
+        match effective {
+            Some(effective) => {
+                cost.model_reason = None;
+                cost.model_overridden = Some(self.requested.is_some_and(|requested| {
+                    !crate::price_table::same_model(requested, effective)
+                }));
+            }
+            None => {
+                cost.model_reason = Some(payload::ModelReason::AdapterReportedNone);
+                cost.model_overridden = None;
+            }
+        }
+    }
+}
+
 /// Map a turn outcome onto its terminal transcript item, the generation's next
 /// status, and whether the session can serve another turn.
 fn turn_result(
@@ -10529,16 +10626,21 @@ fn turn_result(
     duration_ms: u64,
     usage: Option<&TurnUsage>,
     tool_calls: u64,
-    model: Option<&str>,
+    identity: ModelIdentity<'_>,
 ) -> (serde_json::Value, SessionStatus) {
     let cost = match usage {
-        Some(usage) => turn_cost(usage, model),
-        None => payload::TurnCost {
-            cost_reason: Some(payload::CostReason::NoUsageReported),
-            ..Default::default()
-        },
+        Some(usage) => turn_cost(usage, identity),
+        None => {
+            let mut cost = payload::TurnCost {
+                cost_reason: Some(payload::CostReason::NoUsageReported),
+                ..Default::default()
+            };
+            identity.stamp(&mut cost, identity.effective(None));
+            cost
+        }
     };
-    let usage_report = turn_usage_report(usage, tool_calls, model);
+    let window_model = cost.model_effective.as_deref().or(identity.window_fallback);
+    let usage_report = turn_usage_report(usage, tool_calls, window_model);
     match outcome {
         TurnOutcome::Completed { stop_reason } => {
             // `refusal` and the two limit stops are real answers, not provider
@@ -10791,7 +10893,20 @@ fn turn_usage_report(
 /// 5. **`NoUsageReported`** — `usage.delta_reliable` is true yet nothing
 ///    usable is present; defensive fallback, not expected from either
 ///    tracker today.
-fn turn_cost(usage: &TurnUsage, model: Option<&str>) -> payload::TurnCost {
+///
+/// Pricing keys on the model the adapter reported answering (the turn's own
+/// report, else the session's), never on the requested label: a hire for
+/// `default` that ran on `claude-opus-…` is priced as opus and disclosed as a
+/// stand-in. With tokens known and no report at all, the cost is `null` with
+/// `adapter_reported_none` (ledger 268(e)).
+fn turn_cost(usage: &TurnUsage, identity: ModelIdentity<'_>) -> payload::TurnCost {
+    let effective = identity.effective(Some(usage));
+    let mut cost = turn_cost_for(usage, effective);
+    identity.stamp(&mut cost, effective);
+    cost
+}
+
+fn turn_cost_for(usage: &TurnUsage, model: Option<&str>) -> payload::TurnCost {
     if let Some(cost_usd) = usage.turn_cost_usd {
         return payload::TurnCost {
             cost_usd: Some(cost_usd),
@@ -10831,7 +10946,11 @@ fn turn_cost(usage: &TurnUsage, model: Option<&str>) -> payload::TurnCost {
                 ..Default::default()
             },
             None => payload::TurnCost {
-                cost_reason: Some(payload::CostReason::UnknownModelPrice),
+                cost_reason: Some(if model.is_some() {
+                    payload::CostReason::UnknownModelPrice
+                } else {
+                    payload::CostReason::AdapterReportedNone
+                }),
                 input_tokens: usage.turn_input_tokens,
                 output_tokens: usage.turn_output_tokens,
                 total_tokens: usage.turn_total_tokens,
@@ -10967,7 +11086,7 @@ mod tests {
             2_500,
             None,
             0,
-            None,
+            reported(None),
         );
         assert_eq!(
             item["result"],
@@ -11012,7 +11131,7 @@ mod tests {
             10,
             None,
             0,
-            None,
+            reported(None),
         );
         assert_eq!(item["result"], raw, "{item}");
         assert!(item.get("detail").is_none(), "{item}");
@@ -11051,7 +11170,7 @@ mod tests {
             1_000,
             Some(&usage),
             7,
-            Some("opus[1m]"),
+            reported(Some("opus[1m]")),
         );
         assert_eq!(
             item["usage"],
@@ -11081,7 +11200,7 @@ mod tests {
             1_000,
             None,
             0,
-            Some("default"),
+            reported(Some("default")),
         );
         assert!(item.get("usage").is_none(), "{item}");
     }
@@ -11092,6 +11211,87 @@ mod tests {
         let report = turn_usage_report(None, 3, Some("some-model-nobody-shipped"));
         assert_eq!(report.context_window, None);
         assert_eq!(report.tool_calls, Some(3));
+    }
+
+    /// An identity whose request and adapter report agree — the shape every
+    /// pre-268(e) test assumed.
+    fn reported(model: Option<&str>) -> ModelIdentity<'_> {
+        ModelIdentity {
+            requested: model,
+            session_reported: model,
+            window_fallback: model,
+        }
+    }
+
+    /// Ledger 268(e), RED-first: a seat hired as `default` whose adapter
+    /// reports `claude-opus-…` is priced as opus and disclosed as a stand-in.
+    #[test]
+    fn a_default_hire_that_ran_on_opus_prices_as_opus_and_says_so() {
+        let mut usage = usage_with(None, Some(1_000_000), Some(0), true);
+        usage.model = Some("claude-opus-4-6".into());
+        let identity = ModelIdentity {
+            requested: Some("default"),
+            session_reported: None,
+            window_fallback: Some("default"),
+        };
+        let cost = turn_cost(&usage, identity);
+        assert_eq!(cost.cost_basis, Some(payload::CostBasis::Estimated));
+        assert_eq!(cost.cost_usd, Some(15.0));
+        assert_eq!(cost.model_requested.as_deref(), Some("default"));
+        assert_eq!(cost.model_effective.as_deref(), Some("claude-opus-4-6"));
+        assert_eq!(cost.model_overridden, Some(true));
+        let (item, _) = turn_result(
+            &session::TurnOutcome::Completed {
+                stop_reason: buzz_acp::acp::StopReason::EndTurn,
+            },
+            1_000,
+            Some(&usage),
+            0,
+            identity,
+        );
+        assert_eq!(item["modelRequested"], "default", "{item}");
+        assert_eq!(item["modelEffective"], "claude-opus-4-6", "{item}");
+        assert_eq!(item["modelOverridden"], true, "{item}");
+        assert_eq!(item["costBasis"], "estimated", "{item}");
+    }
+
+    /// Ledger 268(e), RED-first: the adapter never said which model answered.
+    /// The requested label is not priced in its place.
+    #[test]
+    fn an_unreported_model_is_null_with_adapter_reported_none() {
+        let usage = usage_with(None, Some(1_000), Some(200), true);
+        let identity = ModelIdentity {
+            requested: Some("default"),
+            session_reported: None,
+            window_fallback: Some("default"),
+        };
+        let cost = turn_cost(&usage, identity);
+        assert_eq!(cost.cost_usd, None);
+        assert_eq!(
+            cost.cost_reason,
+            Some(payload::CostReason::AdapterReportedNone)
+        );
+        assert_eq!(cost.model_effective, None);
+        assert_eq!(
+            cost.model_reason,
+            Some(payload::ModelReason::AdapterReportedNone)
+        );
+        assert_eq!(cost.model_overridden, None);
+    }
+
+    /// Ledger 268(e): requested and reported agree (an alias and its resolved
+    /// id count as agreeing) — not a stand-in.
+    #[test]
+    fn a_seat_running_what_it_asked_for_is_not_overridden() {
+        let mut usage = usage_with(None, Some(1_000), Some(200), true);
+        usage.model = Some("sonnet".into());
+        let cost = turn_cost(&usage, reported(Some("sonnet")));
+        assert_eq!(cost.model_overridden, Some(false));
+        usage.model = Some("claude-sonnet-5".into());
+        let cost = turn_cost(&usage, reported(Some("sonnet")));
+        assert_eq!(cost.model_effective.as_deref(), Some("claude-sonnet-5"));
+        assert_eq!(cost.model_overridden, Some(false));
+        assert_eq!(cost.cost_basis, Some(payload::CostBasis::Estimated));
     }
 
     /// Ledger 266: a bare `TurnUsage` with a billed provider dollar figure is
@@ -11128,7 +11328,7 @@ mod tests {
     #[test]
     fn a_billed_cost_is_never_re_estimated() {
         let usage = usage_with(Some(0.042), Some(100), Some(20), true);
-        let cost = turn_cost(&usage, Some("opus"));
+        let cost = turn_cost(&usage, reported(Some("opus")));
         assert_eq!(cost.cost_usd, Some(0.042));
         assert_eq!(cost.cost_basis, Some(payload::CostBasis::Billed));
         assert_eq!(cost.cost_reason, None);
@@ -11143,7 +11343,7 @@ mod tests {
     #[test]
     fn a_turn_whose_model_has_no_price_row_is_null_with_unknown_model_price() {
         let usage = usage_with(None, Some(1_000), Some(200), true);
-        let cost = turn_cost(&usage, Some("some-model-nobody-priced"));
+        let cost = turn_cost(&usage, reported(Some("some-model-nobody-priced")));
         assert_eq!(cost.cost_usd, None);
         assert_eq!(cost.cost_basis, None);
         assert_eq!(
@@ -11158,7 +11358,7 @@ mod tests {
     #[test]
     fn a_turn_whose_model_is_priced_is_estimated_from_the_table() {
         let usage = usage_with(None, Some(1_000_000), Some(1_000_000), true);
-        let cost = turn_cost(&usage, Some("sonnet"));
+        let cost = turn_cost(&usage, reported(Some("sonnet")));
         assert_eq!(cost.cost_basis, Some(payload::CostBasis::Estimated));
         assert_eq!(cost.cost_reason, None);
         assert_eq!(
@@ -11180,7 +11380,7 @@ mod tests {
     #[test]
     fn a_resumed_counter_with_no_baseline_is_null_with_no_baseline_reason() {
         let usage = usage_with(None, None, None, false);
-        let cost = turn_cost(&usage, Some("opus"));
+        let cost = turn_cost(&usage, reported(Some("opus")));
         assert_eq!(cost.cost_usd, None);
         assert_eq!(cost.cost_reason, Some(payload::CostReason::NoBaseline));
     }
@@ -11197,7 +11397,7 @@ mod tests {
             1_000,
             None,
             0,
-            Some("opus"),
+            reported(Some("opus")),
         );
         assert_eq!(item["costUsd"], serde_json::Value::Null, "{item}");
         assert_eq!(item["costReason"], "no_usage_reported", "{item}");
@@ -12651,6 +12851,8 @@ mod tests {
             granted_viewers: std::collections::BTreeSet::new(),
             authority_seq: 0,
             model: None,
+            model_requested: None,
+            model_effective: None,
             routing: None,
             resume_cursor: None,
             title: None,
@@ -17372,6 +17574,8 @@ mod tests {
                     granted_viewers: std::collections::BTreeSet::new(),
                     authority_seq: 0,
                     model: None,
+                    model_requested: None,
+                    model_effective: None,
                     routing: None,
                     resume_cursor: Some("private-acp-cursor".into()),
                     title: None,

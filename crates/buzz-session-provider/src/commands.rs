@@ -2390,6 +2390,8 @@ mod tests {
             granted_viewers: std::collections::BTreeSet::new(),
             authority_seq: 0,
             model: None,
+            model_requested: None,
+            model_effective: None,
             routing: None,
             resume_cursor: None,
             title: None,

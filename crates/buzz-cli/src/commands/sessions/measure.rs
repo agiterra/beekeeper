@@ -941,6 +941,70 @@ struct Totals {
     unpriced_reasons: BTreeMap<String, usize>,
 }
 
+/// One seat's model identity, read off its result items (ledger 268(e)).
+struct ModelIdentityRow {
+    /// The label the hire asked for, from the latest result that names it.
+    requested: Option<String>,
+    /// The model the adapter last reported answering.
+    effective: Option<String>,
+    /// Every distinct reported model, sorted — more than one means the seat
+    /// changed model mid-run.
+    all_effective: Vec<String>,
+    /// Why `effective` is `null`: the provider's own `modelReason`, or
+    /// `not_on_wire` when no result carried model identity at all (a
+    /// provider build older than ledger 268(e)).
+    reason: Option<String>,
+    /// `true` when any result disclosed a stand-in, `false` when results
+    /// named both ids and none did, `null` when no result could say.
+    overridden: Option<bool>,
+}
+
+fn model_identity(items: &[&Item]) -> ModelIdentityRow {
+    let mut row = ModelIdentityRow {
+        requested: None,
+        effective: None,
+        all_effective: Vec::new(),
+        reason: None,
+        overridden: None,
+    };
+    let mut carried = false;
+    let mut all = BTreeSet::new();
+    for item in items.iter().filter(|item| item.kind == "result") {
+        let Some(object) = item.item.as_object() else {
+            continue;
+        };
+        if !object.contains_key("modelEffective") {
+            continue;
+        }
+        carried = true;
+        if let Some(requested) = object.get("modelRequested").and_then(Value::as_str) {
+            row.requested = Some(requested.to_owned());
+        }
+        match object.get("modelEffective").and_then(Value::as_str) {
+            Some(effective) => {
+                row.effective = Some(effective.to_owned());
+                row.reason = None;
+                all.insert(effective.to_owned());
+            }
+            None if row.effective.is_none() => {
+                row.reason = object
+                    .get("modelReason")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+            }
+            None => {}
+        }
+        if let Some(overridden) = object.get("modelOverridden").and_then(Value::as_bool) {
+            row.overridden = Some(row.overridden.unwrap_or(false) || overridden);
+        }
+    }
+    if !carried {
+        row.reason = Some("not_on_wire".to_owned());
+    }
+    row.all_effective = all.into_iter().collect();
+    row
+}
+
 #[allow(clippy::too_many_arguments)]
 fn seat_row(
     session_id: &str,
@@ -971,6 +1035,7 @@ fn seat_row(
     let mut priced = 0usize;
     let mut results = 0usize;
     let mut unpriced_reasons: BTreeMap<String, usize> = BTreeMap::new();
+    let identity = model_identity(&mine);
     for item in mine.iter().filter(|item| item.kind == "result") {
         results += 1;
         input += num(item.item, "inputTokens");
@@ -1178,6 +1243,11 @@ fn seat_row(
         "actor": seat.and_then(|s| s.actor.clone()),
         "runtime": seat.and_then(|s| s.runtime.clone()),
         "model": seat.and_then(|s| s.model.clone()),
+        "model_requested": identity.requested,
+        "model_effective": identity.effective,
+        "models_effective": identity.all_effective,
+        "model_effective_reason": identity.reason,
+        "model_overridden": identity.overridden,
         "provider": seat.and_then(|s| s.provider.clone()),
         "generation": seat.and_then(|s| s.generation),
         "turns": { "completed": completed, "open": open },

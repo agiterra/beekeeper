@@ -2043,6 +2043,10 @@ pub enum CostReason {
     /// The adapter published no usage signal — no cost, no tokens — for this
     /// turn at all.
     NoUsageReported,
+    /// The turn's token counts were known but the adapter never reported
+    /// which model answered, so there is no model to price them against.
+    /// The requested label is never priced in its place (ledger 268(e)).
+    AdapterReportedNone,
 }
 
 impl CostReason {
@@ -2052,12 +2056,34 @@ impl CostReason {
             Self::NoBaseline => "no_baseline",
             Self::UnknownModelPrice => "unknown_model_price",
             Self::NoUsageReported => "no_usage_reported",
+            Self::AdapterReportedNone => "adapter_reported_none",
+        }
+    }
+}
+
+/// Why [`TurnCost::model_effective`] is `None`.
+///
+/// Ledger 268(e): the model a turn is attributed to is the one the adapter
+/// says answered, never the label the hire asked for. When the adapter says
+/// nothing, the absence is named rather than filled in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelReason {
+    /// The adapter reported no model id for this turn or its session.
+    AdapterReportedNone,
+}
+
+impl ModelReason {
+    /// The exact string the wire and this crate's readers use.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::AdapterReportedNone => "adapter_reported_none",
         }
     }
 }
 
 /// Per-turn accounting, when the adapter reported any.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct TurnCost {
     /// USD cost of the turn — billed or estimated, see [`Self::cost_basis`].
     /// `None` only together with [`Self::cost_reason`] naming why.
@@ -2078,6 +2104,21 @@ pub struct TurnCost {
     pub output_tokens: Option<u64>,
     /// Total tokens, when the adapter reports a genuine total.
     pub total_tokens: Option<u64>,
+    /// The model label the create or hire asked for (`default`, `opus[1m]`,
+    /// …), or `None` when it named none and let the adapter decide.
+    pub model_requested: Option<String>,
+    /// The model id the adapter reported actually answered this turn. The
+    /// cost is priced against this id, never against
+    /// [`Self::model_requested`]. `None` only together with
+    /// [`Self::model_reason`].
+    pub model_effective: Option<String>,
+    /// Why `model_effective` is `None`. `Some` exactly when it is `None` and
+    /// model identity was resolved at all.
+    pub model_reason: Option<ModelReason>,
+    /// Whether the seat ran on a stand-in: a model was requested and the
+    /// adapter reported a different one. `None` when either side is unknown —
+    /// "not a stand-in" is not claimed without both ids.
+    pub model_overridden: Option<bool>,
 }
 
 impl TurnCost {
@@ -2249,6 +2290,24 @@ pub fn result_item(
         }
         if let Some(version) = cost.price_table_version {
             object.insert("priceTableVersion".into(), serde_json::json!(version));
+        }
+        // Model identity (ledger 268(e)) is emitted only when it was resolved
+        // at all; a result item built without it keeps the older shape.
+        if cost.model_effective.is_some() || cost.model_reason.is_some() {
+            object.insert(
+                "modelRequested".into(),
+                serde_json::json!(cost.model_requested.as_deref()),
+            );
+            object.insert(
+                "modelEffective".into(),
+                serde_json::json!(cost.model_effective.as_deref()),
+            );
+            if let Some(reason) = cost.model_reason {
+                object.insert("modelReason".into(), serde_json::json!(reason.as_str()));
+            }
+            if let Some(overridden) = cost.model_overridden {
+                object.insert("modelOverridden".into(), serde_json::json!(overridden));
+            }
         }
         for (key, value) in [
             ("inputTokens", cost.input_tokens),
@@ -4690,6 +4749,63 @@ mod tests {
         assert_eq!(item["costUsd"], serde_json::Value::Null);
         assert_eq!(item["costReason"], "no_baseline");
         assert!(item.get("costBasis").is_none(), "{item}");
+    }
+
+    /// Ledger 268(e): a stand-in names both ids and says it is one.
+    #[test]
+    fn a_result_item_names_the_requested_and_effective_model() {
+        let item = result_item(
+            ResultSubtype::Success,
+            1_000,
+            "completed",
+            TurnCost {
+                model_requested: Some("default".into()),
+                model_effective: Some("claude-opus-4-6".into()),
+                model_overridden: Some(true),
+                ..TurnCost::default()
+            },
+            TurnUsageReport::default(),
+        );
+        assert_eq!(item["modelRequested"], "default");
+        assert_eq!(item["modelEffective"], "claude-opus-4-6");
+        assert_eq!(item["modelOverridden"], true);
+        assert!(item.get("modelReason").is_none(), "{item}");
+    }
+
+    /// No adapter report is an explicit `null` with its reason, never the
+    /// requested label standing in.
+    #[test]
+    fn an_unreported_model_is_null_with_a_named_reason() {
+        let item = result_item(
+            ResultSubtype::Success,
+            1_000,
+            "completed",
+            TurnCost {
+                cost_reason: Some(CostReason::AdapterReportedNone),
+                model_requested: Some("default".into()),
+                model_reason: Some(ModelReason::AdapterReportedNone),
+                ..TurnCost::default()
+            },
+            TurnUsageReport::default(),
+        );
+        assert_eq!(item["modelEffective"], serde_json::Value::Null);
+        assert_eq!(item["modelReason"], "adapter_reported_none");
+        assert_eq!(item["costReason"], "adapter_reported_none");
+        assert!(item.get("modelOverridden").is_none(), "{item}");
+    }
+
+    /// Unresolved identity leaves the older shape untouched.
+    #[test]
+    fn a_result_item_without_model_identity_carries_no_model_keys() {
+        let item = result_item(
+            ResultSubtype::Success,
+            1,
+            "completed",
+            TurnCost::default(),
+            TurnUsageReport::default(),
+        );
+        assert!(item.get("modelEffective").is_none(), "{item}");
+        assert!(item.get("modelRequested").is_none(), "{item}");
     }
 
     /// `usedTokens` is the prompt-side total: fresh input plus both cache
