@@ -89,21 +89,32 @@ pub struct CardAction {
     pub steps: Vec<String>,
 }
 
-/// One `team.yml` agent, with what this host knows of its identity.
+/// One agent this host can hire into the project — a row of the host's own
+/// hire catalog (`agents/managed-agents.json`, [`read_host_agents`]), never a
+/// relay lookup made at wake time.
+///
+/// Control run 9 (Astra, ledger 268(d)) found the lead spending five tool
+/// calls on identity discovery before its first hire, because the card's
+/// roster named only *seated* agents by pubkey — every unseated project
+/// agent it could otherwise have hired came out `unknown`, even though this
+/// host already held its pubkey, role and name on disk. This row exists so
+/// the card can hand over the full identity and a ready-to-run command
+/// instead.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CardRosterEntry {
-    /// Role slug.
+    /// This agent's home role slug (`home_role` in the host's store).
     pub role: String,
-    /// Agent name as `team.yml` records it.
-    pub name: String,
-    /// `persistent` or `ephemeral`.
-    pub lifetime: String,
-    /// The role's advisory runtime hint, when `team.yml` gives one.
-    pub runtime: Option<String>,
-    /// The role's advisory model hint, when `team.yml` gives one.
-    pub model: Option<String>,
-    /// The seat's pubkey, when a seat of this role is recorded here.
-    pub pubkey: Fact,
+    /// Display name, or the reason none could be read.
+    pub name: Fact,
+    /// The agent's full 64-hex pubkey — never abbreviated, so a command can
+    /// be built from it directly.
+    pub pubkey: String,
+    /// Whether this identity currently holds a live, open execution in this
+    /// umbrella.
+    pub seated: bool,
+    /// The exact `bee sessions hire` command that seats this agent, with
+    /// this seat's own channel, session-ref and role filled in.
+    pub hire_command: Fact,
 }
 
 /// What a hired (non-lead) seat is additionally told.
@@ -276,13 +287,12 @@ pub fn render_situation_card(facts: &SituationFacts) -> String {
             for entry in roster.iter().take(MAX_CARD_ROSTER) {
                 let _ = writeln!(
                     out,
-                    "roster: {} {:?} {} runtime {} model {} pubkey {}",
+                    "roster: role {} pubkey {} seated {} name {} hire {}",
                     entry.role,
-                    entry.name,
-                    entry.lifetime,
-                    entry.runtime.as_deref().unwrap_or("unset"),
-                    entry.model.as_deref().unwrap_or("unset"),
-                    fact(&entry.pubkey)
+                    entry.pubkey,
+                    if entry.seated { "yes" } else { "no" },
+                    fact(&entry.name),
+                    fact(&entry.hire_command)
                 );
             }
             if roster.len() > MAX_CARD_ROSTER {
@@ -348,6 +358,98 @@ pub fn send_command(channel: &str, lead_target: &Fact) -> Fact {
         "{} sessions send --channel {channel} --to {target}",
         crate::work_brief::BEE
     ))
+}
+
+/// The `bee sessions hire` command that seats `role` into this umbrella, byte
+/// for byte the shape `crates/buzz-cli/src/lib.rs`'s `Hire` command takes
+/// (`--channel`, `--session-ref`, `--role`). Hire selects by role, never by
+/// pubkey — the pubkey a roster row also carries is the identity that
+/// selection resolves to, printed for confirmation, not as a command flag.
+pub fn hire_command(channel: &str, session_ref: &Fact, role: &str) -> Fact {
+    let session_ref = session_ref.as_ref().map_err(Clone::clone)?;
+    Ok(format!(
+        "{} sessions hire --channel {channel} --session-ref {session_ref} --role {role}",
+        crate::work_brief::BEE
+    ))
+}
+
+/// One record of the host's own hire catalog
+/// (`<app-data-dir>/agents/managed-agents.json`), narrowed to what a roster
+/// row needs. Deserializes leniently: unknown keys (including the agent's
+/// secret key material, which this reader never touches) are ignored, and
+/// every optional field defaults to absent rather than failing the parse.
+#[derive(Debug, Clone, serde::Deserialize)]
+struct HostAgentRecord {
+    pubkey: String,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    home_role: Option<String>,
+    #[serde(default)]
+    project_ref: Option<String>,
+}
+
+/// Every agent this host manages, read from its own on-disk store — never a
+/// relay query. `Ok(&[])` when the store file does not exist yet (a fresh
+/// install with no managed agents is not an error).
+fn read_host_agents(app_data_dir: &Path) -> Result<Vec<HostAgentRecord>, String> {
+    let path = app_data_dir.join("agents").join("managed-agents.json");
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let text = std::fs::read_to_string(&path).map_err(|_| "store-unreadable".to_owned())?;
+    serde_json::from_str(&text).map_err(|_| "store-invalid".to_owned())
+}
+
+/// Build one roster row from a host agent record and whether it currently
+/// holds a live, open execution in this umbrella. Split out of
+/// [`crate::Provider::seat_situation_card`] so the row shape (full pubkey,
+/// the filled-in hire command, the `no-profile-record` reason) is testable
+/// without a live `Provider`.
+fn roster_entry(
+    agent: HostAgentRecord,
+    channel: &str,
+    session_ref: &Fact,
+    seated: bool,
+) -> CardRosterEntry {
+    // `hireable_host_agents`'s own filter guarantees `home_role.is_some()`.
+    let role = agent.home_role.unwrap_or_default();
+    let name = if agent.name.trim().is_empty() {
+        Err("no-profile-record".to_owned())
+    } else {
+        Ok(agent.name)
+    };
+    CardRosterEntry {
+        hire_command: hire_command(channel, session_ref, &role),
+        role,
+        name,
+        pubkey: agent.pubkey,
+        seated,
+    }
+}
+
+/// This host's hireable agents for `project_ref`: every managed-agent record
+/// this host holds whose `project_ref` matches and which carries a
+/// `home_role` — an agent with no `home_role` cannot be hired by role, so it
+/// is not a roster row (mirrors `bee projects agents`'s own rule). Ordered by
+/// role then pubkey so the card's roster is stable across renders.
+fn hireable_host_agents(
+    app_data_dir: Option<&Path>,
+    project_ref: Option<&str>,
+) -> Result<Vec<HostAgentRecord>, String> {
+    let project_ref = project_ref.ok_or_else(|| "no-project".to_owned())?;
+    let app_data_dir = app_data_dir.ok_or_else(|| "no-app-data-dir".to_owned())?;
+    let mut agents: Vec<HostAgentRecord> = read_host_agents(app_data_dir)?
+        .into_iter()
+        .filter(|agent| {
+            agent.home_role.is_some() && agent.project_ref.as_deref() == Some(project_ref)
+        })
+        .collect();
+    agents.sort_by(|a, b| {
+        (a.home_role.as_deref(), a.pubkey.as_str())
+            .cmp(&(b.home_role.as_deref(), b.pubkey.as_str()))
+    });
+    Ok(agents)
 }
 
 /// Attach a card to a turn's frame.
@@ -598,42 +700,28 @@ impl crate::Provider {
             }
         };
         let umbrella = record.session_ref.clone();
-        let roster = match reads.as_ref().map(|reads| &reads.team) {
-            None => Err("no-checkout".to_owned()),
-            Some(Err(reason)) => Err(reason.clone()),
-            Some(Ok(team)) => Ok(team
-                .agents
-                .iter()
-                .map(|agent| {
-                    let hints = team.role(&agent.role);
-                    let seated = self
-                        .state
-                        .sessions()
-                        .filter(|candidate| {
+        let channel = record.channel_id.to_string();
+        let session_ref_fact: Fact = umbrella.clone().ok_or_else(|| "unrecorded".to_owned());
+        let app_data_dir = crate::agent_fence::app_data_dir_from_state_dir(&self.config.state_dir);
+        let roster =
+            hireable_host_agents(app_data_dir.as_deref(), project_ref.as_deref()).map(|agents| {
+                agents
+                    .into_iter()
+                    .map(|agent| {
+                        let seated = self.state.sessions().any(|candidate| {
                             !candidate.closed
                                 && candidate.session_ref == umbrella
-                                && candidate.role.as_deref() == Some(agent.role.as_str())
-                        })
-                        .find_map(|candidate| candidate.actor.clone());
-                    CardRosterEntry {
-                        role: agent.role.clone(),
-                        name: agent.name.clone(),
-                        lifetime: match agent.lifetime {
-                            buzz_persona::team::AgentLifetime::Persistent => "persistent",
-                            buzz_persona::team::AgentLifetime::Ephemeral => "ephemeral",
-                        }
-                        .to_owned(),
-                        runtime: hints.runtime.clone(),
-                        model: hints.model.clone(),
-                        pubkey: seated.ok_or_else(|| "not-seated".to_owned()),
-                    }
-                })
-                .collect()),
-        };
+                                && candidate.actor.as_deref() == Some(agent.pubkey.as_str())
+                        });
+                        roster_entry(agent, &channel, &session_ref_fact, seated)
+                    })
+                    .collect::<Vec<_>>()
+            });
         let (plans, actions) = match reads {
             None => (Err("no-checkout".to_owned()), Err("no-checkout".to_owned())),
             Some(reads) => (reads.plans, reads.actions),
         };
+        let roster_row_count = roster.as_ref().map(Vec::len).unwrap_or(0);
         let facts = SituationFacts {
             channel: record.channel_id.to_string(),
             session_ref: record
@@ -672,6 +760,12 @@ impl crate::Provider {
         };
         let card = render_situation_card(&facts);
         if write_card_copy(&card_path, &card) {
+            tracing::info!(
+                target: "csp::situation_card",
+                bytes = card.len(),
+                roster_rows = roster_row_count,
+                "situation card sent"
+            );
             return Some(card);
         }
         // No copy on disk: the card must not name one, and nothing marks
@@ -680,7 +774,14 @@ impl crate::Provider {
             card_path: Err("write-failed".to_owned()),
             ..facts
         };
-        Some(render_situation_card(&facts))
+        let card = render_situation_card(&facts);
+        tracing::info!(
+            target: "csp::situation_card",
+            bytes = card.len(),
+            roster_rows = roster_row_count,
+            "situation card sent"
+        );
+        Some(card)
     }
 
     /// What a hired seat is told beyond the shared facts.

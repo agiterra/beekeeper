@@ -50,19 +50,25 @@ fn fixed_facts() -> SituationFacts {
         roster: Ok(vec![
             CardRosterEntry {
                 role: "lead".to_owned(),
-                name: "Lead".to_owned(),
-                lifetime: "persistent".to_owned(),
-                runtime: None,
-                model: Some("opus[1m]".to_owned()),
-                pubkey: Ok(PUBKEY.to_owned()),
+                name: Ok("Lead".to_owned()),
+                pubkey: PUBKEY.to_owned(),
+                seated: true,
+                hire_command: hire_command(
+                    "56ef0396-f1d0-4cbd-9cc2-4f4fb592e823",
+                    &Ok("ce7d32cb-b703-4db8-b06e-2adbd2b942b3".to_owned()),
+                    "lead",
+                ),
             },
             CardRosterEntry {
                 role: "builder".to_owned(),
-                name: "Builder".to_owned(),
-                lifetime: "ephemeral".to_owned(),
-                runtime: Some("claude-agent-acp".to_owned()),
-                model: None,
-                pubkey: Err("not-seated".to_owned()),
+                name: Err("no-profile-record".to_owned()),
+                pubkey: BUILDER_PUBKEY.to_owned(),
+                seated: false,
+                hire_command: hire_command(
+                    "56ef0396-f1d0-4cbd-9cc2-4f4fb592e823",
+                    &Ok("ce7d32cb-b703-4db8-b06e-2adbd2b942b3".to_owned()),
+                    "builder",
+                ),
             },
         ]),
         card_path: Ok("/data/agents/seats/s1/situation-card.md".to_owned()),
@@ -88,8 +94,8 @@ plan: plans/kettle.md adoptable yes
   criterion usage-documentation: review
   criterion delivered-main: git-ref refs/heads/main
 action: verify hash 5e7b73dd20f6aa0000000000000000000000000000000000000000000000beef steps verify
-roster: lead \"Lead\" persistent runtime unset model opus[1m] pubkey 1958c6c448e05eed32599f6a25e2293ba84c9d4095c7c6958397bd95176b9644
-roster: builder \"Builder\" ephemeral runtime claude-agent-acp model unset pubkey unknown (not-seated)
+roster: role lead pubkey 1958c6c448e05eed32599f6a25e2293ba84c9d4095c7c6958397bd95176b9644 seated yes name Lead hire $BEE sessions hire --channel 56ef0396-f1d0-4cbd-9cc2-4f4fb592e823 --session-ref ce7d32cb-b703-4db8-b06e-2adbd2b942b3 --role lead
+roster: role builder pubkey 005a9324c448e05eed32599f6a25e2293ba84c9d4095c7c6958397bd95176b96 seated no name unknown (no-profile-record) hire $BEE sessions hire --channel 56ef0396-f1d0-4cbd-9cc2-4f4fb592e823 --session-ref ce7d32cb-b703-4db8-b06e-2adbd2b942b3 --role builder
 card-copy: /data/agents/seats/s1/situation-card.md
 ```";
 
@@ -324,4 +330,153 @@ async fn an_agents_commit_is_read_into_plans_and_a_roster() {
     let team = reads.team.expect("team.yml parses");
     assert_eq!(team.lead.as_deref(), Some("lead"));
     assert_eq!(team.agents.len(), 2);
+}
+
+const PROJECT: &str =
+    "30621:1958c6c448e05eed32599f6a25e2293ba84c9d4095c7c6958397bd95176b9644:kettle-control-9";
+
+fn write_host_agents(dir: &Path, records: serde_json::Value) {
+    let agents_dir = dir.join("agents");
+    std::fs::create_dir_all(&agents_dir).expect("agents dir");
+    std::fs::write(agents_dir.join("managed-agents.json"), records.to_string()).expect("store");
+}
+
+fn host_agent(index: u8, project: &str) -> serde_json::Value {
+    serde_json::json!({
+        "pubkey": format!("{index:02x}{}", "a".repeat(62)),
+        "name": format!("Agent {index}"),
+        "home_role": format!("role-{index}"),
+        "project_ref": project,
+    })
+}
+
+/// Ledger 268(d): a project with 8 hireable agents must list all 8, each
+/// with its full 64-hex pubkey and a `bee sessions hire` command already
+/// filled in — no discovery detour left for the lead to run.
+#[test]
+fn a_project_with_eight_hireable_agents_lists_eight_rows() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let records: Vec<serde_json::Value> = (0..8).map(|i| host_agent(i, PROJECT)).collect();
+    write_host_agents(dir.path(), serde_json::Value::Array(records));
+
+    let agents = hireable_host_agents(Some(dir.path()), Some(PROJECT)).expect("agents");
+    assert_eq!(agents.len(), 8, "{agents:?}");
+    for agent in &agents {
+        assert_eq!(
+            agent.pubkey.len(),
+            64,
+            "{:?} is not full-length",
+            agent.pubkey
+        );
+        assert!(agent.home_role.is_some());
+    }
+
+    // An agent of a different project is not this project's to hire.
+    let mut other_project = host_agent(
+        9,
+        "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:elsewhere",
+    );
+    other_project["home_role"] = serde_json::json!("role-9");
+    let mut records: Vec<serde_json::Value> = (0..8).map(|i| host_agent(i, PROJECT)).collect();
+    records.push(other_project);
+    write_host_agents(dir.path(), serde_json::Value::Array(records));
+    let agents = hireable_host_agents(Some(dir.path()), Some(PROJECT)).expect("agents");
+    assert_eq!(agents.len(), 8, "{agents:?}");
+}
+
+/// An agent with no `home_role` cannot be hired by role and is not a row.
+#[test]
+fn an_agent_with_no_home_role_is_not_a_roster_row() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut roleless = host_agent(0, PROJECT);
+    roleless
+        .as_object_mut()
+        .expect("object")
+        .remove("home_role");
+    write_host_agents(dir.path(), serde_json::Value::Array(vec![roleless]));
+    let agents = hireable_host_agents(Some(dir.path()), Some(PROJECT)).expect("agents");
+    assert!(agents.is_empty(), "{agents:?}");
+}
+
+/// A row for a seated identity says so; the hire command is filled in with
+/// this seat's own channel, session-ref and role — never a placeholder.
+#[test]
+fn a_seated_agent_row_says_seated_and_the_hire_command_is_filled_in() {
+    let channel = "56ef0396-f1d0-4cbd-9cc2-4f4fb592e823";
+    let session_ref: Fact = Ok("ce7d32cb-b703-4db8-b06e-2adbd2b942b3".to_owned());
+    let agent = HostAgentRecord {
+        pubkey: PUBKEY.to_owned(),
+        name: "Lead".to_owned(),
+        home_role: Some("lead".to_owned()),
+        project_ref: Some(PROJECT.to_owned()),
+    };
+    let entry = roster_entry(agent, channel, &session_ref, true);
+    assert!(entry.seated);
+    assert_eq!(entry.role, "lead");
+    assert_eq!(entry.name, Ok("Lead".to_owned()));
+    assert_eq!(entry.pubkey, PUBKEY);
+    assert_eq!(
+        entry.hire_command,
+        Ok(format!(
+            "$BEE sessions hire --channel {channel} --session-ref ce7d32cb-b703-4db8-b06e-2adbd2b942b3 --role lead"
+        ))
+    );
+}
+
+/// An agent with no name on this host's own record says so in words, not a
+/// blank field.
+#[test]
+fn an_agent_with_no_name_says_no_profile_record() {
+    let agent = HostAgentRecord {
+        pubkey: PUBKEY.to_owned(),
+        name: String::new(),
+        home_role: Some("builder".to_owned()),
+        project_ref: Some(PROJECT.to_owned()),
+    };
+    let entry = roster_entry(agent, "c", &Ok("s".to_owned()), false);
+    assert_eq!(entry.name, Err("no-profile-record".to_owned()));
+    assert!(!entry.seated);
+}
+
+/// Delivery proof (ledger 266 D / 268(d)): the first adapter prompt a lead
+/// seat's frame renders — `TurnFraming::render`, `session.rs:499` — carries
+/// the card's fence and its roster rows, above the sender's own words.
+#[test]
+fn the_first_adapter_prompt_for_a_lead_seat_carries_the_card_fence_and_roster_rows() {
+    let mut facts = fixed_facts();
+    facts.roster = Ok(vec![roster_entry(
+        HostAgentRecord {
+            pubkey: BUILDER_PUBKEY.to_owned(),
+            name: "Builder".to_owned(),
+            home_role: Some("builder".to_owned()),
+            project_ref: Some(PROJECT.to_owned()),
+        },
+        &facts.channel,
+        &facts.session_ref.clone(),
+        false,
+    )]);
+    let card = render_situation_card(&facts);
+    let framing = attach_situation_card(
+        None,
+        Some(card.clone()),
+        Uuid::nil(),
+        PUBKEY,
+        CodingSessionDelivery::Boundary,
+    )
+    .expect("a card makes a frame");
+    let prompt = framing.render("kick off the plan");
+
+    assert!(
+        prompt.starts_with(&format!("```{SITUATION_CARD_FENCE}")),
+        "prompt does not open on the card fence:\n{prompt}"
+    );
+    assert!(prompt.contains(SITUATION_CARD_FENCE), "{prompt}");
+    assert!(
+        prompt.contains(&format!("pubkey {BUILDER_PUBKEY}")),
+        "roster row missing from the prompt:\n{prompt}"
+    );
+    assert!(
+        prompt.ends_with("kick off the plan"),
+        "the sender's own words did not survive verbatim:\n{prompt}"
+    );
 }
