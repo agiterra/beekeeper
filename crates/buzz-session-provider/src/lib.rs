@@ -70,6 +70,7 @@ pub mod native_restore;
 mod native_steer_authority;
 pub mod payload;
 pub mod pending_completion;
+mod price_table;
 pub mod publish;
 mod reachability;
 pub mod redaction_vault;
@@ -1348,7 +1349,10 @@ impl Provider {
                             u64::try_from(terminal_at_ms.saturating_sub(open_turn.started_at_ms))
                                 .unwrap_or_default(),
                             "provider terminated mid-turn",
-                            payload::TurnCost::default(),
+                            payload::TurnCost {
+                                cost_reason: Some(payload::CostReason::NoUsageReported),
+                                ..Default::default()
+                            },
                             payload::TurnUsageReport::default(),
                         ),
                         Priority::High,
@@ -6837,7 +6841,10 @@ impl Provider {
                             payload::ResultSubtype::Error,
                             elapsed,
                             Self::HANDOVER_INTERRUPT_REASON,
-                            payload::TurnCost::default(),
+                            payload::TurnCost {
+                                cost_reason: Some(payload::CostReason::NoUsageReported),
+                                ..Default::default()
+                            },
                             payload::TurnUsageReport::default(),
                         ),
                         Priority::High,
@@ -10344,7 +10351,13 @@ fn turn_result(
     tool_calls: u64,
     model: Option<&str>,
 ) -> (serde_json::Value, SessionStatus) {
-    let cost = usage.map(turn_cost).unwrap_or_default();
+    let cost = match usage {
+        Some(usage) => turn_cost(usage, model),
+        None => payload::TurnCost {
+            cost_reason: Some(payload::CostReason::NoUsageReported),
+            ..Default::default()
+        },
+    };
     let usage_report = turn_usage_report(usage, tool_calls, model);
     match outcome {
         TurnOutcome::Completed { stop_reason } => {
@@ -10577,12 +10590,87 @@ fn turn_usage_report(
     }
 }
 
-fn turn_cost(usage: &TurnUsage) -> payload::TurnCost {
+/// Build the terminal `result` item's cost block from a completed turn's
+/// usage.
+///
+/// Order of preference, per ledger 266:
+///
+/// 1. **Billed** — the adapter itself reported a dollar delta against a
+///    proven prior baseline (`usage.turn_cost_usd`). This is the provider's
+///    own figure; never second-guessed.
+/// 2. **Estimated** — no billed figure, but the turn's own token counts are
+///    known (they don't require a cumulative baseline for the standard ACP
+///    adapters) and `model` is in [`crate::price_table`]. Marked
+///    `CostBasis::Estimated` and stamped with the table's id/version.
+/// 3. **`UnknownModelPrice`** — tokens known, but the model isn't in the
+///    price table and there is no billed figure either.
+/// 4. **`NoBaseline`** — neither a billed cost nor per-turn tokens are known
+///    (`!usage.delta_reliable`): the harness only reports cumulative
+///    counters and this turn had no prior baseline to diff against. Never
+///    assumed to be zero.
+/// 5. **`NoUsageReported`** — `usage.delta_reliable` is true yet nothing
+///    usable is present; defensive fallback, not expected from either
+///    tracker today.
+fn turn_cost(usage: &TurnUsage, model: Option<&str>) -> payload::TurnCost {
+    if let Some(cost_usd) = usage.turn_cost_usd {
+        return payload::TurnCost {
+            cost_usd: Some(cost_usd),
+            cost_basis: Some(payload::CostBasis::Billed),
+            input_tokens: usage.turn_input_tokens,
+            output_tokens: usage.turn_output_tokens,
+            total_tokens: usage.turn_total_tokens,
+            ..Default::default()
+        };
+    }
+
+    let has_tokens = usage.turn_input_tokens.is_some() || usage.turn_output_tokens.is_some();
+    if has_tokens {
+        let fresh_input = usage.turn_input_tokens.and_then(|inclusive| {
+            inclusive
+                .checked_sub(usage.turn_cache_read_tokens.unwrap_or(0))
+                .and_then(|rest| rest.checked_sub(usage.turn_cache_write_tokens.unwrap_or(0)))
+        });
+        let estimate = model.and_then(|model| {
+            crate::price_table::estimate_cost_usd(
+                model,
+                fresh_input,
+                usage.turn_output_tokens,
+                usage.turn_cache_read_tokens,
+                usage.turn_cache_write_tokens,
+            )
+        });
+        return match estimate {
+            Some(cost_usd) => payload::TurnCost {
+                cost_usd: Some(cost_usd),
+                cost_basis: Some(payload::CostBasis::Estimated),
+                price_table_id: Some(crate::price_table::PRICE_TABLE_ID),
+                price_table_version: Some(crate::price_table::PRICE_TABLE_VERSION),
+                input_tokens: usage.turn_input_tokens,
+                output_tokens: usage.turn_output_tokens,
+                total_tokens: usage.turn_total_tokens,
+                ..Default::default()
+            },
+            None => payload::TurnCost {
+                cost_reason: Some(payload::CostReason::UnknownModelPrice),
+                input_tokens: usage.turn_input_tokens,
+                output_tokens: usage.turn_output_tokens,
+                total_tokens: usage.turn_total_tokens,
+                ..Default::default()
+            },
+        };
+    }
+
+    let reason = if usage.delta_reliable {
+        payload::CostReason::NoUsageReported
+    } else {
+        payload::CostReason::NoBaseline
+    };
     payload::TurnCost {
-        cost_usd: usage.turn_cost_usd,
+        cost_reason: Some(reason),
         input_tokens: usage.turn_input_tokens,
         output_tokens: usage.turn_output_tokens,
         total_tokens: usage.turn_total_tokens,
+        ..Default::default()
     }
 }
 
@@ -10824,6 +10912,115 @@ mod tests {
         let report = turn_usage_report(None, 3, Some("some-model-nobody-shipped"));
         assert_eq!(report.context_window, None);
         assert_eq!(report.tool_calls, Some(3));
+    }
+
+    /// Ledger 266: a bare `TurnUsage` with a billed provider dollar figure is
+    /// never second-guessed by the price table.
+    fn usage_with(
+        turn_cost_usd: Option<f64>,
+        turn_input_tokens: Option<u64>,
+        turn_output_tokens: Option<u64>,
+        delta_reliable: bool,
+    ) -> buzz_acp::TurnUsage {
+        buzz_acp::TurnUsage {
+            session_id: "s".into(),
+            turn_seq: 1,
+            delta_reliable,
+            turn_input_tokens,
+            turn_output_tokens,
+            turn_total_tokens: None,
+            turn_cost_usd,
+            turn_cache_read_tokens: None,
+            turn_cache_write_tokens: None,
+            cumulative_input_tokens: None,
+            cumulative_output_tokens: None,
+            cumulative_total_tokens: None,
+            cumulative_cost_usd: None,
+            cumulative_cache_read_tokens: None,
+            cumulative_cache_write_tokens: None,
+            model: None,
+            pricing_identity: None,
+        }
+    }
+
+    /// A billed cost is passed through untouched: basis `billed`, no reason,
+    /// no price-table stamp.
+    #[test]
+    fn a_billed_cost_is_never_re_estimated() {
+        let usage = usage_with(Some(0.042), Some(100), Some(20), true);
+        let cost = turn_cost(&usage, Some("opus"));
+        assert_eq!(cost.cost_usd, Some(0.042));
+        assert_eq!(cost.cost_basis, Some(payload::CostBasis::Billed));
+        assert_eq!(cost.cost_reason, None);
+        assert_eq!(cost.price_table_id, None);
+    }
+
+    /// RED-first (ledger 266 build step 4): the turn's tokens are known — the
+    /// standard ACP adapters report per-turn tokens without needing a
+    /// baseline — but the model has no row in this project's price table and
+    /// there is no billed figure either. `costUsd` stays `null`, tagged with
+    /// the reason rather than left unexplained.
+    #[test]
+    fn a_turn_whose_model_has_no_price_row_is_null_with_unknown_model_price() {
+        let usage = usage_with(None, Some(1_000), Some(200), true);
+        let cost = turn_cost(&usage, Some("some-model-nobody-priced"));
+        assert_eq!(cost.cost_usd, None);
+        assert_eq!(cost.cost_basis, None);
+        assert_eq!(
+            cost.cost_reason,
+            Some(payload::CostReason::UnknownModelPrice)
+        );
+    }
+
+    /// A model this project's table does recognize gets an estimate instead
+    /// of a blank: `estimated`, stamped with the table's own id/version, and
+    /// distinguishable from a billed figure at every reader.
+    #[test]
+    fn a_turn_whose_model_is_priced_is_estimated_from_the_table() {
+        let usage = usage_with(None, Some(1_000_000), Some(1_000_000), true);
+        let cost = turn_cost(&usage, Some("sonnet"));
+        assert_eq!(cost.cost_basis, Some(payload::CostBasis::Estimated));
+        assert_eq!(cost.cost_reason, None);
+        assert_eq!(
+            cost.price_table_id,
+            Some(crate::price_table::PRICE_TABLE_ID)
+        );
+        assert_eq!(
+            cost.price_table_version,
+            Some(crate::price_table::PRICE_TABLE_VERSION)
+        );
+        let usd = cost.cost_usd.expect("sonnet is priced");
+        assert!((usd - 18.0).abs() < 1e-9, "got {usd}"); // 3.0 + 15.0 per million
+    }
+
+    /// RED-first (ledger 266 build step 4): a resumed cumulative-only
+    /// counter with no prior baseline (`delta_reliable: false`, no per-turn
+    /// tokens either) is never assumed to be zero — it is `null` with
+    /// `no_baseline` named as the reason.
+    #[test]
+    fn a_resumed_counter_with_no_baseline_is_null_with_no_baseline_reason() {
+        let usage = usage_with(None, None, None, false);
+        let cost = turn_cost(&usage, Some("opus"));
+        assert_eq!(cost.cost_usd, None);
+        assert_eq!(cost.cost_reason, Some(payload::CostReason::NoBaseline));
+    }
+
+    /// A turn whose adapter published no usage notification at all — `usage`
+    /// is `None` in `turn_result` — still carries `costUsd: null` with a
+    /// named reason rather than silently omitting the key.
+    #[test]
+    fn a_turn_with_no_usage_notification_is_null_with_no_usage_reported() {
+        let (item, _) = turn_result(
+            &session::TurnOutcome::Completed {
+                stop_reason: buzz_acp::acp::StopReason::EndTurn,
+            },
+            1_000,
+            None,
+            0,
+            Some("opus"),
+        );
+        assert_eq!(item["costUsd"], serde_json::Value::Null, "{item}");
+        assert_eq!(item["costReason"], "no_usage_reported", "{item}");
     }
 
     use super::*;

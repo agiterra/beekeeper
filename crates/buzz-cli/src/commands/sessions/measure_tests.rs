@@ -815,3 +815,189 @@ fn an_unclaimed_session_ref_is_refused_naming_the_accepted_id() {
     assert!(matches!(refused, CliError::Usage(_)));
     assert!(!refused.to_string().contains("is an execution's sessionId"));
 }
+
+/// Ledger 266, build step 3 (RED-first): a seat whose results are a mix of
+/// billed, estimated and unpriced turns reports each bucket separately, and
+/// the totals block is labelled `partial` — never `complete` — while any
+/// result is unpriced.
+#[test]
+fn measure_labels_a_mixed_seat_partial_with_billed_estimated_and_reasons_split() {
+    let execution = "22222222-3333-4444-5555-666666666666";
+    let umbrella = "11111111-2222-3333-4444-555555555555";
+    let metadata = json!({
+        "id": "meta-1",
+        "pubkey": "p",
+        "kind": KIND_CODING_SESSION_METADATA,
+        "created_at": 100,
+        "tags": [],
+        "content": json!({
+            "session": { "sessionId": execution, "generation": 1 },
+            "sessionRef": umbrella,
+            "role": "builder",
+        })
+        .to_string(),
+    });
+    let result_item = |id: &str, at: i64, extra: Value| {
+        let mut item = json!({
+            "kind": "result",
+            "subtype": "success",
+            "isError": false,
+            "durationMs": 10,
+            "result": "ok",
+        });
+        for (key, value) in extra.as_object().expect("extra is an object") {
+            item[key] = value.clone();
+        }
+        json!({
+            "id": id,
+            "pubkey": "p",
+            "kind": KIND_CODING_SESSION_TRANSCRIPT,
+            "created_at": at,
+            "tags": [],
+            "content": json!({
+                "session": { "sessionId": execution },
+                "timestamp": at * 1_000,
+                "item": item,
+            })
+            .to_string(),
+        })
+    };
+    let events = vec![
+        metadata,
+        result_item(
+            "r-billed",
+            101,
+            json!({ "costUsd": 0.5, "costBasis": "billed" }),
+        ),
+        result_item(
+            "r-estimated",
+            102,
+            json!({ "costUsd": 1.5, "costBasis": "estimated" }),
+        ),
+        result_item(
+            "r-unpriced",
+            103,
+            json!({ "costUsd": null, "costReason": "no_baseline" }),
+        ),
+    ];
+
+    let report = measure_report(&events, Some(umbrella), None, None);
+    let seat = seat(&report, "builder");
+    assert_eq!(f64_at(seat, "/cost/billed_usd"), 0.5);
+    assert_eq!(f64_at(seat, "/cost/estimated_usd"), 1.5);
+    assert_eq!(i64_at(seat, "/cost/results_billed"), 1);
+    assert_eq!(i64_at(seat, "/cost/results_estimated"), 1);
+    assert_eq!(i64_at(seat, "/cost/results_priced"), 2);
+    assert_eq!(i64_at(seat, "/cost/results_unpriced"), 1);
+    assert_eq!(i64_at(seat, "/cost/results_total"), 3);
+    assert_eq!(
+        seat.pointer("/cost/status").and_then(Value::as_str),
+        Some("partial")
+    );
+    assert_eq!(
+        seat.pointer("/cost/unpriced_reasons/no_baseline")
+            .and_then(Value::as_i64),
+        Some(1)
+    );
+    assert_eq!(
+        report
+            .pointer("/totals/cost/status")
+            .and_then(Value::as_str),
+        Some("partial")
+    );
+    assert_eq!(i64_at(&report, "/totals/cost/results_billed"), 1);
+    assert_eq!(i64_at(&report, "/totals/cost/results_estimated"), 1);
+    assert_eq!(
+        report
+            .pointer("/totals/cost/unpriced_reasons/no_baseline")
+            .and_then(Value::as_i64),
+        Some(1)
+    );
+    let honesty = report
+        .get("honesty")
+        .and_then(Value::as_array)
+        .expect("honesty");
+    let dollar_cost = honesty
+        .iter()
+        .find(|row| row.get("metric").and_then(Value::as_str) == Some("dollar cost"))
+        .expect("dollar cost honesty row");
+    assert_eq!(
+        dollar_cost.get("value").and_then(Value::as_str),
+        Some("partial: 2 of 3 priced")
+    );
+    assert!(
+        dollar_cost
+            .get("reason")
+            .and_then(Value::as_str)
+            .expect("reason")
+            .contains("no_baseline: 1"),
+        "{dollar_cost}"
+    );
+}
+
+/// The complementary case: every result priced is labelled `complete`, not
+/// left to be inferred from `results_priced == results_total`.
+#[test]
+fn measure_labels_a_fully_priced_seat_complete() {
+    let execution = "33333333-4444-5555-6666-777777777777";
+    let umbrella = "44444444-5555-6666-7777-888888888888";
+    let metadata = json!({
+        "id": "meta-2",
+        "pubkey": "p",
+        "kind": KIND_CODING_SESSION_METADATA,
+        "created_at": 100,
+        "tags": [],
+        "content": json!({
+            "session": { "sessionId": execution, "generation": 1 },
+            "sessionRef": umbrella,
+            "role": "verifier",
+        })
+        .to_string(),
+    });
+    let result_item = json!({
+        "id": "r-1",
+        "pubkey": "p",
+        "kind": KIND_CODING_SESSION_TRANSCRIPT,
+        "created_at": 101,
+        "tags": [],
+        "content": json!({
+            "session": { "sessionId": execution },
+            "timestamp": 101_000,
+            "item": {
+                "kind": "result",
+                "subtype": "success",
+                "isError": false,
+                "durationMs": 10,
+                "result": "ok",
+                "costUsd": 0.25,
+                "costBasis": "billed",
+            },
+        })
+        .to_string(),
+    });
+    let events = vec![metadata, result_item];
+
+    let report = measure_report(&events, Some(umbrella), None, None);
+    let seat = seat(&report, "verifier");
+    assert_eq!(
+        seat.pointer("/cost/status").and_then(Value::as_str),
+        Some("complete")
+    );
+    assert_eq!(
+        report
+            .pointer("/totals/cost/status")
+            .and_then(Value::as_str),
+        Some("complete")
+    );
+    let honesty = report
+        .get("honesty")
+        .and_then(Value::as_array)
+        .expect("honesty");
+    assert!(
+        honesty.iter().any(
+            |row| row.get("metric").and_then(Value::as_str) == Some("dollar cost")
+                && row.get("value").and_then(Value::as_str) == Some("complete")
+        ),
+        "{honesty:?}"
+    );
+}

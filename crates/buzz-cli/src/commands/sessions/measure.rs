@@ -15,10 +15,15 @@
 //!   it is counted as an open turn and nothing else. Top-level `inputTokens`
 //!   is cache-inclusive; `usage.inputTokens` / `cacheReadTokens` /
 //!   `cacheWriteTokens` are the disjoint split and are never added to it.
-//! - **A partial sum is never presented as a total.** `costUsd` is omitted by
-//!   some drivers on some turns, so every cost carries its coverage — how many
-//!   of the seat's results were priced. No price table is consulted; a cost
-//!   this binary computed would be an invention wearing a number's clothes.
+//! - **A partial sum is never presented as a total.** `costUsd` is `null` on
+//!   some results (ledger 266), so every cost carries its coverage, its split
+//!   between billed and estimated dollars, and — for anything still unpriced
+//!   — the reason by name. No price table is consulted *here*: `costBasis`
+//!   and `costUsd` are the producer's own numbers, taken off the `result`
+//!   item exactly as published (`crates/buzz-session-provider/src/price_table.rs`
+//!   is the one place a token count becomes a dollar estimate). A cost this
+//!   binary computed itself from tokens would be an invention wearing a
+//!   number's clothes.
 //! - **Absence is disclosed, not rounded to zero.** A metric the wire cannot
 //!   support is printed as `unknown` with the reason, in the `honesty` block.
 //! - **A read that fails is an error.** The fetch layer propagates a p-gated or
@@ -768,13 +773,40 @@ pub fn measure_report(
         }));
     }
     if totals.results_priced < totals.results_total {
+        let reasons: Vec<String> = totals
+            .unpriced_reasons
+            .iter()
+            .map(|(reason, count)| format!("{reason}: {count}"))
+            .collect();
         honesty.push(json!({
             "metric": "dollar cost",
-            "value": "partial",
-            "reason": format!(
-                "{} of {} terminal results carry costUsd; the reported sum is the sum of the \
-                 available fields, not this run's spend. No price table was consulted",
+            "value": format!(
+                "partial: {} of {} priced",
                 totals.results_priced, totals.results_total
+            ),
+            "reason": format!(
+                "{} of {} terminal results carry a costUsd number ({} billed, {} estimated \
+                 from this project's own price table); the reported sum is the sum of the \
+                 available fields, not this run's spend. Unpriced reasons: {}",
+                totals.results_priced,
+                totals.results_total,
+                totals.results_billed,
+                totals.results_estimated,
+                if reasons.is_empty() {
+                    "none".to_owned()
+                } else {
+                    reasons.join(", ")
+                }
+            ),
+        }));
+    } else if totals.results_total > 0 {
+        honesty.push(json!({
+            "metric": "dollar cost",
+            "value": "complete",
+            "reason": format!(
+                "all {} terminal results carry a costUsd number ({} billed, {} estimated from \
+                 this project's own price table)",
+                totals.results_total, totals.results_billed, totals.results_estimated
             ),
         }));
     }
@@ -849,8 +881,19 @@ pub fn measure_report(
             "active_minutes": round2(totals.active_ms as f64 / 60_000.0),
             "cost": {
                 "reported_usd": round6(totals.cost_usd),
+                "billed_usd": round6(totals.billed_usd),
+                "estimated_usd": round6(totals.estimated_usd),
+                "results_billed": totals.results_billed,
+                "results_estimated": totals.results_estimated,
                 "results_priced": totals.results_priced,
+                "results_unpriced": totals.results_total - totals.results_priced,
                 "results_total": totals.results_total,
+                "status": if totals.results_priced == totals.results_total {
+                    "complete"
+                } else {
+                    "partial"
+                },
+                "unpriced_reasons": &totals.unpriced_reasons,
             },
         },
         "coordination": {
@@ -889,8 +932,13 @@ struct Totals {
     tool_calls: i64,
     active_ms: i64,
     cost_usd: f64,
+    billed_usd: f64,
+    estimated_usd: f64,
+    results_billed: usize,
+    results_estimated: usize,
     results_priced: usize,
     results_total: usize,
+    unpriced_reasons: BTreeMap<String, usize>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -916,8 +964,13 @@ fn seat_row(
     let mut tool_calls = 0i64;
     let mut active_ms = 0i64;
     let mut cost = 0f64;
+    let mut billed_usd = 0f64;
+    let mut estimated_usd = 0f64;
+    let mut billed = 0usize;
+    let mut estimated = 0usize;
     let mut priced = 0usize;
     let mut results = 0usize;
+    let mut unpriced_reasons: BTreeMap<String, usize> = BTreeMap::new();
     for item in mine.iter().filter(|item| item.kind == "result") {
         results += 1;
         input += num(item.item, "inputTokens");
@@ -946,6 +999,23 @@ fn seat_row(
         if let Some(usd) = item.item.get("costUsd").and_then(Value::as_f64) {
             cost += usd;
             priced += 1;
+            match item.item.get("costBasis").and_then(Value::as_str) {
+                Some("estimated") => {
+                    estimated_usd += usd;
+                    estimated += 1;
+                }
+                // "billed", and any basis this reader doesn't yet know the
+                // name of, are counted with billed rather than silently
+                // dropped from both buckets.
+                _ => {
+                    billed_usd += usd;
+                    billed += 1;
+                }
+            }
+        } else if let Some(reason) = item.item.get("costReason").and_then(Value::as_str) {
+            *unpriced_reasons.entry(reason.to_owned()).or_default() += 1;
+        } else {
+            *unpriced_reasons.entry("unknown".to_owned()).or_default() += 1;
         }
     }
 
@@ -1092,8 +1162,15 @@ fn seat_row(
     totals.tool_calls += tool_calls;
     totals.active_ms += active_ms;
     totals.cost_usd += cost;
+    totals.billed_usd += billed_usd;
+    totals.estimated_usd += estimated_usd;
+    totals.results_billed += billed;
+    totals.results_estimated += estimated;
     totals.results_priced += priced;
     totals.results_total += results;
+    for (reason, count) in &unpriced_reasons {
+        *totals.unpriced_reasons.entry(reason.clone()).or_default() += count;
+    }
 
     json!({
         "session_id": session_id,
@@ -1114,9 +1191,16 @@ fn seat_row(
         "tool_calls_reported": tool_calls,
         "cost": {
             "reported_usd": round6(cost),
+            "billed_usd": round6(billed_usd),
+            "estimated_usd": round6(estimated_usd),
+            "results_billed": billed,
+            "results_estimated": estimated,
             "results_priced": priced,
+            "results_unpriced": results - priced,
             "results_total": results,
             "coverage": share(priced, results),
+            "status": if priced == results { "complete" } else { "partial" },
+            "unpriced_reasons": unpriced_reasons,
         },
         "active_minutes": round2(active_ms as f64 / 60_000.0),
         "no_open_turn_wall_minutes": idle_minutes,

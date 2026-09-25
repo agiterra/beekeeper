@@ -1998,11 +1998,80 @@ impl ResultSubtype {
     }
 }
 
+/// How a turn's [`TurnCost::cost_usd`] was determined.
+///
+/// Ledger 266 (Astra): a control run's cost must separate the provider's own
+/// billed figure from an estimate this project computed, so a reader never
+/// mistakes one for the other.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CostBasis {
+    /// The adapter reported the provider's own billed dollar figure for this
+    /// turn (a cumulative counter delta against a proven prior baseline).
+    Billed,
+    /// No billed figure was available for this turn; this project's own
+    /// price table converted the turn's reported token counts into a dollar
+    /// estimate. Carries `price_table_id`/`price_table_version` alongside it.
+    Estimated,
+}
+
+impl CostBasis {
+    /// The exact string the wire and this crate's readers use.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Billed => "billed",
+            Self::Estimated => "estimated",
+        }
+    }
+}
+
+/// Why [`TurnCost::cost_usd`] is `None` rather than a number.
+///
+/// Ledger 266 (Astra): a resumed cumulative counter is never assumed to
+/// start at zero, so "no prior baseline" is disclosed by name rather than
+/// folded into the same `None` as "the adapter said nothing at all".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CostReason {
+    /// The adapter's own cost figure is a cumulative counter and this turn
+    /// had no prior baseline to subtract from — the first turn of a session,
+    /// a harness restart, or a non-monotonic counter. Never treated as zero.
+    NoBaseline,
+    /// The turn's token counts were known but its model is not in this
+    /// project's price table, so no estimate could be computed either.
+    UnknownModelPrice,
+    /// The adapter published no usage signal — no cost, no tokens — for this
+    /// turn at all.
+    NoUsageReported,
+}
+
+impl CostReason {
+    /// The exact string the wire and this crate's readers use.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::NoBaseline => "no_baseline",
+            Self::UnknownModelPrice => "unknown_model_price",
+            Self::NoUsageReported => "no_usage_reported",
+        }
+    }
+}
+
 /// Per-turn accounting, when the adapter reported any.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct TurnCost {
-    /// Estimated USD cost of the turn.
+    /// USD cost of the turn — billed or estimated, see [`Self::cost_basis`].
+    /// `None` only together with [`Self::cost_reason`] naming why.
     pub cost_usd: Option<f64>,
+    /// How `cost_usd` was determined. `Some` exactly when `cost_usd` is `Some`.
+    pub cost_basis: Option<CostBasis>,
+    /// Why `cost_usd` is `None`. `Some` exactly when `cost_usd` is `None`.
+    pub cost_reason: Option<CostReason>,
+    /// The price table id used to estimate `cost_usd`, when
+    /// `cost_basis == Estimated`. `None` otherwise.
+    pub price_table_id: Option<&'static str>,
+    /// The price table version used to estimate `cost_usd`, when
+    /// `cost_basis == Estimated`. `None` otherwise.
+    pub price_table_version: Option<&'static str>,
     /// Input tokens consumed.
     pub input_tokens: Option<u64>,
     /// Output tokens produced.
@@ -2015,6 +2084,7 @@ impl TurnCost {
     /// Whether anything at all is known.
     pub fn is_empty(&self) -> bool {
         self.cost_usd.is_none()
+            && self.cost_reason.is_none()
             && self.input_tokens.is_none()
             && self.output_tokens.is_none()
             && self.total_tokens.is_none()
@@ -2137,12 +2207,14 @@ pub fn context_window_usage(item: &serde_json::Value) -> Option<ContextWindowUsa
 
 /// Build the terminal `result` item that closes a turn.
 ///
-/// `costUsd` and the token counts are omitted rather than sent as `null`: the
-/// consumer's projector renders `costUsd` only when it is a number, and an
-/// explicit `null` would claim the provider measured zero. `usage` follows the
-/// same rule and the whole object is omitted when it is empty, so a result
-/// item from a driver that reports nothing is byte-identical to the shape that
-/// shipped before [`TurnUsageReport`] existed.
+/// `costUsd` is always present — as a number with `costBasis` naming whether
+/// it is the provider's own billed figure or this project's price-table
+/// estimate, or as an explicit `null` with `costReason` naming why no number
+/// could be produced (ledger 266). The token count fields keep the older
+/// convention of omission rather than `null`: the consumer's projector treats
+/// an absent key as "not reported" and an explicit `null` there would claim
+/// the provider measured zero. `usage` follows the same rule and the whole
+/// object is omitted when it is empty.
 pub fn result_item(
     subtype: ResultSubtype,
     duration_ms: u64,
@@ -2163,6 +2235,20 @@ pub fn result_item(
     if let Some(object) = item.as_object_mut() {
         if let Some(cost_usd) = cost.cost_usd {
             object.insert("costUsd".into(), serde_json::json!(cost_usd));
+        } else {
+            object.insert("costUsd".into(), serde_json::Value::Null);
+        }
+        if let Some(basis) = cost.cost_basis {
+            object.insert("costBasis".into(), serde_json::json!(basis.as_str()));
+        }
+        if let Some(reason) = cost.cost_reason {
+            object.insert("costReason".into(), serde_json::json!(reason.as_str()));
+        }
+        if let Some(id) = cost.price_table_id {
+            object.insert("priceTableId".into(), serde_json::json!(id));
+        }
+        if let Some(version) = cost.price_table_version {
+            object.insert("priceTableVersion".into(), serde_json::json!(version));
         }
         for (key, value) in [
             ("inputTokens", cost.input_tokens),
@@ -4541,6 +4627,69 @@ mod tests {
             },
         );
         assert_eq!(item["usage"], serde_json::json!({ "outputTokens": 5 }));
+    }
+
+    /// Ledger 266: `costUsd` is present — as a number with its basis, or as
+    /// an explicit `null` with a named reason — never a bare omission.
+    #[test]
+    fn a_billed_cost_carries_its_basis_and_no_price_table_stamp() {
+        let item = result_item(
+            ResultSubtype::Success,
+            1_000,
+            "completed",
+            TurnCost {
+                cost_usd: Some(0.042),
+                cost_basis: Some(CostBasis::Billed),
+                ..TurnCost::default()
+            },
+            TurnUsageReport::default(),
+        );
+        assert_eq!(item["costUsd"], serde_json::json!(0.042));
+        assert_eq!(item["costBasis"], "billed");
+        assert!(item.get("costReason").is_none(), "{item}");
+        assert!(item.get("priceTableId").is_none(), "{item}");
+    }
+
+    /// An estimate carries its basis and the price table's own id/version, so
+    /// a reader never mistakes it for a billed figure.
+    #[test]
+    fn an_estimated_cost_carries_its_basis_and_price_table_stamp() {
+        let item = result_item(
+            ResultSubtype::Success,
+            1_000,
+            "completed",
+            TurnCost {
+                cost_usd: Some(18.0),
+                cost_basis: Some(CostBasis::Estimated),
+                price_table_id: Some("buzz-static"),
+                price_table_version: Some("2026-09-25.1"),
+                ..TurnCost::default()
+            },
+            TurnUsageReport::default(),
+        );
+        assert_eq!(item["costUsd"], serde_json::json!(18.0));
+        assert_eq!(item["costBasis"], "estimated");
+        assert_eq!(item["priceTableId"], "buzz-static");
+        assert_eq!(item["priceTableVersion"], "2026-09-25.1");
+    }
+
+    /// An unpriced turn carries an explicit `null` and its reason by name —
+    /// never a silently omitted key.
+    #[test]
+    fn an_unpriced_turn_carries_null_and_a_named_reason() {
+        let item = result_item(
+            ResultSubtype::Success,
+            1_000,
+            "completed",
+            TurnCost {
+                cost_reason: Some(CostReason::NoBaseline),
+                ..TurnCost::default()
+            },
+            TurnUsageReport::default(),
+        );
+        assert_eq!(item["costUsd"], serde_json::Value::Null);
+        assert_eq!(item["costReason"], "no_baseline");
+        assert!(item.get("costBasis").is_none(), "{item}");
     }
 
     /// `usedTokens` is the prompt-side total: fresh input plus both cache

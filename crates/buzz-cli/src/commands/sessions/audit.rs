@@ -319,6 +319,8 @@ fn turn_row(
             .and_then(|usage| number(usage, "contextWindow"))
             .or(driver_window),
         "costUsd": published_cost(result),
+        "costBasis": result.and_then(|item| item.get("costBasis")).cloned().unwrap_or(Value::Null),
+        "costReason": result.and_then(|item| item.get("costReason")).cloned().unwrap_or(Value::Null),
     })
 }
 

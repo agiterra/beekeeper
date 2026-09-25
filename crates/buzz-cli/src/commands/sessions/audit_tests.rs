@@ -106,6 +106,7 @@ fn full_result() -> Value {
             input_tokens: Some(1_223_324),
             output_tokens: Some(9_113),
             total_tokens: Some(1_232_437),
+            ..TurnCost::default()
         },
         TurnUsageReport {
             input_tokens: Some(18_442),
@@ -248,6 +249,7 @@ fn a_cost_the_producer_published_is_reported() {
             input_tokens: None,
             output_tokens: None,
             total_tokens: None,
+            ..TurnCost::default()
         },
         TurnUsageReport {
             input_tokens: Some(5),
