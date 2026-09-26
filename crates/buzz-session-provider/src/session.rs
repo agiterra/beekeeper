@@ -3940,6 +3940,8 @@ pub(crate) mod testing {
 
     /// Run `command` to completion within `limit`, killing it (and failing
     /// the test) if it does not finish: a wrong fixture must not hang a run.
+    /// For the launched boundary cases, which are macOS's.
+    #[cfg(target_os = "macos")]
     pub(crate) fn output_within(
         mut command: std::process::Command,
         limit: std::time::Duration,
@@ -3969,7 +3971,9 @@ pub(crate) mod testing {
     }
 
     /// The tool an opt-in integration test was pointed at through `var`.
-    /// Missing configuration fails the test: it was asked to run.
+    /// Missing configuration fails the test: it was asked to run. Every such
+    /// test exercises the macOS boundary.
+    #[cfg(target_os = "macos")]
     pub(crate) fn required_tool(var: &str) -> std::path::PathBuf {
         let path = std::env::var_os(var)
             .map(std::path::PathBuf::from)
@@ -3979,12 +3983,15 @@ pub(crate) mod testing {
     }
 
     /// A disposable smart-HTTP Git receiver requiring one of `passwords`
-    /// (comma-separated; none serves anyone).
+    /// (comma-separated; none serves anyone). Only the macOS boundary cases
+    /// need a transport in place of a local-path remote.
+    #[cfg(target_os = "macos")]
     pub(crate) struct GitReceiver {
         child: std::process::Child,
         pub port: u16,
     }
 
+    #[cfg(target_os = "macos")]
     impl Drop for GitReceiver {
         fn drop(&mut self) {
             let _ = self.child.kill();
@@ -3992,6 +3999,7 @@ pub(crate) mod testing {
         }
     }
 
+    #[cfg(target_os = "macos")]
     const RECEIVER: &str = r#"
 import base64, http.server, os, subprocess, sys
 ROOT = sys.argv[1]; ALLOWED = set(filter(None, sys.argv[2].split(',')))
@@ -4029,6 +4037,7 @@ print(server.server_address[1], flush=True)
 server.serve_forever()
 "#;
 
+    #[cfg(target_os = "macos")]
     pub(crate) fn git_receiver(root: &Path, passwords: &str) -> GitReceiver {
         use std::io::BufRead;
         let mut child = std::process::Command::new("/usr/bin/python3")

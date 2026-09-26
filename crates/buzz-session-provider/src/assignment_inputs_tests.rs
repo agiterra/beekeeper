@@ -67,26 +67,43 @@ fn seat_clone(origin: &Path, seat: &Path, branch: &str) -> SeatCheckout {
     }
 }
 
-/// Serve `origin` over smart HTTP and point the seat's `remote` at it: a
-/// seat's remote is a transport, and its bounded fetch reads nothing of the
-/// host's but the tree it runs in.
-fn serve_origin(origin: &Path, seat: &Path, remote: &str) -> crate::session::testing::GitReceiver {
-    let receiver = crate::session::testing::git_receiver(origin.parent().expect("parent"), "");
-    let name = origin
-        .file_name()
-        .expect("name")
-        .to_string_lossy()
-        .into_owned();
-    run_git(
-        seat,
-        &[
-            "remote",
-            "set-url",
-            remote,
-            &format!("http://127.0.0.1:{}/{name}", receiver.port),
-        ],
-    );
-    receiver
+/// Holds a test's served origin for the test's duration.
+struct ServedOrigin {
+    #[cfg(target_os = "macos")]
+    _receiver: crate::session::testing::GitReceiver,
+}
+
+/// Where a boundary exists (macOS), serve `origin` over smart HTTP and point
+/// the seat's `remote` at it: a seat's remote is a transport, and its bounded
+/// fetch reads nothing of the host's but the tree it runs in. Elsewhere the
+/// fetch is disclosed as unbounded and reads the local origin as cloned.
+fn serve_origin(origin: &Path, seat: &Path, remote: &str) -> ServedOrigin {
+    #[cfg(target_os = "macos")]
+    {
+        let receiver = crate::session::testing::git_receiver(origin.parent().expect("parent"), "");
+        let name = origin
+            .file_name()
+            .expect("name")
+            .to_string_lossy()
+            .into_owned();
+        run_git(
+            seat,
+            &[
+                "remote",
+                "set-url",
+                remote,
+                &format!("http://127.0.0.1:{}/{name}", receiver.port),
+            ],
+        );
+        ServedOrigin {
+            _receiver: receiver,
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (origin, seat, remote);
+        ServedOrigin {}
+    }
 }
 
 fn intent(assignment_id: &str, base_sha: &str) -> AssignmentIntent {

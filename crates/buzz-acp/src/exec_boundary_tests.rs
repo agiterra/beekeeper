@@ -1,5 +1,7 @@
 use super::*;
 
+// Every consumer prepares a real boundary: macOS only.
+#[cfg(target_os = "macos")]
 fn canonical_tempdir() -> (tempfile::TempDir, PathBuf) {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().canonicalize().expect("canonical tempdir");
@@ -76,6 +78,9 @@ fn a_project_under_a_system_root_cannot_be_bounded() {
     );
 }
 
+// The spec is validated only where a backend exists; elsewhere `prepare`
+// answers `Unsupported` first (`no_backend_is_claimed_off_macos`).
+#[cfg(target_os = "macos")]
 #[test]
 fn the_policy_may_not_live_inside_a_grant() {
     let (_dir, root) = canonical_tempdir();

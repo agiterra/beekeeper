@@ -7,12 +7,20 @@
 //! from the policy text alone.
 
 use super::*;
+// What only the launched (macOS) cases and their helpers use.
+#[cfg(target_os = "macos")]
 use crate::session::testing::fake_agent;
+#[cfg(target_os = "macos")]
 use crate::session::{CreateRequest, SessionEvent, SessionManager};
+#[cfg(target_os = "macos")]
 use buzz_core::coding_session_command::CodingSessionTarget;
+#[cfg(target_os = "macos")]
 use std::collections::BTreeMap;
+#[cfg(target_os = "macos")]
 use std::time::Duration;
+#[cfg(target_os = "macos")]
 use tokio::sync::mpsc;
+#[cfg(target_os = "macos")]
 use uuid::Uuid;
 
 const PROVIDER_PUBKEY: &str = "abababababababababababababababababababababababababababababababab";
@@ -26,8 +34,11 @@ struct Fixture {
     state_dir: PathBuf,
     repo_a: PathBuf,
     seat_a: PathBuf,
+    #[cfg(target_os = "macos")]
     b_plan: PathBuf,
+    #[cfg(target_os = "macos")]
     c_plan: PathBuf,
+    #[cfg(target_os = "macos")]
     cache_plan: PathBuf,
 }
 
@@ -98,8 +109,11 @@ fn fixture() -> Fixture {
         state_dir,
         repo_a,
         seat_a,
+        #[cfg(target_os = "macos")]
         b_plan,
+        #[cfg(target_os = "macos")]
         c_plan,
+        #[cfg(target_os = "macos")]
         cache_plan,
     }
 }
@@ -129,6 +143,7 @@ fn inputs<'a>(
 /// itself, a nested shell and a python child, writes one `name=OK|DENIED`
 /// line per probe to `report` inside its working tree, then waits for the
 /// test to name a path created after it started and probes that too.
+#[cfg(target_os = "macos")]
 fn probe_agent(fx: &Fixture, mutating: bool) -> String {
     let b = fx.b_plan.display();
     let c = fx.c_plan.display();
@@ -193,6 +208,7 @@ for k in ['SEAT_SENTINEL','RUNTIME_SENTINEL','PROJECT_A_ONLY','TMPDIR','GIT_CONF
 for k in ['BUZZ_PRIVATE_KEY','CARGO_MANIFEST_DIR','CARGO_PKG_NAME']:
     print(k+'='+('<present>' if k in os.environ else '<absent>'))"#;
 
+#[cfg(target_os = "macos")]
 fn create_request(cwd: &Path, agent: String, execution: ExecutionPlan) -> CreateRequest {
     CreateRequest {
         media: None,
@@ -225,6 +241,7 @@ fn create_request(cwd: &Path, agent: String, execution: ExecutionPlan) -> Create
     }
 }
 
+#[cfg(target_os = "macos")]
 fn report(dir: &Path) -> BTreeMap<String, String> {
     std::fs::read_to_string(dir.join("report"))
         .unwrap_or_default()
