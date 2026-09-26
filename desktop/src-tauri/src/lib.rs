@@ -286,6 +286,13 @@ pub fn run() {
         .manage(session_provider::CodingSessionProviderState::default())
         .setup(move |app| {
             let app_handle = app.handle().clone();
+            // Where this desktop bounds its own Git in project workspaces
+            // (checkout, status, clean checks). Failure is logged; every
+            // bounded operation then refuses by name rather than run unbounded.
+            match session_provider::host_git_state_dir(&app_handle) {
+                Ok(dir) => coding_sessions::host_git::set_state_dir(dir),
+                Err(error) => eprintln!("buzz-desktop: host Git state dir: {error}"),
+            }
             #[cfg(target_os = "macos")]
             {
                 tray_menu::init(&app_handle)?;

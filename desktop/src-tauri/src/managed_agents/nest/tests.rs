@@ -930,3 +930,59 @@ fn refresh_skill_overwrites_on_version_bump() {
         "SKILL.md must be refreshed on version bump"
     );
 }
+
+/// The version-4 template's commit-identity section, verbatim in the lines
+/// that matter: it told every agent to sign off as the human operator and to
+/// stop and ask a person when no identity was configured.
+const LEGACY_V4_COMMIT_IDENTITY: &str = "## Git Commit Identity\n\n\
+The human operator signs off for accountability.\n\n\
+- **Human sign-off (required):** every commit MUST include a `Signed-off-by` trailer for the human operator who is responsible for the agent's work.\n\
+- **Discovering the human's identity:** If `git config user.email` returns empty, STOP and ask the human operator for their name and email before committing.\n\n";
+
+/// An install that last wrote version 4 receives the corrected template on
+/// its next start: the forged-attestation and stop-and-ask guidance is gone,
+/// the real-author rule is present, and its managed section survives.
+#[test]
+fn a_version_4_install_is_refreshed_off_the_operator_sign_off_rule() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join(".beekeeper");
+    ensure_nest_at(&root).unwrap();
+    let agents_md = root.join("AGENTS.md");
+    upsert_managed_section(&agents_md, "## Active Agents\n\n| Kit | Builder | @Kit |").unwrap();
+    let managed = fs::read_to_string(&agents_md).unwrap();
+    let marker = managed.find(BEGIN_MARKER).unwrap();
+    let marker_line = managed[..marker].rfind('\n').map_or(0, |at| at + 1);
+    fs::write(
+        &agents_md,
+        format!(
+            "# Buzz Nest\n\n{LEGACY_V4_COMMIT_IDENTITY}{}",
+            &managed[marker_line..]
+        ),
+    )
+    .unwrap();
+    fs::write(root.join(".nest-agents-version"), "4\n").unwrap();
+
+    ensure_nest_at(&root).unwrap();
+
+    let content = fs::read_to_string(&agents_md).unwrap();
+    for gone in [
+        "STOP and ask",
+        "Human sign-off (required)",
+        "signs off for accountability",
+    ] {
+        assert!(!content.contains(gone), "still carries {gone:?}");
+        assert!(!AGENTS_MD.contains(gone), "the template carries {gone:?}");
+    }
+    assert!(content.contains("A commit carries the identity of whoever actually made it."));
+    assert!(content.contains("including the person who launched you"));
+    assert!(
+        content.contains("| Kit | Builder | @Kit |"),
+        "managed section kept"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join(".nest-agents-version"))
+            .unwrap()
+            .trim(),
+        NEST_AGENTS_VERSION.to_string()
+    );
+}

@@ -214,6 +214,11 @@ pub struct CreatePlan {
     pub channel_id: Uuid,
     /// Host-local working directory. Never appears in signed content.
     pub cwd: PathBuf,
+    /// Whether a host hint bound `cwd` to `project_ref` (see
+    /// [`ProjectsFile::hint_binds_project`]). Otherwise the directory is the
+    /// project's workspace only if it is the project's recorded checkout or a
+    /// linked worktree of it.
+    pub workspace_bound: bool,
     /// NIP-MP project coordinate, or `None` for a standalone session.
     pub project_ref: Option<String>,
     /// Repository coordinate, or `None`.
@@ -831,6 +836,16 @@ pub fn decide_lifecycle(
         command_id: payload.command_id.clone(),
         runtime_instance_ref: provider_instance_ref.as_str().to_owned(),
         channel_id,
+        workspace_bound: project_ref.as_deref().is_some_and(|project| {
+            context
+                .projects
+                .resolve_hinted(&payload.command_id)
+                .as_ref()
+                == Some(&cwd)
+                && context
+                    .projects
+                    .hint_binds_project(&payload.command_id, project)
+        }),
         cwd,
         project_ref: project_ref.clone(),
         repo_ref: repo_ref.clone(),
@@ -1833,6 +1848,11 @@ pub struct ProjectsFile {
     pub version: u32,
     /// One-shot hint keyed by `commandId`, for a directory chosen at create time.
     pub pending: BTreeMap<String, PathBuf>,
+    /// The project each `pending` hint binds its directory to, by
+    /// `commandId`. Additive: a host that predates it writes none, and its
+    /// hints are then accepted for a project only when the directory is the
+    /// project's recorded checkout or a linked worktree of it.
+    pub pending_projects: BTreeMap<String, String>,
     /// Directory per NIP-MP project coordinate.
     pub projects: BTreeMap<String, PathBuf>,
     /// Fallback directory per channel.
@@ -1874,6 +1894,9 @@ pub struct PendingHint {
     pub command_id: String,
     /// Absolute path of the directory the session should run in.
     pub path: PathBuf,
+    /// The project the writer bound this directory to, when it named one.
+    #[serde(default)]
+    pub project_ref: Option<String>,
     /// When the CLI wrote it, Unix seconds.
     #[serde(default)]
     pub written_at: u64,
@@ -1951,6 +1974,12 @@ pub fn hint_is_consumed(hints_dir: &Path, command_id: &str) -> bool {
 /// because the alternative to falling through to the project and channel
 /// entries is a create refused for a reason the operator did not cause.
 pub fn read_pending_hint(hints_dir: &Path, command_id: &str) -> Option<PathBuf> {
+    read_pending_hint_record(hints_dir, command_id).map(|hint| hint.path)
+}
+
+/// The whole one-shot hint for `command_id`, under the same rules as
+/// [`read_pending_hint`].
+pub fn read_pending_hint_record(hints_dir: &Path, command_id: &str) -> Option<PendingHint> {
     let path = pending_hint_path(hints_dir, command_id);
     let body = match std::fs::read_to_string(&path) {
         Ok(body) => body,
@@ -1984,7 +2013,7 @@ pub fn read_pending_hint(hints_dir: &Path, command_id: &str) -> Option<PathBuf> 
         );
         return None;
     }
-    usable_directory(&hint.path).then_some(hint.path)
+    usable_directory(&hint.path).then_some(hint)
 }
 
 impl ProjectsFile {
@@ -2091,6 +2120,24 @@ impl ProjectsFile {
             }
         }
         None
+    }
+
+    /// Whether this command's live hint binds its directory to `project_ref`:
+    /// the in-file `pending` entry with its `pendingProjects` project, or the
+    /// hint file with its `projectRef`. A hint naming no project, or another
+    /// one, binds nothing.
+    pub fn hint_binds_project(&self, command_id: &str, project_ref: &str) -> bool {
+        if self.pending.contains_key(command_id) {
+            return self
+                .pending_projects
+                .get(command_id)
+                .is_some_and(|bound| bound.trim() == project_ref);
+        }
+        self.hints_dir
+            .as_deref()
+            .and_then(|hints_dir| read_pending_hint_record(hints_dir, command_id))
+            .and_then(|hint| hint.project_ref)
+            .is_some_and(|bound| bound.trim() == project_ref)
     }
 
     /// The project's, then the channel's, remembered directory.
@@ -2370,6 +2417,10 @@ mod tests {
 
     fn session(session_id: &str, cwd: &Path) -> SessionRecord {
         SessionRecord {
+            execution_binding: None,
+            execution_boundary: None,
+            authority_withdrawn: None,
+            project_head_seen_at: None,
             session_id: session_id.to_owned(),
             generation: 1,
             channel_id: Uuid::nil(),
@@ -2513,6 +2564,7 @@ mod tests {
             channels: [(channel, channel_dir.clone())].into_iter().collect(),
             agents_repos: BTreeMap::new(),
             hints_dir: None,
+            ..ProjectsFile::default()
         };
         let content = create_content("create-1", &format!("\"{project_ref}\""), AUTHORITY);
 

@@ -340,15 +340,34 @@ fn truncate_patch(patch: String) -> (String, bool) {
     }
 }
 
+/// Where a diff's Git runs. A diff runs the repository's own `textconv`
+/// programs, so a recorded local workspace — writable by the operator and by
+/// the project's sessions — diffs inside its project boundary. The host's own
+/// fresh scratch clone holds no configuration but what the host wrote, and
+/// stays hardened host Git.
+enum DiffGit<'a> {
+    Scratch(&'a GitAuthConfig),
+    Workspace(&'a buzz_session_provider_pkg::execution_scope_host::HostLaunchPlan),
+}
+
+impl DiffGit<'_> {
+    fn run(&self, args: &[&str], repo_dir: &std::path::Path) -> Result<String, String> {
+        match self {
+            Self::Scratch(auth) => run_git(args, Some(repo_dir), auth),
+            Self::Workspace(plan) => crate::coding_sessions::host_git::run(plan, repo_dir, args),
+        }
+    }
+}
+
 fn diff_from_repo(
     repo_dir: &std::path::Path,
-    auth: &GitAuthConfig,
+    git: &DiffGit<'_>,
     range: &str,
     target_commit: Option<&str>,
 ) -> Result<ProjectRepoDiffInfo, String> {
     let commit_body = target_commit
         .map(|commit| {
-            run_git(
+            git.run(
                 &[
                     "show",
                     "--no-patch",
@@ -356,44 +375,46 @@ fn diff_from_repo(
                     "--end-of-options",
                     commit,
                 ],
-                Some(repo_dir),
-                auth,
+                repo_dir,
             )
             .map(|body| body.trim_end().to_string())
         })
         .transpose()?
         .filter(|body| !body.is_empty());
-    let numstat = run_git(&["diff", "--numstat", range], Some(repo_dir), auth)?;
+    let numstat = git.run(&["diff", "--numstat", range], repo_dir)?;
     let files = parse_numstat(&numstat)
         .into_iter()
         .map(|(path, additions, deletions)| {
-            let patch = run_git(
-                &[
-                    "diff",
-                    "--no-ext-diff",
-                    "--find-renames",
-                    "--find-copies",
-                    "--unified=80",
-                    "--src-prefix=a/",
-                    "--dst-prefix=b/",
-                    range,
-                    "--",
-                    &path,
-                ],
-                Some(repo_dir),
-                auth,
-            )
-            .unwrap_or_default();
+            // A patch that could not be produced — a converter the repository
+            // names failed, or was refused by the boundary — is an error
+            // naming the file, never an empty patch that reads as no change.
+            let patch = git
+                .run(
+                    &[
+                        "diff",
+                        "--no-ext-diff",
+                        "--find-renames",
+                        "--find-copies",
+                        "--unified=80",
+                        "--src-prefix=a/",
+                        "--dst-prefix=b/",
+                        range,
+                        "--",
+                        &path,
+                    ],
+                    repo_dir,
+                )
+                .map_err(|error| format!("could not produce the diff of {path}: {error}"))?;
             let (patch, truncated) = truncate_patch(patch);
-            ProjectRepoDiffFileInfo {
+            Ok(ProjectRepoDiffFileInfo {
                 path,
                 additions,
                 deletions,
                 patch,
                 truncated,
-            }
+            })
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, String>>()?;
     Ok(ProjectRepoDiffInfo {
         additions: files.iter().map(|file| file.additions).sum(),
         deletions: files.iter().map(|file| file.deletions).sum(),
@@ -458,7 +479,7 @@ pub async fn get_project_repo_diff(
         } else {
             None
         };
-        diff_from_repo(&repo_dir, &auth, &range, commit_body_ref)
+        diff_from_repo(&repo_dir, &DiffGit::Scratch(&auth), &range, commit_body_ref)
     })
     .await
     .map_err(|error| format!("repo diff task failed: {error}"))?
@@ -488,22 +509,194 @@ pub async fn get_project_local_repo_diff(
         else {
             return Ok(None);
         };
-        let range = local_diff_range(
-            &checkout.path,
-            &checkout.remote,
+        local_checkout_diff(
+            &checkout,
             &auth,
-            base_branch.as_deref(),
             branch.as_deref(),
+            base_branch.as_deref(),
             base_commit.as_deref(),
             target_commit.as_deref(),
-        );
-        let commit_body_ref = if base_commit.is_none() && base_branch.is_none() {
-            target_commit.as_deref()
-        } else {
-            None
-        };
-        diff_from_repo(&checkout.path, &auth, &range, commit_body_ref).map(Some)
+        )
+        .map(Some)
     })
     .await
     .map_err(|error| format!("local repo diff task failed: {error}"))?
+}
+
+/// The diff of a recorded local checkout, run inside its project boundary
+/// (see [`DiffGit`]). Resolving the range reads refs only; the diff itself
+/// runs the repository's own `textconv`.
+///
+/// # Errors
+/// The checkout could not be bounded (nothing ran), or Git failed.
+pub(crate) fn local_checkout_diff(
+    checkout: &super::project_repo_registry::LocalRepoCheckout,
+    auth: &GitAuthConfig,
+    branch: Option<&str>,
+    base_branch: Option<&str>,
+    base_commit: Option<&str>,
+    target_commit: Option<&str>,
+) -> Result<ProjectRepoDiffInfo, String> {
+    let range = local_diff_range(
+        &checkout.path,
+        &checkout.remote,
+        auth,
+        base_branch,
+        branch,
+        base_commit,
+        target_commit,
+    );
+    let commit_body_ref = if base_commit.is_none() && base_branch.is_none() {
+        target_commit
+    } else {
+        None
+    };
+    let plan =
+        crate::coding_sessions::host_git::prepare(&crate::coding_sessions::host_git::Workspace {
+            tree: &checkout.path,
+            repo_root: None,
+            name: "diff",
+            host_branch: None,
+            host_read: &[],
+        })?;
+    diff_from_repo(
+        &checkout.path,
+        &DiffGit::Workspace(&plan),
+        &range,
+        commit_body_ref,
+    )
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::{diff_from_repo, local_checkout_diff, DiffGit};
+    use crate::commands::project_git_exec::{build_test_git_auth_config, run_git};
+    use crate::commands::project_repo_registry::LocalRepoCheckout;
+
+    /// A diff of the recorded local checkout runs the repository's own
+    /// `textconv` — its transformation is in the patch — inside the
+    /// checkout's boundary. The control, the same diff through hardened host
+    /// Git, shows the same program reading a neighbour's file.
+    #[test]
+    fn a_local_checkout_diff_runs_its_textconv_inside_the_boundary() {
+        let auth = build_test_git_auth_config().expect("auth");
+        let root = tempfile::tempdir().expect("tempdir");
+        let root = root.path().canonicalize().expect("canonical");
+        let foreign = root.join("elsewhere/plan.md");
+        std::fs::create_dir_all(foreign.parent().expect("parent")).expect("elsewhere");
+        std::fs::write(&foreign, "FOREIGN_PLAN_CANARY\n").expect("foreign");
+        let checkout = root.join("checkout");
+        run_git(
+            &[
+                "init",
+                "-q",
+                "--initial-branch=main",
+                "--",
+                checkout.to_str().expect("path"),
+            ],
+            None,
+            &auth,
+        )
+        .expect("init");
+        let commit = |message: &str| {
+            run_git(&["add", "."], Some(&checkout), &auth).expect("add");
+            run_git(
+                &[
+                    "-c",
+                    "user.name=T",
+                    "-c",
+                    "user.email=t@example.invalid",
+                    "commit",
+                    "-q",
+                    "-m",
+                    message,
+                ],
+                Some(&checkout),
+                &auth,
+            )
+            .expect("commit");
+            run_git(&["rev-parse", "HEAD"], Some(&checkout), &auth)
+                .expect("head")
+                .trim()
+                .to_owned()
+        };
+        std::fs::write(checkout.join(".gitattributes"), "*.txt diff=fixture\n")
+            .expect("attributes");
+        std::fs::write(checkout.join("notes.txt"), "one\n").expect("one");
+        let first = commit("first");
+        std::fs::write(checkout.join("notes.txt"), "two\n").expect("two");
+        let second = commit("second");
+        let textconv = format!(
+            "sh -c 'cat \"{}\" 2>/dev/null; sed s/^/conv:/ \"$1\"' --",
+            foreign.display()
+        );
+        run_git(
+            &["config", "diff.fixture.textconv", &textconv],
+            Some(&checkout),
+            &auth,
+        )
+        .expect("textconv");
+        let range = format!("{first}..{second}");
+
+        let control =
+            diff_from_repo(&checkout, &DiffGit::Scratch(&auth), &range, None).expect("control");
+        let control_patch: String = control
+            .files
+            .iter()
+            .map(|file| file.patch.as_str())
+            .collect();
+        assert!(
+            control_patch.contains("FOREIGN_PLAN_CANARY") && control_patch.contains("+conv:two"),
+            "the fixture's textconv must be live and able to read outside, or this test proves nothing: {control_patch}"
+        );
+
+        let bounded = local_checkout_diff(
+            &LocalRepoCheckout {
+                path: checkout.clone(),
+                remote: "origin".to_owned(),
+            },
+            &auth,
+            None,
+            None,
+            Some(&first),
+            Some(&second),
+        )
+        .expect("local diff");
+        let patch: String = bounded
+            .files
+            .iter()
+            .map(|file| file.patch.as_str())
+            .collect();
+        assert!(
+            patch.contains("-conv:one") && patch.contains("+conv:two"),
+            "the project's textconv applied: {patch}"
+        );
+        assert!(
+            !patch.contains("FOREIGN_PLAN_CANARY"),
+            "the diff read a neighbour: {patch}"
+        );
+
+        // A converter that fails is an error naming the file, not an empty
+        // patch that reads as "no change".
+        run_git(
+            &["config", "diff.fixture.textconv", "sh -c 'exit 3' --"],
+            Some(&checkout),
+            &auth,
+        )
+        .expect("failing textconv");
+        let error = local_checkout_diff(
+            &LocalRepoCheckout {
+                path: checkout.clone(),
+                remote: "origin".to_owned(),
+            },
+            &auth,
+            None,
+            None,
+            Some(&first),
+            Some(&second),
+        )
+        .err()
+        .expect("a failed converter is disclosed");
+        assert!(error.contains("notes.txt"), "{error}");
+    }
 }

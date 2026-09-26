@@ -22,6 +22,20 @@ const codingSessionContinuityStatuses = <String, String>{
 /// The title continuity rows carry, distinct from the generic `Status`.
 const codingSessionContinuityTitle = 'Session continuity';
 
+/// Project execution boundary statuses, in the reader's terms. Published by
+/// the session provider on every open (`execution_scope.rs`
+/// `boundary_status_item`); the `reason` is the enforcing backend or, when
+/// nothing is enforced, why. A policy file alone never earns "enforced": the
+/// provider publishes it only after its self-test passed.
+const codingSessionBoundaryStatuses = <String, String>{
+  'execution_boundary_enforced':
+      'Enforced — this agent and everything it runs can reach only this project\'s files',
+  'execution_boundary_not_enforced':
+      'Not enforced — only instructions keep this agent to this project\'s files',
+};
+
+const codingSessionBoundaryTitle = 'Project boundary';
+
 const _maxSummaryChars = 200;
 const _maxTextChars = 8000;
 
@@ -309,6 +323,18 @@ CodingSessionTranscriptItem _pairToolResult(
 
 CodingSessionTranscriptItem _status(CodingSessionTranscriptEnvelope envelope) {
   final slug = _stringOrNull(envelope.item['status']) ?? '';
+  final boundary = codingSessionBoundaryStatuses[slug];
+  if (boundary != null) {
+    final reason = _stringOrNull(envelope.item['reason']);
+    return _base(
+      envelope,
+      type: CodingSessionItemType.lifecycle,
+      title: codingSessionBoundaryTitle,
+      text: reason == null || reason.isEmpty
+          ? boundary
+          : '$boundary (${_bounded(reason, 80)})',
+    );
+  }
   final continuity = codingSessionContinuityStatuses[slug];
   if (continuity == null) {
     return _base(

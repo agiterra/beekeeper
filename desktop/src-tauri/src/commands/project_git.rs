@@ -597,9 +597,22 @@ pub(crate) fn compare_local_remote_status(
         .ok()
         .and_then(|output| first_output_line(&output))
     });
-    let status = run_git(&["status", "--porcelain"], Some(repo_dir), auth).unwrap_or_default();
-    let has_uncommitted_changes = has_uncommitted_changes(&status);
-    let has_untracked_files = has_untracked_files(&status);
+    // Status can run the repository's own clean filters and fsmonitor, and a
+    // coding session of the project can write that configuration, so it runs
+    // inside the checkout's project boundary. A checkout that could not be
+    // bounded is reported as holding changes (push and pull are blocked with
+    // the reason) — never as clean, and never observed unbounded.
+    let status = crate::coding_sessions::host_git::status(repo_dir, None);
+    let (has_uncommitted_changes, has_untracked_files) = match &status {
+        Ok(status) => (has_uncommitted_changes(status), has_untracked_files(status)),
+        Err(error) => {
+            eprintln!(
+                "project git: status of {} not observed: {error}",
+                repo_dir.display()
+            );
+            (true, false)
+        }
+    };
     let ahead_count = match remote_head.as_deref() {
         Some(_) => run_git(
             &[
@@ -949,15 +962,10 @@ pub async fn pull_project_local_repository(
             .remote_branch
             .as_deref()
             .ok_or_else(|| "No branch selected for pull.".to_string())?;
-        run_git(
-            &[
-                "pull",
-                "--ff-only",
-                "--end-of-options",
-                &checkout.remote,
-                branch,
-            ],
-            Some(&checkout.path),
+        super::project_git_materialize::fast_forward_checkout(
+            &checkout.path,
+            &checkout.remote,
+            branch,
             &auth,
         )?;
 

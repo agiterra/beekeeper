@@ -1238,56 +1238,122 @@ impl Provider {
             return Ok(());
         };
         let artifact_dir = self.action_artifact_dir(&record.run_id, &record.step_id);
+        let refused = |code: &str, message: String| HostStepRefusal {
+            code: code.to_owned(),
+            message,
+        };
+        let hermit_state = crate::execution_scope_host::host_hermit_state();
+        let (declared_env, from_host) =
+            crate::execution_scope_host::split_declared_env(&prepared.env, &spec.env_from_host);
+        let step_name = format!("{}\n{}", record.run_id, record.step_id);
         // Spec § 7 C6: run in a fresh detached worktree at the triggering
-        // commit when asked. Cut after the claim (it costs a fetch and a
-        // checkout), re-prepared against the worktree so the working
-        // directory and its escape check are resolved there.
-        let (prepared, run_dir, worktree) = match &bound_commit {
-            None => (prepared, checkout.clone(), None),
-            Some(commit) => {
-                let worktree = artifact_dir.join("worktree");
-                if let Err(error) = host_command::cut_worktree(&checkout, commit, &worktree).await {
-                    let refusal = HostStepRefusal {
-                        code: ACTION_COMMIT_UNAVAILABLE.to_owned(),
-                        message: error,
-                    };
-                    tracing::warn!(
-                        target: "csp::actions",
-                        %requested_event_id,
-                        "refusing a host step after claiming it: {}",
-                        refusal.message
-                    );
-                    let result = crate::action_route::route_refused_result(
-                        &record,
-                        claim_event_id,
-                        &refusal,
-                    );
-                    self.report_host_step_result(requested_event_id, result)?;
-                    self.action_steps
-                        .mark_refused(requested_event_id, &refusal.code)?;
-                    return Ok(());
+        // commit when asked. Cut after the claim (it costs a fetch). Nothing
+        // of the project's runs on the host: the fetch runs inside a boundary
+        // around the checkout, the cut checks nothing out, and the tree is
+        // materialized inside the step's own boundary, where any smudge
+        // filter is the project's own code running with the project's rights.
+        let worktree = bound_commit.as_ref().map(|_| artifact_dir.join("worktree"));
+        if let (Some(commit), Some(worktree)) = (&bound_commit, &worktree) {
+            let fetch_name = format!("{step_name}\nfetch");
+            let checkout_plan = crate::execution_scope_host::prepare_host_command(
+                &crate::execution_scope_host::HostCommandScope::git(
+                    &self.config.state_dir,
+                    Some(&record.project),
+                    Some(&checkout),
+                    &checkout,
+                    &fetch_name,
+                )
+                .fetching(),
+            );
+            let cut = match checkout_plan {
+                Ok(checkout_plan) => host_command::cut_worktree_unmaterialized(
+                    &checkout_plan,
+                    &checkout,
+                    commit,
+                    worktree,
+                )
+                .await
+                .map_err(|message| refused(ACTION_COMMIT_UNAVAILABLE, message)),
+                Err(refusal) => Err(refused(&refusal.code, refusal.message)),
+            };
+            if let Err(refusal) = cut {
+                return self.refuse_claimed_step(
+                    requested_event_id,
+                    &record,
+                    claim_event_id,
+                    refusal,
+                );
+            }
+        }
+        let run_dir = worktree.clone().unwrap_or_else(|| checkout.clone());
+        // The project boundary around the step (`crate::execution_scope_host`).
+        // A step that cannot be bounded where a backend exists is refused,
+        // never run unbounded.
+        let plan = crate::execution_scope_host::prepare_host_command(
+            &crate::execution_scope_host::HostCommandScope {
+                state_dir: &self.config.state_dir,
+                project_ref: Some(&record.project),
+                checkout: Some(&checkout),
+                run_dir: &run_dir,
+                cwd: if worktree.is_some() {
+                    &run_dir
+                } else {
+                    &prepared.cwd
+                },
+                name: &step_name,
+                // The host's own worktree under its state is bound to the
+                // project by the host that cut it; an as-found run must be
+                // the recorded checkout itself.
+                association: if worktree.is_some() {
+                    crate::execution_scope::WorkspaceAssociation::HostBound
+                } else {
+                    crate::execution_scope::WorkspaceAssociation::Unbound
+                },
+                declared_env: &declared_env,
+                from_host: &from_host,
+                hermit_state: hermit_state.as_deref(),
+                host_branch: None,
+                host_read: &[],
+                git_transport: false,
+            },
+        );
+        let plan = match plan {
+            Ok(plan) => plan,
+            Err(refusal) => {
+                if let Some(worktree) = &worktree {
+                    host_command::remove_worktree(&checkout, worktree).await;
                 }
+                return self.refuse_claimed_step(
+                    requested_event_id,
+                    &record,
+                    claim_event_id,
+                    refused(&refusal.code, refusal.message),
+                );
+            }
+        };
+        let prepared = match (&bound_commit, &worktree) {
+            (Some(commit), Some(worktree)) => {
+                let materialized =
+                    host_command::materialize_worktree(&plan, worktree, commit).await;
                 let host_env: HashMap<String, String> = std::env::vars().collect();
-                match host_command::prepare(&spec, &worktree, &host_env) {
-                    Ok(prepared) => (prepared, worktree.clone(), Some(worktree)),
-                    Err(refusal) => {
-                        host_command::remove_worktree(&checkout, &worktree).await;
-                        let refusal = HostStepRefusal {
-                            code: refusal.code,
-                            message: refusal.message,
-                        };
-                        let result = crate::action_route::route_refused_result(
+                let prepared = materialized.and_then(|()| {
+                    host_command::prepare(&spec, worktree, &host_env)
+                        .map_err(|refusal| refusal.message)
+                });
+                match prepared {
+                    Ok(prepared) => prepared,
+                    Err(message) => {
+                        host_command::remove_worktree(&checkout, worktree).await;
+                        return self.refuse_claimed_step(
+                            requested_event_id,
                             &record,
                             claim_event_id,
-                            &refusal,
+                            refused(ACTION_COMMIT_UNAVAILABLE, message),
                         );
-                        self.report_host_step_result(requested_event_id, result)?;
-                        self.action_steps
-                            .mark_refused(requested_event_id, &refusal.code)?;
-                        return Ok(());
                     }
                 }
             }
+            _ => prepared,
         };
         let uploader = if spec.upload {
             crate::artifact_upload::ArtifactUploader::new(
@@ -1301,7 +1367,7 @@ impl Provider {
         // Sample the tree the command is about to run in, before it runs:
         // a post-execution sample alone cannot say what was tested (ledger
         // 178(g)). For a bound run this is the commit itself on a clean tree.
-        let (head_before, dirty_before) = host_command::git_head_and_dirty(&run_dir).await;
+        let (head_before, dirty_before) = host_command::git_head_and_dirty(&plan, &run_dir).await;
         let checkout_record = buzz_core::host_step::HostStepCheckout {
             mode: match &bound_commit {
                 Some(commit) => buzz_core::host_step::host_step_checkout_commit(commit),
@@ -1312,7 +1378,8 @@ impl Provider {
             dirty_before,
         };
         let secrets = prepared.secrets.clone();
-        let command = host_command::spawn(prepared, &artifact_dir).await?;
+        let command = host_command::spawn(prepared, &artifact_dir, plan.launch()).await?;
+        let status_plan = plan.clone();
         self.action_steps
             .mark_running(requested_event_id, command.pid, now_secs())?;
         tracing::info!(
@@ -1327,7 +1394,7 @@ impl Provider {
         let upload_wanted = spec.upload;
         tokio::spawn(async move {
             let outcome = command.wait().await;
-            let (head_sha, dirty) = host_command::git_head_and_dirty(&run_dir).await;
+            let (head_sha, dirty) = host_command::git_head_and_dirty(&status_plan, &run_dir).await;
             if let Some(worktree) = &worktree {
                 host_command::remove_worktree(&checkout, worktree).await;
             }
@@ -1442,6 +1509,27 @@ impl Provider {
             self.action_steps
                 .mark_reported(requested_event_id, &result_event_id)?;
         }
+        Ok(())
+    }
+
+    /// Answer a claimed step with a refusal: report it and record it.
+    fn refuse_claimed_step(
+        &mut self,
+        requested_event_id: &str,
+        record: &ActionStepRecord,
+        claim_event_id: &str,
+        refusal: HostStepRefusal,
+    ) -> anyhow::Result<()> {
+        tracing::warn!(
+            target: "csp::actions",
+            %requested_event_id,
+            "refusing a host step after claiming it: {}",
+            refusal.message
+        );
+        let result = crate::action_route::route_refused_result(record, claim_event_id, &refusal);
+        self.report_host_step_result(requested_event_id, result)?;
+        self.action_steps
+            .mark_refused(requested_event_id, &refusal.code)?;
         Ok(())
     }
 
@@ -1610,11 +1698,19 @@ mod tests {
         let first = stub_repo(repo.path()).await;
         let scratch = tempfile::tempdir().expect("tempdir");
         let worktree = scratch.path().join("worktree");
-        host_command::cut_worktree(repo.path(), &first, &worktree)
+        // Record-keeping only: the boundary around these commands is
+        // exercised in `execution_scope_host_tests`.
+        let plan = crate::execution_scope_host::HostLaunchPlan::Unenforced {
+            reason: "unit-test",
+        };
+        host_command::cut_worktree_unmaterialized(&plan, repo.path(), &first, &worktree)
             .await
             .expect("cut the worktree the bound run executes in");
+        host_command::materialize_worktree(&plan, &worktree, &first)
+            .await
+            .expect("materialize it");
 
-        let (head_before, dirty_before) = host_command::git_head_and_dirty(&worktree).await;
+        let (head_before, dirty_before) = host_command::git_head_and_dirty(&plan, &worktree).await;
         assert_eq!(head_before.as_deref(), Some(first.as_str()));
         assert_eq!(dirty_before, Some(false));
 
@@ -1624,6 +1720,9 @@ mod tests {
             &worktree,
             &scratch.path().join("artifacts"),
             &HashMap::new(),
+            host_command::HostLaunch::Unenforced {
+                reason: "unit-test",
+            },
         )
         .await
         .expect("run");
@@ -1633,7 +1732,7 @@ mod tests {
             "the command saw the bound commit's tree, not the checkout's dirty tip"
         );
 
-        let (head_after, dirty_after) = host_command::git_head_and_dirty(&worktree).await;
+        let (head_after, dirty_after) = host_command::git_head_and_dirty(&plan, &worktree).await;
         let record = ActionStepRecord {
             run_id: "00000000-0000-0000-0000-000000000001".into(),
             step_id: "verify".into(),
@@ -1675,7 +1774,11 @@ mod tests {
         let repo = tempfile::tempdir().expect("tempdir");
         stub_repo(repo.path()).await;
         let scratch = tempfile::tempdir().expect("tempdir");
-        let (head_before, dirty_before) = host_command::git_head_and_dirty(repo.path()).await;
+        let plan = crate::execution_scope_host::HostLaunchPlan::Unenforced {
+            reason: "unit-test",
+        };
+        let (head_before, dirty_before) =
+            host_command::git_head_and_dirty(&plan, repo.path()).await;
         assert_eq!(
             dirty_before,
             Some(true),
@@ -1686,6 +1789,9 @@ mod tests {
             repo.path(),
             &scratch.path().join("artifacts"),
             &HashMap::new(),
+            host_command::HostLaunch::Unenforced {
+                reason: "unit-test",
+            },
         )
         .await
         .expect("run");
@@ -1701,7 +1807,7 @@ mod tests {
             state: StepState::Requested,
             agents_commit: None,
         };
-        let (head_after, dirty_after) = host_command::git_head_and_dirty(repo.path()).await;
+        let (head_after, dirty_after) = host_command::git_head_and_dirty(&plan, repo.path()).await;
         let result = exited_result(
             &record,
             &"ef".repeat(32),

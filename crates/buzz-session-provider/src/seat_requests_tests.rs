@@ -15,6 +15,10 @@ const TEST_PROVIDER: &str = "99";
 /// is actually about.
 fn record(session_id: &str, command_id: &str) -> SessionRecord {
     SessionRecord {
+        execution_binding: None,
+        execution_boundary: None,
+        authority_withdrawn: None,
+        project_head_seen_at: None,
         session_id: session_id.to_owned(),
         generation: 1,
         channel_id: Uuid::nil(),

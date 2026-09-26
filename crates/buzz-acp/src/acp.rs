@@ -761,6 +761,9 @@ pub struct AcpClient {
     /// Empty by default, and empty means the `_meta` key is omitted entirely
     /// rather than sent as `[]`, so a session that denies nothing is
     /// byte-identical to one from before the option existed.
+    /// Host-owned `_meta.claudeCode.options` entries written on every
+    /// session open. Empty by default, which omits nothing and adds nothing.
+    claude_options: serde_json::Map<String, serde_json::Value>,
     disallowed_tools: Vec<String>,
     /// Adapter build from `initialize` (`agentInfo.version`, else
     /// `serverInfo.version`), verbatim. `None` when the adapter reported none.
@@ -1288,6 +1291,53 @@ pub struct EnvFence {
     pub exempt: &'static [&'static str],
 }
 
+/// Everything [`AcpClient::spawn_bounded`] needs to start a project
+/// execution: a verified boundary, the resolved environment and the working
+/// directory.
+///
+/// The boundary is not optional: a launch that holds a `BoundedLaunch` runs
+/// inside the boundary it names, and [`crate::exec_boundary::prepare`] is the
+/// only way to obtain one. Where no backend exists, callers keep their
+/// existing unbounded spawn and disclose it as not enforced; they cannot
+/// build a `BoundedLaunch` that silently runs unconfined.
+#[derive(Debug, Clone)]
+pub struct BoundedLaunch {
+    boundary: crate::exec_boundary::PreparedBoundary,
+    env: crate::exec_env::ResolvedEnv,
+    cwd: std::path::PathBuf,
+}
+
+impl BoundedLaunch {
+    /// Bind a verified boundary, the child's complete environment and its
+    /// working directory.
+    #[must_use]
+    pub fn new(
+        boundary: crate::exec_boundary::PreparedBoundary,
+        env: crate::exec_env::ResolvedEnv,
+        cwd: std::path::PathBuf,
+    ) -> Self {
+        Self { boundary, env, cwd }
+    }
+
+    /// The boundary this launch runs inside.
+    #[must_use]
+    pub fn boundary(&self) -> &crate::exec_boundary::PreparedBoundary {
+        &self.boundary
+    }
+
+    /// The child's complete environment.
+    #[must_use]
+    pub fn env(&self) -> &crate::exec_env::ResolvedEnv {
+        &self.env
+    }
+
+    /// The child's working directory.
+    #[must_use]
+    pub fn cwd(&self) -> &std::path::Path {
+        &self.cwd
+    }
+}
+
 impl EnvFence {
     /// The fence that stops nothing — full environment inheritance.
     pub const OPEN: Self = Self {
@@ -1462,7 +1512,7 @@ impl AcpClient {
         fence: &EnvFence,
         post_fence_env: &[(String, String)],
     ) -> Result<Self, AcpError> {
-        let mut cmd = Self::build_agent_command(
+        let cmd = Self::build_agent_command(
             command,
             args,
             extra_env,
@@ -1470,7 +1520,50 @@ impl AcpClient {
             fence,
             post_fence_env,
         )?;
+        Self::from_command(cmd, command)
+    }
 
+    /// Spawn `command args…` inside a host-prepared execution boundary, with
+    /// exactly the environment the host resolved.
+    ///
+    /// Nothing is inherited: the launch's environment is the child's whole
+    /// environment ([`crate::exec_env::ResolvedEnv`]), the process starts in
+    /// the launch's working directory, and the argv is wrapped so the adapter
+    /// and every process it starts run under the launch's boundary.
+    pub async fn spawn_bounded(
+        command: &str,
+        args: &[String],
+        launch: &BoundedLaunch,
+    ) -> Result<Self, AcpError> {
+        let cmd = Self::build_bounded_command(command, args, launch);
+        Self::from_command(cmd, command)
+    }
+
+    /// Assemble a bounded child `Command` without spawning it.
+    fn build_bounded_command(
+        command: &str,
+        args: &[String],
+        launch: &BoundedLaunch,
+    ) -> tokio::process::Command {
+        use std::process::Stdio;
+
+        let (program, argv) = launch.boundary.wrap(command, args);
+        let mut cmd = tokio::process::Command::new(program);
+        cmd.args(argv)
+            .current_dir(&launch.cwd)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        launch.env.apply_to(&mut cmd);
+        #[cfg(unix)]
+        cmd.process_group(0);
+        configure_no_window(&mut cmd);
+        cmd
+    }
+
+    /// Spawn an assembled command and wire up its stdio.
+    fn from_command(mut cmd: tokio::process::Command, command: &str) -> Result<Self, AcpError> {
         let standard_adapter =
             match crate::config::normalize_agent_command_identity(command).as_str() {
                 "claude-agent-acp" | "claude-code-acp" | "claude-code" | "claudecode" => {
@@ -1529,6 +1622,7 @@ impl AcpClient {
             answer_stall_timeout: None,
             emit_raw_sdk_frames: false,
             disallowed_tools: Vec::new(),
+            claude_options: serde_json::Map::new(),
             agent_name: "unknown".to_owned(),
             agent_version: None,
             protocol_version: 1,
@@ -1791,6 +1885,7 @@ impl AcpClient {
         }
         self.apply_raw_sdk_frames_meta(&mut params);
         self.apply_disallowed_tools_meta(&mut params);
+        self.apply_claude_options_meta(&mut params);
         let result = self.send_request("session/new", params).await?;
         let session_id = result["sessionId"]
             .as_str()
@@ -1825,6 +1920,7 @@ impl AcpClient {
         });
         self.apply_raw_sdk_frames_meta(&mut params);
         self.apply_disallowed_tools_meta(&mut params);
+        self.apply_claude_options_meta(&mut params);
         let result = self.send_request("session/resume", params).await?;
         tracing::info!(target: "acp::session", "session resumed");
         Ok(SessionNewResponse {
@@ -1853,6 +1949,7 @@ impl AcpClient {
         });
         self.apply_raw_sdk_frames_meta(&mut params);
         self.apply_disallowed_tools_meta(&mut params);
+        self.apply_claude_options_meta(&mut params);
         let result = self.send_request("session/load", params).await?;
         tracing::info!(target: "acp::session", "session loaded");
         Ok(SessionNewResponse {
@@ -1922,6 +2019,19 @@ impl AcpClient {
             "modelId": model_id,
         });
         self.send_request("session/set_model", params).await
+    }
+
+    /// Send `session/set_mode` (ACP session modes).
+    pub async fn session_set_mode(
+        &mut self,
+        session_id: &str,
+        mode_id: &str,
+    ) -> Result<serde_json::Value, AcpError> {
+        let params = serde_json::json!({
+            "sessionId": session_id,
+            "modeId": mode_id,
+        });
+        self.send_request("session/set_mode", params).await
     }
 
     /// Send `session/prompt` with idle-based timeout instead of wall-clock.
@@ -2238,6 +2348,24 @@ impl AcpClient {
                 .map(|tool| serde_json::Value::String(tool.clone()))
                 .collect(),
         );
+    }
+
+    /// Set host-owned claude-agent-acp session options.
+    ///
+    /// Written into `_meta.claudeCode.options` on `session/new`,
+    /// `session/resume` and `session/load`; the adapter spreads that object
+    /// over its own defaults (`dist/acp-agent.js:4868-4870` in 0.70.0), so a
+    /// key set here — `settingSources`, `settings` — replaces the adapter's
+    /// default for this session. Other adapters ignore the key. Must be set
+    /// before the session is opened.
+    pub fn set_claude_options(&mut self, options: serde_json::Map<String, serde_json::Value>) {
+        self.claude_options = options;
+    }
+
+    fn apply_claude_options_meta(&self, params: &mut serde_json::Value) {
+        for (key, value) in &self.claude_options {
+            params["_meta"]["claudeCode"]["options"][key] = value.clone();
+        }
     }
 
     pub fn set_answer_stall_timeout(&mut self, timeout: Option<std::time::Duration>) {

@@ -79,7 +79,15 @@ pub struct GitProbe {
 /// Runs up to three short-lived `git` processes. None can outlive
 /// [`PROBE_TIMEOUT`]; `kill_on_drop` guarantees a timed-out child is reaped
 /// rather than orphaned.
-pub(crate) async fn probe(cwd: &Path) -> GitProbe {
+///
+/// `status` can run the repository's own clean filters and fsmonitor, so it
+/// runs inside `scope` — the tree's prepared host-Git boundary. With no scope
+/// (the tree could not be bounded where a backend exists) the dirty state is
+/// reported as not observed rather than observed unbounded.
+pub(crate) async fn probe(
+    cwd: &Path,
+    scope: Option<&crate::execution_scope_host::HostLaunchPlan>,
+) -> GitProbe {
     // `branch` and `commit` are independent observations — a detached `HEAD`
     // answers the second and not the first — so both always run rather than
     // gating one on the other.
@@ -89,10 +97,9 @@ pub(crate) async fn probe(cwd: &Path) -> GitProbe {
     // means `cwd` is not a repository (or an unborn one with no commits and
     // a name `--show-current` still reported would have set `branch`), so the
     // third invocation could only fail the same way.
-    let dirty = if branch.is_some() || commit.is_some() {
-        dirty(cwd).await
-    } else {
-        None
+    let dirty = match scope {
+        Some(scope) if branch.is_some() || commit.is_some() => dirty(cwd, scope).await,
+        _ => None,
     };
     GitProbe {
         branch,
@@ -114,11 +121,14 @@ pub(crate) async fn probe(cwd: &Path) -> GitProbe {
 /// no row at all. A directory that is there degrades exactly as before —
 /// a checkout with no commits yet is not a lie, it is a repository without a
 /// `HEAD`.
-pub(crate) async fn probe_for_gate(cwd: &Path) -> Result<GitProbe, String> {
+pub(crate) async fn probe_for_gate(
+    cwd: &Path,
+    scope: Option<&crate::execution_scope_host::HostLaunchPlan>,
+) -> Result<GitProbe, String> {
     if !cwd.is_dir() {
         return Err(format!("cwd missing: {}", cwd.display()));
     }
-    Ok(probe(cwd).await)
+    Ok(probe(cwd, scope).await)
 }
 
 /// Look at `cwd` for a **verification input**: `HEAD` and how many lines
@@ -136,12 +146,16 @@ pub(crate) async fn probe_for_gate(cwd: &Path) -> Result<GitProbe, String> {
 /// degrades to `None`, which the caller treats as "unknown", never as "clean".
 pub(crate) async fn probe_verification_input(
     cwd: &Path,
+    scope: Option<&crate::execution_scope_host::HostLaunchPlan>,
 ) -> Result<crate::verification_input::SeatTree, String> {
     if !cwd.is_dir() {
         return Err(format!("cwd missing: {}", cwd.display()));
     }
     let head = commit(cwd).await;
-    let dirty_lines = dirty_line_count(cwd).await;
+    let dirty_lines = match scope {
+        Some(scope) => dirty_line_count(cwd, scope).await,
+        None => None,
+    };
     Ok(crate::verification_input::SeatTree { head, dirty_lines })
 }
 
@@ -149,8 +163,11 @@ pub(crate) async fn probe_verification_input(
 ///
 /// Untracked files included, for the reason [`dirty`] documents: an agent's
 /// first act is usually to create a file.
-async fn dirty_line_count(cwd: &Path) -> Option<usize> {
-    let stdout = run_git(cwd, &["status", "--porcelain"]).await?;
+async fn dirty_line_count(
+    cwd: &Path,
+    scope: &crate::execution_scope_host::HostLaunchPlan,
+) -> Option<usize> {
+    let stdout = status(cwd, scope).await?;
     Some(
         stdout
             .lines()
@@ -197,9 +214,39 @@ async fn branch(cwd: &Path) -> Option<String> {
 /// `--untracked-files=no`). The extra 10ms buys untracked files, which for an
 /// *agent* session is the common case — an agent that only ever creates new
 /// files would otherwise read as clean.
-async fn dirty(cwd: &Path) -> Option<bool> {
-    let stdout = run_git(cwd, &["status", "--porcelain"]).await?;
+async fn dirty(cwd: &Path, scope: &crate::execution_scope_host::HostLaunchPlan) -> Option<bool> {
+    let stdout = status(cwd, scope).await?;
     Some(!stdout.trim().is_empty())
+}
+
+/// `git status --porcelain` inside `scope`, taking no optional lock.
+async fn status(cwd: &Path, scope: &crate::execution_scope_host::HostLaunchPlan) -> Option<String> {
+    let args = ["--no-optional-locks", "status", "--porcelain"];
+    let command = match scope {
+        crate::execution_scope_host::HostLaunchPlan::Bounded(_) => scope.git_command(cwd, &args),
+        // No backend on this platform: the existing unbounded probe, as the
+        // session's own disclosed state says.
+        crate::execution_scope_host::HostLaunchPlan::Unenforced { .. } => {
+            let mut command = crate::host_command::metadata_git_command(cwd);
+            command.args(args);
+            command
+        }
+    };
+    let mut command = Command::from(command);
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    let output = tokio::time::timeout(PROBE_TIMEOUT, command.output())
+        .await
+        .ok()?
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8(output.stdout).ok())
+        .flatten()
 }
 
 /// Environment variables by which git selects a repository, all of which beat
@@ -231,6 +278,14 @@ async fn run_git(cwd: &Path, args: &[&str]) -> Option<String> {
         command.env_remove(var);
     }
     command
+        // Nothing here refreshes the index or runs a hook, and neither can a
+        // repository's configuration make it.
+        .args([
+            "-c",
+            "core.hooksPath=/dev/null",
+            "-c",
+            "core.fsmonitor=false",
+        ])
         // Refuse to take any lock the read does not strictly require, so a
         // probe can never contend with the session's own agent over
         // `.git/index.lock`.
@@ -328,14 +383,22 @@ mod tests {
     #[tokio::test]
     async fn a_plain_directory_is_not_observed_at_all() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let observed = probe(dir.path()).await;
+        let observed = probe(
+            dir.path(),
+            Some(&crate::execution_scope_host::UNBOUNDED_FOR_TESTS),
+        )
+        .await;
         assert_eq!(observed, GitProbe::default());
     }
 
     #[tokio::test]
     async fn a_missing_directory_degrades_rather_than_failing() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let observed = probe(&dir.path().join("does-not-exist")).await;
+        let observed = probe(
+            &dir.path().join("does-not-exist"),
+            Some(&crate::execution_scope_host::UNBOUNDED_FOR_TESTS),
+        )
+        .await;
         assert_eq!(observed, GitProbe::default());
     }
 
@@ -343,7 +406,11 @@ mod tests {
     async fn a_clean_checkout_reports_its_branch_and_no_changes() {
         let dir = tempfile::tempdir().expect("tempdir");
         repo(dir.path());
-        let observed = probe(dir.path()).await;
+        let observed = probe(
+            dir.path(),
+            Some(&crate::execution_scope_host::UNBOUNDED_FOR_TESTS),
+        )
+        .await;
         assert_eq!(observed.branch.as_deref(), Some("probe-branch"));
         assert_eq!(observed.dirty, Some(false));
         let oid = observed.commit.as_deref().expect("commit observed");
@@ -360,11 +427,23 @@ mod tests {
     async fn a_second_commit_changes_the_observed_commit() {
         let dir = tempfile::tempdir().expect("tempdir");
         repo(dir.path());
-        let first = probe(dir.path()).await.commit.expect("first commit");
+        let first = probe(
+            dir.path(),
+            Some(&crate::execution_scope_host::UNBOUNDED_FOR_TESTS),
+        )
+        .await
+        .commit
+        .expect("first commit");
         std::fs::write(dir.path().join("b.txt"), "b").expect("write");
         git(dir.path(), &["add", "b.txt"]);
         commit(dir.path(), "two");
-        let second = probe(dir.path()).await.commit.expect("second commit");
+        let second = probe(
+            dir.path(),
+            Some(&crate::execution_scope_host::UNBOUNDED_FOR_TESTS),
+        )
+        .await
+        .commit
+        .expect("second commit");
         assert_ne!(first, second);
     }
 
@@ -373,7 +452,15 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         repo(dir.path());
         std::fs::write(dir.path().join("a.txt"), "changed").expect("write");
-        assert_eq!(probe(dir.path()).await.dirty, Some(true));
+        assert_eq!(
+            probe(
+                dir.path(),
+                Some(&crate::execution_scope_host::UNBOUNDED_FOR_TESTS)
+            )
+            .await
+            .dirty,
+            Some(true)
+        );
     }
 
     /// The reason this probe pays for `status` over the cheaper
@@ -384,7 +471,15 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         repo(dir.path());
         std::fs::write(dir.path().join("new.txt"), "new").expect("write");
-        assert_eq!(probe(dir.path()).await.dirty, Some(true));
+        assert_eq!(
+            probe(
+                dir.path(),
+                Some(&crate::execution_scope_host::UNBOUNDED_FOR_TESTS)
+            )
+            .await
+            .dirty,
+            Some(true)
+        );
     }
 
     /// A detached `HEAD` has no branch to name, and publishing the literal
@@ -395,7 +490,15 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         repo(dir.path());
         git(dir.path(), &["checkout", "-q", "--detach", "HEAD"]);
-        assert_eq!(probe(dir.path()).await.branch, None);
+        assert_eq!(
+            probe(
+                dir.path(),
+                Some(&crate::execution_scope_host::UNBOUNDED_FOR_TESTS)
+            )
+            .await
+            .branch,
+            None
+        );
     }
 
     /// A detached `HEAD` has no branch, but it does have a commit — and
@@ -409,13 +512,25 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         repo(dir.path());
         git(dir.path(), &["checkout", "-q", "--detach", "HEAD"]);
-        let observed = probe(dir.path()).await;
+        let observed = probe(
+            dir.path(),
+            Some(&crate::execution_scope_host::UNBOUNDED_FOR_TESTS),
+        )
+        .await;
         assert!(observed.branch.is_none());
         assert!(observed.commit.is_some());
         assert_eq!(observed.dirty, Some(false));
 
         std::fs::write(dir.path().join("a.txt"), "changed").expect("write");
-        assert_eq!(probe(dir.path()).await.dirty, Some(true));
+        assert_eq!(
+            probe(
+                dir.path(),
+                Some(&crate::execution_scope_host::UNBOUNDED_FOR_TESTS)
+            )
+            .await
+            .dirty,
+            Some(true)
+        );
     }
 
     /// A freshly initialized repository has an unborn branch and no commits.
@@ -426,7 +541,11 @@ mod tests {
     async fn an_empty_repository_still_names_its_unborn_branch() {
         let dir = tempfile::tempdir().expect("tempdir");
         git(dir.path(), &["init", "-q", "-b", "unborn", "."]);
-        let observed = probe(dir.path()).await;
+        let observed = probe(
+            dir.path(),
+            Some(&crate::execution_scope_host::UNBOUNDED_FOR_TESTS),
+        )
+        .await;
         assert_eq!(observed.branch.as_deref(), Some("unborn"));
         assert_eq!(observed.dirty, Some(false));
         assert_eq!(observed.commit, None);
@@ -440,7 +559,12 @@ mod tests {
     async fn a_gate_probe_refuses_a_missing_directory_by_name() {
         let dir = tempfile::tempdir().expect("tempdir");
         let gone = dir.path().join("relocated-away");
-        let refusal = probe_for_gate(&gone).await.expect_err("must refuse");
+        let refusal = probe_for_gate(
+            &gone,
+            Some(&crate::execution_scope_host::UNBOUNDED_FOR_TESTS),
+        )
+        .await
+        .expect_err("must refuse");
         assert_eq!(refusal, format!("cwd missing: {}", gone.display()));
     }
 
@@ -450,12 +574,22 @@ mod tests {
     async fn a_gate_probe_of_a_live_checkout_answers_with_its_commit() {
         let dir = tempfile::tempdir().expect("tempdir");
         repo(dir.path());
-        let observed = probe_for_gate(dir.path()).await.expect("must observe");
+        let observed = probe_for_gate(
+            dir.path(),
+            Some(&crate::execution_scope_host::UNBOUNDED_FOR_TESTS),
+        )
+        .await
+        .expect("must observe");
         assert_eq!(observed.commit.as_deref().map(str::len), Some(40));
         assert_eq!(observed.dirty, Some(false));
 
         std::fs::write(dir.path().join("a.txt"), "changed").expect("write");
-        let dirty = probe_for_gate(dir.path()).await.expect("must observe");
+        let dirty = probe_for_gate(
+            dir.path(),
+            Some(&crate::execution_scope_host::UNBOUNDED_FOR_TESTS),
+        )
+        .await
+        .expect("must observe");
         assert_eq!(dirty.dirty, Some(true));
         assert_eq!(dirty.commit, observed.commit);
     }
@@ -467,17 +601,23 @@ mod tests {
     async fn a_verification_probe_counts_the_uncommitted_changes() {
         let dir = tempfile::tempdir().expect("tempdir");
         repo(dir.path());
-        let clean = probe_verification_input(dir.path())
-            .await
-            .expect("must observe");
+        let clean = probe_verification_input(
+            dir.path(),
+            Some(&crate::execution_scope_host::UNBOUNDED_FOR_TESTS),
+        )
+        .await
+        .expect("must observe");
         assert_eq!(clean.dirty_lines, Some(0));
         assert_eq!(clean.head.as_deref().map(str::len), Some(40));
 
         std::fs::write(dir.path().join("a.txt"), "changed").expect("write");
         std::fs::write(dir.path().join("new.txt"), "new").expect("write");
-        let dirty = probe_verification_input(dir.path())
-            .await
-            .expect("must observe");
+        let dirty = probe_verification_input(
+            dir.path(),
+            Some(&crate::execution_scope_host::UNBOUNDED_FOR_TESTS),
+        )
+        .await
+        .expect("must observe");
         assert_eq!(dirty.dirty_lines, Some(2));
         assert_eq!(dirty.head, clean.head);
     }
@@ -489,9 +629,12 @@ mod tests {
     async fn a_verification_probe_refuses_a_missing_directory_by_name() {
         let dir = tempfile::tempdir().expect("tempdir");
         let gone = dir.path().join("relocated-away");
-        let refusal = probe_verification_input(&gone)
-            .await
-            .expect_err("must refuse");
+        let refusal = probe_verification_input(
+            &gone,
+            Some(&crate::execution_scope_host::UNBOUNDED_FOR_TESTS),
+        )
+        .await
+        .expect_err("must refuse");
         assert_eq!(refusal, format!("cwd missing: {}", gone.display()));
     }
 
@@ -500,9 +643,12 @@ mod tests {
     #[tokio::test]
     async fn a_verification_probe_of_a_plain_directory_knows_nothing() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let observed = probe_verification_input(dir.path())
-            .await
-            .expect("must observe");
+        let observed = probe_verification_input(
+            dir.path(),
+            Some(&crate::execution_scope_host::UNBOUNDED_FOR_TESTS),
+        )
+        .await
+        .expect("must observe");
         assert_eq!(observed, crate::verification_input::SeatTree::default());
     }
 
@@ -512,7 +658,12 @@ mod tests {
     async fn a_gate_probe_of_a_plain_directory_still_degrades() {
         let dir = tempfile::tempdir().expect("tempdir");
         assert_eq!(
-            probe_for_gate(dir.path()).await.expect("must observe"),
+            probe_for_gate(
+                dir.path(),
+                Some(&crate::execution_scope_host::UNBOUNDED_FOR_TESTS)
+            )
+            .await
+            .expect("must observe"),
             GitProbe::default()
         );
     }

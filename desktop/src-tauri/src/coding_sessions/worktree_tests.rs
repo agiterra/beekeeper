@@ -548,3 +548,62 @@ fn a_directory_inside_a_repository_plans_against_the_repository_root() {
         )
     );
 }
+
+/// A seat's worktree is materialized inside the project's boundary: the
+/// filter driver the repository configures runs — a checkout without it would
+/// write the wrong bytes — but it runs with the project's rights only. The
+/// same fixture's plain host checkout is the control: there the filter can
+/// read a file outside the project; in the cut it cannot.
+// The boundary backend is macOS's; elsewhere the plan is disclosed as
+// unenforced and the filter runs with the host's rights.
+#[cfg(target_os = "macos")]
+#[test]
+fn a_worktree_cut_runs_the_projects_filter_inside_its_boundary() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let root = root.path().canonicalize().expect("canonical root");
+    let checkout = root.join("beekeeper");
+    std::fs::create_dir_all(&checkout).expect("create checkout");
+    scratch_repo(&checkout).expect("scratch repository");
+    let foreign = root.join("elsewhere/secret.txt");
+    std::fs::create_dir_all(foreign.parent().expect("parent")).expect("elsewhere");
+    std::fs::write(&foreign, "NOT_THIS_PROJECTS\n").expect("foreign");
+    let auth = build_local_git_auth_config().expect("git");
+    std::fs::write(checkout.join(".gitattributes"), "*.txt filter=canary\n").expect("attributes");
+    std::fs::write(checkout.join("notes.txt"), "own notes\n").expect("notes");
+    let smudge = format!(
+        "if cat '{}' >/dev/null 2>&1; then printf FOREIGN_READ:; fi; sed s/^/smudged:/",
+        foreign.display()
+    );
+    for (key, value) in [
+        ("filter.canary.smudge", smudge.as_str()),
+        ("filter.canary.clean", "sed s/^smudged://"),
+        ("filter.canary.required", "true"),
+    ] {
+        run_git(&["config", key, value], Some(&checkout), &auth).expect("filter config");
+    }
+    run_git(&["add", "."], Some(&checkout), &auth).expect("add");
+    scratch_commit(&checkout, "notes").expect("commit");
+
+    // Control: an ordinary host checkout of the same tree runs the filter
+    // with the host's rights.
+    let control = root.join("control");
+    let control_str = control.to_string_lossy().into_owned();
+    run_git(
+        &["worktree", "add", "--detach", &control_str, "main"],
+        Some(&checkout),
+        &auth,
+    )
+    .expect("control checkout");
+    assert_eq!(
+        std::fs::read_to_string(control.join("notes.txt")).expect("control notes"),
+        "FOREIGN_READ:smudged:own notes\n",
+        "the fixture's filter must be live and able to read outside, or this test proves nothing"
+    );
+
+    let created = create(&checkout.to_string_lossy(), "filtered", None, None).expect("create");
+    assert_eq!(
+        std::fs::read_to_string(Path::new(&created.path).join("notes.txt")).expect("notes"),
+        "smudged:own notes\n",
+        "the project's filter wrote the project's bytes, and read nothing outside the project"
+    );
+}

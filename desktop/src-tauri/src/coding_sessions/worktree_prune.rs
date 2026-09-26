@@ -33,7 +33,6 @@ use crate::coding_sessions::workdir_store::{
     load_workdir_store, seat_worktree_key, CodingSessionSeatWorktree,
 };
 use crate::coding_sessions::worktree::remove_recorded_seat_worktree;
-use crate::commands::project_git_exec::{build_local_git_auth_config, run_git};
 
 /// Upper bound on `git status --porcelain` lines counted for one tree.
 ///
@@ -158,11 +157,11 @@ pub(crate) fn is_protected_worktree(repo_root: &Path, path: &Path) -> bool {
 /// and `node_modules` never make a finished tree look like it holds edits. A
 /// tree git cannot read counts as one dirty file rather than zero: an
 /// unreadable tree is not a clean one.
+///
+/// The status runs inside the tree's project boundary: it can run the
+/// repository's own clean filters and fsmonitor.
 pub(crate) fn count_dirty_files(path: &Path) -> u32 {
-    let Ok(auth) = build_local_git_auth_config() else {
-        return 1;
-    };
-    match run_git(&["status", "--porcelain"], Some(path), &auth) {
+    match super::host_git::status(path, None) {
         Ok(output) => output
             .lines()
             .filter(|line| !line.trim().is_empty())

@@ -339,9 +339,14 @@ fn configure_git_auth(command: &mut Command, auth: &GitAuthConfig, needs_credent
     for key in GIT_REPO_SELECTION_VARS {
         command.env_remove(key);
     }
-    // Two more this host clears for its own reasons: an inherited ssh command
-    // or external diff would run a program we did not choose.
-    for key in ["GIT_SSH_COMMAND", "GIT_EXTERNAL_DIFF"] {
+    // More this host clears for its own reasons: an inherited ssh command,
+    // external diff or askpass program would run a program we did not choose.
+    for key in [
+        "GIT_SSH_COMMAND",
+        "GIT_EXTERNAL_DIFF",
+        "GIT_ASKPASS",
+        "SSH_ASKPASS",
+    ] {
         command.env_remove(key);
     }
     // Git for Windows maps `/dev/null` to `NUL` internally, so this value
@@ -356,6 +361,16 @@ fn configure_git_auth(command: &mut Command, auth: &GitAuthConfig, needs_credent
         ("credential.helper", String::new()),
         ("core.hooksPath", "/dev/null".to_string()),
         ("core.fsmonitor", "false".to_string()),
+        // Two programs a repository's own configuration can name for a
+        // fetch or ls-remote: the password prompt Git runs when no
+        // helper answers a challenge (terminal prompts being off does not
+        // stop it), and the command fetch negotiation runs to list an
+        // alternate's refs. Empty is Git's own "none".
+        ("core.askPass", String::new()),
+        ("core.alternateRefsCommand", String::new()),
+        // History reads (`log`, `show`) would otherwise verify any signed
+        // commit with the repository's own `gpg.program`.
+        ("log.showSignature", "false".to_string()),
         ("protocol.allow", "never".to_string()),
         ("protocol.http.allow", "always".to_string()),
         ("protocol.https.allow", "always".to_string()),
@@ -841,3 +856,7 @@ mod tests {
         assert!(validate_local_clone_url("https://gitlab.com/block/buzz").is_err());
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "project_git_exec_hardening_tests.rs"]
+mod hardening_tests;

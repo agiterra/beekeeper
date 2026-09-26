@@ -75,6 +75,20 @@ pub(crate) fn session_provider_base_dir(app: &AppHandle) -> Result<PathBuf, Stri
     Ok(dir)
 }
 
+/// Where this desktop prepares the project boundary its own Git runs inside
+/// when it checks out, re-stages or inspects a project workspace
+/// (`buzz_session_provider_pkg::execution_scope_host`).
+pub(crate) fn host_git_state_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    let app_data = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("failed to resolve app data dir: {error}"))?;
+    let dir = buzz_session_provider_pkg::execution_scope_host::desktop_host_state_dir(&app_data);
+    std::fs::create_dir_all(&dir)
+        .map_err(|error| format!("failed to create the host Git state dir: {error}"))?;
+    Ok(dir)
+}
+
 /// Per-identity state directory handed to the child as `BUZZ_CSP_STATE_DIR`.
 ///
 /// See the module docs for why this is keyed by pubkey.

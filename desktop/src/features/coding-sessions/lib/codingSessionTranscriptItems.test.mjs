@@ -1,5 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import {
+  createMemoryHistory,
+  createRootRoute,
+  createRouter,
+  RouterProvider,
+} from "@tanstack/react-router";
+
+import { CodingSessionTranscript } from "../ui/CodingSessionTranscript.tsx";
 
 import {
   buildBaseTranscriptItem,
@@ -7,6 +17,11 @@ import {
   CODING_SESSION_CONTINUITY_REASONS,
   CODING_SESSION_CONTINUITY_STATUSES,
 } from "./codingSessionTranscriptItems.ts";
+import {
+  CODING_SESSION_BOUNDARY_REASONS,
+  CODING_SESSION_BOUNDARY_STATUSES,
+  CODING_SESSION_BOUNDARY_TITLE,
+} from "./codingSessionBoundaryStatus.ts";
 
 const IDENTITY = {
   id: "item-1",
@@ -109,6 +124,163 @@ test("an unrecognized status is unaffected by CODING_SESSION_CONTINUITY_REASONS"
   const item = render("some_unrecognized_status", "no_prior_execution");
   assert.equal(item.title, "Status");
   assert.equal(item.text, "some_unrecognized_status");
+});
+
+// ── Project execution boundary disclosure ────────────────────────────────────
+//
+// The host publishes one status item per generation saying what it runs inside
+// (`execution_scope::boundary_status_item`). The generic renderer used to show
+// only the slug and drop `reason`, so an unenforced session read the same as an
+// enforced one to anyone who did not know the slugs.
+
+const ENFORCED = "execution_boundary_enforced";
+const NOT_ENFORCED = "execution_boundary_not_enforced";
+
+test("an enforced boundary names what it covers and the backend that enforced it", () => {
+  const item = render(ENFORCED, "macos-seatbelt");
+  assert.equal(item.type, "lifecycle");
+  assert.equal(item.renderClass, "status");
+  assert.equal(item.title, CODING_SESSION_BOUNDARY_TITLE);
+  assert.equal(
+    item.text,
+    `${CODING_SESSION_BOUNDARY_STATUSES.get(ENFORCED)} (macOS Seatbelt)`,
+  );
+  assert.ok(item.text.startsWith("Enforced — "));
+  assert.ok(item.text.includes("other projects' files are outside it"));
+});
+
+test("an unenforced boundary says the session is not isolated, and why", () => {
+  const item = render(NOT_ENFORCED, "no-backend-for-platform");
+  assert.equal(item.title, CODING_SESSION_BOUNDARY_TITLE);
+  assert.equal(
+    item.text,
+    "Not enforced — this session is not isolated from other projects' files (this platform has no boundary backend)",
+  );
+  assert.ok(!item.text.includes("inside this project's boundary"));
+});
+
+test("an unknown backend or reason slug renders as the bare slug, never as prose", () => {
+  assert.ok(
+    render(ENFORCED, "linux-bubblewrap").text.endsWith("(linux-bubblewrap)"),
+  );
+  const unknown = render(NOT_ENFORCED, "some-future-reason");
+  assert.ok(unknown.text.startsWith("Not enforced — "));
+  assert.ok(unknown.text.endsWith("(some-future-reason)"));
+});
+
+test("a missing or non-string reason still discloses the state", () => {
+  for (const reason of [
+    undefined,
+    "",
+    42,
+    { backend: "macos-seatbelt" },
+    null,
+  ]) {
+    const item = render(NOT_ENFORCED, reason);
+    assert.ok(item.text.startsWith("Not enforced — "), String(reason));
+    assert.ok(item.text.endsWith("(no reason given)"), String(reason));
+  }
+  assert.ok(render(ENFORCED, undefined).text.endsWith("(no reason given)"));
+});
+
+test("a reason that is not a slug is never echoed: no path, value or model text", () => {
+  const leaks = [
+    "/Users/someone/Projects/other-project/plans/plan.md",
+    "SYNTHETIC-SENTINEL-NOT-A-SECRET=1",
+    "the model said: I read the sibling plan",
+    "x".repeat(65),
+  ];
+  for (const reason of leaks) {
+    const item = render(NOT_ENFORCED, reason);
+    assert.ok(item.text.endsWith("(unrecognized reason)"), reason);
+    assert.ok(!item.text.includes(reason), reason);
+  }
+  // Fields beside `reason` are never rendered at all.
+  const item = buildBaseTranscriptItem(
+    {
+      kind: "status",
+      status: ENFORCED,
+      reason: "macos-seatbelt",
+      policyDigest: "SYNTHETIC-DIGEST",
+      path: "/Users/someone/secret",
+      model: "SYNTHETIC-MODEL",
+    },
+    IDENTITY,
+  );
+  for (const value of [
+    "SYNTHETIC-DIGEST",
+    "/Users/someone/secret",
+    "SYNTHETIC-MODEL",
+  ]) {
+    assert.ok(!item.text.includes(value), value);
+    assert.ok(!item.title.includes(value), value);
+  }
+});
+
+test("every boundary status and reason in the maps renders through the transcript", () => {
+  for (const [status, text] of CODING_SESSION_BOUNDARY_STATUSES) {
+    for (const [slug, name] of CODING_SESSION_BOUNDARY_REASONS) {
+      assert.equal(render(status, slug).text, `${text} (${name})`);
+    }
+  }
+});
+
+/** The real transcript component, rendered to markup as its own tests do. */
+async function renderTranscriptMarkup(items) {
+  const rootRoute = createRootRoute({
+    component: () =>
+      React.createElement(CodingSessionTranscript, {
+        generationId: "generation-1",
+        isWorking: false,
+        items,
+      }),
+  });
+  const router = createRouter({
+    history: createMemoryHistory({ initialEntries: ["/"] }),
+    routeTree: rootRoute,
+  });
+  await router.load();
+  return renderToStaticMarkup(React.createElement(RouterProvider, { router }));
+}
+
+test("the transcript shows the boundary row a reader sees, in both states", async () => {
+  const prompt = {
+    ...IDENTITY,
+    id: "prompt-1",
+    type: "message",
+    renderClass: "message",
+    role: "user",
+    title: "Operator",
+    text: "Plan the work",
+    turnId: "turn-1",
+  };
+  const unenforced = await renderTranscriptMarkup([
+    { ...render(NOT_ENFORCED, "no-backend-for-platform"), turnId: "turn-1" },
+    prompt,
+  ]);
+  assert.match(unenforced, /Project boundary/);
+  assert.match(
+    unenforced,
+    /Not enforced — this session is not isolated from other projects(&#x27;|')? ?files/,
+  );
+  assert.match(unenforced, /this platform has no boundary backend/);
+  assert.doesNotMatch(unenforced, /execution_boundary_not_enforced/);
+
+  const enforced = await renderTranscriptMarkup([
+    { ...render(ENFORCED, "macos-seatbelt"), turnId: "turn-1" },
+    prompt,
+  ]);
+  assert.match(enforced, /Enforced — this session and every process it starts/);
+  assert.match(enforced, /macOS Seatbelt/);
+  assert.doesNotMatch(enforced, /Not enforced/);
+});
+
+test("other statuses are untouched by the boundary renderer", () => {
+  const future = render("execution_boundary_something_new", "macos-seatbelt");
+  assert.equal(future.title, "Status");
+  assert.equal(future.text, "execution_boundary_something_new");
+  const fresh = render("session_fresh", "no_prior_execution");
+  assert.equal(fresh.title, "Session continuity");
 });
 
 // ── Per-turn usage on the wire ───────────────────────────────────────────────

@@ -110,7 +110,7 @@ async fn fenced_ready_continuation(
     let cwd = dir.join("checkout");
     std::fs::create_dir_all(&cwd).expect("mkdir");
     let channel_id = Uuid::new_v4();
-    let projects = write_projects(dir, channel_id, &cwd);
+    let projects = write_project_checkout(dir, channel_id, &cwd, &identity().project);
     let mut provider = provider(&dir.join("state"), Some(&projects));
 
     let create = create_in_ci_project(&provider, channel_id, "create-ci");

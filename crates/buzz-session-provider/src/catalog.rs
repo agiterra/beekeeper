@@ -276,6 +276,7 @@ mod tests {
             emit_raw_sdk_frames: false,
             redaction_retention: crate::redaction_vault::RetentionPolicy::default(),
             command_horizon: Duration::from_secs(86_400),
+            runtime_profile_override: None,
         }
     }
 

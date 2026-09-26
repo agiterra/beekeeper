@@ -148,6 +148,7 @@ pub async fn coding_session_seat_worktree_actors(
 pub(crate) fn establish(
     store: &mut CodingSessionWorkdirStore,
     request: &EstablishAssignmentInputRequest,
+    state_dir: &std::path::Path,
 ) -> Result<EstablishedAssignmentInput, EstablishAssignmentInputError> {
     let session_ref = request.session_ref.clone().or_else(|| {
         buzz_session_provider_pkg::assignment_inputs::assignment_input(
@@ -171,6 +172,7 @@ pub(crate) fn establish(
         &mut store.assignment_inputs,
         request,
         checkout.as_ref(),
+        state_dir,
     )
 }
 
@@ -213,7 +215,14 @@ pub async fn coding_session_establish_assignment_input(
     };
     let _lock = lock_workdir_store(&app).map_err(unreadable)?;
     let mut store = load_workdir_store(&app).map_err(unreadable)?;
-    let outcome = establish(&mut store, &request);
+    let state_dir = crate::session_provider::host_git_state_dir(&app).map_err(|error| {
+        refuse(
+            EstablishAssignmentInputCode::CheckoutFailed,
+            "this host could not prepare the boundary the seat's Git runs inside",
+            Some(error),
+        )
+    })?;
+    let outcome = establish(&mut store, &request, &state_dir);
     store.version = WORKDIR_STORE_VERSION;
     if let Err(error) = save_workdir_store(&app, &state, &store) {
         // The disk is already in the state the outcome describes, so the

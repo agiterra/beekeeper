@@ -165,7 +165,7 @@ async fn register_and_die(dir: &Path, seat: Option<&str>, ready: bool) -> Killed
     let cwd = dir.join("checkout");
     std::fs::create_dir_all(&cwd).expect("mkdir");
     let channel_id = Uuid::new_v4();
-    let projects = write_projects(dir, channel_id, &cwd);
+    let projects = write_project_checkout(dir, channel_id, &cwd, &identity().project);
     let state_dir = dir.join("state");
     if let Some(actor) = seat {
         write_restore_seat(dir, "create-1", actor);
@@ -271,7 +271,7 @@ async fn a_waiting_registration_restores_the_generation_and_delivers_one_turn() 
     // The host's re-stage, stood in for: custody under the *generation's*
     // command id, which for a never-resumed execution is the create's.
     write_restore_seat(dir.path(), "create-1", &actor);
-    let log = dir.path().join("restore-methods.log");
+    let log = dir.path().join("checkout").join("restore-methods.log");
     let mut restarted = restarted_with(
         dir.path(),
         &killed,
@@ -346,6 +346,16 @@ async fn a_waiting_registration_restores_the_generation_and_delivers_one_turn() 
     after.next_seq = 0;
     // The turn this delivery started is in flight; the crash's record had none.
     after.open_turn = None;
+    // The boundary the *new process* runs inside is a fact about that
+    // process, like its effective model, and is re-recorded on every open.
+    assert!(
+        after
+            .execution_boundary
+            .as_ref()
+            .is_some_and(|b| b.enforced),
+        "{after:?}"
+    );
+    after.execution_boundary = before.execution_boundary.clone();
     assert_eq!(before, after);
 
     // The one-shot custody was spent by the restore, not left at rest.
@@ -366,7 +376,7 @@ async fn a_ready_registration_restores_the_generation_and_delivers_one_turn() {
     let actor = "cd".repeat(32);
     let killed = register_and_die(dir.path(), Some(&actor), true).await;
     write_restore_seat(dir.path(), "create-1", &actor);
-    let log = dir.path().join("restore-methods.log");
+    let log = dir.path().join("checkout").join("restore-methods.log");
     let mut restarted = restarted_with(
         dir.path(),
         &killed,
@@ -400,7 +410,7 @@ async fn a_ready_registration_restores_the_generation_and_delivers_one_turn() {
 async fn an_unseated_execution_restores_with_the_cursor_alone() {
     let dir = tempfile::tempdir().expect("tempdir");
     let killed = register_and_die(dir.path(), None, true).await;
-    let log = dir.path().join("restore-methods.log");
+    let log = dir.path().join("checkout").join("restore-methods.log");
     let mut restarted = restarted_with(
         dir.path(),
         &killed,
@@ -432,7 +442,7 @@ async fn an_unseated_execution_restores_with_the_cursor_alone() {
 async fn a_second_delivery_after_a_restore_is_still_fenced_to_one_turn() {
     let dir = tempfile::tempdir().expect("tempdir");
     let killed = register_and_die(dir.path(), None, true).await;
-    let log = dir.path().join("restore-methods.log");
+    let log = dir.path().join("checkout").join("restore-methods.log");
     let mut restarted = restarted_with(
         dir.path(),
         &killed,
@@ -482,7 +492,7 @@ async fn a_seat_that_has_not_been_restaged_defers_and_then_delivers_once() {
     let killed = register_and_die(dir.path(), Some(&actor), true).await;
     // Deliberately not re-staged yet: `write_actor_seats` from the first
     // provider's create was consumed at spawn.
-    let log = dir.path().join("restore-methods.log");
+    let log = dir.path().join("checkout").join("restore-methods.log");
     let mut restarted = restarted_with(
         dir.path(),
         &killed,
@@ -551,7 +561,7 @@ async fn a_seat_that_never_arrives_expires_naming_custody() {
     let dir = tempfile::tempdir().expect("tempdir");
     let actor = "cd".repeat(32);
     let killed = register_and_die(dir.path(), Some(&actor), true).await;
-    let log = dir.path().join("restore-methods.log");
+    let log = dir.path().join("checkout").join("restore-methods.log");
     let mut restarted = restarted_with(
         dir.path(),
         &killed,
@@ -596,7 +606,7 @@ async fn a_seat_that_never_arrives_expires_naming_custody() {
 async fn an_adapter_that_rejects_the_reattachment_refuses_and_starts_no_conversation() {
     let dir = tempfile::tempdir().expect("tempdir");
     let killed = register_and_die(dir.path(), None, true).await;
-    let log = dir.path().join("restore-methods.log");
+    let log = dir.path().join("checkout").join("restore-methods.log");
     let mut restarted = restarted_with(
         dir.path(),
         &killed,
@@ -638,7 +648,7 @@ async fn an_adapter_that_rejects_the_reattachment_refuses_and_starts_no_conversa
 async fn an_adapter_with_no_reattachment_refuses_as_unsupported() {
     let dir = tempfile::tempdir().expect("tempdir");
     let killed = register_and_die(dir.path(), None, true).await;
-    let log = dir.path().join("restore-methods.log");
+    let log = dir.path().join("checkout").join("restore-methods.log");
     let mut restarted = restarted_with(
         dir.path(),
         &killed,
@@ -672,7 +682,7 @@ async fn an_adapter_with_no_reattachment_refuses_as_unsupported() {
 async fn an_execution_with_no_cursor_refuses_before_it_spawns() {
     let dir = tempfile::tempdir().expect("tempdir");
     let killed = register_and_die(dir.path(), None, true).await;
-    let log = dir.path().join("restore-methods.log");
+    let log = dir.path().join("checkout").join("restore-methods.log");
     let mut restarted = restarted_with(
         dir.path(),
         &killed,
@@ -755,7 +765,7 @@ async fn the_seat_request_ledger_follows_create_resume_and_stop() {
     let cwd = dir.path().join("checkout");
     std::fs::create_dir_all(&cwd).expect("mkdir");
     let channel_id = Uuid::new_v4();
-    let projects = write_projects(dir.path(), channel_id, &cwd);
+    let projects = write_project_checkout(dir.path(), channel_id, &cwd, &identity().project);
     let state_dir = dir.path().join("state");
     let actor = "cd".repeat(32);
     write_restore_seat(dir.path(), "create-1", &actor);
@@ -823,7 +833,7 @@ async fn restore_rejects_a_different_pack_or_relay_before_spawning() {
     let dir = tempfile::tempdir().expect("tempdir");
     let actor = "cd".repeat(32);
     let killed = register_and_die(dir.path(), Some(&actor), true).await;
-    let log = dir.path().join("restore-methods.log");
+    let log = dir.path().join("checkout").join("restore-methods.log");
     let mut restarted = restarted_with(
         dir.path(),
         &killed,
@@ -858,7 +868,7 @@ async fn restore_rejects_a_different_pack_or_relay_before_spawning() {
 async fn restore_refuses_an_adapter_that_cannot_keep_the_recorded_model() {
     let dir = tempfile::tempdir().expect("tempdir");
     let killed = register_and_die(dir.path(), None, true).await;
-    let log = dir.path().join("restore-methods.log");
+    let log = dir.path().join("checkout").join("restore-methods.log");
     let mut restarted = restarted_with(
         dir.path(),
         &killed,

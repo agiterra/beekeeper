@@ -32,9 +32,32 @@ pub(crate) async fn discover(config: &mut Config) {
             .iter()
             .map(|env| (env.name.clone(), env.value.clone()))
             .collect();
+        let plan = discovery_plan(
+            &config.state_dir,
+            config.runtime_profile_override,
+            descriptor,
+            &cli_env,
+        );
+        let plan = match plan {
+            Ok(plan) => plan,
+            Err(failure) => {
+                tracing::warn!(
+                    target: "csp::models",
+                    "{} model discovery was not run: {}",
+                    descriptor.runtime,
+                    failure.message
+                );
+                continue;
+            }
+        };
         let result = tokio::time::timeout(
             DISCOVERY_TIMEOUT,
-            probe(&descriptor.agent_command, &descriptor.agent_args, &cli_env),
+            probe(
+                &descriptor.agent_command,
+                &descriptor.agent_args,
+                &cli_env,
+                &plan,
+            ),
         )
         .await;
         let runtime = descriptor.runtime.as_str();
@@ -58,28 +81,87 @@ pub(crate) async fn discover(config: &mut Config) {
     }
 }
 
+/// The scope a runtime's model discovery runs in: an empty host-owned
+/// working directory and the runtime's private state, inside the boundary
+/// where one exists — so discovery opens no conversation in the provider's
+/// own directory or in the operator's runtime history.
+fn discovery_plan(
+    state_dir: &std::path::Path,
+    runtime_override: Option<crate::execution_scope::RuntimeProfile>,
+    descriptor: &buzz_core::coding_session_runtime::RuntimeDescriptor,
+    cli_env: &[(String, String)],
+) -> Result<crate::execution_scope::ExecutionPlan, crate::session::CreateFailure> {
+    let slug: String = descriptor
+        .instance_ref
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let cwd = state_dir
+        .join(crate::execution_scope::DISCOVERY_DIR)
+        .join(&slug);
+    std::fs::create_dir_all(&cwd).map_err(|error| crate::session::CreateFailure {
+        code: crate::execution_scope::EXECUTION_BOUNDARY_UNAVAILABLE,
+        message: format!("could not create the discovery directory: {error}"),
+    })?;
+    let session_id = format!("discovery-{slug}");
+    let mut inputs = crate::execution_scope::ScopeInputs::new(
+        crate::execution_scope::ScopePurpose::Discovery,
+        state_dir,
+        &session_id,
+        &cwd,
+    );
+    inputs.driver = &descriptor.driver;
+    inputs.runtime = runtime_override
+        .unwrap_or_else(|| crate::execution_scope::RuntimeProfile::for_driver(&descriptor.driver));
+    inputs.agent_command = &descriptor.agent_command;
+    inputs.agent_args = &descriptor.agent_args;
+    inputs.agent_env = cli_env;
+    crate::execution_scope::prepare(&inputs)
+}
+
 async fn probe(
     agent_command: &str,
     agent_args: &[String],
     cli_env: &[(String, String)],
+    plan: &crate::execution_scope::ExecutionPlan,
 ) -> anyhow::Result<DiscoveredModels> {
     // Fenced for the same reason a session spawn is: this is the same adapter
     // binary, started by the same sidecar, and a startup probe is no more
-    // entitled to the provider's signing key than a session is.
-    let mut client = AcpClient::spawn_with_env_fence(
-        agent_command,
-        agent_args,
-        cli_env,
-        false,
-        &crate::agent_fence::FENCE,
-    )
-    .await?;
+    // entitled to the provider's signing key than a session is. Where a
+    // boundary exists it runs inside one, in an empty host-owned directory.
+    let (mut client, cwd) = match plan {
+        crate::execution_scope::ExecutionPlan::Prepared(prepared) => {
+            let mut client =
+                AcpClient::spawn_bounded(agent_command, agent_args, &prepared.launch).await?;
+            if let Some(options) = &prepared.claude_options {
+                client.set_claude_options(options.clone());
+            }
+            (client, prepared.launch.cwd().to_string_lossy().into_owned())
+        }
+        crate::execution_scope::ExecutionPlan::Legacy { .. } => {
+            let client = AcpClient::spawn_with_env_fence(
+                agent_command,
+                agent_args,
+                cli_env,
+                false,
+                &crate::agent_fence::FENCE,
+            )
+            .await?;
+            let cwd = std::env::current_dir()
+                .unwrap_or_else(|_| std::path::PathBuf::from("/"))
+                .to_string_lossy()
+                .into_owned();
+            (client, cwd)
+        }
+    };
     let result = async {
         client.initialize().await?;
-        let cwd = std::env::current_dir()
-            .unwrap_or_else(|_| std::path::PathBuf::from("/"))
-            .to_string_lossy()
-            .into_owned();
         let response = client.session_new_full(&cwd, vec![], None, None).await?;
         models_from_session_new(&response.raw)
             .ok_or_else(|| anyhow::anyhow!("adapter returned no selectable models"))

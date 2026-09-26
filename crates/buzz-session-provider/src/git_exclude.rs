@@ -379,14 +379,23 @@ mod tests {
         repo(dir.path());
         fence_file(dir.path());
         assert_eq!(
-            crate::git_probe::probe(dir.path()).await.dirty,
+            crate::git_probe::probe(
+                dir.path(),
+                Some(&crate::execution_scope_host::UNBOUNDED_FOR_TESTS)
+            )
+            .await
+            .dirty,
             Some(true),
             "the fixture is not dirty before the exclude, so the test proves nothing"
         );
 
         exclude_the_fence_file(dir.path()).expect("exclude");
 
-        let observed = crate::git_probe::probe(dir.path()).await;
+        let observed = crate::git_probe::probe(
+            dir.path(),
+            Some(&crate::execution_scope_host::UNBOUNDED_FOR_TESTS),
+        )
+        .await;
         assert_eq!(observed.dirty, Some(false));
         assert_eq!(observed.branch.as_deref(), Some("exclude-branch"));
     }

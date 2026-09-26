@@ -206,9 +206,9 @@ async fn exercise_native_steer_grant_fence(
     let dir = tempfile::tempdir().expect("tempdir");
     let cwd = dir.path().join("checkout");
     std::fs::create_dir_all(&cwd).expect("mkdir");
-    let first_written = dir.path().join("first-written");
-    let release_ack = dir.path().join("release-ack");
-    let second_written = dir.path().join("second-written");
+    let first_written = cwd.join("first-written");
+    let release_ack = cwd.join("release-ack");
+    let second_written = cwd.join("second-written");
     let answer = format!(
         "if [ \"$STEERS\" -eq 1 ]; then\n touch '{}'\n while [ ! -f '{}' ]; do sleep 0.01; done\nelse\n touch '{}'\nfi\nprintf '{{\"jsonrpc\":\"2.0\",\"id\":%s,\"result\":{{\"outcome\":\"{}\"}}}}\\n' \"$id\"",
         first_written.display(), release_ack.display(), second_written.display(),

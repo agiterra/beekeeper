@@ -789,3 +789,118 @@ fn the_clone_sits_beside_the_worktree() {
     );
     assert_eq!(seat_agents_clone_path(Path::new("/")), None);
 }
+
+/// A write seat can edit its own clone's configuration. Re-staging the clone
+/// materializes it inside the clone's boundary: a filter the seat planted
+/// there runs with the clone's rights only — it can write the clone, never
+/// outside it. The planted filter is proved live, and able to write outside,
+/// by an ordinary host checkout first.
+// The boundary backend is macOS's; elsewhere the plan is disclosed as
+// unenforced.
+#[cfg(target_os = "macos")]
+#[test]
+fn restaging_runs_a_planted_filter_only_inside_the_clones_boundary() {
+    let temp = tempfile::tempdir().expect("temp");
+    let auth = crate::commands::project_git_exec::build_test_git_auth_config().expect("test auth");
+    let (cache, seed_sha, synced_sha) = build_lagging_cache(&temp, "main", &auth);
+    let dest = temp.path().join("seat-agents");
+    land_seat_agents_clone_on_sha(&cache, &dest, "main", &seed_sha, SEAT_ORIGIN_SUFFIX, &auth)
+        .expect("first stage");
+    run_git(
+        &[
+            "remote",
+            "set-url",
+            "origin",
+            "--",
+            "http://127.0.0.1:9/git/deadbeef/seat-slug-beekeeper-agents",
+        ],
+        Some(&dest),
+        &auth,
+    )
+    .expect("origin at the relay");
+
+    // What the seat plants: attributes and a driver in its clone's `.git`.
+    let canary = temp.path().join("FILTER_RAN");
+    let inside = dest.join(".git/PLANTED_FILTER_RAN");
+    std::fs::write(dest.join(".git/info/attributes"), "* filter=planted\n").expect("attributes");
+    let smudge = format!(
+        "touch '{}' 2>/dev/null; touch '{}' 2>/dev/null; cat",
+        inside.display(),
+        canary.display()
+    );
+    run_git(
+        &["config", "filter.planted.smudge", &smudge],
+        Some(&dest),
+        &auth,
+    )
+    .expect("smudge");
+    run_git(
+        &["config", "filter.planted.clean", "cat"],
+        Some(&dest),
+        &auth,
+    )
+    .expect("clean");
+    run_git(
+        &["config", "filter.planted.required", "true"],
+        Some(&dest),
+        &auth,
+    )
+    .expect("required");
+
+    // Positive control: an ordinary checkout in the clone runs it.
+    run_git(
+        &[
+            "fetch",
+            "--quiet",
+            "--",
+            &cache.to_string_lossy(),
+            &synced_sha,
+        ],
+        Some(&dest),
+        &auth,
+    )
+    .expect("control fetch");
+    run_git(
+        &["checkout", "--quiet", "--detach", &synced_sha],
+        Some(&dest),
+        &auth,
+    )
+    .expect("control checkout");
+    assert!(
+        canary.exists(),
+        "the planted filter must be live, or this test proves nothing"
+    );
+    run_git(&["checkout", "--quiet", "main"], Some(&dest), &auth).expect("back to the seed");
+    std::fs::remove_file(&canary).expect("reset canary");
+    std::fs::remove_file(&inside).expect("reset marker");
+
+    land_seat_agents_clone_on_sha(
+        &cache,
+        &dest,
+        "main",
+        &synced_sha,
+        SEAT_ORIGIN_SUFFIX,
+        &auth,
+    )
+    .expect("re-stage");
+    assert!(
+        inside.exists(),
+        "the re-stage materialized without the clone's own filter"
+    );
+    assert!(
+        !canary.exists(),
+        "the seat's planted filter wrote outside its clone during the host's re-stage"
+    );
+    assert_eq!(
+        run_git(&["rev-parse", "HEAD"], Some(&dest), &auth)
+            .expect("HEAD")
+            .trim(),
+        synced_sha
+    );
+    assert!(
+        std::fs::read_to_string(dest.join("team.yml"))
+            .expect("team.yml")
+            .contains("agents_repo: read"),
+        "the re-stage still materializes the staged commit"
+    );
+}

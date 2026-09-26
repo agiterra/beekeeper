@@ -542,11 +542,23 @@ fn land_seat_agents_clone_on_sha(
 ) -> Result<(), String> {
     let cache_str = cache.to_string_lossy().into_owned();
     let dest_str = dest.to_string_lossy().into_owned();
-    if existing_seat_agents_clone(dest, cache, origin_suffix, auth)?
-        == ExistingSeatAgentsClone::None
-    {
+    // Nothing is checked out on the host: a fresh clone is taken with
+    // nothing checked out, and an existing one only fetches. The files are
+    // written inside the clone's project boundary, because a seat can write
+    // its own clone's configuration (filters, fsmonitor) and the host must
+    // not run what it planted.
+    let fresh = existing_seat_agents_clone(dest, cache, origin_suffix, auth)?
+        == ExistingSeatAgentsClone::None;
+    if fresh {
         run_git(
-            &["clone", "--quiet", "--", &cache_str, &dest_str],
+            &[
+                "clone",
+                "--quiet",
+                "--no-checkout",
+                "--",
+                &cache_str,
+                &dest_str,
+            ],
             None,
             auth,
         )
@@ -561,15 +573,23 @@ fn land_seat_agents_clone_on_sha(
             format!("could not update the seat's agents clone to the staged commit {sha}: {error}")
         })?;
     }
-    run_git(
+    let name = format!("agents-clone\n{}", dest.display());
+    crate::coding_sessions::host_git::materialize(
+        &crate::coding_sessions::host_git::Workspace {
+            tree: dest,
+            repo_root: None,
+            name: &name,
+            host_branch: Some(branch),
+            host_read: &[],
+        },
         &["checkout", "--quiet", "-B", branch, sha],
-        Some(dest),
-        auth,
+        sha,
+        fresh,
     )
     .map_err(|error| {
         format!(
-            "the packs cache at {} has no commit {sha} to check the seat's agents clone out to: \
-             {error}",
+            "the seat's agents clone could not be put on the staged commit {sha} from the packs \
+             cache at {}: {error}",
             cache.display()
         )
     })?;

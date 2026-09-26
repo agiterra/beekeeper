@@ -226,6 +226,13 @@ pub fn render_situation_card(facts: &SituationFacts) -> String {
         }
         Ok(plans) if plans.is_empty() => {
             let _ = writeln!(out, "plan: none");
+            // Where a plan's shape comes from: the offline example, never
+            // another project's plan (run10 copied one from the host cache).
+            let _ = writeln!(
+                out,
+                "plan-example: {} plans example",
+                crate::work_brief::BEE
+            );
         }
         Ok(plans) => {
             for plan in plans.iter().take(MAX_CARD_PLANS) {
@@ -624,6 +631,20 @@ async fn read_agents_commit(dir: &Path, commit: &str, project_ref: Option<&str>)
     }
 }
 
+/// The agents repository a seat's card describes: the seat's own clone
+/// beside its worktree, and nothing else.
+///
+/// The host's own clone lives in its shared cache, which a seat can neither
+/// read nor should be pointed at (run10 read another project's plan there).
+/// A seat without its own clone is told "no checkout"; the host prepares the
+/// clone or refuses the seat before it starts
+/// (`crate::execution_scope::prepare`).
+pub(crate) fn seat_agents_dir(worktree: Option<&Path>) -> Option<PathBuf> {
+    worktree
+        .and_then(buzz_core::model_registry_source::seat_agents_clone_path)
+        .filter(|path| path.join(".git").is_dir())
+}
+
 impl crate::Provider {
     /// The situation card for a seat's first turn, or `None`.
     ///
@@ -653,17 +674,7 @@ impl crate::Provider {
         let worktree_path = worktree.present().map(Path::to_path_buf);
         let projects = crate::commands::ProjectsFile::load(self.config.projects_file.as_deref());
         let project_ref = record.project_ref.clone();
-        let host_agents = project_ref
-            .as_deref()
-            .and_then(|project| projects.agents_repos.get(project).cloned());
-        // The seat's own clone beside its worktree is what the lead passes as
-        // `--agents-repo`; the host's clone is the fallback it can also read.
-        let agents_dir: Option<PathBuf> = worktree_path
-            .as_deref()
-            .and_then(buzz_core::model_registry_source::seat_agents_clone_path)
-            .filter(|path| path.join(".git").exists())
-            .or_else(|| host_agents.map(|record| record.path))
-            .filter(|path| path.exists());
+        let agents_dir = seat_agents_dir(worktree_path.as_deref());
         let agents_commit: Fact = match &agents_dir {
             None => Err("no-checkout".to_owned()),
             Some(dir) => git(dir, &["rev-parse", "HEAD"])

@@ -226,6 +226,29 @@ pub struct SessionRecord {
     /// packless seat, and every record written before this field existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compose_ref: Option<buzz_core::coding_session_payload::ComposeRef>,
+    /// The project, seat and rights scope this generation's native history
+    /// was written under (`crate::execution_scope`). A native cursor is only
+    /// reattached when the next launch prepares the same scope. `None` for a
+    /// record written before binding existed, whose native history is
+    /// therefore never silently reattached.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_binding: Option<crate::execution_scope::ExecutionBinding>,
+    /// What boundary this generation actually ran inside, for metadata and
+    /// diagnostics. `None` for a record written before the boundary existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_boundary: Option<crate::execution_scope::RecordedBoundary>,
+    /// Why this execution's own authority was withdrawn — its seat revoked,
+    /// or this provider removed from its channel. Set when the process is
+    /// stopped for it; a resume or restore of the record is refused while it
+    /// is set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authority_withdrawn: Option<String>,
+    /// The newest head of this execution's project the host has seen served
+    /// (`created_at`): what a later project deletion is judged against, kept
+    /// here so a deletion made while the provider was down is still
+    /// recognised after it restarts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_head_seen_at: Option<u64>,
     /// The verified signer of the create that opened this execution.
     ///
     /// Not the same fact as [`Self::founder_pubkey`]: for a genesis-bearing
@@ -1620,6 +1643,10 @@ mod tests {
 
     fn record(session_id: &str) -> SessionRecord {
         SessionRecord {
+            execution_binding: None,
+            execution_boundary: None,
+            authority_withdrawn: None,
+            project_head_seen_at: None,
             session_id: session_id.to_owned(),
             generation: 1,
             channel_id: Uuid::nil(),

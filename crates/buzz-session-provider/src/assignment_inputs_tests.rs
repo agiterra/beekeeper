@@ -67,6 +67,28 @@ fn seat_clone(origin: &Path, seat: &Path, branch: &str) -> SeatCheckout {
     }
 }
 
+/// Serve `origin` over smart HTTP and point the seat's `remote` at it: a
+/// seat's remote is a transport, and its bounded fetch reads nothing of the
+/// host's but the tree it runs in.
+fn serve_origin(origin: &Path, seat: &Path, remote: &str) -> crate::session::testing::GitReceiver {
+    let receiver = crate::session::testing::git_receiver(origin.parent().expect("parent"), "");
+    let name = origin
+        .file_name()
+        .expect("name")
+        .to_string_lossy()
+        .into_owned();
+    run_git(
+        seat,
+        &[
+            "remote",
+            "set-url",
+            remote,
+            &format!("http://127.0.0.1:{}/{name}", receiver.port),
+        ],
+    );
+    receiver
+}
+
 fn intent(assignment_id: &str, base_sha: &str) -> AssignmentIntent {
     AssignmentIntent {
         assignment_id: assignment_id.to_owned(),
@@ -94,7 +116,12 @@ fn records_of(store: &Path) -> serde_json::Value {
 
 fn drain(records: &mut AssignmentInputRecords, checkout: &SeatCheckout) -> Vec<String> {
     let checkout = checkout.clone();
-    drain_pending_assignment_inputs(records, move |_| Some(checkout.clone()), |_| Ok(()))
+    drain_pending_assignment_inputs(
+        records,
+        &crate::execution_scope_host::test_state_dir(),
+        move |_| Some(checkout.clone()),
+        |_| Ok(()),
+    )
 }
 
 #[test]
@@ -245,6 +272,7 @@ fn a_commit_absent_from_the_clone_is_fetched_from_the_resolved_remote() {
     repo_with_one_commit(&origin);
     let seat = root.path().join("seat");
     let checkout = seat_clone(&origin, &seat, "seat/runner");
+    let _receiver = serve_origin(&origin, &seat, "origin");
     // Published after the clone, so the seat's repository has never seen it.
     let later = add_commit(&origin, "later.txt");
 
@@ -270,6 +298,7 @@ fn a_commit_no_remote_has_is_refused_by_name_after_the_fetch() {
     let first = repo_with_one_commit(&origin);
     let seat = root.path().join("seat");
     let checkout = seat_clone(&origin, &seat, "seat/runner");
+    let _receiver = serve_origin(&origin, &seat, "origin");
     let absent = "0".repeat(39) + "1";
 
     let mut records = AssignmentInputRecords::new();
@@ -704,6 +733,7 @@ fn a_tree_the_caller_cannot_place_is_refused_as_unrecorded() {
             ..EstablishAssignmentInputRequest::default()
         },
         None,
+        &crate::execution_scope_host::test_state_dir(),
     )
     .expect_err("no tree, no establishment");
     assert_eq!(refusal.code, EstablishAssignmentInputCode::UnrecordedTree);
@@ -784,6 +814,7 @@ fn buzz_wip_remote_is_the_first_rung_of_the_ladder() {
     run_git(&seat, &["remote", "rename", "origin", "hive"]);
     run_git(&seat, &["remote", "add", "elsewhere", "../origin"]);
     run_git(&seat, &["config", "buzz.wipRemote", "hive"]);
+    let _receiver = serve_origin(&origin, &seat, "hive");
     let later = add_commit(&origin, "later.txt");
 
     let mut records = AssignmentInputRecords::new();
@@ -907,7 +938,14 @@ fn a_started_attempt_that_cannot_be_saved_stops_before_git() {
             Err("the disk is full".to_owned())
         },
     ));
-    let outcome = establish_recorded_assignment(&store, &id, &checkout, "test-owner", &|_| false);
+    let outcome = establish_recorded_assignment(
+        &store,
+        &id,
+        &checkout,
+        &crate::execution_scope_host::test_state_dir(),
+        "test-owner",
+        &|_| false,
+    );
 
     assert!(
         attempted.load(std::sync::atomic::Ordering::SeqCst) >= 1,
@@ -958,6 +996,7 @@ fn a_store_path_that_cannot_exist_stops_before_git_for_any_user() {
         &store,
         &assignment_id("f5"),
         &checkout,
+        &crate::execution_scope_host::test_state_dir(),
         "test-owner",
         &|_| false,
     );
@@ -1013,7 +1052,14 @@ fn a_terminal_record_that_cannot_be_saved_is_retried_without_redoing_the_checkou
             std::fs::write(path, payload).map_err(|error| error.to_string())
         },
     ));
-    let outcome = establish_recorded_assignment(&store, &id, &checkout, "owner-1", &|_| false);
+    let outcome = establish_recorded_assignment(
+        &store,
+        &id,
+        &checkout,
+        &crate::execution_scope_host::test_state_dir(),
+        "owner-1",
+        &|_| false,
+    );
     let Err(EstablishmentError::Unrecorded { record, error }) = outcome else {
         panic!("a completed checkout with an unsaved record is its own answer: {outcome:?}");
     };
@@ -1098,9 +1144,14 @@ fn a_live_attempt_is_not_replayed_as_an_interrupted_one() {
         path: root.path().join("seat"),
         branch: "seat/verifier".to_owned(),
     };
-    let outcome = establish_recorded_assignment(&store, &id, &checkout, "owner-2", &|owner| {
-        owner == "owner-alive"
-    });
+    let outcome = establish_recorded_assignment(
+        &store,
+        &id,
+        &checkout,
+        &crate::execution_scope_host::test_state_dir(),
+        "owner-2",
+        &|owner| owner == "owner-alive",
+    );
     assert!(
         matches!(outcome, Err(EstablishmentError::AlreadyRunning { ref owner }) if owner == "owner-alive"),
         "a live attempt is joined, never duplicated: {outcome:?}"
@@ -1113,7 +1164,14 @@ fn a_live_attempt_is_not_replayed_as_an_interrupted_one() {
 
     // The same record after a restart: nobody alive owns it, so it is the
     // interrupted case and the one-replay rule applies.
-    let replayed = establish_recorded_assignment(&store, &id, &checkout, "owner-3", &|_| false);
+    let replayed = establish_recorded_assignment(
+        &store,
+        &id,
+        &checkout,
+        &crate::execution_scope_host::test_state_dir(),
+        "owner-3",
+        &|_| false,
+    );
     assert!(replayed.is_ok(), "{replayed:?}");
     assert_eq!(records_of(&path)[&id]["attempts"], 2);
 }

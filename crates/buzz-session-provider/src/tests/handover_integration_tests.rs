@@ -790,7 +790,7 @@ async fn a_create_on_a_fresh_body_under_another_bodys_claim_starts_nothing() {
         claim_receipt(&relay_keys, channel_id, &takeover),
     ];
 
-    let log = dir.path().join("methods.log");
+    let log = dir.path().join("checkout").join("methods.log");
     let (mut provider, mut relay, server) = fresh_body(
         dir.path(),
         &relay_keys,
@@ -866,7 +866,7 @@ async fn a_create_on_a_fresh_body_with_an_unreadable_chain_starts_nothing() {
     // The receipt is served; the transition it names is not.
     let events = vec![genesis, claim_receipt(&relay_keys, channel_id, &grant)];
 
-    let log = dir.path().join("methods.log");
+    let log = dir.path().join("checkout").join("methods.log");
     let (mut provider, mut relay, server) = fresh_body(
         dir.path(),
         &relay_keys,
@@ -945,7 +945,7 @@ async fn the_claimants_own_fresh_body_verifies_the_chain_and_creates() {
         claim_receipt(&relay_keys, channel_id, &takeover),
     ];
 
-    let log = dir.path().join("methods.log");
+    let log = dir.path().join("checkout").join("methods.log");
     let (mut provider, mut relay, server) = fresh_body(
         dir.path(),
         &relay_keys,
@@ -1017,7 +1017,7 @@ async fn a_live_takeover_cancels_the_running_turn_and_releases_the_body() {
     let session_ref = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
     let other_body = "dd".repeat(32);
 
-    let log = dir.path().join("methods.log");
+    let log = dir.path().join("checkout").join("methods.log");
     let state_dir = dir.path().join("state");
     let agent = fake_agent(
         state_dir_parent(&state_dir),
@@ -1180,7 +1180,7 @@ async fn a_claim_on_this_body_does_not_interrupt_its_own_turn() {
     let body = provider_keys.public_key().to_hex();
     let session_ref = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
 
-    let log = dir.path().join("methods.log");
+    let log = dir.path().join("checkout").join("methods.log");
     let state_dir = dir.path().join("state");
     let agent = fake_agent(
         state_dir_parent(&state_dir),
@@ -1478,7 +1478,7 @@ async fn a_create_with_no_witnessed_identity_is_refused_until_the_tick_witnesses
     std::fs::create_dir_all(&cwd).expect("mkdir");
     let projects = write_projects(dir.path(), channel_id, &cwd);
     let state_dir = dir.path().join("state");
-    let log = dir.path().join("methods.log");
+    let log = dir.path().join("checkout").join("methods.log");
     let agent = fake_agent(
         state_dir_parent(&state_dir),
         "stalling-logged-agent",
@@ -1615,7 +1615,7 @@ async fn once_the_identity_is_witnessed_the_old_body_is_refused_by_the_fence() {
     std::fs::create_dir_all(&cwd).expect("mkdir");
     let projects = write_projects(dir.path(), channel_id, &cwd);
     let state_dir = dir.path().join("state");
-    let log = dir.path().join("methods.log");
+    let log = dir.path().join("checkout").join("methods.log");
     let provider_keys = Keys::generate();
     let agent = fake_agent(
         state_dir_parent(&state_dir),
@@ -1688,7 +1688,7 @@ async fn a_tick_that_folds_a_claim_stops_the_work_the_receipt_could_not() {
     let session_ref = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
     let other_body = "dd".repeat(32);
 
-    let log = dir.path().join("methods.log");
+    let log = dir.path().join("checkout").join("methods.log");
     let state_dir = dir.path().join("state");
     let agent = fake_agent(
         state_dir_parent(&state_dir),
@@ -1842,7 +1842,7 @@ async fn a_completed_turn_awaiting_provider_ack_is_never_reported_as_unstarted()
     let session_ref = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
     let other_body = "dd".repeat(32);
 
-    let log = dir.path().join("methods.log");
+    let log = dir.path().join("checkout").join("methods.log");
     let state_dir = dir.path().join("state");
     let agent = fake_agent(
         state_dir_parent(&state_dir),
@@ -2006,7 +2006,7 @@ async fn a_claim_between_admission_and_start_stops_the_turn_before_it_runs() {
     let session_ref = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
     let other_body = "dd".repeat(32);
 
-    let log = dir.path().join("methods.log");
+    let log = dir.path().join("checkout").join("methods.log");
     let state_dir = dir.path().join("state");
     let agent = fake_agent(
         state_dir_parent(&state_dir),
@@ -2198,7 +2198,7 @@ async fn a_takeover_accepted_during_startup_stops_the_creates_first_prompt() {
     let session_ref = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
     let other_body = "dd".repeat(32);
 
-    let log = dir.path().join("methods.log");
+    let log = dir.path().join("checkout").join("methods.log");
     let state_dir = dir.path().join("state");
     let agent = fake_agent(
         state_dir_parent(&state_dir),
@@ -2341,7 +2341,7 @@ async fn a_hint_file_survives_the_projects_file_being_rewritten() {
     let projects = write_projects(dir.path(), channel_id, &default_dir);
 
     let state_dir = dir.path().join("state");
-    let log = dir.path().join("methods.log");
+    let log = dir.path().join("checkout").join("methods.log");
     let agent = fake_agent(
         state_dir_parent(&state_dir),
         "stalling-logged-agent",
@@ -2421,7 +2421,7 @@ async fn a_restart_before_the_record_is_persisted_re_reads_the_same_hint() {
     );
 
     let state_dir = dir.path().join("state");
-    let log = dir.path().join("methods.log");
+    let log = dir.path().join("checkout").join("methods.log");
     let agent = fake_agent(
         state_dir_parent(&state_dir),
         "stalling-logged-agent",
@@ -2474,7 +2474,7 @@ async fn a_consumed_marker_without_a_record_refuses_rather_than_defaulting() {
     .expect("write marker");
 
     let state_dir = dir.path().join("state");
-    let log = dir.path().join("methods.log");
+    let log = dir.path().join("checkout").join("methods.log");
     let agent = fake_agent(
         state_dir_parent(&state_dir),
         "stalling-logged-agent",
@@ -2668,7 +2668,7 @@ async fn the_claimants_own_reconstruct_runs_its_first_turn_on_the_claimed_body()
     let body = provider_keys.public_key().to_hex();
     let session_ref = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
 
-    let log = dir.path().join("methods.log");
+    let log = dir.path().join("checkout").join("methods.log");
     let state_dir = dir.path().join("state");
     let agent = fake_agent(
         state_dir_parent(&state_dir),
@@ -2791,7 +2791,7 @@ async fn the_old_bodys_create_with_a_first_turn_is_still_fenced() {
     let session_ref = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
     let other_body = "dd".repeat(32);
 
-    let log = dir.path().join("methods.log");
+    let log = dir.path().join("checkout").join("methods.log");
     let state_dir = dir.path().join("state");
     let agent = fake_agent(
         state_dir_parent(&state_dir),
@@ -2903,7 +2903,7 @@ async fn a_same_body_transfer_stops_the_old_claimants_queued_turn_too() {
     let body = provider_keys.public_key().to_hex();
     let session_ref = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
 
-    let log = dir.path().join("methods.log");
+    let log = dir.path().join("checkout").join("methods.log");
     let state_dir = dir.path().join("state");
     let agent = fake_agent(
         state_dir_parent(&state_dir),

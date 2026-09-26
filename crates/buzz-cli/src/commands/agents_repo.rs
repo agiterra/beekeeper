@@ -761,12 +761,8 @@ async fn cmd_commit(
             message: head.message.clone(),
         });
     }
-    let templates = super::pack::resolve_templates_dir(templates).ok_or_else(|| {
-        CliError::Usage(
-            "no shipped templates found: pass --templates <dir>, set BUZZ_TEMPLATES_DIR, or run inside a Beekeeper checkout"
-                .into(),
-        )
-    })?;
+    let templates = super::pack::resolve_templates_dir(templates)
+        .ok_or_else(|| CliError::Usage(super::pack::no_templates_message()))?;
     let catalog =
         buzz_persona::template::TemplateCatalog::load(&templates, "cli").map_err(|error| {
             CliError::Other(format!("templates at {}: {error}", templates.display()))
@@ -820,6 +816,13 @@ async fn cmd_commit(
     }
     match &outcome {
         CommitOutcome::Yes { commit, .. } => {
+            // The seat validates and adopts from its own clone; without this
+            // it would read a clone that never saw the commit it just made.
+            out["agents_clone"] = super::agents_repo_clone::clone_refresh_report(
+                std::env::current_dir().ok().as_deref(),
+                &snap.clone_url,
+                commit,
+            );
             // The record closes every open op on each landed path — the head
             // and everything it superseded — because the head's text is what
             // main now says; a superseded op left open would read as a
@@ -906,12 +909,8 @@ pub fn check_tree(
     templates: Option<&Path>,
     project: Option<&str>,
 ) -> Result<(), CliError> {
-    let templates = super::pack::resolve_templates_dir(templates).ok_or_else(|| {
-        CliError::Usage(
-            "no shipped templates found: pass --templates <dir>, set BUZZ_TEMPLATES_DIR, or run inside a Beekeeper checkout"
-                .into(),
-        )
-    })?;
+    let templates = super::pack::resolve_templates_dir(templates)
+        .ok_or_else(|| CliError::Usage(super::pack::no_templates_message()))?;
     let catalog =
         buzz_persona::template::TemplateCatalog::load(&templates, "cli").map_err(|error| {
             CliError::Other(format!("templates at {}: {error}", templates.display()))
@@ -1177,6 +1176,9 @@ pub async fn dispatch_plans(
 ) -> Result<(), CliError> {
     use crate::PlansCmd;
     match cmd {
+        // Answered before the key check in `run`; kept here so any caller
+        // reaching this dispatcher gets the same offline answer.
+        PlansCmd::Example => super::plans_example::cmd_example(),
         PlansCmd::List { project } => {
             let snap = snapshot(client, project.as_deref()).await?;
             let listing = client

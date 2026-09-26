@@ -424,17 +424,7 @@ pub fn clone_repository_to_dir(
         if run_git(&["rev-parse", "--verify", "HEAD"], Some(repo_dir), auth).is_err() {
             if let Some(branch) = branch.as_deref() {
                 run_git(&["fetch", "--quiet", "origin"], Some(repo_dir), auth)?;
-                run_git(
-                    &[
-                        "checkout",
-                        "--quiet",
-                        "-B",
-                        branch,
-                        &format!("origin/{branch}"),
-                    ],
-                    Some(repo_dir),
-                    auth,
-                )?;
+                super::project_git_materialize::check_out_fetched_branch(repo_dir, branch, auth)?;
             }
         }
         return Ok(ProjectRepoCloneResult {

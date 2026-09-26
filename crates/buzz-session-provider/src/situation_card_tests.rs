@@ -168,6 +168,7 @@ lead-pubkey: 1958c6c448e05eed32599f6a25e2293ba84c9d4095c7c6958397bd95176b9644
 report-command: $BEE sessions report --channel 56ef0396-f1d0-4cbd-9cc2-4f4fb592e823 --session-ref ce7d32cb-b703-4db8-b06e-2adbd2b942b3 --genesis fc6f36d9fc6f36d9fc6f36d9fc6f36d9fc6f36d9fc6f36d9fc6f36d9fc6f36d9 --body - --wake-to lead
 send-command: $BEE sessions send --channel 56ef0396-f1d0-4cbd-9cc2-4f4fb592e823 --to coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed36:f543d7bd-6059-44e3-a50b-4275d8440dd51:1
 plan: none
+plan-example: $BEE plans example
 action: verify hash 5e7b73dd20f6aa0000000000000000000000000000000000000000000000beef steps verify
 roster: none
 card-copy: /data/agents/seats/s2/situation-card.md
@@ -479,4 +480,23 @@ fn the_first_adapter_prompt_for_a_lead_seat_carries_the_card_fence_and_roster_ro
         prompt.ends_with("kick off the plan"),
         "the sender's own words did not survive verbatim:\n{prompt}"
     );
+}
+
+/// Run10's regression: the host's shared-cache clone of the project's agents
+/// repository is never the card's answer. Only the seat's own clone is.
+#[test]
+fn a_seat_without_its_own_agents_clone_gets_no_checkout_not_the_host_cache() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let worktree = dir.path().join("repos/project-wt-lead");
+    std::fs::create_dir_all(&worktree).expect("worktree");
+    // A host-cache clone of the same project, with a plan in it.
+    let host_cache = dir.path().join("app/packs/project-beekeeper-agents");
+    std::fs::create_dir_all(host_cache.join(".git")).expect("host cache");
+    std::fs::create_dir_all(host_cache.join("plans")).expect("plans");
+    std::fs::write(host_cache.join("plans/answer.md"), "CACHED_ANSWER").expect("plan");
+    assert_eq!(seat_agents_dir(Some(&worktree)), None);
+    assert_eq!(seat_agents_dir(None), None);
+    let own = dir.path().join("repos/project-wt-lead-agents");
+    std::fs::create_dir_all(own.join(".git")).expect("own clone");
+    assert_eq!(seat_agents_dir(Some(&worktree)), Some(own));
 }

@@ -291,7 +291,72 @@ impl Provider {
         };
 
         let outbox_before = self.outbox.pending_keys();
+        let agent_env: Vec<(String, String)> = descriptor
+            .cli_env
+            .iter()
+            .map(|env| (env.name.clone(), env.value.clone()))
+            .collect();
+        // Strict: the recorded binding must match the scope prepared now, or
+        // the restore refuses rather than reopen another scope's history.
+        let unseated_agents = if self.project_deleted(record.project_ref.as_deref()).await {
+            Err(crate::execution_scope::refuse(
+                crate::execution_scope::EXECUTION_SCOPE_INVALID,
+                "this project was deleted, so no execution of it starts",
+            ))
+        } else if record.actor.is_none() {
+            self.stage_unseated_agents(record.project_ref.as_deref(), &record.session_id)
+                .await
+        } else {
+            Ok(None)
+        };
+        let execution = match unseated_agents
+            .as_ref()
+            .map_err(Clone::clone)
+            .and_then(|_| {
+                self.execution_plan(&crate::execution_scope::LaunchFacts {
+                    session_id: &record.session_id,
+                    project_ref: record.project_ref.as_deref(),
+                    association: crate::execution_scope::recorded_association(&record),
+                    unseated_agents: unseated_agents.as_ref().ok().and_then(Option::as_deref),
+                    actor: record.actor.as_deref(),
+                    driver: &record.driver,
+                    cwd: &record.cwd,
+                    agent_command: &descriptor.agent_command,
+                    agent_args: &descriptor.agent_args,
+                    agent_env: &agent_env,
+                    identity_env: &post_fence_env,
+                    seat_skills: seat_skills.as_ref(),
+                    role: record.role.as_deref(),
+                    rehydration: None,
+                    prior: Some((
+                        record.execution_binding.as_ref(),
+                        record.resume_cursor.as_deref(),
+                    )),
+                })
+            }) {
+            Ok(execution) => execution,
+            Err(failure) => {
+                if record.actor.is_some() {
+                    self.forget_actor_seat(&seat_command_id);
+                }
+                tracing::info!(
+                    target: "csp::restore",
+                    %session_id,
+                    code = failure.code,
+                    "a generation could not be reopened: {}", failure.message
+                );
+                return Ok(Err(RestoreObstacle::ProviderUnavailable));
+            }
+        };
+        if let Some(reason) = execution.native_refusal() {
+            if record.actor.is_some() {
+                self.forget_actor_seat(&seat_command_id);
+            }
+            return Ok(Err(RestoreObstacle::Rejected(reason.to_owned())));
+        }
+        let execution_state = execution.state();
         let request = CreateRequest {
+            execution,
             media: self.media.clone(),
             target: target.clone(),
             channel_id: record.channel_id,
@@ -306,11 +371,7 @@ impl Provider {
             strict_native: true,
             agent_command: descriptor.agent_command.clone(),
             agent_args: descriptor.agent_args.clone(),
-            agent_env: descriptor
-                .cli_env
-                .iter()
-                .map(|env| (env.name.clone(), env.value.clone()))
-                .collect(),
+            agent_env,
             seat: seat_identity,
             post_fence_env,
             seat_skills,
@@ -376,6 +437,7 @@ impl Provider {
             if startup.model.is_some() {
                 stored.model = startup.model.clone();
             }
+            stored.execution_boundary = crate::execution_scope::recorded_state(&execution_state);
         }) {
             // Never hold a live adapter the durable record does not describe.
             self.sessions.shutdown(&record.session_id);
@@ -390,6 +452,13 @@ impl Provider {
             &target,
             None,
             payload::status_item(SESSION_RESTORED_NATIVE),
+            Priority::High,
+        )?;
+        self.enqueue_transcript(
+            record.channel_id,
+            &target,
+            None,
+            crate::execution_scope::boundary_status_item(&execution_state),
             Priority::High,
         )?;
         self.publish_metadata(record.channel_id, &target, SessionStatus::Idle)?;

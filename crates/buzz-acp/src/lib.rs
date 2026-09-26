@@ -8,6 +8,8 @@
 pub mod acp;
 mod config;
 mod engram_fetch;
+pub mod exec_boundary;
+pub mod exec_env;
 mod filter;
 pub mod observer;
 mod pool;

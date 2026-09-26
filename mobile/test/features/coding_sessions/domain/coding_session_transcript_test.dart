@@ -252,6 +252,34 @@ void main() {
       expect(blocks.single.items.last.text, 'something_new');
     });
 
+    test('boundary statuses name the protection and its reason', () {
+      final blocks = projectCodingSessionTranscript([
+        _envelope(
+          eventSeq: 1,
+          item: {
+            'kind': 'status',
+            'status': 'execution_boundary_enforced',
+            'reason': 'macos-seatbelt',
+          },
+        ),
+        _envelope(
+          eventSeq: 2,
+          item: {
+            'kind': 'status',
+            'status': 'execution_boundary_not_enforced',
+            'reason': 'no-backend-for-platform',
+          },
+        ),
+      ]);
+      final items = blocks.single.items;
+      expect(items.first.title, codingSessionBoundaryTitle);
+      expect(items.first.text, contains('Enforced'));
+      expect(items.first.text, contains('(macos-seatbelt)'));
+      expect(items.last.title, codingSessionBoundaryTitle);
+      expect(items.last.text, startsWith('Not enforced'));
+      expect(items.last.text, contains('(no-backend-for-platform)'));
+    });
+
     test('reasoning is folded by default', () {
       final blocks = projectCodingSessionTranscript([
         _envelope(eventSeq: 1, item: {'kind': 'reasoning', 'text': 'thinking'}),

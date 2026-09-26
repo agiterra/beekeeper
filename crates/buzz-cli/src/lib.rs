@@ -374,7 +374,10 @@ enum Cmd {
     #[command(subcommand, name = "agents-repo")]
     AgentsRepo(AgentsRepoCmd),
     /// A project's plans: `plans/<name>.md` in its agents repository
-    #[command(subcommand)]
+    #[command(
+        subcommand,
+        long_about = "A project's plans: `plans/<name>.md` in its agents repository, each a beekeeper-plan/v1 file.\n\nWriting a new one? Start with `bee plans example`: it prints a complete, valid, task-neutral plan (offline, no key) with every value to replace marked SUBSTITUTE. Draft yours with `bee plans edit`, check it with `bee sessions work validate`, and land it with `bee agents-repo commit`."
+    )]
     Plans(PlansCmd),
     /// Run raw Nostr filters against the relay — the debugging verb
     #[command(subcommand)]
@@ -2577,9 +2580,9 @@ pub enum PackCmd {
         #[arg(long)]
         role: String,
         /// Path to a template catalog (`<name>/<semver>/TEMPLATE.md`).
-        /// Defaults to `$BUZZ_TEMPLATES_DIR`, then the nearest
-        /// `personas/templates` above the working directory; without any,
-        /// `![[beekeeper/…]]` includes refuse.
+        /// Defaults to `$BUZZ_TEMPLATES_DIR`, then the templates this `bee`'s
+        /// app bundle ships (or, for a development build, its own checkout's);
+        /// without any, `![[beekeeper/…]]` includes refuse.
         #[arg(long)]
         templates: Option<PathBuf>,
         /// The app version the catalog belongs to, recorded in compose.json
@@ -2612,8 +2615,8 @@ pub enum PackCmd {
         /// `memory@latest`
         template: String,
         /// Path to the template catalog (`<name>/<semver>/TEMPLATE.md`).
-        /// Defaults to `$BUZZ_TEMPLATES_DIR`, then the nearest
-        /// `personas/templates` above the working directory
+        /// Defaults to `$BUZZ_TEMPLATES_DIR`, then the templates this `bee`'s
+        /// app bundle ships (or, for a development build, its own checkout's)
         #[arg(long)]
         templates: Option<PathBuf>,
         /// The team root — the agents repository's root, the default `.`;
@@ -4862,8 +4865,9 @@ pub enum AgentsRepoCmd {
         /// The commit subject (default names the paths)
         #[arg(long)]
         message: Option<String>,
-        /// The shipped templates directory (default: `BUZZ_TEMPLATES_DIR` or
-        /// the nearest `personas/templates` above the working directory)
+        /// The shipped templates directory (default: `BUZZ_TEMPLATES_DIR`,
+        /// then the templates this `bee`'s app bundle ships, or a development
+        /// build's own checkout's)
         #[arg(long)]
         templates: Option<std::path::PathBuf>,
     },
@@ -4874,8 +4878,9 @@ pub enum AgentsRepoCmd {
         /// The agents repository's root (default: the working directory)
         #[arg(long, default_value = ".")]
         root: std::path::PathBuf,
-        /// The shipped templates directory (default: `BUZZ_TEMPLATES_DIR` or
-        /// the nearest `personas/templates` above the working directory)
+        /// The shipped templates directory (default: `BUZZ_TEMPLATES_DIR`,
+        /// then the templates this `bee`'s app bundle ships, or a development
+        /// build's own checkout's)
         #[arg(long)]
         templates: Option<std::path::PathBuf>,
         /// The project coordinate `actions.yml` is parsed against
@@ -4989,6 +4994,11 @@ pub enum AgentsRepoDraftCmd {
 /// `bee plans` — sugar over `plans/<name>.md` in the agents repository.
 #[derive(Subcommand)]
 pub enum PlansCmd {
+    /// Print a complete, valid, task-neutral plan file — start here (offline, no key)
+    #[command(
+        after_help = "Writes one beekeeper-plan/v1 file to stdout: an example of the shape, not a plan to commit as-is. Every value a plan must decide is marked SUBSTITUTE; replace each with what this project's goal asks for:\n\n  bee plans example > plans/<id>.md\n\nReaches no relay, needs no key and reads no other plan. The example is parsed and judged adoptable by the real plan parser in this binary's tests, so it cannot drift from the schema."
+    )]
+    Example,
     /// List the plans on main (in force and archived) and drafts of new ones
     List {
         /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
@@ -5512,6 +5522,14 @@ async fn run(cli: Cli) -> Result<(), CliError> {
     // written the file has no reason to have an identity in hand.
     if let Cmd::Actions(ActionsCmd::Example { kind }) = cli.command {
         return commands::actions_example::cmd_example(kind);
+    }
+
+    // `bee plans example` is the same answer for a plan file: its shape,
+    // offline, with nothing borrowed from another project's plan (ledger
+    // 270(g)). A lead drafting its first plan needs neither an identity nor
+    // a relay to learn the format.
+    if let Cmd::Plans(PlansCmd::Example) = cli.command {
+        return commands::plans_example::cmd_example();
     }
 
     // `sessions explain` answers from a data file compiled into this binary.
@@ -6640,6 +6658,44 @@ mod tests {
                 "publish".to_owned(),
                 "status".to_owned()
             ]
+        );
+    }
+
+    /// The `plans` group's own inventory, kept out of
+    /// `subcommand_names_are_stable` for the reason `registry` is (item 108).
+    #[test]
+    fn plans_subcommand_names_are_stable() {
+        let cmd = Cli::command();
+        let plans = cmd
+            .get_subcommands()
+            .find(|group| group.get_name() == "plans")
+            .expect("plans group");
+        let mut names: Vec<String> = plans
+            .get_subcommands()
+            .map(|sub| sub.get_name().to_string())
+            .filter(|name| name != "help")
+            .collect();
+        names.sort();
+        assert_eq!(names, vec!["edit", "example", "list", "show"]);
+    }
+
+    /// `bee plans example` answers with no identity and no relay: it is
+    /// dispatched ahead of the key gate, like `bee actions example`.
+    #[tokio::test]
+    async fn plans_example_needs_no_key_and_no_relay() {
+        let mut cli =
+            Cli::try_parse_from(["bee", "--relay", "http://127.0.0.1:1/", "plans", "example"])
+                .expect("parses");
+        cli.private_key = None;
+        cli.auth_tag = None;
+        run(cli).await.expect("offline: no key, no relay");
+
+        let mut keyless_read =
+            Cli::try_parse_from(["bee", "plans", "show", "example-plan"]).expect("parses");
+        keyless_read.private_key = None;
+        assert!(
+            matches!(run(keyless_read).await, Err(CliError::Auth(_))),
+            "`plans show` still reads the relay behind the key gate"
         );
     }
 

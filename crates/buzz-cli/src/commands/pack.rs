@@ -153,31 +153,78 @@ pub fn cmd_inspect(path: &str) -> Result<(), CliError> {
     Ok(())
 }
 
-/// Where this process finds the shipped template catalog: `explicit` when
-/// given, else `$BUZZ_TEMPLATES_DIR`, else the nearest `personas/templates`
-/// at or above the working directory (a Beekeeper checkout). `None` when
-/// none of those is a directory — the caller decides whether that refuses
-/// or composes against an empty catalog.
+/// Where a build ships its role templates, relative to its resource root and
+/// to a development checkout — the desktop's `DEFAULT_TEMPLATES_PATH`.
+const SHIPPED_TEMPLATES_PATH: &str = "personas/templates";
+
+/// Where this process finds the shipped template catalog, in order:
+///
+/// 1. `explicit` (`--templates`), then `$BUZZ_TEMPLATES_DIR` — overrides.
+/// 2. The templates this `bee`'s app bundle ships ([`bundle_templates`]).
+/// 3. The checkout this binary was built from, **only** when the running
+///    executable lives inside it ([`own_build_templates`]) — a development
+///    build. A bundled release never falls back to its build machine's tree.
+///
+/// `None` when none of those is a directory — the caller decides whether that
+/// refuses or composes against an empty catalog. The working directory and
+/// its ancestors are never consulted: a seat stands in its project's
+/// checkout, and a directory above it is another project's or the operator's,
+/// never this build's catalog.
 pub(crate) fn resolve_templates_dir(explicit: Option<&Path>) -> Option<PathBuf> {
+    let env = std::env::var_os("BUZZ_TEMPLATES_DIR").map(PathBuf::from);
+    let exe = std::env::current_exe().ok();
+    let build_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    templates_dir_from(explicit, env.as_deref(), exe.as_deref(), Some(&build_root))
+}
+
+/// [`resolve_templates_dir`] over explicit inputs, so every branch is tested
+/// without touching this process's environment or executable.
+pub(crate) fn templates_dir_from(
+    explicit: Option<&Path>,
+    env: Option<&Path>,
+    exe: Option<&Path>,
+    build_root: Option<&Path>,
+) -> Option<PathBuf> {
     if let Some(dir) = explicit {
         return Some(dir.to_path_buf());
     }
-    if let Some(dir) = std::env::var_os("BUZZ_TEMPLATES_DIR") {
-        let dir = PathBuf::from(dir);
-        if dir.is_dir() {
-            return Some(dir);
-        }
+    if let Some(dir) = env.filter(|dir| dir.is_dir()) {
+        return Some(dir.to_path_buf());
     }
-    let mut cursor = std::env::current_dir().ok()?;
-    loop {
-        let candidate = cursor.join("personas").join("templates");
-        if candidate.is_dir() {
-            return Some(candidate);
-        }
-        if !cursor.pop() {
-            return None;
-        }
-    }
+    let exe = exe.map(|exe| exe.canonicalize().unwrap_or_else(|_| exe.to_path_buf()))?;
+    bundle_templates(&exe).or_else(|| own_build_templates(&exe, build_root?))
+}
+
+/// A macOS app bundle's templates: `Contents/Resources/personas/templates`
+/// beside `Contents/MacOS/bee`, as `tauri.conf.json` bundles them.
+fn bundle_templates(exe: &Path) -> Option<PathBuf> {
+    let macos = exe.parent()?;
+    let contents = macos.parent()?;
+    let is_bundle = macos.file_name()? == "MacOS"
+        && contents.file_name()? == "Contents"
+        && contents.parent()?.extension()? == "app";
+    let dir = contents.join("Resources").join(SHIPPED_TEMPLATES_PATH);
+    (is_bundle && dir.is_dir()).then_some(dir)
+}
+
+/// The build checkout's templates, when `exe` is inside that checkout (its
+/// `target/`): the root is verified to be this binary's own, not assumed.
+fn own_build_templates(exe: &Path, build_root: &Path) -> Option<PathBuf> {
+    let root = build_root.canonicalize().ok()?;
+    let dir = root.join(SHIPPED_TEMPLATES_PATH);
+    (exe.starts_with(&root) && dir.is_dir()).then_some(dir)
+}
+
+/// The refusal when [`resolve_templates_dir`] finds no catalog.
+pub(crate) fn no_templates_message() -> String {
+    let exe = std::env::current_exe()
+        .map(|exe| exe.display().to_string())
+        .unwrap_or_else(|_| "this bee".to_owned());
+    format!(
+        "no shipped templates found: {exe} is neither inside an app bundle shipping \
+         Contents/Resources/{SHIPPED_TEMPLATES_PATH} nor inside the checkout it was built from; \
+         pass --templates <dir> or set BUZZ_TEMPLATES_DIR"
+    )
 }
 
 /// Run `bee pack compose <path> --role <role> [--templates <dir>] [--out <dir>]`.
@@ -299,13 +346,8 @@ pub fn cmd_clone_template(
     let (name, range) = spec
         .split_once('@')
         .ok_or_else(|| CliError::Usage(format!("expected <name>@<range>, got {spec:?}")))?;
-    let templates = resolve_templates_dir(templates).ok_or_else(|| {
-        CliError::Usage(
-            "no template catalog: pass --templates <dir>, set BUZZ_TEMPLATES_DIR, or run from a \
-             Beekeeper checkout (personas/templates)"
-                .to_owned(),
-        )
-    })?;
+    let templates =
+        resolve_templates_dir(templates).ok_or_else(|| CliError::Usage(no_templates_message()))?;
     let catalog = TemplateCatalog::load(&templates, "clone")
         .map_err(|e| CliError::Usage(format!("template catalog: {e}")))?;
     let range = TemplateRange::parse(name, range).map_err(|e| CliError::Usage(e.to_string()))?;
@@ -437,6 +479,90 @@ mod tests {
         assert!(missing.to_string().contains("matches none"), "{missing}");
         let bad = cmd_clone_template("memory", Some(&templates), &into, true).unwrap_err();
         assert!(bad.to_string().contains("<name>@<range>"), "{bad}");
+    }
+
+    /// A packaged `bee` finds the templates its bundle ships, from wherever
+    /// it is invoked and through a symlink to it; a development build finds
+    /// its own checkout only when it runs from inside it; the working
+    /// directory, its ancestors and a guessed layout are never a source.
+    // The PATH case is a symlink.
+    #[cfg(unix)]
+    #[test]
+    fn templates_resolve_from_the_bundle_or_the_verified_build_root_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let contents = root.join("Beekeeper.app/Contents");
+        let exe = contents.join("MacOS/bee");
+        write(&exe, "#!/bin/sh\n");
+        let shipped = contents.join("Resources/personas/templates");
+        std::fs::create_dir_all(&shipped).unwrap();
+        let checkout = root.join("checkout");
+        let checkout_templates = checkout.join("personas/templates");
+        std::fs::create_dir_all(&checkout_templates).unwrap();
+
+        // The bundle wins over a build root it is not inside.
+        assert_eq!(
+            templates_dir_from(None, None, Some(&exe), Some(&checkout)),
+            Some(shipped.clone())
+        );
+        // A symlink on PATH resolves to the bundle it points into.
+        let link = root.join("bin/bee");
+        std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&exe, &link).unwrap();
+        assert_eq!(
+            templates_dir_from(None, None, Some(&link), None),
+            Some(shipped.clone())
+        );
+        // Explicit and environment overrides win, in that order; an
+        // environment value that is not a directory is ignored.
+        let other = root.join("other");
+        std::fs::create_dir_all(&other).unwrap();
+        assert_eq!(
+            templates_dir_from(Some(&checkout_templates), Some(&other), Some(&exe), None),
+            Some(checkout_templates.clone())
+        );
+        assert_eq!(
+            templates_dir_from(None, Some(&other), Some(&exe), None),
+            Some(other)
+        );
+        assert_eq!(
+            templates_dir_from(None, Some(&root.join("missing")), Some(&exe), None),
+            Some(shipped)
+        );
+
+        // A development build inside its checkout finds that checkout.
+        let dev = checkout.join("target/debug/bee");
+        write(&dev, "#!/bin/sh\n");
+        assert_eq!(
+            templates_dir_from(None, None, Some(&dev), Some(&checkout)),
+            Some(checkout_templates)
+        );
+
+        // A binary outside every bundle and outside its build root finds
+        // nothing — even with `personas/templates` beside it, in a `MacOS`
+        // directory that is not a bundle, or in the directories above it.
+        let loose = root.join("project/sub/bee");
+        write(&loose, "#!/bin/sh\n");
+        std::fs::create_dir_all(root.join("personas/templates")).unwrap();
+        std::fs::create_dir_all(root.join("project/sub/personas/templates")).unwrap();
+        assert_eq!(
+            templates_dir_from(None, None, Some(&loose), Some(&checkout)),
+            None
+        );
+        let fake = root.join("fake/Contents/MacOS/bee");
+        write(&fake, "#!/bin/sh\n");
+        std::fs::create_dir_all(root.join("fake/Contents/Resources/personas/templates")).unwrap();
+        assert_eq!(templates_dir_from(None, None, Some(&fake), None), None);
+    }
+
+    /// The production resolver finds a loadable catalog for this build with
+    /// no flag and no environment: here, the checkout it was built from.
+    #[test]
+    fn this_build_resolves_a_loadable_catalog_without_setup() {
+        let dir = resolve_templates_dir(None).expect("this build ships templates");
+        let catalog = TemplateCatalog::load(&dir, "test").expect("the catalog loads");
+        let range = TemplateRange::parse("lead", "^1.0.0").unwrap();
+        assert!(catalog.resolve("lead", &range).is_ok());
     }
 
     #[test]

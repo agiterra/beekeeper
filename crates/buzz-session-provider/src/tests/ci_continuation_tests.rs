@@ -135,7 +135,7 @@ async fn provider_with_session(
     let cwd = dir.join("checkout");
     std::fs::create_dir_all(&cwd).expect("mkdir");
     let channel_id = Uuid::new_v4();
-    let projects = write_projects(dir, channel_id, &cwd);
+    let projects = write_project_checkout(dir, channel_id, &cwd, &ci_identity("136").project);
     let state_dir = dir.join("state");
     let mut provider = provider(&state_dir, Some(&projects));
     provider
@@ -145,12 +145,15 @@ async fn provider_with_session(
         )
         .await
         .expect("handle create");
-    let target = provider
-        .state()
-        .sessions()
-        .next()
-        .expect("session")
-        .target("instance-1");
+    let Some(record) = provider.state().sessions().next().cloned() else {
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        panic!(
+            "the create minted no session: {:?}",
+            sink.contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT)
+        );
+    };
+    let target = record.target("instance-1");
     (provider, channel_id, target, projects)
 }
 
@@ -1358,7 +1361,8 @@ async fn a_restart_before_the_result_keeps_the_registration_and_delivers_later()
     let cwd = dir.path().join("checkout");
     std::fs::create_dir_all(&cwd).expect("mkdir");
     let channel_id = Uuid::new_v4();
-    let projects = write_projects(dir.path(), channel_id, &cwd);
+    let projects =
+        write_project_checkout(dir.path(), channel_id, &cwd, &ci_identity("136").project);
     let state_dir = dir.path().join("state");
     let identity = ci_identity("136");
     let target = {
@@ -1417,7 +1421,8 @@ async fn a_restart_after_the_result_is_ready_still_delivers_the_turn() {
     let cwd = dir.path().join("checkout");
     std::fs::create_dir_all(&cwd).expect("mkdir");
     let channel_id = Uuid::new_v4();
-    let projects = write_projects(dir.path(), channel_id, &cwd);
+    let projects =
+        write_project_checkout(dir.path(), channel_id, &cwd, &ci_identity("136").project);
     let state_dir = dir.path().join("state");
     let identity = ci_identity("136");
     {
@@ -1501,7 +1506,8 @@ async fn recovery_drops_a_registration_whose_command_is_already_answered() {
     let cwd = dir.path().join("checkout");
     std::fs::create_dir_all(&cwd).expect("mkdir");
     let channel_id = Uuid::new_v4();
-    let projects = write_projects(dir.path(), channel_id, &cwd);
+    let projects =
+        write_project_checkout(dir.path(), channel_id, &cwd, &ci_identity("136").project);
     let state_dir = dir.path().join("state");
     let identity = ci_identity("136");
     {

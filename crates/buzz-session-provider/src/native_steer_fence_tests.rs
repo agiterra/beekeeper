@@ -5,9 +5,9 @@ async fn native_steer_queued_behind_ack_is_fenced_before_runtime_write() {
     let dir = tempfile::tempdir().expect("tempdir");
     let cwd = dir.path().join("checkout");
     std::fs::create_dir_all(&cwd).expect("mkdir");
-    let first_written = dir.path().join("first-written");
-    let release_ack = dir.path().join("release-ack");
-    let second_written = dir.path().join("second-written");
+    let first_written = cwd.join("first-written");
+    let release_ack = cwd.join("release-ack");
+    let second_written = cwd.join("second-written");
     let channel_id = Uuid::new_v4();
     let projects = write_projects(dir.path(), channel_id, &cwd);
     let answer = format!(

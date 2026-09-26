@@ -308,6 +308,10 @@ pub struct CreateRequest {
     pub idle_shutdown: Duration,
     /// Whether `agent_thought_chunk` updates become `reasoning` items.
     pub include_thoughts: bool,
+    /// The host-prepared execution scope: boundary, resolved environment and
+    /// native-history binding (`crate::execution_scope`). Required, so no
+    /// producer can launch without deciding it.
+    pub execution: crate::execution_scope::ExecutionPlan,
 }
 
 // Host-private cursors, working directories, adapter environment, and context
@@ -329,6 +333,7 @@ impl std::fmt::Debug for CreateRequest {
             .field("max_turn_duration", &self.max_turn_duration)
             .field("idle_shutdown", &self.idle_shutdown)
             .field("include_thoughts", &self.include_thoughts)
+            .field("execution", &self.execution.state())
             .finish_non_exhaustive()
     }
 }
@@ -1824,17 +1829,23 @@ async fn start_agent(
         None => None,
     };
 
-    // Finding 73: a seat's file tools reach everything the operator's `HOME`
-    // can, and this sidecar auto-approves every permission ask. For the Claude
-    // driver the provider writes a deny list the harness itself enforces — see
+    // Finding 73, on the legacy launch only: with no host boundary, a seat's
+    // file tools reach everything the operator's `HOME` can, and this sidecar
+    // auto-approves every permission ask. For the Claude driver the provider
+    // writes a deny list the harness itself enforces — see
     // `crate::agent_fence::WRITE_FENCE_SETTINGS_FILE` for the mechanism, its
     // measurements and its gap. Before the child exists, because the SDK reads
-    // the file once, at `session/new`. Other drivers have no equivalent and are
-    // held to the same boundary by the briefing sentence alone.
+    // the file once, at `session/new`. A prepared launch has the host
+    // boundary instead, and a second, independently generated policy there
+    // could only disagree with it.
+    let legacy = matches!(
+        request.execution,
+        crate::execution_scope::ExecutionPlan::Legacy { .. }
+    );
     if let Some(seat) = request
         .seat
         .as_ref()
-        .filter(|_| request.target.driver == crate::agent_fence::CLAUDE_DRIVER)
+        .filter(|_| legacy && request.target.driver == crate::agent_fence::CLAUDE_DRIVER)
     {
         // A read-only agents clone is fenced too (spec § 4.11).
         let read_only: Vec<PathBuf> = request
@@ -1865,16 +1876,38 @@ async fn start_agent(
     // every execution that is not an agent seat; for a seat it is the four
     // variables that give it *its own* identity, applied after the fence has
     // removed the provider's.
-    let mut client = AcpClient::spawn_with_env_fence_and_overrides(
-        &request.agent_command,
-        &request.agent_args,
-        &request.agent_env,
-        false,
-        &crate::agent_fence::FENCE,
-        &request.post_fence_env,
-    )
-    .await
+    //
+    // A prepared scope replaces all of that: the adapter starts inside the
+    // host's boundary with exactly the environment the host resolved by
+    // source, and every process it starts inherits both
+    // (`crate::execution_scope`).
+    let mut client = match &request.execution {
+        crate::execution_scope::ExecutionPlan::Prepared(prepared) => {
+            AcpClient::spawn_bounded(
+                &request.agent_command,
+                &request.agent_args,
+                &prepared.launch,
+            )
+            .await
+        }
+        crate::execution_scope::ExecutionPlan::Legacy { .. } => {
+            AcpClient::spawn_with_env_fence_and_overrides(
+                &request.agent_command,
+                &request.agent_args,
+                &request.agent_env,
+                false,
+                &crate::agent_fence::FENCE,
+                &request.post_fence_env,
+            )
+            .await
+        }
+    }
     .map_err(|error| classify_startup_error(&error, "spawn the agent"))?;
+    if let crate::execution_scope::ExecutionPlan::Prepared(prepared) = &request.execution {
+        if let Some(options) = &prepared.claude_options {
+            client.set_claude_options(options.clone());
+        }
+    }
 
     client.set_observer(Some(observer.clone()), 0);
     client.set_observer_context(context_for(Some(request.channel_id), None, None));
@@ -1930,6 +1963,20 @@ async fn start_agent(
         bootstrap_transport,
         pending_briefing,
     } = opened;
+    // Codex inside the host boundary: its own command sandbox cannot start
+    // there, so the session must run in the mode that leaves enforcement to
+    // the verified host boundary. Asserted on every open (Codex reports its
+    // default mode again after a load), and only when the boundary is
+    // enforced — never on an unconfined launch.
+    if let Err(failure) = assert_bounded_codex_mode(&mut client, request, &response).await {
+        log_agent_stderr(
+            &client,
+            &request.target.session_id,
+            "select the bounded Codex mode",
+        );
+        client.shutdown().await;
+        return Err(failure);
+    }
     tracing::info!(
         target: "csp::session",
         session_id = %request.target.session_id,
@@ -1981,6 +2028,46 @@ async fn start_agent(
             prompt_image_supported,
         },
     ))
+}
+
+async fn assert_bounded_codex_mode(
+    client: &mut AcpClient,
+    request: &CreateRequest,
+    response: &buzz_acp::acp::SessionNewResponse,
+) -> Result<(), CreateFailure> {
+    let crate::execution_scope::ExecutionPlan::Prepared(prepared) = &request.execution else {
+        return Ok(());
+    };
+    if prepared.runtime != crate::execution_scope::RuntimeProfile::Codex
+        || !matches!(
+            prepared.state(),
+            crate::execution_scope::BoundaryState::Enforced { .. }
+        )
+    {
+        return Ok(());
+    }
+    let mode = crate::execution_scope::CODEX_BOUNDED_MODE;
+    let offered = response
+        .raw
+        .pointer("/modes/availableModes")
+        .and_then(serde_json::Value::as_array)
+        .is_none_or(|modes| modes.iter().any(|m| m["id"] == mode));
+    let refused = |detail: String| {
+        CreateFailure {
+        code: crate::execution_scope::EXECUTION_BOUNDARY_UNAVAILABLE,
+        message: format!(
+            "Codex could not be placed in the {mode} mode the project boundary requires              ({detail}); nothing was started"
+        ),
+    }
+    };
+    if !offered {
+        return Err(refused("the adapter does not offer it".to_owned()));
+    }
+    client
+        .session_set_mode(&response.session_id, mode)
+        .await
+        .map(|_| ())
+        .map_err(|error| refused(error.to_string()))
 }
 
 /// One opened ACP session, with everything the caller must remember about how
@@ -2088,6 +2175,46 @@ fn session_briefing(
     }
 }
 
+/// The paragraph stating what this execution runs inside, from the plan the
+/// host actually prepared — never a claim about a mechanism that is not in
+/// place.
+pub(crate) fn boundary_briefing(execution: &crate::execution_scope::ExecutionPlan) -> String {
+    match execution {
+        crate::execution_scope::ExecutionPlan::Prepared(prepared) => {
+            let mut text = format!(
+                "\n\nThis session runs inside a project boundary the host enforces ({}): this \
+                 process and every process it starts can read and write this project's working \
+                 tree and this execution's own private state; can read, but not change, the \
+                 context files this briefing names for you (unless it says you may commit \
+                 there); and can use the development tools, runtime and logins the host selected \
+                 for it (its toolchains, Git transport, model login and `bee`). Other projects' \
+                 files, plans and conversation histories are refused with \"Operation not \
+                 permitted\". That refusal is the boundary working, not a broken tool: do not look \
+                 for another path to the same data, and if the task needs something outside, say \
+                 so. This runtime's own settings, conversation history and memory are private to \
+                 this execution; this project's own settings and MCP servers load as usual.",
+                prepared.launch.boundary().backend()
+            );
+            if let Some((path, false)) = &prepared.agents {
+                text.push_str(&format!(
+                    " The project's agents repository is checked out read-only at {}: \
+                     `plans/` holds its plans in force and `roles/` its role definitions. To \
+                     start a new plan, `$BEE plans example` prints a valid, task-neutral \
+                     beekeeper-plan/v1 to fill in from your own goal; never copy another \
+                     project's plan.",
+                    path.display()
+                ));
+            }
+            text
+        }
+        crate::execution_scope::ExecutionPlan::Legacy { reason } => format!(
+            "\n\nNo project boundary is enforced for this session ({reason}): only these \
+             instructions keep it to this project's files. Read and write only inside your \
+             working directory, and do not read other projects' files."
+        ),
+    }
+}
+
 /// The role-pack paragraph appended to a seated execution's briefing.
 fn seat_role_briefing(role: &str, pack: &SeatRoleBriefing) -> String {
     let mut text = format!(
@@ -2131,7 +2258,9 @@ const AGENTS_REPO_DRAFT_BRIEFING: &str = "\n\nTo propose a change to a plan or a
      (or `$BEE plans edit <name>`) publishes the whole new text of one file as a draft shared on \
      the relay, which everyone on the project can read and build on; `$BEE agents-repo drafts` \
      lists what is open. A draft becomes real only when it is committed to the agents \
-     repository's main; nothing drafted changes any seat's instructions until then.";
+     repository's main; nothing drafted changes any seat's instructions until then. To start a \
+     new plan, `$BEE plans example` prints a valid, task-neutral beekeeper-plan/v1 to fill in \
+     from your own goal; never copy another project's plan.";
 
 /// The paragraph a seat granted the project's agents repository receives
 /// (spec § 4.11): where the clone is, what is in force and what is retired,
@@ -2145,9 +2274,7 @@ fn agents_checkout_briefing(agents: &crate::actor_seats::SeatAgentsCheckout) -> 
          your own identity; never silently overwrite another author's draft."
     } else {
         "It is read-only for this seat: read it, do not edit it, and propose changes as \
-         drafts for a collaborator with write access to commit. On Claude Code the file \
-         tools refuse writes there by permission rule; on any other harness this sentence is the \
-         whole fence."
+         drafts for a collaborator with write access to commit."
     };
     format!(
         "\n\nThe project's agents repository is checked out at {path}, beside your working \
@@ -2186,6 +2313,8 @@ async fn open_agent_session(
     cwd: &str,
     seat_role: Option<&SeatRoleBriefing>,
 ) -> Result<OpenedSession, OpenFailure> {
+    // The host's own servers. A bounded Claude execution loads the project's
+    // own `.mcp.json` natively; a host server replaces a same-named one.
     let mcp_servers = rehydration_mcp_servers(request)?;
     let attached = request.rehydration_mcp.as_ref();
     // "Rehydrated" is a claim about prior work, not about tooling: an
@@ -2206,7 +2335,20 @@ async fn open_agent_session(
     // one must additionally be told what it is, before either answers anyone.
     // The system prompt is the required transport when the adapter has one; the
     // first-turn preamble exists only for adapters that do not.
-    let briefing = session_briefing(bootstrap.as_deref(), request.seat.as_ref(), seat_role);
+    // What this execution runs inside, stated from the plan the host actually
+    // prepared, before any continuity notice.
+    let briefing = match bootstrap.as_deref() {
+        Some(bootstrap) => format!(
+            "{}{}\n\n{bootstrap}",
+            session_briefing(None, request.seat.as_ref(), seat_role),
+            boundary_briefing(&request.execution)
+        ),
+        None => format!(
+            "{}{}",
+            session_briefing(None, request.seat.as_ref(), seat_role),
+            boundary_briefing(&request.execution)
+        ),
+    };
     let system_prompt = session_new_briefing_transport(client, &briefing);
     let bootstrap_transport = bootstrap.is_some().then(|| {
         if system_prompt.is_some() {
@@ -2220,7 +2362,38 @@ async fn open_agent_session(
     // system-prompt slot, and the conversation they restore already contains
     // the briefing from the open that created it.
     let pending_briefing = system_prompt.is_none().then(|| briefing.clone());
-    let Some(cursor) = request.resume_cursor.as_deref() else {
+    // Native history is reattached only to the execution scope that wrote it
+    // (`crate::execution_scope::ExecutionBinding`). A cursor from another
+    // project, seat or rights scope — or from before binding existed — is
+    // never silently loaded: a restore refuses, anything else starts fresh
+    // and says why.
+    let native_refusal = request.execution.native_refusal();
+    let cursor = request
+        .resume_cursor
+        .as_deref()
+        .filter(|_| native_refusal.is_none());
+    if let (Some(reason), Some(_)) = (native_refusal, request.resume_cursor.as_deref()) {
+        if request.strict_native {
+            return Err(OpenFailure::Strict(CreateFailure {
+                code: crate::native_restore::NATIVE_RESTORE_REJECTED,
+                message: format!("{reason}; no new conversation was started"),
+            }));
+        }
+        let response = client
+            .session_new_full(cwd, mcp_servers, system_prompt, request.title.as_deref())
+            .await?;
+        return Ok(OpenedSession {
+            response,
+            continuity: if rehydrated {
+                SessionContinuity::Rehydrated
+            } else {
+                SessionContinuity::RestartedWithoutContext { reason }
+            },
+            bootstrap_transport,
+            pending_briefing,
+        });
+    }
+    let Some(cursor) = cursor else {
         // A strict restore has nothing to reattach *to*. Saying so before the
         // adapter is asked anything keeps the refusal honest: this is a fact
         // about this provider's own record, not about the adapter.
@@ -2425,8 +2598,27 @@ async fn apply_model(
                 .await
         }
         None => {
+            // Which values it does offer, so a mismatch (a full model id
+            // asked of an adapter that offers aliases) is readable from the
+            // startup log without spending a turn.
+            let offered: Vec<String> = buzz_acp::acp::extract_model_config_options(&response.raw)
+                .iter()
+                .flat_map(|option| option["options"].as_array().cloned().unwrap_or_default())
+                .chain(
+                    buzz_acp::acp::extract_model_state(&response.raw)
+                        .and_then(|models| models["availableModels"].as_array().cloned())
+                        .unwrap_or_default(),
+                )
+                .filter_map(|entry| {
+                    entry["value"]
+                        .as_str()
+                        .or_else(|| entry["modelId"].as_str())
+                        .map(str::to_owned)
+                })
+                .collect();
             tracing::warn!(
                 target: "csp::session",
+                offered = ?offered,
                 "agent does not offer model {desired} — using its default"
             );
             return None;
@@ -3746,6 +3938,157 @@ pub(crate) mod testing {
     use std::io::Write;
     use std::path::Path;
 
+    /// Run `command` to completion within `limit`, killing it (and failing
+    /// the test) if it does not finish: a wrong fixture must not hang a run.
+    pub(crate) fn output_within(
+        mut command: std::process::Command,
+        limit: std::time::Duration,
+    ) -> std::process::Output {
+        let mut child = command
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .stdin(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn");
+        let deadline = std::time::Instant::now() + limit;
+        loop {
+            match child.try_wait().expect("wait") {
+                Some(_) => return child.wait_with_output().expect("output"),
+                None if std::time::Instant::now() >= deadline => {
+                    let _ = child.kill();
+                    let output = child.wait_with_output().expect("output");
+                    panic!(
+                        "a fixture command did not finish within {}s; killed. stderr: {}",
+                        limit.as_secs(),
+                        String::from_utf8_lossy(&output.stderr)
+                    );
+                }
+                None => std::thread::sleep(std::time::Duration::from_millis(50)),
+            }
+        }
+    }
+
+    /// The tool an opt-in integration test was pointed at through `var`.
+    /// Missing configuration fails the test: it was asked to run.
+    pub(crate) fn required_tool(var: &str) -> std::path::PathBuf {
+        let path = std::env::var_os(var)
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| panic!("{var} must name the tool this integration test runs"));
+        assert!(path.is_file(), "{var}={} is not a file", path.display());
+        path
+    }
+
+    /// A disposable smart-HTTP Git receiver requiring one of `passwords`
+    /// (comma-separated; none serves anyone).
+    pub(crate) struct GitReceiver {
+        child: std::process::Child,
+        pub port: u16,
+    }
+
+    impl Drop for GitReceiver {
+        fn drop(&mut self) {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
+
+    const RECEIVER: &str = r#"
+import base64, http.server, os, subprocess, sys
+ROOT = sys.argv[1]; ALLOWED = set(filter(None, sys.argv[2].split(',')))
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self): self.serve()
+    def do_POST(self): self.serve()
+    def serve(self):
+        auth = self.headers.get('Authorization', ''); user = ''
+        ok = not ALLOWED
+        if auth.startswith('Basic '):
+            user, _, password = base64.b64decode(auth[6:]).decode().partition(':')
+            ok = password in ALLOWED
+        if not ok:
+            self.send_response(401); self.send_header('WWW-Authenticate', 'Basic realm="t"'); self.send_header('Content-Length', '0'); self.end_headers(); return
+        path, _, query = self.path.partition('?')
+        length = int(self.headers.get('Content-Length') or 0)
+        body = self.rfile.read(length) if length else b''
+        env = dict(os.environ, GIT_PROJECT_ROOT=ROOT, GIT_HTTP_EXPORT_ALL='1', PATH_INFO=path, QUERY_STRING=query,
+                   REQUEST_METHOD=self.command, CONTENT_TYPE=self.headers.get('Content-Type', ''),
+                   HTTP_CONTENT_ENCODING=self.headers.get('Content-Encoding', ''), REMOTE_USER=user, REMOTE_ADDR='127.0.0.1',
+                   GIT_CONFIG_GLOBAL='/dev/null', GIT_CONFIG_NOSYSTEM='1')
+        out = subprocess.run(['git', 'http-backend'], input=body, env=env, capture_output=True).stdout
+        head, _, rest = out.partition(b'\r\n\r\n')
+        status = 200; headers = []
+        for line in head.decode().split('\r\n'):
+            k, _, v = line.partition(':')
+            if k.lower() == 'status': status = int(v.strip().split()[0])
+            elif k: headers.append((k, v.strip()))
+        self.send_response(status)
+        for k, v in headers: self.send_header(k, v)
+        self.send_header('Content-Length', str(len(rest))); self.end_headers(); self.wfile.write(rest)
+    def log_message(self, *a): pass
+server = http.server.HTTPServer(('127.0.0.1', 0), H)
+print(server.server_address[1], flush=True)
+server.serve_forever()
+"#;
+
+    pub(crate) fn git_receiver(root: &Path, passwords: &str) -> GitReceiver {
+        use std::io::BufRead;
+        let mut child = std::process::Command::new("/usr/bin/python3")
+            .args(["-c", RECEIVER])
+            .arg(root)
+            .arg(passwords)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("receiver");
+        let mut line = String::new();
+        std::io::BufReader::new(child.stdout.take().expect("stdout"))
+            .read_line(&mut line)
+            .expect("port");
+        GitReceiver {
+            child,
+            port: line.trim().parse().expect("port number"),
+        }
+    }
+
+    /// A create for `agent` (a script run with bash) in `cwd`, on the legacy
+    /// launch: for tests of provider lifecycle, not of the boundary.
+    pub(crate) fn legacy_request(
+        agent: &str,
+        cwd: &Path,
+        session_id: &str,
+    ) -> super::CreateRequest {
+        super::CreateRequest {
+            media: None,
+            seat: None,
+            post_fence_env: Vec::new(),
+            seat_skills: None,
+            target: buzz_core::coding_session_command::CodingSessionTarget {
+                driver: "claude-agent-acp".into(),
+                instance_id: "instance-1".into(),
+                session_id: session_id.into(),
+                generation: 1,
+            },
+            channel_id: uuid::Uuid::nil(),
+            cwd: cwd.to_path_buf(),
+            title: None,
+            model: None,
+            resume_cursor: None,
+            strict_native: false,
+            rehydration_mcp: None,
+            agent_command: "bash".into(),
+            agent_args: vec![agent.to_owned()],
+            agent_env: Vec::new(),
+            idle_timeout: std::time::Duration::from_secs(10),
+            answer_stall_timeout: None,
+            emit_raw_sdk_frames: false,
+            max_turn_duration: std::time::Duration::from_secs(20),
+            idle_shutdown: std::time::Duration::from_secs(60),
+            include_thoughts: false,
+            execution: crate::execution_scope::ExecutionPlan::Legacy {
+                reason: "unit-test",
+            },
+        }
+    }
+
     /// Write an executable shell script and return its path.
     pub(crate) fn fake_agent(dir: &Path, name: &str, body: &str) -> String {
         use std::os::unix::fs::PermissionsExt;
@@ -3784,6 +4127,38 @@ while IFS= read -r line; do
 done
 "#
         )
+    }
+
+    /// [`GOOD_AGENT`], leaving a long-lived grandchild in its process group:
+    /// an execution's stop is shown by the whole group disappearing, not by
+    /// its handle being dropped.
+    pub(crate) fn lingering_agent() -> String {
+        format!("sleep 600 </dev/null >/dev/null 2>&1 &\n{GOOD_AGENT}")
+    }
+
+    /// Whether nothing of `pid`'s process group is left.
+    #[cfg(unix)]
+    pub(crate) fn group_is_gone(pid: u32) -> bool {
+        use nix::sys::signal::killpg;
+        use nix::unistd::Pid;
+
+        matches!(
+            killpg(Pid::from_raw(i32::try_from(pid).unwrap_or(i32::MAX)), None),
+            Err(nix::errno::Errno::ESRCH)
+        )
+    }
+
+    /// Whether `pid`'s whole process group is gone within `deadline`.
+    #[cfg(unix)]
+    pub(crate) async fn group_gone_within(pid: u32, deadline: std::time::Duration) -> bool {
+        let until = std::time::Instant::now() + deadline;
+        while std::time::Instant::now() < until {
+            if group_is_gone(pid) {
+                return true;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        group_is_gone(pid)
     }
 
     /// A cooperative agent that first writes its own environment to
@@ -4316,6 +4691,9 @@ done
             max_turn_duration: Duration::from_secs(10),
             idle_shutdown: Duration::from_secs(30),
             include_thoughts: true,
+            execution: crate::execution_scope::ExecutionPlan::Legacy {
+                reason: "unit-test",
+            },
         }
     }
 

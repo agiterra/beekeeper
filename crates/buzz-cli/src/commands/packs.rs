@@ -533,12 +533,10 @@ pub async fn cmd_init(client: &BuzzClient, request: &PackInitRequest<'_>) -> Res
         (PackLayout::Flat, None) => {
             let templates = crate::commands::pack::resolve_templates_dir(request.templates)
                 .ok_or_else(|| {
-                    CliError::Usage(
-                        "no template catalog to seed from: pass --templates <dir>, set \
-                         BUZZ_TEMPLATES_DIR, run from a Beekeeper checkout, or pass --from <dir> \
-                         naming a team root to copy"
-                            .to_owned(),
-                    )
+                    CliError::Usage(format!(
+                        "{}, or pass --from <dir> naming a team root to copy",
+                        crate::commands::pack::no_templates_message()
+                    ))
                 })?;
             let catalog = TemplateCatalog::load(&templates, "cli")
                 .map_err(|e| CliError::Usage(format!("template catalog: {e}")))?;

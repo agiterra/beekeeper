@@ -12,6 +12,7 @@
 
 // NATIVE: establish the revision a seat was hired to work on, in its own tree.
 pub(crate) mod assignment_input;
+pub(crate) mod host_git;
 // The durable queue that owns *when* that happens, so no panel decides it.
 pub(crate) mod assignment_establishment;
 pub(crate) mod naming;

@@ -582,6 +582,7 @@ pub fn requeue_assignment_input(records: &mut AssignmentInputRecords, assignment
 /// Returns the assignment ids it touched, in the order it touched them.
 pub fn drain_pending_assignment_inputs(
     records: &mut AssignmentInputRecords,
+    state_dir: &Path,
     resolve: impl Fn(&AssignmentInputRecord) -> Option<SeatCheckout>,
     mut persist: impl FnMut(&AssignmentInputRecords) -> Result<(), String>,
 ) -> Vec<String> {
@@ -591,7 +592,13 @@ pub fn drain_pending_assignment_inputs(
             continue;
         };
         let checkout = resolve(&record);
-        if drain_one_assignment_input(records, &assignment_id, checkout.as_ref(), &mut persist) {
+        if drain_one_assignment_input(
+            records,
+            &assignment_id,
+            checkout.as_ref(),
+            state_dir,
+            &mut persist,
+        ) {
             drained.push(assignment_id);
         }
     }
@@ -608,6 +615,7 @@ pub fn drain_one_assignment_input(
     records: &mut AssignmentInputRecords,
     assignment_id: &str,
     checkout: Option<&SeatCheckout>,
+    state_dir: &Path,
     persist: &mut impl FnMut(&AssignmentInputRecords) -> Result<(), String>,
 ) -> bool {
     let Some(record) = assignment_input(records, assignment_id).cloned() else {
@@ -644,6 +652,7 @@ pub fn drain_one_assignment_input(
             ..EstablishAssignmentInputRequest::default()
         },
         checkout,
+        state_dir,
     );
     let _ = persist(records);
     true
@@ -781,10 +790,23 @@ fn resolve_request(
 /// needs a credential fails and says so instead of waiting forever on a prompt
 /// no one will answer. The `GIT_DIR` family comes from the single shared
 /// [`crate::git_probe::GIT_REPO_SELECTION_VARS`] list.
+///
+/// Only for operations that run none of the repository's own code (reading
+/// config, refs and objects): hooks and fsmonitor are off as well. Status,
+/// fetch and checkout run inside the seat tree's project boundary
+/// ([`git_scoped`]).
 fn git(tree: &Path, args: &[&str]) -> Result<String, String> {
-    use std::io::Read;
+    run_git(hermetic_git(tree, args), args)
+}
 
+fn hermetic_git(tree: &Path, args: &[&str]) -> std::process::Command {
     let mut command = std::process::Command::new("git");
+    command.args([
+        "-c",
+        "core.hooksPath=/dev/null",
+        "-c",
+        "core.fsmonitor=false",
+    ]);
     command.args(args);
     command.current_dir(tree);
     command.env("GIT_TERMINAL_PROMPT", "0");
@@ -795,6 +817,70 @@ fn git(tree: &Path, args: &[&str]) -> Result<String, String> {
     for key in crate::git_probe::GIT_REPO_SELECTION_VARS {
         command.env_remove(key);
     }
+    command
+}
+
+/// Git that can run the repository's own code — status (clean filters,
+/// fsmonitor), fetch (the remote's transport configuration) and checkout
+/// (smudge filters) — inside the seat tree's prepared boundary. Where no
+/// backend exists it is the hermetic command, disclosed by the plan.
+fn git_scoped(
+    plan: &crate::execution_scope_host::HostLaunchPlan,
+    tree: &Path,
+    args: &[&str],
+) -> Result<String, String> {
+    match plan {
+        crate::execution_scope_host::HostLaunchPlan::Bounded(_) => {
+            run_git(plan.git_command(tree, args), args)
+        }
+        crate::execution_scope_host::HostLaunchPlan::Unenforced { .. } => git(tree, args),
+    }
+}
+
+/// The bounded plan for Git in a seat's tree, allowed to move `branch`.
+fn seat_tree_plan(
+    state_dir: &Path,
+    tree: &Path,
+    branch: &str,
+) -> Result<crate::execution_scope_host::HostLaunchPlan, EstablishAssignmentInputError> {
+    let repo_root = git(
+        tree,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    )
+    .ok()
+    .map(|common| PathBuf::from(common.trim()))
+    .map(|common| {
+        if common.file_name().is_some_and(|name| name == ".git") {
+            common.parent().map_or(common.clone(), Path::to_path_buf)
+        } else {
+            common
+        }
+    });
+    let name = format!("establish\n{branch}");
+    let mut scope = crate::execution_scope_host::HostCommandScope::git(
+        state_dir,
+        None,
+        repo_root.as_deref(),
+        tree,
+        &name,
+    );
+    scope.host_branch = Some(branch);
+    // Establishment fetches the assignment's commit with the operator's own
+    // selected transport.
+    let scope = scope.fetching();
+    crate::execution_scope_host::prepare_host_command(&scope).map_err(|refusal| {
+        refuse(
+            EstablishAssignmentInputCode::CheckoutFailed,
+            "the seat's worktree could not be prepared inside its project boundary, so nothing \
+             was changed",
+            Some(format!("{}: {}", refusal.code, refusal.message)),
+        )
+    })
+}
+
+fn run_git(mut command: std::process::Command, args: &[&str]) -> Result<String, String> {
+    use std::io::Read;
+
     command.stdin(std::process::Stdio::null());
     command.stdout(std::process::Stdio::piped());
     command.stderr(std::process::Stdio::piped());
@@ -937,14 +1023,24 @@ fn commit_is_present(tree: &Path, commit: &str) -> bool {
 /// one commit instead of every ref; a server that does not allow it refuses
 /// that request, so the second attempt is an ordinary fetch.
 fn fetch_commit(
+    plan: &crate::execution_scope_host::HostLaunchPlan,
     tree: &Path,
     remote: &str,
     commit: &str,
 ) -> Result<(), EstablishAssignmentInputError> {
-    if git(tree, &["fetch", "--no-tags", "--quiet", remote, commit]).is_ok() {
+    // `FETCH_HEAD` lives in the shared repository, which a seat's boundary
+    // does not let it write; nothing here reads it.
+    let fetch = [
+        "fetch",
+        "--no-tags",
+        "--quiet",
+        "--no-write-fetch-head",
+        remote,
+    ];
+    if git_scoped(plan, tree, &[&fetch[..], &[commit]].concat()).is_ok() {
         return Ok(());
     }
-    match git(tree, &["fetch", "--no-tags", "--quiet", remote]) {
+    match git_scoped(plan, tree, &fetch) {
         Ok(_) => Ok(()),
         Err(stderr) => Err(refuse(
             EstablishAssignmentInputCode::FetchFailed,
@@ -973,6 +1069,7 @@ fn attempt(
     records: &AssignmentInputRecords,
     request: &EstablishAssignmentInputRequest,
     checkout: Option<&SeatCheckout>,
+    state_dir: &Path,
     facts: &mut AttemptFacts,
 ) -> Result<EstablishedAssignmentInput, EstablishAssignmentInputError> {
     let resolved = resolve_request(records, request)?;
@@ -1009,8 +1106,38 @@ fn attempt(
         ));
     }
 
+    let current_branch = git(&tree, &["symbolic-ref", "--quiet", "--short", "HEAD"])
+        .ok()
+        .map(|branch| branch.trim().to_owned())
+        .filter(|branch| !branch.is_empty());
+    let target = resolved
+        .branch
+        .clone()
+        .unwrap_or_else(|| checkout.branch.clone());
+    if !is_safe_branch_name(&target) {
+        return Err(refuse(
+            EstablishAssignmentInputCode::InvalidInput,
+            "the recorded seat branch cannot be handed to git as a single branch",
+            Some(target),
+        ));
+    }
+    // Only this seat's own branch may be moved: its recorded branch, the one
+    // already checked out here, or a name no branch holds yet. Anything else
+    // belongs to somebody, and resetting it would rewrite their work.
+    let is_seats_own = target == checkout.branch
+        || current_branch.as_deref() == Some(target.as_str())
+        || !branch_exists(&tree, &target);
+    if !is_seats_own {
+        return Err(refuse(
+            EstablishAssignmentInputCode::CheckoutFailed,
+            format!("'{target}' is not this seat's branch, so it was not moved"),
+            Some(format!("the seat's branch is '{}'", checkout.branch)),
+        ));
+    }
+    let plan = seat_tree_plan(state_dir, &tree, &target)?;
+
     // Uncommitted work stops everything, before a single write.
-    let status = git(&tree, &["status", "--porcelain"]).map_err(|stderr| {
+    let status = git_scoped(&plan, &tree, &["status", "--porcelain"]).map_err(|stderr| {
         refuse(
             EstablishAssignmentInputCode::MissingTree,
             "git could not read the state of the recorded worktree",
@@ -1040,11 +1167,6 @@ fn attempt(
         return Err(refusal);
     }
 
-    let current_branch = git(&tree, &["symbolic-ref", "--quiet", "--short", "HEAD"])
-        .ok()
-        .map(|branch| branch.trim().to_owned())
-        .filter(|branch| !branch.is_empty());
-
     // The remote ladder runs only when the object is missing. Resolving it
     // first would refuse `no_remote` about a commit this host demonstrably
     // holds — a false refusal, and the kind that teaches a caller to distrust
@@ -1053,7 +1175,7 @@ fn attempt(
     if !commit_is_present(&tree, &resolved.commit) {
         let resolved_remote = resolve_remote(&tree, current_branch.as_deref())?;
         facts.remote = Some(resolved_remote.clone());
-        fetch_commit(&tree, &resolved_remote, &resolved.commit)?;
+        fetch_commit(&plan, &tree, &resolved_remote, &resolved.commit)?;
         if !commit_is_present(&tree, &resolved.commit) {
             return Err(refuse(
                 EstablishAssignmentInputCode::UnknownCommit,
@@ -1064,31 +1186,6 @@ fn attempt(
             ));
         }
         remote = Some(resolved_remote);
-    }
-
-    let target = resolved
-        .branch
-        .clone()
-        .unwrap_or_else(|| checkout.branch.clone());
-    if !is_safe_branch_name(&target) {
-        return Err(refuse(
-            EstablishAssignmentInputCode::InvalidInput,
-            "the recorded seat branch cannot be handed to git as a single branch",
-            Some(target),
-        ));
-    }
-    // Only this seat's own branch may be moved: its recorded branch, the one
-    // already checked out here, or a name no branch holds yet. Anything else
-    // belongs to somebody, and resetting it would rewrite their work.
-    let is_seats_own = target == checkout.branch
-        || current_branch.as_deref() == Some(target.as_str())
-        || !branch_exists(&tree, &target);
-    if !is_seats_own {
-        return Err(refuse(
-            EstablishAssignmentInputCode::CheckoutFailed,
-            format!("'{target}' is not this seat's branch, so it was not moved"),
-            Some(format!("the seat's branch is '{}'", checkout.branch)),
-        ));
     }
 
     let head = git(&tree, &["rev-parse", "HEAD"]).unwrap_or_default();
@@ -1102,7 +1199,8 @@ fn attempt(
         });
     }
 
-    git(
+    git_scoped(
+        &plan,
         &tree,
         &["checkout", "--quiet", "-B", &target, &resolved.commit, "--"],
     )
@@ -1155,10 +1253,15 @@ fn attempt(
 /// The caller supplies the seat's tree; everything else — the dirty check, the
 /// remote ladder, the checkout and the measurement afterwards — is this
 /// function's, and every outcome becomes exactly one record.
+///
+/// `state_dir` holds the prepared boundary the seat tree's status, fetch and
+/// checkout run inside (the provider's own state, or the desktop host's —
+/// [`crate::execution_scope_host::desktop_host_state_dir`]).
 pub fn establish(
     records: &mut AssignmentInputRecords,
     request: &EstablishAssignmentInputRequest,
     checkout: Option<&SeatCheckout>,
+    state_dir: &Path,
 ) -> Result<EstablishedAssignmentInput, EstablishAssignmentInputError> {
     let assignment_id = request.assignment_id.trim().to_owned();
     if assignment_id.len() != 64 || !is_object_id(&assignment_id) {
@@ -1179,7 +1282,7 @@ pub fn establish(
             (record.attempts, record.blocker_published)
         });
     let mut facts = AttemptFacts::default();
-    let outcome = attempt(records, request, checkout, &mut facts);
+    let outcome = attempt(records, request, checkout, state_dir, &mut facts);
     let (result_outcome, message) = match &outcome {
         Ok(established) if established.already_current => {
             (ASSIGNMENT_INPUT_ALREADY_CURRENT.to_owned(), None)
@@ -1536,6 +1639,7 @@ pub fn establish_recorded_assignment(
     store: &AssignmentInputStore,
     assignment_id: &str,
     checkout: &SeatCheckout,
+    state_dir: &Path,
     owner: &str,
     live: &dyn Fn(&str) -> bool,
 ) -> Result<AssignmentInputRecord, EstablishmentError> {
@@ -1591,6 +1695,7 @@ pub fn establish_recorded_assignment(
             ..EstablishAssignmentInputRequest::default()
         },
         Some(checkout),
+        state_dir,
     );
     let Some(mut terminal) = scratch.get(assignment_id).cloned() else {
         return Err(EstablishmentError::Missing(assignment_id.to_owned()));

@@ -56,6 +56,8 @@ export default defineConfig({
         "**/coding-session-goal.spec.ts",
         "**/coding-session-founded-setup.spec.ts",
         "**/coding-session-transcript-narrative-screenshots.spec.ts",
+        // The provider's project execution boundary disclosure, both states.
+        "**/coding-session-project-boundary.spec.ts",
         "**/coding-session-elision-screenshots.spec.ts",
         "**/coding-session-seat-bee.spec.ts",
         "**/coding-session-surface-host-screenshots.spec.ts",

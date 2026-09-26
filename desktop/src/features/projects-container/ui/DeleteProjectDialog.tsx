@@ -11,6 +11,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/shared/ui/alert-dialog";
+import { isMacPlatform } from "@/shared/lib/platform";
 import { Checkbox } from "@/shared/ui/checkbox";
 
 import type { ProjectContainer } from "../hooks";
@@ -237,12 +238,13 @@ export function DeleteProjectDialog({
               {localPlan.liveSessions.length === 1
                 ? "1 coding session is still open"
                 : `${localPlan.liveSessions.length} coding sessions are still open`}{" "}
-              for this project ({localPlan.liveSessions.join(", ")}). Deleting
-              the project does not close{" "}
-              {localPlan.liveSessions.length === 1 ? "it" : "them"} — close{" "}
-              {localPlan.liveSessions.length === 1 ? "it" : "them"} from{" "}
-              {localPlan.liveSessions.length === 1 ? "its" : "their"} own row
-              first if you want that.
+              for this project ({localPlan.liveSessions.join(", ")}).{" "}
+              {/* What this build does, and where: the Mac provider stops its own
+                  coding sessions of a project once its deletion is confirmed.
+                  Nothing else is claimed. */}
+              {isMacPlatform()
+                ? `Deleting this project stops ${localPlan.liveSessions.length === 1 ? "this coding session" : "these coding sessions"} on this Mac when the deletion is confirmed.`
+                : `Deleting the project does not close ${localPlan.liveSessions.length === 1 ? "it" : "them"} — close ${localPlan.liveSessions.length === 1 ? "it" : "them"} from ${localPlan.liveSessions.length === 1 ? "its" : "their"} own row first if you want that.`}
             </p>
           ) : null}
 

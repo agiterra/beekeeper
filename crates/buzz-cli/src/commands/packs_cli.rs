@@ -72,8 +72,8 @@ pub enum PacksCmd {
         #[arg(long, default_value = "flat")]
         layout: String,
         /// Path to the template catalog the flat seed references. Defaults
-        /// to `$BUZZ_TEMPLATES_DIR`, then the nearest `personas/templates`
-        /// above the working directory
+        /// to `$BUZZ_TEMPLATES_DIR`, then the templates this `bee`'s app
+        /// bundle ships (or, for a development build, its own checkout's)
         #[arg(long)]
         templates: Option<PathBuf>,
         /// Replace the project's existing role source instead of refusing:

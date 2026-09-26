@@ -776,6 +776,26 @@ mod against_a_stub_relay {
         )
         .expect("remote");
         assert!(run_git(&["rev-parse", "--verify", "HEAD"], Some(&unborn), &auth).is_err());
+        // What a session could have planted in this existing checkout: a
+        // filter on every path. The bootstrap's checkout runs it inside the
+        // checkout's boundary — it writes the checkout, never outside it.
+        let inside = unborn.join(".git/BOOTSTRAP_FILTER_RAN");
+        let outside = root.join("BOOTSTRAP_FILTER_WROTE_OUTSIDE");
+        std::fs::create_dir_all(unborn.join(".git/info")).expect("info");
+        std::fs::write(unborn.join(".git/info/attributes"), "* filter=planted\n")
+            .expect("attributes");
+        let smudge = format!(
+            "touch '{}' 2>/dev/null; touch '{}' 2>/dev/null; cat",
+            inside.display(),
+            outside.display()
+        );
+        for (key, value) in [
+            ("filter.planted.smudge", smudge.as_str()),
+            ("filter.planted.clean", "cat"),
+            ("filter.planted.required", "true"),
+        ] {
+            run_git(&["config", key, value], Some(&unborn), &auth).expect("planted filter");
+        }
 
         let (result, recorded) = run_init(
             &state,
@@ -804,6 +824,18 @@ mod against_a_stub_relay {
         );
         let branch = run_git(&["branch", "--show-current"], Some(&unborn), &auth).expect("branch");
         assert_eq!(branch.trim(), SEED_BRANCH);
+        assert!(
+            inside.exists(),
+            "the checkout materialized without its own filter"
+        );
+        // The boundary backend is macOS's; elsewhere the plan is disclosed as
+        // unenforced.
+        if cfg!(target_os = "macos") {
+            assert!(
+                !outside.exists(),
+                "the checkout's planted filter wrote outside it"
+            );
+        }
         assert!(result.complete, "{result:?}");
         std::fs::remove_dir_all(&root).ok();
     }

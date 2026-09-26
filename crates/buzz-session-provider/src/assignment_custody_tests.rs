@@ -89,6 +89,7 @@ fn requirement(
         cwd: seat.to_path_buf(),
         store: store.clone(),
         branch: "seat/verifier".to_owned(),
+        state_dir: crate::execution_scope_host::test_state_dir(),
     }
 }
 

@@ -37,6 +37,11 @@ pub mod actor_seats;
 mod agent_fence;
 pub mod agents_checkout;
 pub mod agents_plan_blob;
+pub mod execution_scope;
+mod execution_scope_git;
+pub mod execution_scope_host;
+pub(crate) mod execution_scope_runtime;
+mod project_deletion;
 // The durable host-owned queue that puts a seat on its exact input (lane 185,
 // moved here by lane 202 so the party holding the turn gate owns the order).
 mod artifact_upload;
@@ -487,6 +492,8 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
             .await?;
     }
     relay.subscribe_membership_notifications().await?;
+    provider.start_project_deletion_listener();
+    let mut project_deletion_events = provider.project_deletion_events.take();
     provider.refresh_catalog(true)?;
 
     // Grants accepted while this provider was down were re-verified and folded
@@ -555,6 +562,9 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
                     tracing::warn!(target: "csp::lease", "lease handoff after a CI result failed: {error}");
                 }
             }
+            event = project_deletion::next_event(&mut project_deletion_events) => {
+                provider.handle_project_deletion_event(event);
+            }
             event = action_step_listener::next_action_step_event(&mut action_step_events) => {
                 if let Err(error) = provider.handle_action_step_event(event, &publisher).await {
                     tracing::error!(target: "csp::actions", "host step handling failed: {error}");
@@ -604,6 +614,8 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
                 provider.witness_relay_identity().await;
                 provider.retry_pending_claim_verification().await;
                 provider.prune_stale_pending_hints();
+                provider.sync_project_deletion_listener();
+                while provider.git_probe_tasks.try_join_next().is_some() {}
             }
             // The replay reorder window closing is a delivery, not a timer
             // tick: the turns it holds are already the operator's, they are
@@ -631,6 +643,9 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
         }
     }
 
+    if let Some(listener) = provider.project_deletion_listener.take() {
+        listener.shutdown();
+    }
     if let Err(error) = provider.queue_live_releases() {
         tracing::warn!(target: "csp::lease", "clean-shutdown release construction failed: {error}");
     }
@@ -773,6 +788,10 @@ pub struct Provider {
     /// match arm). Absent entry means "no probe has ever been launched for
     /// this session id," which compares as generation `0`.
     git_probe_generation: HashMap<String, u64>,
+    /// The worktree and gate probes in flight. Owned, so they are reaped as
+    /// they finish and can be awaited — their host Git preparation runs on
+    /// the blocking pool and outlives nothing that owns it.
+    git_probe_tasks: tokio::task::JoinSet<()>,
     /// Last relay-confirmed reachability fact per session id, keyed and
     /// applied under the exact same generation fence as `git_probes` — see
     /// [`session::SessionEvent::WorktreeObserved`]. Absent, like a `None`
@@ -796,6 +815,14 @@ pub struct Provider {
     /// which is exactly the "not checked" outcome the honesty contract
     /// already models, so no session ever waits on it.
     rest_client: Option<RestClient>,
+    /// The one subscription to deletions of projects with open executions
+    /// ([`project_deletion`]), and its queue for the run loop.
+    project_deletion_listener: Option<project_deletion::ProjectDeletionListener>,
+    project_deletion_events: Option<mpsc::Receiver<project_deletion::ProjectDeletionEvent>>,
+    /// Heads seen served before the execution that saw them had a record
+    /// (a create's own revalidation); the durable copy is each record's
+    /// [`state::SessionRecord::project_head_seen_at`].
+    project_heads: HashMap<String, u64>,
     /// The relay's signing pubkey (lowercase hex) as witnessed from its
     /// NIP-11 `self` field after connecting — the trust root every kind
     /// 40099 authority-acceptance receipt is verified against (see
@@ -1124,9 +1151,13 @@ impl Provider {
             last_metadata: HashMap::new(),
             git_probes: HashMap::new(),
             git_probe_generation: HashMap::new(),
+            git_probe_tasks: tokio::task::JoinSet::new(),
             git_reachability: HashMap::new(),
             recorded_redactions: HashMap::new(),
             rest_client: None,
+            project_deletion_listener: None,
+            project_deletion_events: None,
+            project_heads: HashMap::new(),
             relay_self: None,
             claims_pending_reverification: HashSet::new(),
             context_refresh: HashMap::new(),
@@ -1585,6 +1616,21 @@ impl Provider {
             }
             KIND_MEMBER_REMOVED_NOTIFICATION => {
                 tracing::info!(target: "csp", %channel_id, "membership revoked — unsubscribing");
+                // The notification is addressed to this provider alone
+                // (`#p` is its own key): every execution it runs in that
+                // channel has lost the authority it runs under.
+                let affected: Vec<String> = self
+                    .state
+                    .sessions()
+                    .filter(|record| !record.closed && record.channel_id == channel_id)
+                    .map(|record| record.session_id.clone())
+                    .collect();
+                for session_id in affected {
+                    self.stop_for_withdrawn_authority(
+                        &session_id,
+                        "this provider was removed from the session's channel",
+                    )?;
+                }
                 self.subscribed.remove(&channel_id);
                 relay.unsubscribe_channel(channel_id).await?;
             }
@@ -3080,6 +3126,27 @@ impl Provider {
         }
     }
 
+    /// What host Git in `tree` for this session is prepared from: its
+    /// project, the project's recorded checkout and how the tree is bound.
+    fn host_git_request(
+        &self,
+        record: &state::SessionRecord,
+        tree: &Path,
+    ) -> crate::execution_scope_host::HostGitRequest {
+        let projects = commands::ProjectsFile::load(self.config.projects_file.as_deref());
+        crate::execution_scope_host::HostGitRequest {
+            state_dir: self.config.state_dir.clone(),
+            project_ref: record.project_ref.clone(),
+            checkout: record
+                .project_ref
+                .as_deref()
+                .and_then(|project| projects.projects.get(project))
+                .cloned(),
+            tree: tree.to_path_buf(),
+            association: execution_scope::recorded_association(record),
+        }
+    }
+
     /// The hints directory beside this provider's projects file, if it has one.
     fn hints_dir(&self) -> Option<std::path::PathBuf> {
         self.config
@@ -3367,7 +3434,76 @@ impl Provider {
             .as_ref()
             .and_then(|skills| skills.compose_ref.clone());
 
+        let agent_env: Vec<(String, String)> = descriptor
+            .cli_env
+            .iter()
+            .map(|env| (env.name.clone(), env.value.clone()))
+            .collect();
+        // An unseated execution reads its project's agents repository from a
+        // read-only clone the host stages for it — never the host's own cache.
+        // Revalidated at every start: an execution of a deleted project does
+        // not start, and its own context is prepared or the start refused.
+        let unseated_agents = if self.project_deleted(plan.project_ref.as_deref()).await {
+            Err(execution_scope::refuse(
+                execution_scope::EXECUTION_SCOPE_INVALID,
+                "this project was deleted, so no execution of it starts",
+            ))
+        } else if plan.actor.is_none() {
+            self.stage_unseated_agents(plan.project_ref.as_deref(), &target.session_id)
+                .await
+        } else {
+            Ok(None)
+        };
+        // The execution scope, from this create's own project, seat and
+        // rights — before any process exists.
+        let execution = match unseated_agents
+            .as_ref()
+            .map_err(Clone::clone)
+            .and_then(|_| {
+                self.execution_plan(&execution_scope::LaunchFacts {
+                    session_id: &target.session_id,
+                    project_ref: plan.project_ref.as_deref(),
+                    association: if plan.workspace_bound {
+                        execution_scope::WorkspaceAssociation::HostBound
+                    } else {
+                        execution_scope::WorkspaceAssociation::Unbound
+                    },
+                    unseated_agents: unseated_agents.as_ref().ok().and_then(Option::as_deref),
+                    actor: plan.actor.as_deref(),
+                    driver: &descriptor.driver,
+                    cwd: &plan.cwd,
+                    agent_command: &descriptor.agent_command,
+                    agent_args: &descriptor.agent_args,
+                    agent_env: &agent_env,
+                    identity_env: &post_fence_env,
+                    seat_skills: seat_skills.as_ref(),
+                    role: plan.role.as_deref(),
+                    rehydration: rehydration_mcp.as_ref(),
+                    prior: None,
+                })
+            }) {
+            Ok(execution) => execution,
+            Err(failure) => {
+                tracing::warn!(
+                    target: "csp",
+                    command_id = %plan.command_id,
+                    code = failure.code,
+                    "session creation refused: {}", failure.message
+                );
+                if plan.actor.is_some() {
+                    self.forget_actor_seat(&plan.command_id);
+                }
+                self.discard_orphaned_context_package(context_package_id.as_deref());
+                let receipt =
+                    LifecycleReceipt::failed(&plan.command_id, failure.code, &failure.message);
+                return self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt);
+            }
+        };
+        let execution_binding = execution.binding().cloned();
+        let execution_state = execution.state();
+
         let request = CreateRequest {
+            execution,
             media: self.media.clone(),
             target: target.clone(),
             channel_id: plan.channel_id,
@@ -3381,11 +3517,7 @@ impl Provider {
             rehydration_mcp,
             agent_command: descriptor.agent_command.clone(),
             agent_args: descriptor.agent_args.clone(),
-            agent_env: descriptor
-                .cli_env
-                .iter()
-                .map(|env| (env.name.clone(), env.value.clone()))
-                .collect(),
+            agent_env,
             seat: seat_identity,
             post_fence_env,
             seat_skills,
@@ -3451,6 +3583,13 @@ impl Provider {
             actor: plan.actor.clone(),
             role: plan.role.clone(),
             compose_ref: seat_compose_ref,
+            execution_binding,
+            execution_boundary: crate::execution_scope::recorded_state(&execution_state),
+            authority_withdrawn: None,
+            project_head_seen_at: plan
+                .project_ref
+                .as_deref()
+                .and_then(|project| self.seen_project_head(project)),
             pack_ref: seat_pack_ref,
             founder_pubkey: Some(plan.founder_pubkey.clone()),
             granted_operators: std::collections::BTreeSet::new(),
@@ -3599,6 +3738,15 @@ impl Provider {
                 Priority::High,
             )?;
         }
+        // What this execution runs inside, disclosed on every open: enforced
+        // with its backend, or not enforced with the reason.
+        self.enqueue_transcript(
+            plan.channel_id,
+            &target,
+            None,
+            execution_scope::boundary_status_item(&execution_state),
+            Priority::High,
+        )?;
 
         // A genesis may already carry an accepted authority chain — another
         // execution under the same umbrella can be granted operators before
@@ -4265,6 +4413,20 @@ impl Provider {
         let Some(record) = self.state.session(&plan.target.session_id).cloned() else {
             return Ok(());
         };
+        // Revalidated at every start: an execution whose own authority was
+        // withdrawn does not come back under it.
+        if let Some(reason) = record.authority_withdrawn.as_deref() {
+            self.state.consume_command(&plan.command_id, now_secs())?;
+            if seated {
+                self.forget_actor_seat(&plan.command_id);
+            }
+            let receipt = LifecycleReceipt::failed(
+                &plan.command_id,
+                payload::ACTOR_UNAVAILABLE,
+                &format!("{reason}, so this execution will not be resumed"),
+            );
+            return self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt);
+        }
         let Some(descriptor) = self.config.runtime(&record.provider_instance_ref).cloned() else {
             self.state.consume_command(&plan.command_id, now_secs())?;
             if seated {
@@ -4407,7 +4569,69 @@ impl Provider {
             .as_ref()
             .and_then(|skills| skills.compose_ref.clone());
 
+        let agent_env: Vec<(String, String)> = descriptor
+            .cli_env
+            .iter()
+            .map(|env| (env.name.clone(), env.value.clone()))
+            .collect();
+        // Same scope derivation as the create, from the record — plus the
+        // record's binding, so native history is reattached only to the scope
+        // that wrote it.
+        // Revalidated at every start: an execution of a deleted project does
+        // not start, and its own context is prepared or the start refused.
+        let unseated_agents = if self.project_deleted(record.project_ref.as_deref()).await {
+            Err(execution_scope::refuse(
+                execution_scope::EXECUTION_SCOPE_INVALID,
+                "this project was deleted, so no execution of it starts",
+            ))
+        } else if record.actor.is_none() {
+            self.stage_unseated_agents(record.project_ref.as_deref(), &record.session_id)
+                .await
+        } else {
+            Ok(None)
+        };
+        let execution = match unseated_agents
+            .as_ref()
+            .map_err(Clone::clone)
+            .and_then(|_| {
+                self.execution_plan(&execution_scope::LaunchFacts {
+                    session_id: &record.session_id,
+                    project_ref: record.project_ref.as_deref(),
+                    association: execution_scope::recorded_association(&record),
+                    unseated_agents: unseated_agents.as_ref().ok().and_then(Option::as_deref),
+                    actor: record.actor.as_deref(),
+                    driver: &record.driver,
+                    cwd: &record.cwd,
+                    agent_command: &descriptor.agent_command,
+                    agent_args: &descriptor.agent_args,
+                    agent_env: &agent_env,
+                    identity_env: &post_fence_env,
+                    seat_skills: seat_skills.as_ref(),
+                    role: record.role.as_deref(),
+                    rehydration: rehydration_mcp.as_ref(),
+                    prior: Some((
+                        record.execution_binding.as_ref(),
+                        record.resume_cursor.as_deref(),
+                    )),
+                })
+            }) {
+            Ok(execution) => execution,
+            Err(failure) => {
+                self.state.consume_command(&plan.command_id, now_secs())?;
+                if record.actor.is_some() {
+                    self.forget_actor_seat(&plan.command_id);
+                }
+                self.discard_orphaned_context_package(context_package_id.as_deref());
+                let receipt =
+                    LifecycleReceipt::failed(&plan.command_id, failure.code, &failure.message);
+                return self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt);
+            }
+        };
+        let execution_binding = execution.binding().cloned();
+        let execution_state = execution.state();
+
         let request = CreateRequest {
+            execution,
             media: self.media.clone(),
             target: target.clone(),
             channel_id: record.channel_id,
@@ -4421,11 +4645,7 @@ impl Provider {
             rehydration_mcp,
             agent_command: descriptor.agent_command.clone(),
             agent_args: descriptor.agent_args.clone(),
-            agent_env: descriptor
-                .cli_env
-                .iter()
-                .map(|env| (env.name.clone(), env.value.clone()))
-                .collect(),
+            agent_env,
             seat: seat_identity,
             post_fence_env,
             seat_skills,
@@ -4472,6 +4692,8 @@ impl Provider {
             record.open_turn = None;
             record.closed = false;
             record.resume_cursor = Some(startup.acp_session_id.clone());
+            record.execution_binding = execution_binding.clone();
+            record.execution_boundary = crate::execution_scope::recorded_state(&execution_state);
             // This generation's pack, not the previous one's: a seat restaged
             // from a moved ref runs a different commit, and the 44223 has to
             // say which.
@@ -4552,6 +4774,13 @@ impl Provider {
             &target,
             None,
             payload::status_item_with_reason(status, reason),
+            Priority::High,
+        )?;
+        self.enqueue_transcript(
+            plan.channel_id,
+            &target,
+            None,
+            execution_scope::boundary_status_item(&execution_state),
             Priority::High,
         )?;
         self.publish_metadata(plan.channel_id, &target, SessionStatus::Idle)?;
@@ -4807,6 +5036,227 @@ impl Provider {
         } else {
             Err(anyhow::anyhow!(completion_errors.join("; ")))
         }
+    }
+
+    /// Whether the relay shows `project_ref`'s deletion applied, re-checked at
+    /// every start and resume. Records the head it sees. `false` when there
+    /// is no project, no relay yet, or the answer is unknown: a deletion is
+    /// acted on only when shown.
+    async fn project_deleted(&mut self, project_ref: Option<&str>) -> bool {
+        let (Some(project), Some(rest)) = (project_ref, self.rest_client.clone()) else {
+            return false;
+        };
+        let seen = self.seen_project_head(project);
+        let fact = project_deletion::revalidate(&rest, project, seen).await;
+        self.apply_project_fact(project, &fact);
+        let deleted = fact == project_deletion::ProjectFact::Deleted;
+        if deleted {
+            self.stop_project_executions(project);
+        }
+        deleted
+    }
+
+    /// Start the deletion listener. Needs no relay identity: a tombstone's
+    /// authority is the relay's admission, and whether it applies is checked
+    /// against the relay's own answer before anything stops.
+    pub fn start_project_deletion_listener(&mut self) {
+        let (listener, events) = project_deletion::ProjectDeletionListener::spawn(
+            project_deletion::DeletionListenerConfig {
+                relay_url: self.config.relay_url.clone(),
+                keys: self.config.keys.clone(),
+                auth_tag: self.config.auth_tag.clone(),
+            },
+        );
+        self.project_deletion_listener = Some(listener);
+        self.project_deletion_events = Some(events);
+        self.sync_project_deletion_listener();
+    }
+
+    /// Watch exactly the projects that have open executions here.
+    fn sync_project_deletion_listener(&self) {
+        if let Some(listener) = &self.project_deletion_listener {
+            let projects: BTreeSet<String> = self
+                .state
+                .sessions()
+                .filter(|record| !record.closed)
+                .filter_map(|record| record.project_ref.clone())
+                .collect();
+            listener.watch(projects);
+        }
+    }
+
+    /// A candidate is judged off the loop; a judgement is applied here.
+    fn handle_project_deletion_event(&mut self, event: project_deletion::ProjectDeletionEvent) {
+        match event {
+            project_deletion::ProjectDeletionEvent::Candidate {
+                project,
+                tombstone_at,
+            } => {
+                let (Some(rest), Some(listener)) = (
+                    self.rest_client.clone(),
+                    self.project_deletion_listener.as_ref(),
+                ) else {
+                    return;
+                };
+                let reporter = listener.reporter();
+                let seen = self.seen_project_head(&project);
+                tokio::spawn(async move {
+                    let fact = project_deletion::check(&rest, &project, tombstone_at, seen).await;
+                    let _ = reporter
+                        .send(project_deletion::ProjectDeletionEvent::Checked {
+                            project,
+                            tombstone_at,
+                            fact,
+                        })
+                        .await;
+                });
+            }
+            project_deletion::ProjectDeletionEvent::Checked {
+                project,
+                tombstone_at,
+                fact,
+            } => {
+                self.apply_project_fact(&project, &fact);
+                // Judged off the loop: a newer head this host witnessed in
+                // the meantime (the project re-created) outranks it.
+                let superseded = self
+                    .seen_project_head(&project)
+                    .is_some_and(|seen| seen > tombstone_at);
+                if fact == project_deletion::ProjectFact::Deleted && !superseded {
+                    self.stop_project_executions(&project);
+                }
+            }
+        }
+    }
+
+    /// The newest head of `project` this host has seen served: its records'
+    /// durable fact, or one seen by a create before its record existed.
+    fn seen_project_head(&self, project: &str) -> Option<u64> {
+        self.state
+            .sessions()
+            .filter(|record| record.project_ref.as_deref() == Some(project))
+            .filter_map(|record| record.project_head_seen_at)
+            .chain(self.project_heads.get(project).copied())
+            .max()
+    }
+
+    fn apply_project_fact(&mut self, project: &str, fact: &project_deletion::ProjectFact) {
+        match fact {
+            project_deletion::ProjectFact::Present { head_at } => {
+                let seen = self
+                    .project_heads
+                    .entry(project.to_owned())
+                    .or_insert(*head_at);
+                *seen = (*seen).max(*head_at);
+                let head_at = *head_at;
+                let records: Vec<String> = self
+                    .state
+                    .sessions()
+                    .filter(|record| {
+                        record.project_ref.as_deref() == Some(project)
+                            && record
+                                .project_head_seen_at
+                                .is_none_or(|seen| seen < head_at)
+                    })
+                    .map(|record| record.session_id.clone())
+                    .collect();
+                for session_id in records {
+                    if let Err(error) = self.state.update_session(&session_id, |record| {
+                        record.project_head_seen_at = Some(head_at);
+                    }) {
+                        tracing::warn!(target: "csp::projects", %session_id, "could not record the project head: {error}");
+                    }
+                }
+            }
+            project_deletion::ProjectFact::Unknown(reason) => {
+                tracing::warn!(target: "csp::projects", %project, "project deletion not decided: {reason}");
+            }
+            project_deletion::ProjectFact::NotApplied | project_deletion::ProjectFact::Deleted => {}
+        }
+    }
+
+    /// Stop every open execution of a deleted project.
+    fn stop_project_executions(&mut self, project: &str) {
+        let affected: Vec<String> = self
+            .state
+            .sessions()
+            .filter(|record| !record.closed && record.project_ref.as_deref() == Some(project))
+            .map(|record| record.session_id.clone())
+            .collect();
+        for session_id in affected {
+            if let Err(error) = self
+                .stop_for_withdrawn_authority(&session_id, "this execution's project was deleted")
+            {
+                tracing::error!(target: "csp::projects", %session_id, "could not stop: {error}");
+            }
+        }
+    }
+
+    /// Stop one execution whose own authority was withdrawn, through the same
+    /// terminal path an operator's stop takes: the record is closed and
+    /// marked before anything else, the lease released, admitted turns
+    /// refused, and the adapter's whole process group stopped. A resume or
+    /// restore of the record is refused afterwards
+    /// ([`state::SessionRecord::authority_withdrawn`]).
+    fn stop_for_withdrawn_authority(
+        &mut self,
+        session_id: &str,
+        reason: &str,
+    ) -> anyhow::Result<()> {
+        let Some(record) = self.state.session(session_id).cloned() else {
+            return Ok(());
+        };
+        if record.closed {
+            return Ok(());
+        }
+        let target = self.target_for(&record);
+        let target_key = coding_session_target_key(&target);
+        prepare_terminal_stop(
+            self,
+            |provider| {
+                provider.state.update_session(session_id, |record| {
+                    record.closed = true;
+                    record.open_turn = None;
+                    record.authority_withdrawn = Some(reason.to_owned());
+                })?;
+                Ok(())
+            },
+            |provider| match provider.queue_lease(session_id, CodingSessionLeaseState::Released) {
+                Ok(()) => Ok(()),
+                Err(error) => {
+                    provider.pending_leases.remove(&target_key);
+                    provider.established_leases.remove(&target_key);
+                    Err(error)
+                }
+            },
+        )?;
+        self.publish_seat_requests();
+        let admitted: Vec<String> = self
+            .in_flight
+            .iter()
+            .filter(|(_, turn)| turn.session_id == session_id)
+            .map(|(command_id, _)| command_id.clone())
+            .collect();
+        for command_id in admitted {
+            self.in_flight.remove(&command_id);
+            let receipt = LifecycleReceipt::failed(
+                &command_id,
+                payload::ACTOR_UNAVAILABLE,
+                &format!("{reason}, so this turn will not run"),
+            );
+            if let Err(error) = self.enqueue_receipt(record.channel_id, &command_id, &receipt) {
+                tracing::warn!(target: "csp", %command_id, "could not refuse a withdrawn turn: {error}");
+            }
+        }
+        self.sessions.shutdown(session_id);
+        self.discard_context_packages(session_id);
+        if let Err(error) =
+            self.publish_metadata(record.channel_id, &target, SessionStatus::Stopped)
+        {
+            tracing::warn!(target: "csp", %session_id, "could not publish the withdrawn stop: {error}");
+        }
+        tracing::warn!(target: "csp", %session_id, "execution stopped: {reason}");
+        Ok(())
     }
 
     async fn on_turn(
@@ -7094,6 +7544,15 @@ impl Provider {
         }
         if let Some(record) = self.state.session(session_id).cloned() {
             self.fence_native_steer_authority(&record);
+            // The execution's own seat withdrawn: its process stops now, not
+            // at its next resume. Another actor's seat, or an operator's
+            // grant, leaves it running.
+            if accepted.transition_type == CodingSessionAuthorityTransitionType::RevokeSeat
+                && !record.closed
+                && record.actor.as_deref() == Some(accepted.grantee_pubkey.as_str())
+            {
+                self.stop_for_withdrawn_authority(session_id, "this execution's seat was revoked")?;
+            }
         }
         tracing::info!(
             target: "csp::authority",
@@ -8405,8 +8864,12 @@ impl Provider {
                 }
             }
         }
+        let scope = match (resolved.present(), self.state.session(&target.session_id)) {
+            (Some(cwd), Some(record)) => self.host_git_request(record, cwd).prepare().await,
+            _ => None,
+        };
         let tree = match resolved.present() {
-            Some(cwd) => match git_probe::probe_verification_input(cwd).await {
+            Some(cwd) => match git_probe::probe_verification_input(cwd, scope.as_ref()).await {
                 Ok(tree) => tree,
                 Err(refusal) => {
                     tracing::warn!(
@@ -8804,7 +9267,8 @@ impl Provider {
         // The branch is read from the tree rather than assumed: only a branch
         // the seat is already on, or one no branch holds, may be moved, and
         // guessing a name here is how somebody else's work would get reset.
-        let Some(branch) = git_probe::probe(cwd).await.branch else {
+        // Reading the branch runs nothing of the repository's own.
+        let Some(branch) = git_probe::probe(cwd, None).await.branch else {
             tracing::info!(
                 target: "csp::verification_input",
                 %assignment_ref,
@@ -8866,6 +9330,7 @@ impl Provider {
             cwd: cwd.to_path_buf(),
             store: store.clone(),
             branch: checkout.branch.clone(),
+            state_dir: self.config.state_dir.clone(),
         };
         if record.is_established() && record.commit.as_deref() == Some(base_sha) {
             // The tree holds it now; the actor re-reads it under custody
@@ -8986,10 +9451,11 @@ impl Provider {
             return;
         };
         let recorded_cwd = record.cwd.clone();
+        let host_git = self.host_git_request(record, &recorded_cwd);
         let projects_file = self.config.projects_file.clone();
         let events = self.session_events_tx.clone();
         let session_id = session_id.to_owned();
-        tokio::spawn(async move {
+        self.git_probe_tasks.spawn(async move {
             let resolved = gate_cwd::resolve(projects_file.as_deref(), &session_id, &recorded_cwd);
             let Some(cwd) = resolved.present() else {
                 // No row. The sentence is the whole disclosure: an operator
@@ -9004,7 +9470,13 @@ impl Provider {
                 }
                 return;
             };
-            let probe = git_probe::probe_for_gate(cwd).await;
+            let scope = crate::execution_scope_host::HostGitRequest {
+                tree: cwd.to_path_buf(),
+                ..host_git
+            }
+            .prepare()
+            .await;
+            let probe = git_probe::probe_for_gate(cwd, scope.as_ref()).await;
             let mut observed = observed;
             let probe = match probe {
                 Ok(probe) => probe,
@@ -9036,11 +9508,26 @@ impl Provider {
         });
     }
 
+    /// Await every probe in flight, so a test's fixtures outlive the host
+    /// Git its own stop or create started.
+    #[cfg(test)]
+    pub(crate) async fn settle_git_probes(&mut self) {
+        let settled = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+            while self.git_probe_tasks.join_next().await.is_some() {}
+        })
+        .await;
+        assert!(
+            settled.is_ok(),
+            "a worktree probe did not finish within the deadline"
+        );
+    }
+
     fn spawn_git_probe(&mut self, session_id: &str) {
         let Some(record) = self.state.session(session_id) else {
             return;
         };
         let cwd = record.cwd.clone();
+        let host_git = self.host_git_request(record, &cwd);
         let repo_ref = record.repo_ref.clone();
         let generation = {
             let next = self
@@ -9053,8 +9540,9 @@ impl Provider {
         let events = self.session_events_tx.clone();
         let rest_client = self.rest_client.clone();
         let session_id = session_id.to_owned();
-        tokio::spawn(async move {
-            let observed = git_probe::probe(&cwd).await;
+        self.git_probe_tasks.spawn(async move {
+            let scope = host_git.prepare().await;
+            let observed = git_probe::probe(&cwd, scope.as_ref()).await;
             let reachability = match (&observed.commit, &repo_ref, &rest_client) {
                 (Some(oid), Some(repo_ref), Some(rest_client)) => {
                     reachability::check(rest_client, repo_ref, oid).await
@@ -11451,6 +11939,10 @@ mod tests {
     mod team_wake_relevance_tests;
     #[path = "verification_input_tests.rs"]
     mod verification_input_tests;
+    // Stops are shown by process groups disappearing: Unix only.
+    #[cfg(unix)]
+    #[path = "withdrawn_authority_tests.rs"]
+    mod withdrawn_authority_tests;
     // Custody through the real actor path (lane 219, re-check R2/R3).
     #[path = "custody_boundary_tests.rs"]
     mod custody_boundary_tests;
@@ -11533,6 +12025,8 @@ mod tests {
         /// The identity this fake advertises, so a test can serve one, take it
         /// away, or put it back mid-run.
         relay_self: Arc<Mutex<Option<String>>>,
+        /// The fake's WebSocket URL, for a listener of its own.
+        url: String,
     }
 
     /// Minimal NIP-01 filter matching for the fake relay's `/query` bridge:
@@ -11583,6 +12077,20 @@ mod tests {
         }
         if let Some(since) = filter.get("since").and_then(serde_json::Value::as_u64) {
             if event.created_at.as_secs() < since {
+                return false;
+            }
+        }
+        // Address tag: a project deletion names its coordinate this way.
+        if let Some(wanted) = filter.get("#a").and_then(serde_json::Value::as_array) {
+            let named = event.tags.iter().any(|tag| {
+                let tag = tag.as_slice();
+                tag.len() >= 2
+                    && tag[0] == "a"
+                    && wanted
+                        .iter()
+                        .any(|value| value.as_str() == Some(tag[1].as_str()))
+            });
+            if !named {
                 return false;
             }
         }
@@ -11670,6 +12178,44 @@ mod tests {
             let Ok(value) = serde_json::from_str::<serde_json::Value>(message.as_str()) else {
                 continue;
             };
+            // A subscription: every stored event any filter matches, then
+            // EOSE. What a listener replays on connect.
+            if value.pointer("/0").and_then(serde_json::Value::as_str) == Some("REQ") {
+                let Some(id) = value.pointer("/1").and_then(serde_json::Value::as_str) else {
+                    continue;
+                };
+                let filters: Vec<serde_json::Value> = value
+                    .as_array()
+                    .map(|parts| parts[2..].to_vec())
+                    .unwrap_or_default();
+                let matched: Vec<Event> = state
+                    .events
+                    .lock()
+                    .expect("events lock")
+                    .iter()
+                    .filter(|event| {
+                        filters
+                            .iter()
+                            .any(|filter| test_filter_matches(filter, event))
+                    })
+                    .cloned()
+                    .collect();
+                for event in matched {
+                    let frame = serde_json::json!(["EVENT", id, event]).to_string();
+                    if socket
+                        .send(AxumWsMessage::Text(frame.into()))
+                        .await
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+                let eose = serde_json::json!(["EOSE", id]).to_string();
+                if socket.send(AxumWsMessage::Text(eose.into())).await.is_err() {
+                    return;
+                }
+                continue;
+            }
             if value.pointer("/0").and_then(serde_json::Value::as_str) != Some("EVENT") {
                 continue;
             }
@@ -11853,6 +12399,7 @@ mod tests {
                 reject_next_publish,
                 deferred,
                 relay_self,
+                url: relay_url.clone(),
             },
             server,
         )
@@ -12214,6 +12761,11 @@ mod tests {
             max_turn_duration: Duration::from_secs(7200),
             include_thoughts: true,
             command_horizon: Duration::from_secs(86_400),
+            // These fixtures launch shell doubles, not Claude or Codex: they
+            // opt into the test runtime profile here, so the provider still
+            // prepares a full boundary around them but never reaches for a
+            // real runtime's login or state.
+            runtime_profile_override: Some(crate::execution_scope::RuntimeProfile::TestDouble),
         }
     }
 
@@ -12317,6 +12869,28 @@ mod tests {
             serde_json::json!({
                 "version": 1,
                 "channels": { channel_id.to_string(): cwd },
+            })
+            .to_string(),
+        )
+        .expect("write projects");
+        path
+    }
+
+    /// As [`write_projects`], with `cwd` also recorded as `project`'s
+    /// checkout: a create naming that project runs in its own workspace.
+    fn write_project_checkout(
+        dir: &Path,
+        channel_id: Uuid,
+        cwd: &Path,
+        project: &str,
+    ) -> std::path::PathBuf {
+        let path = dir.join("projects.json");
+        std::fs::write(
+            &path,
+            serde_json::json!({
+                "version": 1,
+                "channels": { channel_id.to_string(): cwd },
+                "projects": { project: cwd },
             })
             .to_string(),
         )
@@ -12594,17 +13168,20 @@ mod tests {
         let payload = buzz_core::coding_session_authority_transition::
             decode_coding_session_authority_transition(&transition.content)
             .expect("transition payload");
+        let mut content = serde_json::json!({
+            "type": authority::ACCEPTANCE_RECEIPT_TYPE,
+            "genesisRef": payload.genesis_ref,
+            "acceptedEventId": transition.id.to_hex(),
+            "seq": payload.seq,
+            "transitionType": payload.transition_type,
+            "granteePubkey": payload.grantee_pubkey,
+        });
+        if let Some(role) = &payload.role {
+            content["role"] = serde_json::json!(role);
+        }
         nostr::EventBuilder::new(
             nostr::Kind::Custom(KIND_SYSTEM_MESSAGE as u16),
-            serde_json::json!({
-                "type": authority::ACCEPTANCE_RECEIPT_TYPE,
-                "genesisRef": payload.genesis_ref,
-                "acceptedEventId": transition.id.to_hex(),
-                "seq": payload.seq,
-                "transitionType": payload.transition_type,
-                "granteePubkey": payload.grantee_pubkey,
-            })
-            .to_string(),
+            content.to_string(),
         )
         .tags(vec![
             nostr::Tag::parse(["h", &channel_id.to_string()]).expect("tag")
@@ -12831,6 +13408,10 @@ mod tests {
     /// authority tests that need no live agent behind the record.
     fn governed_record(channel_id: Uuid, cwd: &Path, genesis_ref: &str) -> SessionRecord {
         SessionRecord {
+            execution_binding: None,
+            execution_boundary: None,
+            authority_withdrawn: None,
+            project_head_seen_at: None,
             session_id: Uuid::new_v4().to_string(),
             generation: 1,
             channel_id,
@@ -13126,6 +13707,14 @@ mod tests {
         assert!(provider.pending_leases.is_empty());
 
         assert_eq!(provider.flush_one(&sink).await.expect("third ack"), 1);
+        provider
+            .queue_initial_live_leases()
+            .expect("prerequisite scan");
+        assert!(
+            provider.pending_leases.is_empty(),
+            "the boundary disclosure is a fact too"
+        );
+        assert_eq!(provider.flush_one(&sink).await.expect("fourth ack"), 1);
         assert_eq!(provider.pending_publishes(), 1, "unrelated row remains");
         provider
             .queue_initial_live_leases()
@@ -13345,8 +13934,11 @@ mod tests {
             .collect();
         assert_eq!(
             disclosures,
-            vec![serde_json::json!("session_fresh")],
-            "a fresh create publishes exactly one continuity disclosure"
+            vec![
+                serde_json::json!("session_fresh"),
+                serde_json::json!(execution_scope::STATUS_BOUNDARY_ENFORCED),
+            ],
+            "a fresh create publishes exactly one continuity disclosure, then what it runs inside"
         );
     }
 
@@ -14035,11 +14627,18 @@ mod tests {
         provider.flush(&sink).await.expect("flush");
         assert_eq!(
             status_items(&sink),
-            vec![serde_json::json!({
-                "kind": "status",
-                "status": "session_fresh",
-                "reason": "no_prior_execution",
-            })]
+            vec![
+                serde_json::json!({
+                    "kind": "status",
+                    "status": "session_fresh",
+                    "reason": "no_prior_execution",
+                }),
+                serde_json::json!({
+                    "kind": "status",
+                    "status": execution_scope::STATUS_BOUNDARY_ENFORCED,
+                    "reason": buzz_acp::exec_boundary::BACKEND_MACOS_SEATBELT,
+                }),
+            ]
         );
     }
 
@@ -17259,9 +17858,9 @@ mod tests {
             .expect("replay");
 
         assert_eq!(provider.state().sessions().count(), 1);
-        // Receipt, metadata, and the one continuity disclosure — the replay adds
-        // nothing.
-        assert_eq!(provider.pending_publishes(), 3);
+        // Receipt, metadata, the one continuity disclosure and the boundary
+        // disclosure — the replay adds nothing.
+        assert_eq!(provider.pending_publishes(), 4);
     }
 
     /// Restart mid-flight: the durable ledger, not memory, is what makes the
@@ -17554,6 +18153,10 @@ mod tests {
             let mut store = StateStore::open(&state_dir, 86_400).expect("state store");
             store
                 .insert_session(SessionRecord {
+                    execution_binding: None,
+                    execution_boundary: None,
+                    authority_withdrawn: None,
+                    project_head_seen_at: None,
                     session_id: "11111111-1111-4111-8111-111111111111".into(),
                     generation: 1,
                     channel_id,
@@ -17663,8 +18266,14 @@ mod tests {
             .collect();
         assert_eq!(
             kinds,
-            vec!["status", "user_prompt", "assistant_text", "result"],
-            "the create's continuity disclosure opens the transcript"
+            vec![
+                "status",
+                "status",
+                "user_prompt",
+                "assistant_text",
+                "result"
+            ],
+            "the create's continuity and boundary disclosures open the transcript"
         );
 
         // Sequences are dense and start at 1, and every item of the turn shares
@@ -17673,7 +18282,7 @@ mod tests {
             .iter()
             .filter_map(|item| item["eventSeq"].as_u64())
             .collect();
-        assert_eq!(seqs, vec![1, 2, 3, 4]);
+        assert_eq!(seqs, vec![1, 2, 3, 4, 5]);
         let turn_ids: Vec<&str> = transcripts
             .iter()
             .filter_map(|item| item["turnId"].as_str())
@@ -18239,8 +18848,9 @@ mod tests {
                     .expect("transcript"),
             );
         }
-        // Sequence 1 was spent on the create's own continuity disclosure.
-        assert_eq!(seqs, vec![Some(2), Some(3), Some(4)]);
+        // Sequences 1 and 2 were spent on the create's own continuity and
+        // boundary disclosures.
+        assert_eq!(seqs, vec![Some(3), Some(4), Some(5)]);
     }
 
     /// Every stage of one turn is on the wire, and the echo names the command
@@ -19041,7 +19651,7 @@ done
         std::fs::create_dir_all(&cwd).expect("mkdir");
         let channel_id = Uuid::new_v4();
         let projects = write_projects(dir.path(), channel_id, &cwd);
-        let log_path = dir.path().join("prompts.log");
+        let log_path = cwd.join("prompts.log");
         let agent = fake_agent(
             dir.path(),
             "logging-agent",

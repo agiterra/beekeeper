@@ -75,6 +75,9 @@ pub struct TurnRequirement {
     pub store: AssignmentInputStore,
     /// The seat's branch, read from the tree when the requirement was made.
     pub branch: String,
+    /// Where the boundary the tree's Git runs inside is prepared (the
+    /// provider's state dir).
+    pub state_dir: PathBuf,
 }
 
 /// The outcome of asking for one seat's input to be established.
@@ -345,6 +348,7 @@ pub async fn establish_for_turn(
     let task_owner = owner.clone();
     let store = requirement.store.clone();
     let assignment_ref = requirement.assignment_ref.clone();
+    let state_dir = requirement.state_dir.clone();
     let checkout = SeatCheckout {
         path: requirement.cwd.clone(),
         branch: requirement.branch.clone(),
@@ -361,6 +365,7 @@ pub async fn establish_for_turn(
                 &attempt_store,
                 &attempt_id,
                 &checkout,
+                &state_dir,
                 &attempt_owner,
                 &attempt_is_live,
             )
@@ -576,7 +581,16 @@ pub async fn verify_for_turn(session_id: &str, command_id: &str) -> TurnCustody 
         .and_then(Result::ok)
         .flatten()
     };
-    let observed = crate::git_probe::probe_verification_input(&requirement.cwd)
+    let scope = crate::execution_scope_host::HostGitRequest {
+        state_dir: requirement.state_dir.clone(),
+        project_ref: None,
+        checkout: None,
+        tree: requirement.cwd.clone(),
+        association: crate::execution_scope::WorkspaceAssociation::Unbound,
+    }
+    .prepare()
+    .await;
+    let observed = crate::git_probe::probe_verification_input(&requirement.cwd, scope.as_ref())
         .await
         .ok();
     let head = observed.as_ref().and_then(|tree| tree.head.clone());

@@ -177,13 +177,19 @@ impl Fixture {
     }
 }
 
+/// A disposable state directory for the bounded Git establishment runs.
+fn host_state() -> PathBuf {
+    let dir = fixture_dir("host-state");
+    dir.canonicalize().unwrap_or(dir)
+}
+
 /// Run one attempt for this fixture's assignment.
 fn run(
     fixture: &mut Fixture,
     commit: &str,
 ) -> Result<EstablishedAssignmentInput, EstablishAssignmentInputError> {
     let request = fixture.request(commit);
-    establish(&mut fixture.store, &request)
+    establish(&mut fixture.store, &request, &host_state())
 }
 
 #[test]
@@ -223,7 +229,7 @@ fn a_seat_this_host_never_recorded_is_refused_rather_than_searched_for() {
         commit: Some(local.clone()),
         branch: None,
     };
-    let refusal = establish(&mut fixture.store, &request).expect_err("refused");
+    let refusal = establish(&mut fixture.store, &request, &host_state()).expect_err("refused");
     assert_eq!(refusal.code, EstablishAssignmentInputCode::UnrecordedTree);
     assert_ne!(
         fixture.seat_head(),
@@ -260,7 +266,7 @@ fn an_assignment_id_that_is_not_an_event_id_is_refused_and_records_nothing() {
         commit: Some(local),
         branch: None,
     };
-    let refusal = establish(&mut fixture.store, &request).expect_err("refused");
+    let refusal = establish(&mut fixture.store, &request, &host_state()).expect_err("refused");
     assert_eq!(refusal.code, EstablishAssignmentInputCode::InvalidInput);
     assert!(
         fixture.store.assignment_inputs.is_empty(),

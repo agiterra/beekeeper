@@ -39,6 +39,8 @@ const KILL_GRACE: Duration = Duration::from_millis(200);
 const REAP_DEADLINE: Duration = Duration::from_secs(2);
 /// How long one `git` probe may run before it is abandoned.
 const GIT_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long a fetch or a checkout inside a project boundary may take.
+const FETCH_TIMEOUT: Duration = Duration::from_secs(300);
 /// File names of the two artifact streams inside the artifact directory.
 pub const STDOUT_LOG: &str = "stdout.log";
 /// See [`STDOUT_LOG`].
@@ -214,7 +216,16 @@ pub fn resolve_working_directory(
 /// error here: it is reported through [`HostCommand::wait`] as exit
 /// [`SPAWN_FAILURE_EXIT_CODE`] with the OS reason in the stderr tail, so the
 /// step's result is a fact about the run rather than a provider failure.
-pub async fn spawn(prepared: PreparedCommand, artifact_dir: &Path) -> io::Result<HostCommand> {
+///
+/// `launch` says, explicitly, what the command runs inside: a prepared
+/// project boundary with exactly its resolved environment
+/// ([`crate::execution_scope_host`]), or — only where no backend exists, or in
+/// a unit test of unrelated behaviour — nothing, named with its reason.
+pub async fn spawn(
+    prepared: PreparedCommand,
+    artifact_dir: &Path,
+    launch: HostLaunch<'_>,
+) -> io::Result<HostCommand> {
     tokio::fs::create_dir_all(artifact_dir).await?;
     let stdout_path = artifact_dir.join(STDOUT_LOG);
     let stderr_path = artifact_dir.join(STDERR_LOG);
@@ -227,20 +238,38 @@ pub async fn spawn(prepared: PreparedCommand, artifact_dir: &Path) -> io::Result
             "run_on_host command is empty",
         ));
     };
-    let mut cmd = Command::new(program);
-    cmd.args(args);
-    cmd.current_dir(&prepared.cwd);
-    // Strip the provider's own credentials (`BUZZ_*` and the enumerated
-    // keys) before the step's environment is layered on, exactly as every
-    // adapter this sidecar spawns is stripped.
-    for (key, _) in std::env::vars_os() {
-        if FENCE.covers(&key.to_string_lossy()) {
-            cmd.env_remove(&key);
+    let mut cmd = match launch {
+        HostLaunch::Bounded(launch) => {
+            let args: Vec<String> = args.to_vec();
+            let (program, argv) = launch.boundary().wrap(program, &args);
+            let mut cmd = Command::new(program);
+            cmd.args(argv);
+            // The step's own validated directory inside the bounded tree.
+            cmd.current_dir(&prepared.cwd);
+            cmd.env_clear();
+            for (name, value) in launch.env().vars() {
+                cmd.env(name, value);
+            }
+            cmd
         }
-    }
-    for (name, value) in &prepared.env {
-        cmd.env(name, value);
-    }
+        HostLaunch::Unenforced { .. } => {
+            let mut cmd = Command::new(program);
+            cmd.args(args);
+            cmd.current_dir(&prepared.cwd);
+            // Strip the provider's own credentials (`BUZZ_*` and the
+            // enumerated keys) before the step's environment is layered on,
+            // exactly as every adapter this sidecar spawns is stripped.
+            for (key, _) in std::env::vars_os() {
+                if FENCE.covers(&key.to_string_lossy()) {
+                    cmd.env_remove(&key);
+                }
+            }
+            for (name, value) in &prepared.env {
+                cmd.env(name, value);
+            }
+            cmd
+        }
+    };
     cmd.stdin(Stdio::null());
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
@@ -381,16 +410,30 @@ impl HostCommand {
     }
 }
 
+/// What a host command runs inside, stated by the caller.
+#[derive(Debug, Clone, Copy)]
+pub enum HostLaunch<'a> {
+    /// A prepared, verified project boundary.
+    Bounded(&'a buzz_acp::acp::BoundedLaunch),
+    /// Nothing is enforced: a platform with no backend, or a unit test of
+    /// unrelated behaviour. The reason is disclosed wherever the run is.
+    Unenforced {
+        /// Stable reason code.
+        reason: &'static str,
+    },
+}
+
 /// Prepare, spawn and wait in one call.
 pub async fn run(
     spec: &ResolvedRunOnHost,
     checkout: &Path,
     artifact_dir: &Path,
     host_env: &HashMap<String, String>,
+    launch: HostLaunch<'_>,
 ) -> io::Result<HostCommandOutcome> {
     let prepared = prepare(spec, checkout, host_env)
         .map_err(|refusal| io::Error::new(io::ErrorKind::InvalidInput, refusal.message))?;
-    let command = spawn(prepared, artifact_dir).await?;
+    let command = spawn(prepared, artifact_dir, launch).await?;
     Ok(command.wait().await)
 }
 
@@ -424,19 +467,38 @@ fn commit_field(trigger_context: &serde_json::Value, keys: &[&str]) -> Option<St
         .filter(|value| value.bytes().any(|b| b != b'0'))
 }
 
-/// Cut a detached worktree of `checkout` at `commit` under `dir`, fetching
-/// first when the commit is not yet local (the push went to the relay, and
-/// this checkout may not have pulled it). Refused when the commit is still
-/// unknown after the fetch.
-pub async fn cut_worktree(checkout: &Path, commit: &str, dir: &Path) -> Result<(), String> {
+/// Cut a detached worktree of `checkout` at `commit` under `dir` **without
+/// checking out any file**, fetching first when the commit is not yet local.
+///
+/// Nothing of the project's runs on the host here: the fetch runs inside
+/// `checkout_plan` (the repository's configuration can name the transport
+/// programs a fetch runs), and the cut itself is metadata only — no hook
+/// (`core.hooksPath=/dev/null`) and no smudge filter, because nothing is
+/// checked out. The tree is materialized afterwards by
+/// [`materialize_worktree`], inside the step's own boundary.
+///
+/// # Errors
+/// The commit is unknown after fetching, or the cut failed.
+pub async fn cut_worktree_unmaterialized(
+    checkout_plan: &crate::execution_scope_host::HostLaunchPlan,
+    checkout: &Path,
+    commit: &str,
+    dir: &Path,
+) -> Result<(), String> {
     let spec = format!("{commit}^{{commit}}");
     if git_output(checkout, &["cat-file", "-e", &spec])
         .await
         .is_none()
     {
-        // Fetch everything the checkout's remotes offer; a specific-object
-        // fetch needs a remote name this host may not have recorded.
-        let _ = git_output(checkout, &["fetch", "--quiet", "--all"]).await;
+        // Every remote the checkout offers: a specific-object fetch needs a
+        // remote name this host may not have recorded.
+        let _ = plan_git_output(
+            checkout_plan,
+            checkout,
+            &["fetch", "--quiet", "--all", "--no-write-fetch-head"],
+            FETCH_TIMEOUT,
+        )
+        .await;
         if git_output(checkout, &["cat-file", "-e", &spec])
             .await
             .is_none()
@@ -455,7 +517,15 @@ pub async fn cut_worktree(checkout: &Path, commit: &str, dir: &Path) -> Result<(
     let dir_text = dir.to_string_lossy().into_owned();
     git_output(
         checkout,
-        &["worktree", "add", "--detach", "--quiet", &dir_text, commit],
+        &[
+            "worktree",
+            "add",
+            "--no-checkout",
+            "--detach",
+            "--quiet",
+            &dir_text,
+            commit,
+        ],
     )
     .await
     .map(|_| ())
@@ -467,7 +537,48 @@ pub async fn cut_worktree(checkout: &Path, commit: &str, dir: &Path) -> Result<(
     })
 }
 
-/// Remove a worktree [`cut_worktree`] made. Best effort; the directory is
+/// Check out `commit` into a worktree cut by [`cut_worktree_unmaterialized`],
+/// inside `plan`'s boundary: any smudge filter the checkout runs is the
+/// project's own code, and runs with the project's rights only. Verified
+/// afterwards: `HEAD` is `commit` and the tree matches it.
+///
+/// # Errors
+/// The checkout failed, or its result is not exactly `commit`.
+pub async fn materialize_worktree(
+    plan: &crate::execution_scope_host::HostLaunchPlan,
+    dir: &Path,
+    commit: &str,
+) -> Result<(), String> {
+    let output = plan_git_run(
+        plan,
+        dir,
+        &["reset", "--hard", "--quiet", commit],
+        FETCH_TIMEOUT,
+    )
+    .await
+    .map_err(|error| format!("checking out {commit} could not run: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "checking out {commit} inside the project boundary failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let (head, dirty) = git_head_and_dirty(plan, dir).await;
+    match (head, dirty) {
+        (Some(head), Some(false)) if head == commit.to_ascii_lowercase() => Ok(()),
+        (head, dirty) => Err(format!(
+            "the checkout of {commit} is not that commit's tree (HEAD {}, {})",
+            head.as_deref().unwrap_or("unknown"),
+            match dirty {
+                Some(true) => "modified",
+                Some(false) => "clean",
+                None => "status unknown",
+            }
+        )),
+    }
+}
+
+/// Remove a worktree [`cut_worktree_unmaterialized`] made. Best effort; the directory is
 /// under the host's own state and a leftover is disclosed in the log.
 pub async fn remove_worktree(checkout: &Path, dir: &Path) {
     let dir_text = dir.to_string_lossy().into_owned();
@@ -484,22 +595,50 @@ pub async fn remove_worktree(checkout: &Path, dir: &Path) {
 }
 
 /// `git rev-parse HEAD` and whether `git status --porcelain` is non-empty,
-/// each `None` when git could not answer within a bounded time.
-pub async fn git_head_and_dirty(checkout: &Path) -> (Option<String>, Option<bool>) {
-    let head = git_output(checkout, &["rev-parse", "HEAD"])
+/// each `None` when git could not answer within a bounded time. Status runs
+/// inside `plan` (it can run the repository's clean filters and fsmonitor).
+pub async fn git_head_and_dirty(
+    plan: &crate::execution_scope_host::HostLaunchPlan,
+    dir: &Path,
+) -> (Option<String>, Option<bool>) {
+    let head = git_output(dir, &["rev-parse", "HEAD"])
         .await
         .map(|text| text.trim().to_ascii_lowercase())
         .filter(|sha| sha.len() == 40 && sha.bytes().all(|b| b.is_ascii_hexdigit()));
-    let dirty = git_output(checkout, &["status", "--porcelain"])
+    let dirty = plan_git_output(plan, dir, &["status", "--porcelain"], GIT_PROBE_TIMEOUT)
         .await
         .map(|text| !text.trim().is_empty());
     (head, dirty)
 }
 
-async fn git_output(checkout: &Path, args: &[&str]) -> Option<String> {
-    let mut cmd = Command::new("git");
+/// A `git` command for an operation that runs none of the repository's own
+/// code — reading refs and objects, cutting a worktree with nothing checked
+/// out, removing one with `--force` (no status check). Hooks and fsmonitor
+/// are off, nothing prompts, and the repository is chosen by the working
+/// directory alone. Anything that checks out, refreshes the index or fetches
+/// runs inside a prepared boundary instead
+/// ([`crate::execution_scope_host::HostLaunchPlan::git_command`]).
+#[must_use]
+pub fn metadata_git_command(dir: &Path) -> std::process::Command {
+    let mut command = std::process::Command::new("git");
+    for var in crate::git_probe::GIT_REPO_SELECTION_VARS {
+        command.env_remove(var);
+    }
+    command
+        .args([
+            "-c",
+            "core.hooksPath=/dev/null",
+            "-c",
+            "core.fsmonitor=false",
+        ])
+        .current_dir(dir)
+        .env("GIT_TERMINAL_PROMPT", "0");
+    command
+}
+
+async fn git_output(dir: &Path, args: &[&str]) -> Option<String> {
+    let mut cmd = Command::from(metadata_git_command(dir));
     cmd.args(args)
-        .current_dir(checkout)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -512,6 +651,36 @@ async fn git_output(checkout: &Path, args: &[&str]) -> Option<String> {
         return None;
     }
     Some(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// Run `git <args>` in `dir` inside `plan`.
+async fn plan_git_run(
+    plan: &crate::execution_scope_host::HostLaunchPlan,
+    dir: &Path,
+    args: &[&str],
+    limit: Duration,
+) -> io::Result<std::process::Output> {
+    let mut cmd = Command::from(plan.git_command(dir, args));
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    tokio::time::timeout(limit, cmd.output())
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "git did not finish in time"))?
+}
+
+async fn plan_git_output(
+    plan: &crate::execution_scope_host::HostLaunchPlan,
+    dir: &Path,
+    args: &[&str],
+    limit: Duration,
+) -> Option<String> {
+    let output = plan_git_run(plan, dir, args, limit).await.ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 /// Whether a process with `pid` exists on this host.
@@ -746,9 +915,17 @@ mod tests {
         let checkout = tempfile::tempdir().expect("tempdir");
         let artifacts = tempfile::tempdir().expect("tempdir");
         let env = HashMap::new();
-        let ok = run(&spec(&["true"], 5), checkout.path(), artifacts.path(), &env)
-            .await
-            .expect("run true");
+        let ok = run(
+            &spec(&["true"], 5),
+            checkout.path(),
+            artifacts.path(),
+            &env,
+            HostLaunch::Unenforced {
+                reason: "unit-test",
+            },
+        )
+        .await
+        .expect("run true");
         assert_eq!(ok.exit_code, Some(0));
         assert!(!ok.timed_out);
         assert!(artifacts.path().join(STDOUT_LOG).is_file());
@@ -757,6 +934,9 @@ mod tests {
             checkout.path(),
             artifacts.path(),
             &env,
+            HostLaunch::Unenforced {
+                reason: "unit-test",
+            },
         )
         .await
         .expect("run false");
@@ -773,6 +953,9 @@ mod tests {
             checkout.path(),
             artifacts.path(),
             &HashMap::new(),
+            HostLaunch::Unenforced {
+                reason: "unit-test",
+            },
         )
         .await
         .expect("run sleep");
@@ -792,9 +975,17 @@ mod tests {
         spec.env_from_host = vec!["TOKEN".into()];
         let mut env = HashMap::new();
         env.insert("TOKEN".to_owned(), "hunter2-secret".to_owned());
-        let outcome = run(&spec, checkout.path(), artifacts.path(), &env)
-            .await
-            .expect("run");
+        let outcome = run(
+            &spec,
+            checkout.path(),
+            artifacts.path(),
+            &env,
+            HostLaunch::Unenforced {
+                reason: "unit-test",
+            },
+        )
+        .await
+        .expect("run");
         assert_eq!(outcome.exit_code, Some(0));
         assert_eq!(outcome.stdout_tail.trim(), format!("token={SCRUBBED}"));
         assert_eq!(outcome.stderr_tail.trim(), SCRUBBED);
@@ -802,9 +993,17 @@ mod tests {
 
         // A stream longer than the tail keeps only its end and says so.
         let long = self::spec(&["sh", "-c", "yes abcdefgh | head -c 1000"], 5);
-        let outcome = run(&long, checkout.path(), artifacts.path(), &HashMap::new())
-            .await
-            .expect("run");
+        let outcome = run(
+            &long,
+            checkout.path(),
+            artifacts.path(),
+            &HashMap::new(),
+            HostLaunch::Unenforced {
+                reason: "unit-test",
+            },
+        )
+        .await
+        .expect("run");
         assert!(outcome.truncated);
         assert_eq!(outcome.stdout_tail.len(), 64);
         let artifact = std::fs::read(artifacts.path().join(STDOUT_LOG)).expect("artifact");
@@ -883,6 +1082,9 @@ mod tests {
             checkout.path(),
             artifacts.path(),
             &HashMap::new(),
+            HostLaunch::Unenforced {
+                reason: "unit-test",
+            },
         )
         .await
         .expect("run");
@@ -937,18 +1139,21 @@ mod tests {
             "-m",
             "x",
         ]);
-        let (head, dirty) = git_head_and_dirty(checkout.path()).await;
+        let plan = crate::execution_scope_host::HostLaunchPlan::Unenforced {
+            reason: "unit-test",
+        };
+        let (head, dirty) = git_head_and_dirty(&plan, checkout.path()).await;
         assert_eq!(head.map(|sha| sha.len()), Some(40));
         assert_eq!(dirty, Some(false));
         std::fs::write(checkout.path().join("new.txt"), "x").expect("write");
-        let (_, dirty) = git_head_and_dirty(checkout.path()).await;
+        let (_, dirty) = git_head_and_dirty(&plan, checkout.path()).await;
         assert_eq!(dirty, Some(true));
 
         let not_a_repo = tempfile::tempdir().expect("tempdir");
         // Not a repository: git answers with a non-zero status, so `None`
         // rather than a guess. (A parent repo would be found by git; a fresh
         // tempdir under /tmp has none.)
-        let (head, _) = git_head_and_dirty(not_a_repo.path()).await;
+        let (head, _) = git_head_and_dirty(&plan, not_a_repo.path()).await;
         assert!(head.is_none() || head.as_deref().map(str::len) == Some(40));
     }
 
@@ -1023,9 +1228,16 @@ mod tests {
         git(repo.path(), &["commit", "-q", "-am", "two"]).await;
 
         let worktree = tempfile::tempdir().expect("tempdir").path().join("wt");
-        cut_worktree(repo.path(), &first, &worktree)
+        let plan = crate::execution_scope_host::HostLaunchPlan::Unenforced {
+            reason: "unit-test",
+        };
+        cut_worktree_unmaterialized(&plan, repo.path(), &first, &worktree)
             .await
             .expect("cut");
+        assert!(!worktree.join("f").exists(), "the cut checks nothing out");
+        materialize_worktree(&plan, &worktree, &first)
+            .await
+            .expect("materialize");
         assert_eq!(
             tokio::fs::read_to_string(worktree.join("f"))
                 .await
@@ -1033,7 +1245,7 @@ mod tests {
             "one",
             "the worktree holds the older commit, not HEAD"
         );
-        let (head, dirty) = git_head_and_dirty(&worktree).await;
+        let (head, dirty) = git_head_and_dirty(&plan, &worktree).await;
         assert_eq!(head.as_deref(), Some(first.as_str()));
         assert_eq!(dirty, Some(false));
 
@@ -1053,7 +1265,10 @@ mod tests {
         git(repo.path(), &["init", "-q", "-b", "main"]).await;
         git(repo.path(), &["commit", "-q", "--allow-empty", "-m", "one"]).await;
         let worktree = tempfile::tempdir().expect("tempdir").path().join("wt");
-        let error = cut_worktree(repo.path(), &"f".repeat(40), &worktree)
+        let plan = crate::execution_scope_host::HostLaunchPlan::Unenforced {
+            reason: "unit-test",
+        };
+        let error = cut_worktree_unmaterialized(&plan, repo.path(), &"f".repeat(40), &worktree)
             .await
             .expect_err("unknown commit");
         assert!(error.contains("even after fetching"), "{error}");

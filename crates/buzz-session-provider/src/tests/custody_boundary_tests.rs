@@ -218,6 +218,7 @@ async fn an_ordinary_running_turn_holds_its_seats_custody() {
             cwd: seat.clone(),
             store,
             branch: "seat/verifier".to_owned(),
+            state_dir: crate::execution_scope_host::test_state_dir(),
         },
         Duration::from_secs(5),
     )
@@ -257,6 +258,7 @@ async fn a_prepared_running_turn_also_blocks_the_next_assignment() {
         cwd: seat.clone(),
         store: store.clone(),
         branch: "seat/verifier".to_owned(),
+        state_dir: crate::execution_scope_host::test_state_dir(),
     };
     for _ in 0..3 {
         let outcome = crate::assignment_custody::establish_for_turn(
@@ -322,6 +324,7 @@ async fn a_turn_refused_at_the_dequeue_is_discharged_with_a_visible_answer() {
             cwd: seat.clone(),
             store: store.clone(),
             branch: "seat/verifier".to_owned(),
+            state_dir: crate::execution_scope_host::test_state_dir(),
         },
     );
 
@@ -439,6 +442,7 @@ async fn a_dequeue_observation_never_clears_a_newer_attempts_owner() {
             cwd: seat.clone(),
             store: store.clone(),
             branch: "seat/verifier".to_owned(),
+            state_dir: crate::execution_scope_host::test_state_dir(),
         },
     );
     let custody = crate::assignment_custody::verify_for_turn(&session_id, "wake-1").await;
@@ -487,6 +491,7 @@ async fn a_dequeue_observation_is_written_when_the_row_is_the_one_it_saw() {
             cwd: seat.clone(),
             store: store.clone(),
             branch: "seat/verifier".to_owned(),
+            state_dir: crate::execution_scope_host::test_state_dir(),
         },
     );
     let custody = crate::assignment_custody::verify_for_turn(&session_id, "wake-1").await;
@@ -742,6 +747,7 @@ async fn an_establishment_that_outlives_the_wait_keeps_the_tree() {
             cwd: seat.clone(),
             store,
             branch: "seat/verifier".to_owned(),
+            state_dir: crate::execution_scope_host::test_state_dir(),
         },
         Duration::from_secs(30),
     )
@@ -892,7 +898,7 @@ async fn an_aborted_actor_leaves_no_grandchild_writing_the_seats_tree() {
         .await
         .expect("custody is free once the predecessor is proven gone");
     assert!(
-        group_is_gone(child_pid),
+        crate::session::testing::group_is_gone(child_pid),
         "custody was handed over while the predecessor's process group was still alive"
     );
     let at_handover = marker.metadata().map(|meta| meta.len()).unwrap_or_default();
@@ -904,18 +910,6 @@ async fn an_aborted_actor_leaves_no_grandchild_writing_the_seats_tree() {
          took custody"
     );
     drop(successor);
-}
-
-/// Whether nothing of `pid`'s process group is left.
-#[cfg(unix)]
-fn group_is_gone(pid: u32) -> bool {
-    use nix::sys::signal::killpg;
-    use nix::unistd::Pid;
-
-    matches!(
-        killpg(Pid::from_raw(i32::try_from(pid).unwrap_or(i32::MAX)), None),
-        Err(nix::errno::Errno::ESRCH)
-    )
 }
 
 /// A fenced seat is refused to **everything**, which is the honest answer
@@ -948,6 +942,7 @@ async fn a_fenced_seat_refuses_every_turn_and_every_establishment() {
             cwd: seat.clone(),
             store,
             branch: "seat/verifier".to_owned(),
+            state_dir: crate::execution_scope_host::test_state_dir(),
         },
         Duration::from_millis(50),
     )

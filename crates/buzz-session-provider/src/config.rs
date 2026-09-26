@@ -169,6 +169,11 @@ pub struct Config {
     pub redaction_retention: crate::redaction_vault::RetentionPolicy,
     /// Age past which an unseen command is ignored rather than acted on.
     pub command_horizon: Duration,
+    /// The runtime profile every launch uses instead of the one its driver
+    /// names. `None` in production — the driver decides. Set only by a test
+    /// fixture that launches shell doubles, which must say so explicitly when
+    /// it builds its configuration.
+    pub runtime_profile_override: Option<crate::execution_scope::RuntimeProfile>,
 }
 
 impl Config {
@@ -291,6 +296,7 @@ impl Config {
             emit_raw_sdk_frames,
             redaction_retention,
             command_horizon,
+            runtime_profile_override: None,
         })
     }
 

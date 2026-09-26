@@ -341,11 +341,10 @@ async fn create_with_repositories(
     let invites = parse_member_args(invited, &caller)?;
     // The seed's inputs are resolved before anything is published.
     let templates = crate::commands::pack::resolve_templates_dir(None).ok_or_else(|| {
-        CliError::Usage(
-            "no template catalog to seed the agents repository from: set BUZZ_TEMPLATES_DIR or \
-             run from a Beekeeper checkout (personas/templates); nothing was created"
-                .to_owned(),
-        )
+        CliError::Usage(format!(
+            "{}; nothing was created",
+            crate::commands::pack::no_templates_message()
+        ))
     })?;
     let catalog = buzz_persona::template::TemplateCatalog::load(&templates, "cli")
         .map_err(|e| CliError::Usage(format!("template catalog: {e}")))?;

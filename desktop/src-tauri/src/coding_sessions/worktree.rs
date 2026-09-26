@@ -593,11 +593,60 @@ fn create(
         Some(source) => format!("refs/heads/{source}"),
         None => "HEAD".to_string(),
     };
+    // Cut with nothing checked out — no hook and no filter runs on the host —
+    // then check the files out inside the new tree's project boundary, where
+    // the repository's own filters run with the project's rights and correct
+    // content, and prove the tree is exactly the commit.
+    let commit = run_git(
+        &[
+            "rev-parse",
+            "--verify",
+            &format!("{start_point}^{{commit}}"),
+        ],
+        Some(Path::new(&repo_root)),
+        &auth,
+    )?
+    .trim()
+    .to_string();
     run_git(
-        &["worktree", "add", "-b", &branch, &path, &start_point],
+        &[
+            "worktree",
+            "add",
+            "--no-checkout",
+            "-b",
+            &branch,
+            &path,
+            &commit,
+        ],
         Some(Path::new(&repo_root)),
         &auth,
     )?;
+    let name = format!("worktree\n{path}");
+    let materialized = super::host_git::materialize(
+        &super::host_git::Workspace {
+            tree: Path::new(&path),
+            repo_root: Some(Path::new(&repo_root)),
+            name: &name,
+            host_branch: None,
+            host_read: &[],
+        },
+        &["reset", "--hard", "--quiet", "HEAD"],
+        &commit,
+        true,
+    );
+    if let Err(error) = materialized {
+        let _ = run_git(
+            &["worktree", "remove", "--force", "--", &path],
+            Some(Path::new(&repo_root)),
+            &auth,
+        );
+        let _ = run_git(
+            &["branch", "-D", "--", &branch],
+            Some(Path::new(&repo_root)),
+            &auth,
+        );
+        return Err(format!("could not check out the new worktree: {error}"));
+    }
     Ok(CodingSessionWorktreeCreated {
         path,
         branch,
@@ -848,14 +897,27 @@ pub async fn record_coding_session_worktree(
 
 /// Remove one worktree directory and forget its record.
 ///
-/// Never `--force`: git refuses to remove a tree holding modifications, and
-/// that refusal is a feature here — it is the last guard under every decision
-/// made further up. `git worktree prune` afterwards clears the administrative
+/// A tree holding modifications is refused — the last guard under every
+/// decision made further up. The check is the tree's own `git status`, run
+/// inside its project boundary (it can run the repository's clean filters
+/// and fsmonitor); the removal itself is then `--force`, which runs no status
+/// of its own. `git worktree prune` afterwards clears the administrative
 /// entry the removal leaves behind.
 pub(crate) fn remove_worktree(repo_root: &Path, path: &Path) -> Result<(), String> {
     let auth = build_local_git_auth_config()?;
+    let status = super::host_git::status(path, Some(repo_root))?;
+    if !status.trim().is_empty() {
+        return Err(format!(
+            "'{}' contains modified or untracked files, so it was not removed",
+            path.display()
+        ));
+    }
     let path = path.to_string_lossy().into_owned();
-    run_git(&["worktree", "remove", "--", &path], Some(repo_root), &auth)?;
+    run_git(
+        &["worktree", "remove", "--force", "--", &path],
+        Some(repo_root),
+        &auth,
+    )?;
     run_git(&["worktree", "prune"], Some(repo_root), &auth)?;
     Ok(())
 }

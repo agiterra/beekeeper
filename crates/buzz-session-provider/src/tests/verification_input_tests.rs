@@ -191,9 +191,12 @@ async fn a_superseded_generation_is_left_to_the_staleness_refusal() {
 async fn a_clean_checkout_at_the_named_commit_is_established() {
     let dir = tempfile::tempdir().expect("tempdir");
     let head = repo_with_commit(dir.path());
-    let tree = crate::git_probe::probe_verification_input(dir.path())
-        .await
-        .expect("observed");
+    let tree = crate::git_probe::probe_verification_input(
+        dir.path(),
+        Some(&crate::execution_scope_host::UNBOUNDED_FOR_TESTS),
+    )
+    .await
+    .expect("observed");
     assert_eq!(
         check_seat_tree(&operation_id(), Some(&head), &tree),
         Ok(head.clone())
@@ -214,9 +217,12 @@ async fn a_clean_checkout_at_the_named_commit_is_established() {
 async fn an_assignment_without_a_base_sha_refuses() {
     let dir = tempfile::tempdir().expect("tempdir");
     repo_with_commit(dir.path());
-    let tree = crate::git_probe::probe_verification_input(dir.path())
-        .await
-        .expect("observed");
+    let tree = crate::git_probe::probe_verification_input(
+        dir.path(),
+        Some(&crate::execution_scope_host::UNBOUNDED_FOR_TESTS),
+    )
+    .await
+    .expect("observed");
     let refusal = check_seat_tree(&operation_id(), None, &tree).expect_err("must refuse");
     assert_eq!(refusal.code, VERIFICATION_INPUT_UNNAMED);
     assert!(
@@ -235,9 +241,12 @@ async fn a_checkout_at_another_commit_refuses_naming_both() {
     std::fs::write(dir.path().join("b.txt"), "b").expect("write");
     git(dir.path(), &["add", "b.txt"]);
     git(dir.path(), &["commit", "-q", "--no-gpg-sign", "-m", "two"]);
-    let tree = crate::git_probe::probe_verification_input(dir.path())
-        .await
-        .expect("observed");
+    let tree = crate::git_probe::probe_verification_input(
+        dir.path(),
+        Some(&crate::execution_scope_host::UNBOUNDED_FOR_TESTS),
+    )
+    .await
+    .expect("observed");
     let head = tree.head.clone().expect("head");
     assert_ne!(head, first);
 
@@ -259,9 +268,12 @@ async fn a_dirty_tree_refuses_with_the_line_count() {
     let head = repo_with_commit(dir.path());
     std::fs::write(dir.path().join("a.txt"), "changed").expect("write");
     std::fs::write(dir.path().join("untracked.txt"), "new").expect("write");
-    let tree = crate::git_probe::probe_verification_input(dir.path())
-        .await
-        .expect("observed");
+    let tree = crate::git_probe::probe_verification_input(
+        dir.path(),
+        Some(&crate::execution_scope_host::UNBOUNDED_FOR_TESTS),
+    )
+    .await
+    .expect("observed");
     let refusal = check_seat_tree(&operation_id(), Some(&head), &tree).expect_err("must refuse");
     assert_eq!(refusal.code, VERIFICATION_INPUT_TREE_DIRTY);
     assert!(
@@ -277,9 +289,12 @@ async fn a_dirty_tree_refuses_with_the_line_count() {
 #[tokio::test]
 async fn an_unreadable_checkout_refuses_rather_than_passing() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let plain = crate::git_probe::probe_verification_input(dir.path())
-        .await
-        .expect("observed");
+    let plain = crate::git_probe::probe_verification_input(
+        dir.path(),
+        Some(&crate::execution_scope_host::UNBOUNDED_FOR_TESTS),
+    )
+    .await
+    .expect("observed");
     assert_eq!(plain, SeatTree::default());
     assert_eq!(
         check_seat_tree(&operation_id(), Some(&"ab".repeat(20)), &plain)
@@ -376,9 +391,12 @@ async fn a_re_issued_assignment_is_admitted_after_a_refusal() {
     let checkout = dir.path().join("checkout");
     std::fs::create_dir_all(&checkout).expect("mkdir");
     let head = repo_with_commit(&checkout);
-    let tree = crate::git_probe::probe_verification_input(&checkout)
-        .await
-        .expect("observed");
+    let tree = crate::git_probe::probe_verification_input(
+        &checkout,
+        Some(&crate::execution_scope_host::UNBOUNDED_FOR_TESTS),
+    )
+    .await
+    .expect("observed");
     assert_eq!(check_seat_tree(&second, Some(&head), &tree), Ok(head));
 }
 
@@ -458,9 +476,12 @@ async fn an_undecided_wake_stays_decidable_under_the_same_command_id() {
         "the same wake must be decidable on the next pass"
     );
     // And once the facts do arrive, the seat's tree establishes the input.
-    let tree = crate::git_probe::probe_verification_input(&checkout)
-        .await
-        .expect("observed");
+    let tree = crate::git_probe::probe_verification_input(
+        &checkout,
+        Some(&crate::execution_scope_host::UNBOUNDED_FOR_TESTS),
+    )
+    .await
+    .expect("observed");
     assert_eq!(check_seat_tree(&operation, Some(&head), &tree), Ok(head));
 
     // The control, so the two assertions above are about this fence rather

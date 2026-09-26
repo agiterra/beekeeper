@@ -123,11 +123,25 @@ impl std::fmt::Display for AgentsReadError {
     }
 }
 
-/// Read `file` from the tip of the record's ref, fetching first.
-pub async fn read_agents_file(
-    record: &AgentsRepoRecord,
-    file: &str,
-) -> Result<AgentsFile, AgentsReadError> {
+/// The commit the record's ref points at: fetched just now, or the last tip
+/// this host had when the fetch fails (`stale`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentsTip {
+    /// The commit.
+    pub sha: String,
+    /// `true` when the fetch failed and `sha` is the last tip this host had.
+    pub stale: bool,
+    /// When the tip was fetched (unix seconds), when known.
+    pub fetched_at: Option<u64>,
+    /// Why the fetch just now failed, when `stale`.
+    pub fetch_error: Option<String>,
+}
+
+/// Fetch the record's ref and answer its tip.
+///
+/// # Errors
+/// No readable clone, or no tip at all.
+pub async fn pinned_tip(record: &AgentsRepoRecord) -> Result<AgentsTip, AgentsReadError> {
     if !record.path.join(".git").exists() {
         return Err(AgentsReadError::NoCheckout {
             path: record.path.clone(),
@@ -172,6 +186,25 @@ pub async fn read_agents_file(
     } else {
         Some(now_secs())
     };
+    Ok(AgentsTip {
+        sha,
+        stale,
+        fetched_at,
+        fetch_error,
+    })
+}
+
+/// Read `file` from the tip of the record's ref, fetching first.
+pub async fn read_agents_file(
+    record: &AgentsRepoRecord,
+    file: &str,
+) -> Result<AgentsFile, AgentsReadError> {
+    let AgentsTip {
+        sha,
+        stale,
+        fetched_at,
+        fetch_error,
+    } = pinned_tip(record).await?;
     let spec = format!("{sha}:{file}");
     match git(&record.path, &["show", &spec]).await {
         Ok(text) => Ok(AgentsFile {
@@ -240,14 +273,109 @@ async fn last_updated(dir: &Path, remote_ref: &str) -> Option<u64> {
     })
 }
 
+/// Stage a read-only clone of the record's pinned tip at `dest`, for an
+/// execution with no seat clone of its own (an ordinary Solo session).
+///
+/// The clone is taken from this host's own clone — implementation storage the
+/// execution never sees — and checked out host-side with global and system
+/// configuration, hooks and fsmonitor off, in a repository whose configuration
+/// the host just wrote and the execution can only read: nothing of the
+/// project's runs here. A later call refreshes it to the current tip.
+///
+/// # Errors
+/// No tip could be read, or Git failed.
+pub async fn stage_read_only_clone(
+    record: &AgentsRepoRecord,
+    dest: &Path,
+) -> Result<AgentsTip, AgentsReadError> {
+    let tip = pinned_tip(record).await?;
+    let failed = |detail: String| AgentsReadError::Git { detail };
+    let source = record.path.to_string_lossy().into_owned();
+    if dest.join(".git").is_dir() {
+        clone_git(
+            dest,
+            &["fetch", "--quiet", "--no-tags", "--", &source, &tip.sha],
+        )
+        .await
+        .map_err(failed)?;
+    } else {
+        let parent = dest.parent().unwrap_or(dest);
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|error| failed(error.to_string()))?;
+        let dest_text = dest.to_string_lossy().into_owned();
+        clone_git(
+            parent,
+            &[
+                "clone",
+                "--quiet",
+                "--no-checkout",
+                "--no-hardlinks",
+                "--",
+                &source,
+                &dest_text,
+            ],
+        )
+        .await
+        .map_err(failed)?;
+    }
+    clone_git(
+        dest,
+        &["checkout", "--quiet", "--force", "--detach", &tip.sha],
+    )
+    .await
+    .map_err(failed)?;
+    Ok(tip)
+}
+
+/// Git on a host-staged clone: hermetic, so no operator or project setting
+/// can run a program.
+async fn clone_git(dir: &Path, args: &[&str]) -> Result<String, String> {
+    let mut cmd = Command::new("git");
+    for var in crate::git_probe::GIT_REPO_SELECTION_VARS {
+        cmd.env_remove(var);
+    }
+    cmd.args([
+        "-c",
+        "core.hooksPath=/dev/null",
+        "-c",
+        "core.fsmonitor=false",
+    ])
+    .args(args)
+    .current_dir(dir)
+    .env("GIT_CONFIG_GLOBAL", "/dev/null")
+    .env("GIT_CONFIG_NOSYSTEM", "1")
+    .env("GIT_TERMINAL_PROMPT", "0")
+    .stdin(Stdio::null())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .kill_on_drop(true);
+    let output = tokio::time::timeout(GIT_TIMEOUT, cmd.output())
+        .await
+        .map_err(|_| format!("git {} timed out", args.join(" ")))?
+        .map_err(|error| format!("could not run git: {error}"))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_owned());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
 async fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
     let mut cmd = Command::new("git");
-    cmd.args(args)
-        .current_dir(dir)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
+    // The host's own clone: its configuration is the host's, but no hook of
+    // it runs either way.
+    cmd.args([
+        "-c",
+        "core.hooksPath=/dev/null",
+        "-c",
+        "core.fsmonitor=false",
+    ])
+    .args(args)
+    .current_dir(dir)
+    .stdin(Stdio::null())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .kill_on_drop(true);
     let output = tokio::time::timeout(GIT_TIMEOUT, cmd.output())
         .await
         .map_err(|_| format!("git {} timed out", args.join(" ")))?

@@ -1283,7 +1283,9 @@ does (`BUZZ_PULSE_PROJECT` when the flag is absent). `ls`/`show` read
 `main`'s tip through the relay's `tree`/`raw` routes (no clone); `drafts`
 folds the op log with the fold Desktop and Mobile bind to; `commit` needs
 git and the credential helper (`just install-git-credentials`) plus the
-shipped templates (`BUZZ_TEMPLATES_DIR` or a Beekeeper checkout).
+shipped templates: `--templates` or `BUZZ_TEMPLATES_DIR` when given, else the
+ones the app bundle ships beside `bee` (or, for a development build, its own
+checkout's); the working directory is never searched.
 
 ```bash
 bee projects create demo                                  # creates <demo> and <demo>-beekeeper-agents, seeds and pins it
