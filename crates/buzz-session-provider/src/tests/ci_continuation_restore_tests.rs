@@ -347,14 +347,10 @@ async fn a_waiting_registration_restores_the_generation_and_delivers_one_turn() 
     // The turn this delivery started is in flight; the crash's record had none.
     after.open_turn = None;
     // The boundary the *new process* runs inside is a fact about that
-    // process, like its effective model, and is re-recorded on every open.
-    assert!(
-        after
-            .execution_boundary
-            .as_ref()
-            .is_some_and(|b| b.enforced),
-        "{after:?}"
-    );
+    // process, like its effective model, and is re-recorded on every open:
+    // exactly this platform's, before the crash and after the restore.
+    assert_this_platforms_recorded_boundary(before.execution_boundary.as_ref());
+    assert_this_platforms_recorded_boundary(after.execution_boundary.as_ref());
     after.execution_boundary = before.execution_boundary.clone();
     assert_eq!(before, after);
 

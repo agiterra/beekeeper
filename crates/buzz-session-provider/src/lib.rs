@@ -12775,6 +12775,94 @@ mod tests {
         Provider::new(config_of(Keys::generate(), state_dir, projects, agent)).expect("provider")
     }
 
+    /// The exact boundary disclosure this platform's provider publishes when
+    /// it opens an execution: on macOS the verified Seatbelt boundary; on
+    /// every other platform, that no backend exists — by its stable wire
+    /// reason, never described as protected.
+    fn this_platforms_boundary_status() -> serde_json::Value {
+        expected_boundary_status(cfg!(target_os = "macos"))
+    }
+
+    fn expected_boundary_status(macos: bool) -> serde_json::Value {
+        if macos {
+            serde_json::json!({
+                "kind": "status",
+                "status": execution_scope::STATUS_BOUNDARY_ENFORCED,
+                "reason": buzz_acp::exec_boundary::BACKEND_MACOS_SEATBELT,
+            })
+        } else {
+            serde_json::json!({
+                "kind": "status",
+                "status": execution_scope::STATUS_BOUNDARY_NOT_ENFORCED,
+                "reason": "no-backend-for-platform",
+            })
+        }
+    }
+
+    /// Assert the boundary a record says its execution ran inside is exactly
+    /// this platform's: on macOS enforced by Seatbelt, with the SHA-256 of
+    /// the policy it ran under and no reason; elsewhere not enforced, for the
+    /// stable reason, with no backend and no digest.
+    fn assert_this_platforms_recorded_boundary(
+        recorded: Option<&execution_scope::RecordedBoundary>,
+    ) {
+        assert_recorded_boundary(cfg!(target_os = "macos"), recorded);
+    }
+
+    fn assert_recorded_boundary(macos: bool, recorded: Option<&execution_scope::RecordedBoundary>) {
+        let recorded = recorded.expect("an opened execution records its boundary");
+        if macos {
+            assert!(recorded.enforced, "{recorded:?}");
+            assert_eq!(
+                recorded.backend.as_deref(),
+                Some(buzz_acp::exec_boundary::BACKEND_MACOS_SEATBELT),
+                "{recorded:?}"
+            );
+            let digest = recorded.policy_digest.as_deref().unwrap_or_default();
+            assert!(
+                digest.len() == 64
+                    && digest
+                        .chars()
+                        .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)),
+                "{recorded:?}"
+            );
+            assert_eq!(recorded.reason, None, "{recorded:?}");
+        } else {
+            assert_eq!(
+                recorded,
+                &execution_scope::RecordedBoundary {
+                    enforced: false,
+                    backend: None,
+                    policy_digest: None,
+                    reason: Some("no-backend-for-platform".to_owned()),
+                }
+            );
+        }
+    }
+
+    /// The off-macOS expectations above, checked on every platform against
+    /// the production mapping of the plan off-macOS `prepare` returns
+    /// (`ExecutionPlan::Legacy { reason: "no-backend-for-platform" }`): the
+    /// transcript disclosure and the recorded boundary are exactly those.
+    #[test]
+    fn the_off_macos_boundary_expectations_are_the_unenforced_plans_own_disclosure() {
+        let state = execution_scope::ExecutionPlan::Legacy {
+            reason: "no-backend-for-platform",
+        }
+        .state();
+        assert_eq!(
+            state,
+            execution_scope::BoundaryState::NotEnforced {
+                reason: "no-backend-for-platform"
+            }
+        );
+        assert_eq!(
+            execution_scope::boundary_status_item(&state),
+            expected_boundary_status(false)
+        );
+        assert_recorded_boundary(false, execution_scope::recorded_state(&state).as_ref());
+    }
+
     fn state_dir_parent(state_dir: &Path) -> &Path {
         state_dir.parent().unwrap_or(state_dir)
     }
@@ -13936,10 +14024,12 @@ mod tests {
             disclosures,
             vec![
                 serde_json::json!("session_fresh"),
-                serde_json::json!(execution_scope::STATUS_BOUNDARY_ENFORCED),
+                this_platforms_boundary_status()["status"].clone(),
             ],
             "a fresh create publishes exactly one continuity disclosure, then what it runs inside"
         );
+        let record = provider.state().sessions().next().expect("record");
+        assert_this_platforms_recorded_boundary(record.execution_boundary.as_ref());
     }
 
     /// A relay whose REST `/query` never answers, so a caller that waits on it
@@ -14633,11 +14723,7 @@ mod tests {
                     "status": "session_fresh",
                     "reason": "no_prior_execution",
                 }),
-                serde_json::json!({
-                    "kind": "status",
-                    "status": execution_scope::STATUS_BOUNDARY_ENFORCED,
-                    "reason": buzz_acp::exec_boundary::BACKEND_MACOS_SEATBELT,
-                }),
+                this_platforms_boundary_status(),
             ]
         );
     }
