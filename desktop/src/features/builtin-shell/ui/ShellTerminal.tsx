@@ -67,11 +67,22 @@ export function ShellTerminal({ sessionId }: { sessionId: string }) {
     term.focus();
 
     let disposed = false;
+    // True while the scrollback replay is being parsed. The scrollback holds
+    // the queries programs once sent this terminal (OSC 11 background colour,
+    // CSI 6n cursor position, DA, ...). A fresh xterm answers each one it
+    // parses through onData, and those answers would reach the PTY as typed
+    // input: "11;rgb:0000/0000/00002;1R" in the prompt on every tab switch.
+    // The program that asked is long gone, so the replay's answers are dropped.
+    let replaying = false;
 
     // Replay retained scrollback so a reopened session shows its history.
     attachShellSession(sessionId)
       .then((b64) => {
-        if (!disposed && b64.length > 0) term.write(base64ToBytes(b64));
+        if (disposed || b64.length === 0) return;
+        replaying = true;
+        term.write(base64ToBytes(b64), () => {
+          replaying = false;
+        });
       })
       .catch(() => {
         // Session may have just closed; the screen handles the empty state.
@@ -91,6 +102,7 @@ export function ShellTerminal({ sessionId }: { sessionId: string }) {
       });
 
     const dataDisposable = term.onData((data) => {
+      if (replaying) return;
       void writeShellSession(sessionId, data).catch(() => {
         // Session gone; exit event will refresh the surrounding UI.
       });

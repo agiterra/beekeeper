@@ -32,6 +32,8 @@ export default defineConfig({
         "**/sidebar-offcanvas-rail.spec.ts",
         "**/search-scope-screenshots.spec.ts",
         "**/coding-sessions.spec.ts",
+        // Built-in shell: a tab's scrollback replay never answers into the PTY.
+        "**/shell-terminal-replay.spec.ts",
         "**/coding-session-mission-lens.spec.ts",
         // NIP-PW: the native work-coverage projection across the bridge.
         "**/project-work.spec.ts",

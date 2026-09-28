@@ -1394,6 +1394,10 @@ declare global {
       command: string;
       payload: unknown;
     }>;
+    /** Built-in shell sessions `list_shell_sessions` returns (default none). */
+    __BUZZ_E2E_SHELL_SESSIONS__?: unknown[];
+    /** Base64 scrollback `attach_shell_session` replays (default empty). */
+    __BUZZ_E2E_SHELL_SCROLLBACK_B64__?: string;
     /** Observer controls accepted by the mock relay. */
     __BUZZ_E2E_OBSERVER_CONTROLS__?: Array<{
       agentPubkey: string;
@@ -12370,7 +12374,7 @@ export function maybeInstallE2eTauriMocks() {
       // Built-in shell mocks: enough for the Settings → Terminals panel and
       // the sidebar section to render in a browser. Not a real PTY.
       case "list_shell_sessions":
-        return [];
+        return window.__BUZZ_E2E_SHELL_SESSIONS__ ?? [];
       case "create_shell_session":
       case "resume_shell_session":
         return {
@@ -12387,7 +12391,7 @@ export function maybeInstallE2eTauriMocks() {
       case "read_shell_session":
         return "$ ";
       case "attach_shell_session":
-        return "";
+        return window.__BUZZ_E2E_SHELL_SCROLLBACK_B64__ ?? "";
       case "close_shell_session":
       case "rename_shell_session":
       case "set_shell_session_project":
