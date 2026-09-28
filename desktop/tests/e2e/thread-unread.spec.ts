@@ -1006,4 +1006,68 @@ test.describe("thread unread indicator", () => {
     await openMenu();
     await expect(toggle).toHaveText("Mark unread");
   });
+  // The reported bug, end to end (Andy, 2026-09-28; ledger 279, 279(g)): an
+  // agent's reply nested under HIS reply left a channel pip that opening the
+  // thread would not clear — it came back on every reload, and only the Inbox
+  // row click cleared it for good. The channel pip resolves per activity row
+  // from resolveChannelActivityFeedItemReadAt, which read only msg:<id> and the
+  // channel; a reply in a collapsed branch is never revealed, so opening the
+  // thread wrote nothing the pip could see. The open now writes the aggregate
+  // thread:<root> marker and the pip folds it. This is the guard that was
+  // missing when the first attempt at the fix (88fb730c0, whole-subtree
+  // per-message marking) traded the in-panel branch badges and the "New"
+  // divider for the same result.
+  test("16-opening-a-thread-clears-a-nested-reply-pip", async ({ page }) => {
+    await installMockBridge(page);
+    await page.goto("/");
+
+    // Read general's frontier first, so only a NEW reply can be unread.
+    await page.getByTestId("channel-general").click();
+    await expect(page.getByTestId("chat-title")).toHaveText("general");
+    await waitForMockLiveSubscription(page, "general");
+    const mine = await emitMockMessage(page, "general", "My reply", {
+      parentEventId: "mock-general-welcome",
+      pubkey: TEST_IDENTITIES.alice.pubkey,
+      createdAt: Math.floor(Date.now() / 1000) - 10,
+    });
+    const threadSummary = page.getByTestId("message-thread-summary").first();
+    await expect(threadSummary).toBeVisible();
+    await threadSummary.click();
+    await expect(page.getByTestId("message-thread-panel")).toBeVisible();
+    await page.getByTestId("auxiliary-panel-close").click();
+
+    // Leave, then land the agent's reply NESTED under mine — a branch that is
+    // collapsed when the thread opens, which is the whole point.
+    await page.getByTestId("channel-random").click();
+    await expect(page.getByTestId("chat-title")).toHaveText("random");
+    await emitMockMessage(page, "general", "Agent reply under mine", {
+      parentEventId: mine?.id ?? "",
+      pubkey: TEST_IDENTITIES.bob.pubkey,
+      createdAt: unreadTimestamp(),
+    });
+
+    // Re-enter general so the channel-open marker fires while it is unread,
+    // then leave: the pip is lit, exactly as reported.
+    await page.getByTestId("channel-general").click();
+    await expect(page.getByTestId("chat-title")).toHaveText("general");
+    await page.getByTestId("channel-random").click();
+    await expect(page.getByTestId("chat-title")).toHaveText("random");
+    await expect(page.getByTestId("channel-unread-dot-general")).toBeVisible();
+
+    // Open the thread. This must clear the pip without expanding the branch.
+    await page.getByTestId("channel-general").click();
+    await expect(page.getByTestId("chat-title")).toHaveText("general");
+    await page.getByTestId("message-thread-summary").first().click();
+    await expect(page.getByTestId("message-thread-panel")).toBeVisible();
+    await page.getByTestId("auxiliary-panel-close").click();
+
+    // Leaving and returning is the reload-equivalent: the pip must stay gone.
+    await page.getByTestId("channel-random").click();
+    await expect(page.getByTestId("chat-title")).toHaveText("random");
+    await expect(page.getByTestId("channel-unread-dot-general")).toHaveCount(0);
+    await page.getByTestId("channel-general").click();
+    await expect(page.getByTestId("chat-title")).toHaveText("general");
+    await page.getByTestId("channel-random").click();
+    await expect(page.getByTestId("channel-unread-dot-general")).toHaveCount(0);
+  });
 });

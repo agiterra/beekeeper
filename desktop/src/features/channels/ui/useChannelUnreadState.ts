@@ -270,23 +270,33 @@ export function useChannelUnreadState({
       threadOpenReadSnapshotRef.current.delete(rootId);
     };
   }, [openThreadHeadId]);
-  // Mark the WHOLE thread read when it opens (threadOpenReadTargets): every
-  // reply, nested branches included, gets its msg:<id> marker advanced to its
-  // createdAt, and the aggregate thread:<root> marker moves to the newest reply
-  // — the same markers the Inbox row click writes. This replaces LP4 v3's
-  // open-at-level rule, which left replies in collapsed branches unread through
-  // every open and reload (an unclearable channel pip). Visible replies are
-  // still marked from threadMessages too, for replies not yet in the timeline
-  // index. A NEWER reply re-raises the badge: the predicate is createdAt > read.
+  // Opening a thread advances TWO kinds of marker, and the split is the whole
+  // design (ledger 279(g)):
+  //
+  //   - msg:<id>, for the replies this open actually revealed — LP4 v3's
+  //     open-at-level rule, unchanged. A reply in a still-collapsed branch
+  //     keeps its own marker, so the in-panel badge on that branch goes on
+  //     saying it holds replies you have not looked at.
+  //   - thread:<root>, the aggregate, at the newest reply in the whole thread,
+  //     nested branches included — the same marker the Inbox row click writes.
+  //     The channel pip and the Inbox row read it (through
+  //     resolveChannelActivityFeedItemReadAt), so opening the thread clears the
+  //     pip for good without marking one collapsed reply read.
+  //
+  // Writing per-reply markers for the whole subtree instead (88fb730c0) did
+  // clear the pip, but it also emptied every in-panel branch badge and
+  // collapsed the in-thread "New" divider, because both read per-message state
+  // that the open had just advanced past. A NEWER reply re-raises both: each
+  // predicate is strictly createdAt > read, and a late reply is newer than the
+  // aggregate this wrote.
   React.useEffect(() => {
     if (!openThreadHeadId) return;
     if (isThreadMuted(openThreadHeadId)) return;
-    const { replies, latest } = threadOpenReadTargets(
+    const { latest } = threadOpenReadTargets(
       openThreadHeadId,
       getReplyDescendantIdsForMessage,
       createdAtByMessageId,
     );
-    for (const [id, createdAt] of replies) markMessageRead(id, createdAt);
     for (const entry of threadMessages) {
       markMessageRead(entry.message.id, entry.message.createdAt);
     }

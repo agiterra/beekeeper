@@ -4,6 +4,7 @@ import { useThreadActivityFeedItems } from "@/app/useThreadActivityFeedItems";
 import {
   maxReadAt,
   msgContextKey,
+  THREAD_PREFIX,
 } from "@/features/channels/readState/readStateFormat";
 import {
   activityScopeKey,
@@ -12,7 +13,10 @@ import {
 } from "@/features/channels/threadActivityStorage";
 import type { ThreadActivityItem } from "@/features/channels/useUnreadChannels";
 import { useCommunities } from "@/features/communities/useCommunities";
-import { isThreadReply } from "@/features/messages/lib/threading";
+import {
+  getThreadReference,
+  isThreadReply,
+} from "@/features/messages/lib/threading";
 import { useIdentityQuery } from "@/shared/api/hooks";
 import type { Channel, FeedItem, HomeFeed } from "@/shared/api/types";
 
@@ -152,12 +156,32 @@ type UseChannelActivityProjectionOptions = {
   mutedRootIds: ReadonlySet<string>;
 };
 
+/**
+ * When a thread-activity row counts as read — the predicate behind the channel
+ * unread pip and the Inbox row.
+ *
+ * Three terms, and the middle one is load-bearing. The row's own `msg:<id>`
+ * marker is what the Inbox click writes per reply. `thread:<root>` is the
+ * AGGREGATE marker, written by the Inbox click and by opening the thread; it
+ * covers every reply in the thread at or below its timestamp, which is what
+ * makes opening a thread clear the channel pip without touching a single
+ * reply's own marker. Reading it here is what lets the pip be a thread-level
+ * signal while the in-panel per-branch badges stay per-message: those read
+ * effective(msg:<id>) only, so a collapsed branch still says it holds replies
+ * you have not looked at (ledger 279(g)). The channel marker covers both.
+ *
+ * A newer reply still re-raises the pip: the caller's predicate is strictly
+ * createdAt > this value, and a reply that lands after the open is newer than
+ * the aggregate marker the open wrote.
+ */
 export function resolveChannelActivityFeedItemReadAt(
-  item: Pick<FeedItem, "channelId" | "id">,
+  item: Pick<FeedItem, "channelId" | "id" | "tags">,
   getOwnReadAt: ReadTimestamp,
 ): number | null {
+  const rootId = getThreadReference(item.tags ?? []).rootId;
   return maxReadAt(
     getOwnReadAt(msgContextKey(item.id)),
+    rootId ? getOwnReadAt(`${THREAD_PREFIX}${rootId}`) : null,
     item.channelId ? getOwnReadAt(item.channelId) : null,
   );
 }
@@ -198,7 +222,7 @@ export function useChannelActivityProjection({
     [getChannelReadAt],
   );
   const getChannelActivityItemReadAt = React.useCallback(
-    (item: Pick<FeedItem, "channelId" | "id">) =>
+    (item: Pick<FeedItem, "channelId" | "id" | "tags">) =>
       resolveChannelActivityFeedItemReadAt(item, getOwnReadAt),
     [getOwnReadAt],
   );

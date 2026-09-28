@@ -41,9 +41,11 @@ type AppShellContextValue = {
   // parent resolver (LP4 v3 per-message badge model).
   getMessageReadAt: (messageId: string) => number | null;
   // Read frontier for a channel-activity item, scoped to that item's own
-  // message and channel rather than the currently mounted channel resolver.
+  // message, its thread's aggregate marker and its channel, rather than the
+  // currently mounted channel resolver. `tags` is required because the thread
+  // root is read from the row's own `root` e-tag (ledger 279(g)).
   getChannelActivityItemReadAt: (
-    item: Pick<FeedItem, "channelId" | "id">,
+    item: Pick<FeedItem, "channelId" | "id" | "tags">,
   ) => number | null;
   // Advance a single message's read marker to the given unix-seconds timestamp.
   markMessageRead: (messageId: string, timestamp: number) => void;

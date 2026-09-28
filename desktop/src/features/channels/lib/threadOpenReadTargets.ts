@@ -1,19 +1,25 @@
 /**
- * What opening a thread marks read: the WHOLE thread, nested branches included.
+ * How far opening a thread advances its AGGREGATE `thread:<root>` marker.
  *
- * This replaces LP4 v3's open-at-level rule (only replies revealed on open were
- * marked read; a reply in a collapsed branch kept its badge until expanded).
- * In practice that left a channel unread pip nobody could clear by looking: a
- * reply nested under another reply stayed unread through every open of the
- * thread and every reload, and only the Inbox list click cleared it, because
- * that path writes the thread-wide `thread:<root>` marker (Andy, 2026-09-28;
- * the unclearable replies were an agent's replies nested under his). Opening the
- * thread now does what the Inbox click does, so both surfaces agree.
+ * Andy, 2026-09-28: a reply nested under another reply left a channel pip
+ * nobody could clear by looking — it survived every open of the thread and
+ * every reload, and only the Inbox list click cleared it for good. That path
+ * writes the thread-wide `thread:<root>` marker; the thread view did not, so
+ * the pip's predicate (resolveChannelActivityFeedItemReadAt) never saw a read
+ * that covered the nested reply.
  *
- * Returns every descendant reply with its createdAt (each gets its own
- * msg:<id> marker, which the channel pip and the root summary badge read), and
- * the newest createdAt for the aggregate `thread:<root>` marker, or null when
- * the thread has no replies with a known createdAt.
+ * Opening the thread now writes that same aggregate marker, at the newest
+ * reply in the whole thread — collapsed branches included, because the pip
+ * counts those replies too. What it deliberately does NOT do is advance each
+ * nested reply's own `msg:<id>`: that is per-message state the in-panel branch
+ * badges and the in-thread "New" divider read, and clearing it wholesale
+ * emptied both (88fb730c0, corrected in ledger 279(g)). Per-message marking
+ * stays open-at-level — the replies the open revealed, and no others.
+ *
+ * Returns `latest`, the newest descendant `createdAt`, or null when the thread
+ * has no replies with a known createdAt — in which case no aggregate marker is
+ * written at all, so a first reply still arrives unread. `replies` is the walk
+ * it came from, kept because the badge surfaces read the same descendant set.
  */
 export function threadOpenReadTargets(
   rootId: string,
