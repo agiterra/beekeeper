@@ -154,12 +154,28 @@ export function buildTrustedCodingSessionIngressFilter(
   return filter;
 }
 
+/**
+ * History is one filter PER KIND, each with its own `limit`. One filter over
+ * all three kinds shared a single budget ordered by `created_at` across kinds,
+ * so a long session's metadata and receipts (about four per turn) crowded its
+ * transcript out of the newest page — and the relay caps a page at 1000
+ * (NIP-11 `max_limit`), so raising the limit is not the fix. The same reason
+ * `codingSessionCreateObservations` queries per kind.
+ */
 export function buildTrustedCodingSessionIngressHistoryFilters(
   channelIds: readonly string[],
   authority: CodingSessionIngressAuthority,
   limit: number,
 ): RelaySubscriptionFilter[] {
-  return [buildTrustedCodingSessionIngressFilter(channelIds, authority, limit)];
+  const filter = buildTrustedCodingSessionIngressFilter(
+    channelIds,
+    authority,
+    limit,
+  );
+  return TRUSTED_CODING_SESSION_INGRESS_KINDS.map((kind) => ({
+    ...filter,
+    kinds: [kind],
+  }));
 }
 
 export function buildTrustedCodingSessionIngressLiveFilter(
@@ -520,20 +536,27 @@ export function useTrustedCodingSessionIngress(
     const historyController = createCodingSessionDiscoveryController({
       async load() {
         const errors: string[] = [];
-        for (const filter of buildTrustedCodingSessionIngressHistoryFilters(
-          stableChannelIds,
-          authority,
-          TRUSTED_INGRESS_HISTORY_LIMIT,
-        )) {
-          try {
-            const events = await client.fetchEvents(filter);
-            if (cancelled) return;
-            store.ingestRelayEvents(events, stableChannelIds, authority);
-            fanOutObservedCodingSessionEvents(events, receiveObservedEvents);
-          } catch (error) {
+        // The per-kind pages are independent: fetch them together so history
+        // costs one round trip, then ingest in filter order.
+        const pages = await Promise.allSettled(
+          buildTrustedCodingSessionIngressHistoryFilters(
+            stableChannelIds,
+            authority,
+            TRUSTED_INGRESS_HISTORY_LIMIT,
+          ).map((filter) => client.fetchEvents(filter)),
+        );
+        if (cancelled) return;
+        for (const page of pages) {
+          if (page.status === "fulfilled") {
+            store.ingestRelayEvents(page.value, stableChannelIds, authority);
+            fanOutObservedCodingSessionEvents(
+              page.value,
+              receiveObservedEvents,
+            );
+          } else {
             errors.push(
-              error instanceof Error
-                ? error.message
+              page.reason instanceof Error
+                ? page.reason.message
                 : "Failed to load coding-session lifecycle history.",
             );
           }

@@ -92,6 +92,10 @@ export { isExactProviderAuthorityPubkey } from "./codingSessionWireDecode";
  */
 export const MAX_RETAINED_RAW_EVENTS_PER_GENERATION = 2_000;
 
+/** Oldest first: created_at, then id for a stable tie-break. */
+const byAge = (left: RelayEvent, right: RelayEvent): number =>
+  left.created_at - right.created_at || left.id.localeCompare(right.id);
+
 export type CodingSessionGenerationScope = {
   channelId: string;
   targetKey: string;
@@ -695,8 +699,7 @@ export class TrustedCodingSessionIngressStore {
    */
   retainedRawEvents(scope: CodingSessionGenerationScope): RelayEvent[] {
     return [...(this.rawEvents.get(generationKey(scope))?.values() ?? [])].sort(
-      (left, right) =>
-        left.created_at - right.created_at || left.id.localeCompare(right.id),
+      byAge,
     );
   }
 
@@ -731,10 +734,7 @@ export class TrustedCodingSessionIngressStore {
         if (raw) out.push(raw);
       }
     }
-    return out.sort(
-      (left, right) =>
-        left.created_at - right.created_at || left.id.localeCompare(right.id),
-    );
+    return out.sort(byAge);
   }
 
   /**
@@ -912,12 +912,15 @@ export class TrustedCodingSessionIngressStore {
     const key = generationKey(scope);
     const retained = this.rawEvents.get(key) ?? new Map<string, RelayEvent>();
     retained.set(event.id, event);
-    // Map iteration is insertion-ordered, so the first key is the least
-    // recently ingested — the one a bootstrap can most cheaply refetch.
+    // Evict the oldest by created_at, not the first ingested: per-kind pages
+    // and live events arrive out of time order. (Oldest = cheapest to refetch.)
     while (retained.size > this.maxRetainedRawEventsPerGeneration) {
-      const oldest = retained.keys().next();
-      if (oldest.done) break;
-      retained.delete(oldest.value);
+      let oldest: RelayEvent | null = null;
+      for (const candidate of retained.values()) {
+        if (oldest === null || byAge(candidate, oldest) < 0) oldest = candidate;
+      }
+      if (oldest === null) break;
+      retained.delete(oldest.id);
     }
     this.rawEvents.set(key, retained);
   }
