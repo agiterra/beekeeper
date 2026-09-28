@@ -629,7 +629,7 @@ fn a_seeded_lead_stages_with_a_writable_agents_grant_and_an_explicit_none_binds(
             &key,
             &source,
             &catalog,
-            SourceProvenance::local(&format!("agents/roles/{role}")),
+            SourceProvenance::local(format!("agents/roles/{role}")),
         )
         .expect("staged")
         .agents_repo
