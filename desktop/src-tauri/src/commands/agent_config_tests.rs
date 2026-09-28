@@ -672,3 +672,25 @@ fn baked_env_allowlist_is_case_insensitive() {
     // Unknown key → masked by default.
     assert!(!super::is_safe_to_reveal("SOME_UNKNOWN_KEY"));
 }
+
+/// ACP config options carry `id`/`name`, and their values carry `value`/`name` (the schema's
+/// required fields, and what claude-agent-acp / codex-acp / grok send). Both levels must keep it.
+#[test]
+fn parse_config_options_reads_acp_name_at_both_levels() {
+    let raw = serde_json::json!([{
+        "id": "model", "name": "Model", "category": "model", "currentValue": "gpt-6-astra",
+        "options": [
+            { "value": "gpt-6-astra", "name": "6 Astra" },
+            { "value": "legacy", "displayName": "Legacy Name" }
+        ]
+    }]);
+    let entries = parse_config_options(Some(&raw));
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].display_name.as_deref(), Some("Model"));
+    let names: Vec<Option<&str>> = entries[0]
+        .options
+        .iter()
+        .map(|o| o.display_name.as_deref())
+        .collect();
+    assert_eq!(names, vec![Some("6 Astra"), Some("Legacy Name")]);
+}

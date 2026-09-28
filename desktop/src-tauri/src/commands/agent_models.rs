@@ -704,6 +704,22 @@ pub(super) use update::{flush_managed_agent_policy, managed_agent_access_policy_
 
 // ── Model normalization ───────────────────────────────────────────────────────
 
+/// The human name of an ACP config option or select value.
+///
+/// ACP spells it `name` (`SessionConfigOption` / `SessionConfigSelectOption`, required in
+/// the schema), and that is what claude-agent-acp, codex-acp and `grok agent stdio` send:
+/// `{ "value": "opus[1m]", "name": "Opus 5.5" }`. Reading only `displayName` dropped every
+/// adapter-supplied name, so the picker fell back to the raw id and a version-less alias
+/// like `opus[1m]` never said which Opus it was. `displayName` stays as a fallback for any
+/// producer that still emits it.
+pub(crate) fn acp_option_label(o: &serde_json::Value) -> Option<String> {
+    ["name", "displayName"]
+        .iter()
+        .filter_map(|k| o.get(*k).and_then(|v| v.as_str()).map(str::trim))
+        .find(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
 /// Normalize raw `buzz-acp models --json` output into a typed DTO for the frontend.
 ///
 /// Merges models from both ACP paths (stable configOptions + unstable SessionModelState),
@@ -737,10 +753,7 @@ pub(super) fn normalize_agent_models(
                         if seen_ids.insert(value.to_string()) {
                             models.push(AgentModelInfo {
                                 id: value.to_string(),
-                                name: o
-                                    .get("displayName")
-                                    .and_then(|v| v.as_str())
-                                    .map(str::to_string),
+                                name: acp_option_label(o),
                                 description: None,
                             });
                         }
