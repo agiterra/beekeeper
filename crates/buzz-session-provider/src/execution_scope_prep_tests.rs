@@ -580,3 +580,209 @@ fn assignment_establishment_moves_only_the_allocated_branch() {
         assert_eq!(again.binding.branch.as_deref(), Some("seat-branch"));
     }
 }
+
+/// The host's store and its pointer, laid out as the desktop does: the store
+/// in the app directory beside the provider's state, never inside it.
+fn declare_host(fx: &super::tests::Fixture, branch: &str) -> PathBuf {
+    let app = fx.root.join("app");
+    let store = app.join("coding-session-workdirs.json");
+    std::fs::write(
+        &store,
+        serde_json::json!({ "version": 2, "worktrees": { "fixture-session/fixture": {
+            "path": fx.seat_a,
+            "branch": branch,
+        }}})
+        .to_string(),
+    )
+    .expect("store");
+    std::fs::write(
+        fx.state_dir
+            .join(crate::assignment_inputs::HOST_STORE_POINTER_FILE),
+        serde_json::json!({
+            "version": crate::assignment_inputs::HOST_STORE_POINTER_VERSION,
+            "path": store,
+        })
+        .to_string(),
+    )
+    .expect("pointer");
+    store
+}
+
+/// Ledger 277, Astra's retained sequence through `prepare()` and the
+/// rendered boundary: the first preparation takes `seat-branch` from the
+/// host's worktree record, a bounded child re-points `HEAD` to `main`, and
+/// the host's authority then fails or disappears. A fresh Session or host
+/// command — no previous session binding — either keeps `seat-branch` or
+/// refuses. `main` never moves.
+#[test]
+fn a_used_host_record_that_fails_or_disappears_never_grants_main() {
+    type Lose = fn(&super::tests::Fixture, &Path);
+    let cases: [(&str, Lose, bool); 5] = [
+        (
+            "pointer corrupted",
+            |fx, _| {
+                std::fs::write(
+                    fx.state_dir
+                        .join(crate::assignment_inputs::HOST_STORE_POINTER_FILE),
+                    "{ bad json",
+                )
+                .expect("corrupt")
+            },
+            false,
+        ),
+        (
+            "pointer removed",
+            |fx, _| {
+                std::fs::remove_file(
+                    fx.state_dir
+                        .join(crate::assignment_inputs::HOST_STORE_POINTER_FILE),
+                )
+                .expect("remove")
+            },
+            false,
+        ),
+        (
+            "store corrupted",
+            |_, store| std::fs::write(store, "{ not json").expect("corrupt"),
+            false,
+        ),
+        (
+            "record removed",
+            |_, store| std::fs::write(store, r#"{"version":2,"worktrees":{}}"#).expect("store"),
+            true,
+        ),
+        (
+            "store removed",
+            |_, store| std::fs::remove_file(store).expect("remove"),
+            true,
+        ),
+    ];
+    for purpose in [ScopePurpose::Session, ScopePurpose::HostCommand] {
+        for (case, lose, preserved) in cases {
+            let fx = fixture();
+            let store = declare_host(&fx, "seat-branch");
+            let mut first = inputs(&fx, "first", &fx.seat_a, &[], &[]);
+            first.purpose = purpose;
+            let first = prepared(prepare(&first));
+            assert_eq!(first.binding.branch.as_deref(), Some("seat-branch"));
+            let output = run_in(&first, &fx.seat_a, "git symbolic-ref HEAD refs/heads/main");
+            assert!(output.status.success(), "{case}: {output:?}");
+            lose(&fx, &store);
+
+            let main = git_out(&fx.repo_a, &["rev-parse", "main"]);
+            let mut second = inputs(&fx, "second", &fx.seat_a, &[], &[]);
+            second.purpose = purpose;
+            assert!(second.prior.is_none(), "no previous session binding");
+            match prepare(&second) {
+                Err(refusal) => {
+                    assert!(!preserved, "{purpose:?} {case}: refused {refusal:?}");
+                    assert_eq!(refusal.code, EXECUTION_BOUNDARY_UNAVAILABLE, "{refusal:?}");
+                }
+                Ok(ExecutionPlan::Prepared(second)) => {
+                    assert!(preserved, "{purpose:?} {case}: prepared anyway");
+                    assert_eq!(
+                        second.binding.branch.as_deref(),
+                        Some("seat-branch"),
+                        "{purpose:?} {case}"
+                    );
+                    let output = run_in(
+                        &second,
+                        &fx.seat_a,
+                        "git -c user.name=f -c user.email=f@example.invalid \
+                         commit --allow-empty -qm escaped",
+                    );
+                    assert!(!output.status.success(), "{purpose:?} {case}: {output:?}");
+                }
+                Ok(other) => panic!("{purpose:?} {case}: {other:?}"),
+            }
+            assert_eq!(
+                git_out(&fx.repo_a, &["rev-parse", "main"]),
+                main,
+                "{purpose:?} {case}: main moved"
+            );
+        }
+    }
+}
+
+/// A restore or resume whose recorded binding disagrees with the tree's
+/// established branch refuses; it does not pick either.
+#[test]
+fn a_resume_whose_binding_disagrees_with_the_established_branch_refuses() {
+    let fx = fixture();
+    let first = prepared(prepare(&inputs(&fx, "first", &fx.seat_a, &[], &[])));
+    let mut stale = first.binding.clone();
+    stale.branch = Some("main".to_owned());
+    let mut resumed = inputs(&fx, "first", &fx.seat_a, &[], &[]);
+    resumed.prior = Some((Some(&stale), None));
+    let refusal = prepare(&resumed).expect_err("disagreeing binding");
+    assert_eq!(refusal.code, EXECUTION_BOUNDARY_UNAVAILABLE, "{refusal:?}");
+    // The binding that agrees still resumes.
+    let mut agreeing = inputs(&fx, "first", &fx.seat_a, &[], &[]);
+    agreeing.prior = Some((Some(&first.binding), None));
+    assert_eq!(
+        prepared(prepare(&agreeing)).binding.branch.as_deref(),
+        Some("seat-branch")
+    );
+}
+
+/// The records the invariant rests on are the host's: a bounded child can
+/// neither rewrite the pin nor the note that a host was declared, nor the
+/// pointer and store.
+#[test]
+fn a_child_cannot_rewrite_the_branch_authority_records() {
+    let fx = fixture();
+    let store = declare_host(&fx, "seat-branch");
+    let plan = prepared(prepare(&inputs(&fx, "first", &fx.seat_a, &[], &[])));
+    let pins = fx
+        .root
+        .join("app")
+        .join(crate::branch_authority::BRANCH_PINS_DIR);
+    let pin = std::fs::read_dir(&pins)
+        .expect("pins")
+        .flatten()
+        .map(|entry| entry.path())
+        .find(|path| {
+            !path
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with('.'))
+        })
+        .expect("a pin was written before the child ran");
+    let records = [
+        pin.clone(),
+        fx.state_dir.join("host-authority-declared.json"),
+        fx.state_dir
+            .join(crate::assignment_inputs::HOST_STORE_POINTER_FILE),
+        store,
+    ];
+    let before: Vec<_> = records
+        .iter()
+        .map(|path| std::fs::read(path).expect("record"))
+        .collect();
+    for path in &records {
+        let output = run_in(
+            &plan,
+            &fx.seat_a,
+            &format!(
+                "printf '{{\"version\":1,\"branch\":\"main\",\"source\":\"first-head\"}}' > '{}'",
+                path.display()
+            ),
+        );
+        assert!(!output.status.success(), "{}: {output:?}", path.display());
+    }
+    let output = run_in(
+        &plan,
+        &fx.seat_a,
+        &format!(
+            "rm -f '{}' || mv '{}' '{}.x'",
+            pin.display(),
+            pin.display(),
+            pin.display()
+        ),
+    );
+    assert!(pin.exists(), "{output:?}");
+    let after: Vec<_> = records
+        .iter()
+        .map(|path| std::fs::read(path).expect("record"))
+        .collect();
+    assert_eq!(before, after);
+}

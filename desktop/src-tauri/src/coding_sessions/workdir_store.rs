@@ -675,8 +675,13 @@ fn materialize_projects_view_for_relay(
 /// app's data directory, which are one folder on macOS and Windows and two on
 /// Linux. So the host says it, in the same write that materializes the
 /// projects view, and a provider that finds no pointer establishes nothing
-/// rather than guessing.
-fn materialize_host_store_pointer(app: &AppHandle, state_dir: &Path) -> Result<(), String> {
+/// rather than guessing. The desktop's own host-Git directory gets the same
+/// pointer at startup, so its bounded Git reads the host's worktree record
+/// and shares the one set of branch pins beside the store (ledger 277).
+pub(crate) fn materialize_host_store_pointer(
+    app: &AppHandle,
+    state_dir: &Path,
+) -> Result<(), String> {
     let pointer = buzz_session_provider_pkg::assignment_inputs::HostStorePointer {
         version: buzz_session_provider_pkg::assignment_inputs::HOST_STORE_POINTER_VERSION,
         path: workdir_store_path_readonly(app)?,

@@ -9281,8 +9281,22 @@ impl Provider {
         let Some(base_sha) = base_sha.map(str::trim).filter(|sha| !sha.is_empty()) else {
             return AssignmentInputPreparation::Unmanaged;
         };
-        let Some(store) = inputs::host_store_from_pointer(&self.config.state_dir) else {
-            return AssignmentInputPreparation::Unmanaged;
+        // A pointer that exists but cannot be used is declared authority that
+        // failed (ledger 277): nothing moves, and the wake waits, rather than
+        // reading it as a provider with no host.
+        let store = match inputs::declared_host_store(&self.config.state_dir) {
+            Ok(Some(store)) => store,
+            Ok(None) => return AssignmentInputPreparation::Unmanaged,
+            Err(error) => {
+                tracing::warn!(
+                    target: "csp::verification_input",
+                    %assignment_ref,
+                    code = "assignment_input_no_authority",
+                    %error,
+                    "the host's record is declared but unusable, so nothing is moved"
+                );
+                return AssignmentInputPreparation::Deferred("branch_authority_unavailable");
+            }
         };
         // The branch is the host's allocation for this tree (ledger 275 A2),
         // never the child-writable `HEAD`: the same authority every

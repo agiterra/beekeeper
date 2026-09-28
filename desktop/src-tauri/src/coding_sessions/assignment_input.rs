@@ -215,13 +215,20 @@ pub async fn coding_session_establish_assignment_input(
     };
     let _lock = lock_workdir_store(&app).map_err(unreadable)?;
     let mut store = load_workdir_store(&app).map_err(unreadable)?;
-    let state_dir = crate::session_provider::host_git_state_dir(&app).map_err(|error| {
-        refuse(
-            EstablishAssignmentInputCode::CheckoutFailed,
-            "this host could not prepare the boundary the seat's Git runs inside",
-            Some(error),
-        )
-    })?;
+    // Pointed at this host's worktree record, so the seat's branch authority
+    // is the one every other preparation of the tree reads (ledger 277).
+    let state_dir = crate::session_provider::host_git_state_dir(&app)
+        .and_then(|dir| {
+            crate::coding_sessions::workdir_store::materialize_host_store_pointer(&app, &dir)
+                .map(|()| dir)
+        })
+        .map_err(|error| {
+            refuse(
+                EstablishAssignmentInputCode::CheckoutFailed,
+                "this host could not prepare the boundary the seat's Git runs inside",
+                Some(error),
+            )
+        })?;
     let outcome = establish(&mut store, &request, &state_dir);
     store.version = WORKDIR_STORE_VERSION;
     if let Err(error) = save_workdir_store(&app, &state, &store) {

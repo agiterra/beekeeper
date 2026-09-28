@@ -1315,48 +1315,62 @@ pub struct HostStorePointer {
     pub path: PathBuf,
 }
 
-/// Resolve the host store this provider shares, or `None` with the reason
-/// logged.
+/// Resolve the host store this provider shares, strictly.
 ///
-/// `None` is an ordinary answer, not a failure: a provider running without a
-/// desktop host beside it has no seat worktrees recorded anywhere, so there is
-/// no tree it could move and nothing is lost by saying so.
-#[must_use]
-pub fn host_store_from_pointer(state_dir: &Path) -> Option<AssignmentInputStore> {
+/// Three outcomes, never collapsed: `Ok(None)` only when no pointer file
+/// exists at all — a provider running without a desktop host beside it, the
+/// legitimate standalone configuration. A pointer that exists but cannot be
+/// read, does not parse, or names a version or relative path this build will
+/// not use is **declared authority that failed**, and is an error: a caller
+/// that decides what a child may move must refuse on it, not read it as "no
+/// host" (ledger 277).
+pub fn declared_host_store(state_dir: &Path) -> Result<Option<AssignmentInputStore>, String> {
     let pointer_path = state_dir.join(HOST_STORE_POINTER_FILE);
     let raw = match std::fs::read(&pointer_path) {
         Ok(raw) => raw,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => {
+            return Err(format!(
+                "the host workdir-store pointer could not be read ({error})"
+            ))
+        }
+    };
+    let pointer: HostStorePointer = serde_json::from_slice(&raw)
+        .map_err(|error| format!("the host workdir-store pointer does not parse ({error})"))?;
+    if pointer.version != HOST_STORE_POINTER_VERSION || !pointer.path.is_absolute() {
+        return Err(format!(
+            "the host workdir-store pointer names version {} or path {} which this build will not use",
+            pointer.version,
+            pointer.path.display()
+        ));
+    }
+    Ok(Some(AssignmentInputStore::new(pointer.path)))
+}
+
+/// Resolve the host store this provider shares, or `None` with the reason
+/// logged — for callers that only *record* facts there.
+///
+/// `None` is an ordinary answer for them: a provider running without a
+/// desktop host beside it has no seat worktrees recorded anywhere, and a
+/// pointer that fails is logged and records nothing. Anything that decides
+/// what a child may move uses [`declared_host_store`], which keeps a failed
+/// pointer apart from an absent one.
+#[must_use]
+pub fn host_store_from_pointer(state_dir: &Path) -> Option<AssignmentInputStore> {
+    match declared_host_store(state_dir) {
+        Ok(Some(store)) => Some(store),
+        Ok(None) => {
             tracing::debug!(
                 target: "csp::assignment_inputs",
-                path = %pointer_path.display(),
-                %error,
                 "no host workdir-store pointer; this provider establishes no inputs"
             );
-            return None;
+            None
         }
-    };
-    let pointer: HostStorePointer = match serde_json::from_slice(&raw) {
-        Ok(pointer) => pointer,
         Err(error) => {
-            tracing::warn!(
-                target: "csp::assignment_inputs",
-                %error,
-                "the host workdir-store pointer could not be read"
-            );
-            return None;
+            tracing::warn!(target: "csp::assignment_inputs", %error, "the host workdir-store pointer is unusable");
+            None
         }
-    };
-    if pointer.version != HOST_STORE_POINTER_VERSION || !pointer.path.is_absolute() {
-        tracing::warn!(
-            target: "csp::assignment_inputs",
-            version = pointer.version,
-            path = %pointer.path.display(),
-            "the host workdir-store pointer names a version or a path this build will not use"
-        );
-        return None;
     }
-    Some(AssignmentInputStore::new(pointer.path))
 }
 
 /// The host-local store, as this module reads and writes it.

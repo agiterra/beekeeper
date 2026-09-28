@@ -287,9 +287,14 @@ pub fn run() {
         .setup(move |app| {
             let app_handle = app.handle().clone();
             // Where this desktop bounds its own Git in project workspaces
-            // (checkout, status, clean checks). Failure is logged; every
-            // bounded operation then refuses by name rather than run unbounded.
-            match session_provider::host_git_state_dir(&app_handle) {
+            // (checkout, status, clean checks), pointed at the host's worktree
+            // record so its branch authority is the same as every provider's
+            // (ledger 277). Failure is logged; every bounded operation then
+            // refuses by name rather than run unbounded or unpinned.
+            match session_provider::host_git_state_dir(&app_handle).and_then(|dir| {
+                coding_sessions::workdir_store::materialize_host_store_pointer(&app_handle, &dir)
+                    .map(|()| dir)
+            }) {
                 Ok(dir) => coding_sessions::host_git::set_state_dir(dir),
                 Err(error) => eprintln!("buzz-desktop: host Git state dir: {error}"),
             }

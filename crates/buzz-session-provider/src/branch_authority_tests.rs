@@ -1,5 +1,6 @@
-//! The branch authority's storage contract (ledger 275 A1): it holds, or it
-//! refuses — never a silent fall back to the child-writable `HEAD`.
+//! The branch authority's storage contract (ledger 275 A1, 277): it holds, or
+//! it refuses — never a silent fall back to the child-writable `HEAD`, and
+//! never "first seen" again because a source went away or failed.
 
 use super::*;
 
@@ -22,6 +23,7 @@ fn git(dir: &Path, args: &[&str]) {
 /// `seat-branch`.
 struct Fx {
     _dir: tempfile::TempDir,
+    root: PathBuf,
     state: PathBuf,
     seat: PathBuf,
 }
@@ -49,8 +51,55 @@ fn fx() -> Fx {
     );
     Fx {
         _dir: dir,
+        root,
         state,
         seat,
+    }
+}
+
+impl Fx {
+    /// The host's store, in the app directory beside (not inside) the
+    /// provider state, as the desktop lays it out.
+    fn store(&self) -> PathBuf {
+        self.root.join("coding-session-workdirs.json")
+    }
+
+    fn pointer(&self) -> PathBuf {
+        self.state
+            .join(crate::assignment_inputs::HOST_STORE_POINTER_FILE)
+    }
+
+    /// Declare the host and record the seat's tree on `branch`.
+    fn host_records(&self, branch: &str) {
+        self.write_store(serde_json::json!({ "session/builder": {
+            "path": self.seat,
+            "branch": branch,
+        }}));
+        std::fs::write(
+            self.pointer(),
+            serde_json::json!({
+                "version": crate::assignment_inputs::HOST_STORE_POINTER_VERSION,
+                "path": self.store(),
+            })
+            .to_string(),
+        )
+        .expect("pointer");
+    }
+
+    fn write_store(&self, worktrees: serde_json::Value) {
+        std::fs::write(
+            self.store(),
+            serde_json::json!({ "version": 2, "worktrees": worktrees }).to_string(),
+        )
+        .expect("store");
+    }
+
+    fn authority(&self, bound: Option<&str>) -> Result<Option<String>, AuthorityError> {
+        branch_authority(&self.state, &self.seat, bound)
+    }
+
+    fn child_repoints_head(&self) {
+        git(&self.seat, &["symbolic-ref", "HEAD", "refs/heads/main"]);
     }
 }
 
@@ -81,7 +130,17 @@ fn a_pin_that_cannot_be_stored_refuses() {
 
 #[test]
 fn an_empty_or_corrupt_pin_refuses() {
-    for content in ["", "\n", "../main", "a b", "main.lock"] {
+    for content in [
+        "",
+        "\n",
+        "../main",
+        "a b",
+        "main.lock",
+        "seat-branch",
+        r#"{"version":1,"branch":"../main","source":"first-head"}"#,
+        r#"{"version":9,"branch":"seat-branch","source":"first-head"}"#,
+        r#"{"version":1,"branch":"seat-branch","source":"child"}"#,
+    ] {
         let fx = fx();
         let pin = pin_path(&fx.state, &fx.seat);
         std::fs::create_dir_all(pin.parent().expect("dir")).expect("dir");
@@ -128,48 +187,201 @@ fn concurrent_first_preparations_agree_on_one_pin() {
     );
 }
 
-/// The host's own worktree record decides over HEAD and over any pin.
+/// The host's own worktree record decides over HEAD and over the binding.
 #[test]
 fn the_hosts_worktree_record_is_the_authority() {
     let fx = fx();
-    let store = fx.state.join("coding-session-workdirs.json");
-    std::fs::write(
-        &store,
-        serde_json::json!({
-            "version": 2,
-            "worktrees": { "session/builder": {
-                "path": fx.seat,
-                "branch": "seat-branch",
-                "repoRoot": fx.state,
-                "createdAt": "2026-09-28T00:00:00Z",
-            }},
-        })
-        .to_string(),
-    )
-    .expect("store");
-    std::fs::write(
-        fx.state
-            .join(crate::assignment_inputs::HOST_STORE_POINTER_FILE),
-        serde_json::json!({
-            "version": crate::assignment_inputs::HOST_STORE_POINTER_VERSION,
-            "path": store,
-        })
-        .to_string(),
-    )
-    .expect("pointer");
-    git(&fx.seat, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+    fx.host_records("seat-branch");
+    fx.child_repoints_head();
     assert_eq!(
-        branch_authority(&fx.state, &fx.seat, Some("main")),
+        fx.authority(Some("main")),
         Ok(Some("seat-branch".to_owned()))
     );
     // An unreadable host record refuses rather than falling through.
-    std::fs::write(&store, "{ not json").expect("corrupt");
-    assert!(branch_authority(&fx.state, &fx.seat, None).is_err());
+    std::fs::write(fx.store(), "{ not json").expect("corrupt");
+    assert!(fx.authority(None).is_err());
+}
+
+/// Ledger 277, Astra's retained sequence: authority from the host record,
+/// a child re-points HEAD, then the host pointer is corrupted, removed, or
+/// otherwise unusable. Each later preparation — with no session binding —
+/// either keeps `seat-branch` or refuses; none grants `main`.
+/// One change a case makes to the fixture's host records.
+type Change = fn(&Fx);
+
+#[test]
+fn a_used_host_record_that_fails_or_disappears_never_restores_head_authority() {
+    let unusable_pointers: [(&str, Change); 5] = [
+        ("corrupt pointer", |fx| {
+            std::fs::write(fx.pointer(), "{ bad json").expect("corrupt")
+        }),
+        ("missing pointer", |fx| {
+            std::fs::remove_file(fx.pointer()).expect("remove")
+        }),
+        ("unsupported pointer version", |fx| {
+            std::fs::write(
+                fx.pointer(),
+                serde_json::json!({ "version": 99, "path": fx.store() }).to_string(),
+            )
+            .expect("future")
+        }),
+        ("relative pointer path", |fx| {
+            std::fs::write(
+                fx.pointer(),
+                serde_json::json!({ "version": 1, "path": "coding-session-workdirs.json" })
+                    .to_string(),
+            )
+            .expect("relative")
+        }),
+        ("pointer to another store", |fx| {
+            let other = fx.root.join("elsewhere.json");
+            std::fs::write(&other, r#"{"version":2,"worktrees":{}}"#).expect("other");
+            std::fs::write(
+                fx.pointer(),
+                serde_json::json!({ "version": 1, "path": other }).to_string(),
+            )
+            .expect("moved")
+        }),
+    ];
+    for (case, break_it) in unusable_pointers {
+        let fx = fx();
+        fx.host_records("seat-branch");
+        assert_eq!(
+            fx.authority(None),
+            Ok(Some("seat-branch".to_owned())),
+            "{case}"
+        );
+        fx.child_repoints_head();
+        break_it(&fx);
+        let error = fx.authority(None).expect_err(case);
+        assert!(error.0.contains("host"), "{case}: {error:?}");
+    }
+
+    // Sources that legitimately stop naming the tree: the established pin
+    // holds, still with no session binding.
+    let silent_sources: [(&str, Change); 3] = [
+        ("record removed", |fx| fx.write_store(serde_json::json!({}))),
+        ("store file removed", |fx| {
+            std::fs::remove_file(fx.store()).expect("remove")
+        }),
+        ("no worktrees key", |fx| {
+            std::fs::write(fx.store(), r#"{"version":2}"#).expect("store")
+        }),
+    ];
+    for (case, silence) in silent_sources {
+        let fx = fx();
+        fx.host_records("seat-branch");
+        assert_eq!(
+            fx.authority(None),
+            Ok(Some("seat-branch".to_owned())),
+            "{case}"
+        );
+        fx.child_repoints_head();
+        silence(&fx);
+        assert_eq!(
+            fx.authority(None),
+            Ok(Some("seat-branch".to_owned())),
+            "{case}"
+        );
+    }
+}
+
+/// A malformed record is declared authority that failed, not "no record".
+#[test]
+fn a_malformed_host_record_refuses() {
+    for worktrees in [
+        serde_json::json!(["not", "a", "map"]),
+        serde_json::json!({ "other/seat": { "branch": "x" } }),
+    ] {
+        let fx = fx();
+        fx.host_records("seat-branch");
+        fx.write_store(worktrees.clone());
+        assert!(fx.authority(None).is_err(), "{worktrees}");
+    }
+}
+
+/// The host re-cutting a tree on another branch is an explicit allocation:
+/// it replaces the pin. The child's HEAD never does.
+#[test]
+fn only_the_host_reallocates_a_pinned_tree() {
+    let fx = fx();
+    assert_eq!(fx.authority(None), Ok(Some("seat-branch".to_owned())));
+    fx.child_repoints_head();
+    assert_eq!(fx.authority(None), Ok(Some("seat-branch".to_owned())));
+    git(&fx.seat, &["branch", "-q", "next"]);
+    fx.host_records("next");
+    assert_eq!(fx.authority(None), Ok(Some("next".to_owned())));
+    std::fs::remove_file(fx.store()).expect("remove");
+    assert_eq!(fx.authority(None), Ok(Some("next".to_owned())));
+    // So does a host caller holding the allocation (establishment).
+    record_allocation(&fx.state, &fx.seat, "seat-branch").expect("allocated");
+    assert_eq!(fx.authority(None), Ok(Some("seat-branch".to_owned())));
+}
+
+/// A session binding that established the tree is pinned too, and a later
+/// preparation without the binding keeps it; a binding that disagrees with
+/// the pin refuses instead of picking one.
+#[test]
+fn a_session_binding_is_made_durable_and_a_disagreeing_one_refuses() {
+    let fx = fx();
+    fx.child_repoints_head();
+    assert_eq!(
+        fx.authority(Some("seat-branch")),
+        Ok(Some("seat-branch".to_owned()))
+    );
+    assert_eq!(fx.authority(None), Ok(Some("seat-branch".to_owned())));
+    assert!(fx.authority(Some("main")).is_err());
+}
+
+/// Every caller reaches one pin, however it spells the tree: a subdirectory
+/// or a non-canonical path is the same tree.
+#[test]
+fn every_spelling_of_a_tree_reaches_one_pin() {
+    let fx = fx();
+    assert_eq!(fx.authority(None), Ok(Some("seat-branch".to_owned())));
+    fx.child_repoints_head();
+    let sub = fx.seat.join("deep/er");
+    std::fs::create_dir_all(&sub).expect("sub");
+    assert_eq!(
+        branch_authority(&fx.state, &sub, None),
+        Ok(Some("seat-branch".to_owned()))
+    );
+    let dotted = fx.seat.join("deep/..");
+    assert_eq!(
+        branch_authority(&fx.state, &dotted, None),
+        Ok(Some("seat-branch".to_owned()))
+    );
+}
+
+/// Two provider identities (and the desktop's host commands) on one
+/// computer share the pins beside the host's store: a fresh state directory
+/// with the same pointer still finds the tree established.
+#[test]
+fn every_state_directory_on_one_host_shares_its_pins() {
+    let fx = fx();
+    fx.host_records("seat-branch");
+    assert_eq!(fx.authority(None), Ok(Some("seat-branch".to_owned())));
+    fx.child_repoints_head();
+    fx.write_store(serde_json::json!({}));
+    let other = fx.root.join("other-identity");
+    std::fs::create_dir_all(&other).expect("other");
+    std::fs::copy(
+        fx.pointer(),
+        other.join(crate::assignment_inputs::HOST_STORE_POINTER_FILE),
+    )
+    .expect("pointer");
+    assert_eq!(
+        branch_authority(&other, &fx.seat, None),
+        Ok(Some("seat-branch".to_owned()))
+    );
 }
 
 #[test]
 fn a_detached_tree_nobody_records_gets_no_branch() {
     let fx = fx();
     git(&fx.seat, &["checkout", "-q", "--detach"]);
-    assert_eq!(branch_authority(&fx.state, &fx.seat, None), Ok(None));
+    assert_eq!(fx.authority(None), Ok(None));
+    // Established on no branch: a child pointing HEAD at main gains nothing.
+    fx.child_repoints_head();
+    assert_eq!(fx.authority(None), Ok(None));
 }

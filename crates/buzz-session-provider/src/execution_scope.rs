@@ -624,6 +624,9 @@ pub fn prepare(inputs: &ScopeInputs<'_>) -> Result<ExecutionPlan, CreateFailure>
     // anything that cannot be established refuses the preparation.
     let branch = match inputs.branch_authority {
         Some(authority) if crate::branch_authority::valid_branch(authority) => {
+            // Durable before any child runs under it (ledger 277).
+            crate::branch_authority::record_allocation(&state_dir, &tree, authority)
+                .map_err(|error| refuse(EXECUTION_BOUNDARY_UNAVAILABLE, error.0))?;
             Some(authority.to_owned())
         }
         Some(_) => {
