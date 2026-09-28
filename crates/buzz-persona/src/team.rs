@@ -89,8 +89,8 @@ pub struct TeamWorkspace {
     /// Whether a seat in this role gets the project's agents repository
     /// beside its worktree, and whether it may write there. Omitted means
     /// the project default ([`TeamManifest::agents_access`]): the lead may
-    /// write its plans, every other role reads them. An explicit `none`
-    /// is kept as a restriction.
+    /// write its plans; other roles get no clone. An explicit `none` is kept
+    /// as a restriction, the lead's included.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agents_repo: Option<AgentsRepoAccess>,
 }
@@ -185,15 +185,16 @@ impl TeamManifest {
 
     /// The agents-repository access a seat in `role` gets: the role's
     /// explicit setting (`none` included), else the project default — `write`
-    /// for the lead, who drafts, commits and adopts the plan, and `read` for
-    /// every other role, which works from it. A project's own requirements
-    /// are never hidden from its own seats by omission.
+    /// for the lead, who reads the requirements and drafts, commits and adopts
+    /// the plan, and `none` for every other role, which reads what it needs
+    /// through the relay and its work brief. An explicit `none` binds the lead
+    /// too.
     pub fn agents_access(&self, role: &str) -> AgentsRepoAccess {
         self.role(role).workspace.agents_repo.unwrap_or_else(|| {
             if self.lead.as_deref() == Some(role) {
                 AgentsRepoAccess::Write
             } else {
-                AgentsRepoAccess::Read
+                AgentsRepoAccess::None
             }
         })
     }
@@ -396,12 +397,12 @@ agents:
     }
 
     /// An omitted `agents_repo` is the project default — the lead writes,
-    /// every other role reads — and an explicit `none` stays a restriction.
+    /// other roles get no clone — and an explicit `none` stays a restriction.
     #[test]
     fn an_omitted_grant_is_the_project_default_and_an_explicit_none_is_kept() {
         let team = parse(GOOD).expect("parses");
         assert_eq!(team.role("builder").workspace.agents_repo, None);
-        assert_eq!(team.agents_access("builder"), AgentsRepoAccess::Read);
+        assert_eq!(team.agents_access("builder"), AgentsRepoAccess::None);
         assert_eq!(
             team.agents_access("project-manager"),
             AgentsRepoAccess::Write
@@ -414,12 +415,15 @@ agents:
             AgentsRepoAccess::Write
         );
         let restricted = GOOD.replace(
-            "  builder: {}",
-            "  builder: { workspace: { agents_repo: none } }",
+            "    workspace: { agents_repo: write }",
+            "    workspace: { agents_repo: none }",
         );
         assert_eq!(
-            parse(&restricted).expect("parses").agents_access("builder"),
-            AgentsRepoAccess::None
+            parse(&restricted)
+                .expect("parses")
+                .agents_access("project-manager"),
+            AgentsRepoAccess::None,
+            "an explicit none binds the lead too"
         );
     }
 

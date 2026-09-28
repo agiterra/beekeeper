@@ -249,15 +249,6 @@ async fn status(cwd: &Path, scope: &crate::execution_scope_host::HostLaunchPlan)
         .flatten()
 }
 
-/// Environment variables by which git selects a repository, all of which beat
-/// `-C <path>`.
-///
-/// Git exports `GIT_DIR` into every hook it runs, so any `git -C` here that
-/// executes under a pre-commit or pre-push hook silently retargets at the
-/// developer's own repository. `probe(cwd)` promises to report *that*
-/// checkout's branch, commit and dirty state; an inherited `GIT_DIR` made it
-/// report a different repository's instead. Cleared for the same reason
-/// `desktop/src-tauri/src/commands/team_readiness_git.rs` clears them.
 /// Configuration a host-side `git` passes so no repository-configured
 /// program runs outside a boundary: hooks and fsmonitor off. Clean and smudge
 /// filters are not covered — a host-side call that would run them (status,
@@ -269,6 +260,15 @@ pub(crate) const HOST_GIT_NO_PROJECT_CODE: [&str; 4] = [
     "core.fsmonitor=false",
 ];
 
+/// Environment variables by which git selects a repository, all of which beat
+/// `-C <path>`.
+///
+/// Git exports `GIT_DIR` into every hook it runs, so any `git -C` here that
+/// executes under a pre-commit or pre-push hook silently retargets at the
+/// developer's own repository. `probe(cwd)` promises to report *that*
+/// checkout's branch, commit and dirty state; an inherited `GIT_DIR` made it
+/// report a different repository's instead. Cleared for the same reason
+/// `desktop/src-tauri/src/commands/team_readiness_git.rs` clears them.
 pub(crate) const GIT_REPO_SELECTION_VARS: [&str; 7] = [
     "GIT_DIR",
     "GIT_WORK_TREE",

@@ -132,15 +132,6 @@ pub(crate) fn linked_worktree_admin(
             Access::NoWrite,
             "no borrowing of another repository's objects",
         ),
-        // Git 2.55's `commit` opens the shared packed-refs lock during its ref
-        // transaction and prints a refused write when it cannot (run11's
-        // builder, seq87). The lock alone is granted; `packed-refs` itself
-        // stays read-only, so no shared ref can be rewritten through it.
-        Grant::file(
-            common.join("packed-refs.lock"),
-            Access::ReadWrite,
-            "the shared packed-refs lock Git takes during a commit",
-        ),
         Grant::tree(
             common.join("refs/remotes"),
             Access::ReadWrite,

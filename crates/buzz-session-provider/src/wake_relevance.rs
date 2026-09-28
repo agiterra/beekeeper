@@ -129,6 +129,9 @@ pub struct WakeFact {
     pub reopens_work: bool,
     /// The obligation the fact is about ([`obligation_of`]), when it names one.
     pub obligation: Option<String>,
+    /// Whether the fact is a report — the only kind an already-delivered
+    /// verdict can make redundant.
+    pub report: bool,
 }
 
 /// One fact already delivered to the recipient in a turn that has ended.
@@ -140,7 +143,14 @@ pub struct DeliveredObligation {
     pub fact_id: String,
     /// The second the turn that delivered it ended (its `result`).
     pub turn_ended_at: u64,
+    /// The delivered fact's signer when it was a verdict, else `None`.
+    pub verdict_author: Option<String>,
 }
+
+/// Seconds a fact must precede a delivering turn's end, on the signers' and
+/// the host's clocks, before it is taken to have been folded into that turn.
+/// Clocks are not trusted to the second; closer calls admit the wake.
+pub const DELIVERED_SKEW_SECS: u64 = 5;
 
 /// What the recipient already knows, folded from signed records.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -193,14 +203,23 @@ pub fn still_owed(fact: &WakeFact, view: &RelevanceView) -> Result<(), WakeDropR
 /// assumed seen because an earlier fact about the same obligation was. An
 /// unknown signing second or an unended turn proves nothing and admits.
 fn obligation_already_delivered(fact: &WakeFact, view: &RelevanceView) -> bool {
-    let (Some(obligation), Some(created_at)) = (fact.obligation.as_deref(), fact.created_at) else {
+    let (Some(obligation), Some(created_at), Some(author)) = (
+        fact.obligation.as_deref(),
+        fact.created_at,
+        fact.author.as_deref(),
+    ) else {
         return false;
     };
-    !fact.reopens_work
+    // Only the run11 shape: a verifier's own settlement report for the
+    // assignment whose verdict the recipient already acted on. An approval,
+    // a superseding report or another author's fact is never assumed seen.
+    fact.report
+        && !fact.reopens_work
         && view.delivered_obligations.iter().any(|delivered| {
             delivered.obligation == obligation
                 && delivered.fact_id != fact.fact_id
-                && created_at < delivered.turn_ended_at
+                && delivered.verdict_author.as_deref() == Some(author)
+                && created_at.saturating_add(DELIVERED_SKEW_SECS) <= delivered.turn_ended_at
         })
 }
 
@@ -302,6 +321,7 @@ fn team_fact(fact_id: &str, team_events: &[Event]) -> WakeFact {
             created_at: None,
             reopens_work: true,
             obligation: None,
+            report: false,
         };
     };
     let reopens_work = validate_coding_session_team_transaction_envelope(event)
@@ -313,6 +333,7 @@ fn team_fact(fact_id: &str, team_events: &[Event]) -> WakeFact {
         created_at: Some(event.created_at.as_secs()),
         reopens_work,
         obligation: obligation_of(fact_id, team_events),
+        report: is_report(fact_id, team_events),
     }
 }
 
@@ -341,6 +362,7 @@ pub(crate) fn fact_of_source(source: &WakeSource, team_events: &[Event]) -> Wake
             created_at: u64::try_from(*terminal_at_ms / 1_000).ok(),
             reopens_work: false,
             obligation: None,
+            report: false,
         },
     }
 }
@@ -361,6 +383,7 @@ pub fn fact_of_pointer(text: &str, team_events: &[Event]) -> Option<WakeFact> {
             created_at: None,
             reopens_work: false,
             obligation: None,
+            report: false,
         });
     }
     // A host result: a failure or refusal is evidence that can contest a
@@ -376,7 +399,31 @@ pub fn fact_of_pointer(text: &str, team_events: &[Event]) -> Option<WakeFact> {
         created_at: None,
         reopens_work: !clean_exit,
         obligation: None,
+        report: false,
     })
+}
+
+/// The signer of `fact_id` when it is a verdict.
+fn verdict_author(fact_id: &str, team_events: &[Event]) -> Option<String> {
+    let event = team_events
+        .iter()
+        .find(|event| event.id.to_hex() == fact_id)?;
+    matches!(
+        validate_coding_session_team_transaction_envelope(event)
+            .ok()?
+            .body,
+        CodingSessionTeamTransactionBody::Verdict(_)
+    )
+    .then(|| event.pubkey.to_hex())
+}
+
+/// Whether `fact_id` is a report.
+fn is_report(fact_id: &str, team_events: &[Event]) -> bool {
+    team_events
+        .iter()
+        .find(|event| event.id.to_hex() == fact_id)
+        .and_then(|event| validate_coding_session_team_transaction_envelope(event).ok())
+        .is_some_and(|payload| matches!(payload.body, CodingSessionTeamTransactionBody::Report(_)))
 }
 
 /// The obligation a team fact is about: the assignment whose settlement it
@@ -501,7 +548,6 @@ pub fn delivered_to(
         let Some(fact_id) = delivered_fact(&item.command_id, &item.content) else {
             continue;
         };
-        delivered.insert(fact_id.clone());
         let turn_id = package.history.iter().find_map(|echo| {
             (echo.target == item.target
                 && echo.item_kind == "user_prompt"
@@ -513,6 +559,9 @@ pub fn delivered_to(
             .then_some(echo.turn_id.as_deref())
             .flatten()
         });
+        // Delivered means a turn that carried the fact ended successfully: a
+        // turn that failed, was cancelled or has not ended delivers nothing,
+        // so a re-sent wake for the same fact still gets its turn.
         let ended_at = turn_id.and_then(|turn_id| {
             package
                 .history
@@ -521,15 +570,23 @@ pub fn delivered_to(
                     result.target == item.target
                         && result.item_kind == "result"
                         && result.turn_id.as_deref() == Some(turn_id)
+                        && result
+                            .content
+                            .get("subtype")
+                            .and_then(serde_json::Value::as_str)
+                            == Some("success")
                 })
                 .map(|result| result.created_at)
                 .max()
         });
-        if let (Some(turn_ended_at), Some(obligation)) =
-            (ended_at, obligation_of(&fact_id, team_events))
-        {
+        let Some(turn_ended_at) = ended_at else {
+            continue;
+        };
+        delivered.insert(fact_id.clone());
+        if let Some(obligation) = obligation_of(&fact_id, team_events) {
             obligations.push(DeliveredObligation {
                 obligation,
+                verdict_author: verdict_author(&fact_id, team_events),
                 fact_id,
                 turn_ended_at,
             });

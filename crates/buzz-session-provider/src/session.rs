@@ -2198,16 +2198,21 @@ pub(crate) fn boundary_briefing(execution: &crate::execution_scope::ExecutionPla
             if let Some(branch) = &prepared.binding.branch {
                 text.push_str(&format!(
                     " Your working tree is on the branch `{branch}`, which the host allocated \
-                     for this session: commit there. Creating, renaming or switching local \
-                     branches is refused by the boundary, so do not try, and never edit files \
-                     under `.git` to get around it. Publish your work with `git push origin \
-                     {branch}`; if your brief names a different remote branch, push this one to \
-                     it with `git push origin HEAD:refs/heads/<that name>`."
+                     for this session: commit there. Creating or renaming a local branch is \
+                     refused by the boundary, and switching to another one leaves you unable to \
+                     commit, so stay on `{branch}` and never edit files under `.git` to get \
+                     around it. Publish your work with `git push origin {branch}`; if your brief \
+                     names a different remote branch, push this one to it with `git push origin \
+                     HEAD:refs/heads/<that name>`. Git may print `Unable to create \
+                     '…/packed-refs.lock': Operation not permitted` after a commit: the shared \
+                     ref pack is the host's, and the commit itself succeeded (check with `git \
+                     log -1`)."
                 ));
             }
             text.push_str(
-                " Temporary files belong in this execution's private temp: `$TMPDIR` and \
-                 `mktemp` (any form) use it.",
+                " Temporary files belong in this execution's private temp: `$TMPDIR`, and \
+                 `mktemp` as found on your `PATH`, use it (`/usr/bin/mktemp` named absolutely \
+                 and macOS Foundation temp directories are refused).",
             );
             if let Some((path, false)) = &prepared.agents {
                 text.push_str(&format!(

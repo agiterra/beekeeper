@@ -311,19 +311,17 @@ fn team_yml(name: &str, lead: &str, roles: &[&Template]) -> String {
          schema: {TEAM_SCHEMA}\nname: {}\nversion: {SEED_TEAM_VERSION}\nlead: {lead}\nroles:\n",
         yaml_string(name)
     );
-    // Explicit grants (spec § 4.11): the lead drafts, commits and adopts the
-    // project's plans; every other role reads them. Written out so the file
-    // says what the host will do rather than leaving it to a default.
+    // The lead drafts, commits and adopts the project's plans, so its grant
+    // is written out (spec § 4.11); other roles take the default (no clone).
     for template in roles {
-        let access = if template.name == lead {
-            "write"
+        if template.name == lead {
+            out.push_str(&format!(
+                "  {}: {{ workspace: {{ agents_repo: write }} }}\n",
+                template.name
+            ));
         } else {
-            "read"
-        };
-        out.push_str(&format!(
-            "  {}: {{ workspace: {{ agents_repo: {access} }} }}\n",
-            template.name
-        ));
+            out.push_str(&format!("  {}: {{}}\n", template.name));
+        }
     }
     // One default agent per role (spec § 4.11): the host mints the
     // identities when the project is created; these are the names it uses
@@ -512,15 +510,13 @@ mod tests {
             vec!["builder", "lead"]
         );
         // Run11 (ledger 272, defect 3): a seeded lead got no agents clone and
-        // improvised one. The seeded lead writes its plans; others read.
+        // improvised one. The seeded lead writes its plans.
         assert_eq!(
             team.role("lead").workspace.agents_repo,
             Some(AgentsRepoAccess::Write)
         );
-        assert_eq!(
-            team.role("builder").workspace.agents_repo,
-            Some(AgentsRepoAccess::Read)
-        );
+        assert_eq!(team.role("builder").workspace.agents_repo, None);
+        assert_eq!(team.agents_access("builder"), AgentsRepoAccess::None);
         let agents: Vec<(&str, &str, bool)> = team
             .agents
             .iter()

@@ -10,6 +10,7 @@ fn fact(id: &str, author: Option<&str>, created_at: Option<u64>, reopens: bool) 
         created_at,
         reopens_work: reopens,
         obligation: None,
+        report: false,
     }
 }
 
@@ -441,6 +442,54 @@ mod obligation {
         // And the verdict itself, re-sent, is a plain duplicate.
         let verdict = team_fact(&run.verdict.id.to_hex(), &run.events);
         assert_eq!(still_owed(&verdict, &view), Err(WakeDropReason::Duplicate));
+    }
+
+    /// Review S3(a): a delivering turn that failed delivered nothing — the
+    /// same fact re-sent (a person's explicit re-wake included) gets a turn.
+    #[test]
+    fn a_failed_delivering_turn_delivers_nothing() {
+        let run = run(269);
+        let lead = run.lead.public_key().to_hex();
+        let mut package = package(&run.lead, &run.verdict.id.to_hex(), true);
+        for item in &mut package.history {
+            if item.item_kind == "result" {
+                item.content = serde_json::json!({ "kind": "result", "subtype": "error" });
+            }
+        }
+        let mut view = view_for(&lead, None, &[&run.events]);
+        let (delivered, obligations) = delivered_to(&package, &lead, &run.events);
+        assert!(delivered.is_empty() && obligations.is_empty());
+        view.delivered = delivered;
+        view.delivered_obligations = obligations;
+        let verdict = team_fact(&run.verdict.id.to_hex(), &run.events);
+        assert_eq!(still_owed(&verdict, &view), Ok(()));
+        let report = team_fact(&run.verifier_report.id.to_hex(), &run.events);
+        assert_eq!(still_owed(&report, &view), Ok(()));
+    }
+
+    /// Review S3(b): only the verdict author's own later *report* is folded.
+    /// Another author's report about the same assignment is never assumed
+    /// seen, however it is timed.
+    #[test]
+    fn only_the_verdict_authors_own_report_is_folded() {
+        let run = run(269);
+        let view = view(&run, true);
+        let mut foreign = team_fact(&run.verifier_report.id.to_hex(), &run.events);
+        foreign.author = Some(run.builder.public_key().to_hex());
+        assert_eq!(still_owed(&foreign, &view), Ok(()));
+        let mut not_a_report = team_fact(&run.verifier_report.id.to_hex(), &run.events);
+        not_a_report.report = false;
+        assert_eq!(still_owed(&not_a_report, &view), Ok(()));
+    }
+
+    /// Review S3(c): a fact signed within the clock-skew margin of the
+    /// turn's end is not taken to have been folded into it.
+    #[test]
+    fn a_fact_within_the_skew_margin_of_the_turns_end_is_owed() {
+        let run = run(290 - DELIVERED_SKEW_SECS + 1);
+        let view = view(&run, true);
+        let fact = team_fact(&run.verifier_report.id.to_hex(), &run.events);
+        assert_eq!(still_owed(&fact, &view), Ok(()));
     }
 
     /// A fact signed after the delivering turn ended is news: owed.

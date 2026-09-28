@@ -467,7 +467,8 @@ fn render_owed(facts: &AssignmentFacts) -> String {
             let _ = write!(
                 out,
                 "\n\nBranch: `{branch}`, allocated to this worktree by the host; commit there \
-                 (creating or switching local branches is refused). The assignment names \
+                 (a new local branch is refused, and another one cannot be committed to). The \
+                 assignment names \
                  `{named}` as the remote branch: publish with `git push origin \
                  HEAD:refs/heads/{named}`."
             );
@@ -480,7 +481,11 @@ fn render_owed(facts: &AssignmentFacts) -> String {
             );
         }
         (None, Some(named)) => {
-            let _ = write!(out, "\n\nBranch: {named}");
+            let _ = write!(
+                out,
+                "\n\nBranch: the host recorded no branch for this worktree; the assignment \
+                 names `{named}` as the remote branch for this work."
+            );
         }
         (None, None) => out.push_str("\n\nBranch: the assignment named none; stay on the branch this worktree is already on."),
     }

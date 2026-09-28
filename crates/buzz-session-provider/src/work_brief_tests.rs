@@ -317,10 +317,7 @@ fn the_brief_names_the_allocated_branch_and_pushes_to_the_assignments_name() {
         text.contains("git push origin HEAD:refs/heads/work/lapbook-cli"),
         "{text}"
     );
-    assert!(
-        text.contains("creating or switching local branches is refused"),
-        "{text}"
-    );
+    assert!(text.contains("a new local branch is refused"), "{text}");
 }
 
 #[test]

@@ -613,14 +613,19 @@ pub fn prepare(inputs: &ScopeInputs<'_>) -> Result<ExecutionPlan, CreateFailure>
         Access::NoUnlink,
         "the working tree's own anchor",
     ));
-    // The branch is pinned by the host: the one recorded when this tree was
-    // first prepared (before any child ran in it), else the tree's branch now.
-    let branch = inputs
-        .prior
-        .and_then(|(prior, _)| prior)
-        .filter(|prior| prior.tree.as_deref() == Some(tree.as_path()))
-        .and_then(|prior| prior.branch.clone())
-        .or_else(|| crate::execution_scope_git::worktree_branch(&tree));
+    // The branch is pinned by the host when it first prepares this tree —
+    // before any child has run in it — and every later preparation of the
+    // tree, for any purpose, grants that branch, never the child-writable
+    // `HEAD`.
+    let branch = pinned_branch(
+        &state_dir,
+        &tree,
+        inputs
+            .prior
+            .and_then(|(prior, _)| prior)
+            .filter(|prior| prior.tree.as_deref() == Some(tree.as_path()))
+            .and_then(|prior| prior.branch.as_deref()),
+    );
     let linked = crate::execution_scope_git::linked_worktree_admin(
         &tree,
         inputs.project_checkout,
@@ -1184,8 +1189,48 @@ pub(crate) fn write_host_file(
     std::io::Write::write_all(&mut file, contents).map_err(failed)
 }
 
-/// A link named `name` in the host's tool directory to the executable the
-/// host chose.
+/// Host-owned branch pins, one file per working tree, beside (never inside)
+/// the executions' state.
+const BRANCH_PINS_DIR: &str = "branch-pins";
+
+/// The branch pinned for `tree`: the record's own, else the host's pin file,
+/// else the tree's branch now — which is then pinned. The first preparation
+/// of a tree happens before any child runs in it (a new worktree is cut by
+/// the host); a tree first seen by this code after an upgrade is pinned from
+/// its `HEAD` at that moment.
+fn pinned_branch(state_dir: &Path, tree: &Path, recorded: Option<&str>) -> Option<String> {
+    let dir = state_dir.join(BRANCH_PINS_DIR);
+    let pin = dir.join(&hex::encode(Sha256::digest(tree.to_string_lossy().as_bytes()))[..32]);
+    let read_pin = || {
+        std::fs::read_to_string(&pin)
+            .ok()
+            .map(|text| text.trim().to_owned())
+            .filter(|branch| !branch.is_empty())
+    };
+    let chosen = recorded
+        .map(str::to_owned)
+        .or_else(read_pin)
+        .or_else(|| crate::execution_scope_git::worktree_branch(tree))?;
+    if read_pin().is_none() && std::fs::create_dir_all(&dir).is_ok() {
+        use std::io::Write as _;
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&pin)
+        {
+            Ok(mut file) => {
+                let _ = file.write_all(chosen.as_bytes());
+            }
+            // Another preparation pinned it first: that pin decides.
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                return read_pin().or(Some(chosen));
+            }
+            Err(_) => {}
+        }
+    }
+    Some(chosen)
+}
+
 /// The host's `mktemp` for an execution: routes macOS's default and `-t`
 /// forms, which ignore `TMPDIR`, to the execution's private temp.
 const MKTEMP_SHIM: &str = include_str!("mktemp_shim.sh");
@@ -1200,16 +1245,33 @@ fn stage_host_script(bin: &Path, name: &str, body: &str) -> Result<(), CreateFai
             format!("could not stage the host's {name}: {error}"),
         )
     };
-    if std::fs::symlink_metadata(&path).is_ok() {
-        std::fs::remove_file(&path).map_err(failed)?;
+    // Already current: leave it, so a running execution never sees it change.
+    if std::fs::read(&path).is_ok_and(|bytes| bytes == body.as_bytes()) {
+        return Ok(());
     }
-    std::fs::write(&path, body).map_err(failed)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o555)).map_err(failed)?;
+    // Written under a name no other preparation uses and renamed into place:
+    // an execution sharing this directory finds the old script or the new
+    // one, never a missing or half-written one.
+    static STAGING: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let building = bin.join(format!(
+        ".{name}-{}-{}",
+        std::process::id(),
+        STAGING.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let staged = std::fs::write(&building, body)
+        .and_then(|()| {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&building, std::fs::Permissions::from_mode(0o555))?;
+            }
+            std::fs::rename(&building, &path)
+        })
+        .map_err(failed);
+    if staged.is_err() {
+        let _ = std::fs::remove_file(&building);
     }
-    Ok(())
+    staged
 }
 
 /// The directories macOS's `path_helper` would give a login shell
@@ -1239,6 +1301,8 @@ fn system_search_path() -> String {
     dirs.join(":")
 }
 
+/// A link named `name` in the host's tool directory to the executable the
+/// host chose.
 fn link_tool(bin: &Path, target: &Path, name: &str) -> Result<(), CreateFailure> {
     let link = bin.join(name);
     let failed = |error: std::io::Error| {

@@ -239,7 +239,8 @@ fn a_seat_commits_and_pushes_its_pinned_branch_and_nothing_else() {
     let briefing = crate::session::boundary_briefing(&ExecutionPlan::Prepared(plan.clone()));
     assert!(
         briefing.contains("on the branch `seat-branch`")
-            && briefing.contains("git push origin seat-branch"),
+            && briefing.contains("git push origin seat-branch")
+            && briefing.contains("packed-refs.lock"),
         "{briefing}"
     );
     let output = run_in(
@@ -251,10 +252,19 @@ fn a_seat_commits_and_pushes_its_pinned_branch_and_nothing_else() {
         output.status.success(),
         "commit on the pinned branch: {output:?}"
     );
+    // Git 2.55 tries the shared packed-refs lock during a commit (run11
+    // builder seq87). The lock is not granted — a child able to write it
+    // could rewrite shared refs while the host's Git holds it — so the only
+    // output allowed is that one disclosed, harmless line.
+    let printed = String::from_utf8_lossy(&output.stdout);
     assert!(
-        output.stdout.is_empty() && output.stderr.is_empty(),
-        "a commit leaves no refused writes behind (run11 builder seq87): {output:?}"
+        printed
+            .lines()
+            .all(|line| line.contains("packed-refs.lock")
+                && line.contains("Operation not permitted")),
+        "{output:?}"
     );
+    assert_eq!(git_out(&fx.seat_a, &["log", "-1", "--format=%s"]), "work");
     for push in [
         "git push -q origin seat-branch",
         "git push -q origin HEAD:refs/heads/work/lapbook-cli",
@@ -305,6 +315,29 @@ fn re_pointing_head_does_not_widen_the_branch_grant_on_continuation() {
         main_before,
         "the shared main branch is unchanged"
     );
+
+    // Review B1: the pin holds for every purpose, not only a resume — a new
+    // session on the same tree and a host command there get no `main`.
+    for purpose in [ScopePurpose::Session, ScopePurpose::HostCommand] {
+        let mut fresh = inputs(&fx, "s2", &fx.seat_a, &[], &[]);
+        fresh.purpose = purpose;
+        let plan = prepared(prepare(&fresh));
+        assert_eq!(
+            plan.binding.branch.as_deref(),
+            Some("seat-branch"),
+            "{purpose:?}"
+        );
+        let output = run_in(
+            &plan,
+            &fx.seat_a,
+            "git update-ref refs/heads/main HEAD~0 2>&1; git -c user.name=s -c user.email=s@example.invalid commit -qam y 2>&1",
+        );
+        assert_eq!(
+            git_out(&fx.repo_a, &["rev-parse", "refs/heads/main"]),
+            main_before,
+            "{purpose:?} wrote main: {output:?}"
+        );
+    }
 }
 
 /// Host-side Git outside a boundary must run none of the repository's own
