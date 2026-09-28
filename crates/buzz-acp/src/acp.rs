@@ -472,6 +472,19 @@ impl TurnWireSummary {
 /// `_meta.claudeCode.emitRawSDKMessages`.
 const RAW_SDK_FRAME_METHOD: &str = "_claude/sdkMessage";
 
+/// Result-message origin kinds claude-agent-acp treats as an autonomous cycle
+/// rather than the user's own turn — copied from the adapter's
+/// `AUTONOMOUS_RESULT_ORIGINS` (0.70.0, `dist/acp-agent.js:114`). The adapter
+/// is deliberately fail-open: any other kind, including `human` (which it
+/// stamps on every ACP prompt) and future kinds, is the user's lane.
+const AUTONOMOUS_RESULT_ORIGINS: &[&str] = &[
+    "task-notification",
+    "peer",
+    "coordinator",
+    "observer",
+    "observer-activity",
+];
+
 /// Drain a child's stderr into `tail`, re-emitting each line through `tracing`.
 ///
 /// Both halves matter: the re-emission is what keeps the harness terminal's
@@ -1891,6 +1904,13 @@ impl AcpClient {
             .as_str()
             .ok_or_else(|| AcpError::Protocol("session/new response missing sessionId".into()))?
             .to_owned();
+        // A session this client just created has spent nothing: its first
+        // turn's cumulative cost is measured from zero. Seeded here, for every
+        // caller, because the session provider opens sessions through this
+        // method and never reaches the pool's `notify_session_spawned`
+        // (ledger 272(d)); the pool's later call is then a no-op. A resume or
+        // load is never seeded — that conversation may already have spent.
+        self.notify_session_spawned(&session_id);
         tracing::info!(target: "acp::session", "session created");
         Ok(SessionNewResponse {
             session_id,
@@ -2302,9 +2322,15 @@ impl AcpClient {
     /// Handle one `_claude/sdkMessage` frame: record the model a `result`
     /// reports, and log the frame only when the diagnostic flag asked for it.
     ///
-    /// Only user-turn results count: an autonomous result (a followup or peer
-    /// cycle, stamped with a non-user `origin`) did not answer the turn in
-    /// flight.
+    /// Only user-turn results name the turn's model: an autonomous result (a
+    /// task-notification followup, a peer/coordinator/observer cycle) did not
+    /// answer the turn in flight. "Autonomous" is exactly the adapter's own
+    /// set, [`AUTONOMOUS_RESULT_ORIGINS`]; every other origin — `human`,
+    /// which claude-agent-acp stamps on every ACP prompt, `channel`, an
+    /// absent one, an unknown future kind — is the user's lane, as the
+    /// adapter itself routes it (ledger 272(d)). An autonomous result still
+    /// advances the session's cumulative `modelUsage` baseline, so its usage
+    /// is never attributed to the next user turn.
     fn handle_raw_sdk_frame(&mut self, msg: &serde_json::Value) {
         if self.emit_raw_sdk_frames {
             self.log_raw_sdk_frame(msg);
@@ -2319,19 +2345,15 @@ impl AcpClient {
         let autonomous = message
             .pointer("/origin/kind")
             .and_then(serde_json::Value::as_str)
-            .is_some_and(|kind| kind != "user");
-        if autonomous {
-            return;
-        }
+            .is_some_and(|kind| AUTONOMOUS_RESULT_ORIGINS.contains(&kind));
         let Some(session_id) = msg
             .pointer("/params/sessionId")
             .and_then(serde_json::Value::as_str)
         else {
             return;
         };
-        if let Some(model) = crate::usage::dominant_model_from_sdk_result(message) {
-            self.standard_usage.record_model(session_id, &model);
-        }
+        self.standard_usage
+            .record_sdk_result(session_id, message, !autonomous);
     }
 
     /// Write the denied-tool list into a request's `_meta`, if there is one.
@@ -2401,7 +2423,8 @@ impl AcpClient {
     /// Seeds a zero baseline so the first usage notification for `session_id`
     /// produces `delta_reliable: true` (turn delta == cumulative from zero).
     /// Must be called only when buzz-acp created the session via `session/new`;
-    /// never when attaching to a pre-existing session.
+    /// never when attaching to a pre-existing session. [`Self::session_new_full`]
+    /// calls it itself; an explicit later call is a no-op.
     pub(crate) fn notify_session_spawned(&mut self, session_id: &str) {
         self.goose_usage.seed_zero_baseline(session_id);
         self.standard_usage.seed_zero_baseline(session_id);
@@ -7238,6 +7261,149 @@ sleep 5
         })
     }
 
+    fn sdk_result_frame(
+        session_id: &str,
+        origin: Option<&str>,
+        usage: serde_json::Value,
+    ) -> serde_json::Value {
+        let mut message = serde_json::json!({ "type": "result", "modelUsage": usage });
+        if let Some(kind) = origin {
+            message["origin"] = serde_json::json!({ "kind": kind });
+        }
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": RAW_SDK_FRAME_METHOD,
+            "params": { "sessionId": session_id, "message": message }
+        })
+    }
+
+    /// Ledger 272(d), RED-first: claude-agent-acp 0.70.0 stamps every ACP
+    /// prompt `origin: {kind: "human"}` (`acp-agent.js:6180`), and its result
+    /// carries that origin. Only the adapter's own autonomous set
+    /// (`task-notification`, `peer`, `coordinator`, `observer`,
+    /// `observer-activity`, `acp-agent.js:114`) is someone else's cycle; a
+    /// `human` result answered the user's turn and names its model.
+    #[tokio::test]
+    async fn a_human_origin_result_names_the_model_that_answered_the_turn() {
+        let mut client = spawn_inert_client().await;
+        client.standard_adapter = Some(StandardAdapterKind::Claude);
+        client.notify_session_spawned("human-session");
+        client.standard_usage.begin_turn("human-session");
+        client.handle_raw_sdk_frame(&sdk_result_frame(
+            "human-session",
+            Some("human"),
+            serde_json::json!({ "claude-opus-5-5": { "costUSD": 0.2, "outputTokens": 400 } }),
+        ));
+        client.handle_session_update(&standard_cost_update("human-session", 0.2));
+        let usage = client.take_turn_usage().expect("usage");
+        assert_eq!(usage.model.as_deref(), Some("claude-opus-5-5"));
+    }
+
+    /// The adapter's autonomous origins still never name the turn's model,
+    /// and an origin the adapter does not list falls to the user lane, as the
+    /// adapter itself routes it (fail-open, `acp-agent.js:105-113`).
+    #[tokio::test]
+    async fn only_the_adapters_autonomous_origins_are_someone_elses_cycle() {
+        for (origin, expected) in [
+            ("task-notification", None),
+            ("peer", None),
+            ("coordinator", None),
+            ("observer", None),
+            ("observer-activity", None),
+            ("channel", Some("claude-sonnet-5")),
+            ("unclassified", Some("claude-sonnet-5")),
+        ] {
+            let mut client = spawn_inert_client().await;
+            client.standard_adapter = Some(StandardAdapterKind::Claude);
+            client.notify_session_spawned("origin-session");
+            client.standard_usage.begin_turn("origin-session");
+            client.handle_raw_sdk_frame(&sdk_result_frame(
+                "origin-session",
+                Some(origin),
+                serde_json::json!({ "claude-sonnet-5": { "costUSD": 0.1, "outputTokens": 10 } }),
+            ));
+            client.handle_session_update(&standard_cost_update("origin-session", 0.1));
+            let usage = client.take_turn_usage().expect("usage");
+            assert_eq!(usage.model.as_deref(), expected, "origin {origin}");
+        }
+    }
+
+    /// Ledger 272(d), RED-first: `modelUsage` on a Claude SDK result is the
+    /// session's cumulative map, so the model that answered *this* turn is
+    /// the one whose usage grew since the previous result — not the one with
+    /// the most usage over the whole session.
+    #[tokio::test]
+    async fn the_turns_model_is_the_one_whose_cumulative_usage_grew() {
+        let mut client = spawn_inert_client().await;
+        client.standard_adapter = Some(StandardAdapterKind::Claude);
+        client.notify_session_spawned("delta-session");
+        client.standard_usage.begin_turn("delta-session");
+        client.handle_raw_sdk_frame(&sdk_result_frame(
+            "delta-session",
+            Some("human"),
+            serde_json::json!({ "claude-opus-5-5": { "costUSD": 1.0, "outputTokens": 900 } }),
+        ));
+        client.handle_session_update(&standard_cost_update("delta-session", 1.0));
+        assert_eq!(
+            client.take_turn_usage().expect("usage").model.as_deref(),
+            Some("claude-opus-5-5")
+        );
+        client.standard_usage.begin_turn("delta-session");
+        client.handle_raw_sdk_frame(&sdk_result_frame(
+            "delta-session",
+            Some("human"),
+            serde_json::json!({
+                "claude-opus-5-5": { "costUSD": 1.0, "outputTokens": 900 },
+                "claude-sonnet-5": { "costUSD": 0.1, "outputTokens": 50 }
+            }),
+        ));
+        client.handle_session_update(&standard_cost_update("delta-session", 1.1));
+        assert_eq!(
+            client.take_turn_usage().expect("usage").model.as_deref(),
+            Some("claude-sonnet-5"),
+            "opus did nothing this turn; the cumulative map still ranks it first"
+        );
+    }
+
+    /// Ledger 272(d), RED-first: every `session/new` seeds the zero cost
+    /// baseline, whoever called it — the session provider opens sessions
+    /// itself and never reaches `pool.rs`'s `notify_session_spawned`, so its
+    /// first turn's cumulative cost had nothing to subtract from.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn session_new_seeds_the_first_turns_cost_baseline() {
+        let script = r#"
+            read -r REQ
+            ID=$(printf '%s' "$REQ" | sed -E 's/.*"id":([0-9]+).*/\1/')
+            echo '{"jsonrpc":"2.0","id":'"$ID"',"result":{"sessionId":"fresh-session"}}'
+            read -r REQ
+            ID=$(printf '%s' "$REQ" | sed -E 's/.*"id":([0-9]+).*/\1/')
+            echo '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"fresh-session","update":{"sessionUpdate":"usage_update","cost":{"amount":0.25,"currency":"USD"}}}}'
+            echo '{"jsonrpc":"2.0","id":'"$ID"',"result":{"stopReason":"end_turn","usage":{"inputTokens":7,"outputTokens":3,"totalTokens":10}}}'
+            sleep 1
+        "#;
+        let (mut client, dir) = spawn_named_script("claude-code", script).await;
+        client.set_turn_clock(idle_clock::ManualTurnClock::frozen());
+        let opened = client
+            .session_new_full("/tmp", vec![], None, None)
+            .await
+            .expect("session/new");
+        assert_eq!(opened.session_id, "fresh-session");
+        client
+            .session_prompt_with_idle_timeout(
+                "fresh-session",
+                "hello",
+                std::time::Duration::from_secs(2),
+                std::time::Duration::from_secs(5),
+            )
+            .await
+            .expect("prompt");
+        let usage = client.take_turn_usage().expect("usage");
+        assert_eq!(usage.turn_cost_usd, Some(0.25));
+        drop(client);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     #[tokio::test]
     async fn claude_prompt_response_usage_merges_with_cumulative_cost() {
         let mut client = spawn_inert_client().await;
@@ -7325,7 +7491,7 @@ sleep 5
         let script = r#"
             read -r REQ
             ID=$(printf '%s' "$REQ" | sed -E 's/.*"id":([0-9]+).*/\1/')
-            echo '{"jsonrpc":"2.0","method":"_claude/sdkMessage","params":{"sessionId":"model-session","message":{"type":"result","origin":{"kind":"followup"},"modelUsage":{"claude-haiku-4-5":{"costUSD":9.0}}}}}'
+            echo '{"jsonrpc":"2.0","method":"_claude/sdkMessage","params":{"sessionId":"model-session","message":{"type":"result","origin":{"kind":"task-notification"},"modelUsage":{"claude-haiku-4-5":{"costUSD":9.0}}}}}'
             echo '{"jsonrpc":"2.0","method":"_claude/sdkMessage","params":{"sessionId":"model-session","message":{"type":"result","modelUsage":{"claude-haiku-4-5":{"costUSD":0.001},"claude-opus-4-6":{"costUSD":0.4}}}}}'
             echo '{"jsonrpc":"2.0","id":'"$ID"',"result":{"stopReason":"end_turn","usage":{"inputTokens":7,"outputTokens":3,"totalTokens":10}}}'
             sleep 1

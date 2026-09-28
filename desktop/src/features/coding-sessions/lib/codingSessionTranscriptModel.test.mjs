@@ -189,6 +189,7 @@ test("deduplicates result echoes without dropping completion duration and cost",
   assert.deepEqual(turn.completion, {
     durationMs: 3557,
     costUsd: 0.3209,
+    costBasis: null,
     outcome: null,
     timestamp,
     state: "completed",
@@ -220,6 +221,7 @@ test("structured duration and cost win over the legacy text-baked suffixes", () 
   assert.deepEqual(turn.completion, {
     durationMs: 3557,
     costUsd: 0.3209,
+    costBasis: null,
     outcome: null,
     timestamp,
     state: "completed",
@@ -347,6 +349,7 @@ test("coalesces an unscoped signed terminal cycle and removes its result echo", 
   assert.deepEqual(turn.completion, {
     durationMs: 3557,
     costUsd: 0.3209,
+    costBasis: null,
     outcome: "success",
     timestamp,
     state: "completed",

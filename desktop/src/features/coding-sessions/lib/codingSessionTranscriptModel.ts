@@ -2,7 +2,10 @@ import {
   buildFileEditDiff,
   type FileEditDiff,
 } from "@/features/agents/ui/agentSessionFileEditDiff";
-import type { TranscriptItem } from "@/features/agents/ui/agentSessionTypes";
+import type {
+  CodingSessionCostBasis,
+  TranscriptItem,
+} from "@/features/agents/ui/agentSessionTypes";
 import { getToolString } from "@/features/agents/ui/agentSessionUtils";
 import { deriveCodingSessionTaskModel } from "@/features/coding-sessions/lib/codingSessionTaskModel";
 import { hasRedactionMarker } from "@/shared/lib/redactionMarker";
@@ -10,6 +13,8 @@ import { hasRedactionMarker } from "@/shared/lib/redactionMarker";
 export type CodingSessionTurnCompletion = {
   durationMs: number | null;
   costUsd: number | null;
+  /** Whose estimate `costUsd` is; `null` when the record named none. */
+  costBasis: CodingSessionCostBasis | null;
   outcome: string | null;
   timestamp: string;
   state: "completed" | "failed" | "interrupted";
@@ -252,6 +257,8 @@ function deriveTurn(
             : result.durationMs,
         costUsd:
           typeof item.costUsd === "number" ? item.costUsd : result.costUsd,
+        costBasis:
+          typeof item.costUsd === "number" ? (item.costBasis ?? null) : null,
         outcome: item.outcome?.trim() || null,
         timestamp: item.timestamp,
         state: isErrorItem(item) ? "failed" : "completed",
@@ -288,6 +295,7 @@ function deriveTurn(
       completion = {
         durationMs: null,
         costUsd: null,
+        costBasis: null,
         outcome: "interrupted",
         timestamp: item.timestamp,
         state: "interrupted",
@@ -737,6 +745,25 @@ export function formatCodingSessionCost(costUsd: number): string {
 }
 
 /**
+ * The words that go beside a turn's dollar figure (ledger 272(d)). No figure
+ * on the wire is an invoice: the adapter's is its own client-side estimate,
+ * the table's is this project's rates applied to reported tokens, and a
+ * record that names no basis is still an estimate.
+ */
+export function formatCodingSessionCostBasis(
+  basis: CodingSessionCostBasis | null,
+): string {
+  switch (basis) {
+    case "adapter_estimate":
+      return "adapter estimate";
+    case "table_estimate":
+      return "price-table estimate";
+    default:
+      return "estimate";
+  }
+}
+
+/**
  * Reuses unchanged block objects across append-only transcript updates.
  *
  * The signed projection store emits a new transcript array for every frame.
@@ -860,6 +887,7 @@ function completionsEqual(
   return (
     left.durationMs === right.durationMs &&
     left.costUsd === right.costUsd &&
+    left.costBasis === right.costBasis &&
     left.outcome === right.outcome &&
     left.timestamp === right.timestamp &&
     left.state === right.state

@@ -1,5 +1,8 @@
 import type { LucideIcon } from "lucide-react";
 
+/** Who produced a coding-session turn's dollar estimate (ledger 272(d)). */
+export type CodingSessionCostBasis = "adapter_estimate" | "table_estimate";
+
 export type ObserverEvent = {
   seq: number;
   timestamp: string;
@@ -181,6 +184,13 @@ export type TranscriptItem =
       durationMs?: number | null;
       /** Structured turn cost (USD) for coding-session "Turn result" items. */
       costUsd?: number | null;
+      /**
+       * Whose estimate `costUsd` is (ledger 272(d)): the adapter's own figure,
+       * or the provider's price table applied to reported tokens. Neither is
+       * an invoice. `null` when the item named no basis (a record older than
+       * ledger 266) — still an estimate, just an unattributed one.
+       */
+      costBasis?: CodingSessionCostBasis | null;
       /**
        * Per-turn token accounting, when the driver reported any.
        *

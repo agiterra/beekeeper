@@ -136,6 +136,31 @@ test("a result item carries structured metrics, never baked into its text", () =
   assert.equal(bare.text, "ok");
   assert.equal(bare.durationMs, null);
   assert.equal(bare.costUsd, null);
+  assert.equal(bare.costBasis, null);
+});
+
+// Ledger 272(d): every dollar figure says whose estimate it is. The pre-272(d)
+// spellings read as what they always meant — `billed` was the adapter's own
+// client-side figure, never an invoice.
+test("a result's cost basis is read, old spellings included", () => {
+  const basisOf = (costBasis) =>
+    projectCodingSessionTranscriptItem(
+      envelope({
+        item: {
+          kind: "result",
+          subtype: "success",
+          costUsd: 0.2274,
+          ...(costBasis === undefined ? {} : { costBasis }),
+          result: "ok",
+        },
+      }),
+    ).costBasis;
+  assert.equal(basisOf("adapter_estimate"), "adapter_estimate");
+  assert.equal(basisOf("billed"), "adapter_estimate");
+  assert.equal(basisOf("table_estimate"), "table_estimate");
+  assert.equal(basisOf("estimated"), "table_estimate");
+  assert.equal(basisOf("invoice"), null);
+  assert.equal(basisOf(undefined), null);
 });
 
 test("an arbitrary caller cannot stamp a malformed source event identity", () => {

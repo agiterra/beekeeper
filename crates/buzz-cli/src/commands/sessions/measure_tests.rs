@@ -112,8 +112,11 @@ fn kettle_reproduces_the_audits_completed_result_subtotal() {
     assert_eq!(i64_at(&report, "/totals/output_tokens"), 106_661);
     assert_eq!(i64_at(&report, "/totals/tool_calls"), 155);
 
-    // $2.297416 of reported cost over 2 priced results out of 5.
-    assert_eq!(f64_at(&report, "/totals/cost/reported_usd"), 2.297_416);
+    // $2.297416 of reported cost over 2 priced results out of 5. The capture
+    // predates `costBasis` (ledger 266), so it is summed as unknown basis —
+    // neither the adapter's nor the table's estimate (ledger 272(d)).
+    assert_eq!(f64_at(&report, "/totals/cost/unknown_basis_usd"), 2.297_416);
+    assert_eq!(i64_at(&report, "/totals/cost/results_unknown_basis"), 2);
     assert_eq!(i64_at(&report, "/totals/cost/results_priced"), 2);
     assert_eq!(i64_at(&report, "/totals/cost/results_total"), 5);
 }
@@ -505,7 +508,11 @@ fn rpg_reproduces_the_cost_and_coordination_ledger() {
     assert_eq!(i64_at(&report, "/totals/completed_turns"), 32);
     assert_eq!(i64_at(&report, "/totals/input_tokens"), 66_492_119);
     assert_eq!(i64_at(&report, "/totals/output_tokens"), 714_115);
-    assert_eq!(f64_at(&report, "/totals/cost/reported_usd"), 38.540_707);
+    // Pre-ledger-266 capture: no `costBasis`, so every dollar is unknown basis.
+    assert_eq!(
+        f64_at(&report, "/totals/cost/unknown_basis_usd"),
+        38.540_707
+    );
     assert_eq!(i64_at(&report, "/totals/cache_read_tokens"), 63_744_991);
     assert_eq!(i64_at(&report, "/totals/cache_write_tokens"), 2_738_740);
     assert_eq!(i64_at(&report, "/totals/fresh_input_tokens"), 8_388);
@@ -534,7 +541,7 @@ fn rpg_reproduces_the_cost_and_coordination_ledger() {
             "{role} input"
         );
         assert_eq!(i64_at(seat, "/tokens/output"), output, "{role} output");
-        assert_eq!(f64_at(seat, "/cost/reported_usd"), cost, "{role} cost");
+        assert_eq!(f64_at(seat, "/cost/unknown_basis_usd"), cost, "{role} cost");
         assert_eq!(
             f64_at(seat, "/no_open_turn_wall_minutes"),
             idle,
@@ -883,10 +890,10 @@ fn measure_labels_a_mixed_seat_partial_with_billed_estimated_and_reasons_split()
 
     let report = measure_report(&events, Some(umbrella), None, None);
     let seat = seat(&report, "builder");
-    assert_eq!(f64_at(seat, "/cost/billed_usd"), 0.5);
-    assert_eq!(f64_at(seat, "/cost/estimated_usd"), 1.5);
-    assert_eq!(i64_at(seat, "/cost/results_billed"), 1);
-    assert_eq!(i64_at(seat, "/cost/results_estimated"), 1);
+    assert_eq!(f64_at(seat, "/cost/adapter_estimate_usd"), 0.5);
+    assert_eq!(f64_at(seat, "/cost/table_estimate_usd"), 1.5);
+    assert_eq!(i64_at(seat, "/cost/results_adapter_estimate"), 1);
+    assert_eq!(i64_at(seat, "/cost/results_table_estimate"), 1);
     assert_eq!(i64_at(seat, "/cost/results_priced"), 2);
     assert_eq!(i64_at(seat, "/cost/results_unpriced"), 1);
     assert_eq!(i64_at(seat, "/cost/results_total"), 3);
@@ -905,8 +912,8 @@ fn measure_labels_a_mixed_seat_partial_with_billed_estimated_and_reasons_split()
             .and_then(Value::as_str),
         Some("partial")
     );
-    assert_eq!(i64_at(&report, "/totals/cost/results_billed"), 1);
-    assert_eq!(i64_at(&report, "/totals/cost/results_estimated"), 1);
+    assert_eq!(i64_at(&report, "/totals/cost/results_adapter_estimate"), 1);
+    assert_eq!(i64_at(&report, "/totals/cost/results_table_estimate"), 1);
     assert_eq!(
         report
             .pointer("/totals/cost/unpriced_reasons/no_baseline")
@@ -1092,4 +1099,251 @@ fn measure_seat_row_shows_requested_and_effective_model() {
         Some("not_on_wire")
     );
     assert_eq!(row.get("model_overridden"), Some(&Value::Null));
+}
+
+// ── Ledger 272(d): host wakes, the approval bound, cost per basis ───────────
+
+const LEDGER_272_UMBRELLA: &str = "33333333-4444-4555-8666-777777777777";
+const LEDGER_272_EXECUTION: &str = "44444444-5555-4666-8777-888888888888";
+
+fn ledger_272_owner() -> String {
+    "f".repeat(64)
+}
+
+fn ledger_272_metadata(role: &str) -> Value {
+    json!({
+        "id": "meta-272",
+        "pubkey": "provider",
+        "kind": KIND_CODING_SESSION_METADATA,
+        "created_at": 1_000,
+        "tags": [],
+        "content": json!({
+            "session": { "sessionId": LEDGER_272_EXECUTION, "generation": 1 },
+            "sessionRef": LEDGER_272_UMBRELLA,
+            "role": role,
+            "projectRef": format!("30617:{}:lapbook", ledger_272_owner()),
+        })
+        .to_string(),
+    })
+}
+
+fn ledger_272_transcript(id: &str, at: i64, turn: &str, item: Value) -> Value {
+    json!({
+        "id": id,
+        "pubkey": "provider",
+        "kind": KIND_CODING_SESSION_TRANSCRIPT,
+        "created_at": at,
+        "tags": [],
+        "content": json!({
+            "session": { "sessionId": LEDGER_272_EXECUTION },
+            "timestamp": at * 1_000,
+            "turnId": turn,
+            "item": item,
+        })
+        .to_string(),
+    })
+}
+
+fn founder_turn(id: &str, at: i64, command_id: &str) -> Value {
+    json!({
+        "id": id,
+        "pubkey": ledger_272_owner(),
+        "kind": KIND_CODING_SESSION_COMMAND,
+        "created_at": at,
+        "tags": [["cs-target", format!("coding-session/v1|x:{LEDGER_272_EXECUTION}:1")]],
+        "content": json!({
+            "commandId": command_id,
+            "action": { "type": "thread.turn.start", "text": "{}" },
+        })
+        .to_string(),
+    })
+}
+
+/// Ledger 272(d), RED-first: Desktop mints `team-wake-v1:<fact>:…` (and its
+/// `:r<n>` re-arm), the provider mints `team-wake-<hash>` and
+/// `host-result-wake-<hash>`. Each is this computer waking a seat under the
+/// founder's key — a host act, never the person's. A turn such a wake opened
+/// is a team wake in the seat's prompt provenance, and one naming a verdict
+/// counts as verdict-woken.
+#[test]
+fn host_minted_wake_commands_are_the_hosts_not_the_persons() {
+    let verdict = "a".repeat(64);
+    let events = vec![
+        ledger_272_metadata("lead"),
+        json!({
+            "id": verdict,
+            "pubkey": "verifier",
+            "kind": KIND_CODING_SESSION_TEAM_TRANSACTION,
+            "created_at": 1_010,
+            "tags": [],
+            "content": json!({ "sessionRef": LEDGER_272_UMBRELLA, "type": "verdict" }).to_string(),
+        }),
+        founder_turn(
+            "c1",
+            1_011,
+            &format!("team-wake-v1:{verdict}:f1e8076482ec686507b8fb0c"),
+        ),
+        founder_turn(
+            "c2",
+            1_012,
+            &format!("team-wake-v1:{verdict}:f1e8076482ec686507b8fb0c:r1"),
+        ),
+        founder_turn("c3", 1_013, &format!("host-result-wake-{}", "b".repeat(64))),
+        founder_turn("c4", 1_014, &format!("team-wake-{}", "c".repeat(64))),
+        founder_turn("c5", 1_015, "csc-8136dfee-cb73-4ffd-9678-fb4f582b49e0"),
+        ledger_272_transcript(
+            "t1",
+            1_020,
+            "turn-1",
+            json!({
+                "kind": "user_prompt",
+                "commandId": format!("team-wake-v1:{verdict}:f1e8076482ec686507b8fb0c"),
+                "content": "{}",
+            }),
+        ),
+        ledger_272_transcript(
+            "t2",
+            1_030,
+            "turn-1",
+            json!({ "kind": "result", "costUsd": null }),
+        ),
+    ];
+    let report = measure_report(&events, Some(LEDGER_272_UMBRELLA), None, None);
+    assert_eq!(
+        i64_at(&report, "/coordination/person_action_count"),
+        1,
+        "only the csc- turn is the person's: {report}"
+    );
+    assert_eq!(
+        i64_at(&report, "/coordination/host_action_under_founder_key_count"),
+        4
+    );
+    assert_eq!(i64_at(&report, "/coordination/verdict_woken_turns"), 1);
+    let lead = seat(&report, "lead");
+    assert_eq!(i64_at(lead, "/prompts/from_person"), 0);
+    assert_eq!(i64_at(lead, "/prompts/from_team_wake"), 1);
+}
+
+/// Ledger 272(d), RED-first: with no `--since`, the founder's approvals were
+/// read back to the beginning of the key's history, so an earlier project's
+/// grants were counted as this run's human actions. The read is bounded at
+/// the umbrella's genesis, and the report names the bound it used.
+#[test]
+fn approvals_before_the_umbrella_genesis_are_not_this_runs() {
+    let approval = |id: &str, at: i64| {
+        json!({
+            "id": id,
+            "pubkey": ledger_272_owner(),
+            "kind": KIND_APPROVAL_GRANT,
+            "created_at": at,
+            "tags": [],
+            "content": "",
+        })
+    };
+    let events = vec![
+        ledger_272_metadata("lead"),
+        json!({
+            "id": "genesis-272",
+            "pubkey": ledger_272_owner(),
+            "kind": KIND_CODING_SESSION_GENESIS,
+            "created_at": 900,
+            "tags": [],
+            "content": json!({ "sessionRef": LEDGER_272_UMBRELLA, "v": 1 }).to_string(),
+        }),
+        approval("earlier-project", 500),
+        approval("this-run", 950),
+    ];
+    let report = measure_report(&events, Some(LEDGER_272_UMBRELLA), None, None);
+    assert_eq!(
+        i64_at(&report, "/coordination/person_action_count"),
+        1,
+        "{report}"
+    );
+    assert_eq!(
+        approval_lower_bound(&events, Some(LEDGER_272_UMBRELLA), None),
+        Some((900, "umbrella genesis"))
+    );
+    assert_eq!(
+        report.pointer("/channel_scope/approvals_since/source"),
+        Some(&json!("umbrella genesis"))
+    );
+    assert_eq!(
+        report.pointer("/channel_scope/approvals_since/at"),
+        Some(&json!(rfc3339(900)))
+    );
+    assert!(
+        table_lines(&report).iter().any(
+            |line| line == &format!("APPROVALS READ SINCE {} (umbrella genesis)", rfc3339(900))
+        ),
+        "the compact table names the bound"
+    );
+    // An explicit --since is the bound when given.
+    assert_eq!(
+        approval_lower_bound(&events, Some(LEDGER_272_UMBRELLA), Some(940)),
+        Some((940, "--since"))
+    );
+}
+
+/// Ledger 272(d), RED-first: the adapter's estimate and the table's estimate
+/// are different measurements and are never added into one unlabeled number.
+/// A basis this reader does not know is counted as unknown, not as either.
+/// Records published before the rename (`billed`, `estimated`) read as the
+/// basis they always were.
+#[test]
+fn cost_is_reported_per_basis_and_never_as_one_unlabelled_sum() {
+    let result = |id: &str, at: i64, cost: Value| {
+        let mut item = json!({ "kind": "result", "subtype": "success", "durationMs": 1 });
+        for (key, value) in cost.as_object().expect("object") {
+            item[key] = value.clone();
+        }
+        ledger_272_transcript(id, at, id, item)
+    };
+    let events = vec![
+        ledger_272_metadata("builder"),
+        result(
+            "r1",
+            1_001,
+            json!({ "costUsd": 0.25, "costBasis": "adapter_estimate" }),
+        ),
+        result(
+            "r2",
+            1_002,
+            json!({ "costUsd": 0.5, "costBasis": "billed" }),
+        ),
+        result(
+            "r3",
+            1_003,
+            json!({ "costUsd": 1.0, "costBasis": "table_estimate" }),
+        ),
+        result(
+            "r4",
+            1_004,
+            json!({ "costUsd": 2.0, "costBasis": "estimated" }),
+        ),
+        result(
+            "r5",
+            1_005,
+            json!({ "costUsd": 4.0, "costBasis": "invoice" }),
+        ),
+        result(
+            "r6",
+            1_006,
+            json!({ "costUsd": null, "costReason": "no_baseline" }),
+        ),
+    ];
+    let report = measure_report(&events, Some(LEDGER_272_UMBRELLA), None, None);
+    for cost in [
+        seat(&report, "builder").get("cost").expect("seat cost"),
+        report.pointer("/totals/cost").expect("totals cost"),
+    ] {
+        assert!(cost.get("reported_usd").is_none(), "{cost}");
+        assert_eq!(f64_at(cost, "/adapter_estimate_usd"), 0.75);
+        assert_eq!(i64_at(cost, "/results_adapter_estimate"), 2);
+        assert_eq!(f64_at(cost, "/table_estimate_usd"), 3.0);
+        assert_eq!(i64_at(cost, "/results_table_estimate"), 2);
+        assert_eq!(f64_at(cost, "/unknown_basis_usd"), 4.0);
+        assert_eq!(i64_at(cost, "/results_unknown_basis"), 1);
+        assert_eq!(i64_at(cost, "/results_unpriced"), 1);
+        assert_eq!(i64_at(cost, "/results_total"), 6);
+    }
 }

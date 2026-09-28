@@ -317,7 +317,10 @@ function Usage({ usage }: { usage: CodingSessionMissionUsageInput | null }) {
     ["Output", formatCount(usage.outputTokens)],
     ["Total", formatCount(usage.totalTokens)],
     ["Tools", formatCount(usage.toolCalls)],
-    ["Cost", usage.costUsd === null ? null : `$${usage.costUsd.toFixed(2)}`],
+    [
+      "Est. cost",
+      usage.costUsd === null ? null : `$${usage.costUsd.toFixed(2)}`,
+    ],
   ].filter((field): field is [string, string] => field[1] !== null);
   return (
     <div>

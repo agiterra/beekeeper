@@ -481,7 +481,7 @@ function TotalsRow({
           </dd>
         </div>
         <div className="flex items-baseline justify-between gap-2">
-          <dt className="text-muted-foreground">Cost</dt>
+          <dt className="text-muted-foreground">Est. cost</dt>
           <dd className="tabular-nums">
             <Cost value={totals.costUsd} />
           </dd>

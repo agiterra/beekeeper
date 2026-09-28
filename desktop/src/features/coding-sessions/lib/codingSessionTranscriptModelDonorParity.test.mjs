@@ -21,6 +21,7 @@ import {
   deriveCodingSessionTranscriptModel,
   formatCodingSessionCompletionOutcome,
   formatCodingSessionCost,
+  formatCodingSessionCostBasis,
   isCompletedSuccessfulCodingSessionTool,
 } from "./codingSessionTranscriptModel.ts";
 
@@ -201,6 +202,16 @@ test("characterization: cost formats four decimals under a cent, else two", () =
   assert.equal(formatCodingSessionCost(0.5), "$0.50");
   assert.equal(formatCodingSessionCost(1.234), "$1.23");
   assert.equal(formatCodingSessionCost(12), "$12.00");
+  // Ledger 272(d): no figure is an invoice, and each says whose it is.
+  assert.equal(
+    formatCodingSessionCostBasis("adapter_estimate"),
+    "adapter estimate",
+  );
+  assert.equal(
+    formatCodingSessionCostBasis("table_estimate"),
+    "price-table estimate",
+  );
+  assert.equal(formatCodingSessionCostBasis(null), "estimate");
 });
 
 test("characterization: only settled successful tools satisfy the completed-successful predicate", () => {

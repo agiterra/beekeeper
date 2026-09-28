@@ -2739,18 +2739,28 @@ impl Provider {
         // Relevance at enqueue (ledger 266): a wake must deliver new
         // responsibility to the lead, not announce a record. The lead's own
         // report, disposition or completion never wakes it; a fact the lead
-        // already cited is used; after a canonical terminal only a new
+        // already cited is used; a fact a lead turn already carried, or
+        // bookkeeping on an obligation one already carried, is not news
+        // (272(d)); after a canonical terminal only a new
         // request or contesting evidence is owed a turn. Retired, not
         // deferred — every one of those answers only hardens with time — and
         // the retirement goes through the durable resolved ledger, so a
         // restart or a replay cannot resurrect it.
         if let Some(lead) = team_wake::lead_actor(&snapshot.authority) {
             let fact = wake_relevance::fact_of_source(&intent.source, &snapshot.team_events);
-            let view = wake_relevance::view_for(
+            let mut view = wake_relevance::view_for(
                 &lead,
                 snapshot.canonical_terminal.clone(),
                 &[&snapshot.team_events],
             );
+            // What the lead's own turns already delivered, from the verified
+            // `turn_started` receipts in the snapshot's package (ledger
+            // 272(d)): the same fact id is a duplicate, and bookkeeping about
+            // an obligation a turn already carried is `obligation_delivered`.
+            let (delivered, obligations) =
+                wake_relevance::delivered_to(&snapshot.package, &lead, &snapshot.team_events);
+            view.delivered = delivered;
+            view.delivered_obligations = obligations;
             if let Err(reason) = wake_relevance::still_owed(&fact, &view) {
                 tracing::info!(
                     target: "csp::team_wake",
@@ -3597,7 +3607,11 @@ impl Provider {
             authority_seq: 0,
             model: startup.model.clone().or_else(|| plan.model.clone()),
             model_requested: plan.model.clone(),
-            model_effective: session_reported_model(startup.model.as_deref()),
+            // What the adapter reports at open is its *selection* — for
+            // claude-agent-acp the picker label (`opus`, `default`) — a request,
+            // not the model that answers (ledger 272(d)). Unknown until a
+            // turn's own result frame names one.
+            model_effective: None,
             routing: plan.routing.clone(),
             resume_cursor: Some(startup.acp_session_id.clone()),
             title: plan.title.clone(),
@@ -4702,10 +4716,16 @@ impl Provider {
             if startup.model.is_some() {
                 record.model = startup.model.clone();
             }
-            // A turn's own report is more specific than the session-level one
-            // (a resolved id, not an alias), so the latter only fills a gap.
-            if record.model_effective.is_none() {
-                record.model_effective = session_reported_model(startup.model.as_deref());
+            // `model_effective` is left as the last turn's own report: the
+            // selection the adapter reports at open is a request, never an
+            // effective model (ledger 272(d)). A record written before that
+            // rule may hold a picker label there; it is cleared, not carried.
+            if record
+                .model_effective
+                .as_deref()
+                .is_some_and(crate::price_table::is_picker_label)
+            {
+                record.model_effective = None;
             }
         }) {
             self.sessions.shutdown(&record.session_id);
@@ -11040,16 +11060,6 @@ fn turn_failure_sentence(message: &str) -> Option<&'static str> {
     claude_login.then_some(CLAUDE_LOGIN_EXPIRED)
 }
 
-/// A session's model as the adapter reported it at startup, or `None` when
-/// what it reported is the `default` picker label — a choice, not a model
-/// (ledger 268(e)).
-fn session_reported_model(model: Option<&str>) -> Option<String> {
-    model
-        .map(str::trim)
-        .filter(|model| !model.is_empty() && *model != "default")
-        .map(str::to_owned)
-}
-
 /// The cost block for a result this provider closes on the adapter's
 /// behalf: no usage, but still naming the model the record says was asked
 /// for and last reported answering (ledger 268(e)).
@@ -11367,16 +11377,20 @@ fn turn_usage_report(
 ///
 /// Order of preference, per ledger 266:
 ///
-/// 1. **Billed** — the adapter itself reported a dollar delta against a
-///    proven prior baseline (`usage.turn_cost_usd`). This is the provider's
-///    own figure; never second-guessed.
-/// 2. **Estimated** — no billed figure, but the turn's own token counts are
-///    known (they don't require a cumulative baseline for the standard ACP
-///    adapters) and `model` is in [`crate::price_table`]. Marked
-///    `CostBasis::Estimated` and stamped with the table's id/version.
-/// 3. **`UnknownModelPrice`** — tokens known, but the model isn't in the
-///    price table and there is no billed figure either.
-/// 4. **`NoBaseline`** — neither a billed cost nor per-turn tokens are known
+/// 1. **Adapter estimate** — the adapter itself reported a dollar delta
+///    against a proven prior baseline (`usage.turn_cost_usd`): the Claude
+///    SDK's `total_cost_usd`, which the SDK documents as a client-side
+///    estimate, not an invoice (ledger 272(d)). Marked
+///    `CostBasis::AdapterEstimate`; never re-priced here.
+/// 2. **Table estimate** — no adapter figure, but the turn's own token counts
+///    are known (they don't require a cumulative baseline for the standard
+///    ACP adapters) and the exact reported `model` id is in
+///    [`crate::price_table`]. Marked `CostBasis::TableEstimate` and stamped
+///    with the table's id/version.
+/// 3. **`UnknownModelPrice`** — tokens known, but the model id isn't in the
+///    price table (a label such as `opus` never is) and there is no adapter
+///    figure either.
+/// 4. **`NoBaseline`** — neither an adapter cost nor per-turn tokens are known
 ///    (`!usage.delta_reliable`): the harness only reports cumulative
 ///    counters and this turn had no prior baseline to diff against. Never
 ///    assumed to be zero.
@@ -11400,7 +11414,7 @@ fn turn_cost_for(usage: &TurnUsage, model: Option<&str>) -> payload::TurnCost {
     if let Some(cost_usd) = usage.turn_cost_usd {
         return payload::TurnCost {
             cost_usd: Some(cost_usd),
-            cost_basis: Some(payload::CostBasis::Billed),
+            cost_basis: Some(payload::CostBasis::AdapterEstimate),
             input_tokens: usage.turn_input_tokens,
             output_tokens: usage.turn_output_tokens,
             total_tokens: usage.turn_total_tokens,
@@ -11427,7 +11441,7 @@ fn turn_cost_for(usage: &TurnUsage, model: Option<&str>) -> payload::TurnCost {
         return match estimate {
             Some(cost_usd) => payload::TurnCost {
                 cost_usd: Some(cost_usd),
-                cost_basis: Some(payload::CostBasis::Estimated),
+                cost_basis: Some(payload::CostBasis::TableEstimate),
                 price_table_id: Some(crate::price_table::PRICE_TABLE_ID),
                 price_table_version: Some(crate::price_table::PRICE_TABLE_VERSION),
                 input_tokens: usage.turn_input_tokens,
@@ -11718,17 +11732,17 @@ mod tests {
     #[test]
     fn a_default_hire_that_ran_on_opus_prices_as_opus_and_says_so() {
         let mut usage = usage_with(None, Some(1_000_000), Some(0), true);
-        usage.model = Some("claude-opus-4-6".into());
+        usage.model = Some("claude-opus-5-5".into());
         let identity = ModelIdentity {
             requested: Some("default"),
             session_reported: None,
             window_fallback: Some("default"),
         };
         let cost = turn_cost(&usage, identity);
-        assert_eq!(cost.cost_basis, Some(payload::CostBasis::Estimated));
-        assert_eq!(cost.cost_usd, Some(15.0));
+        assert_eq!(cost.cost_basis, Some(payload::CostBasis::TableEstimate));
+        assert_eq!(cost.cost_usd, Some(4.0));
         assert_eq!(cost.model_requested.as_deref(), Some("default"));
-        assert_eq!(cost.model_effective.as_deref(), Some("claude-opus-4-6"));
+        assert_eq!(cost.model_effective.as_deref(), Some("claude-opus-5-5"));
         assert_eq!(cost.model_overridden, Some(true));
         let (item, _) = turn_result(
             &session::TurnOutcome::Completed {
@@ -11740,9 +11754,65 @@ mod tests {
             identity,
         );
         assert_eq!(item["modelRequested"], "default", "{item}");
-        assert_eq!(item["modelEffective"], "claude-opus-4-6", "{item}");
+        assert_eq!(item["modelEffective"], "claude-opus-5-5", "{item}");
         assert_eq!(item["modelOverridden"], true, "{item}");
-        assert_eq!(item["costBasis"], "estimated", "{item}");
+        assert_eq!(item["costBasis"], "table_estimate", "{item}");
+    }
+
+    /// Ledger 272(d): at open the adapter reports its current *selection* —
+    /// claude-agent-acp's picker label (`opus`, `sonnet`) — a request, not
+    /// the model that answers. (RED against the removed
+    /// `session_reported_model`, which returned `Some("opus")`; the open
+    /// paths now record no effective model at all.) A seat whose turns never
+    /// report a model is disclosed as unknown and is not priced from its
+    /// label.
+    #[test]
+    fn a_seat_that_asked_for_a_label_is_never_priced_from_it() {
+        for label in ["opus", "sonnet", "opus[1m]", "haiku"] {
+            let usage = usage_with(None, Some(1_000_000), Some(1_000), true);
+            let identity = ModelIdentity {
+                requested: Some(label),
+                session_reported: None,
+                window_fallback: Some(label),
+            };
+            let cost = turn_cost(&usage, identity);
+            assert_eq!(cost.model_effective, None, "{label}");
+            assert_eq!(cost.cost_usd, None, "{label}");
+            assert_eq!(
+                cost.cost_reason,
+                Some(payload::CostReason::AdapterReportedNone),
+                "{label}"
+            );
+            // Even if a label reached the effective slot, the table would
+            // not price it.
+            let mut labelled = usage_with(None, Some(1_000_000), Some(1_000), true);
+            labelled.model = Some(label.into());
+            assert_eq!(
+                turn_cost(&labelled, identity).cost_reason,
+                Some(payload::CostReason::UnknownModelPrice),
+                "{label}"
+            );
+        }
+    }
+
+    /// Ledger 272(d), RED-first: the adapter's own dollar figure goes on the
+    /// wire as the adapter's estimate, not as a bill.
+    #[test]
+    fn an_adapter_dollar_figure_is_published_as_the_adapters_estimate() {
+        let usage = usage_with(Some(0.2274174), Some(397_178), Some(4_184), true);
+        let mut usage = usage;
+        usage.model = Some("claude-opus-5-5".into());
+        let (item, _) = turn_result(
+            &session::TurnOutcome::Completed {
+                stop_reason: buzz_acp::acp::StopReason::EndTurn,
+            },
+            1_000,
+            Some(&usage),
+            0,
+            reported(Some("opus")),
+        );
+        assert_eq!(item["costBasis"], "adapter_estimate", "{item}");
+        assert_eq!(item["costUsd"], serde_json::json!(0.2274174), "{item}");
     }
 
     /// Ledger 268(e), RED-first: the adapter never said which model answered.
@@ -11781,7 +11851,7 @@ mod tests {
         let cost = turn_cost(&usage, reported(Some("sonnet")));
         assert_eq!(cost.model_effective.as_deref(), Some("claude-sonnet-5"));
         assert_eq!(cost.model_overridden, Some(false));
-        assert_eq!(cost.cost_basis, Some(payload::CostBasis::Estimated));
+        assert_eq!(cost.cost_basis, Some(payload::CostBasis::TableEstimate));
     }
 
     /// Ledger 266: a bare `TurnUsage` with a billed provider dollar figure is
@@ -11813,14 +11883,14 @@ mod tests {
         }
     }
 
-    /// A billed cost is passed through untouched: basis `billed`, no reason,
-    /// no price-table stamp.
+    /// The adapter's cost is passed through untouched: basis
+    /// `adapter_estimate`, no reason, no price-table stamp.
     #[test]
     fn a_billed_cost_is_never_re_estimated() {
         let usage = usage_with(Some(0.042), Some(100), Some(20), true);
         let cost = turn_cost(&usage, reported(Some("opus")));
         assert_eq!(cost.cost_usd, Some(0.042));
-        assert_eq!(cost.cost_basis, Some(payload::CostBasis::Billed));
+        assert_eq!(cost.cost_basis, Some(payload::CostBasis::AdapterEstimate));
         assert_eq!(cost.cost_reason, None);
         assert_eq!(cost.price_table_id, None);
     }
@@ -11848,8 +11918,8 @@ mod tests {
     #[test]
     fn a_turn_whose_model_is_priced_is_estimated_from_the_table() {
         let usage = usage_with(None, Some(1_000_000), Some(1_000_000), true);
-        let cost = turn_cost(&usage, reported(Some("sonnet")));
-        assert_eq!(cost.cost_basis, Some(payload::CostBasis::Estimated));
+        let cost = turn_cost(&usage, reported(Some("claude-sonnet-5")));
+        assert_eq!(cost.cost_basis, Some(payload::CostBasis::TableEstimate));
         assert_eq!(cost.cost_reason, None);
         assert_eq!(
             cost.price_table_id,
@@ -11859,8 +11929,8 @@ mod tests {
             cost.price_table_version,
             Some(crate::price_table::PRICE_TABLE_VERSION)
         );
-        let usd = cost.cost_usd.expect("sonnet is priced");
-        assert!((usd - 18.0).abs() < 1e-9, "got {usd}"); // 3.0 + 15.0 per million
+        let usd = cost.cost_usd.expect("claude-sonnet-5 is priced");
+        assert!((usd - 12.0).abs() < 1e-9, "got {usd}"); // 2.0 + 10.0 per million
     }
 
     /// RED-first (ledger 266 build step 4): a resumed cumulative-only

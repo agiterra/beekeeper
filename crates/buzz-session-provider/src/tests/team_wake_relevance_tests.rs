@@ -430,3 +430,177 @@ async fn a_dequeue_drop_is_published_as_a_turn_dropped_receipt() {
     assert!(message.contains("post_terminal") && message.contains(&"ab".repeat(32)));
     assert!(provider.state.is_command_refused("wake-dropped"));
 }
+
+/// Ledger 272(d), run 11 lead seq 88–104, through the real dequeue path.
+///
+/// The verifier's refutation of a builder report woke the lead (a
+/// `cli-wake-v1:<verdict>` command whose `turn_started` receipt and
+/// `result` are on the wire). The verifier's settlement report on its own
+/// assignment — base = the refuted head — was signed while that turn ran. Its
+/// wake is `obligation_delivered`: the lead already had that obligation, and
+/// the ruling it owes stays in the fold's awaiting set.
+#[tokio::test]
+async fn a_settlement_report_signed_inside_the_verdicts_turn_is_obligation_delivered() {
+    use buzz_core::coding_session_command::{
+        CodingSessionAction, CodingSessionCommandPayload, CodingSessionDelivery,
+        CODING_SESSION_COMMAND_SCHEMA,
+    };
+    use buzz_core::coding_session_payload::{ReceiptStatus, TranscriptEnvelope};
+    use buzz_core::coding_session_team_transaction::{
+        CodingSessionTeamAssignment, CodingSessionTeamReport,
+    };
+
+    const HEAD: &str = "7c54cd1ff680aaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let base = now_secs() - 600;
+    let founder = test_operator_keys().clone();
+    let verifier = Keys::generate();
+    let mut verifier_report_id = String::new();
+    let mut rig = rig(|fixture| {
+        let report = |assignment_ref: String| {
+            CodingSessionTeamTransactionBody::Report(CodingSessionTeamReport {
+                assignment_ref,
+                summary: "Done".into(),
+                branch: None,
+                base_sha: Some(HEAD.into()),
+                head_sha: Some(HEAD.into()),
+                files: Vec::new(),
+                tests: Vec::new(),
+                red_before_green: None,
+                deviations: Vec::new(),
+                residuals: Vec::new(),
+                anomalies: Vec::new(),
+            })
+        };
+        let builder_report = team_tx(
+            fixture,
+            report(fixture.assignments[0].id.to_hex()),
+            &fixture.builder,
+            base + 10,
+        );
+        let verifier_assignment = team_tx(
+            fixture,
+            CodingSessionTeamTransactionBody::Assignment(CodingSessionTeamAssignment {
+                assignee_actor: verifier.public_key().to_hex(),
+                assignee_role: "verifier".into(),
+                objective: "Refute the report".into(),
+                brief: "Try to break it.".into(),
+                branch: None,
+                base_sha: Some(HEAD.into()),
+                file_ownership: Vec::new(),
+                acceptance_steps: vec!["publish a verdict".into()],
+            }),
+            &fixture.lead,
+            base + 20,
+        );
+        let verdict = team_tx(
+            fixture,
+            CodingSessionTeamTransactionBody::Verdict(CodingSessionTeamVerdict::Refutation {
+                assignment_ref: fixture.assignments[0].id.to_hex(),
+                report_ref: builder_report.id.to_hex(),
+                decision: CodingSessionTeamRefutationDecision::Confirmed,
+                summary: "Line numbers are wrong".into(),
+                findings: vec!["bad UTF-8 on line 3 reports line 2".into()],
+                required_action: Some("Fix the count".into()),
+            }),
+            &verifier,
+            base + 100,
+        );
+        let verifier_report = team_tx(
+            fixture,
+            report(verifier_assignment.id.to_hex()),
+            &verifier,
+            base + 110,
+        );
+        verifier_report_id = verifier_report.id.to_hex();
+
+        // The verdict's wake, as `bee` minted it, and the lead's turn on it.
+        let verdict_id = verdict.id.to_hex();
+        let command_id = format!("cli-wake-v1:{verdict_id}:f1e8076482ec");
+        let pointer = serde_json::json!({"operationId": verdict_id, "type": "verdict"}).to_string();
+        let target = fixture.lead_target.clone();
+        let command = buzz_sdk::builders::build_coding_session_command(
+            fixture.channel,
+            &CodingSessionCommandPayload {
+                schema: CODING_SESSION_COMMAND_SCHEMA.into(),
+                command_id: command_id.clone(),
+                target: target.clone(),
+                action: CodingSessionAction::ThreadTurnStart {
+                    text: pointer.clone(),
+                    attachments: Vec::new(),
+                    deliver: CodingSessionDelivery::Boundary,
+                },
+            },
+        )
+        .expect("command builds")
+        .custom_created_at(Timestamp::from(base + 101))
+        .sign_with_keys(&founder)
+        .expect("command signs");
+        let started = buzz_sdk::builders::build_coding_session_turn_receipt(
+            fixture.channel,
+            &command_id,
+            ReceiptStatus::TurnStarted,
+            &serde_json::to_string(&LifecycleReceipt::turn_started(&command_id, &target, "t-v"))
+                .expect("receipt json"),
+        )
+        .expect("receipt builds")
+        .custom_created_at(Timestamp::from(base + 102))
+        .sign_with_keys(&founder)
+        .expect("receipt signs");
+        let transcript = |seq: u64, at: u64, item: serde_json::Value| {
+            let envelope =
+                TranscriptEnvelope::new(&target, seq, (at * 1_000) as i64, Some("t-v"), item);
+            buzz_sdk::builders::build_coding_session_transcript_item(
+                fixture.channel,
+                &target,
+                seq,
+                &serde_json::to_string(&envelope).expect("envelope json"),
+            )
+            .expect("transcript builds")
+            .custom_created_at(Timestamp::from(at))
+            .sign_with_keys(&founder)
+            .expect("transcript signs")
+        };
+        vec![
+            builder_report,
+            verifier_assignment,
+            verdict,
+            verifier_report,
+            command,
+            started,
+            transcript(
+                1,
+                base + 102,
+                serde_json::json!({
+                    "kind": "user_prompt",
+                    "commandId": command_id,
+                    "content": pointer,
+                }),
+            ),
+            transcript(
+                2,
+                base + 130,
+                serde_json::json!({
+                    "kind": "result",
+                    "subtype": "success",
+                    "isError": false,
+                    "durationMs": 28_000,
+                    "result": "completed",
+                    "costUsd": null,
+                    "costReason": "no_usage_reported",
+                }),
+            ),
+        ]
+    })
+    .await;
+    let lead = rig.lead_session();
+    let pointer =
+        serde_json::json!({"operationId": verifier_report_id, "type": "report"}).to_string();
+    assert_eq!(
+        admission(&mut rig.provider, &lead, &pointer).await,
+        WakeAdmission::Drop {
+            reason: WakeDropReason::ObligationDelivered,
+            fact_id: verifier_report_id,
+        }
+    );
+    rig.shutdown().await;
+}

@@ -747,19 +747,7 @@ pub async fn fetch_verified_snapshot(
         team_events,
     } = fetch_verified_team_facts(rest, relay_self_pubkey, scope).await?;
 
-    let package = fetch_and_project_session_context(
-        rest,
-        &ContextProjectionRequest {
-            channel_id: scope.channel_ref,
-            session_ref: scope.session_ref.clone(),
-            genesis_ref: scope.genesis_ref.clone(),
-            relay_self_pubkey: Some(relay_self_pubkey.to_owned()),
-            allow_no_executions: false,
-            generated_at: crate::state::now_ms(),
-            limits: ContextProjectionLimits::default(),
-        },
-    )
-    .await?;
+    let package = fetch_scope_package(rest, relay_self_pubkey, scope).await?;
 
     let context = fold_context(scope, &founder_pubkey, &authority);
     let included_reports = included_reports(&team_events, &context)?;
@@ -774,6 +762,28 @@ pub async fn fetch_verified_snapshot(
         included_dispositions,
         canonical_terminal,
     })
+}
+
+/// Project the umbrella's verified context package — roster, inbox with its
+/// receipt stages, and transcript history — as every wake decision reads it.
+pub async fn fetch_scope_package(
+    rest: &buzz_acp::relay::RestClient,
+    relay_self_pubkey: &str,
+    scope: &WakeScope,
+) -> Result<CodingSessionContextPackage, WakeSnapshotError> {
+    Ok(fetch_and_project_session_context(
+        rest,
+        &ContextProjectionRequest {
+            channel_id: scope.channel_ref,
+            session_ref: scope.session_ref.clone(),
+            genesis_ref: scope.genesis_ref.clone(),
+            relay_self_pubkey: Some(relay_self_pubkey.to_owned()),
+            allow_no_executions: false,
+            generated_at: crate::state::now_ms(),
+            limits: ContextProjectionLimits::default(),
+        },
+    )
+    .await?)
 }
 
 /// Fetch the genesis, the accepted authority chain and the umbrella's

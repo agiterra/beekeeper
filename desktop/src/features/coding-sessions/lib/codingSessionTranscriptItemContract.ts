@@ -124,6 +124,17 @@ export type CodingSessionKnownTranscriptItemV1 = { [key: string]: unknown } & (
       detail?: string;
       costUsd?: number;
       /**
+       * Whose estimate `costUsd` is. `adapter_estimate` / `table_estimate`
+       * since ledger 272(d); records published before carry the older
+       * spellings `billed` (the adapter's figure — never an invoice) and
+       * `estimated` (the price table's).
+       */
+      costBasis?:
+        | "adapter_estimate"
+        | "table_estimate"
+        | "billed"
+        | "estimated";
+      /**
        * Per-turn token accounting, when the driver reported any. Additive and
        * every field optional; an unknown field is omitted, never sent as `0`.
        *

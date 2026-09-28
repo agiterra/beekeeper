@@ -279,7 +279,13 @@ pub(crate) struct StandardUsageTracker {
     /// The model the adapter reported answered the in-flight turn (ledger
     /// 268(e)), from claude-agent-acp's raw SDK `result` frame.
     pending_model: Option<(String, String)>,
+    /// The last cumulative `modelUsage` map seen per session: the baseline a
+    /// result's per-turn delta is measured from (ledger 272(d)).
+    model_usage: HashMap<String, ModelUsageSnapshot>,
 }
+
+/// One session's cumulative per-model weight: `(costUSD, outputTokens)`.
+type ModelUsageSnapshot = HashMap<String, (f64, u64)>;
 
 impl StandardUsageTracker {
     pub(crate) fn seed_zero_baseline(&mut self, session_id: &str) {
@@ -297,6 +303,35 @@ impl StandardUsageTracker {
         self.pending_cost = None;
         self.pending_prompt = None;
         self.pending_model = None;
+    }
+
+    /// Fold one Claude SDK `result` frame: record the model it names as the
+    /// in-flight turn's when `answers_turn` (a user-lane result).
+    ///
+    /// `modelUsage` is the SDK session's *cumulative* per-model map, so the
+    /// model that answered this turn is picked from what grew since the
+    /// previous result of the same session ([`model_usage_delta`]), not from
+    /// the running total (ledger 272(d)). Every result — autonomous ones
+    /// included — advances that per-session baseline, so an autonomous
+    /// cycle's usage is never attributed to the next user turn.
+    pub(crate) fn record_sdk_result(
+        &mut self,
+        session_id: &str,
+        message: &serde_json::Value,
+        answers_turn: bool,
+    ) {
+        let Some(current) = model_usage_snapshot(message) else {
+            return;
+        };
+        let previous = self.model_usage.remove(session_id).unwrap_or_default();
+        let delta = model_usage_delta(&previous, &current);
+        self.model_usage.insert(session_id.to_owned(), current);
+        if !answers_turn {
+            return;
+        }
+        if let Some(model) = dominant_model(&delta) {
+            self.record_model(session_id, &model);
+        }
     }
 
     /// Record the model id the adapter itself reported answering the
@@ -413,37 +448,80 @@ impl StandardUsageTracker {
     }
 }
 
-/// The model that did most of a turn's work, from a Claude SDK `result`
-/// message's `modelUsage` map (keyed by the resolved model id the SDK called,
-/// e.g. `claude-opus-4-6` or `claude-sonnet-5[1m]`).
-///
-/// A turn can call more than one model (a subagent, a compaction), so the
-/// entry with the largest `costUSD` wins, ties and missing costs broken by
-/// output tokens. `None` when the map is absent or empty — never a guess.
-pub(crate) fn dominant_model_from_sdk_result(message: &serde_json::Value) -> Option<String> {
+/// A Claude SDK `result` message's `modelUsage` map (keyed by the resolved
+/// model id the SDK called, e.g. `claude-opus-5-5` or `claude-sonnet-5[1m]`)
+/// as `(costUSD, outputTokens)` per id, or `None` when the map is absent.
+fn model_usage_snapshot(message: &serde_json::Value) -> Option<ModelUsageSnapshot> {
     let usage = message.get("modelUsage")?.as_object()?;
-    let weight = |entry: &serde_json::Value| {
-        (
-            entry
-                .get("costUSD")
-                .and_then(serde_json::Value::as_f64)
-                .filter(|cost| cost.is_finite())
-                .unwrap_or(0.0),
-            entry
-                .get("outputTokens")
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(0),
-        )
-    };
-    usage
+    Some(
+        usage
+            .iter()
+            .filter(|(model, _)| !model.trim().is_empty())
+            .map(|(model, entry)| {
+                let cost = entry
+                    .get("costUSD")
+                    .and_then(serde_json::Value::as_f64)
+                    .filter(|cost| cost.is_finite() && *cost >= 0.0)
+                    .unwrap_or(0.0);
+                let output = entry
+                    .get("outputTokens")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0);
+                (model.trim().to_owned(), (cost, output))
+            })
+            .collect(),
+    )
+}
+
+/// What each model added since `previous`, the last cumulative map seen for
+/// the same session.
+///
+/// A model absent from `previous` contributes its whole entry (no baseline
+/// means "from zero": the first result of a session the SDK started fresh).
+/// A value that went *down* means the SDK's cumulative series restarted
+/// (a new adapter process on a resumed session), so the current value is
+/// the growth since that restart.
+fn model_usage_delta(
+    previous: &ModelUsageSnapshot,
+    current: &ModelUsageSnapshot,
+) -> ModelUsageSnapshot {
+    current
         .iter()
-        .filter(|(model, _)| !model.trim().is_empty())
-        .max_by(|(_, a), (_, b)| {
-            let (cost_a, out_a) = weight(a);
-            let (cost_b, out_b) = weight(b);
-            cost_a.total_cmp(&cost_b).then(out_a.cmp(&out_b))
+        .map(|(model, &(cost, output))| {
+            let (prior_cost, prior_output) = previous.get(model).copied().unwrap_or((0.0, 0));
+            let cost = if cost >= prior_cost {
+                cost - prior_cost
+            } else {
+                cost
+            };
+            let output = output.checked_sub(prior_output).unwrap_or(output);
+            (model.clone(), (cost, output))
         })
-        .map(|(model, _)| model.trim().to_owned())
+        .collect()
+}
+
+/// The model that did most of a turn's work: the largest cost growth, ties
+/// and missing costs broken by output tokens. A turn can call more than one
+/// model (a subagent, a compaction). `None` when nothing grew — never a guess.
+fn dominant_model(delta: &ModelUsageSnapshot) -> Option<String> {
+    delta
+        .iter()
+        .filter(|(_, (cost, output))| *cost > 0.0 || *output > 0)
+        .max_by(|(model_a, (cost_a, out_a)), (model_b, (cost_b, out_b))| {
+            cost_a
+                .total_cmp(cost_b)
+                .then(out_a.cmp(out_b))
+                // Deterministic across HashMap orders.
+                .then_with(|| model_b.cmp(model_a))
+        })
+        .map(|(model, _)| model.clone())
+}
+
+/// The model that did most of one SDK `result`'s work, measured from zero —
+/// the first result of a session. Kept for the tests that pin the ranking.
+#[cfg(test)]
+pub(crate) fn dominant_model_from_sdk_result(message: &serde_json::Value) -> Option<String> {
+    dominant_model(&model_usage_snapshot(message)?)
 }
 
 /// Tracks per-session cumulative usage state across turns.
@@ -990,6 +1068,83 @@ mod tests {
         tracker.record_cost("s", 0.5);
         let usage = tracker.take().expect("usage");
         assert_eq!(usage.model, None, "a turn with no report names no model");
+    }
+
+    /// Ledger 272(d): the per-turn model is the growth of the cumulative
+    /// map; an autonomous result advances the baseline without naming a
+    /// model; a restarted series counts from its restart.
+    #[test]
+    fn the_per_turn_model_is_the_growth_of_the_cumulative_model_usage() {
+        let result =
+            |usage: serde_json::Value| serde_json::json!({ "type": "result", "modelUsage": usage });
+        let mut tracker = StandardUsageTracker::default();
+        tracker.seed_zero_baseline("s");
+        tracker.begin_turn("s");
+        tracker.record_sdk_result(
+            "s",
+            &result(
+                serde_json::json!({ "claude-opus-5-5": { "costUSD": 2.0, "outputTokens": 10 } }),
+            ),
+            true,
+        );
+        tracker.record_cost("s", 2.0);
+        assert_eq!(
+            tracker.take().expect("usage").model.as_deref(),
+            Some("claude-opus-5-5")
+        );
+
+        // An autonomous cycle on haiku between turns: baseline only.
+        tracker.record_sdk_result(
+            "s",
+            &result(serde_json::json!({
+                "claude-opus-5-5": { "costUSD": 2.0, "outputTokens": 10 },
+                "claude-haiku-4-5": { "costUSD": 0.5, "outputTokens": 5 }
+            })),
+            false,
+        );
+        tracker.begin_turn("s");
+        tracker.record_sdk_result(
+            "s",
+            &result(serde_json::json!({
+                "claude-opus-5-5": { "costUSD": 2.1, "outputTokens": 12 },
+                "claude-haiku-4-5": { "costUSD": 0.5, "outputTokens": 5 }
+            })),
+            true,
+        );
+        tracker.record_cost("s", 2.6);
+        assert_eq!(
+            tracker.take().expect("usage").model.as_deref(),
+            Some("claude-opus-5-5"),
+            "haiku's usage belonged to the autonomous cycle"
+        );
+
+        // A turn that grew nothing names no model.
+        tracker.begin_turn("s");
+        tracker.record_sdk_result(
+            "s",
+            &result(serde_json::json!({
+                "claude-opus-5-5": { "costUSD": 2.1, "outputTokens": 12 },
+                "claude-haiku-4-5": { "costUSD": 0.5, "outputTokens": 5 }
+            })),
+            true,
+        );
+        tracker.record_cost("s", 2.6);
+        assert_eq!(tracker.take().expect("usage").model, None);
+
+        // A restarted cumulative series (resumed on a new process).
+        tracker.begin_turn("s");
+        tracker.record_sdk_result(
+            "s",
+            &result(
+                serde_json::json!({ "claude-sonnet-5": { "costUSD": 0.3, "outputTokens": 4 } }),
+            ),
+            true,
+        );
+        tracker.record_cost("s", 0.3);
+        assert_eq!(
+            tracker.take().expect("usage").model.as_deref(),
+            Some("claude-sonnet-5")
+        );
     }
 
     #[test]

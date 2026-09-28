@@ -17,8 +17,9 @@
 //!   `cacheWriteTokens` are the disjoint split and are never added to it.
 //! - **A partial sum is never presented as a total.** `costUsd` is `null` on
 //!   some results (ledger 266), so every cost carries its coverage, its split
-//!   between billed and estimated dollars, and — for anything still unpriced
-//!   — the reason by name. No price table is consulted *here*: `costBasis`
+//!   between the adapter's estimate and the price table's estimate (never
+//!   added together, ledger 272(d)), and — for anything still unpriced — the
+//!   reason by name. No price table is consulted *here*: `costBasis`
 //!   and `costUsd` are the producer's own numbers, taken off the `result`
 //!   item exactly as published (`crates/buzz-session-provider/src/price_table.rs`
 //!   is the one place a token count becomes a dollar estimate). A cost this
@@ -124,6 +125,55 @@ const RELAY_ERROR_TOKEN: &str = "\"relay_error\"";
 /// every record of both audited sessions.
 const WAKE_COMMAND_PREFIX: &str = "cli-wake-v1:";
 
+/// Every command-id prefix that marks a wake rather than a typed turn, and
+/// who mints it (ledger 272(d)). One table, read by every rule below that
+/// asks "is this a wake?", so a new minter is added once.
+///
+/// - `cli-wake-v1:<fact>:<suffix>` — `bee` waking a seat about a named fact.
+///   Under the founder's key it is a CLI acting, and the wire does not say
+///   whether a person ran it: **unattributed**.
+/// - `team-wake-v1:<fact>:<target>[:r<n>]` — Desktop's team-wake fallback.
+/// - `team-wake-<hash>` — the session provider's own team wake.
+/// - `host-result-wake-<hash>` — the session provider waking a seat with a
+///   host action's result.
+///
+/// The last three are this computer acting under the founder's key: **host**.
+const WAKE_COMMAND_PREFIXES: &[(&str, WakeMinter)] = &[
+    (WAKE_COMMAND_PREFIX, WakeMinter::Cli),
+    ("team-wake-v1:", WakeMinter::Host),
+    ("team-wake-", WakeMinter::Host),
+    ("host-result-wake-", WakeMinter::Host),
+];
+
+/// Who mints a wake command id, per [`WAKE_COMMAND_PREFIXES`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WakeMinter {
+    /// `bee` — possibly a person at a shell, possibly a seat; not decidable.
+    Cli,
+    /// This computer's Desktop or session provider.
+    Host,
+}
+
+/// The wake prefix a command id carries, and its minter; `None` for a turn
+/// that is not a wake.
+fn wake_prefix(command_id: &str) -> Option<(&'static str, WakeMinter)> {
+    WAKE_COMMAND_PREFIXES
+        .iter()
+        .find(|(prefix, _)| command_id.starts_with(prefix))
+        .copied()
+}
+
+/// The fact id a wake command id names, for the minters that embed it
+/// (`cli-wake-v1:<fact>:…`, `team-wake-v1:<fact>:…`). The provider's hashed
+/// ids name none.
+fn wake_fact(command_id: &str) -> Option<&str> {
+    ["cli-wake-v1:", "team-wake-v1:"]
+        .iter()
+        .find_map(|prefix| command_id.strip_prefix(prefix))
+        .and_then(|rest| rest.split(':').next())
+        .filter(|fact| !fact.is_empty())
+}
+
 // ── Command ─────────────────────────────────────────────────────────────────
 
 /// `bee sessions measure` — read one team session and print its scorecard.
@@ -162,13 +212,18 @@ pub async fn cmd_measure(
     // only by author and kind over the same window. A refusal here is not
     // fatal: the rest of the report stands, and `measure_report` discloses
     // the absence rather than reporting zero approvals as a fact.
+    //
+    // An author-and-kind read has no channel to scope it, so without a lower
+    // bound it returns every approval the key ever signed — earlier projects'
+    // included (ledger 272(d)). It is bounded at `--since`, else at the
+    // umbrella's genesis; the report names which.
     if let Some(owner) = founder_key(&events) {
         let mut filter = json!({
             "kinds": [KIND_APPROVAL_GRANT, KIND_APPROVAL_DENY],
             "authors": [owner],
         });
-        if let Some(since) = since {
-            filter["since"] = json!(since);
+        if let Some((bound, _)) = approval_lower_bound(&events, session_ref, since) {
+            filter["since"] = json!(bound);
         }
         if let Some(until) = until {
             filter["until"] = json!(until);
@@ -298,6 +353,42 @@ fn repo_names(events: &[Value]) -> BTreeSet<String> {
         }
     }
     names
+}
+
+/// The lower bound of the founder's approval read, and where it came from:
+/// `--since` when given, else the umbrella's genesis (with `--session-ref`,
+/// that umbrella's; without, the earliest in the channel), else its goal.
+/// `None` only when the input holds none of them — the read is then
+/// unbounded, and the report says so.
+fn approval_lower_bound(
+    events: &[Value],
+    session_ref: Option<&str>,
+    since: Option<i64>,
+) -> Option<(i64, &'static str)> {
+    if let Some(since) = since {
+        return Some((since, "--since"));
+    }
+    let earliest = |kind: u32| {
+        events
+            .iter()
+            .filter(|event| event.get("kind").and_then(Value::as_u64) == Some(u64::from(kind)))
+            .filter(|event| {
+                session_ref.is_none_or(|wanted| {
+                    event
+                        .get("content")
+                        .and_then(Value::as_str)
+                        .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
+                        .and_then(|content| str_at(&content, "sessionRef"))
+                        .as_deref()
+                        == Some(wanted)
+                })
+            })
+            .filter_map(|event| event.get("created_at").and_then(Value::as_i64))
+            .min()
+    };
+    earliest(KIND_CODING_SESSION_GENESIS)
+        .map(|at| (at, "umbrella genesis"))
+        .or_else(|| earliest(KIND_CODING_SESSION_GOAL).map(|at| (at, "umbrella goal")))
 }
 
 // ── Parsed events ───────────────────────────────────────────────────────────
@@ -479,7 +570,15 @@ pub fn measure_report(
     since: Option<i64>,
     until: Option<i64>,
 ) -> Value {
+    let approvals_since = approval_lower_bound(events, session_ref, since);
     let (mut evs, malformed) = parse_events(events);
+    // The same bound the live approval read used (ledger 272(d)).
+    if let Some((bound, _)) = approvals_since {
+        evs.retain(|ev| {
+            !(ev.kind == KIND_APPROVAL_GRANT || ev.kind == KIND_APPROVAL_DENY)
+                || ev.created_at >= bound
+        });
+    }
     // Mirror the fetch layer's bounds exactly, so the pure path folds the same
     // set the live path would have been handed. `since` is not applied to the
     // umbrella's identity kinds or to git ref state, because neither is queried
@@ -646,8 +745,7 @@ pub fn measure_report(
         }
         if item.kind == "user_prompt" {
             if let Some(command_id) = item.item.get("commandId").and_then(Value::as_str) {
-                if let Some(source) = command_id.strip_prefix(WAKE_COMMAND_PREFIX) {
-                    let event_id = source.split(':').next().unwrap_or_default();
+                if let Some(event_id) = wake_fact(command_id) {
                     turn.woken_by = tx_by_id.get(event_id).map(|ty| (*ty).to_owned());
                 }
             }
@@ -785,13 +883,12 @@ pub fn measure_report(
                 totals.results_priced, totals.results_total
             ),
             "reason": format!(
-                "{} of {} terminal results carry a costUsd number ({} billed, {} estimated \
-                 from this project's own price table); the reported sum is the sum of the \
-                 available fields, not this run's spend. Unpriced reasons: {}",
+                "{} of {} terminal results carry a costUsd number: {}. Each basis is summed on \
+                 its own and none is an invoice; no figure here is this run's spend. Unpriced \
+                 reasons: {}",
                 totals.results_priced,
                 totals.results_total,
-                totals.results_billed,
-                totals.results_estimated,
+                totals.cost.describe(),
                 if reasons.is_empty() {
                     "none".to_owned()
                 } else {
@@ -804,9 +901,10 @@ pub fn measure_report(
             "metric": "dollar cost",
             "value": "complete",
             "reason": format!(
-                "all {} terminal results carry a costUsd number ({} billed, {} estimated from \
-                 this project's own price table)",
-                totals.results_total, totals.results_billed, totals.results_estimated
+                "all {} terminal results carry a costUsd number: {}. Each basis is summed on \
+                 its own and none is an invoice",
+                totals.results_total,
+                totals.cost.describe()
             ),
         }));
     }
@@ -862,6 +960,13 @@ pub fn measure_report(
             "since": since.map(rfc3339),
             "until": until.map(rfc3339),
             "cutoff": cutoff_ms.map(|ms| rfc3339(ms / 1_000)),
+            // The founder's approvals are read by author and kind, with no
+            // channel to scope them; this is the lower bound they were read
+            // from, and why.
+            "approvals_since": match approvals_since {
+                Some((at, source)) => json!({ "at": rfc3339(at), "source": source }),
+                None => json!({ "at": null, "source": "unbounded" }),
+            },
             "events_read": evs.len(),
             "executions_selected": selected.len(),
             "truncated": false,
@@ -879,12 +984,16 @@ pub fn measure_report(
             "fresh_input_tokens": totals.fresh_input,
             "tool_calls": totals.tool_calls,
             "active_minutes": round2(totals.active_ms as f64 / 60_000.0),
+            // Ledger 272(d): never one unlabeled sum. The adapter's figure
+            // and this project's table estimate are different measurements,
+            // and a basis this reader does not know is neither.
             "cost": {
-                "reported_usd": round6(totals.cost_usd),
-                "billed_usd": round6(totals.billed_usd),
-                "estimated_usd": round6(totals.estimated_usd),
-                "results_billed": totals.results_billed,
-                "results_estimated": totals.results_estimated,
+                "adapter_estimate_usd": round6(totals.cost.adapter_usd),
+                "table_estimate_usd": round6(totals.cost.table_usd),
+                "unknown_basis_usd": round6(totals.cost.unknown_usd),
+                "results_adapter_estimate": totals.cost.adapter,
+                "results_table_estimate": totals.cost.table,
+                "results_unknown_basis": totals.cost.unknown,
                 "results_priced": totals.results_priced,
                 "results_unpriced": totals.results_total - totals.results_priced,
                 "results_total": totals.results_total,
@@ -931,14 +1040,70 @@ struct Totals {
     fresh_input: i64,
     tool_calls: i64,
     active_ms: i64,
-    cost_usd: f64,
-    billed_usd: f64,
-    estimated_usd: f64,
-    results_billed: usize,
-    results_estimated: usize,
+    cost: CostByBasis,
     results_priced: usize,
     results_total: usize,
     unpriced_reasons: BTreeMap<String, usize>,
+}
+
+/// Priced results split by the basis their producer named (ledger 272(d)).
+#[derive(Default)]
+struct CostByBasis {
+    /// `adapter_estimate` (published before the rename as `billed`): the
+    /// adapter's own cumulative figure, a client-side estimate.
+    adapter_usd: f64,
+    adapter: usize,
+    /// `table_estimate` (before the rename, `estimated`): the provider's price
+    /// table applied to the turn's reported tokens.
+    table_usd: f64,
+    table: usize,
+    /// A basis this reader does not know the name of, or none at all (a
+    /// producer older than ledger 266). Never folded into either of the above.
+    unknown_usd: f64,
+    unknown: usize,
+}
+
+impl CostByBasis {
+    fn add(&mut self, basis: Option<&str>, usd: f64) {
+        match basis {
+            Some("adapter_estimate" | "billed") => {
+                self.adapter_usd += usd;
+                self.adapter += 1;
+            }
+            Some("table_estimate" | "estimated") => {
+                self.table_usd += usd;
+                self.table += 1;
+            }
+            _ => {
+                self.unknown_usd += usd;
+                self.unknown += 1;
+            }
+        }
+    }
+
+    fn merge(&mut self, other: &Self) {
+        self.adapter_usd += other.adapter_usd;
+        self.adapter += other.adapter;
+        self.table_usd += other.table_usd;
+        self.table += other.table;
+        self.unknown_usd += other.unknown_usd;
+        self.unknown += other.unknown;
+    }
+
+    /// `"<n> adapter estimate ($x), <n> table estimate ($y)[, <n> unknown basis ($z)]"`.
+    fn describe(&self) -> String {
+        let mut text = format!(
+            "{} adapter estimate (${:.6}), {} table estimate (${:.6})",
+            self.adapter, self.adapter_usd, self.table, self.table_usd
+        );
+        if self.unknown > 0 {
+            text.push_str(&format!(
+                ", {} of unknown basis (${:.6})",
+                self.unknown, self.unknown_usd
+            ));
+        }
+        text
+    }
 }
 
 /// One seat's model identity, read off its result items (ledger 268(e)).
@@ -1027,11 +1192,7 @@ fn seat_row(
     let mut cache_write = 0i64;
     let mut tool_calls = 0i64;
     let mut active_ms = 0i64;
-    let mut cost = 0f64;
-    let mut billed_usd = 0f64;
-    let mut estimated_usd = 0f64;
-    let mut billed = 0usize;
-    let mut estimated = 0usize;
+    let mut cost = CostByBasis::default();
     let mut priced = 0usize;
     let mut results = 0usize;
     let mut unpriced_reasons: BTreeMap<String, usize> = BTreeMap::new();
@@ -1062,21 +1223,8 @@ fn seat_row(
             .and_then(Value::as_i64)
             .unwrap_or_default();
         if let Some(usd) = item.item.get("costUsd").and_then(Value::as_f64) {
-            cost += usd;
             priced += 1;
-            match item.item.get("costBasis").and_then(Value::as_str) {
-                Some("estimated") => {
-                    estimated_usd += usd;
-                    estimated += 1;
-                }
-                // "billed", and any basis this reader doesn't yet know the
-                // name of, are counted with billed rather than silently
-                // dropped from both buckets.
-                _ => {
-                    billed_usd += usd;
-                    billed += 1;
-                }
-            }
+            cost.add(item.item.get("costBasis").and_then(Value::as_str), usd);
         } else if let Some(reason) = item.item.get("costReason").and_then(Value::as_str) {
             *unpriced_reasons.entry(reason.to_owned()).or_default() += 1;
         } else {
@@ -1207,7 +1355,7 @@ fn seat_row(
             .item
             .get("commandId")
             .and_then(Value::as_str)
-            .is_some_and(|id| id.starts_with(WAKE_COMMAND_PREFIX));
+            .is_some_and(|id| wake_prefix(id).is_some());
         if host {
             from_host_notice += 1;
         } else if sender_role.is_some() || wake {
@@ -1226,11 +1374,7 @@ fn seat_row(
     totals.fresh_input += fresh;
     totals.tool_calls += tool_calls;
     totals.active_ms += active_ms;
-    totals.cost_usd += cost;
-    totals.billed_usd += billed_usd;
-    totals.estimated_usd += estimated_usd;
-    totals.results_billed += billed;
-    totals.results_estimated += estimated;
+    totals.cost.merge(&cost);
     totals.results_priced += priced;
     totals.results_total += results;
     for (reason, count) in &unpriced_reasons {
@@ -1260,11 +1404,12 @@ fn seat_row(
         },
         "tool_calls_reported": tool_calls,
         "cost": {
-            "reported_usd": round6(cost),
-            "billed_usd": round6(billed_usd),
-            "estimated_usd": round6(estimated_usd),
-            "results_billed": billed,
-            "results_estimated": estimated,
+            "adapter_estimate_usd": round6(cost.adapter_usd),
+            "table_estimate_usd": round6(cost.table_usd),
+            "unknown_basis_usd": round6(cost.unknown_usd),
+            "results_adapter_estimate": cost.adapter,
+            "results_table_estimate": cost.table,
+            "results_unknown_basis": cost.unknown,
             "results_priced": priced,
             "results_unpriced": results - priced,
             "results_total": results,
@@ -1543,10 +1688,31 @@ pub fn table_lines(report: &Value) -> Vec<String> {
         ));
     }
     lines.push(String::new());
+    // The founder's approvals have no channel scope; say what bounded them.
+    if let Some(bound) = report.pointer("/channel_scope/approvals_since") {
+        lines.push(format!(
+            "APPROVALS READ SINCE {} ({})",
+            bound
+                .get("at")
+                .and_then(Value::as_str)
+                .unwrap_or("the beginning"),
+            bound.get("source").and_then(Value::as_str).unwrap_or("?"),
+        ));
+        lines.push(String::new());
+    }
     lines.push("SEATS".to_owned());
     lines.push(format!(
-        "  {:<10} {:>4} {:>4} {:>13} {:>9} {:>7} {:>9} {:>8}",
-        "role", "done", "open", "input", "output", "tools", "cost", "idle m"
+        "  {:<10} {:>4} {:>4} {:>13} {:>9} {:>7} {:>10} {:>10} {:>8} {:>8}",
+        "role",
+        "done",
+        "open",
+        "input",
+        "output",
+        "tools",
+        "adapter $",
+        "table $",
+        "unpriced",
+        "idle m"
     ));
     for seat in report
         .get("seats")
@@ -1555,14 +1721,16 @@ pub fn table_lines(report: &Value) -> Vec<String> {
         .unwrap_or_default()
     {
         lines.push(format!(
-            "  {:<10} {:>4} {:>4} {:>13} {:>9} {:>7} {:>9} {:>8}",
+            "  {:<10} {:>4} {:>4} {:>13} {:>9} {:>7} {:>10} {:>10} {:>8} {:>8}",
             seat.get("role").and_then(Value::as_str).unwrap_or("?"),
             json_num(seat.pointer("/turns/completed")),
             json_num(seat.pointer("/turns/open")),
             json_num(seat.pointer("/tokens/input_total_cache_inclusive")),
             json_num(seat.pointer("/tokens/output")),
             json_num(seat.pointer("/tool_calls_reported")),
-            json_num(seat.pointer("/cost/reported_usd")),
+            json_num(seat.pointer("/cost/adapter_estimate_usd")),
+            json_num(seat.pointer("/cost/table_estimate_usd")),
+            json_num(seat.pointer("/cost/results_unpriced")),
             json_num(seat.pointer("/no_open_turn_wall_minutes")),
         ));
     }
@@ -1708,10 +1876,12 @@ struct FounderActions {
 /// - A `session.create` carrying an `initialTurn` that matches no hire is
 ///   **unattributed**. It could be a person typing a first turn, or a hire
 ///   whose request fell outside the window; the wire does not say.
-/// - A `thread.turn.start` is the person's unless its command id carries the
-///   `cli-wake-v1:` prefix, which is one seat waking another — under the
-///   founder's key that is a CLI acting, not a person typing, and it is
-///   unattributed rather than assigned.
+/// - A `thread.turn.start` is the person's unless its command id carries a
+///   wake prefix ([`WAKE_COMMAND_PREFIXES`]). `cli-wake-v1:` is a CLI acting
+///   under the founder's key, not a person typing, and it is unattributed
+///   rather than assigned; Desktop's `team-wake-v1:` and the provider's
+///   `team-wake-` / `host-result-wake-` are this computer's, and are the
+///   host's (ledger 272(d)).
 /// - A tagged host answer is the host's, by its own tag.
 /// - A founder-signed approval (46030/46031), manual trigger (46020) or
 ///   `decision.answer` is the person's. These are channel- or author-scoped
@@ -1786,15 +1956,23 @@ fn attribute_founder_actions(
                             .get("commandId")
                             .and_then(Value::as_str)
                             .unwrap_or_default();
-                        if command_id.starts_with(WAKE_COMMAND_PREFIX) {
-                            out.unattributed.push(row(
+                        match wake_prefix(command_id) {
+                            Some((_, WakeMinter::Cli)) => out.unattributed.push(row(
                                 "a turn opened by a `cli-wake-v1:` command id — a CLI waking a \
                                  seat, signed with the founder's key",
                                 None,
-                            ));
-                        } else {
-                            out.person
-                                .push(row("a turn opened with no wake command id", None));
+                            )),
+                            Some((prefix, WakeMinter::Host)) => out.host.push(row(
+                                &format!(
+                                    "a turn opened by a `{prefix}` command id — this computer's \
+                                     Desktop or session provider waking a seat, signed with the \
+                                     founder's key"
+                                ),
+                                None,
+                            )),
+                            None => out
+                                .person
+                                .push(row("a turn opened with no wake command id", None)),
                         }
                     }
                     _ => out.person.push(row(

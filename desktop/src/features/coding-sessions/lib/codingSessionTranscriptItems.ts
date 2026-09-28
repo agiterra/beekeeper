@@ -10,6 +10,7 @@
 import { normalizeToolNameText } from "@/features/agents/ui/agentSessionToolCatalog";
 import { classifyTool } from "@/features/agents/ui/agentSessionToolClassifier";
 import type {
+  CodingSessionCostBasis,
   ToolStatus,
   TranscriptItem,
 } from "@/features/agents/ui/agentSessionTypes";
@@ -663,6 +664,24 @@ function buildResultUsage(
   return Object.keys(usage).length > 0 ? usage : null;
 }
 
+/**
+ * The wire's `costBasis`, with the pre-272(d) spellings read as what they
+ * always meant: `billed` was the adapter's own figure (an estimate, never an
+ * invoice) and `estimated` the price table's. Anything else is unattributed.
+ */
+function readCostBasis(value: unknown): CodingSessionCostBasis | null {
+  switch (value) {
+    case "adapter_estimate":
+    case "billed":
+      return "adapter_estimate";
+    case "table_estimate":
+    case "estimated":
+      return "table_estimate";
+    default:
+      return null;
+  }
+}
+
 function buildResultLifecycleItem(
   item: Record<string, unknown>,
   ctx: Identity,
@@ -675,6 +694,7 @@ function buildResultLifecycleItem(
   const durationMs =
     typeof item.durationMs === "number" ? item.durationMs : null;
   const costUsd = typeof item.costUsd === "number" ? item.costUsd : null;
+  const costBasis = costUsd === null ? null : readCostBasis(item.costBasis);
   const usage = buildResultUsage(item.usage);
   const resultText = typeof item.result === "string" ? item.result : "";
   // A provider that rewrote the raw error into an operator sentence keeps the
@@ -700,6 +720,7 @@ function buildResultLifecycleItem(
     outcome: subtype,
     durationMs,
     costUsd,
+    costBasis,
     usage,
     timestamp: ctx.timestamp,
     turnId: ctx.turnId,

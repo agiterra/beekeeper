@@ -19,6 +19,7 @@ import type { TranscriptItem } from "@/features/agents/ui/agentSessionTypes";
 import {
   formatCodingSessionCompletionOutcome,
   formatCodingSessionCost,
+  formatCodingSessionCostBasis,
   formatCodingSessionDuration,
   type CodingSessionChangedFile,
   type CodingSessionTranscriptTurn,
@@ -418,7 +419,7 @@ export function CodingSessionTurnCompletion({
       : null,
     formatCodingSessionCompletionOutcome(completion),
     completion.costUsd !== null
-      ? formatCodingSessionCost(completion.costUsd)
+      ? `${formatCodingSessionCost(completion.costUsd)} ${formatCodingSessionCostBasis(completion.costBasis)}`
       : null,
   ].filter((value): value is string => value !== null);
 

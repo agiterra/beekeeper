@@ -2000,27 +2000,35 @@ impl ResultSubtype {
 
 /// How a turn's [`TurnCost::cost_usd`] was determined.
 ///
-/// Ledger 266 (Astra): a control run's cost must separate the provider's own
-/// billed figure from an estimate this project computed, so a reader never
-/// mistakes one for the other.
+/// Ledger 266 (Astra): a control run's cost must separate the adapter's own
+/// figure from an estimate this project computed, so a reader never mistakes
+/// one for the other. Ledger 272(d): neither is a bill. The adapter's figure
+/// is the Claude SDK's `total_cost_usd` (or goose's `accumulatedCost`), which
+/// the SDK itself documents as a client-side estimate; the name says so.
+///
+/// Wire compatibility: records published before 272(d) carry `"billed"` and
+/// `"estimated"`; both still deserialize, to the variant that always meant
+/// the same thing. New records carry `"adapter_estimate"` / `"table_estimate"`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum CostBasis {
-    /// The adapter reported the provider's own billed dollar figure for this
-    /// turn (a cumulative counter delta against a proven prior baseline).
-    Billed,
-    /// No billed figure was available for this turn; this project's own
+    /// The adapter reported a cumulative dollar figure and this turn's value
+    /// is its delta against a proven prior baseline. The adapter's own
+    /// estimate — not a provider invoice.
+    #[serde(rename = "adapter_estimate", alias = "billed")]
+    AdapterEstimate,
+    /// No adapter figure was available for this turn; this project's own
     /// price table converted the turn's reported token counts into a dollar
     /// estimate. Carries `price_table_id`/`price_table_version` alongside it.
-    Estimated,
+    #[serde(rename = "table_estimate", alias = "estimated")]
+    TableEstimate,
 }
 
 impl CostBasis {
     /// The exact string the wire and this crate's readers use.
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Billed => "billed",
-            Self::Estimated => "estimated",
+            Self::AdapterEstimate => "adapter_estimate",
+            Self::TableEstimate => "table_estimate",
         }
     }
 }
@@ -2085,7 +2093,8 @@ impl ModelReason {
 /// Per-turn accounting, when the adapter reported any.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct TurnCost {
-    /// USD cost of the turn — billed or estimated, see [`Self::cost_basis`].
+    /// USD cost of the turn — the adapter's estimate or this project's table
+    /// estimate, see [`Self::cost_basis`]; never an invoice.
     /// `None` only together with [`Self::cost_reason`] naming why.
     pub cost_usd: Option<f64>,
     /// How `cost_usd` was determined. `Some` exactly when `cost_usd` is `Some`.
@@ -2093,10 +2102,10 @@ pub struct TurnCost {
     /// Why `cost_usd` is `None`. `Some` exactly when `cost_usd` is `None`.
     pub cost_reason: Option<CostReason>,
     /// The price table id used to estimate `cost_usd`, when
-    /// `cost_basis == Estimated`. `None` otherwise.
+    /// `cost_basis == TableEstimate`. `None` otherwise.
     pub price_table_id: Option<&'static str>,
     /// The price table version used to estimate `cost_usd`, when
-    /// `cost_basis == Estimated`. `None` otherwise.
+    /// `cost_basis == TableEstimate`. `None` otherwise.
     pub price_table_version: Option<&'static str>,
     /// Input tokens consumed.
     pub input_tokens: Option<u64>,
@@ -2249,7 +2258,7 @@ pub fn context_window_usage(item: &serde_json::Value) -> Option<ContextWindowUsa
 /// Build the terminal `result` item that closes a turn.
 ///
 /// `costUsd` is always present — as a number with `costBasis` naming whether
-/// it is the provider's own billed figure or this project's price-table
+/// it is the adapter's own estimate or this project's price-table
 /// estimate, or as an explicit `null` with `costReason` naming why no number
 /// could be produced (ledger 266). The token count fields keep the older
 /// convention of omission rather than `null`: the consumer's projector treats
@@ -4691,22 +4700,58 @@ mod tests {
     /// Ledger 266: `costUsd` is present — as a number with its basis, or as
     /// an explicit `null` with a named reason — never a bare omission.
     #[test]
-    fn a_billed_cost_carries_its_basis_and_no_price_table_stamp() {
+    fn an_adapter_cost_carries_its_basis_and_no_price_table_stamp() {
         let item = result_item(
             ResultSubtype::Success,
             1_000,
             "completed",
             TurnCost {
                 cost_usd: Some(0.042),
-                cost_basis: Some(CostBasis::Billed),
+                cost_basis: Some(CostBasis::AdapterEstimate),
                 ..TurnCost::default()
             },
             TurnUsageReport::default(),
         );
         assert_eq!(item["costUsd"], serde_json::json!(0.042));
-        assert_eq!(item["costBasis"], "billed");
+        assert_eq!(item["costBasis"], "adapter_estimate");
         assert!(item.get("costReason").is_none(), "{item}");
         assert!(item.get("priceTableId").is_none(), "{item}");
+    }
+
+    /// Ledger 272(d), RED-first: the adapter's dollar figure (claude-agent-acp
+    /// relays the SDK's `total_cost_usd`, which the SDK documents as a
+    /// client-side estimate) is not a bill. It is named for whose estimate it
+    /// is, and so is the table's; a record stored before the rename still
+    /// reads.
+    #[test]
+    fn a_cost_basis_names_whose_estimate_it_is_and_old_values_still_read() {
+        let item = result_item(
+            ResultSubtype::Success,
+            1_000,
+            "completed",
+            TurnCost {
+                cost_usd: Some(0.2274174),
+                cost_basis: Some(CostBasis::AdapterEstimate),
+                ..TurnCost::default()
+            },
+            TurnUsageReport::default(),
+        );
+        assert_eq!(item["costBasis"], "adapter_estimate");
+        assert_eq!(
+            serde_json::to_value(CostBasis::TableEstimate).expect("serialize"),
+            "table_estimate"
+        );
+        for (stored, basis) in [
+            ("billed", CostBasis::AdapterEstimate),
+            ("adapter_estimate", CostBasis::AdapterEstimate),
+            ("estimated", CostBasis::TableEstimate),
+            ("table_estimate", CostBasis::TableEstimate),
+        ] {
+            assert_eq!(
+                serde_json::from_value::<CostBasis>(serde_json::json!(stored)).expect(stored),
+                basis
+            );
+        }
     }
 
     /// An estimate carries its basis and the price table's own id/version, so
@@ -4719,7 +4764,7 @@ mod tests {
             "completed",
             TurnCost {
                 cost_usd: Some(18.0),
-                cost_basis: Some(CostBasis::Estimated),
+                cost_basis: Some(CostBasis::TableEstimate),
                 price_table_id: Some("buzz-static"),
                 price_table_version: Some("2026-09-25.1"),
                 ..TurnCost::default()
@@ -4727,7 +4772,7 @@ mod tests {
             TurnUsageReport::default(),
         );
         assert_eq!(item["costUsd"], serde_json::json!(18.0));
-        assert_eq!(item["costBasis"], "estimated");
+        assert_eq!(item["costBasis"], "table_estimate");
         assert_eq!(item["priceTableId"], "buzz-static");
         assert_eq!(item["priceTableVersion"], "2026-09-25.1");
     }
