@@ -1313,6 +1313,7 @@ impl Provider {
                 from_host: &from_host,
                 hermit_state: hermit_state.as_deref(),
                 host_branch: None,
+                branch_authority: None,
                 host_read: &[],
                 git_transport: false,
             },

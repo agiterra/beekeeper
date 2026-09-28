@@ -5,6 +5,7 @@ import {
   CODING_SESSION_AUDIT_LIMITS,
   deriveCodingSessionMissionAudit,
   roomDownloadCommand,
+  unpricedDisclosure,
 } from "./codingSessionMissionAuditModel.ts";
 
 const START = Date.parse("2026-09-01T21:34:22.000Z");
@@ -496,4 +497,44 @@ test("Amendment 00:20: the driver's own count is never a floor, cut short or not
   assert.equal(audit.turns[0].toolCalls, 88);
   assert.equal(audit.turns[0].toolCallsReported, true);
   assert.equal(audit.turns[0].toolCallsTruncated, false);
+});
+
+// Ledger 275 A5 (Astra's production probe): two turns report tokens, one
+// reports a cost. Token coverage is complete; cost coverage is not, and the
+// totals keep the two apart instead of calling a $0.50 subtotal complete.
+test("cost coverage is counted apart from token coverage", () => {
+  const result = (turnId, costUsd) => ({
+    id: `${turnId}r`,
+    type: "lifecycle",
+    renderClass: "status",
+    title: "Turn result",
+    text: "done",
+    outcome: "success",
+    durationMs: 1000,
+    costUsd,
+    timestamp: "2026-09-28T12:00:00.000Z",
+    turnId,
+    usage: { inputTokens: 10, outputTokens: 1 },
+  });
+  const audit = deriveCodingSessionMissionAudit([
+    {
+      executionKey: "a",
+      seat: "Lead",
+      transcript: [result("1", 0.5), result("2", null)],
+    },
+  ]);
+  assert.equal(audit.sessionTotals.turns, 2);
+  assert.equal(audit.sessionTotals.reportedTurns, 2);
+  assert.equal(audit.sessionTotals.pricedTurns, 1);
+  assert.equal(audit.sessionTotals.costUsd, 0.5);
+  assert.equal(audit.totalsBySeat[0].totals.pricedTurns, 1);
+  // What the Est. cost cell prints beside the $0.50: never silent.
+  assert.equal(
+    unpricedDisclosure(audit.sessionTotals),
+    "(1 of 2 turns priced)",
+  );
+  assert.equal(
+    unpricedDisclosure({ ...audit.sessionTotals, pricedTurns: 2 }),
+    null,
+  );
 });

@@ -127,6 +127,7 @@ fn scope<'a>(
         from_host,
         hermit_state: None,
         host_branch: None,
+        branch_authority: None,
         host_read: &[],
         git_transport: false,
     }

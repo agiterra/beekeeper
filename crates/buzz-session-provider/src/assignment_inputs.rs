@@ -864,7 +864,9 @@ fn seat_tree_plan(
         tree,
         &name,
     );
-    scope.host_branch = Some(branch);
+    // The one branch this command may move: the host's allocation, not an
+    // extra grant beside whatever the tree's `HEAD` names.
+    scope.branch_authority = Some(branch);
     // Establishment fetches the assignment's commit with the operator's own
     // selected transport.
     let scope = scope.fetching();
@@ -1050,20 +1052,6 @@ fn fetch_commit(
     }
 }
 
-/// Does this repository already have a branch by that name?
-fn branch_exists(tree: &Path, branch: &str) -> bool {
-    git(
-        tree,
-        &[
-            "show-ref",
-            "--verify",
-            "--quiet",
-            &format!("refs/heads/{branch}"),
-        ],
-    )
-    .is_ok()
-}
-
 /// The single attempt, with every refusal named at the step that found it.
 fn attempt(
     records: &AssignmentInputRecords,
@@ -1110,30 +1098,21 @@ fn attempt(
         .ok()
         .map(|branch| branch.trim().to_owned())
         .filter(|branch| !branch.is_empty());
-    let target = resolved
-        .branch
-        .clone()
-        .unwrap_or_else(|| checkout.branch.clone());
-    if !is_safe_branch_name(&target) {
+    // The branch the commit lands on is the host's allocation for this tree
+    // (ledger 275 A2), never a name the child's `HEAD` or the assignment
+    // supplies: moving any other branch would rewrite somebody's work, and a
+    // re-pointed `HEAD` is not evidence of ownership. An assignment that
+    // names a different branch gets its commit on the allocated one; the
+    // name is where the seat pushes, as its work brief says.
+    let target = checkout.branch.clone();
+    if !is_safe_branch_name(&target) || !crate::branch_authority::valid_branch(&target) {
         return Err(refuse(
             EstablishAssignmentInputCode::InvalidInput,
             "the recorded seat branch cannot be handed to git as a single branch",
             Some(target),
         ));
     }
-    // Only this seat's own branch may be moved: its recorded branch, the one
-    // already checked out here, or a name no branch holds yet. Anything else
-    // belongs to somebody, and resetting it would rewrite their work.
-    let is_seats_own = target == checkout.branch
-        || current_branch.as_deref() == Some(target.as_str())
-        || !branch_exists(&tree, &target);
-    if !is_seats_own {
-        return Err(refuse(
-            EstablishAssignmentInputCode::CheckoutFailed,
-            format!("'{target}' is not this seat's branch, so it was not moved"),
-            Some(format!("the seat's branch is '{}'", checkout.branch)),
-        ));
-    }
+    facts.branch = Some(target.clone());
     let plan = seat_tree_plan(state_dir, &tree, &target)?;
 
     // Uncommitted work stops everything, before a single write.

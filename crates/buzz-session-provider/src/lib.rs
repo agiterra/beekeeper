@@ -37,6 +37,7 @@ pub mod actor_seats;
 mod agent_fence;
 pub mod agents_checkout;
 pub mod agents_plan_blob;
+mod branch_authority;
 pub mod execution_scope;
 mod execution_scope_git;
 pub mod execution_scope_host;
@@ -2754,13 +2755,10 @@ impl Provider {
                 &[&snapshot.team_events],
             );
             // What the lead's own turns already delivered, from the verified
-            // `turn_started` receipts in the snapshot's package (ledger
-            // 272(d)): the same fact id is a duplicate, and bookkeeping about
-            // an obligation a turn already carried is `obligation_delivered`.
-            let (delivered, obligations) =
-                wake_relevance::delivered_to(&snapshot.package, &lead, &snapshot.team_events);
-            view.delivered = delivered;
-            view.delivered_obligations = obligations;
+            // `turn_started` receipts in the snapshot's package: the same
+            // fact id in a successfully ended turn is a duplicate. Nothing is
+            // taken as seen because another fact was (ledger 275 A3).
+            view.delivered = wake_relevance::delivered_to(&snapshot.package, &lead);
             if let Err(reason) = wake_relevance::still_owed(&fact, &view) {
                 tracing::info!(
                     target: "csp::team_wake",
@@ -9286,11 +9284,37 @@ impl Provider {
         let Some(store) = inputs::host_store_from_pointer(&self.config.state_dir) else {
             return AssignmentInputPreparation::Unmanaged;
         };
-        // The branch is read from the tree rather than assumed: only a branch
-        // the seat is already on, or one no branch holds, may be moved, and
-        // guessing a name here is how somebody else's work would get reset.
-        // Reading the branch runs nothing of the repository's own.
-        let Some(branch) = git_probe::probe(cwd, None).await.branch else {
+        // The branch is the host's allocation for this tree (ledger 275 A2),
+        // never the child-writable `HEAD`: the same authority every
+        // preparation of the tree grants (`branch_authority`).
+        let bound = self
+            .state
+            .session(session_id_key)
+            .and_then(|record| record.execution_binding.as_ref())
+            .and_then(|binding| binding.branch.clone());
+        let authority = {
+            let state_dir = self.config.state_dir.clone();
+            let cwd = cwd.to_path_buf();
+            tokio::task::spawn_blocking(move || {
+                crate::branch_authority::branch_authority(&state_dir, &cwd, bound.as_deref())
+            })
+            .await
+        };
+        let branch = match authority {
+            Ok(Ok(branch)) => branch,
+            Ok(Err(error)) => {
+                tracing::warn!(
+                    target: "csp::verification_input",
+                    %assignment_ref,
+                    code = "assignment_input_no_authority",
+                    error = %error.0,
+                    "the seat's branch authority could not be established, so nothing is moved"
+                );
+                return AssignmentInputPreparation::Deferred("branch_authority_unavailable");
+            }
+            Err(_) => return AssignmentInputPreparation::Unmanaged,
+        };
+        let Some(branch) = branch else {
             tracing::info!(
                 target: "csp::verification_input",
                 %assignment_ref,
@@ -10095,8 +10119,9 @@ impl Provider {
                     .session(&session_id)
                     .and_then(|record| record.model.clone());
                 // Ledger 268(e): what the hire asked for, and what the adapter
-                // last said it runs. This turn's own report (on `usage`)
-                // outranks the latter and is remembered for later turns.
+                // last said the session runs. The record keeps the latest
+                // report for the session's own display; a turn's result names
+                // only its own report (ledger 275 A4).
                 let (model_requested, session_model) = self
                     .state
                     .session(&session_id)
@@ -10118,7 +10143,6 @@ impl Provider {
                 }
                 let identity = ModelIdentity {
                     requested: model_requested.as_deref(),
-                    session_reported: session_model.as_deref(),
                     window_fallback: model.as_deref(),
                 };
                 let team_terminal = self.state.session(&session_id).and_then(|record| {
@@ -11066,7 +11090,6 @@ fn turn_failure_sentence(message: &str) -> Option<&'static str> {
 fn record_identity_cost(record: &SessionRecord) -> payload::TurnCost {
     let identity = ModelIdentity {
         requested: record.model_requested.as_deref(),
-        session_reported: record.model_effective.as_deref(),
         window_fallback: None,
     };
     let mut cost = payload::TurnCost {
@@ -11082,22 +11105,20 @@ fn record_identity_cost(record: &SessionRecord) -> payload::TurnCost {
 struct ModelIdentity<'a> {
     /// The label the create or hire asked for, verbatim.
     requested: Option<&'a str>,
-    /// The model the adapter last reported for this session, used when the
-    /// turn itself reported none.
-    session_reported: Option<&'a str>,
     /// The session's recorded model, used only to look up a context window
     /// when no adapter report names one.
     window_fallback: Option<&'a str>,
 }
 
 impl<'a> ModelIdentity<'a> {
-    /// The model that answered: the turn's own report, else the session's.
+    /// The model that answered this turn: the turn's own adapter report, or
+    /// unknown. A model an earlier turn reported is not evidence of this one
+    /// (ledger 275 A4), so it is never substituted and never priced.
     fn effective(&self, usage: Option<&'a TurnUsage>) -> Option<&'a str> {
         usage
             .and_then(|usage| usage.model.as_deref())
             .map(str::trim)
             .filter(|model| !model.is_empty())
-            .or(self.session_reported)
     }
 
     /// Stamp requested/effective/reason/overridden onto a cost block.
@@ -11722,7 +11743,6 @@ mod tests {
     fn reported(model: Option<&str>) -> ModelIdentity<'_> {
         ModelIdentity {
             requested: model,
-            session_reported: model,
             window_fallback: model,
         }
     }
@@ -11735,7 +11755,6 @@ mod tests {
         usage.model = Some("claude-opus-5-5".into());
         let identity = ModelIdentity {
             requested: Some("default"),
-            session_reported: None,
             window_fallback: Some("default"),
         };
         let cost = turn_cost(&usage, identity);
@@ -11772,7 +11791,6 @@ mod tests {
             let usage = usage_with(None, Some(1_000_000), Some(1_000), true);
             let identity = ModelIdentity {
                 requested: Some(label),
-                session_reported: None,
                 window_fallback: Some(label),
             };
             let cost = turn_cost(&usage, identity);
@@ -11822,7 +11840,6 @@ mod tests {
         let usage = usage_with(None, Some(1_000), Some(200), true);
         let identity = ModelIdentity {
             requested: Some("default"),
-            session_reported: None,
             window_fallback: Some("default"),
         };
         let cost = turn_cost(&usage, identity);
@@ -11837,6 +11854,36 @@ mod tests {
             Some(payload::ModelReason::AdapterReportedNone)
         );
         assert_eq!(cost.model_overridden, None);
+    }
+
+    /// Ledger 275 A4: a turn that reports no model is unknown and unpriced,
+    /// even right after a turn that reported one — and a switch is followed
+    /// turn by turn, never carried over.
+    #[test]
+    fn a_turns_model_is_its_own_report_never_the_previous_turns() {
+        let identity = || ModelIdentity {
+            requested: Some("claude-opus-5-5"),
+            window_fallback: Some("claude-opus-5-5"),
+        };
+        let mut first = usage_with(None, Some(1_000), Some(200), true);
+        first.model = Some("claude-opus-5-5".into());
+        let cost = turn_cost(&first, identity());
+        assert_eq!(cost.model_effective.as_deref(), Some("claude-opus-5-5"));
+
+        let second = usage_with(None, Some(1_000), Some(200), true);
+        let cost = turn_cost(&second, identity());
+        assert_eq!(cost.model_effective, None, "not the previous turn's model");
+        assert_eq!(cost.cost_usd, None, "never priced from a guessed model");
+        assert_eq!(
+            cost.model_reason,
+            Some(payload::ModelReason::AdapterReportedNone)
+        );
+
+        let mut third = usage_with(None, Some(1_000), Some(200), true);
+        third.model = Some("claude-sonnet-5".into());
+        let cost = turn_cost(&third, identity());
+        assert_eq!(cost.model_effective.as_deref(), Some("claude-sonnet-5"));
+        assert_eq!(cost.model_overridden, Some(true), "a different exact id");
     }
 
     /// Ledger 268(e): requested and reported agree (an alias and its resolved
@@ -11902,7 +11949,8 @@ mod tests {
     /// the reason rather than left unexplained.
     #[test]
     fn a_turn_whose_model_has_no_price_row_is_null_with_unknown_model_price() {
-        let usage = usage_with(None, Some(1_000), Some(200), true);
+        let mut usage = usage_with(None, Some(1_000), Some(200), true);
+        usage.model = Some("some-model-nobody-priced".into());
         let cost = turn_cost(&usage, reported(Some("some-model-nobody-priced")));
         assert_eq!(cost.cost_usd, None);
         assert_eq!(cost.cost_basis, None);
@@ -11917,7 +11965,8 @@ mod tests {
     /// distinguishable from a billed figure at every reader.
     #[test]
     fn a_turn_whose_model_is_priced_is_estimated_from_the_table() {
-        let usage = usage_with(None, Some(1_000_000), Some(1_000_000), true);
+        let mut usage = usage_with(None, Some(1_000_000), Some(1_000_000), true);
+        usage.model = Some("claude-sonnet-5".into());
         let cost = turn_cost(&usage, reported(Some("claude-sonnet-5")));
         assert_eq!(cost.cost_basis, Some(payload::CostBasis::TableEstimate));
         assert_eq!(cost.cost_reason, None);

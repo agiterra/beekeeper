@@ -424,6 +424,10 @@ pub struct ScopeInputs<'a> {
     pub hermit_state: Option<&'a Path>,
     /// A branch a host command (never the child) moves this worktree to.
     pub host_branch: Option<&'a str>,
+    /// The branch this tree may move, when the caller already holds the
+    /// host's authority for it (assignment establishment). `None` looks it up
+    /// ([`crate::branch_authority::branch_authority`]).
+    pub branch_authority: Option<&'a str>,
     /// Host-owned paths a host command reads (the host's own clone a fetch
     /// takes objects from). Never granted to a session.
     pub host_read: &'a [PathBuf],
@@ -479,6 +483,7 @@ impl<'a> ScopeInputs<'a> {
             operator_git_auth: false,
             prior: None,
             ambient_env: None,
+            branch_authority: None,
         }
     }
 }
@@ -613,19 +618,31 @@ pub fn prepare(inputs: &ScopeInputs<'_>) -> Result<ExecutionPlan, CreateFailure>
         Access::NoUnlink,
         "the working tree's own anchor",
     ));
-    // The branch is pinned by the host when it first prepares this tree —
-    // before any child has run in it — and every later preparation of the
-    // tree, for any purpose, grants that branch, never the child-writable
-    // `HEAD`.
-    let branch = pinned_branch(
-        &state_dir,
-        &tree,
-        inputs
-            .prior
-            .and_then(|(prior, _)| prior)
-            .filter(|prior| prior.tree.as_deref() == Some(tree.as_path()))
-            .and_then(|prior| prior.branch.as_deref()),
-    );
+    // Which branch this tree may move is the host's decision, never the
+    // child-writable `HEAD` (see `crate::branch_authority`). A caller that
+    // already holds the host's authority (assignment establishment) names it;
+    // anything that cannot be established refuses the preparation.
+    let branch = match inputs.branch_authority {
+        Some(authority) if crate::branch_authority::valid_branch(authority) => {
+            Some(authority.to_owned())
+        }
+        Some(_) => {
+            return Err(refuse(
+                EXECUTION_SCOPE_INVALID,
+                "the host's branch authority names no usable branch",
+            ))
+        }
+        None => crate::branch_authority::branch_authority(
+            &state_dir,
+            &tree,
+            inputs
+                .prior
+                .and_then(|(prior, _)| prior)
+                .filter(|prior| prior.tree.as_deref() == Some(tree.as_path()))
+                .and_then(|prior| prior.branch.as_deref()),
+        )
+        .map_err(|error| refuse(EXECUTION_BOUNDARY_UNAVAILABLE, error.0))?,
+    };
     let linked = crate::execution_scope_git::linked_worktree_admin(
         &tree,
         inputs.project_checkout,
@@ -1187,48 +1204,6 @@ pub(crate) fn write_host_file(
     let _ = private;
     let mut file = options.open(path).map_err(failed)?;
     std::io::Write::write_all(&mut file, contents).map_err(failed)
-}
-
-/// Host-owned branch pins, one file per working tree, beside (never inside)
-/// the executions' state.
-const BRANCH_PINS_DIR: &str = "branch-pins";
-
-/// The branch pinned for `tree`: the record's own, else the host's pin file,
-/// else the tree's branch now — which is then pinned. The first preparation
-/// of a tree happens before any child runs in it (a new worktree is cut by
-/// the host); a tree first seen by this code after an upgrade is pinned from
-/// its `HEAD` at that moment.
-fn pinned_branch(state_dir: &Path, tree: &Path, recorded: Option<&str>) -> Option<String> {
-    let dir = state_dir.join(BRANCH_PINS_DIR);
-    let pin = dir.join(&hex::encode(Sha256::digest(tree.to_string_lossy().as_bytes()))[..32]);
-    let read_pin = || {
-        std::fs::read_to_string(&pin)
-            .ok()
-            .map(|text| text.trim().to_owned())
-            .filter(|branch| !branch.is_empty())
-    };
-    let chosen = recorded
-        .map(str::to_owned)
-        .or_else(read_pin)
-        .or_else(|| crate::execution_scope_git::worktree_branch(tree))?;
-    if read_pin().is_none() && std::fs::create_dir_all(&dir).is_ok() {
-        use std::io::Write as _;
-        match std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&pin)
-        {
-            Ok(mut file) => {
-                let _ = file.write_all(chosen.as_bytes());
-            }
-            // Another preparation pinned it first: that pin decides.
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                return read_pin().or(Some(chosen));
-            }
-            Err(_) => {}
-        }
-    }
-    Some(chosen)
 }
 
 /// The host's `mktemp` for an execution: routes macOS's default and `-t`
@@ -2089,3 +2064,7 @@ mod live_tests;
 #[cfg(all(test, target_os = "macos"))]
 #[path = "execution_scope_live_workflow_tests.rs"]
 mod live_workflow;
+
+#[cfg(all(test, target_os = "macos"))]
+#[path = "execution_scope_live_planning_tests.rs"]
+mod live_planning;

@@ -26,13 +26,6 @@
 //!   [`delivered_to`]).
 //! - [`WakeDropReason::AlreadyConsumed`] — a record the recipient signed
 //!   already cites the fact id, so it has been used.
-//! - [`WakeDropReason::ObligationDelivered`] — another fact about the same
-//!   obligation ([`obligation_of`]: the assignment a report answers, or the
-//!   verifier's own assignment a verdict reviews under) was delivered to the
-//!   recipient in a turn that ended after this fact was signed, and this fact
-//!   reopens no work. Run 11's verdict-then-settlement-report pair (ledger
-//!   272(d)). The recipient's owed ruling stays visible in the fold's
-//!   `awaiting` set; only the extra turn is not spent.
 //! - [`WakeDropReason::PostTerminal`] — the umbrella has a canonical terminal
 //!   and the fact either predates it or does not contest it. After a
 //!   terminal the only legitimate model work is an explicit new request or
@@ -70,11 +63,9 @@ pub enum WakeDropReason {
     SelfAuthored,
     /// The umbrella is terminal and the fact predates or does not contest it.
     PostTerminal,
-    /// The same fact id was already delivered to this recipient.
+    /// The same fact id was already delivered to this recipient in a turn
+    /// that ended successfully.
     Duplicate,
-    /// Another fact about the same obligation was already delivered to this
-    /// recipient in a turn that ended after this fact was signed.
-    ObligationDelivered,
 }
 
 impl WakeDropReason {
@@ -85,7 +76,6 @@ impl WakeDropReason {
             Self::SelfAuthored => "self_authored",
             Self::PostTerminal => "post_terminal",
             Self::Duplicate => "duplicate",
-            Self::ObligationDelivered => "obligation_delivered",
         }
     }
 }
@@ -127,30 +117,7 @@ pub struct WakeFact {
     /// Whether the fact is a new request or evidence contesting a completion
     /// — the only kinds of fact a terminal umbrella still owes a turn.
     pub reopens_work: bool,
-    /// The obligation the fact is about ([`obligation_of`]), when it names one.
-    pub obligation: Option<String>,
-    /// Whether the fact is a report — the only kind an already-delivered
-    /// verdict can make redundant.
-    pub report: bool,
 }
-
-/// One fact already delivered to the recipient in a turn that has ended.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DeliveredObligation {
-    /// The obligation the delivered fact was about.
-    pub obligation: String,
-    /// The delivered fact.
-    pub fact_id: String,
-    /// The second the turn that delivered it ended (its `result`).
-    pub turn_ended_at: u64,
-    /// The delivered fact's signer when it was a verdict, else `None`.
-    pub verdict_author: Option<String>,
-}
-
-/// Seconds a fact must precede a delivering turn's end, on the signers' and
-/// the host's clocks, before it is taken to have been folded into that turn.
-/// Clocks are not trusted to the second; closer calls admit the wake.
-pub const DELIVERED_SKEW_SECS: u64 = 5;
 
 /// What the recipient already knows, folded from signed records.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -161,11 +128,11 @@ pub struct RelevanceView {
     pub terminal: Option<TerminalMark>,
     /// Every fact id a record signed by the recipient cites.
     pub cited_by_recipient: HashSet<String>,
-    /// Fact ids already delivered to the recipient.
+    /// Fact ids already delivered to the recipient in a turn that ended
+    /// successfully. A fact is never taken as seen because *another* fact
+    /// was, or because of when it was signed (ledger 275 A3): a report whose
+    /// disposition is owed keeps its wake.
     pub delivered: HashSet<String>,
-    /// Obligations already delivered to the recipient, with when the
-    /// delivering turn ended.
-    pub delivered_obligations: Vec<DeliveredObligation>,
 }
 
 /// Whether `fact` still delivers new responsibility to `view.recipient`.
@@ -179,9 +146,6 @@ pub fn still_owed(fact: &WakeFact, view: &RelevanceView) -> Result<(), WakeDropR
     if view.cited_by_recipient.contains(&fact.fact_id) {
         return Err(WakeDropReason::AlreadyConsumed);
     }
-    if obligation_already_delivered(fact, view) {
-        return Err(WakeDropReason::ObligationDelivered);
-    }
     if let Some(terminal) = &view.terminal {
         // Same-second or unknown ordering is not "predates": a contesting
         // fact whose order cannot be proven is delivered.
@@ -193,34 +157,6 @@ pub fn still_owed(fact: &WakeFact, view: &RelevanceView) -> Result<(), WakeDropR
         }
     }
     Ok(())
-}
-
-/// Whether another fact about `fact`'s obligation reached the recipient in a
-/// turn that ended after `fact` was signed (ledger 272(d)).
-///
-/// Only bookkeeping is folded this way: a fact that reopens work (a new
-/// request, a confirmed refutation, a non-approving disposition) is never
-/// assumed seen because an earlier fact about the same obligation was. An
-/// unknown signing second or an unended turn proves nothing and admits.
-fn obligation_already_delivered(fact: &WakeFact, view: &RelevanceView) -> bool {
-    let (Some(obligation), Some(created_at), Some(author)) = (
-        fact.obligation.as_deref(),
-        fact.created_at,
-        fact.author.as_deref(),
-    ) else {
-        return false;
-    };
-    // Only the run11 shape: a verifier's own settlement report for the
-    // assignment whose verdict the recipient already acted on. An approval,
-    // a superseding report or another author's fact is never assumed seen.
-    fact.report
-        && !fact.reopens_work
-        && view.delivered_obligations.iter().any(|delivered| {
-            delivered.obligation == obligation
-                && delivered.fact_id != fact.fact_id
-                && delivered.verdict_author.as_deref() == Some(author)
-                && created_at.saturating_add(DELIVERED_SKEW_SECS) <= delivered.turn_ended_at
-        })
 }
 
 /// The canonical terminal of a verified kind-44244 set, with its second.
@@ -320,8 +256,6 @@ fn team_fact(fact_id: &str, team_events: &[Event]) -> WakeFact {
             author: None,
             created_at: None,
             reopens_work: true,
-            obligation: None,
-            report: false,
         };
     };
     let reopens_work = validate_coding_session_team_transaction_envelope(event)
@@ -332,8 +266,6 @@ fn team_fact(fact_id: &str, team_events: &[Event]) -> WakeFact {
         author: Some(event.pubkey.to_hex()),
         created_at: Some(event.created_at.as_secs()),
         reopens_work,
-        obligation: obligation_of(fact_id, team_events),
-        report: is_report(fact_id, team_events),
     }
 }
 
@@ -361,8 +293,6 @@ pub(crate) fn fact_of_source(source: &WakeSource, team_events: &[Event]) -> Wake
             author: Some(actor_pubkey.clone()),
             created_at: u64::try_from(*terminal_at_ms / 1_000).ok(),
             reopens_work: false,
-            obligation: None,
-            report: false,
         },
     }
 }
@@ -382,8 +312,6 @@ pub fn fact_of_pointer(text: &str, team_events: &[Event]) -> Option<WakeFact> {
             author: None,
             created_at: None,
             reopens_work: false,
-            obligation: None,
-            report: false,
         });
     }
     // A host result: a failure or refusal is evidence that can contest a
@@ -398,104 +326,7 @@ pub fn fact_of_pointer(text: &str, team_events: &[Event]) -> Option<WakeFact> {
         author: None,
         created_at: None,
         reopens_work: !clean_exit,
-        obligation: None,
-        report: false,
     })
-}
-
-/// The signer of `fact_id` when it is a verdict.
-fn verdict_author(fact_id: &str, team_events: &[Event]) -> Option<String> {
-    let event = team_events
-        .iter()
-        .find(|event| event.id.to_hex() == fact_id)?;
-    matches!(
-        validate_coding_session_team_transaction_envelope(event)
-            .ok()?
-            .body,
-        CodingSessionTeamTransactionBody::Verdict(_)
-    )
-    .then(|| event.pubkey.to_hex())
-}
-
-/// Whether `fact_id` is a report.
-fn is_report(fact_id: &str, team_events: &[Event]) -> bool {
-    team_events
-        .iter()
-        .find(|event| event.id.to_hex() == fact_id)
-        .and_then(|event| validate_coding_session_team_transaction_envelope(event).ok())
-        .is_some_and(|payload| matches!(payload.body, CodingSessionTeamTransactionBody::Report(_)))
-}
-
-/// The obligation a team fact is about: the assignment whose settlement it
-/// moves (ledger 272(d)).
-///
-/// - A **report** is about the assignment it answers (`assignmentRef`).
-/// - A **verdict** is about its author's own open assignment whose `baseSha`
-///   is the reviewed report's `headSha` — a verifier reviewing a builder's
-///   report does so under its own assignment, and its settlement report on
-///   that assignment is the same obligation. When no such assignment is in
-///   the set, the verdict's own `assignmentRef` (the reviewed report's).
-/// - Anything else, or an id the set does not hold: `None`.
-pub fn obligation_of(fact_id: &str, team_events: &[Event]) -> Option<String> {
-    let body = |event: &Event| {
-        validate_coding_session_team_transaction_envelope(event)
-            .ok()
-            .map(|payload| payload.body)
-    };
-    let event = team_events
-        .iter()
-        .find(|event| event.id.to_hex() == fact_id)?;
-    let (assignment_ref, report_ref) = match body(event)? {
-        CodingSessionTeamTransactionBody::Report(report) => return Some(report.assignment_ref),
-        CodingSessionTeamTransactionBody::Verdict(
-            CodingSessionTeamVerdict::Refutation {
-                assignment_ref,
-                report_ref,
-                ..
-            }
-            | CodingSessionTeamVerdict::Disposition {
-                assignment_ref,
-                report_ref,
-                ..
-            },
-        ) => (assignment_ref, report_ref),
-        _ => return None,
-    };
-    let reviewed_head = team_events
-        .iter()
-        .find(|candidate| candidate.id.to_hex() == report_ref)
-        .and_then(body)
-        .and_then(|reviewed| match reviewed {
-            CodingSessionTeamTransactionBody::Report(report) => report.head_sha,
-            _ => None,
-        });
-    let author = event.pubkey.to_hex();
-    let superseded: HashSet<String> = team_events
-        .iter()
-        .filter_map(|candidate| {
-            validate_coding_session_team_transaction_envelope(candidate)
-                .ok()?
-                .supersedes
-        })
-        .collect();
-    let own_open_assignment = reviewed_head.and_then(|head| {
-        team_events
-            .iter()
-            .filter(|candidate| !superseded.contains(&candidate.id.to_hex()))
-            .filter(|candidate| match body(candidate) {
-                Some(CodingSessionTeamTransactionBody::Assignment(assignment)) => {
-                    assignment.assignee_actor.eq_ignore_ascii_case(&author)
-                        && assignment
-                            .base_sha
-                            .as_deref()
-                            .is_some_and(|base| base.eq_ignore_ascii_case(&head))
-                }
-                _ => false,
-            })
-            .max_by_key(|candidate| candidate.created_at.as_secs())
-            .map(|candidate| candidate.id.to_hex())
-    });
-    Some(own_open_assignment.unwrap_or(assignment_ref))
 }
 
 /// Command-id prefixes that embed the fact a wake is about:
@@ -518,21 +349,16 @@ fn delivered_fact(command_id: &str, content: &str) -> Option<String> {
         })
 }
 
-/// What the recipient's own turns already delivered, from the verified
-/// context package (ledger 272(d)).
-///
-/// A command addressed to one of the recipient's seats whose verified
-/// receipt says `turn_started` delivered its fact. The fact comes from the
-/// command id (`cli-wake-v1:<fact>:…`, `team-wake-v1:<fact>:…`) or the
-/// pointer it carried. Returns every such fact id (the `Duplicate` rule), and
-/// — for each one whose turn has a signed `result` — its obligation and the
-/// second that turn ended. A turn with no `result` in the package has no
-/// provable end and delivers no obligation.
+/// Every fact id delivered to `recipient` in a turn that ended successfully,
+/// from the verified context package: a command addressed to one of the
+/// recipient's seats whose verified receipt says `turn_started`, whose fact
+/// comes from the command id (`cli-wake-v1:<fact>:…`, `team-wake-v1:<fact>:…`)
+/// or the pointer it carried, and whose turn has a signed `result` of
+/// subtype `success`. A failed, cancelled or unended turn delivered nothing.
 pub fn delivered_to(
     package: &buzz_core::coding_session_context::CodingSessionContextPackage,
     recipient: &str,
-    team_events: &[Event],
-) -> (HashSet<String>, Vec<DeliveredObligation>) {
+) -> HashSet<String> {
     use buzz_core::coding_session_payload::ReceiptStatus;
     let seats: Vec<_> = package
         .roster
@@ -541,7 +367,6 @@ pub fn delivered_to(
         .map(|entry| &entry.target)
         .collect();
     let mut delivered = HashSet::new();
-    let mut obligations = Vec::new();
     for item in package.inbox.iter().filter(|item| {
         seats.contains(&&item.target) && item.stage == Some(ReceiptStatus::TurnStarted)
     }) {
@@ -562,37 +387,24 @@ pub fn delivered_to(
         // Delivered means a turn that carried the fact ended successfully: a
         // turn that failed, was cancelled or has not ended delivers nothing,
         // so a re-sent wake for the same fact still gets its turn.
-        let ended_at = turn_id.and_then(|turn_id| {
-            package
-                .history
-                .iter()
-                .filter(|result| {
-                    result.target == item.target
-                        && result.item_kind == "result"
-                        && result.turn_id.as_deref() == Some(turn_id)
-                        && result
-                            .content
-                            .get("subtype")
-                            .and_then(serde_json::Value::as_str)
-                            == Some("success")
-                })
-                .map(|result| result.created_at)
-                .max()
+        let ended_successfully = turn_id.is_some_and(|turn_id| {
+            package.history.iter().any(|result| {
+                result.target == item.target
+                    && result.item_kind == "result"
+                    && result.turn_id.as_deref() == Some(turn_id)
+                    && result
+                        .content
+                        .get("subtype")
+                        .and_then(serde_json::Value::as_str)
+                        == Some("success")
+            })
         });
-        let Some(turn_ended_at) = ended_at else {
+        if !ended_successfully {
             continue;
-        };
-        delivered.insert(fact_id.clone());
-        if let Some(obligation) = obligation_of(&fact_id, team_events) {
-            obligations.push(DeliveredObligation {
-                obligation,
-                verdict_author: verdict_author(&fact_id, team_events),
-                fact_id,
-                turn_ended_at,
-            });
         }
+        delivered.insert(fact_id);
     }
-    (delivered, obligations)
+    delivered
 }
 
 /// Build the view one routing decision checks a wake against.
@@ -610,7 +422,6 @@ pub fn view_for(
         terminal,
         cited_by_recipient,
         delivered: HashSet::new(),
-        delivered_obligations: Vec::new(),
     }
 }
 
@@ -647,20 +458,13 @@ pub(crate) async fn evaluate_at_dequeue(
     if let Err(reason) = still_owed(&fact, &view) {
         return Ok(Some((reason, fact.fact_id)));
     }
-    // Only a bookkeeping fact about a named obligation can be one the
-    // recipient already had (ledger 272(d)); only then is the package — the
-    // recipient's delivered turns — worth projecting. A projection that
-    // fails costs this check that one rule, never the wake.
-    if fact.obligation.is_none() || fact.reopens_work {
-        return Ok(None);
-    }
+    // The recipient's delivered turns, for the duplicate rule. A projection
+    // that fails costs this check that one rule, never the wake.
     let Ok(package) = crate::team_wake::fetch_scope_package(rest, relay_self_pubkey, scope).await
     else {
         return Ok(None);
     };
-    let (delivered, obligations) = delivered_to(&package, recipient, &facts.team_events);
-    view.delivered = delivered;
-    view.delivered_obligations = obligations;
+    view.delivered = delivered_to(&package, recipient);
     Ok(still_owed(&fact, &view)
         .err()
         .map(|reason| (reason, fact.fact_id)))

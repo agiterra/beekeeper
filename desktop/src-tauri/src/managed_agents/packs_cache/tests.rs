@@ -599,3 +599,51 @@ fn the_host_and_the_cli_name_the_same_cache_directory() {
         );
     }
 }
+
+/// Ledger 274/275: a project seeded before explicit grants (every role `{}`)
+/// stages its lead with a writable agents grant — which is what makes the
+/// seat staging cut the lead's clone before its first turn — while other
+/// roles and an explicit `none` stage with none. Through the production
+/// staging function the seat plan reads.
+#[test]
+fn a_seeded_lead_stages_with_a_writable_agents_grant_and_an_explicit_none_binds() {
+    use crate::managed_agents::packs_cache::AgentsRepoAccess;
+    let root = scratch_root();
+    let packs_root = root.join("packs");
+    let checkout = root.join("checkout");
+    let flat = checkout.join("agents");
+    write(&flat.join("roles/lead.md"), "You lead.\n");
+    write(&flat.join("roles/builder.md"), "You build.\n");
+    let team = |lead: &str| {
+        format!(
+            "schema: beekeeper-team/v1\nname: lapbook\nversion: 0.1.0\nlead: lead\nroles:\n  lead: {lead}\n  builder: {{}}\n"
+        )
+    };
+    write(&flat.join("team.yml"), &team("{}"));
+    let catalog = TemplateCatalog::empty("0.5.16");
+    let key = local_source_key(&flat);
+    let stage = |role: &str| {
+        let source = locate_role_source(&checkout, "agents", role).expect("flat role");
+        stage_composed_pack(
+            &packs_root,
+            &key,
+            &source,
+            &catalog,
+            SourceProvenance::local(&format!("agents/roles/{role}")),
+        )
+        .expect("staged")
+        .agents_repo
+    };
+    assert_eq!(stage("lead"), AgentsRepoAccess::Write);
+    assert_eq!(stage("builder"), AgentsRepoAccess::None);
+    write(
+        &flat.join("team.yml"),
+        &team("{ workspace: { agents_repo: none } }"),
+    );
+    assert_eq!(
+        stage("lead"),
+        AgentsRepoAccess::None,
+        "an explicit none binds the lead"
+    );
+    std::fs::remove_dir_all(&root).ok();
+}

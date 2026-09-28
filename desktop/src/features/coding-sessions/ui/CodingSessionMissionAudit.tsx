@@ -6,6 +6,7 @@ import {
   type CodingSessionMissionAuditSeatInput,
   type CodingSessionMissionAuditTotals,
   type CodingSessionMissionAuditTurn,
+  unpricedDisclosure,
 } from "@/features/coding-sessions/lib/codingSessionMissionAuditModel";
 import type { CodingSessionObservationView } from "@/features/coding-sessions/lib/codingSessionObservationView";
 import { cn } from "@/shared/lib/cn";
@@ -456,6 +457,7 @@ function TotalsRow({
   totals: CodingSessionMissionAuditTotals;
 }) {
   const disclosure = partialDisclosure(totals);
+  const unpriced = unpricedDisclosure(totals);
   return (
     <div data-testid="mission-audit-totals-row">
       <p className="flex items-baseline justify-between gap-2 text-xs font-medium">
@@ -484,6 +486,14 @@ function TotalsRow({
           <dt className="text-muted-foreground">Est. cost</dt>
           <dd className="tabular-nums">
             <Cost value={totals.costUsd} />
+            {unpriced ? (
+              <span
+                className="ml-1 text-muted-foreground"
+                data-testid="mission-audit-unpriced-disclosure"
+              >
+                {unpriced}
+              </span>
+            ) : null}
           </dd>
         </div>
       </dl>

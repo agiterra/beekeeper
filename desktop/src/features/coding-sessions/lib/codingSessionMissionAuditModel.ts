@@ -162,6 +162,12 @@ export type CodingSessionMissionAuditTotals = {
    * (REVIEW-A3 F2).
    */
   reportedTurns: number;
+  /**
+   * How many of those turns carry a cost of their own. Counted apart from
+   * `reportedTurns`: a turn can report tokens and no price, and a cost total
+   * over fewer priced turns than it covers must say so (ledger 275 A5).
+   */
+  pricedTurns: number;
   durationMs: number | null;
   toolCalls: number;
   /** False when any turn in the total fell back to the published-item count. */
@@ -490,6 +496,7 @@ function sumTotals(
   return {
     turns: turns.length,
     reportedTurns: turns.filter(hasReportedUsage).length,
+    pricedTurns: turns.filter((turn) => turn.costUsd !== null).length,
     durationMs: sum(turns, (turn) => turn.durationMs),
     toolCalls: turns.reduce((total, turn) => total + turn.toolCalls, 0),
     toolCallsReported: turns.every((turn) => turn.toolCallsReported),
@@ -755,4 +762,17 @@ function utf8Bytes(value: string): number {
 
 function finiteOrNull(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/**
+ * `(1 of 2 turns priced)` beside an estimated cost that does not cover every
+ * turn in its row (ledger 275 A5). Token reporting says nothing about price.
+ */
+export function unpricedDisclosure(
+  totals: CodingSessionMissionAuditTotals,
+): string | null {
+  if (totals.turns === 0 || totals.pricedTurns === totals.turns) return null;
+  return `(${totals.pricedTurns} of ${totals.turns} turn${
+    totals.turns === 1 ? "" : "s"
+  } priced)`;
 }

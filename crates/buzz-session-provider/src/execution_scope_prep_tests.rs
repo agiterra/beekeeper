@@ -501,3 +501,82 @@ fn a_writing_lead_drafts_commits_and_pushes_its_plan_in_the_prepared_clone() {
     );
     assert!(!stdout.contains("Operation not permitted"), "{stdout}");
 }
+
+/// Astra's audit A1 (ledger 275), through `prepare()` and the rendered
+/// boundary: with pin storage blocked, the candidate launched anyway and a
+/// later preparation granted `main` from a re-pointed `HEAD`. Preparation
+/// now refuses, so nothing is granted from `HEAD`.
+#[test]
+fn blocked_branch_pin_storage_refuses_instead_of_granting_from_head() {
+    let fx = fixture();
+    std::fs::write(
+        fx.state_dir.join(crate::branch_authority::BRANCH_PINS_DIR),
+        "fixture blocks pin directory",
+    )
+    .expect("block");
+    for purpose in [ScopePurpose::Session, ScopePurpose::HostCommand] {
+        let mut facts = inputs(&fx, "first", &fx.seat_a, &[], &[]);
+        facts.purpose = purpose;
+        let refusal = prepare(&facts).expect_err("pin storage failed");
+        assert_eq!(refusal.code, EXECUTION_BOUNDARY_UNAVAILABLE, "{refusal:?}");
+        assert!(refusal.message.contains("branch pin"), "{refusal:?}");
+    }
+    let main = git_out(&fx.repo_a, &["rev-parse", "main"]);
+    assert_eq!(git_out(&fx.repo_a, &["rev-parse", "main"]), main);
+}
+
+/// Astra's audit A2 (ledger 275), through the public `establish`: a seat
+/// commits on its own branch and re-points `HEAD` to `main`; establishing
+/// that commit with the assignment naming `main` moved `main`. Now the commit
+/// lands on the host's allocation and `main` is untouched — and an ordinary
+/// differing name (`work/lapbook-cli`) creates no second local branch.
+#[test]
+fn assignment_establishment_moves_only_the_allocated_branch() {
+    use crate::assignment_inputs as ai;
+    for named in ["main", "work/lapbook-cli"] {
+        let fx = fixture();
+        let first = prepared(prepare(&inputs(&fx, "first", &fx.seat_a, &[], &[])));
+        let output = run_in(
+            &first,
+            &fx.seat_a,
+            "git -c user.name=f -c user.email=f@example.invalid commit --allow-empty -qm next \
+             && git symbolic-ref HEAD refs/heads/main",
+        );
+        assert!(output.status.success(), "{output:?}");
+        // The fixture's own probe files would read as uncommitted work.
+        std::fs::remove_dir_all(fx.seat_a.join(".probe")).expect("fixture probe dir");
+        let main_before = git_out(&fx.repo_a, &["rev-parse", "main"]);
+        let target = git_out(&fx.repo_a, &["rev-parse", "seat-branch"]);
+        let mut records = ai::AssignmentInputRecords::new();
+        let request = ai::EstablishAssignmentInputRequest {
+            assignment_id: "ab".repeat(32),
+            session_ref: Some("fixture-session".into()),
+            seat_label: Some("fixture".into()),
+            commit: Some(target.clone()),
+            branch: Some(named.into()),
+        };
+        let checkout = ai::SeatCheckout {
+            path: fx.seat_a.clone(),
+            branch: "seat-branch".into(),
+        };
+        let result = ai::establish(&mut records, &request, Some(&checkout), &fx.state_dir);
+        assert_eq!(
+            git_out(&fx.repo_a, &["rev-parse", "main"]),
+            main_before,
+            "{named}: main moved: {result:?}"
+        );
+        let established = result.unwrap_or_else(|error| panic!("{named}: {error:?}"));
+        assert_eq!(established.branch, "seat-branch", "{named}");
+        assert_eq!(
+            git_out(&fx.seat_a, &["branch", "--show-current"]),
+            "seat-branch"
+        );
+        assert_eq!(git_out(&fx.seat_a, &["rev-parse", "HEAD"]), target);
+        assert!(
+            git_out(&fx.repo_a, &["branch", "--list", "work/lapbook-cli"]).is_empty(),
+            "{named}: no second local branch"
+        );
+        let again = prepared(prepare(&inputs(&fx, "again", &fx.seat_a, &[], &[])));
+        assert_eq!(again.binding.branch.as_deref(), Some("seat-branch"));
+    }
+}

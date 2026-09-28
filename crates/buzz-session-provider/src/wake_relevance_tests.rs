@@ -9,8 +9,6 @@ fn fact(id: &str, author: Option<&str>, created_at: Option<u64>, reopens: bool) 
         author: author.map(str::to_owned),
         created_at,
         reopens_work: reopens,
-        obligation: None,
-        report: false,
     }
 }
 
@@ -142,7 +140,6 @@ fn every_drop_reason_has_its_stable_slug() {
             WakeDropReason::SelfAuthored,
             WakeDropReason::PostTerminal,
             WakeDropReason::Duplicate,
-            WakeDropReason::ObligationDelivered,
         ]
         .map(WakeDropReason::as_str),
         [
@@ -150,12 +147,11 @@ fn every_drop_reason_has_its_stable_slug() {
             "self_authored",
             "post_terminal",
             "duplicate",
-            "obligation_delivered"
         ]
     );
 }
 
-// ── Ledger 272(d): one obligation, delivered once ───────────────────────────
+// ── Ledger 272(d) / 275 A3: delivery is proved, never inferred ───────────────────────────
 //
 // Run 11 (lead seq 88–104): the verifier's refutation 252522f7 of builder
 // report 516bc23c woke the lead, whose turn ran 1257–1290 s. The verifier's
@@ -399,34 +395,17 @@ mod obligation {
         let lead = run.lead.public_key().to_hex();
         let package = package(&run.lead, &run.verdict.id.to_hex(), ended);
         let mut view = view_for(&lead, None, &[&run.events]);
-        let (delivered, obligations) = delivered_to(&package, &lead, &run.events);
-        view.delivered = delivered;
-        view.delivered_obligations = obligations;
+        view.delivered = delivered_to(&package, &lead);
         view
     }
 
-    /// RED-first: a verifier's verdict is about the verifier's own open
-    /// assignment — the one whose base is the reviewed report's head — and a
-    /// report is about the assignment it answers. Run 11's two facts name
-    /// one obligation.
+    /// Astra's audit A3 (ledger 275): run 11's settlement report, signed
+    /// while the lead's verdict turn was running, may have arrived after the
+    /// lead's last read — its signing time proves neither delivery nor
+    /// consumption, and its disposition is still owed. It keeps its wake; only
+    /// the verdict itself, re-sent, is a duplicate.
     #[test]
-    fn a_verdict_and_the_verifiers_settlement_report_are_one_obligation() {
-        let run = run(269);
-        assert_eq!(
-            obligation_of(&run.verdict.id.to_hex(), &run.events).as_deref(),
-            Some(run.verifier_assignment.as_str())
-        );
-        assert_eq!(
-            obligation_of(&run.verifier_report.id.to_hex(), &run.events).as_deref(),
-            Some(run.verifier_assignment.as_str())
-        );
-    }
-
-    /// RED-first: the settlement report, signed while the verdict's turn was
-    /// still running, is `obligation_delivered` — the Duplicate rule never
-    /// fired because nothing ever filled `delivered`.
-    #[test]
-    fn a_fact_signed_inside_the_delivering_turn_is_obligation_delivered() {
+    fn a_report_signed_during_the_verdicts_turn_keeps_its_wake() {
         let run = run(269);
         let view = view(&run, true);
         assert!(
@@ -434,18 +413,14 @@ mod obligation {
             "the verdict's own id is delivered: {:?}",
             view.delivered
         );
-        let fact = team_fact(&run.verifier_report.id.to_hex(), &run.events);
-        assert_eq!(
-            still_owed(&fact, &view),
-            Err(WakeDropReason::ObligationDelivered)
-        );
-        // And the verdict itself, re-sent, is a plain duplicate.
+        let report = team_fact(&run.verifier_report.id.to_hex(), &run.events);
+        assert_eq!(still_owed(&report, &view), Ok(()));
         let verdict = team_fact(&run.verdict.id.to_hex(), &run.events);
         assert_eq!(still_owed(&verdict, &view), Err(WakeDropReason::Duplicate));
     }
 
-    /// Review S3(a): a delivering turn that failed delivered nothing — the
-    /// same fact re-sent (a person's explicit re-wake included) gets a turn.
+    /// A delivering turn that failed delivered nothing — the same fact re-sent
+    /// (a person's explicit re-wake included) gets a turn.
     #[test]
     fn a_failed_delivering_turn_delivers_nothing() {
         let run = run(269);
@@ -457,77 +432,27 @@ mod obligation {
             }
         }
         let mut view = view_for(&lead, None, &[&run.events]);
-        let (delivered, obligations) = delivered_to(&package, &lead, &run.events);
-        assert!(delivered.is_empty() && obligations.is_empty());
-        view.delivered = delivered;
-        view.delivered_obligations = obligations;
+        view.delivered = delivered_to(&package, &lead);
+        assert!(view.delivered.is_empty());
         let verdict = team_fact(&run.verdict.id.to_hex(), &run.events);
         assert_eq!(still_owed(&verdict, &view), Ok(()));
-        let report = team_fact(&run.verifier_report.id.to_hex(), &run.events);
-        assert_eq!(still_owed(&report, &view), Ok(()));
     }
 
-    /// Review S3(b): only the verdict author's own later *report* is folded.
-    /// Another author's report about the same assignment is never assumed
-    /// seen, however it is timed.
+    /// A delivering turn with no `result` yet has not delivered its fact.
     #[test]
-    fn only_the_verdict_authors_own_report_is_folded() {
-        let run = run(269);
-        let view = view(&run, true);
-        let mut foreign = team_fact(&run.verifier_report.id.to_hex(), &run.events);
-        foreign.author = Some(run.builder.public_key().to_hex());
-        assert_eq!(still_owed(&foreign, &view), Ok(()));
-        let mut not_a_report = team_fact(&run.verifier_report.id.to_hex(), &run.events);
-        not_a_report.report = false;
-        assert_eq!(still_owed(&not_a_report, &view), Ok(()));
-    }
-
-    /// Review S3(c): a fact signed within the clock-skew margin of the
-    /// turn's end is not taken to have been folded into it.
-    #[test]
-    fn a_fact_within_the_skew_margin_of_the_turns_end_is_owed() {
-        let run = run(290 - DELIVERED_SKEW_SECS + 1);
-        let view = view(&run, true);
-        let fact = team_fact(&run.verifier_report.id.to_hex(), &run.events);
-        assert_eq!(still_owed(&fact, &view), Ok(()));
-    }
-
-    /// A fact signed after the delivering turn ended is news: owed.
-    #[test]
-    fn a_fact_signed_after_the_delivering_turn_ended_is_owed() {
-        let run = run(291);
-        let fact = team_fact(&run.verifier_report.id.to_hex(), &run.events);
-        assert_eq!(still_owed(&fact, &view(&run, true)), Ok(()));
-    }
-
-    /// A delivering turn with no `result` yet has no provable end; nothing is
-    /// dropped on its account.
-    #[test]
-    fn an_unended_delivering_turn_proves_nothing() {
+    fn an_unended_delivering_turn_delivers_nothing() {
         let run = run(269);
         let view = view(&run, false);
-        assert!(view.delivered_obligations.is_empty());
-        let fact = team_fact(&run.verifier_report.id.to_hex(), &run.events);
-        assert_eq!(still_owed(&fact, &view), Ok(()));
-    }
-
-    /// Evidence that contests the work is never folded into an earlier
-    /// delivery of the same obligation: the rule drops bookkeeping only.
-    #[test]
-    fn a_contesting_fact_is_never_obligation_delivered() {
-        let run = run(269);
-        let mut view = view(&run, true);
-        view.delivered_obligations[0].fact_id = "00".repeat(32);
-        view.delivered.clear();
+        assert!(view.delivered.is_empty());
         let verdict = team_fact(&run.verdict.id.to_hex(), &run.events);
-        assert!(verdict.reopens_work);
         assert_eq!(still_owed(&verdict, &view), Ok(()));
     }
 
-    /// Dropping the wake leaves the lead's owed ruling on the verifier's
-    /// report visible where the lead reads it: the fold's awaiting set.
+    /// Why that report's wake is kept: the lead's ruling on it is still owed
+    /// in the fold's awaiting set, and no later event is guaranteed to wake
+    /// the lead for it.
     #[test]
-    fn the_dropped_reports_ruling_stays_owed_in_the_folds_awaiting_set() {
+    fn the_reports_ruling_is_still_owed_so_its_wake_is_kept() {
         let run = run(269);
         let context = buzz_core::coding_session_team_transaction::CodingSessionTeamFoldContext {
             channel_ref: CHANNEL.into(),
@@ -557,13 +482,5 @@ mod obligation {
         let awaiting = settlement.awaiting.as_ref().expect("still awaiting");
         assert_eq!(awaiting.link, CodingSessionTeamSettlementLink::Disposition);
         assert_eq!(awaiting.owed_by_role, "lead");
-    }
-
-    #[test]
-    fn the_new_drop_reason_has_its_stable_slug() {
-        assert_eq!(
-            WakeDropReason::ObligationDelivered.as_str(),
-            "obligation_delivered"
-        );
     }
 }

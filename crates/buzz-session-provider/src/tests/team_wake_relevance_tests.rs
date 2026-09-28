@@ -436,11 +436,11 @@ async fn a_dequeue_drop_is_published_as_a_turn_dropped_receipt() {
 /// The verifier's refutation of a builder report woke the lead (a
 /// `cli-wake-v1:<verdict>` command whose `turn_started` receipt and
 /// `result` are on the wire). The verifier's settlement report on its own
-/// assignment — base = the refuted head — was signed while that turn ran. Its
-/// wake is `obligation_delivered`: the lead already had that obligation, and
-/// the ruling it owes stays in the fold's awaiting set.
+/// assignment — base = the refuted head — was signed while that turn ran.
+/// Ledger 275 A3: its signing time proves neither delivery nor consumption,
+/// and the lead's ruling on it is owed, so its wake is admitted.
 #[tokio::test]
-async fn a_settlement_report_signed_inside_the_verdicts_turn_is_obligation_delivered() {
+async fn a_settlement_report_signed_inside_the_verdicts_turn_keeps_its_wake() {
     use buzz_core::coding_session_command::{
         CodingSessionAction, CodingSessionCommandPayload, CodingSessionDelivery,
         CODING_SESSION_COMMAND_SCHEMA,
@@ -597,10 +597,7 @@ async fn a_settlement_report_signed_inside_the_verdicts_turn_is_obligation_deliv
         serde_json::json!({"operationId": verifier_report_id, "type": "report"}).to_string();
     assert_eq!(
         admission(&mut rig.provider, &lead, &pointer).await,
-        WakeAdmission::Drop {
-            reason: WakeDropReason::ObligationDelivered,
-            fact_id: verifier_report_id,
-        }
+        WakeAdmission::Admit
     );
     rig.shutdown().await;
 }

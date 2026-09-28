@@ -138,13 +138,20 @@ pub(crate) fn is_picker_label(model: &str) -> bool {
     model == "default" || FAMILY_PREFIXES.iter().any(|(_, family)| *family == model)
 }
 
-/// Whether a requested label and the model the adapter reported are the same
-/// model: identical ids, or an alias and a resolved id of one family
-/// (`opus` / `claude-opus-5-5`). `default` names no family, so any model
-/// answering a `default` request is a stand-in and is disclosed as one.
+/// Whether a requested model and the model the adapter reported are the same
+/// model. Two exact ids must be identical (`claude-opus-5-5` is not
+/// `claude-opus-4-6`, ledger 275 A6); only a requested *alias* (`opus`,
+/// `sonnet`, `haiku`) matches any resolved id of its family. `default` names
+/// no family, so any model answering a `default` request is a stand-in and is
+/// disclosed as one.
 pub(crate) fn same_model(requested: &str, effective: &str) -> bool {
     let (requested, effective) = (requested.trim(), effective.trim());
-    requested == effective || family(requested).is_some_and(|f| family(effective) == Some(f))
+    if requested == effective {
+        return true;
+    }
+    is_picker_label(requested)
+        && requested != "default"
+        && family(requested).is_some_and(|f| family(effective) == Some(f))
 }
 
 /// The row for an exact reported id. A long-context id (`…[1m]`) is
@@ -290,6 +297,11 @@ mod tests {
         assert!(same_model("claude-fable-5[1m]", "claude-fable-5[1m]"));
         assert!(!same_model("default", "claude-opus-4-6"));
         assert!(!same_model("sonnet", "claude-opus-4-6"));
+        // Ledger 275 A6 (Astra's helper probe): two exact ids of one family
+        // are different models.
+        assert!(!same_model("claude-opus-5-5", "claude-opus-4-6"));
+        assert!(!same_model("claude-sonnet-5", "claude-sonnet-4-6"));
+        assert!(same_model("claude-opus-5-5", "claude-opus-5-5"));
     }
 
     #[test]

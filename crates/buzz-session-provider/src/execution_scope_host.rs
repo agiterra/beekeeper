@@ -66,6 +66,10 @@ pub struct HostCommandScope<'a> {
     pub hermit_state: Option<&'a Path>,
     /// A branch the command (host-decided) moves the worktree to.
     pub host_branch: Option<&'a str>,
+    /// The branch the host's own record allocates to this tree, when the
+    /// caller holds it (assignment establishment): the only branch the
+    /// command may move.
+    pub branch_authority: Option<&'a str>,
     /// Host-owned paths the command reads.
     pub host_read: &'a [PathBuf],
     /// Whether the command fetches with the operator's selected Git
@@ -96,6 +100,7 @@ impl<'a> HostCommandScope<'a> {
             from_host: &[],
             hermit_state: None,
             host_branch: None,
+            branch_authority: None,
             host_read: &[],
             git_transport: false,
         }
@@ -200,6 +205,7 @@ pub fn prepare_host_command(
     inputs.project_env = &project_env;
     inputs.hermit_state = scope.hermit_state;
     inputs.host_branch = scope.host_branch;
+    inputs.branch_authority = scope.branch_authority;
     inputs.host_read = scope.host_read;
     inputs.operator_git_auth = scope.git_transport;
     if !scope.cwd.starts_with(scope.run_dir) {
