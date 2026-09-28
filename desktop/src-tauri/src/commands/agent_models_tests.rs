@@ -932,3 +932,60 @@ fn databricks_static_token_error_redacts_echoed_token() {
         "error lost its remediation: {error}"
     );
 }
+
+/// The shape claude-agent-acp 0.81 actually sends from `session/new` (captured 2026-09-28):
+/// ACP's `name`, not `displayName`. Before the fix every name here came back `None`, and the
+/// picker showed the bare alias `opus[1m]` instead of "Opus 5.5".
+#[test]
+fn acp_model_options_keep_the_adapters_name() {
+    let raw = serde_json::json!({
+        "agent": { "name": "@agentclientprotocol/claude-agent-acp", "version": "0.81.2" },
+        "stable": { "configOptions": [{
+            "id": "model", "name": "Model", "category": "model", "type": "select",
+            "currentValue": "opus[1m]",
+            "options": [
+                { "value": "default", "name": "Default (recommended)" },
+                { "value": "opus[1m]", "name": "Opus 5.5" },
+                { "value": "claude-fable-5-1[1m]", "name": "Fable 5.1" }
+            ]
+        }]}
+    });
+    let out = normalize_agent_models(&raw, None);
+    let names: Vec<(String, Option<String>)> = out
+        .models
+        .iter()
+        .map(|m| (m.id.clone(), m.name.clone()))
+        .collect();
+    assert_eq!(
+        names,
+        vec![
+            (
+                "default".to_string(),
+                Some("Default (recommended)".to_string())
+            ),
+            ("opus[1m]".to_string(), Some("Opus 5.5".to_string())),
+            (
+                "claude-fable-5-1[1m]".to_string(),
+                Some("Fable 5.1".to_string())
+            ),
+        ]
+    );
+}
+
+#[test]
+fn acp_option_label_prefers_name_then_falls_back_to_display_name() {
+    use serde_json::json;
+    assert_eq!(
+        acp_option_label(&json!({ "name": "Opus 5.5", "displayName": "old" })).as_deref(),
+        Some("Opus 5.5")
+    );
+    assert_eq!(
+        acp_option_label(&json!({ "displayName": "Claude Opus 4" })).as_deref(),
+        Some("Claude Opus 4")
+    );
+    assert_eq!(
+        acp_option_label(&json!({ "name": "  ", "displayName": "Legacy" })).as_deref(),
+        Some("Legacy")
+    );
+    assert_eq!(acp_option_label(&json!({ "value": "x" })), None);
+}

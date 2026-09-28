@@ -4034,9 +4034,10 @@ pub enum ModelSwitchMethod {
 
 /// Extract `configOptions` entries with `category == "model"` from a `session/new` result.
 ///
-/// Returns the raw JSON array entries. Each entry has `configId` (spelled `id`
-/// by some adapters, e.g. claude-agent-acp), `displayName`,
-/// `options: [{ value, displayName }]`, etc.
+/// Returns the raw JSON array entries. Per the ACP schema each entry has `id` and
+/// `name`, with `options: [{ value, name, description? }]` — what claude-agent-acp,
+/// codex-acp and `grok agent stdio` send. Older producers spell them `configId` /
+/// `displayName`; consumers should read `name` first and fall back.
 pub fn extract_model_config_options(result: &serde_json::Value) -> Vec<serde_json::Value> {
     result["configOptions"]
         .as_array()
