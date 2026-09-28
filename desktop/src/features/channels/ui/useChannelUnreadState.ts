@@ -9,6 +9,7 @@ import {
 } from "@/features/channels/lib/subtreeCreatedAt";
 import { computeThreadReplyUnreadCounts } from "@/features/channels/lib/threadReplyUnreadCounts";
 import { computeThreadBadgeCounts } from "@/features/channels/lib/threadBadgeCounts";
+import { threadOpenReadTargets } from "@/features/channels/lib/threadOpenReadTargets";
 import {
   useStableArrayShallow,
   useStableMap,
@@ -43,6 +44,8 @@ type UseChannelUnreadStateOptions = {
   ) => void;
   markChannelUnread: (channelId: string) => void;
   markMessageRead: (messageId: string, timestamp: number) => void;
+  /** Aggregate thread:<root> marker, written on thread open (Inbox parity). */
+  markThreadRead?: (rootId: string, timestamp: number) => void;
   isThreadMuted: (rootId: string) => boolean;
   readStateVersion: number;
 };
@@ -72,6 +75,7 @@ export function useChannelUnreadState({
   clearChannelUnreadSource,
   markChannelUnread,
   markMessageRead,
+  markThreadRead,
   isThreadMuted,
   readStateVersion,
 }: UseChannelUnreadStateOptions) {
@@ -266,19 +270,36 @@ export function useChannelUnreadState({
       threadOpenReadSnapshotRef.current.delete(rootId);
     };
   }, [openThreadHeadId]);
-  // Mark the revealed set read when the thread opens (LP4 v3): only the replies
-  // visible on open are read, never the whole subtree. A reply nested in a
-  // still-collapsed branch keeps its badge until it too is revealed (the
-  // deliberate reversal of #1118's whole-subtree-on-open). Each revealed reply
-  // gets its own msg:<id> marker advanced to its createdAt; a NEWER reply
-  // re-raises the badge because the predicate is strictly createdAt > read.
+  // Mark the WHOLE thread read when it opens (threadOpenReadTargets): every
+  // reply, nested branches included, gets its msg:<id> marker advanced to its
+  // createdAt, and the aggregate thread:<root> marker moves to the newest reply
+  // — the same markers the Inbox row click writes. This replaces LP4 v3's
+  // open-at-level rule, which left replies in collapsed branches unread through
+  // every open and reload (an unclearable channel pip). Visible replies are
+  // still marked from threadMessages too, for replies not yet in the timeline
+  // index. A NEWER reply re-raises the badge: the predicate is createdAt > read.
   React.useEffect(() => {
     if (!openThreadHeadId) return;
     if (isThreadMuted(openThreadHeadId)) return;
+    const { replies, latest } = threadOpenReadTargets(
+      openThreadHeadId,
+      getReplyDescendantIdsForMessage,
+      createdAtByMessageId,
+    );
+    for (const [id, createdAt] of replies) markMessageRead(id, createdAt);
     for (const entry of threadMessages) {
       markMessageRead(entry.message.id, entry.message.createdAt);
     }
-  }, [openThreadHeadId, threadMessages, markMessageRead, isThreadMuted]);
+    if (latest !== null) markThreadRead?.(openThreadHeadId, latest);
+  }, [
+    openThreadHeadId,
+    threadMessages,
+    markMessageRead,
+    markThreadRead,
+    isThreadMuted,
+    getReplyDescendantIdsForMessage,
+    createdAtByMessageId,
+  ]);
   // In-thread "New" divider position. Reads the open-time snapshot (frozen
   // before the mark-read effect above), so the divider does not collapse the
   // instant open marks the revealed replies read. A reply absent from the
