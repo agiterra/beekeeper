@@ -158,12 +158,19 @@ fn evidence(root: &Path, name: &str, value: &serde_json::Value) {
     eprintln!("evidence: {}", path.display());
 }
 
+/// What the adapter reported for a turn: the effective model and cost the
+/// provider would publish, beside what the model said.
+struct Reported {
+    items: Vec<serde_json::Value>,
+    usage: serde_json::Value,
+}
+
 async fn turn(
     manager: &mut SessionManager,
     rx: &mut mpsc::Receiver<SessionEvent>,
     session_id: &str,
     text: &str,
-) -> Vec<serde_json::Value> {
+) -> Reported {
     manager
         .handle(session_id)
         .expect("handle")
@@ -183,7 +190,19 @@ async fn turn(
             .expect("open")
         {
             SessionEvent::TranscriptItems { items: batch, .. } => items.extend(batch),
-            SessionEvent::TurnFinished { .. } => return items,
+            SessionEvent::TurnFinished { usage, .. } => {
+                let usage = usage.map_or(serde_json::Value::Null, |usage| {
+                    serde_json::json!({
+                        "model": usage.model,
+                        "turn_cost_usd": usage.turn_cost_usd,
+                        "turn_input_tokens": usage.turn_input_tokens,
+                        "turn_output_tokens": usage.turn_output_tokens,
+                        "turn_cache_read_tokens": usage.turn_cache_read_tokens,
+                        "turn_cache_write_tokens": usage.turn_cache_write_tokens,
+                    })
+                });
+                return Reported { items, usage };
+            }
             _ => {}
         }
     }
@@ -303,7 +322,8 @@ async fn workflow(d: Driver, session_id: &str, codeword: &str) {
         b = l.b_plan.display(),
         late = l.late.display(),
     );
-    let items = turn(&mut manager, &mut rx, session_id, &prompt).await;
+    let first = turn(&mut manager, &mut rx, session_id, &prompt).await;
+    let items = first.items;
     let all = serde_json::Value::Array(items.clone()).to_string();
     let cursor = started.acp_session_id.clone();
     manager.shutdown(session_id);
@@ -318,13 +338,14 @@ async fn workflow(d: Driver, session_id: &str, codeword: &str) {
         .create(request(&l, &d, session_id, plan, Some(cursor)))
         .await
         .expect("resume");
-    let resumed_items = turn(
+    let second = turn(
         &mut manager,
         &mut rx,
         session_id,
         "Run `git log -1 --format=%s` and report its output verbatim, then tell me the codeword.",
     )
     .await;
+    let resumed_items = second.items;
     manager.shutdown(session_id);
     let resumed_all = serde_json::Value::Array(resumed_items.clone()).to_string();
 
@@ -355,6 +376,8 @@ async fn workflow(d: Driver, session_id: &str, codeword: &str) {
             "private_temp_entries": temp_entries,
             "local_branches": local_branches,
             "binding_branch": binding.branch,
+            "turn1_reported": first.usage,
+            "turn2_reported": second.usage,
         }),
     );
     assert!(all.contains("A_OWN_WORKFLOW_CANARY"), "own read: {all}");
