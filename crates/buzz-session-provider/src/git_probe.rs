@@ -224,12 +224,12 @@ async fn status(cwd: &Path, scope: &crate::execution_scope_host::HostLaunchPlan)
     let args = ["--no-optional-locks", "status", "--porcelain"];
     let command = match scope {
         crate::execution_scope_host::HostLaunchPlan::Bounded(_) => scope.git_command(cwd, &args),
-        // No backend on this platform: the existing unbounded probe, as the
-        // session's own disclosed state says.
+        // No backend on this platform: `status` would run the repository's
+        // clean filters on the host, so the dirty state is read from stat
+        // information alone.
         crate::execution_scope_host::HostLaunchPlan::Unenforced { .. } => {
-            let mut command = crate::host_command::metadata_git_command(cwd);
-            command.args(args);
-            command
+            let changes = crate::host_command::stat_only_changes(cwd)?;
+            return Some(changes.iter().map(|path| format!("?? {path}\n")).collect());
         }
     };
     let mut command = Command::from(command);
@@ -258,6 +258,17 @@ async fn status(cwd: &Path, scope: &crate::execution_scope_host::HostLaunchPlan)
 /// checkout's branch, commit and dirty state; an inherited `GIT_DIR` made it
 /// report a different repository's instead. Cleared for the same reason
 /// `desktop/src-tauri/src/commands/team_readiness_git.rs` clears them.
+/// Configuration a host-side `git` passes so no repository-configured
+/// program runs outside a boundary: hooks and fsmonitor off. Clean and smudge
+/// filters are not covered — a host-side call that would run them (status,
+/// checkout) must run inside a prepared boundary or not at all.
+pub(crate) const HOST_GIT_NO_PROJECT_CODE: [&str; 4] = [
+    "-c",
+    "core.hooksPath=/dev/null",
+    "-c",
+    "core.fsmonitor=false",
+];
+
 pub(crate) const GIT_REPO_SELECTION_VARS: [&str; 7] = [
     "GIT_DIR",
     "GIT_WORK_TREE",

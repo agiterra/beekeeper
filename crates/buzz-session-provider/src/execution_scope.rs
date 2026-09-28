@@ -87,6 +87,14 @@ pub struct ExecutionBinding {
     /// The canonical agents clone the scope was granted, when it had one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agents: Option<PathBuf>,
+    /// The working tree's branch, pinned when the host first prepared the
+    /// tree. Continuations grant this branch's ref, never whatever the child
+    /// left in `HEAD`; the briefing and work brief name it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    /// Whether the agents clone above was granted for writing.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub agents_writable: bool,
 }
 
 /// Whether an enforced boundary surrounds the execution, disclosed as such.
@@ -426,6 +434,11 @@ pub struct ScopeInputs<'a> {
     pub operator_git_auth: bool,
     /// The record's previous binding and native cursor, on a resume/restore.
     pub prior: Option<(Option<&'a ExecutionBinding>, Option<&'a str>)>,
+    /// The host environment the baseline is resolved from. `None` (always,
+    /// in production) reads this process's own environment; a test names
+    /// one so it can prove what an operator-level value does and does not
+    /// reach, without mutating the test process.
+    pub ambient_env: Option<&'a [(std::ffi::OsString, std::ffi::OsString)]>,
 }
 
 impl<'a> ScopeInputs<'a> {
@@ -465,6 +478,7 @@ impl<'a> ScopeInputs<'a> {
             host_read: &[],
             operator_git_auth: false,
             prior: None,
+            ambient_env: None,
         }
     }
 }
@@ -599,9 +613,18 @@ pub fn prepare(inputs: &ScopeInputs<'_>) -> Result<ExecutionPlan, CreateFailure>
         Access::NoUnlink,
         "the working tree's own anchor",
     ));
+    // The branch is pinned by the host: the one recorded when this tree was
+    // first prepared (before any child ran in it), else the tree's branch now.
+    let branch = inputs
+        .prior
+        .and_then(|(prior, _)| prior)
+        .filter(|prior| prior.tree.as_deref() == Some(tree.as_path()))
+        .and_then(|prior| prior.branch.clone())
+        .or_else(|| crate::execution_scope_git::worktree_branch(&tree));
     let linked = crate::execution_scope_git::linked_worktree_admin(
         &tree,
         inputs.project_checkout,
+        branch.as_deref(),
         inputs.host_branch,
     )?;
     if inputs.purpose != ScopePurpose::Discovery {
@@ -627,7 +650,7 @@ pub fn prepare(inputs: &ScopeInputs<'_>) -> Result<ExecutionPlan, CreateFailure>
             )
         })?;
         if !path.join(".git").is_dir()
-            || crate::execution_scope_git::linked_worktree_admin(&path, None, None)?.is_some()
+            || crate::execution_scope_git::linked_worktree_admin(&path, None, None, None)?.is_some()
         {
             return Err(refuse(
                 EXECUTION_SCOPE_INVALID,
@@ -721,18 +744,21 @@ pub fn prepare(inputs: &ScopeInputs<'_>) -> Result<ExecutionPlan, CreateFailure>
     // The host's own tools, found by name: a host-owned directory holding a
     // link to each, readable as a directory without lending the directory the
     // tool was installed in.
-    let mut tool_dir = None;
+    // Always staged: the `mktemp` that keeps ordinary temporary files in this
+    // execution's private temp (see `mktemp_shim.sh`), for sessions and host
+    // commands alike.
+    let bin = host_dir(&dirs.control, "bin")?;
+    stage_host_script(&bin, "mktemp", MKTEMP_SHIM)?;
+    grants.push(Grant::tree(
+        &bin,
+        Access::ReadOnly,
+        "the host's tools, by name",
+    ));
     if let (ScopePurpose::Session, Some(bee)) = (inputs.purpose, inputs.seat_bee) {
-        let bin = host_dir(&dirs.control, "bin")?;
         link_tool(&bin, bee, "bee")?;
-        grants.push(Grant::tree(
-            &bin,
-            Access::ReadOnly,
-            "the host's tools, by name",
-        ));
         grants.extend(executable_grants(bee, "the bee CLI this host chose"));
-        tool_dir = Some(bin);
     }
+    let tool_dir = Some(bin);
 
     // Git transport: the operator's selected identity and credential
     // helpers, staged host-side as a read-only file.
@@ -816,6 +842,8 @@ pub fn prepare(inputs: &ScopeInputs<'_>) -> Result<ExecutionPlan, CreateFailure>
         actor: inputs.actor.map(str::to_owned),
         tree: Some(tree.clone()),
         agents: agents.as_ref().map(|(path, _)| path.clone()),
+        branch,
+        agents_writable: agents.as_ref().is_some_and(|(_, writable)| *writable),
     };
     let native_refusal = inputs.prior.and_then(|(prior, cursor)| {
         cursor?;
@@ -1158,6 +1186,59 @@ pub(crate) fn write_host_file(
 
 /// A link named `name` in the host's tool directory to the executable the
 /// host chose.
+/// The host's `mktemp` for an execution: routes macOS's default and `-t`
+/// forms, which ignore `TMPDIR`, to the execution's private temp.
+const MKTEMP_SHIM: &str = include_str!("mktemp_shim.sh");
+
+/// Write a host-owned script into the execution's read-only tool directory,
+/// replacing any earlier copy (a continuation re-stages the current one).
+fn stage_host_script(bin: &Path, name: &str, body: &str) -> Result<(), CreateFailure> {
+    let path = bin.join(name);
+    let failed = |error: std::io::Error| {
+        refuse(
+            EXECUTION_BOUNDARY_UNAVAILABLE,
+            format!("could not stage the host's {name}: {error}"),
+        )
+    };
+    if std::fs::symlink_metadata(&path).is_ok() {
+        std::fs::remove_file(&path).map_err(failed)?;
+    }
+    std::fs::write(&path, body).map_err(failed)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o555)).map_err(failed)?;
+    }
+    Ok(())
+}
+
+/// The directories macOS's `path_helper` would give a login shell
+/// (`/etc/paths`, then `/etc/paths.d/*` in name order). The boundary denies
+/// the helper so a login shell keeps the prepared `PATH`; the host appends
+/// these instead, after the prepared directories.
+fn system_search_path() -> String {
+    let mut dirs: Vec<String> = Vec::new();
+    let mut read = |file: &Path| {
+        if let Ok(text) = std::fs::read_to_string(file) {
+            dirs.extend(
+                text.lines()
+                    .map(str::trim)
+                    .filter(|line| !line.is_empty() && !line.starts_with('#'))
+                    .map(str::to_owned),
+            );
+        }
+    };
+    read(Path::new("/etc/paths"));
+    if let Ok(entries) = std::fs::read_dir("/etc/paths.d") {
+        let mut files: Vec<PathBuf> = entries.filter_map(|e| e.ok().map(|e| e.path())).collect();
+        files.sort();
+        for file in files {
+            read(&file);
+        }
+    }
+    dirs.join(":")
+}
+
 fn link_tool(bin: &Path, target: &Path, name: &str) -> Result<(), CreateFailure> {
     let link = bin.join(name);
     let failed = |error: std::io::Error| {
@@ -1344,7 +1425,9 @@ pub(crate) fn validate_workspace_placement(
 /// selection variables cleared.
 fn git_toplevel(cwd: &Path) -> Option<PathBuf> {
     let mut cmd = std::process::Command::new("git");
-    cmd.args(["rev-parse", "--show-toplevel"]).current_dir(cwd);
+    cmd.args(crate::git_probe::HOST_GIT_NO_PROJECT_CODE)
+        .args(["rev-parse", "--show-toplevel"])
+        .current_dir(cwd);
     for var in crate::git_probe::GIT_REPO_SELECTION_VARS {
         cmd.env_remove(var);
     }
@@ -1646,7 +1729,10 @@ fn resolve_env(
     } else {
         ModelAuth::None
     };
-    let mut env = ResolvedEnv::baseline(std::env::vars_os(), auth, &FENCE, &usable);
+    let mut env = match inputs.ambient_env {
+        Some(ambient) => ResolvedEnv::baseline(ambient.iter().cloned(), auth, &FENCE, &usable),
+        None => ResolvedEnv::baseline(std::env::vars_os(), auth, &FENCE, &usable),
+    };
     if model {
         for (name, value) in inputs.agent_env {
             env.runtime(name, value, &FENCE);
@@ -1677,6 +1763,12 @@ fn resolve_env(
         // The staged file is the whole selection (system entries included).
         ("GIT_CONFIG_NOSYSTEM", "1".to_owned()),
         ("CARGO_HOME", text(&scope.caches.join("cargo"))),
+        // clang and swiftc otherwise build modules under the per-user Darwin
+        // cache directory, outside the boundary.
+        (
+            "CLANG_MODULE_CACHE_PATH",
+            text(&scope.caches.join("clang-module-cache")),
+        ),
         ("npm_config_cache", text(&scope.caches.join("npm"))),
         (
             "npm_config_store_dir",
@@ -1726,10 +1818,13 @@ fn resolve_env(
                 &usable,
             );
         }
-        if let Some(tools) = tool_dir {
-            env.prepend_path(&tools.display().to_string(), EnvSource::Scope, &usable);
-        }
     }
+    // The host's tool directory first, for sessions and host commands; the
+    // system search path last, composed here rather than by a login shell.
+    if let Some(tools) = tool_dir {
+        env.prepend_path(&tools.display().to_string(), EnvSource::Scope, &usable);
+    }
+    env.append_path(&system_search_path(), EnvSource::Platform, &usable);
     Ok(env)
 }
 
@@ -1920,5 +2015,13 @@ impl crate::Provider {
 mod tests;
 
 #[cfg(all(test, target_os = "macos"))]
+#[path = "execution_scope_prep_tests.rs"]
+mod prep_tests;
+
+#[cfg(all(test, target_os = "macos"))]
 #[path = "execution_scope_live_tests.rs"]
 mod live_tests;
+
+#[cfg(all(test, target_os = "macos"))]
+#[path = "execution_scope_live_workflow_tests.rs"]
+mod live_workflow;

@@ -28,21 +28,21 @@ const PROVIDER_PUBKEY: &str = "ababababababababababababababababababababababababa
 /// Disposable fixture: an app-data layout holding another project's cached
 /// plan, project A as a git repository with a linked seat worktree, a sibling
 /// project B, and a project C under a different root.
-struct Fixture {
-    _dir: tempfile::TempDir,
-    root: PathBuf,
-    state_dir: PathBuf,
-    repo_a: PathBuf,
-    seat_a: PathBuf,
+pub(crate) struct Fixture {
+    pub(crate) _dir: tempfile::TempDir,
+    pub(crate) root: PathBuf,
+    pub(crate) state_dir: PathBuf,
+    pub(crate) repo_a: PathBuf,
+    pub(crate) seat_a: PathBuf,
     #[cfg(target_os = "macos")]
-    b_plan: PathBuf,
+    pub(crate) b_plan: PathBuf,
     #[cfg(target_os = "macos")]
-    c_plan: PathBuf,
+    pub(crate) c_plan: PathBuf,
     #[cfg(target_os = "macos")]
-    cache_plan: PathBuf,
+    pub(crate) cache_plan: PathBuf,
 }
 
-fn git(dir: &Path, args: &[&str]) {
+pub(crate) fn git(dir: &Path, args: &[&str]) {
     let mut command = std::process::Command::new("git");
     command.args(args).current_dir(dir);
     for name in crate::git_probe::GIT_REPO_SELECTION_VARS {
@@ -63,7 +63,7 @@ fn git(dir: &Path, args: &[&str]) {
     assert!(status.success(), "git {args:?} failed");
 }
 
-fn fixture() -> Fixture {
+pub(crate) fn fixture() -> Fixture {
     let dir = tempfile::tempdir().expect("tempdir");
     let root = dir.path().canonicalize().expect("canonical");
     let app = root.join("app");
@@ -118,7 +118,7 @@ fn fixture() -> Fixture {
     }
 }
 
-fn inputs<'a>(
+pub(crate) fn inputs<'a>(
     fx: &'a Fixture,
     session_id: &'a str,
     cwd: &'a Path,
@@ -339,11 +339,12 @@ fn a_project_launch_runs_only_in_a_workspace_the_host_ties_to_that_project() {
 fn a_worktree_of_another_repository_or_with_borrowed_objects_is_refused() {
     let fx = fixture();
     let other = fx.root.join("repos/b");
-    let error = crate::execution_scope_git::linked_worktree_admin(&fx.seat_a, Some(&other), None)
-        .expect_err("foreign repo");
+    let error =
+        crate::execution_scope_git::linked_worktree_admin(&fx.seat_a, Some(&other), None, None)
+            .expect_err("foreign repo");
     assert_eq!(error.code, EXECUTION_SCOPE_INVALID);
     let grants =
-        crate::execution_scope_git::linked_worktree_admin(&fx.seat_a, Some(&fx.repo_a), None)
+        crate::execution_scope_git::linked_worktree_admin(&fx.seat_a, Some(&fx.repo_a), None, None)
             .expect("own repo")
             .expect("linked worktree");
     let common = fx.repo_a.join(".git").canonicalize().expect("common");
@@ -363,6 +364,7 @@ fn a_worktree_of_another_repository_or_with_borrowed_objects_is_refused() {
     let grants = crate::execution_scope_git::linked_worktree_admin(
         &fx.seat_a,
         Some(&fx.repo_a),
+        None,
         Some("wip/next"),
     )
     .expect("host branch")
@@ -377,7 +379,7 @@ fn a_worktree_of_another_repository_or_with_borrowed_objects_is_refused() {
     )
     .expect("alt");
     let error =
-        crate::execution_scope_git::linked_worktree_admin(&fx.seat_a, Some(&fx.repo_a), None)
+        crate::execution_scope_git::linked_worktree_admin(&fx.seat_a, Some(&fx.repo_a), None, None)
             .expect_err("alternates");
     assert_eq!(error.code, EXECUTION_SCOPE_INVALID);
 }
@@ -514,10 +516,14 @@ fn prepared_diagnostics_carry_no_values_or_paths() {
 }
 
 #[cfg(target_os = "macos")]
-mod launched {
+pub(crate) mod launched {
     use super::*;
 
-    fn run_in(plan: &PreparedExecution, cwd: &Path, script: &str) -> std::process::Output {
+    pub(crate) fn run_in(
+        plan: &PreparedExecution,
+        cwd: &Path,
+        script: &str,
+    ) -> std::process::Output {
         let (program, args) = plan
             .launch
             .boundary()

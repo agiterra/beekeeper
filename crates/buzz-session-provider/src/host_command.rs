@@ -605,18 +605,76 @@ pub async fn git_head_and_dirty(
         .await
         .map(|text| text.trim().to_ascii_lowercase())
         .filter(|sha| sha.len() == 40 && sha.bytes().all(|b| b.is_ascii_hexdigit()));
-    let dirty = plan_git_output(plan, dir, &["status", "--porcelain"], GIT_PROBE_TIMEOUT)
-        .await
-        .map(|text| !text.trim().is_empty());
+    let dirty = match plan {
+        crate::execution_scope_host::HostLaunchPlan::Bounded(_) => {
+            plan_git_output(plan, dir, &["status", "--porcelain"], GIT_PROBE_TIMEOUT)
+                .await
+                .map(|text| !text.trim().is_empty())
+        }
+        // Unbounded, `status` would run the repository's clean filters on the
+        // host: read the dirty state from stat information alone.
+        crate::execution_scope_host::HostLaunchPlan::Unenforced { .. } => {
+            let dir = dir.to_path_buf();
+            tokio::task::spawn_blocking(move || stat_only_dirty(&dir))
+                .await
+                .ok()
+                .flatten()
+        }
+    };
     (head, dirty)
+}
+
+/// The paths that differ from `HEAD`, without running any of the
+/// repository's own code: `diff-index --name-only` against the index's stat
+/// information (no refresh, so no clean filter; every index entry when there
+/// is no commit yet) plus untracked files. A file touched but not changed can
+/// be listed — the safe direction for a probe.
+pub(crate) fn stat_only_changes(dir: &Path) -> Option<Vec<String>> {
+    let lines = |args: &[&str]| -> Option<Vec<String>> {
+        let output = metadata_git_command(dir)
+            .arg("--no-optional-locks")
+            .args(args)
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()?;
+        output.status.success().then(|| {
+            String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .filter(|line| !line.is_empty())
+                .map(str::to_owned)
+                .collect()
+        })
+    };
+    let born = metadata_git_command(dir)
+        .args(["rev-parse", "--verify", "-q", "HEAD"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .ok()?
+        .success();
+    let mut changes = if born {
+        lines(&["diff-index", "--name-only", "HEAD", "--"])?
+    } else {
+        lines(&["ls-files"])?
+    };
+    changes.extend(lines(&["ls-files", "--others", "--exclude-standard"])?);
+    Some(changes)
+}
+
+/// Whether [`stat_only_changes`] lists anything.
+pub(crate) fn stat_only_dirty(dir: &Path) -> Option<bool> {
+    stat_only_changes(dir).map(|changes| !changes.is_empty())
 }
 
 /// A `git` command for an operation that runs none of the repository's own
 /// code — reading refs and objects, cutting a worktree with nothing checked
 /// out, removing one with `--force` (no status check). Hooks and fsmonitor
 /// are off, nothing prompts, and the repository is chosen by the working
-/// directory alone. Anything that checks out, refreshes the index or fetches
-/// runs inside a prepared boundary instead
+/// directory alone. Clean/smudge filters are **not** switched off: `status`,
+/// checkout and anything else that refreshes the index would run them, so
+/// those never use this command; they run inside a prepared boundary instead
 /// ([`crate::execution_scope_host::HostLaunchPlan::git_command`]).
 #[must_use]
 pub fn metadata_git_command(dir: &Path) -> std::process::Command {
@@ -625,12 +683,7 @@ pub fn metadata_git_command(dir: &Path) -> std::process::Command {
         command.env_remove(var);
     }
     command
-        .args([
-            "-c",
-            "core.hooksPath=/dev/null",
-            "-c",
-            "core.fsmonitor=false",
-        ])
+        .args(crate::git_probe::HOST_GIT_NO_PROJECT_CODE)
         .current_dir(dir)
         .env("GIT_TERMINAL_PROMPT", "0");
     command

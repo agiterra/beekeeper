@@ -165,7 +165,8 @@ fn bounded(detail: &str) -> String {
 /// One git invocation in `dir`, hermetic and never prompting.
 async fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
     let mut cmd = Command::new("git");
-    cmd.args(args)
+    cmd.args(crate::git_probe::HOST_GIT_NO_PROJECT_CODE)
+        .args(args)
         .current_dir(dir)
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")

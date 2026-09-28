@@ -38,11 +38,16 @@ use crate::session::CreateFailure;
 /// belong to this worktree and (when known) to this project's repository.
 /// `None` when the tree holds its own `.git` directory (the tree grant covers
 /// it) or no repository at all.
+/// `pinned_branch` is the branch the host recorded for this worktree when it
+/// first prepared it (see [`crate::execution_scope::ExecutionBinding`]); when
+/// present it — not the child-writable `HEAD` — decides which branch ref is
+/// writable, so a seat cannot widen its own grant by re-pointing `HEAD`.
 /// `host_branch` is a branch a host-run operation (never the child) decided
 /// this worktree moves to — its ref is granted beside the current one.
 pub(crate) fn linked_worktree_admin(
     tree: &Path,
     project_checkout: Option<&Path>,
+    pinned_branch: Option<&str>,
     host_branch: Option<&str>,
 ) -> Result<Option<Vec<Grant>>, CreateFailure> {
     let dot_git = tree.join(".git");
@@ -127,6 +132,15 @@ pub(crate) fn linked_worktree_admin(
             Access::NoWrite,
             "no borrowing of another repository's objects",
         ),
+        // Git 2.55's `commit` opens the shared packed-refs lock during its ref
+        // transaction and prints a refused write when it cannot (run11's
+        // builder, seq87). The lock alone is granted; `packed-refs` itself
+        // stays read-only, so no shared ref can be rewritten through it.
+        Grant::file(
+            common.join("packed-refs.lock"),
+            Access::ReadWrite,
+            "the shared packed-refs lock Git takes during a commit",
+        ),
         Grant::tree(
             common.join("refs/remotes"),
             Access::ReadWrite,
@@ -138,13 +152,9 @@ pub(crate) fn linked_worktree_admin(
             "remote-tracking ref logs",
         ),
     ];
-    let head_branch = std::fs::read_to_string(admin.join("HEAD"))
-        .ok()
-        .and_then(|head| {
-            head.trim()
-                .strip_prefix("ref: refs/heads/")
-                .map(str::to_owned)
-        });
+    let head_branch = pinned_branch
+        .map(str::to_owned)
+        .or_else(|| head_branch_of(&admin));
     for branch in head_branch
         .iter()
         .map(String::as_str)
@@ -154,6 +164,36 @@ pub(crate) fn linked_worktree_admin(
         grants.extend(branch_ref_grants(&common, branch));
     }
     Ok(Some(grants))
+}
+
+/// The branch a worktree administration's `HEAD` names, if it names one.
+fn head_branch_of(admin: &Path) -> Option<String> {
+    std::fs::read_to_string(admin.join("HEAD"))
+        .ok()
+        .and_then(|head| {
+            head.trim()
+                .strip_prefix("ref: refs/heads/")
+                .map(str::to_owned)
+        })
+        .filter(|branch| valid_branch(branch))
+}
+
+/// The branch a working tree is on: its linked administration's `HEAD`, or
+/// its own `.git/HEAD`. Read by the host when it first prepares the tree —
+/// before any child has run in it — and then pinned.
+pub(crate) fn worktree_branch(tree: &Path) -> Option<String> {
+    let dot_git = tree.join(".git");
+    if dot_git.is_dir() {
+        return head_branch_of(&dot_git);
+    }
+    let text = std::fs::read_to_string(&dot_git).ok()?;
+    let dir = Path::new(text.trim().strip_prefix("gitdir:")?.trim());
+    let admin = if dir.is_absolute() {
+        dir.to_path_buf()
+    } else {
+        tree.join(dir)
+    };
+    head_branch_of(&admin)
 }
 
 /// The ref, reflog and lock files of one branch, and the directories a
@@ -267,7 +307,10 @@ pub(crate) fn stage_git_config(
         std::process::id(),
         STAGING.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
-    crate::execution_scope::write_host_file(&building, b"", false)?;
+    // Repository maintenance is the host's, not an execution's: the detached
+    // `git maintenance run --auto` a commit starts would try to repack the
+    // project's shared refs, which the boundary refuses, and outlive the turn.
+    crate::execution_scope::write_host_file(&building, STAGED_GIT_BASE, false)?;
     let staged = fill_git_config(&building, unseated, tool_dir).and_then(|staged| {
         std::fs::rename(&building, &config)
             .map(|()| staged)
@@ -278,6 +321,10 @@ pub(crate) fn stage_git_config(
     }
     staged.map(|staged| StagedGit { config, ..staged })
 }
+
+/// What every staged Git configuration starts with, before the operator's
+/// selected entries are added.
+const STAGED_GIT_BASE: &[u8] = b"[maintenance]\n\tauto = false\n[gc]\n\tauto = 0\n";
 
 fn fill_git_config(
     config: &Path,
@@ -297,6 +344,7 @@ fn fill_git_config(
     };
     let mut entries: Vec<(String, String)> =
         operator_git_config(&["--get-regexp", STAGED_GIT_KEYS]);
+
     if unseated {
         let keyfile = operator_git_config(&["--get", "nostr.keyfile"])
             .into_iter()

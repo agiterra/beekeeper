@@ -2195,6 +2195,20 @@ pub(crate) fn boundary_briefing(execution: &crate::execution_scope::ExecutionPla
                  this execution; this project's own settings and MCP servers load as usual.",
                 prepared.launch.boundary().backend()
             );
+            if let Some(branch) = &prepared.binding.branch {
+                text.push_str(&format!(
+                    " Your working tree is on the branch `{branch}`, which the host allocated \
+                     for this session: commit there. Creating, renaming or switching local \
+                     branches is refused by the boundary, so do not try, and never edit files \
+                     under `.git` to get around it. Publish your work with `git push origin \
+                     {branch}`; if your brief names a different remote branch, push this one to \
+                     it with `git push origin HEAD:refs/heads/<that name>`."
+                ));
+            }
+            text.push_str(
+                " Temporary files belong in this execution's private temp: `$TMPDIR` and \
+                 `mktemp` (any form) use it.",
+            );
             if let Some((path, false)) = &prepared.agents {
                 text.push_str(&format!(
                     " The project's agents repository is checked out read-only at {}: \
@@ -2268,13 +2282,19 @@ const AGENTS_REPO_DRAFT_BRIEFING: &str = "\n\nTo propose a change to a plan or a
 fn agents_checkout_briefing(agents: &crate::actor_seats::SeatAgentsCheckout) -> String {
     let path = agents.path.display();
     let mode = if agents.writable() {
-        "You may commit there and push to main; the relay's push gate decides whether your \
-         push lands, and a seat pushes with its owner's tier. Commit plans and role edits there, \
-         never in the code repository. Validate and commit authorized drafts yourself, under \
-         your own identity; never silently overwrite another author's draft."
+        format!(
+            "You may commit there and push to main; the relay's push gate decides whether your \
+             push lands, and a seat pushes with its owner's tier. Commit plans and role edits \
+             there, never in the code repository. Validate and commit authorized drafts \
+             yourself, under your own identity; never silently overwrite another author's draft. \
+             This is the clone the host prepared for you: pass `--agents-repo {path}` wherever a \
+             command asks for the agents repository (adopting or binding a plan), and do not \
+             clone the repository again."
+        )
     } else {
         "It is read-only for this seat: read it, do not edit it, and propose changes as \
          drafts for a collaborator with write access to commit."
+            .to_owned()
     };
     format!(
         "\n\nThe project's agents repository is checked out at {path}, beside your working \

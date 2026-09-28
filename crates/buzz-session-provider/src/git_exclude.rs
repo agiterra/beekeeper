@@ -97,6 +97,7 @@ fn exclude_path(cwd: &Path) -> Option<PathBuf> {
         command.env_remove(var);
     }
     let output = command
+        .args(crate::git_probe::HOST_GIT_NO_PROJECT_CODE)
         .arg("-C")
         .arg(cwd)
         .args(["rev-parse", "--git-path", "info/exclude"])

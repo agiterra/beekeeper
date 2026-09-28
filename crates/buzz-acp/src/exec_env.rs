@@ -431,6 +431,29 @@ impl ResolvedEnv {
         self.insert("PATH", joined, source);
     }
 
+    /// Put directories after everything already on `PATH`: the system search
+    /// path a login shell would otherwise compose itself (see
+    /// [`crate::exec_boundary::PATH_HELPER`]). Only directories usable in the
+    /// boundary and not already present are added; the existing order holds.
+    pub fn append_path(&mut self, value: &str, source: EnvSource, usable: &dyn Fn(&Path) -> bool) {
+        let current = self.get("PATH").unwrap_or_default().to_owned();
+        let mut composed: Vec<&str> = current.split(':').filter(|c| !c.is_empty()).collect();
+        let before = composed.len();
+        for component in value.split(':') {
+            if !component.is_empty()
+                && !composed.contains(&component)
+                && Path::new(component).is_absolute()
+                && usable(Path::new(component))
+            {
+                composed.push(component);
+            }
+        }
+        if composed.len() > before {
+            let joined = composed.join(":");
+            self.insert("PATH", joined, source);
+        }
+    }
+
     /// Remove a variable a later layer decided the child must not hold.
     pub fn remove(&mut self, name: &str) {
         self.vars.remove(name);

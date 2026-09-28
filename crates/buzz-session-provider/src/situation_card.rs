@@ -502,7 +502,8 @@ fn project_words(project_ref: Option<&str>) -> Fact {
 /// One git invocation in `dir`, hermetic and never prompting.
 async fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
     let mut cmd = Command::new("git");
-    cmd.args(args)
+    cmd.args(crate::git_probe::HOST_GIT_NO_PROJECT_CODE)
+        .args(args)
         .current_dir(dir)
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
@@ -674,9 +675,25 @@ impl crate::Provider {
         let worktree_path = worktree.present().map(Path::to_path_buf);
         let projects = crate::commands::ProjectsFile::load(self.config.projects_file.as_deref());
         let project_ref = record.project_ref.clone();
-        let agents_dir = seat_agents_dir(worktree_path.as_deref());
+        // What the host prepared for this execution, when the record carries
+        // it: the card states the grant the boundary enforces, never a guess
+        // from what happens to be on disk.
+        let (agents_dir, missing) = match &record.execution_binding {
+            Some(binding) => (
+                binding
+                    .agents
+                    .clone()
+                    .filter(|path| path.join(".git").exists()),
+                if binding.agents.is_some() {
+                    "no-checkout"
+                } else {
+                    "no-grant"
+                },
+            ),
+            None => (seat_agents_dir(worktree_path.as_deref()), "no-checkout"),
+        };
         let agents_commit: Fact = match &agents_dir {
-            None => Err("no-checkout".to_owned()),
+            None => Err(missing.to_owned()),
             Some(dir) => git(dir, &["rev-parse", "HEAD"])
                 .await
                 .map(|sha| sha.trim().to_owned()),

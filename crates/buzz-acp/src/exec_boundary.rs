@@ -55,7 +55,10 @@ pub const BACKEND_MACOS_SEATBELT: &str = "macos-seatbelt";
 
 /// Version of the policy shape this module renders. Part of every policy
 /// text, so a change to the rendering is a change to the digest.
-pub const POLICY_VERSION: u32 = 2;
+pub const POLICY_VERSION: u32 = 3;
+
+/// macOS's login-shell `PATH` composer, denied inside the boundary.
+pub const PATH_HELPER: &str = "/usr/libexec/path_helper";
 
 /// The launcher every bounded child is started through.
 pub const SANDBOX_EXEC: &str = "/usr/bin/sandbox-exec";
@@ -419,6 +422,20 @@ pub fn render_policy(grants: &[Grant]) -> Result<String, BoundaryError> {
         };
         out.push_str(&format!("({rule} {filter})\n"));
     }
+    // Delegation out of the boundary: LaunchServices starts an application
+    // through launchd, outside this sandbox, and Apple Events script one that
+    // already runs outside it. Either would read what this policy denies
+    // (measured: a background-only app opened from the writable tree read a
+    // denied file). Nothing a project build or test needs sends either.
+    out.push_str("(deny lsopen)\n(deny appleevent-send)\n");
+    // A login shell's `path_helper` reorders the prepared `PATH`, putting the
+    // host's tool directory (and its `mktemp`) behind `/usr/bin`. The host
+    // composes the system search path itself (see the session scope), so the
+    // helper is not needed and its absence is silent to `/etc/zprofile`.
+    out.push_str(&format!(
+        "(deny file-read* process-exec (literal {}))\n",
+        quote(PATH_HELPER)?
+    ));
     Ok(out)
 }
 
