@@ -385,3 +385,63 @@ fn a_detached_tree_nobody_records_gets_no_branch() {
     fx.child_repoints_head();
     assert_eq!(fx.authority(None), Ok(None));
 }
+
+/// Ledger 280(4): a provider that established trees while standalone, then
+/// gains a host, carries those decisions into the host's pin store — a
+/// branch and a "no branch" alike. The tree is never first-seen again.
+#[test]
+fn the_first_host_declaration_carries_standalone_decisions_over() {
+    for detached in [false, true] {
+        let fx = fx();
+        if detached {
+            git(&fx.seat, &["checkout", "-q", "--detach"]);
+        }
+        let established = fx.authority(None).expect("standalone");
+        fx.child_repoints_head();
+        // The host appears; its store records nothing for this tree.
+        fx.host_records("unrelated");
+        fx.write_store(serde_json::json!({}));
+        assert_eq!(
+            fx.authority(None),
+            Ok(established.clone()),
+            "detached={detached}"
+        );
+        assert!(
+            pin_path(&fx.root, &fx.seat).exists(),
+            "the decision lives in the host's pin store now"
+        );
+        // And stays there on later preparations.
+        assert_eq!(fx.authority(None), Ok(established), "detached={detached}");
+    }
+}
+
+/// A tree this provider established one way while standalone, which the
+/// host's store already established another way, refuses the declaration:
+/// neither record is picked, and the declaration is not noted, so every
+/// later preparation refuses too — even with a host record for the tree —
+/// until one of the two pins is removed.
+#[test]
+fn a_standalone_decision_the_host_contradicts_refuses_the_declaration() {
+    let fx = fx();
+    assert_eq!(fx.authority(None), Ok(Some("seat-branch".to_owned())));
+    let host_pin = pin_path(&fx.root, &fx.seat);
+    std::fs::create_dir_all(host_pin.parent().expect("dir")).expect("dir");
+    std::fs::write(
+        &host_pin,
+        r#"{"version":1,"branch":"main","source":"first-head"}"#,
+    )
+    .expect("other identity's pin");
+    fx.host_records("unrelated");
+    fx.write_store(serde_json::json!({}));
+    for _ in 0..2 {
+        let error = fx.authority(None).expect_err("contradiction");
+        assert!(error.0.contains("neither is picked"), "{error:?}");
+    }
+    assert!(!fx.state.join(HOST_DECLARED_FILE).exists());
+    fx.host_records("seat-branch");
+    assert!(fx.authority(None).is_err(), "still refused");
+    // Removing the contradicting pin lets the standalone decision carry over.
+    std::fs::remove_file(&host_pin).expect("remove");
+    fx.child_repoints_head();
+    assert_eq!(fx.authority(None), Ok(Some("seat-branch".to_owned())));
+}

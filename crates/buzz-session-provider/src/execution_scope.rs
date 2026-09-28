@@ -422,7 +422,8 @@ pub struct ScopeInputs<'a> {
     /// Hermit's package state on this host, used only when the working tree
     /// declares Hermit packages (`bin/hermit` and `bin/.<pkg>.pkg`).
     pub hermit_state: Option<&'a Path>,
-    /// A branch a host command (never the child) moves this worktree to.
+    /// A branch a host command (never the child) moves this worktree to. It
+    /// is an explicit host allocation, recorded like `branch_authority`.
     pub host_branch: Option<&'a str>,
     /// The branch this tree may move, when the caller already holds the
     /// host's authority for it (assignment establishment). `None` looks it up
@@ -622,7 +623,19 @@ pub fn prepare(inputs: &ScopeInputs<'_>) -> Result<ExecutionPlan, CreateFailure>
     // child-writable `HEAD` (see `crate::branch_authority`). A caller that
     // already holds the host's authority (assignment establishment) names it;
     // anything that cannot be established refuses the preparation.
-    let branch = match inputs.branch_authority {
+    // A host operation that moves the tree to a branch (`host_branch`) is the
+    // same kind of decision as an assignment's allocation: one explicit
+    // authority, recorded, never a second grant beside the established one.
+    let explicit = match (inputs.branch_authority, inputs.host_branch) {
+        (Some(allocated), Some(moved)) if allocated != moved => {
+            return Err(refuse(
+                EXECUTION_SCOPE_INVALID,
+                "the host named two different branches for one working tree",
+            ))
+        }
+        (allocated, moved) => allocated.or(moved),
+    };
+    let branch = match explicit {
         Some(authority) if crate::branch_authority::valid_branch(authority) => {
             // Durable before any child runs under it (ledger 277).
             crate::branch_authority::record_allocation(&state_dir, &tree, authority)
@@ -646,11 +659,15 @@ pub fn prepare(inputs: &ScopeInputs<'_>) -> Result<ExecutionPlan, CreateFailure>
         )
         .map_err(|error| refuse(EXECUTION_BOUNDARY_UNAVAILABLE, error.0))?,
     };
+    // The established decision, consumed as it is: an established "no
+    // branch" grants no branch ref (ledger 280).
     let linked = crate::execution_scope_git::linked_worktree_admin(
         &tree,
         inputs.project_checkout,
-        branch.as_deref(),
-        inputs.host_branch,
+        branch.as_deref().map_or(
+            crate::execution_scope_git::BranchDecision::NoBranch,
+            crate::execution_scope_git::BranchDecision::Branch,
+        ),
     )?;
     if inputs.purpose != ScopePurpose::Discovery {
         check_association(inputs, &tree, linked.is_some())?;
@@ -675,7 +692,12 @@ pub fn prepare(inputs: &ScopeInputs<'_>) -> Result<ExecutionPlan, CreateFailure>
             )
         })?;
         if !path.join(".git").is_dir()
-            || crate::execution_scope_git::linked_worktree_admin(&path, None, None, None)?.is_some()
+            || crate::execution_scope_git::linked_worktree_admin(
+                &path,
+                None,
+                crate::execution_scope_git::BranchDecision::Inspect,
+            )?
+            .is_some()
         {
             return Err(refuse(
                 EXECUTION_SCOPE_INVALID,

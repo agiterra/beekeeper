@@ -339,14 +339,20 @@ fn a_project_launch_runs_only_in_a_workspace_the_host_ties_to_that_project() {
 fn a_worktree_of_another_repository_or_with_borrowed_objects_is_refused() {
     let fx = fixture();
     let other = fx.root.join("repos/b");
-    let error =
-        crate::execution_scope_git::linked_worktree_admin(&fx.seat_a, Some(&other), None, None)
-            .expect_err("foreign repo");
+    let error = crate::execution_scope_git::linked_worktree_admin(
+        &fx.seat_a,
+        Some(&other),
+        crate::execution_scope_git::BranchDecision::Inspect,
+    )
+    .expect_err("foreign repo");
     assert_eq!(error.code, EXECUTION_SCOPE_INVALID);
-    let grants =
-        crate::execution_scope_git::linked_worktree_admin(&fx.seat_a, Some(&fx.repo_a), None, None)
-            .expect("own repo")
-            .expect("linked worktree");
+    let grants = crate::execution_scope_git::linked_worktree_admin(
+        &fx.seat_a,
+        Some(&fx.repo_a),
+        crate::execution_scope_git::BranchDecision::Inspect,
+    )
+    .expect("own repo")
+    .expect("linked worktree");
     let common = fx.repo_a.join(".git").canonicalize().expect("common");
     assert!(grants.iter().any(|g| g.target
         == exec_boundary::GrantTarget::Tree(common.join("objects"))
@@ -360,27 +366,51 @@ fn a_worktree_of_another_repository_or_with_borrowed_objects_is_refused() {
             .any(|g| g.target.path() == common.join("refs/heads/main")),
         "another branch must not be writable"
     );
-    // A branch the host itself moves the tree to is granted beside its own.
+    // The established branch, and only it, is granted; no branch at all when
+    // the decision is "no branch" or the call only inspects (ledger 280).
     let grants = crate::execution_scope_git::linked_worktree_admin(
         &fx.seat_a,
         Some(&fx.repo_a),
-        None,
-        Some("wip/next"),
+        crate::execution_scope_git::BranchDecision::Branch("wip/next"),
     )
     .expect("host branch")
     .expect("linked");
     assert!(grants
         .iter()
         .any(|g| g.target.path() == common.join("refs/heads/wip/next")));
+    assert!(!grants
+        .iter()
+        .any(|g| g.target.path() == common.join("refs/heads/seat-branch")));
+    for decision in [
+        crate::execution_scope_git::BranchDecision::NoBranch,
+        crate::execution_scope_git::BranchDecision::Inspect,
+    ] {
+        let grants = crate::execution_scope_git::linked_worktree_admin(
+            &fx.seat_a,
+            Some(&fx.repo_a),
+            decision,
+        )
+        .expect("decision")
+        .expect("linked");
+        assert!(
+            !grants
+                .iter()
+                .any(|g| g.target.path().starts_with(common.join("refs/heads"))),
+            "{decision:?} grants no branch ref"
+        );
+    }
     std::fs::create_dir_all(common.join("objects/info")).expect("info");
     std::fs::write(
         common.join("objects/info/alternates"),
         "/elsewhere/objects\n",
     )
     .expect("alt");
-    let error =
-        crate::execution_scope_git::linked_worktree_admin(&fx.seat_a, Some(&fx.repo_a), None, None)
-            .expect_err("alternates");
+    let error = crate::execution_scope_git::linked_worktree_admin(
+        &fx.seat_a,
+        Some(&fx.repo_a),
+        crate::execution_scope_git::BranchDecision::Inspect,
+    )
+    .expect_err("alternates");
     assert_eq!(error.code, EXECUTION_SCOPE_INVALID);
 }
 

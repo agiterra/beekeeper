@@ -34,21 +34,32 @@ use buzz_acp::exec_boundary::{Access, Grant};
 use crate::execution_scope::{canonical, refuse, EXECUTION_SCOPE_INVALID};
 use crate::session::CreateFailure;
 
+/// Which branch ref a linked worktree's grants may make writable: the
+/// decision [`crate::branch_authority`] established for the tree, consumed
+/// as it is (ledger 280). Nothing here reads the child-writable `HEAD`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BranchDecision<'a> {
+    /// The tree's established branch: its ref, and only its ref, is writable.
+    Branch(&'a str),
+    /// The tree was established on no branch (detached): no branch ref is
+    /// writable, whatever `HEAD` names now.
+    NoBranch,
+    /// The caller only verifies the administration and uses no grants.
+    Inspect,
+}
+
 /// For a linked worktree, the Git administration it may use — verified to
 /// belong to this worktree and (when known) to this project's repository.
 /// `None` when the tree holds its own `.git` directory (the tree grant covers
 /// it) or no repository at all.
-/// `pinned_branch` is the branch the host recorded for this worktree when it
-/// first prepared it (see [`crate::execution_scope::ExecutionBinding`]); when
-/// present it — not the child-writable `HEAD` — decides which branch ref is
-/// writable, so a seat cannot widen its own grant by re-pointing `HEAD`.
-/// `host_branch` is a branch a host-run operation (never the child) decided
-/// this worktree moves to — its ref is granted beside the current one.
+/// `branch` is the host's established decision for this worktree (see
+/// [`crate::execution_scope::ExecutionBinding`]); it alone decides which
+/// branch ref is writable, so a seat cannot widen its own grant by
+/// re-pointing `HEAD`.
 pub(crate) fn linked_worktree_admin(
     tree: &Path,
     project_checkout: Option<&Path>,
-    pinned_branch: Option<&str>,
-    host_branch: Option<&str>,
+    branch: BranchDecision<'_>,
 ) -> Result<Option<Vec<Grant>>, CreateFailure> {
     let dot_git = tree.join(".git");
     if dot_git.is_dir() {
@@ -143,16 +154,16 @@ pub(crate) fn linked_worktree_admin(
             "remote-tracking ref logs",
         ),
     ];
-    let head_branch = pinned_branch
-        .map(str::to_owned)
-        .or_else(|| head_branch_of(&admin));
-    for branch in head_branch
-        .iter()
-        .map(String::as_str)
-        .chain(host_branch)
-        .filter(|branch| valid_branch(branch))
-    {
-        grants.extend(branch_ref_grants(&common, branch));
+    match branch {
+        BranchDecision::Branch(branch) if valid_branch(branch) => {
+            grants.extend(branch_ref_grants(&common, branch));
+        }
+        BranchDecision::Branch(_) => {
+            return Err(invalid(
+                "the established branch is not a usable branch name",
+            ));
+        }
+        BranchDecision::NoBranch | BranchDecision::Inspect => {}
     }
     Ok(Some(grants))
 }

@@ -786,3 +786,128 @@ fn a_child_cannot_rewrite_the_branch_authority_records() {
         .collect();
     assert_eq!(before, after);
 }
+
+/// Every branch ref a prepared boundary makes writable, by branch name.
+fn writable_branches(plan: &PreparedExecution, repo: &Path) -> Vec<String> {
+    let heads = repo
+        .join(".git/refs/heads")
+        .canonicalize()
+        .expect("refs/heads");
+    let mut branches: Vec<String> = plan
+        .launch
+        .boundary()
+        .grants()
+        .iter()
+        .filter(|grant| grant.access == buzz_acp::exec_boundary::Access::ReadWrite)
+        // A hierarchical name's directories are granted too; they are not
+        // branches.
+        .filter(|grant| !grant.target.path().is_dir())
+        .filter_map(|grant| grant.target.path().strip_prefix(&heads).ok())
+        .map(|branch| {
+            branch
+                .to_string_lossy()
+                .trim_end_matches(".lock")
+                .to_owned()
+        })
+        .collect();
+    branches.sort();
+    branches.dedup();
+    branches
+}
+
+/// Ledger 280: a tree established on no branch keeps "no branch" through Git
+/// permission generation. Detached at its first preparation, re-pointed by a
+/// bounded child to `main` and then to a new name, it is prepared again —
+/// fresh and as a resume, as a Session and as a host command. The binding
+/// says no branch, the generated grants name no branch ref, and the enforced
+/// boundary refuses a commit that would move `main` or create a branch.
+#[test]
+fn a_detached_tree_stays_without_a_branch_in_its_binding_and_its_grants() {
+    for purpose in [ScopePurpose::Session, ScopePurpose::HostCommand] {
+        let fx = fixture();
+        git_out(&fx.seat_a, &["checkout", "-q", "--detach"]);
+        let mut first = inputs(&fx, "first", &fx.seat_a, &[], &[]);
+        first.purpose = purpose;
+        let first = prepared(prepare(&first));
+        assert_eq!(first.binding.branch, None, "{purpose:?}");
+        assert!(
+            writable_branches(&first, &fx.repo_a).is_empty(),
+            "{purpose:?}"
+        );
+        let main = git_out(&fx.repo_a, &["rev-parse", "main"]);
+
+        for head in ["refs/heads/main", "refs/heads/escape"] {
+            let output = run_in(&first, &fx.seat_a, &format!("git symbolic-ref HEAD {head}"));
+            assert!(output.status.success(), "{purpose:?} {head}: {output:?}");
+            let mut fresh = inputs(&fx, "fresh", &fx.seat_a, &[], &[]);
+            fresh.purpose = purpose;
+            let mut resumed = inputs(&fx, "first", &fx.seat_a, &[], &[]);
+            resumed.purpose = purpose;
+            resumed.prior = Some((Some(&first.binding), None));
+            for (how, facts) in [("fresh", fresh), ("resumed", resumed)] {
+                let plan = prepared(prepare(&facts));
+                assert_eq!(plan.binding.branch, None, "{purpose:?} {head} {how}");
+                assert_eq!(
+                    writable_branches(&plan, &fx.repo_a),
+                    Vec::<String>::new(),
+                    "{purpose:?} {head} {how}: generated grants"
+                );
+                let output = run_in(
+                    &plan,
+                    &fx.seat_a,
+                    "git -c user.name=f -c user.email=f@example.invalid \
+                     commit --allow-empty -qm escaped",
+                );
+                assert!(
+                    !output.status.success(),
+                    "{purpose:?} {head} {how}: enforced: {output:?}"
+                );
+            }
+            assert_eq!(git_out(&fx.repo_a, &["rev-parse", "main"]), main);
+            assert!(
+                git_out(&fx.repo_a, &["branch", "--list", "escape"]).is_empty(),
+                "{purpose:?}: no branch created"
+            );
+        }
+    }
+}
+
+/// The allocated branch still works end to end, and is the only branch the
+/// grants name — for a tree first seen on its branch, for an explicit
+/// assignment allocation, and for a host operation moving the tree
+/// (`host_branch`), which is recorded as the tree's allocation rather than
+/// granted beside it.
+#[test]
+fn the_allocated_branch_is_the_one_writable_branch_and_commits_on_it_work() {
+    let fx = fixture();
+    let plan = prepared(prepare(&inputs(&fx, "first", &fx.seat_a, &[], &[])));
+    assert_eq!(writable_branches(&plan, &fx.repo_a), vec!["seat-branch"]);
+    let output = run_in(
+        &plan,
+        &fx.seat_a,
+        "git -c user.name=f -c user.email=f@example.invalid commit --allow-empty -qm work",
+    );
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        git_out(&fx.repo_a, &["log", "-1", "--format=%s", "seat-branch"]),
+        "work"
+    );
+
+    git_out(&fx.repo_a, &["branch", "wip/next", "seat-branch"]);
+    let mut moved = inputs(&fx, "move", &fx.seat_a, &[], &[]);
+    moved.purpose = ScopePurpose::HostCommand;
+    moved.host_branch = Some("wip/next");
+    let moved = prepared(prepare(&moved));
+    assert_eq!(moved.binding.branch.as_deref(), Some("wip/next"));
+    assert_eq!(writable_branches(&moved, &fx.repo_a), vec!["wip/next"]);
+    // Recorded: a later preparation with nothing else to go on keeps it.
+    let later = prepared(prepare(&inputs(&fx, "later", &fx.seat_a, &[], &[])));
+    assert_eq!(later.binding.branch.as_deref(), Some("wip/next"));
+
+    let mut both = inputs(&fx, "both", &fx.seat_a, &[], &[]);
+    both.purpose = ScopePurpose::HostCommand;
+    both.host_branch = Some("wip/next");
+    both.branch_authority = Some("seat-branch");
+    let refusal = prepare(&both).expect_err("two host branches");
+    assert_eq!(refusal.code, EXECUTION_SCOPE_INVALID, "{refusal:?}");
+}

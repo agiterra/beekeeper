@@ -147,13 +147,20 @@ fn host_authority(state_dir: &Path, tree: &Path) -> Result<HostAuthority, Author
             )))
         }
         Some(_) => {}
-        None => declare_host(state_dir, store.path())?,
+        None => {}
     }
     let pins_root = store
         .path()
         .parent()
         .map(Path::to_path_buf)
         .ok_or_else(|| AuthorityError("the host's worktree record has no directory".to_owned()))?;
+    if declared.is_none() {
+        // The first sighting of a host: whatever this provider established
+        // standalone moves with the pins, before the note that makes the
+        // host's store the only place they are read (ledger 280).
+        adopt_standalone_pins(state_dir, &pins_root)?;
+        declare_host(state_dir, store.path())?;
+    }
     let recorded = recorded_branch(&store, tree)?;
     Ok(HostAuthority {
         pins_root,
@@ -189,6 +196,56 @@ fn read_declared_host(state_dir: &Path) -> Result<Option<PathBuf>, AuthorityErro
         .filter(|declared| declared.version == PIN_VERSION && declared.store.is_absolute())
         .map(|declared| Some(declared.store))
         .ok_or_else(|| AuthorityError("the record of this provider's host is corrupt".to_owned()))
+}
+
+/// Carry every pin this provider wrote while standalone into the host's pin
+/// store. A tree established here keeps its decision; a tree the host's store
+/// already established differently refuses the declaration — neither record
+/// is picked over the other, and no tree becomes first-seen. Pins are keyed
+/// by a hash of the tree, so the refusal cannot be narrowed to that tree: the
+/// provider prepares nothing until one of the two pins is removed. Idempotent,
+/// so a declaration interrupted before its note is simply repeated.
+fn adopt_standalone_pins(state_dir: &Path, pins_root: &Path) -> Result<(), AuthorityError> {
+    let legacy = state_dir.join(BRANCH_PINS_DIR);
+    if canonical_or_self(&legacy) == canonical_or_self(&pins_root.join(BRANCH_PINS_DIR)) {
+        return Ok(());
+    }
+    let entries = match std::fs::read_dir(&legacy) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(AuthorityError(format!(
+                "this provider's earlier branch pins could not be read ({error})"
+            )))
+        }
+    };
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            AuthorityError(format!(
+                "this provider's earlier branch pins could not be read ({error})"
+            ))
+        })?;
+        let name = entry.file_name();
+        if name.to_string_lossy().starts_with('.') {
+            continue;
+        }
+        let Some(pin) = read_pin(&entry.path())? else {
+            continue;
+        };
+        let target = pins_root.join(BRANCH_PINS_DIR).join(&name);
+        let kept = write_pin(&target, &pin, false)?;
+        if kept.branch != pin.branch {
+            return Err(AuthorityError(format!(
+                "a tree this provider established on {} while it ran without a host is \
+                 established on {} in the host's pins ({}); neither is picked, so this \
+                 provider prepares nothing until one of the two pins is removed",
+                pin.branch.as_deref().unwrap_or("no branch"),
+                kept.branch.as_deref().unwrap_or("no branch"),
+                target.display(),
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn declare_host(state_dir: &Path, store: &Path) -> Result<(), AuthorityError> {
