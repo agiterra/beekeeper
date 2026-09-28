@@ -597,3 +597,71 @@ test("mounted virtual target retires bottom intent before direct centering", asy
   assert.equal(bottomWrites.length, 1, "geometry cannot re-pin to bottom");
   await act(async () => root.unmount());
 });
+
+function HoldBottomHarness({ onState, refs }) {
+  const anchored = useAnchoredScroll({
+    channelId: "coding-session",
+    contentRef: refs.content,
+    holdBottomUntilReaderScrolls: true,
+    isLoading: false,
+    messages: [{ id: "selected" }],
+    scrollContainerRef: refs.container,
+  });
+  onState(anchored);
+  return null;
+}
+
+test("a held bottom pin re-pins late growth and releases on an upward wheel", async () => {
+  const nodes = makePinnedCenterNodes();
+  nodes.container.ownerDocument = document;
+  const refs = {
+    container: { current: nodes.container },
+    content: { current: nodes.content },
+  };
+  const root = createRoot(document.createElement("div"));
+  let state = null;
+  await act(async () =>
+    root.render(
+      React.createElement(HoldBottomHarness, {
+        onState: (next) => {
+          state = next;
+        },
+        refs,
+      }),
+    ),
+  );
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+
+  // At the floor, then rows measure taller before the queued scroll event
+  // runs. (The fake does not clamp scrollTop; the mount pin left it at 1000.)
+  await act(async () => state.onScroll());
+  assert.equal(state.isAtBottom, true);
+  nodes.moveSelectedRowBy(1_000); // a row in view, so the gap reads as a scroll-up
+  nodes.container.scrollHeight = 1_500;
+  await act(async () => state.onScroll());
+  assert.equal(state.isAtBottom, true, "growth is not the reader leaving");
+  assert.equal(nodes.container.scrollTop, 1_500, "the pin chases the floor");
+
+  // A downward wheel is not a reason to leave the bottom either.
+  nodes.container.scrollTop = 600;
+  nodes.container.dispatchEvent({ type: "wheel", deltaY: 40 });
+  await act(async () => state.onScroll());
+  assert.equal(state.isAtBottom, true);
+
+  // Reader input alone is not a scroll-up: growth landing in the input window
+  // leaves scrollTop where it was, and the pin holds.
+  nodes.moveSelectedRowBy(400); // keep a row in view at the new scrollTop
+  nodes.container.dispatchEvent({ type: "wheel", deltaY: -40 });
+  nodes.container.scrollHeight = 2_000;
+  await act(async () => state.onScroll());
+  assert.equal(state.isAtBottom, true, "input without an upward move holds");
+  assert.equal(nodes.container.scrollTop, 2_000);
+
+  nodes.container.dispatchEvent({ type: "wheel", deltaY: -40 });
+  nodes.container.scrollTop = 100;
+  await act(async () => state.onScroll());
+  assert.equal(state.isAtBottom, false, "an upward wheel releases the pin");
+
+  await act(async () => root.unmount());
+  assert.equal(document.listeners.get("keydown")?.length ?? 0, 0);
+});

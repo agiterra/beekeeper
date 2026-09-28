@@ -551,6 +551,9 @@ function ReadyCodingSessionWorkspace({
     useAnchoredScroll({
       channelId: `${channelId}:${generationId}`,
       contentRef,
+      // The transcript virtualizes past 40 rows and corrects scrollTop as rows
+      // measure; only the reader scrolling up may switch follow-latest off.
+      holdBottomUntilReaderScrolls: true,
       isLoading: false,
       messages,
       scrollContainerRef: scrollRef,

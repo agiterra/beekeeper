@@ -4,10 +4,12 @@ import { classifyTimelineMessageDelta } from "@/features/messages/lib/timelineSn
 import {
   getPinnedCenterDrift,
   settleProgrammaticBottomPin,
+  shouldHoldBottomPin,
   shouldIgnorePinnedCenterScroll,
   shouldSettleForSplitPanel,
   shouldSettleVirtualizedBottom,
 } from "./anchoredScrollPolicy";
+import { useReaderScrollIntent } from "./useReaderScrollIntent";
 import { useVirtualizedViewportResize } from "./useVirtualizedViewportResize";
 
 /**
@@ -59,6 +61,9 @@ type UseAnchoredScrollOptions = {
   virtualizerOwnsPrependAnchoring?: boolean;
   /** Bumps when a virtualized range changes, so pending target/search retries can re-check newly mounted DOM. */
   virtualizerRenderVersion?: number;
+  /** Only reader input releases a bottom-pinned view, for lists whose
+   *  virtualizer corrects scrollTop itself (see `shouldHoldBottomPin`). */
+  holdBottomUntilReaderScrolls?: boolean;
 };
 
 type UseAnchoredScrollResult = {
@@ -166,6 +171,7 @@ export function useAnchoredScroll({
   virtualSettleAtBottom,
   virtualizerOwnsPrependAnchoring = false,
   virtualizerRenderVersion = 0,
+  holdBottomUntilReaderScrolls = false,
 }: UseAnchoredScrollOptions): UseAnchoredScrollResult {
   // Anchor lives in a ref because it must survive renders and is updated
   // both on scroll (commit-time read) and in the layout effect (post-render
@@ -209,6 +215,11 @@ export function useAnchoredScroll({
   const isWritingScrollRef = React.useRef(false);
   const programmaticScrollRafRef = React.useRef<number | null>(null);
   const targetSettleRafRef = React.useRef<number | null>(null);
+  const readerScrolledUp = useReaderScrollIntent(
+    scrollContainerRef,
+    holdBottomUntilReaderScrolls,
+    channelId,
+  );
 
   // Reset everything when the channel changes — the layout effect that runs
   // immediately after this reset is responsible for either jumping to bottom
@@ -585,13 +596,27 @@ export function useAnchoredScroll({
       releasePinnedCenter();
       return;
     }
-    anchorRef.current = computeAnchor(container);
+    const nextAnchor = computeAnchor(container);
+    if (
+      shouldHoldBottomPin({
+        holdEnabled: holdBottomUntilReaderScrolls,
+        nextAtBottom: nextAnchor.kind === "at-bottom",
+        readerScrolledUp: readerScrolledUp(container.scrollTop),
+        wasAtBottom: anchorRef.current.kind === "at-bottom",
+      })
+    ) {
+      container.scrollTo({ top: container.scrollHeight, behavior: "auto" });
+      return;
+    }
+    anchorRef.current = nextAnchor;
     const atBottom = anchorRef.current.kind === "at-bottom";
     setIsAtBottom((prev) => (prev === atBottom ? prev : atBottom));
     if (atBottom) {
       setNewMessageCount(0);
     }
   }, [
+    holdBottomUntilReaderScrolls,
+    readerScrolledUp,
     releasePinnedCenter,
     scrollContainerRef,
     virtualizerOwnsPrependAnchoring,

@@ -582,7 +582,10 @@ test("short-window reflow retains a bounded virtualized transcript and follow-la
   await expect
     .poll(() => transcript.locator("[data-index]").count())
     .toBeLessThan(60);
+  // A reader's jump to the top: an upward wheel tick, then the scroll. A bare
+  // scrollTop write is not reader input, and a bottom-pinned transcript holds.
   await scroller.evaluate((element) => {
+    element.dispatchEvent(new WheelEvent("wheel", { deltaY: -1 }));
     element.scrollTop = 0;
   });
   await expect(transcript).toContainText("Fix the reconnect bug");
@@ -616,4 +619,135 @@ test("short-window reflow retains a bounded virtualized transcript and follow-la
   expect(
     await page.evaluate(() => document.documentElement.scrollHeight),
   ).toBeLessThanOrEqual(720);
+});
+
+test("follow-latest survives virtualizer corrections and resumes after the reader scrolls back down", async ({
+  page,
+}) => {
+  const events: RelayEvent[] = [];
+  for (let index = 0; index < 120; index++) {
+    const turnId = `history-turn-${index}`;
+    events.push(
+      transcriptEvent(
+        3 + index * 2,
+        {
+          kind: "user_prompt",
+          content: `History prompt ${index}`,
+          commandId: `history-command-${index}`,
+        },
+        turnId,
+      ),
+    );
+    events.push(
+      transcriptEvent(
+        4 + index * 2,
+        { kind: "assistant_text", text: `History answer ${index}` },
+        turnId,
+      ),
+    );
+  }
+  await seed(page, events);
+  const transcript = page.getByTestId("coding-session-transcript");
+  await expect(transcript).toHaveAttribute(
+    "data-transcript-renderer",
+    "virtualized",
+  );
+  const scroller = page.getByTestId("coding-session-transcript-scroll");
+  const gap = () =>
+    scroller.evaluate(
+      (element) =>
+        element.scrollHeight - element.clientHeight - element.scrollTop,
+    );
+  const latest = page.getByTestId("coding-session-scroll-to-latest");
+  // The burst virtualizes the transcript; the virtualizer's scrollTop
+  // corrections must not read as the reader leaving the bottom.
+  await expect.poll(gap).toBeLessThan(32);
+  await expect(latest).toHaveCount(0);
+
+  const box = await scroller.boundingBox();
+  if (!box) throw new Error("transcript scroller has no box");
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  for (let tick = 0; tick < 10; tick++) await page.mouse.wheel(0, -400);
+  await expect(latest).toHaveCount(1);
+  await expect.poll(gap).toBeGreaterThan(1_000);
+  for (let tick = 0; tick < 40; tick++) await page.mouse.wheel(0, 400);
+  await expect.poll(gap).toBeLessThan(32);
+  await expect(latest).toHaveCount(0);
+
+  await seed(page, [
+    transcriptEvent(
+      243,
+      {
+        kind: "user_prompt",
+        content: "Latest after scrolling back",
+        commandId: "latest-after-scrolling-back",
+      },
+      "latest-turn",
+    ),
+    transcriptEvent(
+      244,
+      { kind: "assistant_text", text: "Answer line\n".repeat(30) },
+      "latest-turn",
+    ),
+  ]);
+  await expect(transcript).toContainText("Latest after scrolling back");
+  await expect.poll(gap).toBeLessThan(32);
+  await expect(latest).toHaveCount(0);
+});
+
+test("returning to a long coding session opens at the latest content and holds there", async ({
+  page,
+}) => {
+  const events: RelayEvent[] = [];
+  for (let index = 0; index < 120; index++) {
+    const turnId = `history-turn-${index}`;
+    events.push(
+      transcriptEvent(
+        3 + index * 2,
+        {
+          kind: "user_prompt",
+          content: `History prompt ${index}`,
+          commandId: `history-command-${index}`,
+        },
+        turnId,
+      ),
+    );
+    events.push(
+      transcriptEvent(
+        4 + index * 2,
+        { kind: "assistant_text", text: `History answer ${index}` },
+        turnId,
+      ),
+    );
+  }
+  await seed(page, events);
+  const scroller = page.getByTestId("coding-session-transcript-scroll");
+  const gap = () =>
+    scroller.evaluate(
+      (element) =>
+        element.scrollHeight - element.clientHeight - element.scrollTop,
+    );
+  await expect(page.getByTestId("coding-session-transcript")).toHaveAttribute(
+    "data-transcript-renderer",
+    "virtualized",
+  );
+  await expect.poll(gap).toBeLessThan(32);
+
+  await page.getByTestId("channel-general").click();
+  await expect(scroller).toHaveCount(0);
+  await page.getByTestId(`channel-${CHANNEL_NAME}`).click();
+  await page.getByTestId("channel-coding-sessions-trigger").click();
+  await page.getByTestId("channel-coding-session-open").click();
+  await expect(scroller).toHaveCount(1);
+  await expect.poll(gap).toBeLessThan(32);
+  await expect(page.getByTestId("coding-session-scroll-to-latest")).toHaveCount(
+    0,
+  );
+
+  // The virtualizer scrolls its element to 0 when it attaches to it. Any
+  // scroll to the top that no reader made must not strand a pinned view there.
+  await scroller.evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  await expect.poll(gap).toBeLessThan(32);
 });
